@@ -58,34 +58,29 @@ namespace Intercolony
             float x = 0f;
             DoRowButton(ref x, y, "Dump state", "Write the full state to the debug log.",
                 () => IntercolonyLog.Message(state.DebugStateSummary()));
-            DoRowButton(ref x, y, "New record", "Create a persisted test record with a fresh ID.",
-                () => IntercolonyLog.Message($"Created {state.CreateTestRecord()}"));
-            DoRowButton(ref x, y, "Advance refresh", "Run the refresh now instead of waiting for the schedule.",
-                state.ForceRefreshNow);
-            DoRowButton(ref x, y, "Clear test state", "Reset every test field. Does not rewind the ID counter.",
-                state.ClearTestState);
-            y += ButtonHeight + Gap;
-
-            // Row 2: the Phase 1 probe values, kept reachable from here too.
-            x = 0f;
-            DoRowButton(ref x, y, "Set 7 / \"Intercolony\"", "Set the Phase 1 probe values (DESIGN.md §94).",
+            DoRowButton(ref x, y, "Advance refresh",
+                "Run the refresh now: expire lapsed opportunities, then generate new demand.",
                 () =>
                 {
-                    state.testCounter = 7;
-                    state.testString = "Intercolony";
+                    state.ForceRefreshNow();
+                    cachedText = null;
                 });
-            DoRowButton(ref x, y, "Counter +1", "Increment the test counter.", () => state.testCounter++);
-            DoRowButton(ref x, y, "Advance all records", "Step every record through its state machine.",
+            DoRowButton(ref x, y, "Expire all",
+                "Force every live opportunity to lapse, to watch expiry work.",
                 () =>
                 {
-                    foreach (IntercolonyTestRecord record in state.TestRecords)
-                    {
-                        record.TryAdvance();
-                    }
+                    state.ExpireAllOpportunitiesNow();
+                    cachedText = null;
+                });
+            DoRowButton(ref x, y, "Clear opportunities", "Remove every opportunity.",
+                () =>
+                {
+                    state.ClearOpportunities();
+                    cachedText = null;
                 });
             y += ButtonHeight + Gap;
 
-            // Row 3: settlement profiles (§96 debug inspector).
+            // Row 2: settlement profiles (§96 debug inspector).
             x = 0f;
             DoRowButton(ref x, y, showProfiles ? "Show state" : "Show profiles",
                 "Switch the pane below between raw state and settlement economic profiles.",

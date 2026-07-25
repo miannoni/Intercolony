@@ -146,4 +146,48 @@ Manual test:
 - **Destroyed settlements (§87)**: `Test settlement removal` reported PASS — victim `Planeton` (id 0), 57 eligible before with profile and cache entry present, 56 eligible after with `IsEligible=False` and `GetProfile` null, and the cache entry gone after a prune.
 - Evidence for the last two items was read from the in-game dev debug log window and pasted back, not from `Player.log`: a second RimWorld instance was launched and closed during that window, so `Player.log` may belong to the short-lived process.
 - All five §96 acceptance criteria pass, with the modded-faction caveat recorded above.
+
+---
+
+## Phase 4 — Market opportunity generation  (2026-07-25)
+
+Implemented:
+- `Source/Intercolony/Market/MarketOpportunity.cs` — the §7.2 entity: buyer, item, quantity, unit price, expiry, delivery deadline, distance, and a pre-computed price explanation. Persisted (§61) with an `Available -> Expired` state machine (§73). `IsValidAfterLoad` detects an unresolvable `ThingDef`, which is what a removed mod looks like on load (§64, §86).
+- `Source/Intercolony/Market/IntercolonyProductClassifier.cs` — maps `ThingDef` to a §10 category by category ancestry and def properties, never a hard-coded vanilla defName list (§63). A modded steel-equivalent lands in IntermediateGoods without Intercolony knowing the mod exists.
+- `Source/Intercolony/Market/IntercolonyTradeBlacklistDef.cs` + `IntercolonyTradeBlacklist.cs` + `Defs/IntercolonyTradeBlacklistDefs/TradeBlacklist.xml` — the §64 "debug/settings tooling to blacklist problematic items". Rule-based (exclude by comp, by category, or by def) rather than a defName list, and additive across defs so other mods or the player extend it with new XML instead of overriding. The shipped rule excludes anything with `CompHatcher`, which is how vanilla filters the same thing (`ThingFilter.disallowWithComp`), so modded fertilized eggs are caught too.
+- `Source/Intercolony/Market/IntercolonyPricing.cs` — the single place prices are computed (§46 explicitly: "do not scatter pricing formulas"). Starts from `BaseMarketValue`, then applies local demand, buyer wealth, lot size, distance, and quality expectations, each recorded as a named `PriceFactor` so the §47 breakdown is real data rather than a recomputation. §13 saturation is a continuous 1.22x -> 0.96x decay, so there is no tier cliff to game.
+- `Source/Intercolony/Market/MarketOpportunityGenerator.cs` — §11 demand generation on the existing coarse refresh (§59, §84), seeded per (economy seed, settlement, refresh number) inside a pushed `Rand` state (§60). Quantity targets a silver value rather than a unit count, so 5 healer mech serums and 1,025 units of meat are both plausible asks.
+- `Source/Intercolony/Market/IntercolonyMarketAccess.cs` — §51 market access. Hostile factions neither generate demand nor keep existing listings. Kept separate from `SettlementProfileGenerator.IsEligible`: eligibility is structural and must stay stable so profiles do not regenerate as goodwill drifts, while access is volatile and answers "can the player trade right now".
+- `Source/Intercolony/UI/MainTabWindow_Intercolony.cs` + `Defs/MainButtonDefs/Intercolony_MainButtons.xml` — the §53 market tab. Columns per §53 including Distance, all sortable by clicking the header (click again to reverse), with numeric columns defaulting to descending and ties broken on id so rows do not jitter between frames. Distance filter slider per §53/§66, persisted per save. Row tooltip shows the §47 price breakdown.
+- Save schema 3 -> 4 (Phase 1/2 test probes retired now that a real persisted entity exists; `IntercolonyTestRecord` deleted) and 4 -> 5 (distance filter and per-opportunity distance).
+- `Source/Intercolony/Debug/IntercolonyMarketSelfTest.cs` and debug actions: dump opportunities, dump product classification, dump trade blacklist, advance refresh, expire all, clear.
+
+Not implemented:
+- Accepting an opportunity. It stays non-binding; turning one into a Sales Order is Phase 5 (§98). The market tab is deliberately read-only.
+- Only stackable items are traded (fungible lots, §23.1). Furniture, capital equipment, and art classify correctly but are excluded, because they need the unique-item snapshot path (§23.2, §24).
+- The other §51 access gates: settlement discovered, comms console, caravan contact, prior trade. §51 asks for the simplest intuitive rule first, so only hostility is enforced.
+- The other §53 filters: faction, category, item, quality, minimum value, fulfillment mode. Only distance exists.
+- The §53 Fulfillment column, which needs the logistics models in §25.
+- §66 mod settings. The distance filter is per save, not a global setting, and `IntercolonyLog.Verbose` is still gated on `Prefs.DevMode`.
+- Demand saturation is per lot only. §13's "temporary market state" — a settlement's appetite decaying as it repeatedly buys the same good — needs order history that does not exist yet.
+
+Known limitations:
+- Repeated forced refreshes at the same tick stack up demand, because generation is per refresh number rather than per elapsed time. Harmless for a dev action, but it means the debug button is not a faithful simulation of a day passing.
+- Distance is `WorldGrid.ApproxDistanceInTiles` from the player's home map, which ignores terrain and actual caravan travel time. §17 wants travel time surfaced to the player before an order can be silently missed; that needs real routing.
+- Runtime blacklist exclusions (`AddRuntimeExclusion`) are session-only and not persisted. XML rules are the durable path; the runtime one exists for the §66 settings hook.
+- The per-settlement cap counts all listings including those hidden by the distance filter, so a filtered view can look emptier than the cap suggests.
+- The saturation curve, wealth factors, and archetype weight tables are all first-pass guesses. §78 balance work has not started.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors. Custom def type `Intercolony.IntercolonyTradeBlacklistDef` and the `MainButtonDef` both parse with no XML errors; 16 `MainButtonDef`s load against vanilla's 15.
+- Blacklist verified from the log: 10 fertilized egg defs excluded (chicken, cobra, iguana, tortoise, cassowary, emu, ostrich, turkey, duck, goose), each reported with its reason; 160 tradable fungible defs remain. Confirmed in game that no fertilized eggs appear in the market.
+- Market self-test: **39 passed, 0 failed**, over a sample of **86 generated opportunities from 12 settlements**, with **31 inaccessible settlements present** so the access assertions had real subjects. Covers classifier coverage, blacklist enforcement at both classification and generation, saturation monotonicity, that the §47 breakdown reconstructs the price it explains, no quality factor on goods without `CompQuality`, generation determinism, unique IDs, and RNG isolation.
+- Opportunity counts per refresh fell from ~36 to ~9-11 once §51 access gating landed, consistent with 31 of ~57 settlements being inaccessible.
+- Market tab verified in game: table renders, all columns sort ascending and descending, price-breakdown tooltip appears on hover, distance filter narrows the list.
+- Save/load: after save -> quit to main menu -> reload, the log shows `State loaded (schema 5, nextId 44)` and a dump of 43 opportunities with IDs #1-#43, prices and price explanations intact, zero `<missing def>` entries and zero drop warnings. This exercises `Scribe_Defs` reference resolution, a path Phases 1-3 never touched — an unresolvable def would have been reported by `IsValidAfterLoad` and printed as `<missing def>`. Caveat: no pre-save dump was taken, so this is not the byte-for-byte comparison used in Phase 3; it confirms survival and def resolution, not field-level equality.
+- All five §97 acceptance criteria pass.
+
+Bugs found and fixed during the phase:
+- **Quality expectations applied to goods that cannot have quality.** Reported from a screenshot showing a "Quality expectations -3.4%" line on chemfuel. `QualityPremium` ran unconditionally; it is now gated on `def.HasComp(typeof(CompQuality))`. Since every vanilla quality-bearing item has `stackLimit 1` and Phase 4 only trades stackables, the factor is now dormant until §24 — correct rather than dead. A self-test sweep now prices every tradable def and fails if the factor reappears on a non-quality good.
+- **The market self-test was passing vacuously.** It reported "26 passed" while testing exactly one (settlement, refresh) pair; generation is ~35% per settlement, so that pair usually produced nothing, the four per-opportunity assertions ran zero times, and a `|| runA.Count == 0` escape hatch made the "different refresh changes the roll" check pass without evidence. Rewritten to sweep up to 60 cycles to find one that generates, drop the escape hatch, and sweep invariants over a 12-settlement x 25-cycle sample. The report now prints its sample size so a vacuous pass is visible rather than inferred.
 - No red errors in the in-game dev debug log window. All four §94 acceptance criteria pass.

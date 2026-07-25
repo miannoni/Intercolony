@@ -84,6 +84,12 @@ namespace Intercolony
             IntercolonyLog.Message(IntercolonyProfileSelfTest.Run());
         }
 
+        [DebugAction(Category, "Run market self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 59)]
+        private static void RunMarketSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyMarketSelfTest.Run(state)));
+        }
+
         /// <summary>
         /// Destroys a settlement to prove §87 handling. Genuinely destructive — intended for a
         /// throwaway <c>-quicktest</c> world, not a save you care about.
@@ -155,65 +161,65 @@ namespace Intercolony
             });
         }
 
-        [DebugAction(Category, "Create test record", allowedGameStates = AllowedGameStates.Playing)]
-        private static void CreateTestRecord()
-        {
-            WithState(state => Report($"Created {state.CreateTestRecord()}"));
-        }
-
-        [DebugAction(Category, "Advance all test records", allowedGameStates = AllowedGameStates.Playing)]
-        private static void AdvanceTestRecords()
+        [DebugAction(Category, "Dump opportunities", allowedGameStates = AllowedGameStates.Playing, displayPriority = 85)]
+        private static void DumpOpportunities()
         {
             WithState(state =>
             {
-                int advanced = 0;
-                foreach (IntercolonyTestRecord record in state.TestRecords)
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Market opportunities ({state.Opportunities.Count} listed, " +
+                              $"{state.ActiveOpportunityCount} available, refresh #{state.RefreshCount})");
+                foreach (MarketOpportunity opportunity in state.Opportunities)
                 {
-                    if (record.TryAdvance())
+                    sb.AppendLine();
+                    sb.AppendLine($"  {opportunity}");
+                    sb.AppendLine($"    expires in {opportunity.DaysRemaining:F1}d, " +
+                                  $"delivery deadline {opportunity.deadlineDays}d");
+                    foreach (string line in opportunity.priceExplanation.Split('\n'))
                     {
-                        advanced++;
+                        if (!string.IsNullOrEmpty(line.Trim()))
+                        {
+                            sb.AppendLine("    " + line.TrimEnd());
+                        }
                     }
                 }
 
-                Report($"Advanced {advanced} of {state.TestRecords.Count} record(s).");
+                IntercolonyLog.Message(sb.ToString());
             });
         }
 
-        [DebugAction(Category, "Advance refresh", allowedGameStates = AllowedGameStates.Playing)]
+        [DebugAction(Category, "Dump product classification", allowedGameStates = AllowedGameStates.Playing, displayPriority = 45)]
+        private static void DumpProductClassification()
+        {
+            IntercolonyLog.Message(IntercolonyProductClassifier.DebugHistogram());
+        }
+
+        [DebugAction(Category, "Dump trade blacklist", allowedGameStates = AllowedGameStates.Playing, displayPriority = 44)]
+        private static void DumpTradeBlacklist()
+        {
+            IntercolonyLog.Message(IntercolonyTradeBlacklist.DebugSummary());
+        }
+
+        [DebugAction(Category, "Advance refresh", allowedGameStates = AllowedGameStates.Playing, displayPriority = 95)]
         private static void AdvanceRefresh()
         {
             WithState(state =>
             {
                 state.ForceRefreshNow();
-                Report($"Refresh #{state.RefreshCount} forced at tick {state.LastRefreshTick}.");
+                Report($"Refresh #{state.RefreshCount}: {state.ActiveOpportunityCount} opportunities available.");
             });
         }
 
-        [DebugAction(Category, "Clear test state", allowedGameStates = AllowedGameStates.Playing)]
-        private static void ClearTestState()
+        [DebugAction(Category, "Expire all opportunities", allowedGameStates = AllowedGameStates.Playing)]
+        private static void ExpireAllOpportunities()
         {
-            WithState(state =>
-            {
-                state.ClearTestState();
-                Report("Test state cleared.");
-            });
+            WithState(state => Report($"Expired {state.ExpireAllOpportunitiesNow()} opportunit(ies)."));
         }
 
-        [DebugAction(Category, "Set test values (7 / \"Intercolony\")", allowedGameStates = AllowedGameStates.Playing)]
-        private static void SetTestValues()
+        [DebugAction(Category, "Clear opportunities", allowedGameStates = AllowedGameStates.Playing)]
+        private static void ClearOpportunities()
         {
-            WithState(state =>
-            {
-                state.testCounter = 7;
-                state.testString = "Intercolony";
-                Report("Test values set. Save, quit to menu, reload, then Dump state.");
-            });
-        }
-
-        [DebugAction(Category, "Test counter +1", allowedGameStates = AllowedGameStates.Playing)]
-        private static void IncrementTestCounter()
-        {
-            WithState(state => Report($"testCounter = {++state.testCounter}"));
+            WithState(state => state.ClearOpportunities());
         }
 
         [DebugAction(Category, "Allocate ID", allowedGameStates = AllowedGameStates.Playing)]

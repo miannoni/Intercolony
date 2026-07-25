@@ -82,7 +82,7 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 3 complete (2026-07-25). Next: Phase 4 — market opportunity generation (DESIGN.md §97).
+**Phase:** 4 complete (2026-07-25). Next: Phase 5 — first playable vertical slice: commodity Sales Order (DESIGN.md §98).
 
 Update this line when a phase completes.
 

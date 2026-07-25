@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Defs>
+
+  <!--
+    Default trade exclusions (DESIGN.md §64).
+
+    These are rules, not defName lists, so they keep working when mods add their own
+    variants. Add another IntercolonyTradeBlacklistDef to extend this — the defs are
+    additive and you never need to override this one.
+  -->
+  <Intercolony.IntercolonyTradeBlacklistDef>
+    <defName>Intercolony_DefaultBlacklist</defName>
+    <reason>fertilized eggs hatch in transit and make for an odd trade contract</reason>
+    <excludeWithComps>
+      <!--
+        CompHatcher marks a fertilized egg. Vanilla filters the same way
+        (ThingFilter.disallowWithComp), so this catches modded fertilized eggs too.
+        Unfertilized eggs have no hatcher and remain tradable as ordinary food.
+      -->
+      <li>CompHatcher</li>
+    </excludeWithComps>
+  </Intercolony.IntercolonyTradeBlacklistDef>
+
+</Defs>

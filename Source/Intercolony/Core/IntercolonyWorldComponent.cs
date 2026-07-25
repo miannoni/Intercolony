@@ -24,7 +24,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 3;
+        public const int CurrentSaveVersion = 5;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -64,10 +64,31 @@ namespace Intercolony
         /// <summary>How many refreshes have run in this world's lifetime, scheduled or forced.</summary>
         private int refreshCount;
 
-        // --- Phase 1/2 persistence probes. Delete once real state exists (DESIGN.md §94, §95). ---
-        public int testCounter;
-        public string testString = "";
-        private List<IntercolonyTestRecord> testRecords = new List<IntercolonyTestRecord>();
+        /// <summary>
+        /// Live market opportunities (DESIGN.md §7.2). Persisted, because §61 lists active
+        /// opportunities as state that must survive save/load. This replaces the Phase 1/2
+        /// test-record probe: the deep-list round trip it existed to de-risk now carries a
+        /// real entity.
+        /// </summary>
+        private List<MarketOpportunity> opportunities = new List<MarketOpportunity>();
+
+        /// <summary>
+        /// Player's maximum acceptable haul, in world tiles, or <see cref="NoDistanceLimit"/>
+        /// for no limit (DESIGN.md §53 filters, §66 "maximum market distance").
+        ///
+        /// Persisted because it is a per-save player preference: a young colony that cannot
+        /// cross the planet should not have to re-set it after every reload.
+        /// </summary>
+        private float maxMarketDistance = NoDistanceLimit;
+
+        /// <summary>Sentinel meaning "show everything regardless of distance".</summary>
+        public const float NoDistanceLimit = 9999f;
+
+        public float MaxMarketDistance
+        {
+            get => maxMarketDistance;
+            set => maxMarketDistance = value;
+        }
 
         public IntercolonyWorldComponent(World world) : base(world)
         {
@@ -79,8 +100,8 @@ namespace Intercolony
 
         public int RefreshCount => refreshCount;
 
-        /// <summary>Read-only view; mutate through <see cref="CreateTestRecord"/> / <see cref="ClearTestState"/>.</summary>
-        public List<IntercolonyTestRecord> TestRecords => testRecords;
+        /// <summary>Read-only view; mutate through the generation and expiry paths below.</summary>
+        public List<MarketOpportunity> Opportunities => opportunities;
 
         /// <summary>Ticks until the next scheduled refresh.</summary>
         public int TicksUntilNextRefresh => RefreshIntervalTicks - (GenTicks.TicksGame % RefreshIntervalTicks);
@@ -283,33 +304,30 @@ namespace Intercolony
             Scribe_Values.Look(ref economySeed, "economySeed", 0);
             Scribe_Values.Look(ref lastRefreshTick, "lastRefreshTick", -1);
             Scribe_Values.Look(ref refreshCount, "refreshCount", 0);
-            Scribe_Values.Look(ref testCounter, "testCounter", 0);
-            Scribe_Values.Look(ref testString, "testString", "");
-            Scribe_Collections.Look(ref testRecords, "testRecords", LookMode.Deep);
+            Scribe_Values.Look(ref maxMarketDistance, "maxMarketDistance", NoDistanceLimit);
+            Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
-                if (testString == null)
-                {
-                    testString = "";
-                }
-
                 // A missing or IsNull list node loads as null, not as an empty list
                 // (Scribe_Collections.Look, LoadingVars branch). Every consumer below
                 // assumes non-null, so restore the invariant here rather than at each use.
-                if (testRecords == null)
+                if (opportunities == null)
                 {
-                    testRecords = new List<IntercolonyTestRecord>();
+                    opportunities = new List<MarketOpportunity>();
                 }
                 else
                 {
-                    // Deep-loaded children are never expected to be null, but a corrupt or
-                    // hand-edited save can produce them. Drop them loudly instead of
-                    // throwing NREs from unrelated code later.
-                    int removed = testRecords.RemoveAll(r => r == null);
-                    if (removed > 0)
+                    // A null child means a corrupt save; an opportunity whose ThingDef no
+                    // longer resolves means a mod was removed since the save. Drop both
+                    // loudly rather than letting them surface as NREs elsewhere (§64, §86).
+                    int nulls = opportunities.RemoveAll(o => o == null);
+                    int broken = opportunities.RemoveAll(o => !o.IsValidAfterLoad);
+                    if (nulls > 0 || broken > 0)
                     {
-                        IntercolonyLog.Warning($"Dropped {removed} null test record(s) while loading.");
+                        IntercolonyLog.Warning(
+                            $"Dropped {nulls} null and {broken} unresolvable opportunit(ies) while loading. " +
+                            "Unresolvable usually means a mod that supplied the item was removed.");
                     }
                 }
 
@@ -355,37 +373,142 @@ namespace Intercolony
             refreshCount++;
             PruneProfileCache();
 
-            // Nothing to regenerate yet: opportunity generation arrives with settlement
-            // economic profiles (DESIGN.md §96+). This proves the cadence and gives that
-            // work a hook to attach to. Seeded per-refresh RNG (§60) is still outstanding.
-            IntercolonyLog.Verbose($"Refresh #{refreshCount} ({cause}) at tick {lastRefreshTick}.");
+            int expired = ExpireStaleOpportunities();
+            int withdrawn = DropInaccessibleOpportunities();
+            int created = GenerateOpportunities();
+
+            IntercolonyLog.Verbose(
+                $"Refresh #{refreshCount} ({cause}) at tick {lastRefreshTick}: " +
+                $"{expired} expired, {withdrawn} withdrawn, {created} created, " +
+                $"{ActiveOpportunityCount} active.");
         }
 
-        /// <summary>Creates a persisted test record with a freshly allocated ID (DESIGN.md §95).</summary>
-        public IntercolonyTestRecord CreateTestRecord(string label = null)
+        /// <summary>Opportunities still available and not past their expiry tick.</summary>
+        public int ActiveOpportunityCount
         {
-            IntercolonyTestRecord record = new IntercolonyTestRecord(
-                NextId(),
-                label ?? "test",
-                GenTicks.TicksGame);
-            testRecords.Add(record);
-            return record;
+            get
+            {
+                int count = 0;
+                foreach (MarketOpportunity opportunity in opportunities)
+                {
+                    if (opportunity.IsAvailable)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
         }
 
         /// <summary>
-        /// Resets every Phase 1/2 probe field to its default (DESIGN.md §95 "clear test state").
-        /// Deliberately does NOT rewind <see cref="nextId"/>: IDs must never be reissued, or
-        /// a stale reference could silently resolve to a different entity.
+        /// Marks lapsed opportunities expired and drops them (DESIGN.md §97 "opportunities
+        /// expire"). Removal rather than retention keeps the saved list bounded; a history of
+        /// missed opportunities is a §75 transaction-log concern, not this list's job.
         /// </summary>
-        public void ClearTestState()
+        public int ExpireStaleOpportunities()
         {
-            int cleared = testRecords.Count;
-            testRecords.Clear();
-            testCounter = 0;
-            testString = "";
-            lastRefreshTick = -1;
-            refreshCount = 0;
-            IntercolonyLog.Message($"Test state cleared ({cleared} record(s) removed). nextId left at {nextId}.");
+            int now = GenTicks.TicksGame;
+            int expired = 0;
+
+            for (int i = opportunities.Count - 1; i >= 0; i--)
+            {
+                MarketOpportunity opportunity = opportunities[i];
+                if (opportunity.IsAvailable && opportunity.HasExpired(now))
+                {
+                    opportunity.TryExpire();
+                    expired++;
+                }
+
+                if (!opportunity.IsAvailable)
+                {
+                    opportunities.RemoveAt(i);
+                }
+            }
+
+            return expired;
+        }
+
+        /// <summary>
+        /// Removes listings whose buyer has become unreachable — turned hostile, or ceased to
+        /// exist (DESIGN.md §51, §87). Opportunities are non-binding, so withdrawing them
+        /// costs the player nothing; binding contracts caught by a war are §88's problem.
+        /// </summary>
+        public int DropInaccessibleOpportunities()
+        {
+            int dropped = 0;
+            for (int i = opportunities.Count - 1; i >= 0; i--)
+            {
+                if (!IntercolonyMarketAccess.IsStillValid(opportunities[i]))
+                {
+                    opportunities.RemoveAt(i);
+                    dropped++;
+                }
+            }
+
+            return dropped;
+        }
+
+        /// <summary>
+        /// Generates new demand across eligible settlements (DESIGN.md §11, §97).
+        /// Called from the coarse refresh only.
+        /// </summary>
+        public int GenerateOpportunities()
+        {
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                return 0;
+            }
+
+            // Count existing per settlement once, rather than rescanning inside the loop.
+            Dictionary<int, int> perSettlement = new Dictionary<int, int>();
+            foreach (MarketOpportunity opportunity in opportunities)
+            {
+                perSettlement.TryGetValue(opportunity.settlementId, out int n);
+                perSettlement[opportunity.settlementId] = n + 1;
+            }
+
+            int created = 0;
+            foreach (Settlement settlement in settlements)
+            {
+                SettlementEconomicProfile profile = GetProfile(settlement);
+                if (profile == null)
+                {
+                    continue;
+                }
+
+                perSettlement.TryGetValue(settlement.ID, out int existing);
+                List<MarketOpportunity> fresh = MarketOpportunityGenerator.GenerateFor(
+                    settlement, profile, EconomySeed, refreshCount, existing, NextId);
+
+                foreach (MarketOpportunity opportunity in fresh)
+                {
+                    opportunities.Add(opportunity);
+                    created++;
+                }
+            }
+
+            return created;
+        }
+
+        /// <summary>Removes every opportunity. Debug only.</summary>
+        public void ClearOpportunities()
+        {
+            int count = opportunities.Count;
+            opportunities.Clear();
+            IntercolonyLog.Message($"Cleared {count} opportunit{(count == 1 ? "y" : "ies")}.");
+        }
+
+        /// <summary>Forces every live opportunity to lapse immediately. Debug only.</summary>
+        public int ExpireAllOpportunitiesNow()
+        {
+            foreach (MarketOpportunity opportunity in opportunities)
+            {
+                opportunity.expiryTick = GenTicks.TicksGame;
+            }
+
+            return ExpireStaleOpportunities();
         }
 
         /// <summary>
@@ -435,6 +558,31 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 2 -> 3: economy seed will be assigned on first use.");
             }
 
+            if (saveVersion < 4)
+            {
+                // 3 -> 4 retired the Phase 1/2 test probes (testCounter, testString,
+                // testRecords) now that a real persisted entity exists, and added the
+                // opportunity list. The retired nodes are simply no longer read; Scribe
+                // ignores unknown XML, so old saves load cleanly and the dead data is
+                // dropped the next time the game is saved.
+                //
+                // Nothing of value is lost: the probes were scaffolding by construction.
+                // nextId is deliberately NOT rewound, so IDs once issued to test records are
+                // never reissued to opportunities.
+                IntercolonyLog.Message(
+                    "  schema 3 -> 4: test probes retired, market opportunity list added.");
+            }
+
+            if (saveVersion < 5)
+            {
+                // 4 -> 5 added the distance filter and per-opportunity distance. Existing
+                // opportunities keep distanceTiles = -1 ("unknown"), which the filter treats
+                // as always-visible so a migrated save never hides listings the player could
+                // previously see.
+                IntercolonyLog.Message(
+                    "  schema 4 -> 5: distance filter added; existing opportunities have unknown distance.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -447,11 +595,11 @@ namespace Intercolony
         private void ValidateIds()
         {
             int highest = 0;
-            foreach (IntercolonyTestRecord record in testRecords)
+            foreach (MarketOpportunity opportunity in opportunities)
             {
-                if (record.id > highest)
+                if (opportunity.id > highest)
                 {
-                    highest = record.id;
+                    highest = opportunity.id;
                 }
             }
 
@@ -485,12 +633,10 @@ namespace Intercolony
             sb.AppendLine($"  lastRefresh  : {LastRefreshTickDescription}");
             sb.AppendLine($"  refreshCount : {refreshCount}");
             sb.AppendLine($"  nextRefresh  : in {TicksUntilNextRefresh} ticks");
-            sb.AppendLine($"  testCounter  : {testCounter}");
-            sb.AppendLine($"  testString   : \"{testString}\"");
-            sb.AppendLine($"  testRecords  : {testRecords.Count}");
-            foreach (IntercolonyTestRecord record in testRecords)
+            sb.AppendLine($"  opportunities: {opportunities.Count} ({ActiveOpportunityCount} available)");
+            foreach (MarketOpportunity opportunity in opportunities)
             {
-                sb.AppendLine($"    {record}");
+                sb.AppendLine($"    {opportunity}  {opportunity.DaysRemaining:F1}d left");
             }
 
             return sb.ToString();

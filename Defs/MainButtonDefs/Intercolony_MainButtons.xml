@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Defs>
+
+  <!--
+    Puts the market tab on the bottom button bar (DESIGN.md §52).
+    order sits after the vanilla tabs so Intercolony does not displace them.
+  -->
+  <MainButtonDef>
+    <defName>Intercolony</defName>
+    <label>intercolony</label>
+    <description>Inspect what other settlements want to buy.</description>
+    <tabWindowClass>Intercolony.MainTabWindow_Intercolony</tabWindowClass>
+    <order>95</order>
+    <closesWorldView>true</closesWorldView>
+  </MainButtonDef>
+
+</Defs>
