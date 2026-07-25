@@ -24,7 +24,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 2;
+        public const int CurrentSaveVersion = 3;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -41,6 +41,22 @@ namespace Intercolony
         /// aliases (e.g. "SO-42") are a display concern layered on top later.
         /// </summary>
         private int nextId = 1;
+
+        /// <summary>
+        /// Per-world seed for all economic generation (DESIGN.md §60 "persistent seeds").
+        /// Every settlement profile is derived from this plus the settlement's stable ID, so
+        /// this single int is the only thing about the economy that needs saving. 0 means
+        /// "not yet assigned"; <see cref="EconomySeed"/> assigns it lazily.
+        /// </summary>
+        private int economySeed;
+
+        /// <summary>
+        /// Derived profiles, keyed by settlement ID. NOT persisted and not authoritative:
+        /// regenerating from <see cref="economySeed"/> reproduces it exactly (§96). Purely a
+        /// cache so profile lookups are not recomputing rolls every frame (§84).
+        /// </summary>
+        private readonly Dictionary<int, SettlementEconomicProfile> profileCache =
+            new Dictionary<int, SettlementEconomicProfile>();
 
         /// <summary>Tick of the last refresh, or -1 if none has run yet.</summary>
         private int lastRefreshTick = -1;
@@ -70,6 +86,183 @@ namespace Intercolony
         public int TicksUntilNextRefresh => RefreshIntervalTicks - (GenTicks.TicksGame % RefreshIntervalTicks);
 
         /// <summary>
+        /// Arbitrary salt so the economy seed does not equal the world seed itself, keeping
+        /// Intercolony's rolls independent of anything else keyed off the world seed.
+        /// </summary>
+        private const int EconomySeedSalt = 0x1C7EC0;
+
+        /// <summary>
+        /// The world's economy seed, assigned on first access and then persisted.
+        ///
+        /// Derived from the world's own seed rather than drawn from <see cref="Rand"/>. Drawing
+        /// would perturb RimWorld's global random state (DESIGN.md §60) at an arbitrary moment,
+        /// and would make the entire economy depend on *when* the first profile happened to be
+        /// requested. Deriving means the same world always produces the same economy, which is
+        /// what makes profile regeneration reproducible for debugging.
+        /// </summary>
+        public int EconomySeed
+        {
+            get
+            {
+                if (economySeed == 0)
+                {
+                    economySeed = Gen.HashCombineInt(world?.info?.Seed ?? 0, EconomySeedSalt);
+
+                    // 0 is the "unassigned" sentinel, so a hash that lands on it must move.
+                    if (economySeed == 0)
+                    {
+                        economySeed = EconomySeedSalt;
+                    }
+
+                    IntercolonyLog.Message($"Derived economy seed {economySeed} from the world seed.");
+                }
+
+                return economySeed;
+            }
+        }
+
+        /// <summary>
+        /// Profile for a settlement, generated on demand and cached (DESIGN.md §9, §96).
+        /// Returns null for settlements that are not economic participants, so callers must
+        /// null-check — that is also how a destroyed settlement stops having an economy (§87).
+        /// </summary>
+        public SettlementEconomicProfile GetProfile(Settlement settlement)
+        {
+            if (!SettlementProfileGenerator.IsEligible(settlement))
+            {
+                return null;
+            }
+
+            if (profileCache.TryGetValue(settlement.ID, out SettlementEconomicProfile cached))
+            {
+                // Tech tier is inherited from the faction (§8), so a settlement changing hands
+                // must invalidate its profile rather than keep its old owner's economy.
+                if (cached.factionLoadId == (settlement.Faction?.loadID ?? -1))
+                {
+                    return cached;
+                }
+
+                IntercolonyLog.Verbose(
+                    $"Settlement {settlement.ID} changed faction; regenerating profile.");
+            }
+
+            SettlementEconomicProfile profile = SettlementProfileGenerator.Generate(EconomySeed, settlement);
+            profileCache[settlement.ID] = profile;
+            return profile;
+        }
+
+        /// <summary>Every eligible settlement's profile, in world-object order.</summary>
+        public List<SettlementEconomicProfile> AllProfiles()
+        {
+            List<SettlementEconomicProfile> profiles = new List<SettlementEconomicProfile>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                return profiles;
+            }
+
+            foreach (Settlement settlement in settlements)
+            {
+                SettlementEconomicProfile profile = GetProfile(settlement);
+                if (profile != null)
+                {
+                    profiles.Add(profile);
+                }
+            }
+
+            return profiles;
+        }
+
+        /// <summary>Whether a profile is currently cached for this settlement ID. Debug inspection only.</summary>
+        public bool HasCachedProfile(int settlementId)
+        {
+            return profileCache.ContainsKey(settlementId);
+        }
+
+        /// <summary>Forces a cache prune without waiting for a refresh. Debug inspection only.</summary>
+        public void PruneProfileCacheNow()
+        {
+            PruneProfileCache();
+        }
+
+        /// <summary>
+        /// Drops cached profiles so the next lookup regenerates them. Since generation is
+        /// deterministic, this is a no-op in behaviour — which is exactly what makes it a
+        /// useful test that regeneration really is deterministic (§96).
+        /// </summary>
+        public void ClearProfileCache()
+        {
+            int count = profileCache.Count;
+            profileCache.Clear();
+            IntercolonyLog.Message($"Profile cache cleared ({count} entr{(count == 1 ? "y" : "ies")}).");
+        }
+
+        /// <summary>
+        /// Replaces the economy seed with a random one, regenerating every profile. Debug-only:
+        /// this rewrites the character of every settlement in the world. Unlike the derived
+        /// default this does draw from <see cref="Rand"/>, which is acceptable precisely because
+        /// it is a manual dev action rather than something that happens during normal play.
+        /// </summary>
+        public void RerollEconomySeed()
+        {
+            profileCache.Clear();
+
+            economySeed = 0;
+            while (economySeed == 0)
+            {
+                economySeed = Rand.Int;
+            }
+
+            IntercolonyLog.Message($"Economy seed rerolled to {economySeed}; all profiles regenerated.");
+        }
+
+        /// <summary>
+        /// Drops cache entries for settlements that no longer exist (DESIGN.md §87). Cheap and
+        /// only runs on the coarse refresh, never per tick.
+        /// </summary>
+        private void PruneProfileCache()
+        {
+            if (profileCache.Count == 0)
+            {
+                return;
+            }
+
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                return;
+            }
+
+            HashSet<int> liveIds = new HashSet<int>();
+            foreach (Settlement settlement in settlements)
+            {
+                liveIds.Add(settlement.ID);
+            }
+
+            List<int> stale = null;
+            foreach (KeyValuePair<int, SettlementEconomicProfile> entry in profileCache)
+            {
+                if (!liveIds.Contains(entry.Key))
+                {
+                    stale = stale ?? new List<int>();
+                    stale.Add(entry.Key);
+                }
+            }
+
+            if (stale == null)
+            {
+                return;
+            }
+
+            foreach (int id in stale)
+            {
+                profileCache.Remove(id);
+            }
+
+            IntercolonyLog.Verbose($"Pruned {stale.Count} profile(s) for settlements that no longer exist.");
+        }
+
+        /// <summary>
         /// The live state owner, or null when no world is loaded. Always null-check:
         /// this is reachable from the main menu and during world generation.
         /// </summary>
@@ -87,6 +280,7 @@ namespace Intercolony
 
             Scribe_Values.Look(ref saveVersion, "saveVersion", 0);
             Scribe_Values.Look(ref nextId, "nextId", 1);
+            Scribe_Values.Look(ref economySeed, "economySeed", 0);
             Scribe_Values.Look(ref lastRefreshTick, "lastRefreshTick", -1);
             Scribe_Values.Look(ref refreshCount, "refreshCount", 0);
             Scribe_Values.Look(ref testCounter, "testCounter", 0);
@@ -159,6 +353,7 @@ namespace Intercolony
         {
             lastRefreshTick = GenTicks.TicksGame;
             refreshCount++;
+            PruneProfileCache();
 
             // Nothing to regenerate yet: opportunity generation arrives with settlement
             // economic profiles (DESIGN.md §96+). This proves the cadence and gives that
@@ -231,6 +426,15 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 1 -> 2: refresh clock and test record list initialized.");
             }
 
+            if (saveVersion < 3)
+            {
+                // 2 -> 3 added economySeed. Leaving it 0 is the correct default: EconomySeed
+                // assigns one lazily on first use. A save upgraded from schema 2 therefore
+                // gets a fresh economy, which is acceptable because no economic state existed
+                // to preserve at schema 2.
+                IntercolonyLog.Message("  schema 2 -> 3: economy seed will be assigned on first use.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -275,6 +479,8 @@ namespace Intercolony
             sb.AppendLine("Intercolony world state");
             sb.AppendLine($"  saveVersion  : {saveVersion} (current {CurrentSaveVersion})");
             sb.AppendLine($"  nextId       : {nextId}");
+            sb.AppendLine($"  economySeed  : {(economySeed == 0 ? "unassigned" : economySeed.ToString())}");
+            sb.AppendLine($"  profiles     : {profileCache.Count} cached");
             sb.AppendLine($"  tick now     : {GenTicks.TicksGame}");
             sb.AppendLine($"  lastRefresh  : {LastRefreshTickDescription}");
             sb.AppendLine($"  refreshCount : {refreshCount}");

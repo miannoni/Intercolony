@@ -98,4 +98,52 @@ Manual test:
   - `Clear test state` zeroed the probe fields without rewinding `nextId`; a record created afterwards received an ID above the deleted ones.
   - `Advance refresh` incremented the refresh counter and recorded the tick.
 - No red errors in the in-game dev debug log window. The §95 acceptance criterion is met: a known test state can be forced in seconds without waiting through gameplay.
+
+---
+
+## Phase 3 — Settlement economic profiles  (2026-07-25)
+
+Implemented:
+- `Source/Intercolony/Core/IntercolonyProductCategory.cs` — the six product buckets straight from DESIGN.md §10 (commodities, intermediate, manufactured, furniture, capital equipment, art/unique), with a cached `All` array. Weighting buckets only; mapping concrete (possibly modded) ThingDefs into them is a market-phase problem (§64).
+- `Source/Intercolony/Core/SettlementEconomicProfile.cs` — the §9 profile: settlement/faction ids, tech tier, wealth tier, archetype, per-category demand and supply weights, quality preference, labor placeholder, volatility, and the derivation seed.
+- `Source/Intercolony/Core/SettlementProfileGenerator.cs` — deterministic generation and eligibility.
+  - **Deterministic regeneration rather than persistence**, which §96 explicitly permits. Only a single `economySeed` int is saved; each profile is derived from `Gen.HashCombineInt(economySeed, settlement.ID)`. This buys three acceptance criteria directly: destroyed settlements need no orphan cleanup, modded factions put nothing in the save file, and save/load is stable because the same seed reproduces the same profile. It also means the profile shape can change without a schema migration.
+  - Rolls run inside `Rand.PushState(seed)` / `Rand.PopState()` so the global random stream is untouched (§60).
+  - `NormalizeTech` resolves `TechLevel.Undefined` to Industrial. Undefined is the enum's zero value, so without this every `tech <= TechLevel.Medieval` test silently classified unset-tech factions as neolithic and pushed them toward the Tribal archetype — while `TechSupplyFactor` treated the same value as industrial. Modded factions routinely leave `techLevel` unset (§63, §64).
+  - `GenerateFrom(...)` takes plain values rather than a `Settlement`, so generation is a pure function and can be exercised against inputs vanilla never produces (§83.1).
+  - Tech gates supply far harder than demand (§50): a neolithic settlement cannot manufacture a fabrication bench, but wanting one is plausible.
+  - Eligibility (§51 "simplest intuitive rule") checks only structurally stable traits — spawned, has a faction, not the player's, not hidden/temporary, not a permanent enemy. Deliberately excludes goodwill so profiles do not wink in and out as relations drift; relationship/comms gating belongs to the market layer.
+- `IntercolonyWorldComponent`: persisted `economySeed` (derived from `world.info.Seed`, not drawn from `Rand`, so the economy does not depend on *when* the first profile was requested), a non-persisted profile cache with faction-change invalidation, `AllProfiles()`, `ClearProfileCache()`, `RerollEconomySeed()`, and `PruneProfileCache()` on the coarse refresh for §87.
+- Save schema bumped 2 -> 3 with a migration step.
+- Debug inspector (§96): `Dump settlement profiles`, a `ToolWorld` click-a-settlement inspector, a profiles pane in the debug window (throttled to ~4 rebuilds/sec — building 60+ StringBuilders per GUI pass was visibly janky), `Clear profile cache`, `Reroll economy seed`.
+- `Source/Intercolony/Debug/IntercolonyProfileSelfTest.cs` — in-game assertions (§83.2) covering the two criteria that cannot be reached by playing a vanilla world: synthetic modded-faction inputs, and §60 RNG isolation.
+- `Test settlement removal (DESTRUCTIVE)` debug action — exercises §87 end to end and prints PASS/FAIL.
+- `IntercolonyLog` now prefixes **every** line of a multi-line entry. RimWorld writes multi-line messages as plain consecutive lines in `Player.log` with nothing marking continuations, so any tag-grep filter kept the header of a state dump and silently dropped the body.
+- `dev.ps1` added to the repo (was sitting one directory above, where `$PSScriptRoot` made `$Proj` unresolvable) and its argument binding fixed: `$Note` declared `[Parameter(Position = 1)]` while `$Task` had no `[Parameter()]` attribute, so PowerShell bound the first positional argument to the lowest *declared* position. Every invocation silently ran the default `cycle` task, rebuilding and restarting the game regardless of the argument given.
+
+Not implemented:
+- Profiles are not persisted, by design. Anything that genuinely accumulates — commercial reputation, demand saturation, order history — must be stored separately when it arrives; it cannot live on the profile.
+- No market access gating (§51: discovery, comms console, prior trade, relationship thresholds). Eligibility is structural only.
+- Labor is a single placeholder multiplier (§96 "labor tendency placeholder"). No worker pools.
+- No pricing, no opportunities, no ThingDef-to-category mapping. Phase 4+ (§97).
+- `RerollEconomySeed` draws from `Rand` rather than deriving. Acceptable because it is a manual dev action, not something that happens in play.
+
+Known limitations:
+- **"Modded factions do not crash" is verified synthetically, not with a faction-adding mod installed.** The self-test drives every `TechLevel` including `Undefined`, null names, and extreme IDs through `GenerateFrom`, which covers the code paths — but no third-party faction has actually been loaded. Install one (e.g. a faction pack) and re-run `Dump settlement profiles` plus the self-test before treating this criterion as fully closed.
+- The profile cache is pruned only on the coarse refresh or manually, so a destroyed settlement's entry can linger up to one in-game day. Harmless: `AllProfiles()` iterates live settlements and `GetProfile` rejects unspawned ones.
+- Forcing a refresh still does not shift the schedule (carried over from Phase 2).
+- An intermittent `Root level exception in OnGUI(): NullReferenceException` at `UIRoot_Play.UIRootOnGUI` was seen on 2 of 6 `-quicktest` launches. **Not attributable to Intercolony**: it reproduces on neither a fixed build nor a fixed configuration (identical Phase 3 code gave 4 occurrences twice and 0 occurrences four times), the trace contains no Intercolony frames, it fires before the world component initializes, and the only Intercolony OnGUI surface (the debug window) was closed. A plausible vanilla mechanism is `WorldRendererUtility.CurrentWorldRenderMode` dereferencing `Find.CurrentMap.generatorDef` during map generation (`reference/decompiled/RimWorld.Planet/WorldRendererUtility.cs:35`), but this is unproven. Watch for it during normal, non-quicktest play.
+
+Manual test:
+- `dotnet build` via `dev.ps1 build` — 0 warnings, 0 errors; `Assemblies/` contains only `Intercolony.dll`.
+- Startup: `[Intercolony] loaded.` then `[Intercolony] State initialized fresh (schema 3).`, no Intercolony errors.
+- **Every eligible settlement gets a profile**: 64 eligible, 64 profiles in one world; 48 and 57 in later worlds. No gaps.
+- **Profiles differ**: all 8 archetypes present in a 64-settlement world (14 Agricultural, 12 Mixed, 10 Frontier, 8 Industrial, 7 Affluent, 6 Tribal, 4 Military, 3 TradeHub) and all 4 wealth tiers.
+- **Deterministic regeneration**: dumps before and after `Clear profile cache` were byte-identical by md5 (768-line bodies). A reroll produced a different dump, confirming the comparison was actually sensitive.
+- **Save/load stable**: dump before save vs. after save -> quit to main menu -> reload were byte-identical by md5 (577 tagged lines each, 48 settlements). Critically, **no `Derived economy seed` line appeared after the reload** — proving the seed was read from the save rather than re-derived, which would have coincidentally produced the same value and masked a persistence failure.
+- **§50 tech gating**: mean capital-equipment supply was 0.02 for 33 neolithic settlements (at the floor; highest individual 0.03) versus 0.76 for 31 industrial ones, while neolithic *demand* stayed at 0.65. The Tribal archetype appeared only at Neolithic (6/6).
+- **Profile self-test**: 154 passed, 0 failed. The count cross-checks against the test design (8 tech levels x 17 assertions, + 12 awkward-ID checks, + 4 determinism, + 1 variety, + 1 RNG isolation = 154), confirming every assertion ran rather than silently skipping. Includes the §60 check that generation leaves the global `Rand` stream untouched — invisible from the UI and never previously verified.
+- **Destroyed settlements (§87)**: `Test settlement removal` reported PASS — victim `Planeton` (id 0), 57 eligible before with profile and cache entry present, 56 eligible after with `IsEligible=False` and `GetProfile` null, and the cache entry gone after a prune.
+- Evidence for the last two items was read from the in-game dev debug log window and pasted back, not from `Player.log`: a second RimWorld instance was launched and closed during that window, so `Player.log` may belong to the short-lived process.
+- All five §96 acceptance criteria pass, with the modded-faction caveat recorded above.
 - No red errors in the in-game dev debug log window. All four §94 acceptance criteria pass.

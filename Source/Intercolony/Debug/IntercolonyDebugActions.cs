@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Text;
 using LudeonTK;
 using RimWorld;
+using RimWorld.Planet;
 using Verse;
 
 namespace Intercolony
@@ -23,6 +26,133 @@ namespace Intercolony
         private static void DumpState()
         {
             WithState(state => IntercolonyLog.Message(state.DebugStateSummary()));
+        }
+
+        [DebugAction(Category, "Dump settlement profiles", allowedGameStates = AllowedGameStates.Playing, displayPriority = 80)]
+        private static void DumpSettlementProfiles()
+        {
+            WithState(state =>
+            {
+                List<SettlementEconomicProfile> profiles = state.AllProfiles();
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Settlement economic profiles ({profiles.Count} eligible, economy seed {state.EconomySeed})");
+                foreach (SettlementEconomicProfile profile in profiles)
+                {
+                    sb.AppendLine();
+                    sb.Append(profile.DebugSummary());
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
+        /// <summary>
+        /// Click a settlement on the world map to print its profile. A ToolWorld action is
+        /// only offered while the world map is rendered, and must read the hovered tile itself
+        /// (see <c>DebugActionNode.cs:286</c> — the tool is handed a plain Action).
+        /// </summary>
+        [DebugAction(Category, "Inspect settlement profile", actionType = DebugActionType.ToolWorld,
+            allowedGameStates = AllowedGameStates.PlayingOnWorld, displayPriority = 70)]
+        private static void InspectSettlementProfile()
+        {
+            WithState(state =>
+            {
+                PlanetTile tile = GenWorld.MouseTile();
+                Settlement settlement = Find.WorldObjects.SettlementAt(tile);
+                if (settlement == null)
+                {
+                    IntercolonyLog.Message($"No settlement at tile {tile}.");
+                    return;
+                }
+
+                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                if (profile == null)
+                {
+                    IntercolonyLog.Message(
+                        $"{settlement.Label} is not an economic participant " +
+                        $"(faction: {settlement.Faction?.Name ?? "none"}).");
+                    return;
+                }
+
+                IntercolonyLog.Message(profile.DebugSummary());
+            });
+        }
+
+        [DebugAction(Category, "Run profile self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 60)]
+        private static void RunProfileSelfTest()
+        {
+            IntercolonyLog.Message(IntercolonyProfileSelfTest.Run());
+        }
+
+        /// <summary>
+        /// Destroys a settlement to prove §87 handling. Genuinely destructive — intended for a
+        /// throwaway <c>-quicktest</c> world, not a save you care about.
+        /// </summary>
+        [DebugAction(Category, "Test settlement removal (DESTRUCTIVE)", allowedGameStates = AllowedGameStates.Playing, displayPriority = 50)]
+        private static void TestSettlementRemoval()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("Settlement removal test (DESIGN.md §87)");
+
+                Settlement victim = null;
+                foreach (Settlement settlement in Find.WorldObjects.Settlements)
+                {
+                    if (SettlementProfileGenerator.IsEligible(settlement))
+                    {
+                        victim = settlement;
+                        break;
+                    }
+                }
+
+                if (victim == null)
+                {
+                    IntercolonyLog.Warning("No eligible settlement to remove.");
+                    return;
+                }
+
+                int id = victim.ID;
+                int before = state.AllProfiles().Count;
+                bool profileBefore = state.GetProfile(victim) != null;
+                bool cachedBefore = state.HasCachedProfile(id);
+                sb.AppendLine($"  victim: {victim.Label} (id {id})");
+                sb.AppendLine($"  before: {before} eligible, profile={profileBefore}, cached={cachedBefore}");
+
+                Find.WorldObjects.Remove(victim);
+
+                bool eligibleAfter = SettlementProfileGenerator.IsEligible(victim);
+                bool profileAfter = state.GetProfile(victim) != null;
+                int after = state.AllProfiles().Count;
+                sb.AppendLine($"  after removal: {after} eligible, IsEligible={eligibleAfter}, profile={profileAfter}");
+
+                state.PruneProfileCacheNow();
+                bool cachedAfterPrune = state.HasCachedProfile(id);
+                sb.AppendLine($"  after prune: cached={cachedAfterPrune}");
+
+                bool pass = profileBefore && !eligibleAfter && !profileAfter && after == before - 1 && !cachedAfterPrune;
+                sb.AppendLine(pass
+                    ? "  PASS: removal handled gracefully, no orphan profile left."
+                    : "  FAIL: see values above.");
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
+        [DebugAction(Category, "Clear profile cache", allowedGameStates = AllowedGameStates.Playing)]
+        private static void ClearProfileCache()
+        {
+            WithState(state => state.ClearProfileCache());
+        }
+
+        [DebugAction(Category, "Reroll economy seed", allowedGameStates = AllowedGameStates.Playing)]
+        private static void RerollEconomySeed()
+        {
+            WithState(state =>
+            {
+                state.RerollEconomySeed();
+                Report($"Economy seed is now {state.EconomySeed}.");
+            });
         }
 
         [DebugAction(Category, "Create test record", allowedGameStates = AllowedGameStates.Playing)]

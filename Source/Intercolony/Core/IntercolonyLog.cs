@@ -1,3 +1,4 @@
+using System.Text;
 using Verse;
 
 namespace Intercolony
@@ -14,26 +15,63 @@ namespace Intercolony
         /// </summary>
         public static bool VerboseEnabled => Prefs.DevMode;
 
+        /// <summary>
+        /// Prefixes every line, not just the first.
+        ///
+        /// RimWorld writes a multi-line entry as plain consecutive lines in Player.log with
+        /// nothing marking the continuations. Any log filter that greps for the tag therefore
+        /// keeps the first line of a state dump and silently drops the body — which is exactly
+        /// what happened to the first settlement-profile dump. Tagging every line costs a few
+        /// characters and makes multi-line dumps survive filtering.
+        /// </summary>
+        private static string WithPrefix(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return Prefix;
+            }
+
+            string normalized = text.Replace("\r\n", "\n").TrimEnd('\n');
+            if (normalized.IndexOf('\n') < 0)
+            {
+                return Prefix + normalized;
+            }
+
+            string[] lines = normalized.Split('\n');
+            StringBuilder sb = new StringBuilder(normalized.Length + lines.Length * Prefix.Length);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append('\n');
+                }
+
+                sb.Append(Prefix).Append(lines[i]);
+            }
+
+            return sb.ToString();
+        }
+
         public static void Message(string text)
         {
-            Log.Message(Prefix + text);
+            Log.Message(WithPrefix(text));
         }
 
         public static void Warning(string text)
         {
-            Log.Warning(Prefix + text);
+            Log.Warning(WithPrefix(text));
         }
 
         public static void Error(string text)
         {
-            Log.Error(Prefix + text);
+            Log.Error(WithPrefix(text));
         }
 
         public static void Verbose(string text)
         {
             if (VerboseEnabled)
             {
-                Log.Message(Prefix + text);
+                Log.Message(WithPrefix(text));
             }
         }
     }

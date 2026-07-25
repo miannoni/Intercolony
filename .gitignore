@@ -438,3 +438,6 @@ Assemblies/
 # also matches our hand-written source folder Source/Intercolony/Debug/ (DESIGN.md §69).
 # Un-ignore the directory itself so git descends into it and tracks the .cs files.
 !Source/Intercolony/Debug/
+
+.dev-log-offset
+.dev-log-marks

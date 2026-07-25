@@ -82,7 +82,7 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 2 complete (2026-07-25). Next: Phase 3 — settlement economic profiles (DESIGN.md §96).
+**Phase:** 3 complete (2026-07-25). Next: Phase 4 — market opportunity generation (DESIGN.md §97).
 
 Update this line when a phase completes.
 
@@ -118,3 +118,31 @@ Conventional-ish, one coherent unit of work per commit:
 `chore:` `feat:` `fix:` `refactor:` `docs:`
 
 Commit after each working slice so broken experiments can be rolled back cheaply.
+
+## Dev loop — use this, don't ask me to paste logs
+
+Full cycle (build, restart game, wait, show filtered log):
+    powershell -ExecutionPolicy Bypass -File dev.ps1
+
+Other tasks: `dev.ps1 build`, `dev.ps1 run`, `dev.ps1 log`, `dev.ps1 stop`
+
+You can run these yourself. The log is readable while the game is running —
+you never need to ask me to close it. `dev.ps1 log` shows only Intercolony
+lines plus errors; use `-Full` only if something is genuinely missing.
+
+After any code change, run the cycle and read the output yourself before
+reporting back to me.
+
+## Reading the game log during play
+
+The game stays running. You can read its log at any time — do not ask me
+to close it or paste anything.
+
+    powershell -ExecutionPolicy Bypass -File dev.ps1 new
+
+That returns only lines written since your last check. Use it every time I
+say I did something in game. `dev.ps1 log` gives the whole session if you
+need context; `dev.ps1 reset` re-shows everything from the top.
+
+After any code change, run the full cycle yourself and read the result
+before reporting back to me.
