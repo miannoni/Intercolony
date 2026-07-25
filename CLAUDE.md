@@ -82,7 +82,7 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 1 complete (2026-07-25). Next: Phase 2 — debug framework (DESIGN.md §95).
+**Phase:** 2 complete (2026-07-25). Next: Phase 3 — settlement economic profiles (DESIGN.md §96).
 
 Update this line when a phase completes.
 

@@ -62,4 +62,40 @@ Manual test:
 - In-game (dev mode, debug actions menu — default key `/`, per `Core/Defs/Misc/KeyBindings/KeyBindings.xml:404`): ran `Set test values`, then `Allocate ID` twice, then `Print state`.
 - Saved → **quit to main menu** → reloaded the save → `Print state`: `testCounter`, `testString`, `saveVersion`, and `nextId` all matched the pre-save values.
 - `Allocate ID` after reload continued the sequence instead of restarting at 1 — the ID counter genuinely survived the round trip, which is the real acceptance test for §72.
+
+---
+
+## Phase 2 — Debug framework  (2026-07-25)
+
+Implemented:
+- `Source/Intercolony/Debug/IntercolonyDebugWindow.cs` — the Intercolony debug window (§95). Derives from `LudeonTK.EditWindow` (verified in `reference/decompiled/LudeonTK/EditWindow.cs`), which sets `resizeable`, `draggable`, `doCloseX`, and `preventCameraMotion = false`, so the window can stay open during play instead of blocking the game. Live state dump in a `DevGUI` scroll view plus two rows of action buttons via the inherited `DoRowButton`. `Toggle()` follows the vanilla dev-window idiom (`WindowStack.TryRemove(Type)`, per `DebugWindowsOpener.cs:147`).
+- Refresh cadence scaffolding (§59, §84): `RefreshIntervalTicks = 60000` (one in-game day), fired from `WorldComponentTick()` by a single `GenTicks.IsTickInterval` modulo test. Schedule is derived from absolute tick rather than from `lastRefreshTick`, so it cannot drift and can be staggered per settlement later. `ForceRefreshNow()` backs the "advance refresh" dev action. `lastRefreshTick` / `refreshCount` are persisted.
+- `Source/Intercolony/Core/IntercolonyTestRecord.cs` — throwaway persisted entity carrying an ID from the generator, a `createdTick`, a label, and a `Pending -> Active -> Closed` state machine with `TryAdvance()` that refuses and logs illegal transitions (§73). Its real purpose is to de-risk the `Scribe_Collections.Look(ref list, ..., LookMode.Deep)` round trip before sales orders and employment contracts depend on it.
+- `ClearTestState()` (§95 "clear test state") — resets every probe field but deliberately does not rewind `nextId`, so an ID is never reissued.
+- `ValidateIds()` (§67 "validate IDs/references") — if any persisted record's ID is >= `nextId`, advances the counter and warns. Prevents a corrupt save from handing out duplicate IDs.
+- Save schema bumped 1 -> 2 with a real, exercised migration step (§62). New fields are additive, but bumping deliberately turned the previously untested migration path into tested code, using the Phase 1 save as the fixture.
+- `IntercolonyDebugActions` grown to nine actions (open window, dump state, create test record, advance all test records, advance refresh, clear test state, set test values, counter +1, allocate ID). Repeated null-check boilerplate collapsed into a `WithState(Action<...>)` helper.
+
+Not implemented:
+- No "print serialized state" in the §67 sense of dumping the actual Scribe XML. `DebugStateSummary()` is structured text. Dumping real XML outside a save cycle means driving Scribe machinery manually; not worth the risk yet.
+- No mod settings (§66), so `IntercolonyLog.Verbose` is still gated on `Prefs.DevMode`.
+- No seeded per-refresh RNG (§60). The refresh currently generates nothing, so there is no RNG to isolate; needed before opportunity generation lands.
+- "Create test entity" creates the throwaway `IntercolonyTestRecord`, not a domain entity — no domain entities exist until Phase 3.
+- No dev palette registration, no custom keybinding for the window. The debug actions menu (`/`) is the only entry point.
+
+Known limitations:
+- `IntercolonyTestRecord`, `testCounter`, `testString`, and `testRecords` are all scaffolding. They must be deleted when real persisted entities arrive, which will mean another schema bump.
+- Forcing a refresh does not shift the schedule — the next scheduled refresh still lands on the next multiple of `RefreshIntervalTicks`. Intentional (no drift), documented on `ForceRefreshNow`, but surprising if you expect "advance" to reset the timer.
+- The refresh fires whenever `TicksGame % 60000 == 0`, so it also fires at tick 0. Harmless while the refresh is a no-op; revisit when it does real work.
+- `DebugStateSummary()` is rebuilt every frame the window is open (once for the dump, and the button row calls it again on click). Fine for a dev window at current state size; do not reuse this pattern for player-facing UI (§84 "lazy UI calculations").
+
+Manual test:
+- `dotnet build Source/Intercolony/Intercolony.csproj` — 0 warnings, 0 errors. `Assemblies/` still contains only `Intercolony.dll`; no Harmony DLL leak.
+- In-game, dev mode. Note: the action sequence actually run differed from the scripted one, so specific counter values were not compared against predicted numbers. The behaviours below were each confirmed:
+  - Loading the existing schema-1 Phase 1 save logged the `1 -> 2` migration and came up at `saveVersion 2`.
+  - The debug window opened from the debug actions menu and stayed usable during play.
+  - Test records created through the window persisted across save -> **quit to main menu** -> reload, retaining IDs, labels, and state-machine states. This is the `LookMode.Deep` list round trip, the main thing Phase 2 was meant to de-risk.
+  - `Clear test state` zeroed the probe fields without rewinding `nextId`; a record created afterwards received an ID above the deleted ones.
+  - `Advance refresh` incremented the refresh counter and recorded the tick.
+- No red errors in the in-game dev debug log window. The §95 acceptance criterion is met: a known test state can be forced in seconds without waiting through gameplay.
 - No red errors in the in-game dev debug log window. All four §94 acceptance criteria pass.
