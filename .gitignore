@@ -427,3 +427,9 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+reference/
+bin/
+obj/
+Assemblies/
+*.user
+.claude/
