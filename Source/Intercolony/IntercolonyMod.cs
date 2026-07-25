@@ -6,7 +6,7 @@ namespace Intercolony
     {
         public IntercolonyMod(ModContentPack content) : base(content)
         {
-            Log.Message("[Intercolony] loaded.");
+            IntercolonyLog.Message("loaded.");
         }
     }
 }

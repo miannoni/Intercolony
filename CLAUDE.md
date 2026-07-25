@@ -82,7 +82,7 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 0 complete (2026-07-25). Next: Phase 1 — persistent core state (DESIGN.md §94).
+**Phase:** 1 complete (2026-07-25). Next: Phase 2 — debug framework (DESIGN.md §95).
 
 Update this line when a phase completes.
 

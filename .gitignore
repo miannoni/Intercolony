@@ -433,3 +433,8 @@ obj/
 Assemblies/
 *.user
 .claude/
+
+# The Visual Studio boilerplate rule "[Dd]ebug/" above is meant for build output, but it
+# also matches our hand-written source folder Source/Intercolony/Debug/ (DESIGN.md §69).
+# Un-ignore the directory itself so git descends into it and tracks the .cs files.
+!Source/Intercolony/Debug/
