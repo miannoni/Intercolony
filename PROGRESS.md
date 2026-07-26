@@ -190,4 +190,49 @@ Manual test:
 Bugs found and fixed during the phase:
 - **Quality expectations applied to goods that cannot have quality.** Reported from a screenshot showing a "Quality expectations -3.4%" line on chemfuel. `QualityPremium` ran unconditionally; it is now gated on `def.HasComp(typeof(CompQuality))`. Since every vanilla quality-bearing item has `stackLimit 1` and Phase 4 only trades stackables, the factor is now dormant until §24 — correct rather than dead. A self-test sweep now prices every tradable def and fails if the factor reappears on a non-quality good.
 - **The market self-test was passing vacuously.** It reported "26 passed" while testing exactly one (settlement, refresh) pair; generation is ~35% per settlement, so that pair usually produced nothing, the four per-opportunity assertions ran zero times, and a `|| runA.Count == 0` escape hatch made the "different refresh changes the roll" check pass without evidence. Rewritten to sweep up to 60 cycles to find one that generates, drop the escape hatch, and sweep invariants over a 12-settlement x 25-cycle sample. The report now prints its sample size so a vacuous pass is visible rather than inferred.
+
+---
+
+## Phase 5 — First playable vertical slice: commodity Sales Order  (2026-07-25)
+
+The first complete gameplay loop: see demand -> accept -> deliver -> receive silver.
+
+Implemented:
+- `Source/Intercolony/Orders/SalesOrder.cs` — the §7.3/§15 entity. Persisted, with a locked-in unit price so later market drift cannot change an agreed deal, and `deliveredQuantity`/`paidSilver` so partial deliveries are first-class.
+- Lifecycle `Accepted -> Completed | Failed | Cancelled` (§14). §14 sketches a longer chain, and explicitly says the initial implementation does not need every state. **There is deliberately no `InTransit` state**: the caravan *is* that state — the goods are physically on the map, owned by pawns, visible to the player. A parallel status field would be a second source of truth that could disagree with the world.
+- `Source/Intercolony/Orders/SalesOrderService.cs` — the only place order status is assigned (§70, §73: "UI should not arbitrarily mutate status fields"). Accept, deliver, complete, fail, cancel, and the overdue sweep all live here.
+- `Source/Intercolony/Orders/OrderValidation.cs` — structured validation (§18, §74: "Return structured results, not only booleans"). `OrderValidationResult` carries matched quantity, missing quantity and human-readable failures, so the UI never re-derives a reason and can never disagree with the authoritative check. `OrderValidator.Matches` is the single answer to "does this Thing satisfy this order line".
+- `Source/Intercolony/Orders/CaravanArrivalAction_DeliverOrder.cs` — delivery when *sending* a caravan (§25.1, §98). A `CaravanArrivalAction` so it appears in the same float menu as Trade and Visit, with no new UI concept, and §26's abstraction boundary stays intact.
+- `Source/Intercolony/Orders/CaravanDeliveryGizmos.cs` — delivery when a caravan is *already parked* at the buyer. Mirrors vanilla's `CaravanVisitUtility.TradeCommand`.
+- `Source/Intercolony/Compatibility/HarmonyPatches.cs` — the project's first Harmony patches, both append-only postfixes (`Settlement.GetFloatMenuOptions`, `Caravan.GetGizmos`). Each addition is wrapped in try/catch: an exception while building a float menu or gizmo bar would otherwise cost the player the ability to command caravans at all, so an Intercolony bug degrades to "no delivery option" rather than "game unplayable" (§86).
+- Payment follows vanilla's own route for giving goods to a caravan (`Caravan_TraderTracker.GiveSoldThingToPlayer`): find a pawn with room, add to inventory. If nobody can carry it, the player is told rather than having the silver deleted.
+- Deadlines checked hourly rather than on the daily refresh (§17: an order must not silently fail; noticing up to a day late would make the message arrive long after the moment it describes).
+- Market tab gained an Accept button with a confirmation dialog, and an Orders tab (§54) showing progress, time remaining, payment and outcome.
+- Save schema 5 -> 6 (sales orders). Unresolvable orders on load are reported at **error** level, not warning: §62 forbids silently dropping active obligations, and a dropped order is a broken promise the player cannot see.
+- `Source/Intercolony/Debug/IntercolonyOrderSelfTest.cs` and debug actions: dump orders, accept first offer, spawn goods for open orders, create order state matrix.
+
+Not implemented:
+- No reservation of stock, per §16's explicit "do not build a complex inventory reservation framework before the first vertical slice". Goods are taken at hand-over.
+- Only fungible single-line orders. Quality, stuff, hit-point and unique-item matching is Phase 6 (§99); those fields are deliberately absent rather than present-and-unused.
+- Only seller delivery (§25.1). Buyer pickup, player pickup and supplier delivery (§25.2-25.4) do not exist, so there is no fulfilment mode to choose.
+- No reputation or penalty effects on success or failure (§27, §28). Failing an order currently costs nothing but the goods.
+- No travel-time estimate or "delivery appears impossible" warning, which §17 asks for. The Orders tab shows time remaining and distance is in the market tab, but nothing computes whether the trip is actually achievable.
+- No transaction history (§75).
+
+Known limitations:
+- **Opportunity flood at real-world scale.** A refresh on a full-size map generated 333 offers, reaching 695 live. The per-settlement cap of 3 has no global ceiling behind it, and §5.2 explicitly rejects an "infinite global catalog". Found during Phase 5 play-testing; it is a Phase 4 generation defect that only appears at scale. To be fixed next.
+- Cancelling an order forfeits anything already delivered, with no partial settlement.
+- The order list grows without bound: completed and failed orders are retained forever so the player can see what happened. Needs pruning or archiving eventually.
+- `CaravanArrivalAction_DeliverOrder` stores the order by id rather than by reference, because orders live in the world component rather than the Scribe reference graph. Correct, but it means a deleted order leaves an arrival action that resolves to nothing — handled by returning early with a message.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors. Both Harmony patches apply: `[Intercolony] Harmony patches applied.`, no patch errors.
+- Order self-test: 38 passed, 0 failed. Covers the state machine refusing every illegal transition, payment arithmetic across partial deliveries (floored so repeated partials cannot overpay), deadline maths, the validation contract, def matching, and the overdue sweep touching only lapsed open orders.
+- **Full loop played for real, without dev tools for the transaction itself**: accepted an offer in the market tab, took a caravan to the buyer, delivered, collected silver, returned. Log: `Order 364 completed. Delivered 25 units for 628 silver.`
+- Save/load matrix (§98): five orders — open, partially delivered, completed, failed, cancelled — dumped, saved, quit to main menu, reloaded, dumped again. **Byte-identical by md5** (16 lines each). The partially delivered order retained both `deliveredQuantity` 40/100 and `paidSilver` 60/150, which is the state most likely to be lost.
+- All §98 acceptance criteria pass.
+
+Bugs found and fixed during the phase:
+- **Double-accept duplication exploit.** The order self-test caught `Accept` creating two binding orders from one offer (#33 and #34, 9,507 silver each). `Accept` removed the opportunity from the world's list but never changed the opportunity's own state, so any caller still holding a reference — a UI row captured earlier in the frame, a second click on the confirmation dialog — saw it as available. Fixed by adding an `Available -> Accepted` transition on the opportunity itself (§14, §76.1): removal from a list cannot stop a caller that already has the object, but a state check on the object can. A first attempt at the fix claimed the offer *before* validating the buyer, which would have consumed a listing while creating no order on any transient failure; the claim now happens after all validation, where nothing below can fail.
+- **No way to deliver from a parked caravan.** Delivery was implemented only as a `CaravanArrivalAction`, which fires on the transition into the tile. A caravan already sitting at the settlement — arrived earlier, travelled there for another reason, or loaded from a save — had no arrival left to trigger and could never deliver. Found immediately in play-testing. Fixed by adding the caravan gizmo, mirroring how vanilla exposes trading.
 - No red errors in the in-game dev debug log window. All four §94 acceptance criteria pass.

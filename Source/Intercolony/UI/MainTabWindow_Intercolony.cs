@@ -45,6 +45,17 @@ namespace Intercolony
 
         public override Vector2 RequestedTabSize => new Vector2(920f, 560f);
 
+        /// <summary>Which top-level view is showing (DESIGN.md §52, §53, §54).</summary>
+        private enum Tab
+        {
+            Market,
+            Orders
+        }
+
+        private Tab tab = Tab.Market;
+
+        private Vector2 ordersScroll;
+
         public override void DoWindowContents(Rect inRect)
         {
             IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
@@ -54,6 +65,43 @@ namespace Intercolony
                 return;
             }
 
+            float tabY = DrawTabSelector(inRect, state);
+            Rect body = new Rect(0f, tabY, inRect.width, inRect.height - tabY);
+
+            if (tab == Tab.Orders)
+            {
+                DrawOrders(body, state);
+                return;
+            }
+
+            DrawMarket(body, state);
+        }
+
+        private float DrawTabSelector(Rect inRect, IntercolonyWorldComponent state)
+        {
+            const float ButtonWidth = 150f;
+            const float ButtonHeight = 30f;
+
+            Rect marketRect = new Rect(0f, 0f, ButtonWidth, ButtonHeight);
+            Rect ordersRect = new Rect(ButtonWidth + 6f, 0f, ButtonWidth, ButtonHeight);
+
+            int open = state.OpenOrderCount;
+            if (Widgets.ButtonText(marketRect, "Market", drawBackground: tab != Tab.Market))
+            {
+                tab = Tab.Market;
+            }
+
+            if (Widgets.ButtonText(ordersRect, open > 0 ? $"Orders ({open})" : "Orders",
+                    drawBackground: tab != Tab.Orders))
+            {
+                tab = Tab.Orders;
+            }
+
+            return ButtonHeight + 8f;
+        }
+
+        private void DrawMarket(Rect inRect, IntercolonyWorldComponent state)
+        {
             int totalAvailable = 0;
             List<MarketOpportunity> live = new List<MarketOpportunity>();
             foreach (MarketOpportunity opportunity in state.Opportunities)
@@ -70,7 +118,8 @@ namespace Intercolony
                 }
             }
 
-            float y = 0f;
+            // inRect starts below the tab selector, so y must too.
+            float y = inRect.y;
 
             Text.Font = GameFont.Medium;
             Widgets.Label(new Rect(0f, y, inRect.width, 34f), "Market opportunities");
@@ -99,7 +148,7 @@ namespace Intercolony
             Widgets.DrawLineHorizontal(0f, y, inRect.width);
             y += 2f;
 
-            Rect outRect = new Rect(0f, y, inRect.width, inRect.height - y);
+            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, live.Count * RowHeight);
 
             Widgets.BeginScrollView(outRect, ref scrollPosition, viewRect);
@@ -337,6 +386,150 @@ namespace Intercolony
             GUI.color = Color.white;
 
             Widgets.Label(Cell(7), $"{opportunity.deadlineDays}d after accepting");
+
+            // Accept sits inside the last column so the table keeps its shape.
+            Rect acceptRect = new Rect(rect.xMax - 76f, rect.y + 3f, 72f, RowHeight - 7f);
+            if (Widgets.ButtonText(acceptRect, "Accept"))
+            {
+                AcceptOpportunity(opportunity);
+            }
+        }
+
+        /// <summary>
+        /// Accepting is a binding commitment, so it is confirmed rather than one misclick away
+        /// (§17: do not let a player fail an order they did not understand they had taken on).
+        /// </summary>
+        private void AcceptOpportunity(MarketOpportunity opportunity)
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null)
+            {
+                return;
+            }
+
+            string body =
+                $"Deliver {opportunity.quantity}x {opportunity.thingDef?.LabelCap} to " +
+                $"{opportunity.settlementName} within {opportunity.deadlineDays} days.\n\n" +
+                $"Payment: {opportunity.TotalPrice} silver ({opportunity.unitPrice:F2} each)\n" +
+                $"Distance: {(opportunity.distanceTiles < 0f ? "unknown" : $"{opportunity.distanceTiles:F0} tiles")}\n\n" +
+                "You deliver by taking a caravan to the settlement. Missing the deadline fails the order.";
+
+            Find.WindowStack.Add(new Dialog_MessageBox(
+                body,
+                "Accept order",
+                () =>
+                {
+                    SalesOrder order = SalesOrderService.Accept(state, opportunity);
+                    if (order != null)
+                    {
+                        tab = Tab.Orders;
+                    }
+                },
+                "Cancel",
+                null,
+                "Accept this order?"));
+        }
+
+        private void DrawOrders(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, inRect.width, 34f), "Sales orders");
+            y += 38f;
+            Text.Font = GameFont.Small;
+
+            List<SalesOrder> orders = new List<SalesOrder>(state.Orders);
+            if (orders.Count == 0)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(0f, y, inRect.width, 60f),
+                    "No orders yet. Accept an offer in the Market tab to commit to one.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            // Open orders first, then most recent, so the actionable ones are always on top.
+            orders.Sort((a, b) =>
+            {
+                if (a.IsOpen != b.IsOpen)
+                {
+                    return a.IsOpen ? -1 : 1;
+                }
+
+                return b.id.CompareTo(a.id);
+            });
+
+            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, orders.Count * OrderRowHeight);
+
+            Widgets.BeginScrollView(outRect, ref ordersScroll, viewRect);
+            float rowY = 0f;
+            for (int i = 0; i < orders.Count; i++)
+            {
+                DrawOrderRow(new Rect(0f, rowY, viewRect.width, OrderRowHeight), orders[i], i);
+                rowY += OrderRowHeight;
+            }
+
+            Widgets.EndScrollView();
+        }
+
+        private const float OrderRowHeight = 56f;
+
+        private void DrawOrderRow(Rect rect, SalesOrder order, int index)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            Rect main = new Rect(rect.x + 4f, rect.y + 3f, rect.width - 200f, rect.height - 6f);
+            string title = $"#{order.id}  {order.settlementName} — {order.quantity}x " +
+                           $"{order.thingDef?.LabelCap.ToString() ?? "<missing>"}";
+
+            Widgets.Label(new Rect(main.x, main.y, main.width, 22f), title);
+
+            // §17: show progress and time remaining, and warn rather than fail silently.
+            string detail;
+            Color colour = Color.white;
+            if (order.IsOpen)
+            {
+                detail = $"{order.deliveredQuantity}/{order.quantity} delivered   " +
+                         $"{order.DaysRemaining:F1}d left   " +
+                         $"{order.TotalPayment} silver on completion";
+                if (order.DaysRemaining < 1f)
+                {
+                    colour = Color.yellow;
+                }
+            }
+            else
+            {
+                detail = $"{order.status}: {order.outcomeNote}";
+                colour = order.status == SalesOrderStatus.Completed
+                    ? new Color(0.6f, 0.9f, 0.6f)
+                    : new Color(0.9f, 0.6f, 0.6f);
+            }
+
+            GUI.color = colour;
+            Widgets.Label(new Rect(main.x, main.y + 24f, main.width, 22f), detail);
+            GUI.color = Color.white;
+
+            if (!order.IsOpen)
+            {
+                return;
+            }
+
+            Rect cancelRect = new Rect(rect.xMax - 90f, rect.y + 14f, 80f, 28f);
+            if (Widgets.ButtonText(cancelRect, "Cancel"))
+            {
+                Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                    $"Cancel order #{order.id} for {order.settlementName}? " +
+                    "You will not be paid for anything already delivered.",
+                    () => SalesOrderService.Cancel(order),
+                    destructive: true));
+            }
         }
     }
 }

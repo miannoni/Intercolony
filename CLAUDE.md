@@ -82,7 +82,7 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 4 complete (2026-07-25). Next: Phase 5 — first playable vertical slice: commodity Sales Order (DESIGN.md §98).
+**Phase:** 5 complete (2026-07-25). Next: fix opportunity flood at scale (§5.2), then Phase 6 — generalized Sales Order item matching (DESIGN.md §99).
 
 Update this line when a phase completes.
 

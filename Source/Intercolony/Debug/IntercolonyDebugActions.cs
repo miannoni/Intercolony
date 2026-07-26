@@ -4,6 +4,7 @@ using System.Text;
 using LudeonTK;
 using RimWorld;
 using RimWorld.Planet;
+using UnityEngine;
 using Verse;
 
 namespace Intercolony
@@ -186,6 +187,164 @@ namespace Intercolony
 
                 IntercolonyLog.Message(sb.ToString());
             });
+        }
+
+        [DebugAction(Category, "Dump orders", allowedGameStates = AllowedGameStates.Playing, displayPriority = 84)]
+        private static void DumpOrders()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Sales orders ({state.Orders.Count} total, {state.OpenOrderCount} open)");
+                foreach (SalesOrder order in state.Orders)
+                {
+                    sb.AppendLine($"  {order}");
+                    sb.AppendLine($"    accepted@{order.acceptedTick} deadline@{order.deadlineTick} " +
+                                  $"({order.DaysRemaining:F1}d left), paid {order.paidSilver}/{order.TotalPayment}");
+                    if (!string.IsNullOrEmpty(order.outcomeNote))
+                    {
+                        sb.AppendLine($"    {order.outcomeNote}");
+                    }
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
+        /// <summary>
+        /// Accepts an offer without clicking through the market tab. Sets up a test; it does
+        /// not bypass delivery, which still has to happen physically.
+        /// </summary>
+        [DebugAction(Category, "Accept first offer", allowedGameStates = AllowedGameStates.Playing, displayPriority = 83)]
+        private static void AcceptFirstOffer()
+        {
+            WithState(state =>
+            {
+                foreach (MarketOpportunity opportunity in new List<MarketOpportunity>(state.Opportunities))
+                {
+                    if (!opportunity.IsAvailable)
+                    {
+                        continue;
+                    }
+
+                    SalesOrder order = SalesOrderService.Accept(state, opportunity);
+                    if (order != null)
+                    {
+                        Report($"Accepted order #{order.id}.");
+                        return;
+                    }
+                }
+
+                IntercolonyLog.Warning("No acceptable offer found.");
+            });
+        }
+
+        /// <summary>
+        /// Drops the goods an open order needs at the colony, so the delivery half of the loop
+        /// can be exercised without first farming them. The caravan trip and hand-over are
+        /// still entirely real.
+        /// </summary>
+        [DebugAction(Category, "Spawn goods for open orders", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 82)]
+        private static void SpawnGoodsForOpenOrders()
+        {
+            WithState(state =>
+            {
+                Map map = Find.CurrentMap;
+                if (map == null)
+                {
+                    IntercolonyLog.Warning("No current map.");
+                    return;
+                }
+
+                int spawned = 0;
+                foreach (SalesOrder order in state.Orders)
+                {
+                    if (!order.IsOpen || order.thingDef == null)
+                    {
+                        continue;
+                    }
+
+                    int needed = order.RemainingQuantity;
+                    IntVec3 cell = DropCellFinder.TradeDropSpot(map);
+                    while (needed > 0)
+                    {
+                        int stack = Mathf.Min(needed, order.thingDef.stackLimit);
+                        Thing thing = ThingMaker.MakeThing(order.thingDef);
+                        thing.stackCount = stack;
+                        GenPlace.TryPlaceThing(thing, cell, map, ThingPlaceMode.Near);
+                        needed -= stack;
+                        spawned += stack;
+                    }
+                }
+
+                Report(spawned > 0
+                    ? $"Spawned {spawned} units at the trade drop spot."
+                    : "No open orders needing goods.");
+            });
+        }
+
+        /// <summary>
+        /// Creates one order in each lifecycle state so §98's save/load matrix can be checked
+        /// in a single save-and-reload rather than five separate play sessions.
+        /// </summary>
+        [DebugAction(Category, "Create order state matrix", allowedGameStates = AllowedGameStates.Playing, displayPriority = 81)]
+        private static void CreateOrderStateMatrix()
+        {
+            WithState(state =>
+            {
+                ThingDef def = ThingDefOf.Silver;
+
+                SalesOrder MakeOrder(string label)
+                {
+                    SalesOrder order = new SalesOrder
+                    {
+                        id = state.NextId(),
+                        settlementName = "MatrixTest " + label,
+                        factionName = "MatrixFaction",
+                        thingDef = def,
+                        quantity = 100,
+                        unitPrice = 1.5f,
+                        acceptedTick = GenTicks.TicksGame,
+                        deadlineTick = GenTicks.TicksGame + GenDate.TicksPerDay * 10,
+                        status = SalesOrderStatus.Accepted
+                    };
+
+                    state.AddOrder(order);
+                    return order;
+                }
+
+                // Open, untouched.
+                MakeOrder("open");
+
+                // Open with a partial delivery recorded, to prove progress survives too.
+                SalesOrder partial = MakeOrder("partial");
+                partial.deliveredQuantity = 40;
+                partial.paidSilver = partial.PaymentFor(40);
+
+                // Completion is only reachable through a real delivery (SalesOrderService
+                // .Complete is private by design), so the matrix sets the terminal state
+                // directly. That is fine here: this checks persistence of the state, and a
+                // genuine completion was already exercised in play.
+                SalesOrder completed = MakeOrder("completed");
+                completed.deliveredQuantity = completed.quantity;
+                completed.paidSilver = completed.TotalPayment;
+                completed.status = SalesOrderStatus.Completed;
+                completed.outcomeNote = $"Delivered {completed.deliveredQuantity} units for {completed.paidSilver} silver.";
+
+                SalesOrder failed = MakeOrder("failed");
+                SalesOrderService.Fail(failed, "Matrix test failure.");
+
+                SalesOrder cancelled = MakeOrder("cancelled");
+                SalesOrderService.Cancel(cancelled);
+
+                Report("Created 5 matrix orders. Dump orders, save, quit to menu, reload, dump again.");
+            });
+        }
+
+        [DebugAction(Category, "Run order self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 58)]
+        private static void RunOrderSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyOrderSelfTest.Run(state)));
         }
 
         [DebugAction(Category, "Dump product classification", allowedGameStates = AllowedGameStates.Playing, displayPriority = 45)]

@@ -24,7 +24,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 5;
+        public const int CurrentSaveVersion = 6;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -83,6 +83,60 @@ namespace Intercolony
 
         /// <summary>Sentinel meaning "show everything regardless of distance".</summary>
         public const float NoDistanceLimit = 9999f;
+
+        /// <summary>
+        /// Binding sales orders (DESIGN.md §7.3, §61). Unlike opportunities these are
+        /// obligations, so completed and failed ones are retained rather than removed —
+        /// the player needs to see what happened, and §62 warns against silently dropping
+        /// active obligations.
+        /// </summary>
+        private List<SalesOrder> orders = new List<SalesOrder>();
+
+        public List<SalesOrder> Orders => orders;
+
+        public SalesOrder FindOrder(int orderId)
+        {
+            foreach (SalesOrder order in orders)
+            {
+                if (order.id == orderId)
+                {
+                    return order;
+                }
+            }
+
+            return null;
+        }
+
+        public void AddOrder(SalesOrder order)
+        {
+            if (order != null)
+            {
+                orders.Add(order);
+            }
+        }
+
+        public void RemoveOpportunity(MarketOpportunity opportunity)
+        {
+            opportunities.Remove(opportunity);
+        }
+
+        /// <summary>Open orders, i.e. still owed.</summary>
+        public int OpenOrderCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (SalesOrder order in orders)
+                {
+                    if (order.IsOpen)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+        }
 
         public float MaxMarketDistance
         {
@@ -306,6 +360,7 @@ namespace Intercolony
             Scribe_Values.Look(ref refreshCount, "refreshCount", 0);
             Scribe_Values.Look(ref maxMarketDistance, "maxMarketDistance", NoDistanceLimit);
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
+            Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -331,6 +386,25 @@ namespace Intercolony
                     }
                 }
 
+                if (orders == null)
+                {
+                    orders = new List<SalesOrder>();
+                }
+                else
+                {
+                    int nullOrders = orders.RemoveAll(o => o == null);
+                    int brokenOrders = orders.RemoveAll(o => !o.IsValidAfterLoad);
+                    if (nullOrders > 0 || brokenOrders > 0)
+                    {
+                        // §62 is explicit that migration must not silently drop active
+                        // obligations, so this is an error rather than a quiet warning:
+                        // a dropped order is a broken promise the player cannot see.
+                        IntercolonyLog.Error(
+                            $"Dropped {nullOrders} null and {brokenOrders} unresolvable order(s) while loading. " +
+                            "This usually means a mod supplying an ordered item was removed.");
+                    }
+                }
+
                 if (nextId < 1)
                 {
                     IntercolonyLog.Warning($"Loaded nextId={nextId}; clamping to 1 to keep IDs positive.");
@@ -352,7 +426,19 @@ namespace Intercolony
             {
                 DoRefresh("scheduled");
             }
+
+            // Deadlines are checked hourly rather than on the daily refresh. §17 is explicit
+            // that an order must not silently fail; noticing up to a day late would make the
+            // failure message arrive long after the moment it describes. Still coarse enough
+            // to be free (§84).
+            if (GenTicks.IsTickInterval(DeadlineCheckIntervalTicks) && orders.Count > 0)
+            {
+                SalesOrderService.FailOverdue(orders);
+            }
         }
+
+        /// <summary>One in-game hour.</summary>
+        private const int DeadlineCheckIntervalTicks = 2500;
 
         /// <summary>
         /// Runs the refresh immediately (DESIGN.md §95). Note this does not shift the
@@ -583,6 +669,13 @@ namespace Intercolony
                     "  schema 4 -> 5: distance filter added; existing opportunities have unknown distance.");
             }
 
+            if (saveVersion < 6)
+            {
+                // 5 -> 6 added sales orders. Purely additive: a save from schema 5 simply has
+                // no orders yet, which is the correct state for a colony that never accepted one.
+                IntercolonyLog.Message("  schema 5 -> 6: sales orders added.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -600,6 +693,14 @@ namespace Intercolony
                 if (opportunity.id > highest)
                 {
                     highest = opportunity.id;
+                }
+            }
+
+            foreach (SalesOrder order in orders)
+            {
+                if (order.id > highest)
+                {
+                    highest = order.id;
                 }
             }
 
@@ -637,6 +738,12 @@ namespace Intercolony
             foreach (MarketOpportunity opportunity in opportunities)
             {
                 sb.AppendLine($"    {opportunity}  {opportunity.DaysRemaining:F1}d left");
+            }
+
+            sb.AppendLine($"  orders       : {orders.Count} ({OpenOrderCount} open)");
+            foreach (SalesOrder order in orders)
+            {
+                sb.AppendLine($"    {order}  {(order.IsOpen ? $"{order.DaysRemaining:F1}d left" : order.outcomeNote)}");
             }
 
             return sb.ToString();

@@ -12,7 +12,13 @@ namespace Intercolony
     public enum MarketOpportunityState
     {
         Available,
-        Expired
+        Expired,
+
+        /// <summary>
+        /// Converted into a binding Sales Order. Terminal: an offer is consumed by acceptance
+        /// and can never be taken again (§14 Available -> Accepted, §76.1 exploit resistance).
+        /// </summary>
+        Accepted
     }
 
     /// <summary>
@@ -77,8 +83,28 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// The only legal transition. Returns false and logs rather than permitting an
-        /// impossible state change (DESIGN.md §73).
+        /// Consumes the offer. Returns false if it has already been taken or has lapsed.
+        ///
+        /// The guard lives on the opportunity itself rather than on the list that holds it,
+        /// because removal from a list cannot stop a caller that already has a reference —
+        /// a UI row captured earlier in the frame, or a second click on a confirmation
+        /// dialog. Two orders off one offer is a duplication exploit (§76.1).
+        /// </summary>
+        public bool TryAccept()
+        {
+            if (state != MarketOpportunityState.Available)
+            {
+                IntercolonyLog.Warning($"Opportunity {id} is already {state}; refusing to accept again.");
+                return false;
+            }
+
+            state = MarketOpportunityState.Accepted;
+            return true;
+        }
+
+        /// <summary>
+        /// The only legal transition to Expired. Returns false and logs rather than permitting
+        /// an impossible state change (DESIGN.md §73).
         /// </summary>
         public bool TryExpire()
         {
