@@ -82,8 +82,10 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 6 complete (2026-07-25). Next: Phase 7 — unique goods / capital equipment
-technical spike (DESIGN.md §100). **Do not start Phase 7 without Matteo's explicit OK.**
+**Phase:** 7 complete (2026-07-25). Next: Phase 8 — finished goods market (DESIGN.md §101).
+
+Phase 7's deliverable is `docs/unique-goods-spike.md`. Read it before starting Phase 8;
+it contains the representation decision and a concrete Phase 8 recommendation.
 
 Update this line when a phase completes.
 
@@ -94,7 +96,8 @@ Update this line when a phase completes.
 Promises made to Matteo that are not yet kept. Raise these at the next natural point;
 do not let them quietly expire.
 
-- **Everything should be tradeable.** (raised 2026-07-25, during Phase 6)
+- **Everything should be tradeable.** (raised 2026-07-25 during Phase 6; unblocked by the
+  Phase 7 spike, now due in Phase 8 §101 "Finished goods market")
   Furniture, capital equipment and art are classified correctly and the *matcher* handles
   them — §99's "20 Excellent Dining Chairs" case passes — but they are **not generated as
   demand**, so no chair or bench order ever appears in the market. They travel minified and

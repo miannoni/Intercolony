@@ -281,4 +281,37 @@ Manual test:
 - Classifier count rose 160 -> 307, confirming the single-stack widening actually reached weapons and apparel rather than being a no-op.
 - Confirmed in game that quality demands appear in the market and display as e.g. "Airwire headset (normal+)", "Tuque (excellent+)", with the quality premium visible in the price tooltip.
 - The §99 acceptance criterion is met: one validation path supports all four test cases.
+
+---
+
+## Phase 7 — Unique goods / capital equipment technical spike  (2026-07-25)
+
+A spike, not a feature. §100's deliverable is a written technical note, and its acceptance criterion is "a robust strategy exists before generalized implementation".
+
+Implemented:
+- `docs/unique-goods-spike.md` — **the deliverable**. Documents the chosen representation, serialization strategy, unsupported edge cases and compatibility risks, as §100 requires.
+- `Source/Intercolony/Debug/IntercolonyUniqueGoodsSpike.cs` — the evidence behind the note. Runs §100's cases 1, 2, 3/5, 6 and 7 in one pass, plus a two-part probe for case 4 (plant objects, save/load, verify) since that cannot complete in a single call.
+- Three debug actions: run the spike, plant save/load probes, verify them after reload.
+
+Findings (full reasoning in the note):
+- **`Thing`s are moved, never copied.** This deliberately contradicts §23.2's phrasing about "unique item snapshots". A snapshot must enumerate what it preserves, so anything it does not know about is dropped — including `CompArt.taleRef`, ideoligion style sources, and **any comp added by any mod**. §64 flags unsafe custom comps as a hazard, and a snapshot is exactly the construct that turns an unknown comp into silent data loss. Moving the object cannot lose a comp it has never heard of.
+- Snapshots are still right for *describing* an item in a listing the player does not own. Phase 6's `OrderLine` already fills that role, so no new type was needed for either job.
+- **Installation needs no custom code.** A `MinifiedThing` placed on the map is installed through vanilla's own `Blueprint_Install` flow. That is a finding, not a gap.
+- Intercolony serializes nothing about a unique object: orders persist a `ThingDef` plus constraints, and the object lives in vanilla containers whose serialization is RimWorld's responsibility.
+- The existing Phase 5/6 delivery path already handles unique goods unchanged — `Matches` unwraps minified things, `CountableUnits` counts a crate as one, and `RemoveFromCaravan` splits a stack of one cleanly.
+
+Not implemented:
+- No production code changed. Generation still excludes buildings; that is Phase 8 (§101).
+- Art re-attribution after sale is left as an open design question, not answered.
+- No balance work on unique-good lot sizes (§78).
+
+Known limitations:
+- **Only one modded minifiable building was available to test.** Case 7 passed against `Building_RTCircuitBreaker` from RT Fuse, which is genuine third-party coverage, but a single data point from a simple mod. A vehicle or furniture-framework mod would be a stronger test and has not been run. Recorded as an open compatibility risk in the note rather than treated as covered.
+- Mods that *subclass* `MinifiedThing` are handled in principle — `GetInnerIfMinified` uses an `is` check — but none was loaded to confirm.
+- A sold sculpture's tale reference leaves the world with it, because delivery destroys the handed-over object. Correct for a sale, but it means art sold to a settlement has no continuing existence.
+
+Manual test:
+- Spike run in game: **23 passed, 0 failed** across cases 1, 2, 3/5, 6, 7.
+- Case 4: a crated masterwork wooden chair at half hit points and a crated sculpture with a custom art title were planted, then the game was saved, quit to main menu and reloaded. Verification reported **PASS** — quality, reduced hit points, art title and author all intact.
+- The §100 acceptance criterion is met: a robust strategy exists, written down, before generalized implementation.
 - No red errors in the in-game dev debug log window. All four §94 acceptance criteria pass.

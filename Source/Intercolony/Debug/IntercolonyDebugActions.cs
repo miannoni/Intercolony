@@ -340,6 +340,24 @@ namespace Intercolony
             });
         }
 
+        [DebugAction(Category, "Run unique goods spike", allowedGameStates = AllowedGameStates.Playing, displayPriority = 57)]
+        private static void RunUniqueGoodsSpike()
+        {
+            IntercolonyLog.Message(IntercolonyUniqueGoodsSpike.Run());
+        }
+
+        [DebugAction(Category, "Plant unique goods probes", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 56)]
+        private static void PlantUniqueGoodsProbes()
+        {
+            IntercolonyLog.Message(IntercolonyUniqueGoodsSpike.PlantSaveLoadProbes(Find.CurrentMap));
+        }
+
+        [DebugAction(Category, "Verify unique goods probes", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 55)]
+        private static void VerifyUniqueGoodsProbes()
+        {
+            IntercolonyLog.Message(IntercolonyUniqueGoodsSpike.VerifySaveLoadProbes(Find.CurrentMap));
+        }
+
         [DebugAction(Category, "Run order self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 58)]
         private static void RunOrderSelfTest()
         {
