@@ -82,7 +82,7 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 9 complete (2026-07-25). Next: Phase 10 — Procurement / RFQ MVP (DESIGN.md §103).
+**Phase:** 10 complete (2026-07-26). Next: Phase 11 — Purchase Order fulfilment (DESIGN.md §104).
 
 `docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
 Read it before touching anything that moves an individual object.

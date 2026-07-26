@@ -570,6 +570,39 @@ namespace Intercolony
 
                 Check("some settlement is interested", interested > 0,
                     $"none of {offers.Count} would buy {probeDef.defName}");
+
+                // The opposite vacuity: if every settlement wants everything, §12's
+                // "No current interest" outcome is dead and the ranking is meaningless.
+                // Sampled across several goods, since one good can legitimately be universal.
+                int universalGoods = 0;
+                int sampledGoods = 0;
+                for (int i = 0; i < tradable.Count && sampledGoods < 6; i += Mathf.Max(1, tradable.Count / 6))
+                {
+                    List<BuyerOffer> probeOffers = FindBuyerService.FindBuyers(state, tradable[i], null, 100);
+                    if (probeOffers.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    sampledGoods++;
+                    int uninterested = 0;
+                    foreach (BuyerOffer o in probeOffers)
+                    {
+                        if (!o.Interested)
+                        {
+                            uninterested++;
+                        }
+                    }
+
+                    if (uninterested == 0)
+                    {
+                        universalGoods++;
+                    }
+                }
+
+                Check("demand is selective, not universal", universalGoods < sampledGoods,
+                    $"all {sampledGoods} sampled goods were wanted by every settlement");
+                sb.AppendLine($"  (of {sampledGoods} goods sampled, {universalGoods} were wanted by everyone)");
                 Check("interested offers are priced", badPrice == 0, $"{badPrice} bad");
                 Check("offers never exceed the buyer's appetite", overAppetite == 0,
                     $"{overAppetite} over");

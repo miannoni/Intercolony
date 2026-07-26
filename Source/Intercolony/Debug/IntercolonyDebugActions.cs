@@ -364,7 +364,38 @@ namespace Intercolony
             });
         }
 
-        [DebugAction(Category, "Run unique goods spike", allowedGameStates = AllowedGameStates.Playing, displayPriority = 57)]
+        [DebugAction(Category, "Run RFQ self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 57)]
+        private static void RunRfqSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyRfqSelfTest.Run(state)));
+        }
+
+        [DebugAction(Category, "Dump requests", allowedGameStates = AllowedGameStates.Playing, displayPriority = 83)]
+        private static void DumpRequests()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Purchase requests ({state.Requests.Count} total, {state.OpenRequestCount} open)");
+                foreach (PurchaseRequest request in state.Requests)
+                {
+                    sb.AppendLine($"  {request}");
+                    if (!request.AnyQuotes)
+                    {
+                        sb.AppendLine($"    no quotes: {request.noResponseReason}");
+                    }
+
+                    foreach (Quotation quote in request.quotes)
+                    {
+                        sb.AppendLine($"    {quote}");
+                    }
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
+        [DebugAction(Category, "Run unique goods spike", allowedGameStates = AllowedGameStates.Playing, displayPriority = 56)]
         private static void RunUniqueGoodsSpike()
         {
             IntercolonyLog.Message(IntercolonyUniqueGoodsSpike.Run());

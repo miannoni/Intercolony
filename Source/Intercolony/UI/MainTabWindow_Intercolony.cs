@@ -54,7 +54,8 @@ namespace Intercolony
         {
             Market,
             Orders,
-            FindBuyer
+            FindBuyer,
+            Procurement
         }
 
         private Tab tab = Tab.Market;
@@ -124,6 +125,12 @@ namespace Intercolony
                 return;
             }
 
+            if (tab == Tab.Procurement)
+            {
+                DrawProcurement(body, state);
+                return;
+            }
+
             DrawMarket(body, state);
         }
 
@@ -155,6 +162,15 @@ namespace Intercolony
                 // Re-scan once on entry so the list is current without being live.
                 stockCache = null;
                 findBuyerCache = null;
+            }
+
+            Rect procureRect = new Rect(findRect.xMax + 6f, 0f, ButtonWidth, ButtonHeight);
+            int openRequests = state.OpenRequestCount;
+            if (Widgets.ButtonText(procureRect,
+                    openRequests > 0 ? $"Procurement ({openRequests})" : "Procurement",
+                    drawBackground: tab != Tab.Procurement))
+            {
+                tab = Tab.Procurement;
             }
 
             return ButtonHeight + 8f;
@@ -1022,6 +1038,171 @@ namespace Intercolony
                 "Cancel",
                 null,
                 "Sell to this buyer?"));
+        }
+
+        private Vector2 procurementScroll;
+
+        /// <summary>
+        /// Procurement (DESIGN.md §19, §55, §103). Requests with their quotes underneath, so
+        /// comparing suppliers is a matter of reading down a list rather than clicking through.
+        /// </summary>
+        private void DrawProcurement(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, inRect.width - 200f, 34f), "Procurement");
+            Text.Font = GameFont.Small;
+
+            Rect newRect = new Rect(inRect.width - 190f, y + 2f, 180f, 30f);
+            if (Widgets.ButtonText(newRect, "Request goods..."))
+            {
+                Find.WindowStack.Add(new Dialog_CreateRequest(state));
+            }
+
+            y += 40f;
+
+            List<PurchaseRequest> requests = new List<PurchaseRequest>(state.Requests);
+            if (requests.Count == 0)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(0f, y, inRect.width, 70f),
+                    "No requests yet.\n\n" +
+                    "Intercolony is not a shop. You state what you need, and known settlements " +
+                    "answer if they can — sometimes with less than you asked for, sometimes not at all.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            // Open requests first, newest first within each group.
+            requests.Sort((a, b) =>
+            {
+                if (a.IsOpen != b.IsOpen)
+                {
+                    return a.IsOpen ? -1 : 1;
+                }
+
+                return b.id.CompareTo(a.id);
+            });
+
+            float contentHeight = 0f;
+            foreach (PurchaseRequest request in requests)
+            {
+                contentHeight += RequestBlockHeight(request);
+            }
+
+            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contentHeight);
+
+            Widgets.BeginScrollView(outRect, ref procurementScroll, viewRect);
+            float rowY = 0f;
+            foreach (PurchaseRequest request in requests)
+            {
+                float height = RequestBlockHeight(request);
+                DrawRequestBlock(new Rect(0f, rowY, viewRect.width, height), request, state);
+                rowY += height;
+            }
+
+            Widgets.EndScrollView();
+        }
+
+        private const float RequestHeaderHeight = 46f;
+        private const float QuoteRowHeight = 26f;
+
+        private static float RequestBlockHeight(PurchaseRequest request)
+        {
+            int rows = Mathf.Max(1, request.quotes.Count);
+            return RequestHeaderHeight + rows * QuoteRowHeight + 10f;
+        }
+
+        private void DrawRequestBlock(Rect rect, PurchaseRequest request, IntercolonyWorldComponent state)
+        {
+            Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, RequestHeaderHeight));
+
+            string header = $"#{request.id}  {request.quantityRequested}x {request.ItemLabel()}";
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width - 200f, 22f), header);
+
+            string sub;
+            Color colour = Color.white;
+            if (request.IsOpen)
+            {
+                sub = request.AnyQuotes
+                    ? $"{request.quotes.Count} quote(s) — offers stand for {request.DaysRemaining:F1}d"
+                    : $"No supplier answered: {request.noResponseReason}";
+                if (!request.AnyQuotes)
+                {
+                    colour = new Color(0.9f, 0.7f, 0.5f);
+                }
+            }
+            else
+            {
+                sub = request.status.ToString();
+                colour = new Color(0.7f, 0.7f, 0.7f);
+            }
+
+            GUI.color = colour;
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 24f, rect.width - 200f, 22f), sub);
+            GUI.color = Color.white;
+
+            if (request.IsOpen)
+            {
+                Rect cancelRect = new Rect(rect.xMax - 96f, rect.y + 10f, 86f, 26f);
+                if (Widgets.ButtonText(cancelRect, "Withdraw"))
+                {
+                    request.TryCancel();
+                }
+            }
+
+            float rowY = rect.y + RequestHeaderHeight;
+            if (request.quotes.Count == 0)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.45f);
+                Widgets.Label(new Rect(rect.x + 20f, rowY + 2f, rect.width - 40f, 22f),
+                    "— nothing available —");
+                GUI.color = Color.white;
+                return;
+            }
+
+            foreach (Quotation quote in request.quotes)
+            {
+                DrawQuoteRow(new Rect(rect.x + 16f, rowY, rect.width - 24f, QuoteRowHeight),
+                    quote, request);
+                rowY += QuoteRowHeight;
+            }
+        }
+
+        private void DrawQuoteRow(Rect rect, Quotation quote, PurchaseRequest request)
+        {
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            bool partial = quote.quantityOffered < request.quantityRequested;
+
+            Widgets.Label(new Rect(rect.x, rect.y + 2f, rect.width * 0.26f, 22f), quote.settlementName);
+
+            // A partial quote is flagged, not hidden: §20 makes partial answers a first-class
+            // outcome, and combining two suppliers is a legitimate move.
+            GUI.color = partial ? new Color(0.9f, 0.8f, 0.5f) : Color.white;
+            Widgets.Label(new Rect(rect.x + rect.width * 0.26f, rect.y + 2f, rect.width * 0.16f, 22f),
+                partial
+                    ? $"{quote.quantityOffered} of {request.quantityRequested}"
+                    : $"{quote.quantityOffered}");
+            GUI.color = Color.white;
+
+            Widgets.Label(new Rect(rect.x + rect.width * 0.42f, rect.y + 2f, rect.width * 0.14f, 22f),
+                $"{quote.unitPrice:F2}");
+            Widgets.Label(new Rect(rect.x + rect.width * 0.56f, rect.y + 2f, rect.width * 0.14f, 22f),
+                quote.TotalPrice.ToString());
+            Widgets.Label(new Rect(rect.x + rect.width * 0.70f, rect.y + 2f, rect.width * 0.16f, 22f),
+                $"{quote.FulfillmentLabel}, {quote.leadTimeDays}d");
+            Widgets.Label(new Rect(rect.x + rect.width * 0.86f, rect.y + 2f, rect.width * 0.14f, 22f),
+                quote.distanceTiles < 0f ? "?" : $"{quote.distanceTiles:F0} t");
+
+            TooltipHandler.TipRegion(rect,
+                $"{quote.settlementName} ({quote.factionName})\n" +
+                $"{quote.quantityOffered} of {request.quantityRequested} requested\n" +
+                $"{(quote.supplierDelivers ? "They deliver" : "You collect")}, ready in {quote.leadTimeDays} days\n\n" +
+                quote.priceExplanation +
+                "\nAccepting a quote arrives with purchase order fulfilment (Phase 11).");
         }
 
         private const float OrderRowHeight = 56f;

@@ -24,7 +24,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 7;
+        public const int CurrentSaveVersion = 8;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -93,6 +93,39 @@ namespace Intercolony
         private List<SalesOrder> orders = new List<SalesOrder>();
 
         public List<SalesOrder> Orders => orders;
+
+        /// <summary>
+        /// Purchase requests and their quotations (DESIGN.md §61 lists both as persistent).
+        /// Retained after expiry so the player can see what was asked and what came back.
+        /// </summary>
+        private List<PurchaseRequest> requests = new List<PurchaseRequest>();
+
+        public List<PurchaseRequest> Requests => requests;
+
+        public void AddRequest(PurchaseRequest request)
+        {
+            if (request != null)
+            {
+                requests.Add(request);
+            }
+        }
+
+        public int OpenRequestCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (PurchaseRequest request in requests)
+                {
+                    if (request.IsOpen)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+        }
 
         public SalesOrder FindOrder(int orderId)
         {
@@ -361,6 +394,7 @@ namespace Intercolony
             Scribe_Values.Look(ref maxMarketDistance, "maxMarketDistance", NoDistanceLimit);
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
+            Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -402,6 +436,22 @@ namespace Intercolony
                         IntercolonyLog.Error(
                             $"Dropped {nullOrders} null and {brokenOrders} unresolvable order(s) while loading. " +
                             "This usually means a mod supplying an ordered item was removed.");
+                    }
+                }
+
+                if (requests == null)
+                {
+                    requests = new List<PurchaseRequest>();
+                }
+                else
+                {
+                    int nullRequests = requests.RemoveAll(r => r == null);
+                    int brokenRequests = requests.RemoveAll(r => !r.IsValidAfterLoad);
+                    if (nullRequests > 0 || brokenRequests > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullRequests} null and {brokenRequests} unresolvable request(s) " +
+                            "while loading. Unresolvable usually means a mod supplying the item was removed.");
                     }
                 }
 
@@ -462,6 +512,7 @@ namespace Intercolony
             int expired = ExpireStaleOpportunities();
             int withdrawn = DropInaccessibleOpportunities();
             int created = GenerateOpportunities();
+            RfqService.ExpireStale(requests);
 
             IntercolonyLog.Verbose(
                 $"Refresh #{refreshCount} ({cause}) at tick {lastRefreshTick}: " +
@@ -757,6 +808,13 @@ namespace Intercolony
                     "  schema 6 -> 7: order items migrated into constraint-capable order lines.");
             }
 
+            if (saveVersion < 8)
+            {
+                // 7 -> 8 added purchase requests and quotations. Purely additive: a save from
+                // schema 7 simply has none, which is correct for a colony that never asked.
+                IntercolonyLog.Message("  schema 7 -> 8: purchase requests added.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -782,6 +840,22 @@ namespace Intercolony
                 if (order.id > highest)
                 {
                     highest = order.id;
+                }
+            }
+
+            foreach (PurchaseRequest request in requests)
+            {
+                if (request.id > highest)
+                {
+                    highest = request.id;
+                }
+
+                foreach (Quotation quote in request.quotes)
+                {
+                    if (quote.id > highest)
+                    {
+                        highest = quote.id;
+                    }
                 }
             }
 

@@ -384,6 +384,47 @@ Bugs and issues found and fixed during the phase, all reported from play:
 - **Silver could be sold for silver.** Every transaction settles in silver, so this was a direct money printer — buy low, get paid more of the same commodity, repeat — exactly §76.6's "guaranteed arbitrage". Not only a Find Buyer problem: silver passed every tradability test, so the market could have generated silver purchase orders too. Excluded in `IntercolonyProductClassifier` as a **structural invariant rather than a §64 blacklist entry**: a blacklist entry can be removed by another mod's XML, and removing this one would silently reopen the exploit. Self-test now checks silver at every entry point — classifier, tradable set, live offers, Find Buyer — because one uncovered path is enough.
 - Added a sweep so opportunities for goods that are no longer tradable are withdrawn on refresh. Without it a save made before an exclusion would keep advertising the item forever, since nothing else revisits an already-generated listing's eligibility.
 
+---
+
+## Phase 10 — Procurement / RFQ MVP  (2026-07-26)
+
+The buy side. §20 calls this "the core anti-vending-machine design", and that framing drove every decision here.
+
+Implemented:
+- `Source/Intercolony/Procurement/PurchaseRequest.cs` — the §7.4 RFQ and §7.5 Quotation, both persisted (§61 lists them). Request lifecycle `Open -> Expired | Cancelled` (§73). A quote carries quantity offered, unit price, lead time, fulfilment mode and distance.
+- `Source/Intercolony/Procurement/RfqService.cs` — request creation and supplier response generation against §20's factor list: category, settlement technology, profile, requested quantity, distance and random variation.
+  - **Quotes are rolled once at creation and then stand until expiry.** Re-rolling on demand would let a player refresh until they liked the price — the §76.1 reroll exploit.
+  - Seeded on the request id, so a given request always produces the same quotes and a reported problem is reproducible (§60).
+  - Partial quotes are first-class (§20): even a capable supplier has a 35% chance of falling short of a large request, which makes combining two suppliers a real move.
+  - Buying costs more than selling, with the spread running against the player: supplier margin plus a scarcity factor, so a settlement with little of a good charges more. Scarcity shows up in price as well as availability.
+  - Lead time and fulfilment mode (pickup vs supplier delivery, §25.3/§25.4) vary by distance and wealth.
+- `Source/Intercolony/UI/Dialog_CreateRequest.cs` — searchable item selection with quantity and desired deadline. A searchable list rather than a nested float menu, because there are 400+ tradable defs; matches are cached per search string for the same reason the Find Buyer stock scan had to be (§84).
+- Procurement tab: requests with their quotes underneath, partial quotes flagged in amber, an explanation when nothing came back, and Withdraw.
+- Save schema 7 -> 8, purely additive.
+
+Not implemented:
+- **Accepting a quote.** §103's build list ends at "comparison UI"; receiving goods and paying is Phase 11 (§104). The quote tooltip says so rather than leaving a dead button.
+- No material or quality constraints on a request; the player asks for a def and a count.
+- No relationship or commercial-reputation input to response probability (§20 lists it; §27 reputation does not exist yet).
+- No "current market state" input (§20) — quotes do not react to what the settlement is currently buying or selling.
+
+Known limitations:
+- Response chances, supplier capacity and the price spread are first-pass guesses (§78).
+- A common good can draw 15+ quotes, which is a lot to compare. §19's example shows three. Not capped, because silently dropping suppliers would misrepresent the market, but the list can get long.
+- Trade hubs source one tech tier above their own base 50% of the time. That number is invented, not derived.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- RFQ self-test: **19 passed, 0 failed**. Diagnostics: 24 sampled requests produced 3 empty, 66 full quotes and 84 partial; 20 of 24 had differing prices between suppliers and 19 had differing quantities; 2 modded defs exercised without crashing.
+- Targeted scarcity probe: a psylink neuroformer (Archotech) returned **0 quotes** — genuinely unobtainable rather than merely expensive.
+- Requests created through the UI in play (berries, table 2x4) returned quotes correctly.
+- All three §103 acceptance criteria met: requesting scarce goods can fail, suppliers differ in price and quantity, and modded goods do not crash request generation.
+
+Bug found and fixed during the phase:
+- **Procurement was a vending machine.** The self-test failed on its headline criterion: all 24 sampled requests found a supplier. The cause was structural rather than a tuning problem. Supply capability was checked at **category** level, so `SupplyFor(ManufacturedGoods)` treated a bionic ear and a shirt as the same capability and any settlement that made clothing appeared able to make bionics. Scarcity was then left entirely to a per-settlement dice roll — and with ~30 reachable settlements at roughly 40% each, the odds of all declining are about 1 in 5 million. Lowering that probability was the wrong lever: it would make *everything* unreliable rather than making *scarce things* unavailable.
+  Fixed by applying §50's tech gate **per def** rather than per category: a settlement cannot supply an item above its own tech tier, except that trade hubs import one tier up half the time. The test also no longer relies on sampling luck — it sends a targeted probe for the highest-tech tradable def and asserts not every settlement can supply it.
+  Worth recording that 14 of 15 assertions passed while this was broken. A test that only checked "quotes are well formed" would have called the phase done.
+
 Bugs found and fixed during the phase:
 - **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
 - **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.

@@ -53,8 +53,13 @@ namespace Intercolony
         /// <summary>
         /// Below this category demand weight a settlement is simply not in the market for the
         /// good, and is reported as uninterested rather than quoted a derisory price.
+        ///
+        /// Demand weights cluster around 1.0, so this has to sit close to that to bite at all.
+        /// At 0.55 every settlement in a 31-settlement world was interested in everything,
+        /// which made §12's "No current interest" outcome dead code and flattened the ranking:
+        /// if everyone buys everything, choosing a buyer stops being a decision.
         /// </summary>
-        private const float InterestThreshold = 0.55f;
+        private const float InterestThreshold = 0.9f;
 
         /// <summary>
         /// Who would buy <paramref name="quantity"/> of this good, best offer first.
