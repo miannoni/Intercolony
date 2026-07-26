@@ -133,7 +133,7 @@ namespace Intercolony
                     IntercolonyProductClassifier.Classify(sample) ?? IntercolonyProductCategory.Commodities;
 
                 float price = IntercolonyPricing.UnitPrice(
-                    sample, 500, profile, category, 25f, out List<PriceFactor> factors);
+                    sample, 500, profile, category, 25f, null, out List<PriceFactor> factors);
 
                 Check("unit price is positive", price > 0f, price.ToString("F3"));
                 Check("breakdown has factors", factors.Count >= 3, $"count {factors.Count}");
@@ -165,7 +165,7 @@ namespace Intercolony
 
                     IntercolonyProductCategory c =
                         IntercolonyProductClassifier.Classify(def) ?? IntercolonyProductCategory.Commodities;
-                    IntercolonyPricing.UnitPrice(def, 100, profile, c, 10f, out List<PriceFactor> defFactors);
+                    IntercolonyPricing.UnitPrice(def, 100, profile, c, 10f, null, out List<PriceFactor> defFactors);
                     foreach (PriceFactor factor in defFactors)
                     {
                         if (factor.label.Contains("Quality"))
@@ -328,6 +328,37 @@ namespace Intercolony
                     Check($"all {sampleSet.Count} totals positive", badTotal == 0, $"{badTotal} bad");
                     Check($"all {sampleSet.Count} expiries in the future", badExpiry == 0, $"{badExpiry} bad");
                     Check($"all {sampleSet.Count} deadlines sane", badDeadline == 0, $"{badDeadline} bad");
+                    // --- Quality constraints are actually generated (§99) ---
+                    // Without this, the whole quality path could be dead code and every other
+                    // assertion would still pass.
+                    int qualityCapable = 0;
+                    int withConstraint = 0;
+                    int constraintOnNonQuality = 0;
+                    foreach (MarketOpportunity o in sampleSet)
+                    {
+                        if (IntercolonyPricing.CanHaveQuality(o.thingDef))
+                        {
+                            qualityCapable++;
+                            if (o.minQuality.HasValue)
+                            {
+                                withConstraint++;
+                            }
+                        }
+                        else if (o.minQuality.HasValue)
+                        {
+                            constraintOnNonQuality++;
+                        }
+                    }
+
+                    Check("quality-capable goods appear in generated demand", qualityCapable > 0,
+                        $"none of {sampleSet.Count} sampled offers could carry quality");
+                    Check("some quality demands carry a minimum", withConstraint > 0,
+                        $"0 of {qualityCapable} quality-capable offers asked for a minimum");
+                    Check("no quality demand on goods without quality", constraintOnNonQuality == 0,
+                        $"{constraintOnNonQuality} offer(s)");
+                    sb.AppendLine($"  ({withConstraint} of {qualityCapable} quality-capable offers " +
+                                  $"carried a minimum quality)");
+
                     Check("no generated item is blacklisted", blacklisted == 0, $"{blacklisted} leaked");
                     Check("every generated item is a fungible trade item", untradable == 0, $"{untradable} bad");
                     Check("allocated IDs are unique", duplicateIds == 0, $"{duplicateIds} duplicates");
@@ -392,6 +423,21 @@ namespace Intercolony
                 }
             }
 
+            // --- Global ceiling (§5.2 "No infinite global catalog") ---
+            // Regression guard: the per-settlement cap alone let total demand scale with world
+            // size, reaching 695 live offers on a full-size map.
+            int beforeRefreshes = state.Opportunities.Count;
+            for (int i = 0; i < 12; i++)
+            {
+                state.GenerateOpportunities();
+            }
+
+            Check("live offers stay under the global ceiling",
+                state.ActiveOpportunityCount <= IntercolonyWorldComponent.MaxLiveOpportunities,
+                $"{state.ActiveOpportunityCount} live, ceiling {IntercolonyWorldComponent.MaxLiveOpportunities}");
+            sb.AppendLine($"  (12 extra refreshes took live offers from {beforeRefreshes} to " +
+                          $"{state.ActiveOpportunityCount}, ceiling {IntercolonyWorldComponent.MaxLiveOpportunities})");
+
             // --- Opportunity state machine (§73) ---
             MarketOpportunity probe = new MarketOpportunity
             {
@@ -417,7 +463,7 @@ namespace Intercolony
             if (profiles.Count > 0 && tradable.Count > 0)
             {
                 IntercolonyPricing.UnitPrice(tradable[0], 100, profiles[0],
-                    IntercolonyProductCategory.Commodities, 10f, out _);
+                    IntercolonyProductCategory.Commodities, 10f, null, out _);
             }
 
             int actual = Rand.Int;

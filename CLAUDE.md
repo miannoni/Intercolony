@@ -82,9 +82,30 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 5 complete (2026-07-25). Next: fix opportunity flood at scale (§5.2), then Phase 6 — generalized Sales Order item matching (DESIGN.md §99).
+**Phase:** 6 complete (2026-07-25). Next: Phase 7 — unique goods / capital equipment
+technical spike (DESIGN.md §100). **Do not start Phase 7 without Matteo's explicit OK.**
 
 Update this line when a phase completes.
+
+---
+
+## Open commitments
+
+Promises made to Matteo that are not yet kept. Raise these at the next natural point;
+do not let them quietly expire.
+
+- **Everything should be tradeable.** (raised 2026-07-25, during Phase 6)
+  Furniture, capital equipment and art are classified correctly and the *matcher* handles
+  them — §99's "20 Excellent Dining Chairs" case passes — but they are **not generated as
+  demand**, so no chair or bench order ever appears in the market. They travel minified and
+  need the unique-item representation from §23.2, which is exactly what Phase 7 (§100)
+  exists to prove.
+  Matteo accepted the deferral on the condition it is not forgotten, and said plainly he
+  wants full coverage. **When Phase 7 lands, raise this first**: widening generation is
+  roughly a one-line change in `IntercolonyProductClassifier.IsFungibleTradeItem`, but only
+  once unique-item transfer is proven safe.
+  Also still ungenerated, same file: material and condition constraints exist on `OrderLine`
+  and are enforced by the matcher, but nothing produces them yet.
 
 ---
 

@@ -42,7 +42,7 @@ namespace Intercolony
                 SalesOrder order = FindOrder();
                 return order == null
                     ? "Deliver Intercolony order"
-                    : $"Deliver order #{order.id} ({order.RemainingQuantity}x {order.thingDef?.label})";
+                    : $"Deliver order #{order.id} ({order.RemainingQuantity}x {order.ThingDef?.label})";
             }
         }
 
@@ -125,7 +125,7 @@ namespace Intercolony
                 // Shown greyed-out with the reason, rather than hidden: a player who took a
                 // caravan out specifically to deliver needs to know why the option is absent.
                 return FloatMenuAcceptanceReport.WithFailReason(
-                    $"carrying no {order.thingDef?.label ?? "goods"}");
+                    $"carrying no {order.ThingDef?.label ?? "goods"}");
             }
 
             return true;
@@ -155,7 +155,7 @@ namespace Intercolony
                              () => CanDeliver(caravan, settlement, localOrder),
                              () => new CaravanArrivalAction_DeliverOrder(settlement, localOrder),
                              $"Deliver order #{localOrder.id}: {localOrder.RemainingQuantity}x " +
-                             $"{localOrder.thingDef?.label ?? "goods"}",
+                             $"{localOrder.ThingDef?.label ?? "goods"}",
                              caravan,
                              settlement.Tile,
                              settlement))

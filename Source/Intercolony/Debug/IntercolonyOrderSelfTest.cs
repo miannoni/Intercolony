@@ -101,13 +101,26 @@ namespace Intercolony
                 noCaravan.missingQuantity.ToString());
             Check("failure summary is non-empty", !string.IsNullOrEmpty(noCaravan.Summary()));
 
-            // --- Matching (§74): def identity is the whole test in Phase 5 ---
+            // --- §99 acceptance: one centralized validation path supports all test cases ---
+            // The four cases named in §99, each driven through OrderValidator.Matches with a
+            // real spawned Thing rather than asserted in the abstract.
+            sb.AppendLine("  §99 test cases:");
+            RunCase(sb, Check, "1,000 Rice",
+                ThingDefOf.RawPotatoes, 1000, null, null);
+            RunCase(sb, Check, "200 Cloth",
+                ThingDefOf.Cloth, 200, null, null);
+            RunCase(sb, Check, "5 Normal-or-better weapons",
+                ThingDefOf.MeleeWeapon_Knife, 5, QualityCategory.Normal, ThingDefOf.Steel);
+            RunCase(sb, Check, "20 Excellent Dining Chairs",
+                ThingDefOf.DiningChair, 20, QualityCategory.Excellent, ThingDefOf.WoodLog);
+
+            // --- Matching (§74): def identity is the whole test for unconstrained lines ---
             Thing silver = ThingMaker.MakeThing(ThingDefOf.Silver);
             Thing steel = ThingMaker.MakeThing(ThingDefOf.Steel);
             SalesOrder silverOrder = NewOrder(ThingDefOf.Silver, 5, 1f);
-            Check("matching def matches", OrderValidator.Matches(silverOrder, silver));
-            Check("different def does not match", !OrderValidator.Matches(silverOrder, steel));
-            Check("null thing does not match", !OrderValidator.Matches(silverOrder, null));
+            Check("matching def matches", OrderValidator.Matches(silverOrder.line, silver));
+            Check("different def does not match", !OrderValidator.Matches(silverOrder.line, steel));
+            Check("null thing does not match", !OrderValidator.Matches(silverOrder.line, null));
             silver.Destroy(DestroyMode.Vanish);
             steel.Destroy(DestroyMode.Vanish);
 
@@ -172,13 +185,77 @@ namespace Intercolony
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Exercises one §99 case end to end: build the line, spawn a real Thing that should
+        /// satisfy it, and one that should not, and assert the single matcher agrees.
+        /// </summary>
+        private static void RunCase(
+            StringBuilder sb,
+            System.Action<string, bool, string> check,
+            string caseName,
+            ThingDef def,
+            int quantity,
+            QualityCategory? minQuality,
+            ThingDef stuff)
+        {
+            if (def == null)
+            {
+                sb.AppendLine($"    {caseName}: SKIPPED (def not present in this install)");
+                return;
+            }
+
+            OrderLine line = new OrderLine(def, quantity) { minQuality = minQuality };
+
+            ThingDef madeOf = stuff != null && def.MadeFromStuff ? stuff : null;
+            Thing good = ThingMaker.MakeThing(def, madeOf);
+
+            if (minQuality.HasValue)
+            {
+                CompQuality comp = good.TryGetComp<CompQuality>();
+                if (comp == null)
+                {
+                    sb.AppendLine($"    {caseName}: SKIPPED ({def.defName} has no quality comp)");
+                    good.Destroy(DestroyMode.Vanish);
+                    return;
+                }
+
+                comp.SetQuality(minQuality.Value, ArtGenerationContext.Outsider);
+            }
+
+            check($"{caseName}: a conforming item matches",
+                OrderValidator.Matches(line, good, out _), null);
+
+            // A below-threshold item must be rejected with the *specific* reason, not a
+            // generic shortfall — that distinction is what §18's worked example is about.
+            if (minQuality.HasValue && minQuality.Value > QualityCategory.Awful)
+            {
+                Thing shoddy = ThingMaker.MakeThing(def, madeOf);
+                CompQuality comp = shoddy.TryGetComp<CompQuality>();
+                comp?.SetQuality(QualityCategory.Awful, ArtGenerationContext.Outsider);
+
+                bool matched = OrderValidator.Matches(line, shoddy, out MatchFailure failure);
+                check($"{caseName}: an Awful item is rejected", !matched, null);
+                check($"{caseName}: rejection reason is quality",
+                    failure == MatchFailure.BelowMinimumQuality, failure.ToString());
+                shoddy.Destroy(DestroyMode.Vanish);
+            }
+
+            // A different def must never satisfy the line.
+            Thing wrong = ThingMaker.MakeThing(ThingDefOf.Silver);
+            check($"{caseName}: a different item is rejected",
+                !OrderValidator.Matches(line, wrong, out _), null);
+            wrong.Destroy(DestroyMode.Vanish);
+
+            sb.AppendLine($"    {caseName}: {line.ShortLabel()}");
+            good.Destroy(DestroyMode.Vanish);
+        }
+
         private static SalesOrder NewOrder(ThingDef def, int quantity, float unitPrice)
         {
             return new SalesOrder
             {
                 id = 0,
-                thingDef = def,
-                quantity = quantity,
+                line = new OrderLine(def, quantity),
                 unitPrice = unitPrice,
                 acceptedTick = GenTicks.TicksGame,
                 deadlineTick = GenTicks.TicksGame + GenDate.TicksPerDay * 10,

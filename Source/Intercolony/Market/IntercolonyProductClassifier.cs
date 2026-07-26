@@ -157,9 +157,7 @@ namespace Intercolony
         /// </summary>
         public static bool WouldTradeIgnoringBlacklist(ThingDef def)
         {
-            return PassesIntrinsicRules(def) &&
-                   def.category == ThingCategory.Item &&
-                   def.stackLimit > 1;
+            return PassesIntrinsicRules(def) && def.category == ThingCategory.Item;
         }
 
         /// <summary>Drops cached classifications, e.g. after a blacklist change.</summary>
@@ -170,13 +168,19 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Defs Phase 4 will actually generate opportunities for: stackable items only.
+        /// Defs demand can be generated for.
+        ///
+        /// Phase 4 restricted this to stackable items, which silently excluded everything with
+        /// a quality rating — every quality-bearing vanilla thing has stackLimit 1. Phase 6
+        /// (§99) needs weapons and apparel, so single-stack *items* now qualify too.
+        ///
+        /// Buildings — furniture, benches, art — still do not. They travel minified and need
+        /// the unique-item representation from §23.2, which is Phase 7's spike (§100). The
+        /// matcher already handles them, so widening generation later is a one-line change.
         /// </summary>
         public static bool IsFungibleTradeItem(ThingDef def)
         {
-            return IsTradableGood(def) &&
-                   def.category == ThingCategory.Item &&
-                   def.stackLimit > 1;
+            return IsTradableGood(def) && def.category == ThingCategory.Item;
         }
 
         /// <summary>

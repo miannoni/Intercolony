@@ -259,7 +259,7 @@ namespace Intercolony
                 int spawned = 0;
                 foreach (SalesOrder order in state.Orders)
                 {
-                    if (!order.IsOpen || order.thingDef == null)
+                    if (!order.IsOpen || order.ThingDef == null)
                     {
                         continue;
                     }
@@ -268,8 +268,8 @@ namespace Intercolony
                     IntVec3 cell = DropCellFinder.TradeDropSpot(map);
                     while (needed > 0)
                     {
-                        int stack = Mathf.Min(needed, order.thingDef.stackLimit);
-                        Thing thing = ThingMaker.MakeThing(order.thingDef);
+                        int stack = Mathf.Min(needed, order.ThingDef.stackLimit);
+                        Thing thing = ThingMaker.MakeThing(order.ThingDef);
                         thing.stackCount = stack;
                         GenPlace.TryPlaceThing(thing, cell, map, ThingPlaceMode.Near);
                         needed -= stack;
@@ -301,8 +301,7 @@ namespace Intercolony
                         id = state.NextId(),
                         settlementName = "MatrixTest " + label,
                         factionName = "MatrixFaction",
-                        thingDef = def,
-                        quantity = 100,
+                        line = new OrderLine(def, 100),
                         unitPrice = 1.5f,
                         acceptedTick = GenTicks.TicksGame,
                         deadlineTick = GenTicks.TicksGame + GenDate.TicksPerDay * 10,
@@ -326,7 +325,7 @@ namespace Intercolony
                 // directly. That is fine here: this checks persistence of the state, and a
                 // genuine completion was already exercised in play.
                 SalesOrder completed = MakeOrder("completed");
-                completed.deliveredQuantity = completed.quantity;
+                completed.deliveredQuantity = completed.Quantity;
                 completed.paidSilver = completed.TotalPayment;
                 completed.status = SalesOrderStatus.Completed;
                 completed.outcomeNote = $"Delivered {completed.deliveredQuantity} units for {completed.paidSilver} silver.";

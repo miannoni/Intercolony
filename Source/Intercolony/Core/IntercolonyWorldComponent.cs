@@ -24,7 +24,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 6;
+        public const int CurrentSaveVersion = 7;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -555,27 +555,89 @@ namespace Intercolony
                 perSettlement[opportunity.settlementId] = n + 1;
             }
 
-            int created = 0;
+            int slots = MaxLiveOpportunities - ActiveOpportunityCount;
+            if (slots <= 0)
+            {
+                return 0;
+            }
+
+            // Visit settlements in a seeded shuffle. Iterating world-object order would let
+            // the same handful of settlements claim every slot on every refresh, so distant
+            // or late-indexed settlements would never post anything (§48: far settlements
+            // must not become useless). Seeded on the refresh number so the choice is still
+            // reproducible for debugging (§60).
+            List<Settlement> candidates = new List<Settlement>();
             foreach (Settlement settlement in settlements)
             {
-                SettlementEconomicProfile profile = GetProfile(settlement);
-                if (profile == null)
+                if (GetProfile(settlement) != null)
                 {
-                    continue;
+                    candidates.Add(settlement);
+                }
+            }
+
+            ShuffleSeeded(candidates, Gen.HashCombineInt(EconomySeed, refreshCount, 0x5A1F, 0));
+
+            int created = 0;
+            foreach (Settlement settlement in candidates)
+            {
+                if (slots <= 0)
+                {
+                    break;
                 }
 
+                SettlementEconomicProfile profile = GetProfile(settlement);
                 perSettlement.TryGetValue(settlement.ID, out int existing);
                 List<MarketOpportunity> fresh = MarketOpportunityGenerator.GenerateFor(
                     settlement, profile, EconomySeed, refreshCount, existing, NextId);
 
                 foreach (MarketOpportunity opportunity in fresh)
                 {
+                    if (slots <= 0)
+                    {
+                        break;
+                    }
+
                     opportunities.Add(opportunity);
                     created++;
+                    slots--;
                 }
             }
 
             return created;
+        }
+
+        /// <summary>
+        /// Ceiling on live offers, regardless of world size (DESIGN.md §5.2 "No infinite
+        /// global catalog").
+        ///
+        /// The per-settlement cap alone is not enough: total demand scaled with the number of
+        /// settlements, which is invisible on a small test map and produced 695 live offers on
+        /// a full-size world. A flat ceiling keeps the market readable and keeps the refresh
+        /// cheap. The exact number is a first-pass guess; balance is §78.
+        /// </summary>
+        public const int MaxLiveOpportunities = 60;
+
+        /// <summary>
+        /// Fisher-Yates using a local seeded RNG, so shuffling cannot disturb the global
+        /// random stream (§60).
+        /// </summary>
+        private static void ShuffleSeeded<T>(List<T> list, int seed)
+        {
+            Rand.PushState(seed);
+            try
+            {
+                for (int i = list.Count - 1; i > 0; i--)
+                {
+                    int j = Rand.Range(0, i + 1);
+                    T tmp = list[i];
+                    list[i] = list[j];
+                    list[j] = tmp;
+                }
+            }
+            finally
+            {
+                Rand.PopState();
+            }
         }
 
         /// <summary>Removes every opportunity. Debug only.</summary>
@@ -674,6 +736,17 @@ namespace Intercolony
                 // 5 -> 6 added sales orders. Purely additive: a save from schema 5 simply has
                 // no orders yet, which is the correct state for a colony that never accepted one.
                 IntercolonyLog.Message("  schema 5 -> 6: sales orders added.");
+            }
+
+            if (saveVersion < 7)
+            {
+                // 6 -> 7 moved an order's item and quantity into an OrderLine that can also
+                // carry quality, material and condition constraints. SalesOrder.ExposeData
+                // still reads the schema-6 nodes and rebuilds a line from them, so an order
+                // accepted before this change keeps its terms rather than becoming an empty
+                // promise — §62 forbids silently dropping active obligations.
+                IntercolonyLog.Message(
+                    "  schema 6 -> 7: order items migrated into constraint-capable order lines.");
             }
 
             saveVersion = CurrentSaveVersion;

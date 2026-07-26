@@ -52,6 +52,7 @@ namespace Intercolony
             SettlementEconomicProfile profile,
             IntercolonyProductCategory category,
             float distanceTiles,
+            QualityCategory? minQuality,
             out List<PriceFactor> factors)
         {
             factors = new List<PriceFactor>();
@@ -84,6 +85,14 @@ namespace Intercolony
                 if (!Mathf.Approximately(quality, 1f))
                 {
                     factors.Add(new PriceFactor("Quality expectations", quality));
+                }
+
+                // A quality floor is a real constraint on the seller — it narrows what can be
+                // delivered and may mean discarding usable stock — so the buyer pays for it.
+                if (minQuality.HasValue)
+                {
+                    factors.Add(new PriceFactor(
+                        $"Requires {minQuality.Value.GetLabel()}+", MinQualityPremium(minQuality.Value)));
                 }
             }
 
@@ -146,6 +155,30 @@ namespace Intercolony
         private static float QualityPremium(SettlementEconomicProfile profile)
         {
             return 1f + (profile.qualityPreference - 0.5f) * 0.1f;
+        }
+
+        /// <summary>
+        /// What a buyer pays extra for insisting on a quality floor. Scales steeply, because
+        /// each step up is markedly rarer to produce.
+        /// </summary>
+        private static float MinQualityPremium(QualityCategory minQuality)
+        {
+            switch (minQuality)
+            {
+                case QualityCategory.Awful:
+                case QualityCategory.Poor:
+                    return 1f;
+                case QualityCategory.Normal:
+                    return 1.1f;
+                case QualityCategory.Good:
+                    return 1.35f;
+                case QualityCategory.Excellent:
+                    return 1.8f;
+                case QualityCategory.Masterwork:
+                    return 2.6f;
+                default:
+                    return 4f;
+            }
         }
 
         /// <summary>

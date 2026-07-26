@@ -64,8 +64,12 @@ namespace Intercolony
                 settlementId = opportunity.settlementId,
                 settlementName = opportunity.settlementName,
                 factionName = settlement.Faction?.Name ?? "",
-                thingDef = opportunity.thingDef,
-                quantity = opportunity.quantity,
+                line = new OrderLine(opportunity.thingDef, opportunity.quantity)
+                {
+                    // Constraints advertised in the market must carry into the binding order,
+                    // or the player could be held to terms different from the ones shown.
+                    minQuality = opportunity.minQuality
+                },
                 unitPrice = opportunity.unitPrice,
                 acceptedTick = GenTicks.TicksGame,
 
@@ -81,12 +85,12 @@ namespace Intercolony
             state.RemoveOpportunity(opportunity);
 
             IntercolonyLog.Message(
-                $"Accepted order {order.id}: {order.quantity}x {order.thingDef.label} for " +
+                $"Accepted order {order.id}: {order.Quantity}x {order.ThingDef.label} for " +
                 $"{order.settlementName}, {order.TotalPayment} silver, " +
                 $"{opportunity.deadlineDays}d to deliver.");
 
             Messages.Message(
-                $"Order accepted: {order.quantity}x {order.thingDef.label} for {order.settlementName}. " +
+                $"Order accepted: {order.Quantity}x {order.ThingDef.label} for {order.settlementName}. " +
                 $"Deliver within {opportunity.deadlineDays} days.",
                 MessageTypeDefOf.PositiveEvent,
                 historical: false);
@@ -134,7 +138,7 @@ namespace Intercolony
                     $"Order {order.id}: partial delivery {handedOver} units, " +
                     $"{order.RemainingQuantity} still owed. Paid {payment} silver.");
                 Messages.Message(
-                    $"Delivered {handedOver}x {order.thingDef.label}. " +
+                    $"Delivered {handedOver}x {order.ThingDef.label}. " +
                     $"{order.RemainingQuantity} still owed. Received {payment} silver.",
                     MessageTypeDefOf.NeutralEvent,
                     historical: false);
@@ -220,7 +224,7 @@ namespace Intercolony
             List<Thing> matching = new List<Thing>();
             foreach (Thing thing in items)
             {
-                if (OrderValidator.Matches(order, thing))
+                if (OrderValidator.Matches(order.line, thing))
                 {
                     matching.Add(thing);
                 }

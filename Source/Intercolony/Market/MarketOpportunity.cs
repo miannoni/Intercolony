@@ -46,6 +46,13 @@ namespace Intercolony
         public int quantity;
         public float unitPrice;
 
+        /// <summary>
+        /// Minimum quality demanded, or null if the buyer does not care (§11, §99).
+        /// Carried on the opportunity so the market table can show it before acceptance —
+        /// a player must be able to see they are committing to Excellent work.
+        /// </summary>
+        public QualityCategory? minQuality;
+
         public int createdTick;
         public int expiryTick;
 
@@ -130,6 +137,7 @@ namespace Intercolony
             Scribe_Values.Look(ref expiryTick, "expiryTick", 0);
             Scribe_Values.Look(ref deadlineDays, "deadlineDays", 0);
             Scribe_Values.Look(ref distanceTiles, "distanceTiles", -1f);
+            Scribe_Values.Look(ref minQuality, "minQuality");
             Scribe_Values.Look(ref state, "state", MarketOpportunityState.Available);
             Scribe_Values.Look(ref priceExplanation, "priceExplanation", "");
 
@@ -153,9 +161,16 @@ namespace Intercolony
         /// </summary>
         public bool IsValidAfterLoad => thingDef != null && quantity > 0;
 
+        /// <summary>Item plus any constraint, e.g. "plasteel longsword (Excellent+)".</summary>
+        public string ItemLabel()
+        {
+            string label = thingDef?.LabelCap.ToString() ?? "<missing def>";
+            return minQuality.HasValue ? $"{label} ({minQuality.Value.GetLabel()}+)" : label;
+        }
+
         public override string ToString()
         {
-            return $"#{id} {settlementName} wants {quantity}x {thingDef?.label ?? "<missing def>"} " +
+            return $"#{id} {settlementName} wants {quantity}x {ItemLabel()} " +
                    $"@ {unitPrice:F2} = {TotalPrice} silver [{state}]";
         }
     }

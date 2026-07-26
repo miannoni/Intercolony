@@ -98,8 +98,10 @@ namespace Intercolony
             ThingDef def = candidates[Rand.Range(0, candidates.Count)];
 
             int quantity = PickQuantity(def, profile);
+            QualityCategory? minQuality = PickMinimumQuality(def, profile);
+
             float unitPrice = IntercolonyPricing.UnitPrice(
-                def, quantity, profile, category, distance, out List<PriceFactor> factors);
+                def, quantity, profile, category, distance, minQuality, out List<PriceFactor> factors);
 
             int deadlineDays = Rand.RangeInclusive(MinDeadlineDays, MaxDeadlineDays);
             int lifespanDays = Rand.RangeInclusive(3, 10);
@@ -116,6 +118,7 @@ namespace Intercolony
                 expiryTick = GenTicks.TicksGame + lifespanDays * GenDate.TicksPerDay,
                 deadlineDays = deadlineDays,
                 distanceTiles = distance,
+                minQuality = minQuality,
                 state = MarketOpportunityState.Available,
                 priceExplanation = IntercolonyPricing.Explain(def, quantity, unitPrice, factors)
             };
@@ -154,6 +157,46 @@ namespace Intercolony
             }
 
             return IntercolonyProductCategory.Commodities;
+        }
+
+        /// <summary>
+        /// A minimum quality demand, or null when the buyer does not care (§11's quality-order
+        /// example, §99 quality constraints).
+        ///
+        /// Only for goods that can actually carry quality, and weighted by the settlement's
+        /// quality preference so an affluent buyer is the one asking for Excellent work.
+        /// Deliberately capped below Legendary: a demand nobody can reliably fill is not
+        /// interesting, it is just an offer that never gets taken.
+        ///
+        /// Must be called inside a pushed Rand state.
+        /// </summary>
+        private static QualityCategory? PickMinimumQuality(ThingDef def, SettlementEconomicProfile profile)
+        {
+            if (!IntercolonyPricing.CanHaveQuality(def))
+            {
+                return null;
+            }
+
+            // Even a picky buyer often just wants the thing, not a showpiece.
+            float demandChance = 0.25f + profile.qualityPreference * 0.5f;
+            if (Rand.Value > demandChance)
+            {
+                return null;
+            }
+
+            // Higher preference shifts the floor upward.
+            float roll = Rand.Value * profile.qualityPreference;
+            if (roll > 0.55f)
+            {
+                return QualityCategory.Excellent;
+            }
+
+            if (roll > 0.32f)
+            {
+                return QualityCategory.Good;
+            }
+
+            return QualityCategory.Normal;
         }
 
         /// <summary>

@@ -42,8 +42,12 @@ namespace Intercolony
         public string settlementName = "";
         public string factionName = "";
 
-        public ThingDef thingDef;
-        public int quantity;
+        /// <summary>
+        /// What is being sold, including any quality, material or condition constraints
+        /// (§15 lineItems). Phase 6 carries exactly one line; §15's multi-line model is a
+        /// later addition, and a list of one would be abstraction ahead of a second use case.
+        /// </summary>
+        public OrderLine line = new OrderLine();
 
         /// <summary>Agreed unit price, locked at acceptance so later market drift cannot change the deal.</summary>
         public float unitPrice;
@@ -66,9 +70,14 @@ namespace Intercolony
         {
         }
 
-        public int TotalPayment => Mathf.RoundToInt(unitPrice * quantity);
+        /// <summary>Convenience passthroughs so call sites read naturally.</summary>
+        public ThingDef ThingDef => line?.thingDef;
 
-        public int RemainingQuantity => Mathf.Max(0, quantity - deliveredQuantity);
+        public int Quantity => line?.quantity ?? 0;
+
+        public int TotalPayment => Mathf.RoundToInt(unitPrice * Quantity);
+
+        public int RemainingQuantity => Mathf.Max(0, Quantity - deliveredQuantity);
 
         public bool IsOpen => status == SalesOrderStatus.Accepted;
 
@@ -94,9 +103,17 @@ namespace Intercolony
             Scribe_Values.Look(ref settlementId, "settlementId", -1);
             Scribe_Values.Look(ref settlementName, "settlementName", "");
             Scribe_Values.Look(ref factionName, "factionName", "");
-            Scribe_Defs.Look(ref thingDef, "thingDef");
-            Scribe_Values.Look(ref quantity, "quantity", 0);
+            Scribe_Deep.Look(ref line, "line");
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
+
+            // Schema 6 stored the item and quantity directly on the order. Read the legacy
+            // nodes so an order accepted before Phase 6 is not silently emptied — §62 forbids
+            // dropping active obligations, and an order whose line vanished would be exactly
+            // that, a promise the player can no longer fulfil.
+            ThingDef legacyDef = null;
+            int legacyQuantity = 0;
+            Scribe_Defs.Look(ref legacyDef, "thingDef");
+            Scribe_Values.Look(ref legacyQuantity, "quantity", 0);
             Scribe_Values.Look(ref acceptedTick, "acceptedTick", 0);
             Scribe_Values.Look(ref deadlineTick, "deadlineTick", 0);
             Scribe_Values.Look(ref status, "status", SalesOrderStatus.Accepted);
@@ -109,16 +126,30 @@ namespace Intercolony
                 if (settlementName == null) settlementName = "";
                 if (factionName == null) factionName = "";
                 if (outcomeNote == null) outcomeNote = "";
+
+                if (line == null || line.thingDef == null)
+                {
+                    if (legacyDef != null && legacyQuantity > 0)
+                    {
+                        line = new OrderLine(legacyDef, legacyQuantity);
+                        IntercolonyLog.Message(
+                            $"Order {id}: migrated schema-6 item fields into an order line.");
+                    }
+                    else if (line == null)
+                    {
+                        line = new OrderLine();
+                    }
+                }
             }
         }
 
         /// <summary>A missing def means the mod supplying the item was removed (§64, §86).</summary>
-        public bool IsValidAfterLoad => thingDef != null && quantity > 0;
+        public bool IsValidAfterLoad => line?.thingDef != null && line.quantity > 0;
 
         public override string ToString()
         {
-            return $"#{id} {settlementName}: {deliveredQuantity}/{quantity} " +
-                   $"{thingDef?.label ?? "<missing def>"} [{status}]";
+            return $"#{id} {settlementName}: {deliveredQuantity}/{Quantity} " +
+                   $"{line?.ShortLabel() ?? "<missing def>"} [{status}]";
         }
     }
 }

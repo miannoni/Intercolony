@@ -235,4 +235,50 @@ Manual test:
 Bugs found and fixed during the phase:
 - **Double-accept duplication exploit.** The order self-test caught `Accept` creating two binding orders from one offer (#33 and #34, 9,507 silver each). `Accept` removed the opportunity from the world's list but never changed the opportunity's own state, so any caller still holding a reference — a UI row captured earlier in the frame, a second click on the confirmation dialog — saw it as available. Fixed by adding an `Available -> Accepted` transition on the opportunity itself (§14, §76.1): removal from a list cannot stop a caller that already has the object, but a state check on the object can. A first attempt at the fix claimed the offer *before* validating the buyer, which would have consumed a listing while creating no order on any transient failure; the claim now happens after all validation, where nothing below can fail.
 - **No way to deliver from a parked caravan.** Delivery was implemented only as a `CaravanArrivalAction`, which fires on the transition into the tile. A caravan already sitting at the settlement — arrived earlier, travelled there for another reason, or loaded from a save — had no arrival left to trigger and could never deliver. Found immediately in play-testing. Fixed by adding the caravan gizmo, mirroring how vanilla exposes trading.
+
+---
+
+## Interlude — opportunity flood fix  (2026-07-25)
+
+Found during Phase 5 play-testing on a full-size map: one refresh generated 333 offers, reaching 695 live. The per-settlement cap of 3 had no global ceiling behind it, so total demand scaled with world size — invisible on a small quicktest map, unusable on a real one, and squarely against §5.2 "No infinite global catalog".
+
+- Added `MaxLiveOpportunities = 60` as a hard ceiling, checked before generating.
+- Settlements are now visited in a **seeded shuffle** rather than world-object order. Iterating in order would let the same handful of settlements claim every slot on each refresh, so distant or late-indexed settlements would never post anything — the opposite of §48's "avoid making far settlements useless". Seeded so the choice stays reproducible (§60).
+- Market self-test gained a regression assertion: 12 extra refreshes must not push live offers past the ceiling. Verified 0 -> 21 (small map), 0 -> 36 (later run), ceiling 60.
+
+---
+
+## Phase 6 — Generalized Sales Order item matching  (2026-07-25)
+
+Implemented:
+- `Source/Intercolony/Orders/OrderLine.cs` — the §15 order line: item, quantity, and optional minimum quality, required material, and minimum condition. Constraints are opt-in, so a plain commodity line carries no quality or material baggage.
+- One centralized matcher, which is §99's entire acceptance criterion ("One centralized validation path supports all test cases"). `OrderValidator.Matches(OrderLine, Thing, out MatchFailure)` is the only place the question is answered; delivery, the market UI, gizmo availability and pricing all route through it.
+- `MatchFailure` reason codes and per-reason aggregation, so a shortfall reads "2 carried below the required quality" rather than a generic "you are short 2". §18's worked example is exactly this distinction.
+- **Minified-thing unwrapping.** Furniture and equipment travel as a `MinifiedThing` whose own def is "MinifiedThing", with the real item inside. Matching on `thing.def` would have meant §99's dining chairs could never match anything a caravan is physically able to carry. `CountableUnits` also treats a minified item as one unit rather than trusting the wrapper's stack count.
+- Generation widened from stackable-only to all items. Phase 4's `stackLimit > 1` filter silently excluded **everything with a quality rating**, since every quality-bearing vanilla thing has `stackLimit 1` — so weapons and apparel, precisely what §99 needs, were unreachable. Tradable defs went from 160 to 307.
+- Quality demands are generated for quality-capable goods only, weighted by the settlement's quality preference, and capped below Legendary — a demand nobody can reliably fill is not interesting, just an offer that never gets taken. Some buyers ask for a plain knife, some for an excellent one; that spread is intentional.
+- Quality floors feed pricing as a named §47 factor (`Requires Excellent+`), scaling steeply because each step up is markedly rarer to produce.
+- Constraints carry from the advertised opportunity into the binding order, so a player can never be held to terms different from the ones shown.
+- Save schema 6 -> 7. `SalesOrder.ExposeData` still reads the schema-6 item and quantity nodes and rebuilds a line from them, so an order accepted before this change keeps its terms instead of becoming an empty promise (§62).
+- Market table layout fixed: Accept now has its own column instead of being drawn over the last one, headers shortened, cells given a gutter so long values truncate honestly instead of running underneath the next column, and the deadline wording moved into the row tooltip.
+
+Not implemented:
+- **Buildings are still not generated as demand** — furniture, capital equipment and art. See "Open commitments" in `CLAUDE.md`: Matteo wants everything tradeable and accepted this deferral only on the condition it is raised again at Phase 7.
+- Material and condition constraints exist on `OrderLine` and are enforced by the matcher, but nothing generates them yet. Only quality floors are produced.
+- No exact-quality constraint (§15 `exactQuality`), only minimums.
+- Still single-line orders. §15's `lineItems[]` remains a list of one, deliberately.
+- No "find buyer" flow, no category-based selectors — the line names a concrete `ThingDef`.
+
+Known limitations:
+- Widening generation to all items means some odd asks are now possible (a settlement wanting a single high-value apparel item). Quantity is silver-targeted so the lots stay sane, but the item spread has not been balance-tested (§78).
+- The quality-demand chance and price premiums are first-pass guesses.
+- `MinifiedThing` unwrapping is verified by the self-test against a constructed chair, but no chair has been delivered by caravan in play, because generation never produces one.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- Order self-test: **43 passed, 0 failed**, including all four §99 cases driven through the single matcher with real spawned Things — 1,000 Rice (potatoes), 200 Cloth, 5 Normal-or-better knives, 20 Excellent dining chairs. Each constrained case also asserts an Awful item is rejected *with the quality reason specifically*.
+- Market self-test: **40 passed, 0 failed**, sample of 69 generated opportunities across 12 settlements, 29 inaccessible settlements present.
+- Classifier count rose 160 -> 307, confirming the single-stack widening actually reached weapons and apparel rather than being a no-op.
+- Confirmed in game that quality demands appear in the market and display as e.g. "Airwire headset (normal+)", "Tuque (excellent+)", with the quality premium visible in the price tooltip.
+- The §99 acceptance criterion is met: one validation path supports all four test cases.
 - No red errors in the in-game dev debug log window. All four §94 acceptance criteria pass.

@@ -59,8 +59,8 @@ namespace Intercolony
             {
                 defaultLabel = $"Deliver order #{order.id}",
                 defaultDesc =
-                    $"Hand over {order.thingDef?.label} to {order.settlementName}.\n\n" +
-                    $"Owed: {owed}\nCarried: {carried}\n" +
+                    $"Hand over {order.line?.ShortLabel()} to {order.settlementName}.\n\n" +
+                    $"Owed: {owed}\nCarried (meeting the requirements): {carried}\n" +
                     $"Payment: {order.unitPrice:F2} silver each",
                 icon = BaseContent.BadTex
             };
@@ -86,7 +86,7 @@ namespace Intercolony
             }
             else if (carried <= 0)
             {
-                command.Disable($"This caravan is carrying no {order.thingDef?.label ?? "goods"}.");
+                command.Disable($"This caravan is carrying no {order.ThingDef?.label ?? "goods"}.");
             }
 
             return command;

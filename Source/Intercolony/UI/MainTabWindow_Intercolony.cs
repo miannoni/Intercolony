@@ -32,7 +32,10 @@ namespace Intercolony
             TotalPrice = 4,
             Distance = 5,
             Expires = 6,
-            Deadline = 7
+            Deadline = 7,
+
+            /// <summary>Action column. Not sortable; exists so Accept has its own space.</summary>
+            Accept = 8
         }
 
         /// <summary>
@@ -167,10 +170,15 @@ namespace Intercolony
         /// and the rows cannot drift apart.
         /// </summary>
         private static readonly float[] ColumnWidths =
-            { 0.18f, 0.20f, 0.08f, 0.09f, 0.11f, 0.10f, 0.09f, 0.15f };
+            { 0.16f, 0.23f, 0.06f, 0.08f, 0.09f, 0.08f, 0.08f, 0.10f, 0.12f };
 
+        /// <summary>
+        /// Headers are short because the column has to hold the value, not the explanation.
+        /// "Delivery deadline" with "11d after accepting" underneath did not fit and ran under
+        /// the Accept button; the full wording now lives in the row tooltip.
+        /// </summary>
         private static readonly string[] ColumnLabels =
-            { "Buyer", "Wants", "Qty", "Unit", "Total", "Distance", "Expires", "Delivery deadline" };
+            { "Buyer", "Wants", "Qty", "Unit", "Total", "Dist", "Expires", "Deadline", "" };
 
         /// <summary>
         /// Distance sort key. Unknown distance (-1) must sort as "furthest", not "nearest",
@@ -262,7 +270,16 @@ namespace Intercolony
             for (int i = 0; i < ColumnLabels.Length; i++)
             {
                 float w = rect.width * ColumnWidths[i];
-                Rect cell = new Rect(x, rect.y, w, rect.height);
+                Rect cell = new Rect(x, rect.y, w - 4f, rect.height);
+
+                // The action column has no value to sort on; clicking it would set a sort
+                // column with no comparison behind it.
+                if (i == (int)Column.Accept)
+                {
+                    x += w;
+                    continue;
+                }
+
                 bool active = (int)sortColumn == i;
 
                 Widgets.DrawHighlightIfMouseover(cell);
@@ -352,7 +369,12 @@ namespace Intercolony
 
             // §47: the player should understand why an offer is attractive. The full factor
             // breakdown was computed once at generation time and stored on the opportunity.
-            TooltipHandler.TipRegion(rect, opportunity.priceExplanation);
+            // The deadline wording lives here rather than in the column, which is too narrow
+            // to hold an explanation without colliding with the Accept button.
+            TooltipHandler.TipRegion(rect,
+                $"{opportunity.quantity}x {opportunity.ItemLabel()} for {opportunity.settlementName}\n" +
+                $"Deliver within {opportunity.deadlineDays} days of accepting.\n\n" +
+                opportunity.priceExplanation);
 
             float[] w = new float[ColumnWidths.Length];
             for (int i = 0; i < ColumnWidths.Length; i++)
@@ -368,11 +390,14 @@ namespace Intercolony
                     cellX += w[k];
                 }
 
-                return new Rect(cellX, rect.y + 4f, w[i], rect.height - 4f);
+                // Leave a gutter so a long value abuts the next column instead of running
+                // underneath it. RimWorld clips labels to their rect, so this is what turns
+                // an overlapping mess into honest truncation.
+                return new Rect(cellX, rect.y + 4f, w[i] - 4f, rect.height - 4f);
             }
 
             Widgets.Label(Cell(0), opportunity.settlementName);
-            Widgets.Label(Cell(1), opportunity.thingDef?.LabelCap.ToString() ?? "<missing>");
+            Widgets.Label(Cell(1), opportunity.ItemLabel());
             Widgets.Label(Cell(2), opportunity.quantity.ToString());
             Widgets.Label(Cell(3), opportunity.unitPrice.ToString("F2"));
             Widgets.Label(Cell(4), opportunity.TotalPrice.ToString());
@@ -385,10 +410,13 @@ namespace Intercolony
             Widgets.Label(Cell(6), $"{days:F1}d");
             GUI.color = Color.white;
 
-            Widgets.Label(Cell(7), $"{opportunity.deadlineDays}d after accepting");
+            Widgets.Label(Cell(7), $"{opportunity.deadlineDays}d");
 
-            // Accept sits inside the last column so the table keeps its shape.
-            Rect acceptRect = new Rect(rect.xMax - 76f, rect.y + 3f, 72f, RowHeight - 7f);
+            // Accept has its own column. Previously it was drawn over the last one, so the
+            // deadline text ran underneath the button.
+            Rect acceptCell = Cell((int)Column.Accept);
+            Rect acceptRect = new Rect(acceptCell.x, rect.y + 3f,
+                Mathf.Min(acceptCell.width, 76f), RowHeight - 7f);
             if (Widgets.ButtonText(acceptRect, "Accept"))
             {
                 AcceptOpportunity(opportunity);
@@ -408,7 +436,7 @@ namespace Intercolony
             }
 
             string body =
-                $"Deliver {opportunity.quantity}x {opportunity.thingDef?.LabelCap} to " +
+                $"Deliver {opportunity.quantity}x {opportunity.ItemLabel()} to " +
                 $"{opportunity.settlementName} within {opportunity.deadlineDays} days.\n\n" +
                 $"Payment: {opportunity.TotalPrice} silver ({opportunity.unitPrice:F2} each)\n" +
                 $"Distance: {(opportunity.distanceTiles < 0f ? "unknown" : $"{opportunity.distanceTiles:F0} tiles")}\n\n" +
@@ -486,8 +514,8 @@ namespace Intercolony
             Widgets.DrawHighlightIfMouseover(rect);
 
             Rect main = new Rect(rect.x + 4f, rect.y + 3f, rect.width - 200f, rect.height - 6f);
-            string title = $"#{order.id}  {order.settlementName} — {order.quantity}x " +
-                           $"{order.thingDef?.LabelCap.ToString() ?? "<missing>"}";
+            string title = $"#{order.id}  {order.settlementName} — {order.Quantity}x " +
+                           $"{order.line?.ShortLabel() ?? "<missing>"}";
 
             Widgets.Label(new Rect(main.x, main.y, main.width, 22f), title);
 
@@ -496,7 +524,7 @@ namespace Intercolony
             Color colour = Color.white;
             if (order.IsOpen)
             {
-                detail = $"{order.deliveredQuantity}/{order.quantity} delivered   " +
+                detail = $"{order.deliveredQuantity}/{order.Quantity} delivered   " +
                          $"{order.DaysRemaining:F1}d left   " +
                          $"{order.TotalPayment} silver on completion";
                 if (order.DaysRemaining < 1f)
