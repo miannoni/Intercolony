@@ -197,20 +197,29 @@ namespace Intercolony
                 return null;
             }
 
-            int offered = OfferedQuantity(request, profile, supply);
+            // Material is chosen *before* pricing and quantity, and both use it. Picking it
+            // afterwards meant a supplier could offer a gold bed and charge the price of a
+            // stuffless one — 120 silver for several hundred silver of gold, which is a money
+            // exploit by way of the deconstruct button.
+            ThingDef offeredStuff = request.stuffDef ?? PickSupplierStuff(request.thingDef);
+            QualityCategory? offeredQuality = PickOfferedQuality(request.thingDef, profile);
+
+            int offered = OfferedQuantity(request, offeredStuff, profile, supply);
             if (offered <= 0)
             {
                 return null;
             }
 
-            float unitPrice = QuotedUnitPrice(request, profile, category, supply, distance,
-                out string explanation);
+            float unitPrice = QuotedUnitPrice(request, offeredStuff, offeredQuality, profile,
+                category, supply, distance, out string explanation);
 
             bool delivers = Rand.Value < DeliveryChance(profile, distance);
             int leadTime = LeadTimeDays(distance, delivers, supply);
 
             return new Quotation
             {
+                offeredQuality = offeredQuality,
+                offeredStuff = offeredStuff,
                 settlementId = settlement.ID,
                 settlementName = settlement.Label ?? "unnamed",
                 factionName = settlement.Faction?.Name ?? "",
@@ -221,6 +230,44 @@ namespace Intercolony
                 distanceTiles = distance,
                 priceExplanation = explanation
             };
+        }
+
+        /// <summary>
+        /// Quality the supplier will provide, centred on how much that settlement cares about
+        /// craftsmanship. Must be called inside a pushed Rand state.
+        /// </summary>
+        private static QualityCategory? PickOfferedQuality(ThingDef def, SettlementEconomicProfile profile)
+        {
+            if (!IntercolonyPricing.CanHaveQuality(def))
+            {
+                return null;
+            }
+
+            float roll = Rand.Value * 0.6f + profile.qualityPreference * 0.4f;
+            if (roll > 0.82f) return QualityCategory.Excellent;
+            if (roll > 0.62f) return QualityCategory.Good;
+            if (roll > 0.3f) return QualityCategory.Normal;
+            return QualityCategory.Poor;
+        }
+
+        /// <summary>Material the supplier happens to work in. Must be called inside a pushed Rand state.</summary>
+        private static ThingDef PickSupplierStuff(ThingDef def)
+        {
+            if (def == null || !def.MadeFromStuff)
+            {
+                return null;
+            }
+
+            List<ThingDef> options = new List<ThingDef>();
+            foreach (ThingDef candidate in GenStuff.AllowedStuffsFor(def))
+            {
+                if (candidate.BaseMarketValue > 0f)
+                {
+                    options.Add(candidate);
+                }
+            }
+
+            return options.Count == 0 ? GenStuff.DefaultStuffFor(def) : options[Rand.Range(0, options.Count)];
         }
 
         /// <summary>
@@ -258,10 +305,10 @@ namespace Intercolony
         /// (§20), so this is deliberately allowed to fall short of the request.
         /// </summary>
         private static int OfferedQuantity(
-            PurchaseRequest request, SettlementEconomicProfile profile, float supply)
+            PurchaseRequest request, ThingDef stuff, SettlementEconomicProfile profile, float supply)
         {
             float capacity = SupplyCapacity(profile.wealthTier) * supply;
-            float unitValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(request.thingDef, request.stuffDef));
+            float unitValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(request.thingDef, stuff));
             int affordable = Mathf.RoundToInt(capacity / unitValue);
 
             // Crated goods and single-stack items are produced, not stockpiled in bulk.
@@ -304,6 +351,8 @@ namespace Intercolony
         /// </summary>
         private static float QuotedUnitPrice(
             PurchaseRequest request,
+            ThingDef stuff,
+            QualityCategory? quality,
             SettlementEconomicProfile profile,
             IntercolonyProductCategory category,
             float supply,
@@ -311,7 +360,15 @@ namespace Intercolony
             out string explanation)
         {
             List<PriceFactor> factors = new List<PriceFactor>();
-            float baseValue = IntercolonyPricing.BaseValue(request.thingDef, request.stuffDef);
+            float baseValue = IntercolonyPricing.BaseValue(request.thingDef, stuff);
+
+            // Better craftsmanship costs more, the same way a quality floor does on the sell
+            // side. Without this a supplier could offer Excellent work at Normal prices.
+            if (quality.HasValue)
+            {
+                factors.Add(new PriceFactor(
+                    $"{quality.Value.GetLabel()} workmanship", QualityCostFactor(quality.Value)));
+            }
 
             // Buyer's spread: the counterparty is selling, so they mark up.
             factors.Add(new PriceFactor("Supplier margin", 1.15f));
@@ -340,8 +397,23 @@ namespace Intercolony
 
             price = Mathf.Max(0.01f, price);
             explanation = IntercolonyPricing.Explain(
-                request.thingDef, request.stuffDef, request.quantityRequested, price, factors);
+                request.thingDef, stuff, request.quantityRequested, price, factors);
             return price;
+        }
+
+        /// <summary>What a supplier charges for better work. Mirrors the sell-side premium.</summary>
+        private static float QualityCostFactor(QualityCategory quality)
+        {
+            switch (quality)
+            {
+                case QualityCategory.Awful: return 0.6f;
+                case QualityCategory.Poor: return 0.8f;
+                case QualityCategory.Normal: return 1f;
+                case QualityCategory.Good: return 1.3f;
+                case QualityCategory.Excellent: return 1.75f;
+                case QualityCategory.Masterwork: return 2.5f;
+                default: return 3.8f;
+            }
         }
 
         private static float DeliveryChance(SettlementEconomicProfile profile, float distance)

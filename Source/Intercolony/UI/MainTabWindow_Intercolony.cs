@@ -1062,6 +1062,8 @@ namespace Intercolony
 
             y += 40f;
 
+            y = DrawPurchaseOrders(inRect, y, state);
+
             List<PurchaseRequest> requests = new List<PurchaseRequest>(state.Requests);
             if (requests.Count == 0)
             {
@@ -1104,6 +1106,72 @@ namespace Intercolony
             }
 
             Widgets.EndScrollView();
+        }
+
+        /// <summary>
+        /// Live purchases, above the requests. These are money already spent, so they are the
+        /// first thing the player should see on this tab.
+        /// </summary>
+        private float DrawPurchaseOrders(Rect inRect, float y, IntercolonyWorldComponent state)
+        {
+            List<PurchaseOrder> open = new List<PurchaseOrder>();
+            foreach (PurchaseOrder order in state.PurchaseOrders)
+            {
+                if (order.IsOpen)
+                {
+                    open.Add(order);
+                }
+            }
+
+            if (open.Count == 0)
+            {
+                return y;
+            }
+
+            Widgets.Label(new Rect(0f, y, inRect.width, 24f), $"On order ({open.Count})");
+            y += 26f;
+
+            foreach (PurchaseOrder order in open)
+            {
+                Rect row = new Rect(0f, y, inRect.width - 16f, 26f);
+                Widgets.DrawLightHighlight(row);
+                Widgets.DrawHighlightIfMouseover(row);
+
+                Widgets.Label(new Rect(row.x + 6f, row.y + 2f, row.width * 0.42f, 22f),
+                    $"#{order.id}  {order.quantity}x {order.ItemLabel()}");
+                Widgets.Label(new Rect(row.x + row.width * 0.44f, row.y + 2f, row.width * 0.22f, 22f),
+                    order.settlementName);
+
+                string statusText;
+                Color colour = Color.white;
+                if (order.status == PurchaseOrderStatus.ReadyForPickup)
+                {
+                    statusText = $"collect within {order.DaysUntilPickupExpires:F1}d";
+                    colour = new Color(0.6f, 0.9f, 0.6f);
+                }
+                else
+                {
+                    statusText = order.supplierDelivers
+                        ? $"arriving in {order.DaysUntilReady:F1}d"
+                        : $"ready in {order.DaysUntilReady:F1}d";
+                }
+
+                GUI.color = colour;
+                Widgets.Label(new Rect(row.x + row.width * 0.66f, row.y + 2f, row.width * 0.26f, 22f),
+                    statusText);
+                GUI.color = Color.white;
+
+                TooltipHandler.TipRegion(row,
+                    $"{order.quantity}x {order.ItemLabel()} from {order.settlementName}\n" +
+                    $"Paid {order.paidSilver} silver.\n" +
+                    (order.supplierDelivers
+                        ? "They deliver to your colony."
+                        : "Send a caravan to collect. Use the caravan's Collect button at the settlement."));
+
+                y += 26f;
+            }
+
+            return y + 8f;
         }
 
         private const float RequestHeaderHeight = 46f;
@@ -1194,15 +1262,84 @@ namespace Intercolony
                 quote.TotalPrice.ToString());
             Widgets.Label(new Rect(rect.x + rect.width * 0.70f, rect.y + 2f, rect.width * 0.16f, 22f),
                 $"{quote.FulfillmentLabel}, {quote.leadTimeDays}d");
-            Widgets.Label(new Rect(rect.x + rect.width * 0.86f, rect.y + 2f, rect.width * 0.14f, 22f),
-                quote.distanceTiles < 0f ? "?" : $"{quote.distanceTiles:F0} t");
+            if (request.IsOpen)
+            {
+                Rect buyRect = new Rect(rect.xMax - 66f, rect.y + 1f, 62f, 24f);
+                if (Widgets.ButtonText(buyRect, "Buy"))
+                {
+                    ConfirmPurchase(request, quote);
+                }
+            }
+            else
+            {
+                Widgets.Label(new Rect(rect.x + rect.width * 0.86f, rect.y + 2f, rect.width * 0.14f, 22f),
+                    quote.distanceTiles < 0f ? "?" : $"{quote.distanceTiles:F0} t");
+            }
 
             TooltipHandler.TipRegion(rect,
                 $"{quote.settlementName} ({quote.factionName})\n" +
                 $"{quote.quantityOffered} of {request.quantityRequested} requested\n" +
-                $"{(quote.supplierDelivers ? "They deliver" : "You collect")}, ready in {quote.leadTimeDays} days\n\n" +
-                quote.priceExplanation +
-                "\nAccepting a quote arrives with purchase order fulfilment (Phase 11).");
+                (quote.offeredQuality.HasValue ? $"Quality: {quote.offeredQuality.Value.GetLabel()}\n" : "") +
+                (quote.offeredStuff != null ? $"Material: {quote.offeredStuff.label}\n" : "") +
+                $"{(quote.supplierDelivers ? "They deliver it" : "You collect it")}, " +
+                $"ready in {quote.leadTimeDays} days\n\n" +
+                quote.priceExplanation);
+        }
+
+        /// <summary>
+        /// Buying spends real silver up front, so it is confirmed and the confirmation states
+        /// exactly what was promised — §104's criterion is that goods "preserve expected
+        /// properties", and the player has to know what those were to notice if they do not.
+        /// </summary>
+        private void ConfirmPurchase(PurchaseRequest request, Quotation quote)
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            Map map = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            if (state == null || map == null)
+            {
+                return;
+            }
+
+            int silver = PurchaseOrderService.CountColonySilver(map);
+            bool affordable = silver >= quote.TotalPrice;
+
+            StringBuilder body = new StringBuilder();
+            body.AppendLine($"Buy {quote.quantityOffered}x {request.thingDef?.LabelCap} " +
+                            $"from {quote.settlementName}.");
+            body.AppendLine();
+            if (quote.offeredQuality.HasValue)
+            {
+                body.AppendLine($"Quality: {quote.offeredQuality.Value.GetLabel()}");
+            }
+
+            if (quote.offeredStuff != null)
+            {
+                body.AppendLine($"Material: {quote.offeredStuff.label}");
+            }
+
+            body.AppendLine($"Price: {quote.TotalPrice} silver (you have {silver})");
+            body.AppendLine(quote.supplierDelivers
+                ? $"They will deliver to your colony in {quote.leadTimeDays} days."
+                : $"Ready to collect at {quote.settlementName} in {quote.leadTimeDays} days. " +
+                  "Send a caravan — goods left uncollected are eventually resold.");
+            body.AppendLine();
+            body.Append("Payment is taken now. Cancelling later forfeits it.");
+
+            if (!affordable)
+            {
+                body.AppendLine();
+                body.Append("\nYou do not have enough silver in storage.");
+                Find.WindowStack.Add(new Dialog_MessageBox(body.ToString(), "OK"));
+                return;
+            }
+
+            Find.WindowStack.Add(new Dialog_MessageBox(
+                body.ToString(),
+                "Buy",
+                () => PurchaseOrderService.AcceptQuote(state, request, quote, map),
+                "Cancel",
+                null,
+                "Confirm purchase?"));
         }
 
         private const float OrderRowHeight = 56f;

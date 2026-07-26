@@ -24,7 +24,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 8;
+        public const int CurrentSaveVersion = 9;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -107,6 +107,49 @@ namespace Intercolony
             if (request != null)
             {
                 requests.Add(request);
+            }
+        }
+
+        /// <summary>Paid purchase orders awaiting delivery or collection (§7.6, §61).</summary>
+        private List<PurchaseOrder> purchaseOrders = new List<PurchaseOrder>();
+
+        public List<PurchaseOrder> PurchaseOrders => purchaseOrders;
+
+        public void AddPurchaseOrder(PurchaseOrder order)
+        {
+            if (order != null)
+            {
+                purchaseOrders.Add(order);
+            }
+        }
+
+        public PurchaseOrder FindPurchaseOrder(int orderId)
+        {
+            foreach (PurchaseOrder order in purchaseOrders)
+            {
+                if (order.id == orderId)
+                {
+                    return order;
+                }
+            }
+
+            return null;
+        }
+
+        public int OpenPurchaseCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (PurchaseOrder order in purchaseOrders)
+                {
+                    if (order.IsOpen)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
             }
         }
 
@@ -395,6 +438,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
+            Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -455,6 +499,24 @@ namespace Intercolony
                     }
                 }
 
+                if (purchaseOrders == null)
+                {
+                    purchaseOrders = new List<PurchaseOrder>();
+                }
+                else
+                {
+                    int nullPurchases = purchaseOrders.RemoveAll(o => o == null);
+                    int brokenPurchases = purchaseOrders.RemoveAll(o => !o.IsValidAfterLoad);
+                    if (nullPurchases > 0 || brokenPurchases > 0)
+                    {
+                        // A purchase is silver already spent, so losing one is worse than
+                        // losing a listing (§62).
+                        IntercolonyLog.Error(
+                            $"Dropped {nullPurchases} null and {brokenPurchases} unresolvable purchase order(s) " +
+                            "while loading. Any silver paid for them is gone.");
+                    }
+                }
+
                 if (nextId < 1)
                 {
                     IntercolonyLog.Warning($"Loaded nextId={nextId}; clamping to 1 to keep IDs positive.");
@@ -481,9 +543,19 @@ namespace Intercolony
             // that an order must not silently fail; noticing up to a day late would make the
             // failure message arrive long after the moment it describes. Still coarse enough
             // to be free (§84).
-            if (GenTicks.IsTickInterval(DeadlineCheckIntervalTicks) && orders.Count > 0)
+            if (GenTicks.IsTickInterval(DeadlineCheckIntervalTicks))
             {
-                SalesOrderService.FailOverdue(orders);
+                if (orders.Count > 0)
+                {
+                    SalesOrderService.FailOverdue(orders);
+                }
+
+                // Purchases become ready on their own schedule; checking hourly means the
+                // "ready to collect" letter lands near the moment it describes (§17).
+                if (purchaseOrders.Count > 0)
+                {
+                    PurchaseOrderService.AdvanceOrders(purchaseOrders);
+                }
             }
         }
 
@@ -513,6 +585,7 @@ namespace Intercolony
             int withdrawn = DropInaccessibleOpportunities();
             int created = GenerateOpportunities();
             RfqService.ExpireStale(requests);
+            PurchaseOrderService.AdvanceOrders(purchaseOrders);
 
             IntercolonyLog.Verbose(
                 $"Refresh #{refreshCount} ({cause}) at tick {lastRefreshTick}: " +
@@ -815,6 +888,12 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 7 -> 8: purchase requests added.");
             }
 
+            if (saveVersion < 9)
+            {
+                // 8 -> 9 added purchase orders. Purely additive.
+                IntercolonyLog.Message("  schema 8 -> 9: purchase orders added.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -840,6 +919,14 @@ namespace Intercolony
                 if (order.id > highest)
                 {
                     highest = order.id;
+                }
+            }
+
+            foreach (PurchaseOrder purchase in purchaseOrders)
+            {
+                if (purchase.id > highest)
+                {
+                    highest = purchase.id;
                 }
             }
 

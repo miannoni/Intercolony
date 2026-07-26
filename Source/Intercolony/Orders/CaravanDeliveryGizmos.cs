@@ -47,6 +47,34 @@ namespace Intercolony
 
                 yield return BuildCommand(caravan, settlement, order, state);
             }
+
+            // Player pickup of purchased goods (§25.3). Same gizmo shape as delivering a sale,
+            // because it is the same player action from the other direction.
+            foreach (PurchaseOrder purchase in state.PurchaseOrders)
+            {
+                if (!purchase.AwaitingCollection || purchase.settlementId != settlement.ID)
+                {
+                    continue;
+                }
+
+                yield return BuildCollectCommand(caravan, purchase);
+            }
+        }
+
+        private static Command BuildCollectCommand(Caravan caravan, PurchaseOrder purchase)
+        {
+            Command_Action command = new Command_Action
+            {
+                defaultLabel = $"Collect purchase #{purchase.id}",
+                defaultDesc =
+                    $"Load {purchase.quantity}x {purchase.ItemLabel()} onto this caravan.\n\n" +
+                    $"Already paid: {purchase.paidSilver} silver\n" +
+                    $"Held for another {purchase.DaysUntilPickupExpires:F1} days before it is resold.",
+                icon = BaseContent.BadTex,
+                action = delegate { PurchaseOrderService.CollectWithCaravan(purchase, caravan); }
+            };
+
+            return command;
         }
 
         private static Command BuildCommand(

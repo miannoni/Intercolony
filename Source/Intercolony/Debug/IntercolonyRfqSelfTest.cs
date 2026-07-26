@@ -58,6 +58,8 @@ namespace Intercolony
             int distinctQuantityRequests = 0;
             int badQuote = 0;
             int overOffer = 0;
+            int underpriced = 0;
+            string firstUnderpriced = null;
 
             for (int i = 0; i < tradable.Count && totalRequests < 24; i += Mathf.Max(1, tradable.Count / 24))
             {
@@ -104,6 +106,18 @@ namespace Intercolony
                     else
                     {
                         fullQuotes++;
+                    }
+
+                    // A quote must never undercut the value of what it promises. Pricing once
+                    // ran before the material was chosen, so a supplier offered a gold bed at
+                    // the price of a stuffless one — buy it, deconstruct it, profit.
+                    float promisedValue = IntercolonyPricing.BaseValue(def, quote.offeredStuff);
+                    if (quote.unitPrice < promisedValue * 0.9f)
+                    {
+                        underpriced++;
+                        firstUnderpriced = firstUnderpriced ??
+                            $"{def.defName} in {quote.offeredStuff?.label ?? "no stuff"}: " +
+                            $"quoted {quote.unitPrice:F1} vs material value {promisedValue:F1}";
                     }
 
                     prices.Add(quote.TotalPrice);
@@ -156,6 +170,8 @@ namespace Intercolony
             Check("requests were generated", totalRequests > 0);
             Check("all quotes are well formed", badQuote == 0, $"{badQuote} malformed");
             Check("no supplier offers more than requested", overOffer == 0, $"{overOffer} over-offers");
+            Check("no quote undercuts the value of what it promises", underpriced == 0,
+                $"{underpriced} underpriced, first: {firstUnderpriced}");
 
             // §103: "requesting scarce goods can fail". If nothing ever comes back empty this
             // is a vending machine, which §20 explicitly sets out to avoid.
@@ -240,8 +256,108 @@ namespace Intercolony
                 state.Requests.Remove(request);
             }
 
+            // --- §104: purchased goods arrive and preserve expected properties ---
+            // Built through the same path a real purchase uses, then inspected. §104's four
+            // named cases: commodity, weapon/apparel, chair, workbench.
+            sb.AppendLine("  §104 goods construction:");
+            CheckGoods(sb, Check, "commodity", ThingDefOf.Steel, null, null, 120);
+            CheckGoods(sb, Check, "weapon", ThingDefOf.MeleeWeapon_Knife,
+                ThingDefOf.Plasteel, QualityCategory.Excellent, 3);
+            CheckGoods(sb, Check, "chair", ThingDefOf.DiningChair,
+                ThingDefOf.WoodLog, QualityCategory.Good, 4);
+            CheckGoods(sb, Check, "workbench",
+                DefDatabase<ThingDef>.GetNamedSilentFail("ElectricStove"), ThingDefOf.Steel, null, 1);
+
             sb.AppendLine($"  {passed} passed, {failed} failed.");
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Builds the goods for a synthetic purchase order and verifies they carry exactly what
+        /// was promised. Nothing is spawned into the world — the objects are inspected and
+        /// destroyed — so running this leaves no residue.
+        /// </summary>
+        private static void CheckGoods(
+            StringBuilder sb,
+            System.Action<string, bool, string> check,
+            string caseName,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            int quantity)
+        {
+            if (def == null)
+            {
+                sb.AppendLine($"    {caseName}: SKIPPED (def not in this install)");
+                return;
+            }
+
+            PurchaseOrder order = new PurchaseOrder
+            {
+                id = 0,
+                thingDef = def,
+                stuffDef = def.MadeFromStuff ? stuff : null,
+                quality = IntercolonyPricing.CanHaveQuality(def) ? quality : null,
+                quantity = quantity,
+                settlementName = "SelfTest"
+            };
+
+            List<Thing> goods = PurchaseOrderService.MakeGoods(order);
+            check($"{caseName}: goods are produced", goods.Count > 0, null);
+            if (goods.Count == 0)
+            {
+                return;
+            }
+
+            int units = 0;
+            int wrongDef = 0;
+            int wrongStuff = 0;
+            int wrongQuality = 0;
+            int uncrated = 0;
+
+            foreach (Thing thing in goods)
+            {
+                units += OrderValidator.CountableUnits(thing);
+
+                // Buildings must arrive crated or they cannot be hauled home.
+                if (def.Minifiable && !(thing is MinifiedThing))
+                {
+                    uncrated++;
+                }
+
+                Thing inner = thing.GetInnerIfMinified();
+                if (inner.def != def)
+                {
+                    wrongDef++;
+                }
+
+                if (order.stuffDef != null && inner.Stuff != order.stuffDef)
+                {
+                    wrongStuff++;
+                }
+
+                if (order.quality.HasValue)
+                {
+                    if (!inner.TryGetQuality(out QualityCategory got) || got != order.quality.Value)
+                    {
+                        wrongQuality++;
+                    }
+                }
+            }
+
+            check($"{caseName}: full quantity produced", units == quantity, $"{units} of {quantity}");
+            check($"{caseName}: correct item", wrongDef == 0, $"{wrongDef} wrong");
+            check($"{caseName}: material preserved", wrongStuff == 0, $"{wrongStuff} wrong");
+            check($"{caseName}: quality preserved", wrongQuality == 0, $"{wrongQuality} wrong");
+            check($"{caseName}: minifiable goods arrive crated", uncrated == 0, $"{uncrated} uncrated");
+
+            sb.AppendLine($"    {caseName}: {units}x {order.ItemLabel()}" +
+                          (def.Minifiable ? " (crated)" : ""));
+
+            foreach (Thing thing in goods)
+            {
+                thing.Destroy(DestroyMode.Vanish);
+            }
         }
 
         /// <summary>Highest-tech tradable def available, for the scarcity probe.</summary>

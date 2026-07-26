@@ -43,6 +43,17 @@ namespace Intercolony
         /// <summary>True when the supplier delivers (§25.4); false when the player collects (§25.3).</summary>
         public bool supplierDelivers;
 
+        /// <summary>
+        /// Quality the supplier is offering, or null for goods that cannot carry one.
+        /// §20 lists differing quality as an RFQ outcome, and fixing it at quote time is what
+        /// lets the player compare "cheap and shoddy" against "dear and good" — and what makes
+        /// §104's "preserve expected properties" checkable, since the promise is on record.
+        /// </summary>
+        public QualityCategory? offeredQuality;
+
+        /// <summary>Material the supplier would provide, or null when the def has no stuff.</summary>
+        public ThingDef offeredStuff;
+
         public float distanceTiles = -1f;
 
         /// <summary>Price factor breakdown, for the §47 tooltip.</summary>
@@ -66,6 +77,8 @@ namespace Intercolony
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
             Scribe_Values.Look(ref leadTimeDays, "leadTimeDays", 0);
             Scribe_Values.Look(ref supplierDelivers, "supplierDelivers", false);
+            Scribe_Values.Look(ref offeredQuality, "offeredQuality");
+            Scribe_Defs.Look(ref offeredStuff, "offeredStuff");
             Scribe_Values.Look(ref distanceTiles, "distanceTiles", -1f);
             Scribe_Values.Look(ref priceExplanation, "priceExplanation", "");
 

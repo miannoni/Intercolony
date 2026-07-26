@@ -425,6 +425,45 @@ Bug found and fixed during the phase:
   Fixed by applying §50's tech gate **per def** rather than per category: a settlement cannot supply an item above its own tech tier, except that trade hubs import one tier up half the time. The test also no longer relies on sampling luck — it sends a targeted probe for the highest-tech tradable def and asserts not every settlement can supply it.
   Worth recording that 14 of 15 assertions passed while this was broken. A test that only checked "quotes are well formed" would have called the phase done.
 
+---
+
+## Phase 11 — Purchase Order fulfilment  (2026-07-26)
+
+Closes the buy-side loop: request → quote → accept → physically receive or collect.
+
+Implemented:
+- `Source/Intercolony/Procurement/PurchaseOrder.cs` — the §7.6 entity, recording exactly what was promised (def, material, quality, count) so §104's "preserve expected properties" is verifiable rather than a matter of trust.
+- Lifecycle `Confirmed -> ReadyForPickup -> Completed`, plus `Cancelled` and `SupplierDefault` (§21). §21 sketches eight states and says the first implementation may use fewer. **There is no `Delivered` or `InTransit` state**, for the same reason sales orders have none: a caravan in motion *is* the in-transit state, and goods either arrive at the colony and complete immediately or wait at the supplier. A parallel flag would be a second source of truth.
+- `Source/Intercolony/Procurement/PurchaseOrderService.cs` — the only place purchase status is assigned (§73). Payment, lead-time advancement, delivery to the colony, caravan collection, refunds and cancellation.
+- **Payment is taken up front.** §21 lists a PlayerDefault branch, implying payment on delivery, but that needs a debt-and-default policy that does not exist. Taking silver at acceptance means a purchase can never arrive at a colony that cannot pay for it; refunds on supplier default keep it honest the other way.
+- Quotations now advertise **offered quality and material**. §20 lists differing quality as an RFQ outcome, and putting the promise on record is what makes the arrival checkable.
+- Delivery drops goods at the trade spot; pickup adds a **Collect purchase** caravan gizmo at the supplier, mirroring the sell-side delivery gizmo. Uncollected goods are resold after a grace period with a refund (§21 SupplierDefault) rather than sitting open forever.
+- Goods are built with the promised properties and **crated when minifiable**, per `docs/unique-goods-spike.md` — a building that arrives uncrated cannot be hauled or installed.
+- Save schema 8 -> 9. Unresolvable purchase orders are logged at **error** level: a purchase is silver already spent, so losing one is worse than losing a listing.
+
+Not implemented:
+- Payment on delivery and the §21 PlayerDefault branch.
+- No partial refund on player cancellation — the payment is forfeited, since the supplier already produced the goods.
+- No reputation effect from defaulting in either direction (§27).
+- Delivery always lands at the trade drop spot; no choice of destination.
+
+Known limitations:
+- Lead times, the pickup grace period and the supplier margin are first-pass guesses (§78).
+- A delivery with no player home map is held rather than delivered or refunded; it will arrive once a colony exists again.
+- Partial caravan collection reduces the outstanding quantity but does not re-price; the player has already paid in full.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- RFQ self-test: **44 passed, 0 failed**, including §104's four named cases constructed and inspected — `120x Steel`, `3x Knife (plasteel, excellent)`, `4x Dining chair (wood, good) (crated)`, `1x Electric stove (crated)`.
+- **Bought a bed in real play**: `Purchase 174: 1x Bed (gold, good) from Banedla for 120 silver, delivered in 7d` followed seven in-game days later by `Purchase 174 completed. Delivered 1 to the colony.` Material and quality both survived the whole path.
+- §104's acceptance criterion is met: purchased goods arrive physically and preserve their expected properties.
+
+Bug found and fixed during the phase:
+- **Suppliers offered expensive materials at cheap prices.** The bed above is the evidence: 120 silver for a *gold* bed, when the gold alone is worth several hundred. The offered material was chosen *after* the price was computed, so pricing fell back to `request.stuffDef` — null whenever the player does not specify a material. Buy the gold bed, deconstruct it, keep the gold: a money printer of the same family as the silver-for-silver exploit.
+  Fixed by choosing the material before pricing and quantity, and by adding a workmanship factor so quality costs money too — it had the identical hole, letting a supplier offer Excellent work at Normal prices.
+  A regression assertion now fails any quote priced below the raw value of what it promises, which covers the class rather than the instance.
+  Worth recording how this was caught: **the self-test did not find it, and could not have.** It verified goods are *constructed* with the right material and quality, which was never the broken part. Nothing checked that the *price* reflected the promise. A gold bed delivered correctly for 120 silver only looks wrong if you know what gold costs — it took a human reading a log line.
+
 Bugs found and fixed during the phase:
 - **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
 - **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.
