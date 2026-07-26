@@ -314,4 +314,39 @@ Manual test:
 - Spike run in game: **23 passed, 0 failed** across cases 1, 2, 3/5, 6, 7.
 - Case 4: a crated masterwork wooden chair at half hit points and a crated sculpture with a custom art title were planted, then the game was saved, quit to main menu and reloaded. Verification reported **PASS** — quality, reduced hit points, art title and author all intact.
 - The §100 acceptance criterion is met: a robust strategy exists, written down, before generalized implementation.
+
+---
+
+## Phase 8 — Finished goods market  (2026-07-25)
+
+Furniture, art, weapons, apparel and equipment are now normal market participants. Implements the recommendation written in `docs/unique-goods-spike.md`.
+
+Implemented:
+- Generation widened to buildings **where `def.Minifiable` is true**. Non-minifiable buildings stay excluded permanently, not temporarily: a caravan physically cannot carry a wall, so demanding one would be an offer nobody could ever fill. The self-test asserts none is ever generated. Tradable defs went 307 -> 407.
+- **Material-aware valuation** (§101). `ThingDef.BaseMarketValue` is `GetStatValueAbstract(MarketValue)` with *no stuff*, so pricing off it quoted identical silver for a wooden longsword and a plasteel one. `IntercolonyPricing.BaseValue(def, stuff)` now uses the real material, and the §47 breakdown names it on the base line — otherwise the factors below would not reconstruct the quoted price and the explanation would quietly stop being true.
+- **Material constraints are generated**, not merely enforced. Drawn from `GenStuff.AllowedStuffsFor` so a demand is always fillable; asking for a plasteel chair when the def forbids plasteel would be an unfillable listing.
+- Lot sizes capped by how goods travel, not just by silver: crated buildings at 8, single-stack items at 15. A silver-reasonable lot of 40 sculptures is a caravan that cannot move.
+- **Filters** (§53): category dropdown and minimum-value slider, alongside the existing distance filter.
+- **Unique listing details and art detail display** (§101): the row tooltip states the quality floor, the required material, a caravan-capacity warning for crated goods (each travels as its own crate), and for artwork a note that quality drives the price and the piece keeps its title and author after sale.
+- Material constraints carry from the advertised opportunity into the binding order, as quality already did.
+
+Not implemented:
+- No art *title* or author shown in listings, because the artwork does not exist until the player makes it. Only the requirement is described.
+- Faction, item and quality filters from §53's list; only category, distance and minimum value exist.
+- No balance pass on the widened item pool (§78).
+
+Known limitations:
+- The item spread is much wider now, so odd-looking asks are possible (a settlement wanting a single expensive piece of apparel). Quantity is silver-targeted and capped, but this has not been balance-tested.
+- Art re-attribution after sale is still an open design question (see the spike note).
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- **4x tube television** accepted, hauled and delivered in real play. First crated good to complete the full loop: generated as demand, matched through the minified wrapper, handed over, paid.
+- **8x large sculpture (normal+)** accepted, spawned, hauled and delivered for **4,500 silver**. `SculptureLarge` is minifiable *and* made from stuff *and* carries `CompArt`, with a quality floor — so this single delivery closed all three paths that were unproven at the end of Phase 7: crated goods, material-made goods, and art, with a quality constraint checked through the crate.
+- Classified tradable defs rose 307 -> 407, confirming buildings actually entered the pool rather than the widening being a no-op.
+- The §101 acceptance criterion is met: a colony can intentionally operate as a furniture or art business, and did.
+
+Bugs found and fixed during the phase:
+- **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
+- **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.
 - No red errors in the in-game dev debug log window. All four §94 acceptance criteria pass.

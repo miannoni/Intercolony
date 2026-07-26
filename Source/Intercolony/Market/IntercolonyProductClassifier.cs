@@ -157,7 +157,9 @@ namespace Intercolony
         /// </summary>
         public static bool WouldTradeIgnoringBlacklist(ThingDef def)
         {
-            return PassesIntrinsicRules(def) && def.category == ThingCategory.Item;
+            return PassesIntrinsicRules(def) &&
+                   (def.category == ThingCategory.Item ||
+                    (def.category == ThingCategory.Building && def.Minifiable));
         }
 
         /// <summary>Drops cached classifications, e.g. after a blacklist change.</summary>
@@ -170,17 +172,24 @@ namespace Intercolony
         /// <summary>
         /// Defs demand can be generated for.
         ///
-        /// Phase 4 restricted this to stackable items, which silently excluded everything with
-        /// a quality rating — every quality-bearing vanilla thing has stackLimit 1. Phase 6
-        /// (§99) needs weapons and apparel, so single-stack *items* now qualify too.
-        ///
-        /// Buildings — furniture, benches, art — still do not. They travel minified and need
-        /// the unique-item representation from §23.2, which is Phase 7's spike (§100). The
-        /// matcher already handles them, so widening generation later is a one-line change.
+        /// Items qualify outright. Buildings qualify **only when minifiable**, per the Phase 7
+        /// spike (`docs/unique-goods-spike.md`): a non-minifiable building cannot be crated,
+        /// so a caravan physically cannot carry it. That exclusion is permanent, not a
+        /// temporary gap — no future phase can deliver a wall.
         /// </summary>
         public static bool IsFungibleTradeItem(ThingDef def)
         {
-            return IsTradableGood(def) && def.category == ThingCategory.Item;
+            if (!IsTradableGood(def))
+            {
+                return false;
+            }
+
+            if (def.category == ThingCategory.Item)
+            {
+                return true;
+            }
+
+            return def.category == ThingCategory.Building && def.Minifiable;
         }
 
         /// <summary>

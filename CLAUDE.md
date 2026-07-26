@@ -82,10 +82,10 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 7 complete (2026-07-25). Next: Phase 8 — finished goods market (DESIGN.md §101).
+**Phase:** 8 complete (2026-07-25). Next: Phase 9 — Find Buyer (DESIGN.md §102).
 
-Phase 7's deliverable is `docs/unique-goods-spike.md`. Read it before starting Phase 8;
-it contains the representation decision and a concrete Phase 8 recommendation.
+`docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
+Read it before touching anything that moves an individual object.
 
 Update this line when a phase completes.
 
@@ -96,19 +96,16 @@ Update this line when a phase completes.
 Promises made to Matteo that are not yet kept. Raise these at the next natural point;
 do not let them quietly expire.
 
-- **Everything should be tradeable.** (raised 2026-07-25 during Phase 6; unblocked by the
-  Phase 7 spike, now due in Phase 8 §101 "Finished goods market")
-  Furniture, capital equipment and art are classified correctly and the *matcher* handles
-  them — §99's "20 Excellent Dining Chairs" case passes — but they are **not generated as
-  demand**, so no chair or bench order ever appears in the market. They travel minified and
-  need the unique-item representation from §23.2, which is exactly what Phase 7 (§100)
-  exists to prove.
-  Matteo accepted the deferral on the condition it is not forgotten, and said plainly he
-  wants full coverage. **When Phase 7 lands, raise this first**: widening generation is
-  roughly a one-line change in `IntercolonyProductClassifier.IsFungibleTradeItem`, but only
-  once unique-item transfer is proven safe.
-  Also still ungenerated, same file: material and condition constraints exist on `OrderLine`
-  and are enforced by the matcher, but nothing produces them yet.
+- ~~**Everything should be tradeable.**~~ **KEPT in Phase 8 (2026-07-25).** Furniture, art,
+  weapons, apparel and minifiable equipment are now generated as demand and deliverable;
+  proven in play by an 8-sculpture order paid at 4,500 silver. One permanent exclusion
+  remains and is not a gap: **non-minifiable buildings** cannot be crated, so a caravan
+  physically cannot carry them. No future phase changes that.
+
+- **Condition constraints are enforced but never generated.** `OrderLine.minHitPointsPercent`
+  works and the matcher honours it, but nothing produces a demand that uses it, so
+  used/damaged-goods trading does not exist in practice. Low priority; raise it if a phase
+  touches order generation again.
 
 ---
 

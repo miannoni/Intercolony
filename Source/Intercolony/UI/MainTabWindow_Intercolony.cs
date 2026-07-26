@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -59,6 +60,12 @@ namespace Intercolony
 
         private Vector2 ordersScroll;
 
+        /// <summary>Category filter (§53, §101). Null means "all categories".</summary>
+        private IntercolonyProductCategory? categoryFilter;
+
+        /// <summary>Minimum total value filter (§53 "minimum value").</summary>
+        private int minValueFilter;
+
         public override void DoWindowContents(Rect inRect)
         {
             IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
@@ -115,7 +122,7 @@ namespace Intercolony
                 }
 
                 totalAvailable++;
-                if (PassesDistanceFilter(opportunity, state.MaxMarketDistance))
+                if (PassesFilters(opportunity, state.MaxMarketDistance))
                 {
                     live.Add(opportunity);
                 }
@@ -204,6 +211,28 @@ namespace Intercolony
             return opportunity.distanceTiles <= maxDistance;
         }
 
+        /// <summary>All active filters (§53, §101). A listing must satisfy every one.</summary>
+        private bool PassesFilters(MarketOpportunity opportunity, float maxDistance)
+        {
+            if (!PassesDistanceFilter(opportunity, maxDistance))
+            {
+                return false;
+            }
+
+            if (minValueFilter > 0 && opportunity.TotalPrice < minValueFilter)
+            {
+                return false;
+            }
+
+            if (categoryFilter.HasValue &&
+                IntercolonyProductClassifier.Classify(opportunity.thingDef) != categoryFilter.Value)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         /// <summary>
         /// Distance filter (DESIGN.md §53 "Potential filters: ... distance", §66 "maximum
         /// market distance"). A far-off buyer is not useless — §48 is explicit that distant
@@ -247,15 +276,51 @@ namespace Intercolony
                 ? "no limit"
                 : $"{chosen:F0} tiles");
 
-            Rect countRect = new Rect(valueRect.xMax + 8f, row.y + 4f, inRect.width - valueRect.xMax - 12f, 24f);
+            Rect countRect = new Rect(valueRect.xMax + 8f, row.y + 4f, 160f, 24f);
             GUI.color = new Color(1f, 1f, 1f, 0.6f);
             Widgets.Label(countRect, shown == totalAvailable
                 ? $"{shown} offers"
                 : $"{shown} of {totalAvailable} offers");
             GUI.color = Color.white;
 
-            return row.yMax + 4f;
+            // Second filter row: category and minimum value (§53, §101 "filters").
+            Rect row2 = new Rect(0f, row.yMax + 2f, inRect.width, 30f);
+
+            Widgets.Label(new Rect(0f, row2.y + 4f, 130f, 24f), "Category:");
+            Rect categoryRect = new Rect(134f, row2.y + 3f, 170f, 26f);
+            string categoryLabel = categoryFilter.HasValue
+                ? categoryFilter.Value.Label()
+                : "all categories";
+            if (Widgets.ButtonText(categoryRect, categoryLabel))
+            {
+                List<FloatMenuOption> options = new List<FloatMenuOption>
+                {
+                    new FloatMenuOption("all categories", () => categoryFilter = null)
+                };
+
+                foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
+                {
+                    IntercolonyProductCategory local = category;
+                    options.Add(new FloatMenuOption(local.Label(), () => categoryFilter = local));
+                }
+
+                Find.WindowStack.Add(new FloatMenu(options));
+            }
+
+            Widgets.Label(new Rect(categoryRect.xMax + 12f, row2.y + 4f, 110f, 24f), "Min value:");
+            Rect minValueRect = new Rect(categoryRect.xMax + 122f, row2.y + 6f, 200f, 20f);
+            minValueFilter = Mathf.RoundToInt(Widgets.HorizontalSlider(
+                minValueRect, minValueFilter, 0f, MaxMinValueFilter,
+                middleAlignment: false, null, null, null, roundTo: 100f));
+
+            Widgets.Label(new Rect(minValueRect.xMax + 8f, row2.y + 4f, 150f, 24f),
+                minValueFilter <= 0 ? "any value" : $"{minValueFilter}+ silver");
+
+            return row2.yMax + 4f;
         }
+
+        /// <summary>Upper end of the minimum-value slider.</summary>
+        private const float MaxMinValueFilter = 5000f;
 
         /// <summary>Upper end of the filter slider; beyond this it means "no limit".</summary>
         private const float MaxFilterTiles = 200f;
@@ -371,10 +436,7 @@ namespace Intercolony
             // breakdown was computed once at generation time and stored on the opportunity.
             // The deadline wording lives here rather than in the column, which is too narrow
             // to hold an explanation without colliding with the Accept button.
-            TooltipHandler.TipRegion(rect,
-                $"{opportunity.quantity}x {opportunity.ItemLabel()} for {opportunity.settlementName}\n" +
-                $"Deliver within {opportunity.deadlineDays} days of accepting.\n\n" +
-                opportunity.priceExplanation);
+            TooltipHandler.TipRegion(rect, BuildListingTooltip(opportunity));
 
             float[] w = new float[ColumnWidths.Length];
             for (int i = 0; i < ColumnWidths.Length; i++)
@@ -421,6 +483,53 @@ namespace Intercolony
             {
                 AcceptOpportunity(opportunity);
             }
+        }
+
+        /// <summary>
+        /// Listing detail (DESIGN.md §101 "unique listing details", "art detail display").
+        ///
+        /// A furniture or art order is not just a line in a table: it commits the colony to
+        /// producing specific objects at a specific standard, and each one travels as its own
+        /// crate. The tooltip has to say all of that before the player clicks Accept.
+        /// </summary>
+        private static string BuildListingTooltip(MarketOpportunity opportunity)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine($"{opportunity.quantity}x {opportunity.ItemLabel()} for {opportunity.settlementName}");
+            sb.AppendLine($"Deliver within {opportunity.deadlineDays} days of accepting.");
+
+            if (opportunity.minQuality.HasValue)
+            {
+                sb.AppendLine($"Only items of {opportunity.minQuality.Value.GetLabel()} quality " +
+                              "or better will be accepted.");
+            }
+
+            if (opportunity.stuffDef != null)
+            {
+                sb.AppendLine($"Must be made of {opportunity.stuffDef.label}.");
+            }
+
+            if (opportunity.IsCratedGood)
+            {
+                // Each crated good is one crate with real mass; 8 sculptures is a caravan.
+                sb.AppendLine($"Each of the {opportunity.quantity} travels as a separate crate " +
+                              "— check your caravan capacity.");
+            }
+
+            if (IsArt(opportunity.thingDef))
+            {
+                sb.AppendLine("Artwork: the buyer values the piece itself. Quality drives the price, " +
+                              "and the work keeps its title and author after sale.");
+            }
+
+            sb.AppendLine();
+            sb.Append(opportunity.priceExplanation);
+            return sb.ToString();
+        }
+
+        private static bool IsArt(ThingDef def)
+        {
+            return def != null && def.HasComp(typeof(CompArt));
         }
 
         /// <summary>

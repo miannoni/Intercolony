@@ -68,7 +68,8 @@ namespace Intercolony
                 {
                     // Constraints advertised in the market must carry into the binding order,
                     // or the player could be held to terms different from the ones shown.
-                    minQuality = opportunity.minQuality
+                    minQuality = opportunity.minQuality,
+                    allowedStuff = opportunity.stuffDef
                 },
                 unitPrice = opportunity.unitPrice,
                 acceptedTick = GenTicks.TicksGame,
@@ -122,8 +123,18 @@ namespace Intercolony
                 return result;
             }
 
-            int payment = order.PaymentFor(handedOver);
             order.deliveredQuantity += handedOver;
+
+            // Per-delivery payment is floored so a run of partial deliveries can never overpay
+            // past the agreed total. On the delivery that *completes* the order, pay the exact
+            // remainder instead: otherwise the quoted total (rounded) and the sum of floored
+            // instalments disagree, and the player is visibly short-changed — an order
+            // advertised at 537 silver paid out 536.
+            int payment = order.RemainingQuantity <= 0
+                ? order.TotalPayment - order.paidSilver
+                : order.PaymentFor(handedOver);
+
+            payment = Mathf.Max(0, payment);
             order.paidSilver += payment;
 
             GiveSilver(caravan, payment);

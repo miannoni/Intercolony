@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -52,6 +53,9 @@ namespace Intercolony
         /// a player must be able to see they are committing to Excellent work.
         /// </summary>
         public QualityCategory? minQuality;
+
+        /// <summary>Required material, or null for any (§101 material-aware valuation).</summary>
+        public ThingDef stuffDef;
 
         public int createdTick;
         public int expiryTick;
@@ -138,6 +142,7 @@ namespace Intercolony
             Scribe_Values.Look(ref deadlineDays, "deadlineDays", 0);
             Scribe_Values.Look(ref distanceTiles, "distanceTiles", -1f);
             Scribe_Values.Look(ref minQuality, "minQuality");
+            Scribe_Defs.Look(ref stuffDef, "stuffDef");
             Scribe_Values.Look(ref state, "state", MarketOpportunityState.Available);
             Scribe_Values.Look(ref priceExplanation, "priceExplanation", "");
 
@@ -161,12 +166,34 @@ namespace Intercolony
         /// </summary>
         public bool IsValidAfterLoad => thingDef != null && quantity > 0;
 
-        /// <summary>Item plus any constraint, e.g. "plasteel longsword (Excellent+)".</summary>
+        /// <summary>Item plus any constraint, e.g. "Longsword (plasteel, excellent+)".</summary>
         public string ItemLabel()
         {
             string label = thingDef?.LabelCap.ToString() ?? "<missing def>";
-            return minQuality.HasValue ? $"{label} ({minQuality.Value.GetLabel()}+)" : label;
+            if (stuffDef == null && !minQuality.HasValue)
+            {
+                return label;
+            }
+
+            List<string> parts = new List<string>();
+            if (stuffDef != null)
+            {
+                parts.Add(stuffDef.label);
+            }
+
+            if (minQuality.HasValue)
+            {
+                parts.Add(minQuality.Value.GetLabel() + "+");
+            }
+
+            return $"{label} ({string.Join(", ", parts.ToArray())})";
         }
+
+        /// <summary>
+        /// Whether this is a crated good — furniture, art, equipment. Used by the UI to warn
+        /// about caravan mass, since each one travels as its own crate.
+        /// </summary>
+        public bool IsCratedGood => thingDef != null && thingDef.category == ThingCategory.Building;
 
         public override string ToString()
         {

@@ -359,6 +359,77 @@ namespace Intercolony
                     sb.AppendLine($"  ({withConstraint} of {qualityCapable} quality-capable offers " +
                                   $"carried a minimum quality)");
 
+                    // --- §101 finished goods: crated buildings reach the market ---
+                    int cratedGoods = 0;
+                    int oversizedCratedLot = 0;
+                    int nonMinifiableBuilding = 0;
+                    int withStuff = 0;
+                    int stuffOnNonStuffable = 0;
+                    foreach (MarketOpportunity o in sampleSet)
+                    {
+                        if (o.thingDef.category == ThingCategory.Building)
+                        {
+                            cratedGoods++;
+                            if (o.quantity > 8)
+                            {
+                                oversizedCratedLot++;
+                            }
+
+                            // A non-minifiable building could never be delivered — the caravan
+                            // physically cannot carry it (docs/unique-goods-spike.md).
+                            if (!o.thingDef.Minifiable)
+                            {
+                                nonMinifiableBuilding++;
+                            }
+                        }
+
+                        if (o.stuffDef != null)
+                        {
+                            withStuff++;
+                            if (!o.thingDef.MadeFromStuff)
+                            {
+                                stuffOnNonStuffable++;
+                            }
+                        }
+                    }
+
+                    Check("furniture and equipment reach the market", cratedGoods > 0,
+                        $"0 of {sampleSet.Count} sampled offers were buildings");
+                    Check("no non-minifiable building is ever demanded", nonMinifiableBuilding == 0,
+                        $"{nonMinifiableBuilding} undeliverable offer(s)");
+                    Check("crated lots stay small", oversizedCratedLot == 0,
+                        $"{oversizedCratedLot} lot(s) over 8 crates");
+                    Check("some demands specify a material", withStuff > 0,
+                        "no offer in the sample required a material");
+                    Check("no material demand on a def that cannot use one", stuffOnNonStuffable == 0,
+                        $"{stuffOnNonStuffable} offer(s)");
+                    sb.AppendLine($"  ({cratedGoods} crated-good offers, {withStuff} with a required material)");
+
+                    // Material-aware valuation (§101): the same def in a costlier material must
+                    // be worth more, or "material-aware" is a label with nothing behind it.
+                    ThingDef stuffable = null;
+                    foreach (ThingDef def in tradable)
+                    {
+                        if (def.MadeFromStuff)
+                        {
+                            stuffable = def;
+                            break;
+                        }
+                    }
+
+                    if (stuffable != null)
+                    {
+                        float wood = IntercolonyPricing.BaseValue(stuffable, ThingDefOf.WoodLog);
+                        float plasteel = IntercolonyPricing.BaseValue(stuffable, ThingDefOf.Plasteel);
+                        float stuffless = IntercolonyPricing.BaseValue(stuffable, null);
+                        Check("material changes base value",
+                            !Mathf.Approximately(wood, plasteel),
+                            $"{stuffable.defName}: wood {wood:F1} vs plasteel {plasteel:F1}");
+                        Check("costlier material is worth more", plasteel > wood,
+                            $"wood {wood:F1}, plasteel {plasteel:F1}");
+                        Check("stuffless base value is still positive", stuffless > 0f);
+                    }
+
                     Check("no generated item is blacklisted", blacklisted == 0, $"{blacklisted} leaked");
                     Check("every generated item is a fungible trade item", untradable == 0, $"{untradable} bad");
                     Check("allocated IDs are unique", duplicateIds == 0, $"{duplicateIds} duplicates");

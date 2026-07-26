@@ -55,9 +55,29 @@ namespace Intercolony
             QualityCategory? minQuality,
             out List<PriceFactor> factors)
         {
+            return UnitPrice(def, null, quantity, profile, category, distanceTiles, minQuality, out factors);
+        }
+
+        /// <summary>
+        /// Material-aware overload (DESIGN.md §101 "material-aware valuation"). A plasteel
+        /// longsword and a wooden one are not the same product, and
+        /// <see cref="ThingDef.BaseMarketValue"/> ignores stuff entirely — it is
+        /// <c>GetStatValueAbstract(MarketValue)</c> with no material — so pricing off it
+        /// would quote the same silver for both.
+        /// </summary>
+        public static float UnitPrice(
+            ThingDef def,
+            ThingDef stuff,
+            int quantity,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float distanceTiles,
+            QualityCategory? minQuality,
+            out List<PriceFactor> factors)
+        {
             factors = new List<PriceFactor>();
 
-            float baseValue = def.BaseMarketValue;
+            float baseValue = BaseValue(def, stuff);
 
             // Local appetite for this category. Weights sit around 1.0, so this is already a
             // multiplier; clamped so an extreme roll cannot produce a silly price.
@@ -149,6 +169,25 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Market value including material, falling back to the stuffless base when the def
+        /// is not made from stuff or no material was specified.
+        /// </summary>
+        public static float BaseValue(ThingDef def, ThingDef stuff)
+        {
+            if (def == null)
+            {
+                return 0f;
+            }
+
+            if (stuff != null && def.MadeFromStuff)
+            {
+                return def.GetStatValueAbstract(StatDefOf.MarketValue, stuff);
+            }
+
+            return def.BaseMarketValue;
+        }
+
+        /// <summary>
         /// Settlements that care about craftsmanship pay a premium on goods where
         /// craftsmanship is a real property. Only applied when <see cref="CanHaveQuality"/>.
         /// </summary>
@@ -187,8 +226,22 @@ namespace Intercolony
         /// </summary>
         public static string Explain(ThingDef def, int quantity, float unitPrice, List<PriceFactor> factors)
         {
+            return Explain(def, null, quantity, unitPrice, factors);
+        }
+
+        /// <summary>
+        /// Material-aware breakdown. The base line must show the value actually used, or the
+        /// factors below it will not reconstruct the quoted price and the whole explanation
+        /// stops being trustworthy (§47).
+        /// </summary>
+        public static string Explain(
+            ThingDef def, ThingDef stuff, int quantity, float unitPrice, List<PriceFactor> factors)
+        {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine($"Base value                {def.BaseMarketValue,10:F2}");
+            string baseLabel = stuff != null && def.MadeFromStuff
+                ? $"Base value ({stuff.label})"
+                : "Base value";
+            sb.AppendLine($"{baseLabel,-25} {BaseValue(def, stuff),10:F2}");
             foreach (PriceFactor factor in factors)
             {
                 float percent = (factor.multiplier - 1f) * 100f;

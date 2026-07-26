@@ -76,6 +76,43 @@ namespace Intercolony
             Check("partial payment is floored, never rounded up",
                 firstHalf == Mathf.FloorToInt(1.37f * 50), firstHalf.ToString());
 
+            // Regression: an order advertised at 537 silver paid out 536, because the quoted
+            // total rounds while instalments floor. A completing delivery must settle the
+            // exact advertised total across a range of awkward prices.
+            int mismatches = 0;
+            string firstMismatch = null;
+            for (int q = 1; q <= 40; q++)
+            {
+                for (int cents = 1; cents < 100; cents += 7)
+                {
+                    SalesOrder probe = NewOrder(sample, q, q + cents / 100f);
+                    int instalments = 0;
+                    int deliveredSoFar = 0;
+
+                    // Deliver in thirds, then finish, mimicking real partial hand-overs.
+                    int chunk = Mathf.Max(1, q / 3);
+                    while (deliveredSoFar < q)
+                    {
+                        int take = Mathf.Min(chunk, q - deliveredSoFar);
+                        deliveredSoFar += take;
+                        probe.deliveredQuantity = deliveredSoFar;
+                        instalments += probe.RemainingQuantity <= 0
+                            ? probe.TotalPayment - instalments
+                            : probe.PaymentFor(take);
+                    }
+
+                    if (instalments != probe.TotalPayment)
+                    {
+                        mismatches++;
+                        firstMismatch = firstMismatch ??
+                            $"q={q} price={q + cents / 100f:F2}: paid {instalments} vs total {probe.TotalPayment}";
+                    }
+                }
+            }
+
+            Check("instalments always settle the advertised total", mismatches == 0,
+                $"{mismatches} mismatch(es), first: {firstMismatch}");
+
             // Remaining quantity must track deliveries and never go negative.
             partial.deliveredQuantity = 40;
             Check("remaining tracks deliveries", partial.RemainingQuantity == 60,

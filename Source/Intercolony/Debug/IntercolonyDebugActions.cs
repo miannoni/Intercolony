@@ -264,14 +264,38 @@ namespace Intercolony
                         continue;
                     }
 
+                    ThingDef def = order.ThingDef;
+
+                    // Goods must actually satisfy the line, or the helper produces stock that
+                    // cannot be delivered and the order system looks broken when it is not.
+                    // Passing no stuff for a MadeFromStuff def also makes RimWorld log a red
+                    // "madeFromStuff but stuff=null" error and pick a material for us.
+                    ThingDef stuff = null;
+                    if (def.MadeFromStuff)
+                    {
+                        stuff = order.line?.allowedStuff ?? GenStuff.DefaultStuffFor(def);
+                    }
+
                     int needed = order.RemainingQuantity;
                     IntVec3 cell = DropCellFinder.TradeDropSpot(map);
                     while (needed > 0)
                     {
-                        int stack = Mathf.Min(needed, order.ThingDef.stackLimit);
-                        Thing thing = ThingMaker.MakeThing(order.ThingDef);
+                        int stack = Mathf.Min(needed, Mathf.Max(1, def.stackLimit));
+                        Thing thing = ThingMaker.MakeThing(def, stuff);
                         thing.stackCount = stack;
-                        GenPlace.TryPlaceThing(thing, cell, map, ThingPlaceMode.Near);
+
+                        // Meet the quality floor, otherwise the delivery is correctly refused.
+                        if (order.line?.minQuality != null)
+                        {
+                            thing.TryGetComp<CompQuality>()?
+                                .SetQuality(order.line.minQuality.Value, ArtGenerationContext.Outsider);
+                        }
+
+                        // Crated goods have to arrive haulable. Spawning a building directly
+                        // would install it, forcing an uninstall before it could be caravanned.
+                        Thing toPlace = def.Minifiable ? thing.TryMakeMinified() : thing;
+
+                        GenPlace.TryPlaceThing(toPlace, cell, map, ThingPlaceMode.Near);
                         needed -= stack;
                         spawned += stack;
                     }

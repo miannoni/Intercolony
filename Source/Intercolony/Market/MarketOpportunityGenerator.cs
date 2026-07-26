@@ -97,11 +97,13 @@ namespace Intercolony
 
             ThingDef def = candidates[Rand.Range(0, candidates.Count)];
 
-            int quantity = PickQuantity(def, profile);
+            ThingDef stuff = PickStuff(def, profile);
+            int quantity = PickQuantity(def, stuff, profile);
             QualityCategory? minQuality = PickMinimumQuality(def, profile);
 
             float unitPrice = IntercolonyPricing.UnitPrice(
-                def, quantity, profile, category, distance, minQuality, out List<PriceFactor> factors);
+                def, stuff, quantity, profile, category, distance, minQuality,
+                out List<PriceFactor> factors);
 
             int deadlineDays = Rand.RangeInclusive(MinDeadlineDays, MaxDeadlineDays);
             int lifespanDays = Rand.RangeInclusive(3, 10);
@@ -119,6 +121,7 @@ namespace Intercolony
                 deadlineDays = deadlineDays,
                 distanceTiles = distance,
                 minQuality = minQuality,
+                stuffDef = stuff,
                 state = MarketOpportunityState.Available,
                 priceExplanation = IntercolonyPricing.Explain(def, quantity, unitPrice, factors)
             };
@@ -132,12 +135,10 @@ namespace Intercolony
         /// </summary>
         private static IntercolonyProductCategory PickCategory(SettlementEconomicProfile profile)
         {
-            IntercolonyProductCategory[] tradable =
-            {
-                IntercolonyProductCategory.Commodities,
-                IntercolonyProductCategory.IntermediateGoods,
-                IntercolonyProductCategory.ManufacturedGoods
-            };
+            // Phase 8 (§101): furniture, capital equipment and art are now normal market
+            // participants. Only minifiable buildings reach this point — the classifier
+            // filters the rest — so anything demanded here can physically be delivered.
+            IntercolonyProductCategory[] tradable = IntercolonyProductCategoryUtility.All;
 
             float total = 0f;
             foreach (IntercolonyProductCategory category in tradable)
@@ -200,14 +201,70 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// A required material, or null for "any" (DESIGN.md §101 material-aware valuation,
+        /// §11's "Preferred material: Marble" example).
+        ///
+        /// Most buyers do not care. When one does, the material is drawn from what the def can
+        /// actually be made of, so the demand is always fillable — asking for a plasteel chair
+        /// when the def forbids plasteel would be an offer nobody can take.
+        ///
+        /// Must be called inside a pushed Rand state.
+        /// </summary>
+        private static ThingDef PickStuff(ThingDef def, SettlementEconomicProfile profile)
+        {
+            if (def == null || !def.MadeFromStuff)
+            {
+                return null;
+            }
+
+            // Pickier settlements specify a material more often.
+            float chance = 0.15f + profile.qualityPreference * 0.35f;
+            if (Rand.Value > chance)
+            {
+                return null;
+            }
+
+            List<ThingDef> options = new List<ThingDef>();
+            foreach (ThingDef candidate in GenStuff.AllowedStuffsFor(def))
+            {
+                // Only materials the player could plausibly obtain and the buyer value.
+                if (candidate.BaseMarketValue > 0f)
+                {
+                    options.Add(candidate);
+                }
+            }
+
+            if (options.Count == 0)
+            {
+                return null;
+            }
+
+            return options[Rand.Range(0, options.Count)];
+        }
+
+        /// <summary>
         /// Quantity scaled so the lot is worth a plausible amount of silver rather than a
         /// fixed unit count — 1,200 corn and 1,200 components are wildly different asks (§11).
         /// </summary>
-        private static int PickQuantity(ThingDef def, SettlementEconomicProfile profile)
+        private static int PickQuantity(ThingDef def, ThingDef stuff, SettlementEconomicProfile profile)
         {
             float targetSilver = Rand.Range(400f, 3000f) * WealthScale(profile.wealthTier);
-            float unitValue = Mathf.Max(0.4f, def.BaseMarketValue);
+            float unitValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(def, stuff));
             int quantity = Mathf.RoundToInt(targetSilver / unitValue);
+
+            // Crated goods travel one per crate and carry real caravan mass, so a lot that is
+            // reasonable in silver can still be impossible to haul. Cap them hard
+            // (docs/unique-goods-spike.md: "keep unique-good lot sizes small").
+            if (def.category == ThingCategory.Building)
+            {
+                return Mathf.Clamp(quantity, 1, 8);
+            }
+
+            // Single-stack items — weapons, apparel — are bulky too, just less so.
+            if (def.stackLimit <= 1)
+            {
+                return Mathf.Clamp(quantity, 1, 15);
+            }
 
             // Keep lots in a sane band: never a token handful, never an unshippable mountain.
             quantity = Mathf.Clamp(quantity, 5, 5000);
