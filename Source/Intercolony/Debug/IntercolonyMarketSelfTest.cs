@@ -509,6 +509,86 @@ namespace Intercolony
             sb.AppendLine($"  (12 extra refreshes took live offers from {beforeRefreshes} to " +
                           $"{state.ActiveOpportunityCount}, ceiling {IntercolonyWorldComponent.MaxLiveOpportunities})");
 
+            // --- Currency is not merchandise (§76.6 guaranteed arbitrage) ---
+            // Selling silver for silver at a markup is a money printer. Checked at every
+            // entry point, because one uncovered path is enough to reopen it.
+            Check("silver is not a tradable good",
+                !IntercolonyProductClassifier.IsFungibleTradeItem(ThingDefOf.Silver));
+            Check("silver is not in the tradable def set",
+                !tradable.Contains(ThingDefOf.Silver));
+
+            int silverOffers = 0;
+            foreach (MarketOpportunity o in state.Opportunities)
+            {
+                if (o.thingDef == ThingDefOf.Silver)
+                {
+                    silverOffers++;
+                }
+            }
+
+            Check("no live offer asks for silver", silverOffers == 0, $"{silverOffers} found");
+            Check("find buyer will not sell silver",
+                FindBuyerService.FindBuyers(state, ThingDefOf.Silver, null, 500).Count == 0);
+
+            // --- Find Buyer (§12, §102) ---
+            if (tradable.Count > 0)
+            {
+                ThingDef probeDef = tradable[0];
+                List<BuyerOffer> offers = FindBuyerService.FindBuyers(state, probeDef, null, 500);
+                Check("find buyer returns candidates", offers.Count > 0,
+                    $"0 settlements evaluated for {probeDef.defName}");
+
+                int interested = 0;
+                int badPrice = 0;
+                int overAppetite = 0;
+                bool sortedByValue = true;
+                int previousTotal = int.MaxValue;
+                bool seenUninterested = false;
+                bool interestedAfterUninterested = false;
+
+                foreach (BuyerOffer offer in offers)
+                {
+                    if (offer.Interested)
+                    {
+                        interested++;
+                        if (offer.unitPrice <= 0f) badPrice++;
+                        if (offer.quantity > offer.maxQuantity) overAppetite++;
+                        if (offer.TotalPrice > previousTotal) sortedByValue = false;
+                        previousTotal = offer.TotalPrice;
+                        if (seenUninterested) interestedAfterUninterested = true;
+                    }
+                    else
+                    {
+                        seenUninterested = true;
+                        // §12 lists uninterested settlements, but they must say why.
+                        if (string.IsNullOrEmpty(offer.noInterestReason))
+                        {
+                            badPrice++;
+                        }
+                    }
+                }
+
+                Check("some settlement is interested", interested > 0,
+                    $"none of {offers.Count} would buy {probeDef.defName}");
+                Check("interested offers are priced", badPrice == 0, $"{badPrice} bad");
+                Check("offers never exceed the buyer's appetite", overAppetite == 0,
+                    $"{overAppetite} over");
+                Check("offers are ranked best-first", sortedByValue);
+                Check("uninterested settlements sort last", !interestedAfterUninterested);
+
+                // Saturation must bite here too, or Find Buyer becomes a way to dodge §13 by
+                // routing around the market.
+                List<BuyerOffer> small = FindBuyerService.FindBuyers(state, probeDef, null, 10);
+                if (small.Count > 0 && offers.Count > 0 && small[0].Interested && offers[0].Interested)
+                {
+                    Check("a small lot fetches a better unit price than a large one",
+                        small[0].unitPrice >= offers[0].unitPrice - 0.0001f,
+                        $"10 units {small[0].unitPrice:F3} vs 500 units {offers[0].unitPrice:F3}");
+                }
+
+                sb.AppendLine($"  (find buyer: {interested} of {offers.Count} settlements want {probeDef.label})");
+            }
+
             // --- Opportunity state machine (§73) ---
             MarketOpportunity probe = new MarketOpportunity
             {

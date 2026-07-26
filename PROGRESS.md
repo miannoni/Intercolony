@@ -346,6 +346,44 @@ Manual test:
 - Classified tradable defs rose 307 -> 407, confirming buildings actually entered the pool rather than the widening being a no-op.
 - The §101 acceptance criterion is met: a colony can intentionally operate as a furniture or art business, and did.
 
+---
+
+## Phase 9 — Find Buyer  (2026-07-25)
+
+Surplus-first commerce: "I already have a huge surplus. Who wants it?" (§12, §102).
+
+Implemented:
+- `Source/Intercolony/Market/FindBuyerService.cs` — evaluates every accessible settlement's latent appetite for a given good and returns ranked offers.
+  - **Deliberately does not search posted listings.** §12's worked example shows demand bands ("Demand: up to 2,000") and a "No current interest" row — that is latent appetite derived from settlement profiles, not a lookup of what happens to be advertised. A surplus of 3,842 rice rarely matches a posted order, so a listing search would answer a much less useful question and usually return nothing.
+  - Appetite is expressed in **units**, bounded by the buyer's wealth and category demand, then clamped by how the good travels — the same crated-goods reasoning as generation.
+  - Uninterested settlements are returned with a reason, because §12 lists them and "nobody nearby wants this" is a useful answer.
+  - Prices route through the same `IntercolonyPricing` path as the market, so §13 saturation still applies. Without that, Find Buyer would be a way to dodge saturation by routing around the market entirely.
+- `SalesOrderService.CreateFromOffer` — "create sale from result" (§102). A second entry point into the same binding commitment, so it re-runs the access checks rather than trusting the offer: a settlement evaluated seconds ago may since have turned hostile or been destroyed.
+- Find buyer tab: colony stock on the left, ranked buyers on the right, sortable columns, a sell-quantity slider with All/Half, and a Sell button with a confirmation that states the stock is **not reserved** (§16 has no reservation system, so anything the colony eats still has to be replaced before the deadline).
+- Stock counts only what is in storage. Loose items scattered across the map are not a surplus the player is choosing to sell.
+
+Not implemented:
+- No quality or material selection when offering stock; the search treats a def as fungible. Selling a specific masterwork item through Find Buyer is not possible.
+- No category-level search ("who wants any textile?"), only per-def.
+- No offer expiry — a Find Buyer quote is computed live and is not a standing commitment from the settlement.
+
+Known limitations:
+- Appetite and wealth budgets are first-pass guesses (§78).
+- The buyer search runs over every accessible settlement each time the selection or quantity changes. Fine at current scale; would need indexing if settlement counts grow much.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- A Find Buyer order was created, delivered and paid in real play.
+- The §102 acceptance criterion is met: a surplus can be turned into deliberate sales without browsing every settlement.
+
+Bugs and issues found and fixed during the phase, all reported from play:
+- **Severe frame-rate drop when the tab was open.** `FindBuyerService.ColonyStock` walks `map.listerThings.AllThings` and checks storage membership on each. I had throttled the buyer *search* but left the *stock scan* running on every GUI event — twice per frame — so a developed colony's entire thing list was scanned ~120 times a second. Stock is now scanned once on entering the tab and otherwise only on an explicit Refresh. A timed rebuild was rejected: it would make the stutter periodic rather than removing it, and nothing here needs tick accuracy.
+- **Buyer columns were not sortable**, unlike the market table. Added, with the same click-to-sort convention and per-column defaults. Uninterested settlements always sort last regardless of column or direction — they have no numbers to compare, and reversing a sort would otherwise bury every real offer.
+- **No way to sell part of a stockpile.** Added a quantity slider with All/Half. This is more than convenience: changing the quantity re-prices, because a smaller lot avoids §13 saturation and earns a better unit price, so splitting a surplus across buyers is a real decision.
+- **"Will take" showed the amount being offered rather than the buyer's total appetite**, which is the number that makes splitting a surplus possible. Now always shows appetite.
+- **Silver could be sold for silver.** Every transaction settles in silver, so this was a direct money printer — buy low, get paid more of the same commodity, repeat — exactly §76.6's "guaranteed arbitrage". Not only a Find Buyer problem: silver passed every tradability test, so the market could have generated silver purchase orders too. Excluded in `IntercolonyProductClassifier` as a **structural invariant rather than a §64 blacklist entry**: a blacklist entry can be removed by another mod's XML, and removing this one would silently reopen the exploit. Self-test now checks silver at every entry point — classifier, tradable set, live offers, Find Buyer — because one uncovered path is enough.
+- Added a sweep so opportunities for goods that are no longer tradable are withdrawn on refresh. Without it a save made before an exclusion would keep advertising the item forever, since nothing else revisits an already-generated listing's eligibility.
+
 Bugs found and fixed during the phase:
 - **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
 - **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.

@@ -100,6 +100,60 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Creates an order directly from a Find Buyer result (DESIGN.md §102 "create sale
+        /// from result"), with no market listing involved.
+        ///
+        /// This is a second entry point into the same binding commitment, so it repeats the
+        /// access checks rather than trusting the caller: an offer computed a few seconds ago
+        /// could reference a settlement that has since turned hostile or been destroyed.
+        /// </summary>
+        public static SalesOrder CreateFromOffer(
+            IntercolonyWorldComponent state, BuyerOffer offer, int quantity, int deadlineDays)
+        {
+            if (state == null || offer?.settlement == null || quantity <= 0)
+            {
+                return null;
+            }
+
+            if (!IntercolonyMarketAccess.IsAccessible(offer.settlement, out string reason))
+            {
+                IntercolonyLog.Warning($"Cannot sell to {offer.settlement.Label}: {reason}.");
+                Messages.Message($"{offer.settlement.Label} will not trade: {reason}.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return null;
+            }
+
+            SalesOrder order = new SalesOrder
+            {
+                id = state.NextId(),
+                opportunityId = 0,
+                settlementId = offer.settlement.ID,
+                settlementName = offer.settlement.Label ?? "unnamed",
+                factionName = offer.settlement.Faction?.Name ?? "",
+                line = new OrderLine(offer.def, quantity)
+                {
+                    allowedStuff = offer.stuff
+                },
+                unitPrice = offer.unitPrice,
+                acceptedTick = GenTicks.TicksGame,
+                deadlineTick = GenTicks.TicksGame + deadlineDays * GenDate.TicksPerDay,
+                status = SalesOrderStatus.Accepted
+            };
+
+            state.AddOrder(order);
+
+            IntercolonyLog.Message(
+                $"Created order {order.id} from Find Buyer: {quantity}x {offer.def.label} " +
+                $"for {order.settlementName}, {order.TotalPayment} silver, {deadlineDays}d.");
+            Messages.Message(
+                $"Order created: {quantity}x {offer.def.label} for {order.settlementName}. " +
+                $"Deliver within {deadlineDays} days.",
+                MessageTypeDefOf.PositiveEvent, historical: false);
+
+            return order;
+        }
+
+        /// <summary>
         /// Hands over whatever the caravan is carrying against this order and pays for it
         /// (§98 "physical delivery; validation; payment").
         ///

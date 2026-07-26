@@ -53,7 +53,8 @@ namespace Intercolony
         private enum Tab
         {
             Market,
-            Orders
+            Orders,
+            FindBuyer
         }
 
         private Tab tab = Tab.Market;
@@ -62,6 +63,39 @@ namespace Intercolony
 
         /// <summary>Category filter (§53, §101). Null means "all categories".</summary>
         private IntercolonyProductCategory? categoryFilter;
+
+        // --- Find Buyer (§12, §102) ---
+        private Vector2 stockScroll;
+        private Vector2 buyerScroll;
+        private ThingDef selectedStockDef;
+        private int selectedStockCount;
+
+        /// <summary>How much of the selected stock to offer. Drives saturation pricing (§13).</summary>
+        private int sellQuantity;
+
+        private List<BuyerOffer> findBuyerCache;
+
+        /// <summary>
+        /// Colony stock is cached and only rebuilt on demand.
+        ///
+        /// <see cref="FindBuyerService.ColonyStock"/> walks every Thing on the map. GUI code
+        /// runs at least twice per frame (layout and repaint), so calling it unconditionally
+        /// scanned a developed colony's entire thing list ~120 times a second and tanked the
+        /// frame rate. Nothing here needs to be live to the tick.
+        /// </summary>
+        private List<KeyValuePair<ThingDef, int>> stockCache;
+
+        private enum BuyerColumn
+        {
+            Buyer = 0,
+            MaxQuantity = 1,
+            UnitPrice = 2,
+            Total = 3,
+            Distance = 4
+        }
+
+        private BuyerColumn buyerSortColumn = BuyerColumn.Total;
+        private bool buyerSortDescending = true;
 
         /// <summary>Minimum total value filter (§53 "minimum value").</summary>
         private int minValueFilter;
@@ -81,6 +115,12 @@ namespace Intercolony
             if (tab == Tab.Orders)
             {
                 DrawOrders(body, state);
+                return;
+            }
+
+            if (tab == Tab.FindBuyer)
+            {
+                DrawFindBuyer(body, state);
                 return;
             }
 
@@ -105,6 +145,16 @@ namespace Intercolony
                     drawBackground: tab != Tab.Orders))
             {
                 tab = Tab.Orders;
+            }
+
+            Rect findRect = new Rect(ordersRect.xMax + 6f, 0f, ButtonWidth, ButtonHeight);
+            if (Widgets.ButtonText(findRect, "Find buyer", drawBackground: tab != Tab.FindBuyer))
+            {
+                tab = Tab.FindBuyer;
+
+                // Re-scan once on entry so the list is current without being live.
+                stockCache = null;
+                findBuyerCache = null;
             }
 
             return ButtonHeight + 8f;
@@ -609,6 +659,369 @@ namespace Intercolony
             }
 
             Widgets.EndScrollView();
+        }
+
+        /// <summary>
+        /// Find Buyer (DESIGN.md §12, §102): "I already have a huge surplus. Who wants it?"
+        /// Stock on the left, buyers for the selected good on the right.
+        /// </summary>
+        private void DrawFindBuyer(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, inRect.width, 34f), "Find a buyer");
+            y += 38f;
+            Text.Font = GameFont.Small;
+
+            Map map = Find.CurrentMap;
+            if (map == null)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(0f, y, inRect.width, 40f),
+                    "Open a colony map to search your stock.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            // Scanning the map is opt-in, never per-frame.
+            if (stockCache == null)
+            {
+                stockCache = FindBuyerService.ColonyStock(map);
+            }
+
+            // Sits to the right of the heading, not under it.
+            Rect refreshRect = new Rect(inRect.width - 124f, y - 36f, 110f, 26f);
+            if (Widgets.ButtonText(refreshRect, "Refresh"))
+            {
+                stockCache = FindBuyerService.ColonyStock(map);
+                findBuyerCache = null;
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
+            TooltipHandler.TipRegion(refreshRect,
+                "Re-scan storage. Stock is not tracked live — scanning every frame would cost " +
+                "real performance on a large colony.");
+
+            if (stockCache.Count == 0)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(0f, y, inRect.width, 60f),
+                    "Nothing tradeable in storage.\n" +
+                    "Stock counts only what is in a stockpile — loose items lying around are not a surplus.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            float listWidth = Mathf.Min(300f, inRect.width * 0.34f);
+            Rect stockRect = new Rect(0f, y, listWidth, inRect.yMax - y);
+            Rect offersRect = new Rect(listWidth + 12f, y, inRect.width - listWidth - 12f, inRect.yMax - y);
+
+            DrawStockList(stockRect, stockCache);
+            DrawBuyerOffers(offersRect, state);
+        }
+
+        private void DrawStockList(Rect rect, List<KeyValuePair<ThingDef, int>> stock)
+        {
+            Widgets.Label(new Rect(rect.x, rect.y, rect.width, 24f), "In storage");
+            Rect outRect = new Rect(rect.x, rect.y + 26f, rect.width, rect.height - 26f);
+            Rect viewRect = new Rect(0f, 0f, rect.width - 16f, stock.Count * 28f);
+
+            Widgets.BeginScrollView(outRect, ref stockScroll, viewRect);
+            float rowY = 0f;
+            foreach (KeyValuePair<ThingDef, int> entry in stock)
+            {
+                Rect row = new Rect(0f, rowY, viewRect.width, 28f);
+                if (selectedStockDef == entry.Key)
+                {
+                    Widgets.DrawHighlightSelected(row);
+                }
+
+                Widgets.DrawHighlightIfMouseover(row);
+                Widgets.Label(new Rect(row.x + 4f, row.y + 3f, row.width - 70f, 24f),
+                    entry.Key.LabelCap);
+                Widgets.Label(new Rect(row.xMax - 64f, row.y + 3f, 60f, 24f), entry.Value.ToString());
+
+                if (Widgets.ButtonInvisible(row))
+                {
+                    selectedStockDef = entry.Key;
+                    selectedStockCount = entry.Value;
+
+                    // Default to offering everything, which is the common case, but the
+                    // player can dial it back below.
+                    sellQuantity = entry.Value;
+                    findBuyerCache = null;
+                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+                }
+
+                rowY += 28f;
+            }
+
+            Widgets.EndScrollView();
+        }
+
+        private void DrawBuyerOffers(Rect rect, IntercolonyWorldComponent state)
+        {
+            if (selectedStockDef == null)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(rect.x, rect.y + 4f, rect.width, 40f),
+                    "Select something from your storage to see who wants it.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            float y = rect.y;
+
+            // Quantity to offer. Changing it re-prices, because a smaller lot avoids
+            // saturation and fetches a better unit price (§13) — that trade-off is the whole
+            // reason to let the player choose rather than always dumping the whole stockpile.
+            Widgets.Label(new Rect(rect.x, y, rect.width, 24f),
+                $"Sell {sellQuantity} of {selectedStockCount} {selectedStockDef.LabelCap}");
+            y += 26f;
+
+            sellQuantity = Mathf.Clamp(sellQuantity, 1, Mathf.Max(1, selectedStockCount));
+            Rect sliderRect = new Rect(rect.x, y + 4f, rect.width * 0.55f, 20f);
+            int newQuantity = Mathf.RoundToInt(Widgets.HorizontalSlider(
+                sliderRect, sellQuantity, 1f, Mathf.Max(1, selectedStockCount)));
+
+            Rect allRect = new Rect(sliderRect.xMax + 8f, y, 60f, 26f);
+            if (Widgets.ButtonText(allRect, "All"))
+            {
+                newQuantity = selectedStockCount;
+            }
+
+            Rect halfRect = new Rect(allRect.xMax + 4f, y, 60f, 26f);
+            if (Widgets.ButtonText(halfRect, "Half"))
+            {
+                newQuantity = Mathf.Max(1, selectedStockCount / 2);
+            }
+
+            if (newQuantity != sellQuantity)
+            {
+                sellQuantity = newQuantity;
+                findBuyerCache = null;
+            }
+
+            y += 32f;
+
+            // Searching walks every accessible settlement and prices each one. Cached, and
+            // invalidated only when the selection or quantity changes (§84).
+            if (findBuyerCache == null)
+            {
+                findBuyerCache = FindBuyerService.FindBuyers(
+                    state, selectedStockDef, null, sellQuantity);
+                SortBuyers(findBuyerCache);
+            }
+
+            DrawBuyerHeader(new Rect(rect.x, y, rect.width - 16f, 24f));
+            y += 24f;
+            Widgets.DrawLineHorizontal(rect.x, y, rect.width);
+            y += 2f;
+
+            Rect outRect = new Rect(rect.x, y, rect.width, rect.yMax - y);
+            Rect viewRect = new Rect(0f, 0f, rect.width - 16f, findBuyerCache.Count * 34f);
+
+            Widgets.BeginScrollView(outRect, ref buyerScroll, viewRect);
+            float rowY = 0f;
+            for (int i = 0; i < findBuyerCache.Count; i++)
+            {
+                DrawBuyerRow(new Rect(0f, rowY, viewRect.width, 34f), findBuyerCache[i], i, state);
+                rowY += 34f;
+            }
+
+            Widgets.EndScrollView();
+        }
+
+        private static readonly float[] BuyerColumnWidths = { 0.28f, 0.16f, 0.14f, 0.16f, 0.12f, 0.14f };
+
+        private static readonly string[] BuyerColumnLabels =
+            { "Buyer", "Will take", "Unit", "Total", "Dist", "" };
+
+        /// <summary>Sortable headers, matching the Market tab's convention.</summary>
+        private void DrawBuyerHeader(Rect rect)
+        {
+            float x = rect.x;
+            for (int i = 0; i < BuyerColumnLabels.Length; i++)
+            {
+                float w = rect.width * BuyerColumnWidths[i];
+                Rect cell = new Rect(x, rect.y, w - 4f, rect.height);
+
+                // Last column holds the Sell button and has nothing to sort on.
+                if (i >= BuyerColumnLabels.Length - 1)
+                {
+                    x += w;
+                    continue;
+                }
+
+                bool active = (int)buyerSortColumn == i;
+                Widgets.DrawHighlightIfMouseover(cell);
+                GUI.color = active ? Color.white : new Color(1f, 1f, 1f, 0.6f);
+                Widgets.Label(cell, BuyerColumnLabels[i] + (active ? (buyerSortDescending ? " v" : " ^") : ""));
+                GUI.color = Color.white;
+
+                if (Widgets.ButtonInvisible(cell))
+                {
+                    if (active)
+                    {
+                        buyerSortDescending = !buyerSortDescending;
+                    }
+                    else
+                    {
+                        buyerSortColumn = (BuyerColumn)i;
+                        // Money and quantity read best biggest-first; names A-Z; distance nearest-first.
+                        buyerSortDescending = i != (int)BuyerColumn.Buyer && i != (int)BuyerColumn.Distance;
+                    }
+
+                    SortBuyers(findBuyerCache);
+                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+                }
+
+                x += w;
+            }
+        }
+
+        private void SortBuyers(List<BuyerOffer> offers)
+        {
+            if (offers == null)
+            {
+                return;
+            }
+
+            Comparison<BuyerOffer> comparison;
+            switch (buyerSortColumn)
+            {
+                case BuyerColumn.Buyer:
+                    comparison = (a, b) => string.Compare(
+                        a.settlement?.Label ?? "", b.settlement?.Label ?? "",
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case BuyerColumn.MaxQuantity:
+                    comparison = (a, b) => a.maxQuantity.CompareTo(b.maxQuantity);
+                    break;
+                case BuyerColumn.UnitPrice:
+                    comparison = (a, b) => a.unitPrice.CompareTo(b.unitPrice);
+                    break;
+                case BuyerColumn.Distance:
+                    comparison = (a, b) => SortableOfferDistance(a).CompareTo(SortableOfferDistance(b));
+                    break;
+                default:
+                    comparison = (a, b) => a.TotalPrice.CompareTo(b.TotalPrice);
+                    break;
+            }
+
+            offers.Sort((a, b) =>
+            {
+                // Uninterested settlements have no numbers to compare and always sort last,
+                // whatever the column — otherwise reversing a sort buries every real offer.
+                if (a.Interested != b.Interested)
+                {
+                    return a.Interested ? -1 : 1;
+                }
+
+                if (!a.Interested)
+                {
+                    return string.Compare(a.settlement?.Label ?? "", b.settlement?.Label ?? "",
+                        StringComparison.CurrentCultureIgnoreCase);
+                }
+
+                int result = comparison(a, b);
+                if (result != 0)
+                {
+                    return buyerSortDescending ? -result : result;
+                }
+
+                return (a.settlement?.ID ?? 0).CompareTo(b.settlement?.ID ?? 0);
+            });
+        }
+
+        private static float SortableOfferDistance(BuyerOffer offer)
+        {
+            return offer.distanceTiles < 0f ? float.MaxValue : offer.distanceTiles;
+        }
+
+        private void DrawBuyerRow(Rect rect, BuyerOffer offer, int index, IntercolonyWorldComponent state)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            Widgets.Label(new Rect(rect.x + 4f, rect.y + 6f, rect.width * 0.28f, 24f),
+                offer.settlement?.Label ?? "?");
+
+            if (!offer.Interested)
+            {
+                // §12 shows uninterested settlements explicitly — "nobody nearby wants this"
+                // is a useful answer, and hiding it looks like a broken search.
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(rect.x + rect.width * 0.30f, rect.y + 6f, rect.width * 0.5f, 24f),
+                    offer.noInterestReason);
+                GUI.color = Color.white;
+                return;
+            }
+
+            // Columns must line up with DrawBuyerHeader or sorting looks arbitrary.
+            float x = rect.x + rect.width * BuyerColumnWidths[0];
+            // Total appetite, not the amount currently offered: the useful question is "how
+            // much would this settlement absorb before losing interest", which is what lets
+            // the player split a surplus across several buyers.
+            Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[1] - 4f, 24f),
+                offer.maxQuantity.ToString());
+            x += rect.width * BuyerColumnWidths[1];
+
+            Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[2] - 4f, 24f),
+                $"{offer.unitPrice:F2}");
+            x += rect.width * BuyerColumnWidths[2];
+
+            Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[3] - 4f, 24f),
+                offer.TotalPrice.ToString());
+            x += rect.width * BuyerColumnWidths[3];
+
+            Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[4] - 4f, 24f),
+                offer.distanceTiles < 0f ? "?" : $"{offer.distanceTiles:F0} t");
+
+            TooltipHandler.TipRegion(rect,
+                $"{offer.settlement?.Label} would take up to {offer.maxQuantity} " +
+                $"{selectedStockDef?.label}.\n" +
+                $"Selling {offer.quantity} at {offer.unitPrice:F2} each = {offer.TotalPrice} silver.\n\n" +
+                IntercolonyPricing.Explain(offer.def, offer.stuff, offer.quantity, offer.unitPrice, offer.factors));
+
+            Rect sellRect = new Rect(rect.xMax - 84f, rect.y + 4f, 78f, 26f);
+            if (Widgets.ButtonText(sellRect, "Sell"))
+            {
+                ConfirmSell(state, offer);
+            }
+        }
+
+        private void ConfirmSell(IntercolonyWorldComponent state, BuyerOffer offer)
+        {
+            const int DeadlineDays = 12;
+
+            string body =
+                $"Commit to delivering {offer.quantity}x {offer.def.LabelCap} to " +
+                $"{offer.settlement?.Label} within {DeadlineDays} days.\n\n" +
+                $"Payment: {offer.TotalPrice} silver ({offer.unitPrice:F2} each)\n" +
+                $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
+                "This is a binding order. Your stock is not reserved — anything the colony " +
+                "consumes in the meantime still has to be replaced before the deadline.";
+
+            Find.WindowStack.Add(new Dialog_MessageBox(
+                body,
+                "Create order",
+                () =>
+                {
+                    if (SalesOrderService.CreateFromOffer(state, offer, offer.quantity, DeadlineDays) != null)
+                    {
+                        tab = Tab.Orders;
+                        findBuyerCache = null;
+                    }
+                },
+                "Cancel",
+                null,
+                "Sell to this buyer?"));
         }
 
         private const float OrderRowHeight = 56f;

@@ -136,6 +136,20 @@ namespace Intercolony
                 return false;
             }
 
+            // Never trade the payment currency. Every Intercolony transaction settles in
+            // silver, so a silver-for-silver sale is a direct money printer: buy low, get paid
+            // more of the same commodity, repeat. That is exactly the "guaranteed arbitrage"
+            // §76.6 warns about, and there is no legitimate version of it without a lending
+            // system that Intercolony deliberately does not have.
+            //
+            // This is a structural invariant, not a taste call, so it is enforced here rather
+            // than in the §64 blacklist — a blacklist entry can be removed by another mod's
+            // XML, and removing this one would re-open the exploit.
+            if (def == ThingDefOf.Silver)
+            {
+                return false;
+            }
+
             if (!def.tradeability.PlayerCanSell())
             {
                 return false;

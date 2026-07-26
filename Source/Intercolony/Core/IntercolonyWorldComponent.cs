@@ -525,7 +525,15 @@ namespace Intercolony
             int dropped = 0;
             for (int i = opportunities.Count - 1; i >= 0; i--)
             {
-                if (!IntercolonyMarketAccess.IsStillValid(opportunities[i]))
+                MarketOpportunity opportunity = opportunities[i];
+
+                // Also drop offers for goods that are no longer tradable at all. A save made
+                // before an item was excluded — silver, or anything newly blacklisted — would
+                // otherwise keep advertising it forever, since nothing else revisits the
+                // eligibility of an already-generated listing.
+                bool stillSellable = IntercolonyProductClassifier.IsFungibleTradeItem(opportunity.thingDef);
+
+                if (!stillSellable || !IntercolonyMarketAccess.IsStillValid(opportunity))
                 {
                     opportunities.RemoveAt(i);
                     dropped++;
