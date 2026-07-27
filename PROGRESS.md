@@ -546,6 +546,45 @@ Manual test:
 Design change during the phase:
 - Reputation was first built per faction and re-keyed to per settlement at Matteo's request. His instinct matched §8 better than my reading of §27's UI mock-up did — the mock-up's faction heading is a presentation detail, while §8 is a structural statement about who the economic actor is.
 
+---
+
+## Phase 14 — Recurring contracts  (2026-07-26)
+
+Standing supply agreements: a fixed quantity every quadrum for a fixed term.
+
+Implemented:
+- `Source/Intercolony/Contracts/RecurringContract.cs` — the §29/§30 entity with an `Offered -> Active -> Completed | Breached | Cancelled | Declined` lifecycle (§73). Deliberately the simple version §30 prescribes: **fixed quantity, fixed cadence, fixed duration, fixed price formula**. Category selectors, quantity ranges and negotiated terms are listed there as later work.
+- `Source/Intercolony/Contracts/ContractService.cs` — offers, cycle advancement, breach, completion and cancellation. Owns every status transition.
+- **Gated on commercial reputation** (62+), which makes §28's "access to recurring contracts" concrete and gives Phase 13 somewhere to lead. A settlement will not stake a year of supply on someone with no record.
+- **Priced ~15% above spot.** Without a premium there is no reason to accept one, and §29's stated objective — "a future demand commitment causes the player to expand capacity" — never happens. The buyer is purchasing certainty; the player gives up the freedom to sell elsewhere.
+- Each cycle raises a **real sales order** with the full cadence as its deadline, so contract deliveries flow through the existing delivery, validation, payment and reputation machinery rather than a parallel system. `SalesOrder.contractId` links them.
+- **Breach after two consecutive misses** (§30 grace period), with a successful delivery clearing the strike. Breach costs -20 reputation; completing a full agreement gains +8; withdrawing costs -10.
+- Contracts tab: offers first, then live agreements, then history. The acceptance dialog states the obligation as **units per day of sustained output**, since that is the number that tells the player whether they can hold the pace.
+- Save schema 12 -> 13, purely additive.
+
+Not implemented:
+- **Renewal** (§107 lists it). A completed agreement simply ends; nothing offers to continue it.
+- No category-based contracts — §107's "category Y" wording is deferred in favour of §30's "start simple" exact-product version.
+- No quantity ranges (§29's example shows 800-1,200 per quadrum), quality or material requirements on contracts, or negotiated price rules.
+- No buyer-pickup contracts; every cycle is seller delivery.
+- No partial-cycle credit: a delivery either meets the full quantity by the deadline or counts as missed.
+
+Known limitations:
+- Offer chance, premium, cycle count and breach threshold are first-pass guesses (§78).
+- Contract quantities can be large (a real offer in testing was 1,850 units per quadrum). That is intentional — §29 wants commitments that force capacity expansion — but it is unbalanced.
+- Only one live agreement or proposal per settlement.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- Contract self-test: **17 passed, 0 failed**. Covers the state machine, a 3-cycle contract raising one order per cycle and completing, breach at exactly the threshold, a single miss *not* ending the agreement, and a later delivery clearing the strike.
+- Real offer built through the shipped path: **1,850x caribou meat @ 3.23 vs spot 2.81, 5,977 silver per cycle** — the premium and the scale are both visible rather than merely asserted.
+- **§107's acceptance criterion met**: a 4-cycle contract was planted, saved, reloaded from the main menu and verified — `Active, 1/4 delivered, 100x Steel @ 2.19`, terms and progress intact.
+- The schema 9 -> 13 migration chain ran on a real save, walking all four steps.
+
+Issues found and fixed during the phase:
+- **The self-test produced a false failure.** It asserted "a contract pays more per unit than spot" against a contract *it had constructed itself* at `BaseValue x 1.15`, ignoring demand, wealth, saturation, distance and logistics — so it was checking its own arithmetic against an object the shipped code never produces. Fixed by extracting `ContractService.BuildOffer` and testing the real path. This is the inverse of the vacuous passes seen earlier in the project: a test wrong in the other direction, and just as misleading.
+- **"Offer contract (force)" could not force anything.** It routed through `OfferContracts`, which rolls a 12% chance against a *fixed* seed, so for a given settlement and refresh it would deterministically fail forever no matter how many times it was clicked — the log's "try again" advice was impossible to act on. It now builds the offer directly.
+
 Bugs found and fixed during the phase:
 - **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
 - **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.

@@ -82,7 +82,8 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 13 complete (2026-07-26). Next: Phase 14 — Recurring contracts (DESIGN.md §107).
+**Phase:** 14 complete (2026-07-26). Next: Phase 15 — Labor control feasibility prototype
+(DESIGN.md §108). **Read §33 first — it mandates a technical spike before any labor code.**
 
 `docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
 Read it before touching anything that moves an individual object.
@@ -106,6 +107,10 @@ do not let them quietly expire.
   works and the matcher honours it, but nothing produces a demand that uses it, so
   used/damaged-goods trading does not exist in practice. Low priority; raise it if a phase
   touches order generation again.
+
+- **Recurring contracts never renew.** §107 lists renewal in its build list; a completed
+  agreement currently just ends. Raise when a phase next touches contracts — the natural
+  moment is whenever reputation or contract terms get extended.
 
 ---
 

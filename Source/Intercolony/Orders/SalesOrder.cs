@@ -59,6 +59,12 @@ namespace Intercolony
         /// <summary>The opportunity this came from, for traceability.</summary>
         public int opportunityId;
 
+        /// <summary>
+        /// Recurring contract this delivery belongs to, or 0 for a one-off. Lets the Orders
+        /// tab show that a deadline is a contract obligation rather than a spot sale.
+        /// </summary>
+        public int contractId;
+
         public int settlementId;
         public string settlementName = "";
         public string factionName = "";
@@ -137,6 +143,7 @@ namespace Intercolony
         {
             Scribe_Values.Look(ref id, "id", 0);
             Scribe_Values.Look(ref opportunityId, "opportunityId", 0);
+            Scribe_Values.Look(ref contractId, "contractId", 0);
             Scribe_Values.Look(ref settlementId, "settlementId", -1);
             Scribe_Values.Look(ref settlementName, "settlementName", "");
             Scribe_Values.Look(ref factionName, "factionName", "");

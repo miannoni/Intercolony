@@ -364,6 +364,86 @@ namespace Intercolony
             });
         }
 
+        [DebugAction(Category, "Run contract self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 58)]
+        private static void RunContractSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyContractSelfTest.Run(state)));
+        }
+
+        [DebugAction(Category, "Plant contract probe", allowedGameStates = AllowedGameStates.Playing, displayPriority = 54)]
+        private static void PlantContractProbe()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyContractSelfTest.PlantSaveLoadProbe(state)));
+        }
+
+        [DebugAction(Category, "Verify contract probe", allowedGameStates = AllowedGameStates.Playing, displayPriority = 53)]
+        private static void VerifyContractProbe()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyContractSelfTest.VerifySaveLoadProbe(state)));
+        }
+
+        /// <summary>Forces a settlement to propose an agreement, bypassing the reputation gate.</summary>
+        [DebugAction(Category, "Offer contract (force)", allowedGameStates = AllowedGameStates.Playing, displayPriority = 52)]
+        private static void ForceOfferContract()
+        {
+            WithState(state =>
+            {
+                foreach (Settlement settlement in Find.WorldObjects.Settlements)
+                {
+                    if (!IntercolonyMarketAccess.IsAccessible(settlement) ||
+                        state.HasContractWith(settlement.ID))
+                    {
+                        continue;
+                    }
+
+                    CommercialReputation rep = state.GetOrCreateReputation(settlement);
+                    rep.Adjust(ContractService.MinimumReputation + 5f - rep.Score);
+
+                    // "Force" should force. Going through OfferContracts left it to a 12%
+                    // roll on a fixed seed, so the action could never succeed for that
+                    // settlement no matter how many times it was clicked.
+                    SettlementEconomicProfile profile = state.GetProfile(settlement);
+                    RecurringContract offer = ContractService.BuildOffer(
+                        state, settlement, profile, Rand.Int);
+
+                    if (offer != null)
+                    {
+                        state.AddContract(offer);
+                        Report($"{settlement.Label} offered an agreement: " +
+                               $"{offer.quantityPerCycle}x {offer.thingDef.label} x{offer.totalCycles}.");
+                    }
+                    else
+                    {
+                        IntercolonyLog.Warning("Could not build an offer.");
+                    }
+
+                    return;
+                }
+
+                IntercolonyLog.Warning("No eligible settlement without an existing agreement.");
+            });
+        }
+
+        [DebugAction(Category, "Dump contracts", allowedGameStates = AllowedGameStates.Playing, displayPriority = 81)]
+        private static void DumpContracts()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Recurring contracts ({state.Contracts.Count})");
+                foreach (RecurringContract contract in state.Contracts)
+                {
+                    sb.AppendLine($"  {contract}");
+                    if (!string.IsNullOrEmpty(contract.outcomeNote))
+                    {
+                        sb.AppendLine($"    {contract.outcomeNote}");
+                    }
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
         [DebugAction(Category, "Run reputation self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 57)]
         private static void RunReputationSelfTest()
         {

@@ -56,6 +56,7 @@ namespace Intercolony
             Orders,
             FindBuyer,
             Procurement,
+            Contracts,
             Relations
         }
 
@@ -132,6 +133,12 @@ namespace Intercolony
                 return;
             }
 
+            if (tab == Tab.Contracts)
+            {
+                DrawContracts(body, state);
+                return;
+            }
+
             if (tab == Tab.Relations)
             {
                 DrawRelations(body, state);
@@ -171,7 +178,16 @@ namespace Intercolony
                 findBuyerCache = null;
             }
 
-            Rect relationsRect = new Rect(findRect.xMax + 6f + ButtonWidth + 6f, 0f, ButtonWidth, ButtonHeight);
+            Rect contractsRect = new Rect(findRect.xMax + 6f + ButtonWidth + 6f, 0f, ButtonWidth, ButtonHeight);
+            int liveContracts = state.ActiveContractCount;
+            if (Widgets.ButtonText(contractsRect,
+                    liveContracts > 0 ? $"Contracts ({liveContracts})" : "Contracts",
+                    drawBackground: tab != Tab.Contracts))
+            {
+                tab = Tab.Contracts;
+            }
+
+            Rect relationsRect = new Rect(contractsRect.xMax + 6f, 0f, ButtonWidth, ButtonHeight);
             if (Widgets.ButtonText(relationsRect, "Relations", drawBackground: tab != Tab.Relations))
             {
                 tab = Tab.Relations;
@@ -1214,6 +1230,173 @@ namespace Intercolony
             }
 
             return y + 8f;
+        }
+
+        private Vector2 contractsScroll;
+
+        /// <summary>
+        /// Recurring contracts (DESIGN.md §29, §107). Offers first, then live agreements, then
+        /// history — a proposal on the table is the only thing here needing a decision.
+        /// </summary>
+        private void DrawContracts(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, inRect.width, 34f), "Supply agreements");
+            y += 38f;
+            Text.Font = GameFont.Small;
+
+            List<RecurringContract> contracts = new List<RecurringContract>(state.Contracts);
+            if (contracts.Count == 0)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(0f, y, inRect.width, 80f),
+                    "No supply agreements.\n\n" +
+                    "Settlements that trust you may offer standing agreements — a fixed quantity " +
+                    "every quadrum for a fixed term, at better than spot prices. Build a trading " +
+                    "record first: a settlement will not stake a year of supply on a stranger.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            contracts.Sort((a, b) =>
+            {
+                int rank = ContractRank(a).CompareTo(ContractRank(b));
+                return rank != 0 ? rank : b.id.CompareTo(a.id);
+            });
+
+            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contracts.Count * 74f);
+
+            Widgets.BeginScrollView(outRect, ref contractsScroll, viewRect);
+            float rowY = 0f;
+            for (int i = 0; i < contracts.Count; i++)
+            {
+                DrawContractRow(new Rect(0f, rowY, viewRect.width, 74f), contracts[i], i, state);
+                rowY += 74f;
+            }
+
+            Widgets.EndScrollView();
+        }
+
+        private static int ContractRank(RecurringContract contract)
+        {
+            if (contract.IsOffer) return 0;
+            if (contract.IsActive) return 1;
+            return 2;
+        }
+
+        private void DrawContractRow(
+            Rect rect, RecurringContract contract, int index, IntercolonyWorldComponent state)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width - 220f, 22f),
+                $"#{contract.id}  {contract.settlementName} — {contract.quantityPerCycle}x " +
+                $"{contract.ItemLabel()} every {contract.CadenceDays:F0}d");
+
+            GUI.color = new Color(1f, 1f, 1f, 0.7f);
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 26f, rect.width - 220f, 22f),
+                $"{contract.totalCycles} deliveries   {contract.CycleValue} silver each   " +
+                $"{contract.TotalValue} total");
+            GUI.color = Color.white;
+
+            string status;
+            Color colour = Color.white;
+            if (contract.IsOffer)
+            {
+                status = $"offer expires in {contract.DaysUntilOfferExpires:F1}d";
+                colour = new Color(0.6f, 0.9f, 1f);
+            }
+            else if (contract.IsActive)
+            {
+                status = contract.activeOrderId != 0
+                    ? $"delivery {contract.cyclesCompleted + contract.cyclesFailed + 1} in progress"
+                    : $"next delivery in {contract.DaysUntilNextCycle:F1}d";
+                if (contract.consecutiveFailures > 0)
+                {
+                    status += "  — one more miss ends it";
+                    colour = Color.yellow;
+                }
+            }
+            else
+            {
+                status = $"{contract.status}: {contract.outcomeNote}";
+                colour = contract.status == ContractStatus.Completed
+                    ? new Color(0.6f, 0.9f, 0.6f)
+                    : new Color(0.9f, 0.6f, 0.6f);
+            }
+
+            GUI.color = colour;
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 48f, rect.width - 220f, 22f),
+                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — {status}");
+            GUI.color = Color.white;
+
+            TooltipHandler.TipRegion(rect,
+                $"{contract.settlementName} ({contract.factionName})\n\n" +
+                $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
+                $"{contract.CadenceDays:F0} days, {contract.totalCycles} times.\n" +
+                $"{contract.unitPrice:F2} silver each — above spot, because they are buying certainty.\n\n" +
+                "Each cycle raises a delivery order with the full cadence as its deadline. " +
+                $"Missing {RecurringContract.BreachThreshold} deliveries in a row ends the " +
+                "agreement and badly damages your standing.");
+
+            if (contract.IsOffer)
+            {
+                Rect acceptRect = new Rect(rect.xMax - 200f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(acceptRect, "Accept"))
+                {
+                    ConfirmContract(state, contract);
+                }
+
+                Rect declineRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(declineRect, "Decline"))
+                {
+                    contract.TryDecline();
+                }
+            }
+            else if (contract.IsActive)
+            {
+                Rect cancelRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(cancelRect, "Withdraw"))
+                {
+                    Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                        $"Withdraw from the agreement with {contract.settlementName}?\n\n" +
+                        "They will think considerably less of you as a supplier.",
+                        () => ContractService.CancelContract(state, contract),
+                        destructive: true));
+                }
+            }
+        }
+
+        private void ConfirmContract(IntercolonyWorldComponent state, RecurringContract contract)
+        {
+            // §29's objective is that a commitment drives production planning, so the
+            // confirmation states the ongoing obligation in those terms rather than just a price.
+            string body =
+                $"{contract.settlementName} wants {contract.quantityPerCycle}x " +
+                $"{contract.ItemLabel()} every {contract.CadenceDays:F0} days, " +
+                $"{contract.totalCycles} times.\n\n" +
+                $"Payment: {contract.CycleValue} silver per delivery, {contract.TotalValue} in total\n" +
+                $"Rate: {contract.unitPrice:F2} each — better than spot, because they are buying certainty\n\n" +
+                $"That is roughly {contract.quantityPerCycle / Mathf.Max(1f, contract.CadenceDays):F1} " +
+                "units per day of sustained output. Make sure you can hold that pace: missing " +
+                $"{RecurringContract.BreachThreshold} deliveries in a row ends the agreement and " +
+                "badly damages your standing with them.";
+
+            Find.WindowStack.Add(new Dialog_MessageBox(
+                body,
+                "Accept agreement",
+                () => ContractService.AcceptOffer(state, contract),
+                "Decline",
+                () => contract.TryDecline(),
+                "Standing supply agreement"));
         }
 
         private Vector2 relationsScroll;

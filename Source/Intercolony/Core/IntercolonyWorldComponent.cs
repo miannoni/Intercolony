@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 12;
+        public const int CurrentSaveVersion = 13;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -153,6 +153,51 @@ namespace Intercolony
                 settlement.ID, settlement.Label ?? "unnamed", factionName);
             reputations[settlement.ID] = created;
             return created;
+        }
+
+        /// <summary>Recurring supply agreements and their proposals (DESIGN.md §29, §61).</summary>
+        private List<RecurringContract> contracts = new List<RecurringContract>();
+
+        public List<RecurringContract> Contracts => contracts;
+
+        public void AddContract(RecurringContract contract)
+        {
+            if (contract != null)
+            {
+                contracts.Add(contract);
+            }
+        }
+
+        /// <summary>Whether a settlement already has a live proposal or agreement.</summary>
+        public bool HasContractWith(int settlementId)
+        {
+            foreach (RecurringContract contract in contracts)
+            {
+                if (contract.settlementId == settlementId &&
+                    (contract.IsOffer || contract.IsActive))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public int ActiveContractCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (RecurringContract contract in contracts)
+                {
+                    if (contract.IsOffer || contract.IsActive)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
         }
 
         /// <summary>Paid purchase orders awaiting delivery or collection (§7.6, §61).</summary>
@@ -485,6 +530,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
+            Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -568,6 +614,24 @@ namespace Intercolony
                     reputations = new Dictionary<int, CommercialReputation>();
                 }
 
+                if (contracts == null)
+                {
+                    contracts = new List<RecurringContract>();
+                }
+                else
+                {
+                    int nullContracts = contracts.RemoveAll(c => c == null);
+                    int brokenContracts = contracts.RemoveAll(c => !c.IsValidAfterLoad);
+                    if (nullContracts > 0 || brokenContracts > 0)
+                    {
+                        // A live agreement is a multi-quadrum commitment; losing one silently
+                        // would strand the production the player built around it (§62).
+                        IntercolonyLog.Error(
+                            $"Dropped {nullContracts} null and {brokenContracts} unresolvable contract(s) " +
+                            "while loading.");
+                    }
+                }
+
                 if (nextId < 1)
                 {
                     IntercolonyLog.Warning($"Loaded nextId={nextId}; clamping to 1 to keep IDs positive.");
@@ -643,6 +707,8 @@ namespace Intercolony
             int withdrawn = DropInaccessibleOpportunities();
             int created = GenerateOpportunities();
             RfqService.ExpireStale(requests);
+            ContractService.AdvanceContracts(this);
+            ContractService.OfferContracts(this);
             PurchaseOrderService.AdvanceOrders(purchaseOrders);
 
             IntercolonyLog.Verbose(
@@ -978,6 +1044,12 @@ namespace Intercolony
                     "  schema 11 -> 12: reputation is now per settlement; any faction-level records were discarded.");
             }
 
+            if (saveVersion < 13)
+            {
+                // 12 -> 13 added recurring contracts. Purely additive.
+                IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -1003,6 +1075,14 @@ namespace Intercolony
                 if (order.id > highest)
                 {
                     highest = order.id;
+                }
+            }
+
+            foreach (RecurringContract contract in contracts)
+            {
+                if (contract.id > highest)
+                {
+                    highest = contract.id;
                 }
             }
 

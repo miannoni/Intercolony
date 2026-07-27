@@ -1,0 +1,187 @@
+using RimWorld;
+using UnityEngine;
+using Verse;
+
+namespace Intercolony
+{
+    /// <summary>
+    /// Contract lifecycle (DESIGN.md §29, §30, §73).
+    ///
+    /// <c>Offered</c> is a proposal the player has not answered; everything else is a live
+    /// agreement or its ending. Breach is distinct from cancellation because §30 lists breach
+    /// conditions separately, and the two should not cost the same.
+    /// </summary>
+    public enum ContractStatus
+    {
+        Offered,
+        Active,
+        Completed,
+        Breached,
+        Cancelled,
+
+        /// <summary>Proposal lapsed unanswered.</summary>
+        Declined
+    }
+
+    /// <summary>
+    /// A standing supply agreement (DESIGN.md §29, §107).
+    ///
+    /// §29's design objective is strategic rather than transactional: "A future demand
+    /// commitment causes the player to expand capacity." So the point of this entity is that
+    /// it is *known in advance* — the player can see that 900 units are due every quadrum for
+    /// a year and build a farm around it.
+    ///
+    /// Deliberately the simple version §30 prescribes: fixed quantity, fixed cadence, fixed
+    /// duration, fixed price formula. Category selectors, quantity ranges and negotiated price
+    /// rules are all listed in §30 as later additions.
+    /// </summary>
+    public class RecurringContract : IExposable
+    {
+        public int id;
+
+        public int settlementId;
+        public string settlementName = "";
+        public string factionName = "";
+
+        public ThingDef thingDef;
+        public ThingDef stuffDef;
+        public QualityCategory? minQuality;
+
+        /// <summary>Units due each cycle. Fixed, per §30's "start simple".</summary>
+        public int quantityPerCycle;
+
+        /// <summary>Cycle length in ticks. One quadrum by default (§107).</summary>
+        public int cadenceTicks = GenDate.TicksPerQuadrum;
+
+        public int totalCycles;
+        public int cyclesCompleted;
+        public int cyclesFailed;
+
+        /// <summary>Agreed rate, locked for the contract's life — that is what makes it plannable.</summary>
+        public float unitPrice;
+
+        public ContractStatus status = ContractStatus.Offered;
+
+        /// <summary>Tick the next delivery window opens.</summary>
+        public int nextCycleTick;
+
+        /// <summary>Tick this proposal stops being available.</summary>
+        public int offerExpiryTick;
+
+        /// <summary>Id of the sales order for the cycle currently in flight, or 0.</summary>
+        public int activeOrderId;
+
+        public string outcomeNote = "";
+
+        /// <summary>
+        /// Consecutive-failure tolerance before the agreement collapses (§30 grace period).
+        /// One missed quadrum is a bad month; two in a row is not a supplier.
+        /// </summary>
+        public const int BreachThreshold = 2;
+
+        public int consecutiveFailures;
+
+        public RecurringContract()
+        {
+        }
+
+        public bool IsOffer => status == ContractStatus.Offered;
+
+        public bool IsActive => status == ContractStatus.Active;
+
+        public int CyclesRemaining => Mathf.Max(0, totalCycles - cyclesCompleted - cyclesFailed);
+
+        public int TotalValue => Mathf.RoundToInt(unitPrice * quantityPerCycle * totalCycles);
+
+        public int CycleValue => Mathf.RoundToInt(unitPrice * quantityPerCycle);
+
+        public float DaysUntilNextCycle => (nextCycleTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
+
+        public float DaysUntilOfferExpires => (offerExpiryTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
+
+        public float CadenceDays => cadenceTicks / (float)GenDate.TicksPerDay;
+
+        public string ItemLabel()
+        {
+            string label = thingDef?.LabelCap.ToString() ?? "<missing def>";
+            System.Collections.Generic.List<string> parts = new System.Collections.Generic.List<string>();
+            if (stuffDef != null)
+            {
+                parts.Add(stuffDef.label);
+            }
+
+            if (minQuality.HasValue)
+            {
+                parts.Add(minQuality.Value.GetLabel() + "+");
+            }
+
+            return parts.Count == 0 ? label : $"{label} ({string.Join(", ", parts.ToArray())})";
+        }
+
+        /// <summary>Player accepts the proposal. The only path from Offered to Active.</summary>
+        public bool TryAccept()
+        {
+            if (status != ContractStatus.Offered)
+            {
+                IntercolonyLog.Warning($"Contract {id} is {status}; cannot accept.");
+                return false;
+            }
+
+            status = ContractStatus.Active;
+
+            // The first delivery is due one full cycle out, so the player has the agreed
+            // cadence to produce it rather than being immediately behind.
+            nextCycleTick = GenTicks.TicksGame + cadenceTicks;
+            return true;
+        }
+
+        public bool TryDecline()
+        {
+            if (status != ContractStatus.Offered)
+            {
+                return false;
+            }
+
+            status = ContractStatus.Declined;
+            return true;
+        }
+
+        public void ExposeData()
+        {
+            Scribe_Values.Look(ref id, "id", 0);
+            Scribe_Values.Look(ref settlementId, "settlementId", -1);
+            Scribe_Values.Look(ref settlementName, "settlementName", "");
+            Scribe_Values.Look(ref factionName, "factionName", "");
+            Scribe_Defs.Look(ref thingDef, "thingDef");
+            Scribe_Defs.Look(ref stuffDef, "stuffDef");
+            Scribe_Values.Look(ref minQuality, "minQuality");
+            Scribe_Values.Look(ref quantityPerCycle, "quantityPerCycle", 0);
+            Scribe_Values.Look(ref cadenceTicks, "cadenceTicks", GenDate.TicksPerQuadrum);
+            Scribe_Values.Look(ref totalCycles, "totalCycles", 0);
+            Scribe_Values.Look(ref cyclesCompleted, "cyclesCompleted", 0);
+            Scribe_Values.Look(ref cyclesFailed, "cyclesFailed", 0);
+            Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
+            Scribe_Values.Look(ref status, "status", ContractStatus.Offered);
+            Scribe_Values.Look(ref nextCycleTick, "nextCycleTick", 0);
+            Scribe_Values.Look(ref offerExpiryTick, "offerExpiryTick", 0);
+            Scribe_Values.Look(ref activeOrderId, "activeOrderId", 0);
+            Scribe_Values.Look(ref consecutiveFailures, "consecutiveFailures", 0);
+            Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
+
+            if (Scribe.mode == LoadSaveMode.PostLoadInit)
+            {
+                if (settlementName == null) settlementName = "";
+                if (factionName == null) factionName = "";
+                if (outcomeNote == null) outcomeNote = "";
+            }
+        }
+
+        public bool IsValidAfterLoad => thingDef != null && quantityPerCycle > 0 && totalCycles > 0;
+
+        public override string ToString()
+        {
+            return $"#{id} {settlementName}: {quantityPerCycle}x {ItemLabel()} every " +
+                   $"{CadenceDays:F0}d, {cyclesCompleted}/{totalCycles} done [{status}]";
+        }
+    }
+}
