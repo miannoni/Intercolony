@@ -82,8 +82,12 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 14 complete (2026-07-26). Next: Phase 15 — Labor control feasibility prototype
-(DESIGN.md §108). **Read §33 first — it mandates a technical spike before any labor code.**
+**Phase:** 15 complete (2026-07-26). Next: Phase 16 — Basic temporary labor (DESIGN.md §109).
+
+Phase 15's deliverable is `docs/LABOR_TECHNICAL_NOTES.md`. **Read it before writing any
+labor code** — it records the chosen control strategy and two things that must be handled
+by the implementation: `kindDef` is not restored automatically, and faction transfer
+inflates storyteller population adaptation.
 
 `docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
 Read it before touching anything that moves an individual object.

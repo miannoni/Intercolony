@@ -364,6 +364,16 @@ namespace Intercolony
             });
         }
 
+        /// <summary>
+        /// §33's mandatory labor spike. Generates a foreign pawn, transfers it to the player
+        /// faction, probes what works, restores it, and destroys the probe.
+        /// </summary>
+        [DebugAction(Category, "Run labor control spike", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 51)]
+        private static void RunLaborSpike()
+        {
+            IntercolonyLog.Message(IntercolonyLaborSpike.Run(Find.CurrentMap));
+        }
+
         [DebugAction(Category, "Run contract self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 58)]
         private static void RunContractSelfTest()
         {

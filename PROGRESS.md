@@ -585,6 +585,44 @@ Issues found and fixed during the phase:
 - **The self-test produced a false failure.** It asserted "a contract pays more per unit than spot" against a contract *it had constructed itself* at `BaseValue x 1.15`, ignoring demand, wealth, saturation, distance and logistics — so it was checking its own arithmetic against an object the shipped code never produces. Fixed by extracting `ContractService.BuildOffer` and testing the real path. This is the inverse of the vacuous passes seen earlier in the project: a test wrong in the other direction, and just as misleading.
 - **"Offer contract (force)" could not force anything.** It routed through `OfferContracts`, which rolls a 12% chance against a *fixed* seed, so for a given settlement and refresh it would deterministically fail forever no matter how many times it was clicked — the log's "try again" advice was impossible to act on. It now builds the offer directly.
 
+---
+
+## Phase 15 — Labor control feasibility prototype  (2026-07-26)
+
+A mandatory spike (§33's own title). Deliverable is `docs/LABOR_TECHNICAL_NOTES.md`; no labor economy was built, per §33's closing instruction: "Do not build the full labor economy until the control model is proven."
+
+Implemented:
+- `Source/Intercolony/Debug/IntercolonyLaborSpike.cs` — generates a foreign pawn, snapshots its state, transfers it into the player faction, probes §33's questions, restores it, reports residue, and destroys the probe so nothing is left in the player's world.
+- `docs/LABOR_TECHNICAL_NOTES.md` — **the deliverable**: chosen strategy, hooks required, known incompatibilities, restoration behaviour and unresolved risks, as §108 specifies.
+
+Findings (full reasoning in the note):
+- **Strategy A (temporary transfer into the player faction) chosen on evidence**, per §34's "choose based on experiments, not aesthetics". A foreign pawn has no `drafter`, `outfits`, `drugs`, `timetable`, `foodRestriction` or `playerSettings` — those are created only when the faction is the player's — and `Pawn.IsColonist` hard-requires it. Strategy B would mean Harmony-patching `IsColonist`, a property the whole game reads constantly, plus hand-building six trackers. Rejected as a permanent compatibility liability.
+- **No Harmony patches are needed for control.** Once the faction is the player's, the vanilla systems simply work. That was the main open question and the answer is a clean yes.
+- All ten programmatically checkable §33 control questions passed: selectable, work priorities settable and readable, workbench and bed eligibility, food policy, area assignment, drafting, combat records, caravan eligibility and return.
+- **Ideoligion survives** both transfers intact.
+- **One concrete restoration defect: `kindDef` is not restored.** `SetFaction` calls `ChangeKind(newFaction.def.basicMemberKind)` for humanlikes joining the player, and only *player* faction defs define `basicMemberKind` — so the rewrite is one-way. The probe subject went `Mercenary_Gunner -> Colonist` and stayed there. Any implementation must capture and reapply it; nothing errors if it is forgotten, the pawn is simply wrong forever.
+- **Storyteller population adaptation is the sharpest unresolved risk.** `SetFaction` notifies `watcherPopAdaptation` of a `GainedColonist` and records a population increase, which feeds raid scaling, and nothing observed reverses it on departure. A labor system could make raids progressively harder per worker hired in a way no player would attribute to the mod. Found by reading the source, not by measurement — flagged as the first thing to test before shipping labor.
+
+Not implemented:
+- No employment contracts, payroll, hiring UI, worker pool or employer reputation. All of it waits on §33's instruction.
+- No fix for the kindDef defect or the population-adaptation effect; both are recorded as requirements for the implementation phase rather than patched in a spike.
+
+Known limitations — recorded as UNRESOLVED in the note rather than guessed at:
+- Death, incapacitation and capture of an employee are untested.
+- Save/load mid-employment is untested.
+- Source faction turning hostile mid-contract is untested (§88 needs a deliberate policy).
+- Social relations formed *during* employment are untested: the probe pawn had zero relations, so "unchanged 0 -> 0" is weak evidence.
+- No pawn-control mod was loaded, so §33 q18 (mod assumptions) is unproven.
+- The spike measures a single instant; whether an employee actually hauls, cooks and sleeps over days needs long-form observation.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- Spike run in game against a `Mercenary_Gunner` of a non-hostile outlander faction. Full transcript in the phase's log; verdict was "residue detected" naming the kindDef specifically, which is the correct outcome — the probe was built to catch exactly that.
+- §108's acceptance question can be answered: yes, outside employees can behave like useful workers without corrupting faction or pawn state, provided `kindDef` is restored explicitly and the population-adaptation effect is resolved.
+
+Bug found and fixed during the phase:
+- The spike's first run selected employers by `faction.def.basicMemberKind != null` and found none, because **only player faction defs define that field** — the filter excluded every faction in the game. Fixed to use `Faction.RandomPawnKind()`. The same asymmetry turned out to be the root of the kindDef restoration defect, so the bug and the finding share a cause.
+
 Bugs found and fixed during the phase:
 - **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
 - **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.
