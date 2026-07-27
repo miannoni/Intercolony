@@ -82,7 +82,7 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 11 complete (2026-07-26). Next: Phase 12 — Logistics expansion (DESIGN.md §105).
+**Phase:** 12 complete (2026-07-26). Next: Phase 13 — Commercial reputation (DESIGN.md §106).
 
 `docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
 Read it before touching anything that moves an individual object.

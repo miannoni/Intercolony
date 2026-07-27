@@ -20,7 +20,28 @@ namespace Intercolony
         Accepted,
         Completed,
         Failed,
-        Cancelled
+        Cancelled,
+
+        /// <summary>
+        /// Buyer-pickup only: the player has declared the goods ready and the buyer's caravan
+        /// is on its way (§25.2). Distinct from Accepted because the player can no longer
+        /// quietly consume the stock — someone is coming for it.
+        /// </summary>
+        AwaitingCollection
+    }
+
+    /// <summary>
+    /// Who moves the goods (DESIGN.md §25). The two modes are a genuine trade-off rather
+    /// than flavour: seller delivery pays more but costs caravan time, travel and risk;
+    /// buyer pickup pays less but costs nothing but patience.
+    /// </summary>
+    public enum FulfillmentMode
+    {
+        /// <summary>§25.1 — the player hauls the goods to the buyer.</summary>
+        SellerDelivery,
+
+        /// <summary>§25.2 — the buyer sends a caravan once the player declares the goods ready.</summary>
+        BuyerPickup
     }
 
     /// <summary>
@@ -57,6 +78,12 @@ namespace Intercolony
 
         public SalesOrderStatus status = SalesOrderStatus.Accepted;
 
+        /// <summary>How the goods move (§25). Fixed at acceptance; the price already reflects it.</summary>
+        public FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery;
+
+        /// <summary>Buyer-pickup only: tick the buyer's caravan arrives. -1 until goods are declared ready.</summary>
+        public int buyerArrivalTick = -1;
+
         /// <summary>How much has actually been handed over. Partial deliveries accumulate.</summary>
         public int deliveredQuantity;
 
@@ -79,7 +106,17 @@ namespace Intercolony
 
         public int RemainingQuantity => Mathf.Max(0, Quantity - deliveredQuantity);
 
-        public bool IsOpen => status == SalesOrderStatus.Accepted;
+        public bool IsOpen => status == SalesOrderStatus.Accepted ||
+                              status == SalesOrderStatus.AwaitingCollection;
+
+        /// <summary>Buyer pickup where the player has not yet declared the goods ready.</summary>
+        public bool CanMarkReady => status == SalesOrderStatus.Accepted &&
+                                    fulfillment == FulfillmentMode.BuyerPickup;
+
+        public bool BuyerEnRoute => status == SalesOrderStatus.AwaitingCollection;
+
+        public float DaysUntilBuyerArrives =>
+            buyerArrivalTick < 0 ? -1f : (buyerArrivalTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
         public int TicksRemaining => deadlineTick - GenTicks.TicksGame;
 
@@ -117,6 +154,8 @@ namespace Intercolony
             Scribe_Values.Look(ref acceptedTick, "acceptedTick", 0);
             Scribe_Values.Look(ref deadlineTick, "deadlineTick", 0);
             Scribe_Values.Look(ref status, "status", SalesOrderStatus.Accepted);
+            Scribe_Values.Look(ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
+            Scribe_Values.Look(ref buyerArrivalTick, "buyerArrivalTick", -1);
             Scribe_Values.Look(ref deliveredQuantity, "deliveredQuantity", 0);
             Scribe_Values.Look(ref paidSilver, "paidSilver", 0);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");

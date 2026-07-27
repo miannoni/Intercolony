@@ -430,6 +430,36 @@ namespace Intercolony
                         Check("stuffless base value is still positive", stuffless > 0f);
                     }
 
+                    // --- §105: both fulfilment modes occur and differ in money ---
+                    int pickupOffers = 0;
+                    int deliveryOffers = 0;
+                    foreach (MarketOpportunity o in sampleSet)
+                    {
+                        if (o.fulfillment == FulfillmentMode.BuyerPickup)
+                        {
+                            pickupOffers++;
+                        }
+                        else
+                        {
+                            deliveryOffers++;
+                        }
+                    }
+
+                    Check("buyer-pickup offers occur", pickupOffers > 0,
+                        $"0 of {sampleSet.Count} offers were buyer-pickup");
+                    Check("seller-delivery offers occur", deliveryOffers > 0,
+                        $"0 of {sampleSet.Count} offers were seller-delivery");
+
+                    // §105's acceptance criterion is a *real trade-off*, so the modes must not
+                    // price identically — otherwise they are the same offer with two labels.
+                    float pickupFactor = IntercolonyPricing.LogisticsFactor(FulfillmentMode.BuyerPickup).multiplier;
+                    float deliverFactor = IntercolonyPricing.LogisticsFactor(FulfillmentMode.SellerDelivery).multiplier;
+                    Check("delivering pays more than being collected from",
+                        deliverFactor > pickupFactor,
+                        $"deliver {deliverFactor:F2} vs pickup {pickupFactor:F2}");
+                    sb.AppendLine($"  ({pickupOffers} buyer-pickup, {deliveryOffers} seller-delivery; " +
+                                  $"x{deliverFactor:F2} vs x{pickupFactor:F2})");
+
                     Check("no generated item is blacklisted", blacklisted == 0, $"{blacklisted} leaked");
                     Check("every generated item is a fungible trade item", untradable == 0, $"{untradable} bad");
                     Check("allocated IDs are unique", duplicateIds == 0, $"{duplicateIds} duplicates");

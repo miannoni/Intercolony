@@ -57,6 +57,12 @@ namespace Intercolony
         /// <summary>Required material, or null for any (§101 material-aware valuation).</summary>
         public ThingDef stuffDef;
 
+        /// <summary>
+        /// Who moves the goods (§25). Advertised before acceptance because it changes both the
+        /// price and what the player has to do — it is half the decision.
+        /// </summary>
+        public FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery;
+
         public int createdTick;
         public int expiryTick;
 
@@ -143,6 +149,7 @@ namespace Intercolony
             Scribe_Values.Look(ref distanceTiles, "distanceTiles", -1f);
             Scribe_Values.Look(ref minQuality, "minQuality");
             Scribe_Defs.Look(ref stuffDef, "stuffDef");
+            Scribe_Values.Look(ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(ref state, "state", MarketOpportunityState.Available);
             Scribe_Values.Look(ref priceExplanation, "priceExplanation", "");
 

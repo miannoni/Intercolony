@@ -21,10 +21,24 @@ namespace Intercolony
         /// </summary>
         public static SalesOrder Accept(IntercolonyWorldComponent state, MarketOpportunity opportunity)
         {
+            return Accept(state, opportunity, opportunity?.quantity ?? 0);
+        }
+
+        /// <summary>
+        /// Accepts part of an offer. The player may commit to less than the buyer asked for —
+        /// supplying 50 of 200 is a legitimate deal — but never more, since the advertised
+        /// unit price was computed for the full lot and saturation (§13) makes a smaller lot
+        /// worth more per unit, not less.
+        /// </summary>
+        public static SalesOrder Accept(
+            IntercolonyWorldComponent state, MarketOpportunity opportunity, int quantity)
+        {
             if (state == null || opportunity == null)
             {
                 return null;
             }
+
+            quantity = Mathf.Clamp(quantity, 1, opportunity.quantity);
 
             if (!opportunity.IsAvailable)
             {
@@ -64,15 +78,19 @@ namespace Intercolony
                 settlementId = opportunity.settlementId,
                 settlementName = opportunity.settlementName,
                 factionName = settlement.Faction?.Name ?? "",
-                line = new OrderLine(opportunity.thingDef, opportunity.quantity)
+                line = new OrderLine(opportunity.thingDef, quantity)
                 {
                     // Constraints advertised in the market must carry into the binding order,
                     // or the player could be held to terms different from the ones shown.
                     minQuality = opportunity.minQuality,
                     allowedStuff = opportunity.stuffDef
                 },
-                unitPrice = opportunity.unitPrice,
+                // Re-priced for the quantity actually accepted, so the order matches what the
+                // confirmation showed. A smaller lot earns a better rate (§13).
+                unitPrice = IntercolonyPricing.RepriceForQuantity(
+                    opportunity, state.GetProfile(settlement), quantity, out _),
                 acceptedTick = GenTicks.TicksGame,
+                fulfillment = opportunity.fulfillment,
 
                 // The deadline starts counting at acceptance, which is what the market tab
                 // advertised as "Nd after accepting" (§17).
@@ -86,7 +104,8 @@ namespace Intercolony
             state.RemoveOpportunity(opportunity);
 
             IntercolonyLog.Message(
-                $"Accepted order {order.id}: {order.Quantity}x {order.ThingDef.label} for " +
+                $"Accepted order {order.id}: {order.Quantity} of {opportunity.quantity}x " +
+                $"{order.ThingDef.label} for " +
                 $"{order.settlementName}, {order.TotalPayment} silver, " +
                 $"{opportunity.deadlineDays}d to deliver.");
 
@@ -223,6 +242,141 @@ namespace Intercolony
                 $"Order complete: {order.settlementName} paid {order.paidSilver} silver.",
                 MessageTypeDefOf.PositiveEvent,
                 historical: true);
+        }
+
+        /// <summary>
+        /// Declares a buyer-pickup order ready, dispatching the buyer's caravan (§25.2).
+        ///
+        /// The player must actually have the goods. Letting them announce readiness on an
+        /// empty stockpile would just move the failure to the arrival, which §17 warns
+        /// against — a player should not discover a problem at the deadline.
+        /// </summary>
+        public static bool MarkReadyForPickup(SalesOrder order, Map map)
+        {
+            if (order == null || !order.CanMarkReady)
+            {
+                return false;
+            }
+
+            int available = OrderValidator.CountMatchingInColony(order, map);
+            if (available < order.RemainingQuantity)
+            {
+                Messages.Message(
+                    $"Only {available} of {order.RemainingQuantity} {order.line.thingDef.label} " +
+                    "in storage that meet the requirements.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return false;
+            }
+
+            float distance = 20f;
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(order.settlementId);
+            if (settlement != null)
+            {
+                distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+            }
+
+            int travelDays = Mathf.Clamp(Mathf.RoundToInt(distance < 0f ? 3f : distance / 14f), 1, 20);
+            order.status = SalesOrderStatus.AwaitingCollection;
+            order.buyerArrivalTick = GenTicks.TicksGame + travelDays * GenDate.TicksPerDay;
+
+            IntercolonyLog.Message(
+                $"Order {order.id}: goods declared ready; {order.settlementName} arriving in {travelDays}d.");
+
+            // §25.2's worked example is exactly this letter.
+            Find.LetterStack.ReceiveLetter(
+                "Order ready",
+                $"{order.settlementName} will arrive in approximately {travelDays} days to collect " +
+                $"order #{order.id}: {order.RemainingQuantity}x {order.line.ShortLabel()}.\n\n" +
+                "Keep the goods in storage until they arrive.",
+                LetterDefOf.PositiveEvent);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Handles buyers arriving to collect (§25.2). Called on the coarse and hourly ticks.
+        /// </summary>
+        public static void ProcessBuyerCollections(List<SalesOrder> orders)
+        {
+            int now = GenTicks.TicksGame;
+            Map map = Find.AnyPlayerHomeMap;
+
+            foreach (SalesOrder order in orders)
+            {
+                if (!order.BuyerEnRoute || order.buyerArrivalTick < 0 || now < order.buyerArrivalTick)
+                {
+                    continue;
+                }
+
+                if (map == null)
+                {
+                    continue;
+                }
+
+                int owed = order.RemainingQuantity;
+                int taken = OrderValidator.TakeFromColony(order, map, owed);
+
+                if (taken <= 0)
+                {
+                    // The goods were promised and are gone. That is a failed order, not a
+                    // silent no-op — the buyer travelled for nothing.
+                    Fail(order, "The buyer arrived and the goods were not there.");
+                    continue;
+                }
+
+                int payment = taken >= owed
+                    ? order.TotalPayment - order.paidSilver
+                    : order.PaymentFor(taken);
+
+                order.deliveredQuantity += taken;
+                order.paidSilver += Mathf.Max(0, payment);
+                GiveSilverToColony(map, Mathf.Max(0, payment));
+
+                if (order.RemainingQuantity <= 0)
+                {
+                    order.status = SalesOrderStatus.Completed;
+                    order.outcomeNote =
+                        $"Collected by the buyer. {order.deliveredQuantity} units for {order.paidSilver} silver.";
+                    IntercolonyLog.Message($"Order {order.id} completed by buyer pickup. {order.outcomeNote}");
+                    Find.LetterStack.ReceiveLetter(
+                        "Order collected",
+                        $"{order.settlementName} collected {taken}x {order.line.ShortLabel()} " +
+                        $"and paid {payment} silver.",
+                        LetterDefOf.PositiveEvent);
+                }
+                else
+                {
+                    // Short on arrival: they take what is there, pay for it, and the rest
+                    // still stands. Better than voiding the whole order over a shortfall.
+                    order.status = SalesOrderStatus.Accepted;
+                    order.buyerArrivalTick = -1;
+                    Find.LetterStack.ReceiveLetter(
+                        "Partial collection",
+                        $"{order.settlementName} collected only {taken} of {owed} units and paid " +
+                        $"{payment} silver. Declare the remainder ready when you have it.",
+                        LetterDefOf.NeutralEvent);
+                }
+            }
+        }
+
+        /// <summary>Drops payment at the colony's trade spot, where a buyer's caravan would leave it.</summary>
+        private static void GiveSilverToColony(Map map, int amount)
+        {
+            if (map == null || amount <= 0)
+            {
+                return;
+            }
+
+            IntVec3 cell = DropCellFinder.TradeDropSpot(map);
+            int remaining = amount;
+            while (remaining > 0)
+            {
+                int stack = Mathf.Min(remaining, ThingDefOf.Silver.stackLimit);
+                Thing silver = ThingMaker.MakeThing(ThingDefOf.Silver);
+                silver.stackCount = stack;
+                GenPlace.TryPlaceThing(silver, cell, map, ThingPlaceMode.Near);
+                remaining -= stack;
+            }
         }
 
         /// <summary>Marks an order failed. The only path to <see cref="SalesOrderStatus.Failed"/>.</summary>

@@ -101,9 +101,22 @@ namespace Intercolony
             int quantity = PickQuantity(def, stuff, profile);
             QualityCategory? minQuality = PickMinimumQuality(def, profile);
 
+            // Buyers closer to the player are likelier to fetch goods themselves; a buyer on
+            // the far side of the planet expects delivery.
+            float pickupChance = distance < 0f ? 0.35f : Mathf.Lerp(0.55f, 0.15f, Mathf.Clamp01(distance / 120f));
+            FulfillmentMode fulfillment = Rand.Value < pickupChance
+                ? FulfillmentMode.BuyerPickup
+                : FulfillmentMode.SellerDelivery;
+
             float unitPrice = IntercolonyPricing.UnitPrice(
                 def, stuff, quantity, profile, category, distance, minQuality,
                 out List<PriceFactor> factors);
+
+            // §105 logistics pricing modifier: the mode has to change the money, or the two
+            // modes are the same offer with different wording.
+            PriceFactor logistics = IntercolonyPricing.LogisticsFactor(fulfillment);
+            factors.Add(logistics);
+            unitPrice *= logistics.multiplier;
 
             int deadlineDays = Rand.RangeInclusive(MinDeadlineDays, MaxDeadlineDays);
             int lifespanDays = Rand.RangeInclusive(3, 10);
@@ -122,8 +135,9 @@ namespace Intercolony
                 distanceTiles = distance,
                 minQuality = minQuality,
                 stuffDef = stuff,
+                fulfillment = fulfillment,
                 state = MarketOpportunityState.Available,
-                priceExplanation = IntercolonyPricing.Explain(def, quantity, unitPrice, factors)
+                priceExplanation = IntercolonyPricing.Explain(def, stuff, quantity, unitPrice, factors)
             };
         }
 

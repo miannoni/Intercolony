@@ -127,6 +127,74 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Re-prices an existing offer for a different lot size.
+        ///
+        /// A buyer's rate is not flat: §13 saturation means the first units are worth more to
+        /// them, so committing to 50 of a 200-unit offer earns a *better* unit price than the
+        /// advertised one. Freezing the rate would have shown the player an unchanging
+        /// "2.50 each" while the slider moved, which is both wrong and confusing.
+        ///
+        /// Scaling down is always safe: the total still falls, because quantity drops faster
+        /// than the unit rate rises. That is why the confirmation slider only ever reduces.
+        /// </summary>
+        public static float RepriceForQuantity(
+            MarketOpportunity opportunity,
+            SettlementEconomicProfile profile,
+            int quantity,
+            out List<PriceFactor> factors)
+        {
+            factors = new List<PriceFactor>();
+            if (opportunity?.thingDef == null)
+            {
+                return 0f;
+            }
+
+            // No profile — settlement gone or unreachable — means no basis to re-price, so
+            // fall back to the advertised rate rather than inventing one.
+            if (profile == null)
+            {
+                return opportunity.unitPrice;
+            }
+
+            IntercolonyProductCategory category =
+                IntercolonyProductClassifier.Classify(opportunity.thingDef)
+                ?? IntercolonyProductCategory.Commodities;
+
+            float price = UnitPrice(
+                opportunity.thingDef,
+                opportunity.stuffDef,
+                Mathf.Max(1, quantity),
+                profile,
+                category,
+                opportunity.distanceTiles,
+                opportunity.minQuality,
+                out factors);
+
+            PriceFactor logistics = LogisticsFactor(opportunity.fulfillment);
+            factors.Add(logistics);
+            return price * logistics.multiplier;
+        }
+
+        /// <summary>
+        /// Logistics pricing modifier (DESIGN.md §105, §25.1/§25.2).
+        ///
+        /// The whole point of offering two modes is that they differ in more than wording.
+        /// Seller delivery pays a premium because the player absorbs the caravan time, travel
+        /// and risk; buyer pickup pays less because the counterparty does. Applied as a named
+        /// factor so the §47 breakdown shows the player exactly what the convenience costs.
+        /// </summary>
+        public static PriceFactor LogisticsFactor(FulfillmentMode mode)
+        {
+            switch (mode)
+            {
+                case FulfillmentMode.BuyerPickup:
+                    return new PriceFactor("Buyer collects", 0.85f);
+                default:
+                    return new PriceFactor("You deliver", 1.12f);
+            }
+        }
+
+        /// <summary>
         /// Marginal demand decay (DESIGN.md §13). Prevents one nearby settlement from becoming
         /// an infinite premium sink: the more you ship in a single lot, the worse the unit price.
         /// Continuous rather than tiered, so there is no cliff to game.

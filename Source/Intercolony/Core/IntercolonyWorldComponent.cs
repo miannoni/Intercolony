@@ -24,7 +24,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 9;
+        public const int CurrentSaveVersion = 10;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -556,6 +556,13 @@ namespace Intercolony
                 {
                     PurchaseOrderService.AdvanceOrders(purchaseOrders);
                 }
+
+                // Buyers arriving to collect (§25.2). Hourly so the letter lands near the
+                // moment it describes.
+                if (orders.Count > 0)
+                {
+                    SalesOrderService.ProcessBuyerCollections(orders);
+                }
             }
         }
 
@@ -892,6 +899,14 @@ namespace Intercolony
             {
                 // 8 -> 9 added purchase orders. Purely additive.
                 IntercolonyLog.Message("  schema 8 -> 9: purchase orders added.");
+            }
+
+            if (saveVersion < 10)
+            {
+                // 9 -> 10 added fulfilment modes. Existing sales orders default to
+                // SellerDelivery, which is what they were implicitly, so nothing changes for
+                // an order already in flight.
+                IntercolonyLog.Message("  schema 9 -> 10: fulfilment modes added; existing orders are seller-delivery.");
             }
 
             saveVersion = CurrentSaveVersion;

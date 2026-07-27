@@ -538,7 +538,13 @@ namespace Intercolony
             Widgets.Label(Cell(6), $"{days:F1}d");
             GUI.color = Color.white;
 
-            Widgets.Label(Cell(7), $"{opportunity.deadlineDays}d");
+            GUI.color = opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                ? new Color(0.6f, 0.85f, 1f)
+                : Color.white;
+            Widgets.Label(Cell(7), opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                ? "collected"
+                : $"{opportunity.deadlineDays}d haul");
+            GUI.color = Color.white;
 
             // Accept has its own column. Previously it was drawn over the last one, so the
             // deadline text ran underneath the button.
@@ -575,6 +581,11 @@ namespace Intercolony
                 sb.AppendLine($"Must be made of {opportunity.stuffDef.label}.");
             }
 
+            // §105: the mode is half the decision, so it belongs in the listing detail.
+            sb.AppendLine(opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                ? "The buyer collects: no caravan needed, but they pay less for handling it."
+                : "You deliver: a caravan trip, paid at a premium for taking it on.");
+
             if (opportunity.IsCratedGood)
             {
                 // Each crated good is one crate with real mass; 8 sculptures is a caravan.
@@ -591,6 +602,32 @@ namespace Intercolony
             sb.AppendLine();
             sb.Append(opportunity.priceExplanation);
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Unit rate a buyer pays for this lot size. Re-computed rather than reused, so the
+        /// confirmation slider moves the per-unit price the way saturation says it should (§13).
+        /// </summary>
+        private static float SellRateFor(BuyerOffer offer, int quantity)
+        {
+            if (offer?.def == null || offer.profile == null)
+            {
+                return offer?.unitPrice ?? 0f;
+            }
+
+            IntercolonyProductCategory category =
+                IntercolonyProductClassifier.Classify(offer.def) ?? IntercolonyProductCategory.Commodities;
+
+            return IntercolonyPricing.UnitPrice(
+                offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
+                category, offer.distanceTiles, null, out _);
+        }
+
+        /// <summary>Profile for a settlement id, or null if it is gone. Used for live re-pricing.</summary>
+        private static SettlementEconomicProfile ProfileFor(IntercolonyWorldComponent state, int settlementId)
+        {
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
+            return settlement == null ? null : state.GetProfile(settlement);
         }
 
         private static bool IsArt(ThingDef def)
@@ -610,27 +647,40 @@ namespace Intercolony
                 return;
             }
 
-            string body =
-                $"Deliver {opportunity.quantity}x {opportunity.ItemLabel()} to " +
-                $"{opportunity.settlementName} within {opportunity.deadlineDays} days.\n\n" +
-                $"Payment: {opportunity.TotalPrice} silver ({opportunity.unitPrice:F2} each)\n" +
-                $"Distance: {(opportunity.distanceTiles < 0f ? "unknown" : $"{opportunity.distanceTiles:F0} tiles")}\n\n" +
-                "You deliver by taking a caravan to the settlement. Missing the deadline fails the order.";
-
-            Find.WindowStack.Add(new Dialog_MessageBox(
-                body,
+            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
+                "Accept this order?",
                 "Accept order",
-                () =>
+                opportunity.quantity,
+                qty =>
                 {
-                    SalesOrder order = SalesOrderService.Accept(state, opportunity);
+                    string logistics = opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                        ? $"{opportunity.settlementName} will collect from your storage once you " +
+                          "declare the goods ready. No caravan needed."
+                        : "You deliver by caravan. Missing the deadline fails the order.";
+
+                    string partial = qty < opportunity.quantity
+                        ? $"\n\nThe buyer asked for {opportunity.quantity}. Committing to {qty} is a " +
+                          "smaller deal, not a partial one — you owe exactly what you accept.\n" +
+                          "A smaller lot earns a better rate per unit."
+                        : "";
+
+                    float rate = IntercolonyPricing.RepriceForQuantity(
+                        opportunity, ProfileFor(state, opportunity.settlementId), qty, out _);
+
+                    return $"Supply {qty}x {opportunity.ItemLabel()} to {opportunity.settlementName} " +
+                           $"within {opportunity.deadlineDays} days.\n\n" +
+                           $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
+                           $"Distance: {(opportunity.distanceTiles < 0f ? "unknown" : $"{opportunity.distanceTiles:F0} tiles")}\n\n" +
+                           logistics + partial;
+                },
+                qty =>
+                {
+                    SalesOrder order = SalesOrderService.Accept(state, opportunity, qty);
                     if (order != null)
                     {
                         tab = Tab.Orders;
                     }
-                },
-                "Cancel",
-                null,
-                "Accept this order?"));
+                }));
         }
 
         private void DrawOrders(Rect inRect, IntercolonyWorldComponent state)
@@ -789,37 +839,13 @@ namespace Intercolony
 
             float y = rect.y;
 
-            // Quantity to offer. Changing it re-prices, because a smaller lot avoids
-            // saturation and fetches a better unit price (§13) — that trade-off is the whole
-            // reason to let the player choose rather than always dumping the whole stockpile.
+            // The search runs against the full stock; choosing how much to actually sell
+            // happens in the confirmation dialog, where every other commitment is made.
+            sellQuantity = Mathf.Max(1, selectedStockCount);
+
             Widgets.Label(new Rect(rect.x, y, rect.width, 24f),
-                $"Sell {sellQuantity} of {selectedStockCount} {selectedStockDef.LabelCap}");
-            y += 26f;
-
-            sellQuantity = Mathf.Clamp(sellQuantity, 1, Mathf.Max(1, selectedStockCount));
-            Rect sliderRect = new Rect(rect.x, y + 4f, rect.width * 0.55f, 20f);
-            int newQuantity = Mathf.RoundToInt(Widgets.HorizontalSlider(
-                sliderRect, sellQuantity, 1f, Mathf.Max(1, selectedStockCount)));
-
-            Rect allRect = new Rect(sliderRect.xMax + 8f, y, 60f, 26f);
-            if (Widgets.ButtonText(allRect, "All"))
-            {
-                newQuantity = selectedStockCount;
-            }
-
-            Rect halfRect = new Rect(allRect.xMax + 4f, y, 60f, 26f);
-            if (Widgets.ButtonText(halfRect, "Half"))
-            {
-                newQuantity = Mathf.Max(1, selectedStockCount / 2);
-            }
-
-            if (newQuantity != sellQuantity)
-            {
-                sellQuantity = newQuantity;
-                findBuyerCache = null;
-            }
-
-            y += 32f;
+                $"Buyers for {selectedStockCount}x {selectedStockDef.LabelCap}");
+            y += 28f;
 
             // Searching walks every accessible settlement and prices each one. Cached, and
             // invalidated only when the selection or quantity changes (§84).
@@ -1016,28 +1042,31 @@ namespace Intercolony
         {
             const int DeadlineDays = 12;
 
-            string body =
-                $"Commit to delivering {offer.quantity}x {offer.def.LabelCap} to " +
-                $"{offer.settlement?.Label} within {DeadlineDays} days.\n\n" +
-                $"Payment: {offer.TotalPrice} silver ({offer.unitPrice:F2} each)\n" +
-                $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
-                "This is a binding order. Your stock is not reserved — anything the colony " +
-                "consumes in the meantime still has to be replaced before the deadline.";
-
-            Find.WindowStack.Add(new Dialog_MessageBox(
-                body,
+            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
+                "Sell to this buyer?",
                 "Create order",
-                () =>
+                offer.quantity,
+                qty =>
                 {
-                    if (SalesOrderService.CreateFromOffer(state, offer, offer.quantity, DeadlineDays) != null)
+                    float rate = SellRateFor(offer, qty);
+                    return $"Commit to delivering {qty}x {offer.def.LabelCap} to " +
+                           $"{offer.settlement?.Label} within {DeadlineDays} days.\n\n" +
+                           $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
+                           $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
+                           "This is a binding order. Your stock is not reserved — anything the colony " +
+                           "consumes in the meantime still has to be replaced before the deadline." +
+                           (qty < offer.quantity ? "\n\nA smaller lot earns a better rate per unit." : "");
+                },
+                qty =>
+                {
+                    BuyerOffer priced = offer;
+                    priced.unitPrice = SellRateFor(offer, qty);
+                    if (SalesOrderService.CreateFromOffer(state, priced, qty, DeadlineDays) != null)
                     {
                         tab = Tab.Orders;
                         findBuyerCache = null;
                     }
-                },
-                "Cancel",
-                null,
-                "Sell to this buyer?"));
+                }));
         }
 
         private Vector2 procurementScroll;
@@ -1301,45 +1330,47 @@ namespace Intercolony
             }
 
             int silver = PurchaseOrderService.CountColonySilver(map);
-            bool affordable = silver >= quote.TotalPrice;
 
-            StringBuilder body = new StringBuilder();
-            body.AppendLine($"Buy {quote.quantityOffered}x {request.thingDef?.LabelCap} " +
-                            $"from {quote.settlementName}.");
-            body.AppendLine();
-            if (quote.offeredQuality.HasValue)
-            {
-                body.AppendLine($"Quality: {quote.offeredQuality.Value.GetLabel()}");
-            }
-
-            if (quote.offeredStuff != null)
-            {
-                body.AppendLine($"Material: {quote.offeredStuff.label}");
-            }
-
-            body.AppendLine($"Price: {quote.TotalPrice} silver (you have {silver})");
-            body.AppendLine(quote.supplierDelivers
-                ? $"They will deliver to your colony in {quote.leadTimeDays} days."
-                : $"Ready to collect at {quote.settlementName} in {quote.leadTimeDays} days. " +
-                  "Send a caravan — goods left uncollected are eventually resold.");
-            body.AppendLine();
-            body.Append("Payment is taken now. Cancelling later forfeits it.");
-
-            if (!affordable)
-            {
-                body.AppendLine();
-                body.Append("\nYou do not have enough silver in storage.");
-                Find.WindowStack.Add(new Dialog_MessageBox(body.ToString(), "OK"));
-                return;
-            }
-
-            Find.WindowStack.Add(new Dialog_MessageBox(
-                body.ToString(),
+            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
+                "Confirm purchase?",
                 "Buy",
-                () => PurchaseOrderService.AcceptQuote(state, request, quote, map),
-                "Cancel",
-                null,
-                "Confirm purchase?"));
+                quote.quantityOffered,
+                qty =>
+                {
+                    int cost = Mathf.RoundToInt(quote.unitPrice * qty);
+
+                    StringBuilder body = new StringBuilder();
+                    body.AppendLine($"Buy {qty}x {request.thingDef?.LabelCap} from {quote.settlementName}.");
+                    body.AppendLine();
+                    if (quote.offeredQuality.HasValue)
+                    {
+                        body.AppendLine($"Quality: {quote.offeredQuality.Value.GetLabel()}");
+                    }
+
+                    if (quote.offeredStuff != null)
+                    {
+                        body.AppendLine($"Material: {quote.offeredStuff.label}");
+                    }
+
+                    body.AppendLine($"Price: {cost} silver ({quote.unitPrice:F2} each)");
+                    body.AppendLine(quote.supplierDelivers
+                        ? $"They will deliver to your colony in {quote.leadTimeDays} days."
+                        : $"Ready to collect at {quote.settlementName} in {quote.leadTimeDays} days. " +
+                          "Send a caravan — goods left uncollected are eventually resold.");
+                    body.AppendLine();
+                    body.Append("Payment is taken now. Cancelling later forfeits it.");
+
+                    // Shown rather than blocking the dialog: the player can dial the quantity
+                    // down until it is affordable, which is exactly why the slider is here.
+                    if (cost > silver)
+                    {
+                        body.Append($"\n\nNot enough silver — short by {cost - silver}. " +
+                                    "Reduce the quantity or come back richer.");
+                    }
+
+                    return body.ToString();
+                },
+                qty => PurchaseOrderService.AcceptQuote(state, request, quote, map, qty)));
         }
 
         private const float OrderRowHeight = 56f;
@@ -1362,11 +1393,20 @@ namespace Intercolony
             // §17: show progress and time remaining, and warn rather than fail silently.
             string detail;
             Color colour = Color.white;
-            if (order.IsOpen)
+            if (order.BuyerEnRoute)
             {
+                detail = $"{order.settlementName} arriving in {order.DaysUntilBuyerArrives:F1}d " +
+                         $"to collect {order.RemainingQuantity} — keep them in storage";
+                colour = new Color(0.6f, 0.85f, 1f);
+            }
+            else if (order.IsOpen)
+            {
+                string mode = order.fulfillment == FulfillmentMode.BuyerPickup
+                    ? "buyer collects"
+                    : "you deliver";
                 detail = $"{order.deliveredQuantity}/{order.Quantity} delivered   " +
                          $"{order.DaysRemaining:F1}d left   " +
-                         $"{order.TotalPayment} silver on completion";
+                         $"{order.TotalPayment} silver   ({mode})";
                 if (order.DaysRemaining < 1f)
                 {
                     colour = Color.yellow;
@@ -1387,6 +1427,25 @@ namespace Intercolony
             if (!order.IsOpen)
             {
                 return;
+            }
+
+            // Buyer pickup: the player declares the goods ready and the buyer travels (§25.2).
+            if (order.CanMarkReady)
+            {
+                Map map = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+                int have = OrderValidator.CountMatchingInColony(order, map);
+                bool enough = have >= order.RemainingQuantity;
+
+                Rect readyRect = new Rect(rect.xMax - 210f, rect.y + 14f, 110f, 28f);
+                if (Widgets.ButtonText(readyRect, "Mark ready", active: enough))
+                {
+                    SalesOrderService.MarkReadyForPickup(order, map);
+                }
+
+                TooltipHandler.TipRegion(readyRect, enough
+                    ? $"Tell {order.settlementName} the goods are ready. Their caravan will " +
+                      "come and collect them from your storage."
+                    : $"Storage holds {have} of {order.RemainingQuantity} matching items.");
             }
 
             Rect cancelRect = new Rect(rect.xMax - 90f, rect.y + 14f, 80f, 28f);

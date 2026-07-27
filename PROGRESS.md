@@ -464,6 +464,46 @@ Bug found and fixed during the phase:
   A regression assertion now fails any quote priced below the raw value of what it promises, which covers the class rather than the instance.
   Worth recording how this was caught: **the self-test did not find it, and could not have.** It verified goods are *constructed* with the right material and quality, which was never the broken part. Nothing checked that the *price* reflected the promise. A gold bed delivered correctly for 120 silver only looks wrong if you know what gold costs — it took a human reading a log line.
 
+---
+
+## Phase 12 — Logistics expansion  (2026-07-26)
+
+Fulfilment becomes a choice rather than a label.
+
+Implemented:
+- **Buyer pickup (§25.2)**, the mode that did not exist. The player accepts, produces the goods, hits **Mark ready**, and the buyer's caravan travels to the colony, takes the goods out of storage and leaves silver at the trade spot. §25.2's worked example is an "ORDER READY … will arrive in approximately N days" letter; that is now literally what happens.
+- New `FulfillmentMode` on both opportunities and orders, and a new `AwaitingCollection` order status — distinct from Accepted because once a buyer is en route the player can no longer quietly consume the stock.
+- **Logistics pricing modifier (§105)**: seller delivery x1.12, buyer pickup x0.85, applied as a named §47 factor so the breakdown shows what the convenience costs. Roughly 32% more silver for taking on the round trip.
+- Nearer buyers are likelier to collect; a buyer across the planet expects delivery.
+- `OrderValidator.CountMatchingInColony` / `TakeFromColony` — the same centralized matcher (§74) applied to colony storage instead of a caravan, so quality, material and condition constraints are enforced identically on the pickup path.
+- Arrival events as letters for ready, collected and partial collection.
+- Save schema 9 -> 10; existing orders default to seller delivery, which is what they implicitly were.
+- `Source/Intercolony/UI/Dialog_ConfirmQuantity.cs` — one shared confirmation dialog with a quantity slider, used by Accept, Buy and Sell. The body rebuilds as the slider moves, so the price shown is always the price being agreed to.
+- Partial acceptance: the player may commit to fewer units than a buyer asked for, and fewer than a supplier offered. Never more — prices are struck for the advertised lot.
+
+Not implemented:
+- Player pickup and supplier delivery already existed from Phase 11; this phase added no new *purchase*-side modes.
+- No choice of mode: the counterparty proposes one, the player takes it or leaves it. Negotiating fulfilment is not in §105's list.
+- No transport pods, vehicles or alternative logistics (§26 leaves room; nothing uses it).
+- Buyer caravans are abstract — no physical caravan spawns and travels.
+
+Known limitations:
+- The x1.12 / x0.85 split and the buyer travel speed are first-pass guesses (§78).
+- A buyer arriving while the player has no home map is skipped rather than resolved; it will retry.
+- Goods for a pickup order are not reserved, so the colony can consume them before the buyer arrives. That is consistent with §16 having no reservation system, and the arrival handles the shortfall, but it can surprise.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- Market table shows both modes in play (`12d haul` and `collected`), confirmed in game.
+- Schema 9 -> 10 migration ran on a real save: `existing orders are seller-delivery`, no errors.
+- Quantity sliders verified on all three confirmation dialogs.
+- §105's acceptance criterion is met: two fulfilment modes with a real trade-off — more silver for hauling it yourself, less effort for letting them collect.
+
+Issues found in play and fixed:
+- **The per-unit price did not move with the confirmation slider.** Reported as cosmetic; it was a correctness bug. I had frozen the unit rate out of caution, but §13 saturation means a smaller lot genuinely earns a better rate, so the dialog showed an unchanging "2.50 each" while the amount changed. Worse, accepting a partial order would have **booked it at the full-lot rate** — the dialog and the contract would have disagreed. Prices are now re-computed for the chosen quantity on both sell paths, and the order is created at the re-priced rate. Reducing remains safe from exploitation because quantity falls faster than the unit rate rises, so the total always drops; that is also why the slider only ever reduces. Purchase quotes deliberately keep a fixed rate: a supplier quoted a price for their lot, and buying fewer does not make each unit dearer to them.
+- Procurement dialog showed the player's silver holdings, which RimWorld already displays permanently. Replaced with the per-unit price to match the sales dialogs; the shortfall warning stays, since it is actionable.
+- Removed the Find Buyer tab's quantity slider now that the amount is chosen at commitment like everywhere else.
+
 Bugs found and fixed during the phase:
 - **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
 - **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.

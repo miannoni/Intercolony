@@ -172,6 +172,75 @@ namespace Intercolony
             return result;
         }
 
+        /// <summary>
+        /// Units in colony storage that satisfy the line (§25.2 buyer pickup).
+        ///
+        /// Storage only, for the same reason Find Buyer counts storage only: goods strewn
+        /// across the map are not stock the player has set aside, and a buyer's caravan
+        /// should not strip a half-built wall of its blocks.
+        /// </summary>
+        public static int CountMatchingInColony(SalesOrder order, Map map)
+        {
+            if (order?.line?.thingDef == null || map == null)
+            {
+                return 0;
+            }
+
+            int total = 0;
+            foreach (Thing thing in map.listerThings.AllThings)
+            {
+                if (thing.IsInAnyStorage() && Matches(order.line, thing, out _))
+                {
+                    total += CountableUnits(thing);
+                }
+            }
+
+            return total;
+        }
+
+        /// <summary>
+        /// Takes units out of colony storage, returning how many were actually removed.
+        /// </summary>
+        public static int TakeFromColony(SalesOrder order, Map map, int wanted)
+        {
+            if (order?.line?.thingDef == null || map == null || wanted <= 0)
+            {
+                return 0;
+            }
+
+            // Snapshot first: destroying things mutates the lister mid-iteration.
+            List<Thing> matching = new List<Thing>();
+            foreach (Thing thing in map.listerThings.AllThings)
+            {
+                if (thing.IsInAnyStorage() && Matches(order.line, thing, out _))
+                {
+                    matching.Add(thing);
+                }
+            }
+
+            int remaining = wanted;
+            foreach (Thing thing in matching)
+            {
+                if (remaining <= 0)
+                {
+                    break;
+                }
+
+                if (thing is MinifiedThing)
+                {
+                    thing.Destroy(DestroyMode.Vanish);
+                    remaining -= 1;
+                    continue;
+                }
+
+                int take = Mathf.Min(remaining, thing.stackCount);
+                thing.SplitOff(take).Destroy(DestroyMode.Vanish);
+                remaining -= take;
+            }
+
+            return wanted - remaining;
+        }
+
         /// <summary>Total units carried that satisfy the line.</summary>
         public static int CountMatching(SalesOrder order, Caravan caravan)
         {

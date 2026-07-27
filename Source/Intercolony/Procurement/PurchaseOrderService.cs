@@ -29,10 +29,24 @@ namespace Intercolony
         public static PurchaseOrder AcceptQuote(
             IntercolonyWorldComponent state, PurchaseRequest request, Quotation quote, Map paymentMap)
         {
+            return AcceptQuote(state, request, quote, paymentMap, quote?.quantityOffered ?? 0);
+        }
+
+        /// <summary>
+        /// Buys part of a quote. The player may take fewer units than offered — useful when
+        /// silver is short — but never more, since the quoted unit price was struck for that
+        /// lot.
+        /// </summary>
+        public static PurchaseOrder AcceptQuote(
+            IntercolonyWorldComponent state, PurchaseRequest request, Quotation quote,
+            Map paymentMap, int quantity)
+        {
             if (state == null || request == null || quote == null)
             {
                 return null;
             }
+
+            quantity = Mathf.Clamp(quantity, 1, quote.quantityOffered);
 
             if (!request.IsOpen)
             {
@@ -62,7 +76,7 @@ namespace Intercolony
                 return null;
             }
 
-            int price = quote.TotalPrice;
+            int price = Mathf.RoundToInt(quote.unitPrice * quantity);
             int available = CountColonySilver(paymentMap);
             if (available < price)
             {
@@ -91,7 +105,7 @@ namespace Intercolony
                 thingDef = request.thingDef,
                 stuffDef = quote.offeredStuff ?? request.stuffDef,
                 quality = quote.offeredQuality,
-                quantity = quote.quantityOffered,
+                quantity = quantity,
                 unitPrice = quote.unitPrice,
                 paidSilver = price,
                 supplierDelivers = quote.supplierDelivers,
