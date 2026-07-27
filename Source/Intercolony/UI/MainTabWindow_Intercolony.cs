@@ -55,7 +55,8 @@ namespace Intercolony
             Market,
             Orders,
             FindBuyer,
-            Procurement
+            Procurement,
+            Relations
         }
 
         private Tab tab = Tab.Market;
@@ -131,6 +132,12 @@ namespace Intercolony
                 return;
             }
 
+            if (tab == Tab.Relations)
+            {
+                DrawRelations(body, state);
+                return;
+            }
+
             DrawMarket(body, state);
         }
 
@@ -162,6 +169,12 @@ namespace Intercolony
                 // Re-scan once on entry so the list is current without being live.
                 stockCache = null;
                 findBuyerCache = null;
+            }
+
+            Rect relationsRect = new Rect(findRect.xMax + 6f + ButtonWidth + 6f, 0f, ButtonWidth, ButtonHeight);
+            if (Widgets.ButtonText(relationsRect, "Relations", drawBackground: tab != Tab.Relations))
+            {
+                tab = Tab.Relations;
             }
 
             Rect procureRect = new Rect(findRect.xMax + 6f, 0f, ButtonWidth, ButtonHeight);
@@ -1201,6 +1214,112 @@ namespace Intercolony
             }
 
             return y + 8f;
+        }
+
+        private Vector2 relationsScroll;
+
+        /// <summary>
+        /// Relationship view (DESIGN.md §57, §27). Shows commercial reputation alongside
+        /// faction goodwill, because §27's whole point is that they are different things:
+        /// goodwill is whether they shoot at you, reputation is whether they rely on you.
+        /// </summary>
+        private void DrawRelations(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, inRect.width, 34f), "Trading relationships");
+            y += 38f;
+            Text.Font = GameFont.Small;
+
+            List<CommercialReputation> records = new List<CommercialReputation>();
+            foreach (KeyValuePair<int, CommercialReputation> entry in state.Reputations)
+            {
+                records.Add(entry.Value);
+            }
+
+            if (records.Count == 0)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(0f, y, inRect.width, 60f),
+                    "No trading history yet.\n\n" +
+                    "Complete or fail an order and that settlement will form an opinion. " +
+                    "Reputation is held per settlement and is separate from faction goodwill — " +
+                    "being liked is not the same as being relied on.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            records.Sort((a, b) => b.Score.CompareTo(a.Score));
+
+            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, records.Count * 58f);
+
+            Widgets.BeginScrollView(outRect, ref relationsScroll, viewRect);
+            float rowY = 0f;
+            for (int i = 0; i < records.Count; i++)
+            {
+                DrawRelationRow(new Rect(0f, rowY, viewRect.width, 58f), records[i], i);
+                rowY += 58f;
+            }
+
+            Widgets.EndScrollView();
+        }
+
+        private void DrawRelationRow(Rect rect, CommercialReputation rep, int index)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width * 0.34f, 24f),
+                $"{rep.settlementName}");
+
+            GUI.color = TierColour(rep.Tier);
+            Widgets.Label(new Rect(rect.x + rect.width * 0.36f, rect.y + 4f, rect.width * 0.28f, 24f),
+                $"{rep.ScoreDisplay}/100  {rep.TierLabel()}");
+            GUI.color = Color.white;
+
+            // Owning faction and its goodwill beside it, per §27's illustrative UI — the
+            // two numbers together are the point: liked is not the same as relied upon.
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(rep.settlementId);
+            Faction faction = settlement?.Faction;
+            GUI.color = new Color(1f, 1f, 1f, 0.6f);
+            Widgets.Label(new Rect(rect.x + rect.width * 0.66f, rect.y + 4f, rect.width * 0.34f, 24f),
+                faction != null
+                    ? $"{rep.factionName}  goodwill {faction.PlayerGoodwill:+#;-#;0}"
+                    : $"{rep.factionName}  (gone)");
+            GUI.color = Color.white;
+
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 28f, rect.width - 12f, 24f),
+                $"{rep.ordersCompleted} completed   {rep.ordersLate} late   " +
+                $"{rep.ordersFailed} failed   {rep.ordersCancelled} cancelled   " +
+                $"{rep.purchasesCompleted} purchases");
+            GUI.color = Color.white;
+
+            TooltipHandler.TipRegion(rect,
+                $"{rep.factionName}\n" +
+                $"Commercial reputation: {rep.ScoreDisplay}/100 ({rep.TierLabel()})\n\n" +
+                "A better record means larger orders, more frequent offers, slightly better " +
+                "prices and more generous deadlines.\n\n" +
+                "This is separate from faction goodwill, and it is held by this settlement " +
+                "rather than its faction: another town of the same faction forms its own view.");
+        }
+
+        private static Color TierColour(ReputationTier tier)
+        {
+            switch (tier)
+            {
+                case ReputationTier.Untrusted: return new Color(0.9f, 0.5f, 0.5f);
+                case ReputationTier.Unproven: return new Color(0.9f, 0.8f, 0.6f);
+                case ReputationTier.Reliable: return new Color(0.7f, 0.9f, 0.7f);
+                case ReputationTier.Preferred: return new Color(0.6f, 0.9f, 1f);
+                default: return Color.white;
+            }
         }
 
         private const float RequestHeaderHeight = 46f;

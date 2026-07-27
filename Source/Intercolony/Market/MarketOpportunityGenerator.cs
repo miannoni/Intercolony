@@ -55,10 +55,15 @@ namespace Intercolony
             int seed = Gen.HashCombineInt(economySeed, settlement.ID, refreshNumber, 0x0F1E);
             float distance = DistanceToPlayer(settlement);
 
+            // §28: a trusted partner posts more often. Bounded to about half again, so a
+            // good record widens the pipeline rather than flooding it.
+            float reputation = ReputationService.ScoreFor(IntercolonyWorldComponent.Current, settlement);
+            float postChance = PostChance * ReputationService.OpportunityFrequencyFactor(reputation);
+
             Rand.PushState(seed);
             try
             {
-                if (Rand.Value > PostChance)
+                if (Rand.Value > postChance)
                 {
                     return created;
                 }
@@ -66,7 +71,8 @@ namespace Intercolony
                 int wanted = Mathf.Min(Rand.RangeInclusive(1, 2), MaxPerSettlement - existingCount);
                 for (int i = 0; i < wanted; i++)
                 {
-                    MarketOpportunity opportunity = CreateOne(settlement, profile, distance, idAllocator);
+                    MarketOpportunity opportunity =
+                        CreateOne(settlement, profile, distance, reputation, idAllocator);
                     if (opportunity != null)
                     {
                         created.Add(opportunity);
@@ -86,6 +92,7 @@ namespace Intercolony
             Settlement settlement,
             SettlementEconomicProfile profile,
             float distance,
+            float reputation,
             System.Func<int> idAllocator)
         {
             IntercolonyProductCategory category = PickCategory(profile);
@@ -98,7 +105,10 @@ namespace Intercolony
             ThingDef def = candidates[Rand.Range(0, candidates.Count)];
 
             ThingDef stuff = PickStuff(def, profile);
-            int quantity = PickQuantity(def, stuff, profile);
+            // §28 "larger orders": trusted partners commit to more, capped at +40%.
+            int quantity = Mathf.Max(1, Mathf.RoundToInt(
+                PickQuantity(def, stuff, profile) *
+                ReputationService.OpportunitySizeFactor(reputation)));
             QualityCategory? minQuality = PickMinimumQuality(def, profile);
 
             // Buyers closer to the player are likelier to fetch goods themselves; a buyer on
@@ -118,7 +128,17 @@ namespace Intercolony
             factors.Add(logistics);
             unitPrice *= logistics.multiplier;
 
-            int deadlineDays = Rand.RangeInclusive(MinDeadlineDays, MaxDeadlineDays);
+            // §28 "slightly better prices" — deliberately the smallest of the three effects,
+            // because price compounds with both size and frequency.
+            PriceFactor record = ReputationService.PriceFactorFor(reputation);
+            factors.Add(record);
+            unitPrice *= record.multiplier;
+
+            // §28 "better deadlines": extra days rather than a multiplier, so it helps a
+            // tight deadline most, which is where the pressure actually is.
+            int deadlineDays = Mathf.Max(2,
+                Rand.RangeInclusive(MinDeadlineDays, MaxDeadlineDays) +
+                ReputationService.DeadlineBonusDays(reputation));
             int lifespanDays = Rand.RangeInclusive(3, 10);
 
             return new MarketOpportunity

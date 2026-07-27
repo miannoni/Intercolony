@@ -364,7 +364,29 @@ namespace Intercolony
             });
         }
 
-        [DebugAction(Category, "Run RFQ self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 57)]
+        [DebugAction(Category, "Run reputation self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 57)]
+        private static void RunReputationSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyReputationSelfTest.Run(state)));
+        }
+
+        [DebugAction(Category, "Dump reputations", allowedGameStates = AllowedGameStates.Playing, displayPriority = 82)]
+        private static void DumpReputations()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Commercial reputations ({state.Reputations.Count})");
+                foreach (KeyValuePair<int, CommercialReputation> entry in state.Reputations)
+                {
+                    sb.AppendLine($"  {entry.Value}");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
+        [DebugAction(Category, "Run RFQ self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 56)]
         private static void RunRfqSelfTest()
         {
             WithState(state => IntercolonyLog.Message(IntercolonyRfqSelfTest.Run(state)));

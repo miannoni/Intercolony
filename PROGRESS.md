@@ -504,6 +504,48 @@ Issues found in play and fixed:
 - Procurement dialog showed the player's silver holdings, which RimWorld already displays permanently. Replaced with the per-unit price to match the sales dialogs; the shortfall warning stays, since it is actionable.
 - Removed the Find Buyer tab's quantity slider now that the amount is chosen at commitment like everywhere else.
 
+---
+
+## Phase 13 — Commercial reputation  (2026-07-26)
+
+Repeated commerce now matters: a settlement remembers how you have dealt with it, and its future offers reflect that.
+
+Implemented:
+- `Source/Intercolony/Reputation/CommercialReputation.cs` — a 0-100 score with five tiers (Untrusted, Unproven, Known trader, Reliable supplier, Preferred partner) and §27's counters: completed, late, failed, cancelled, purchases, purchase cancellations.
+- **Held per settlement**, keyed by stable `WorldObject.ID`. §27's illustrative UI is headed by a faction name, which is what I built first, but §8 is the stronger signal: "The primary economic actor should be a settlement, with faction-level defaults." It also fits everything else — profiles, demand, supply and access are all per-settlement, so faction-level reputation was the odd one out. Two towns of one faction can now rate you differently.
+- **Separate from faction goodwill**, per §27. Goodwill is whether they shoot at you; reputation is whether they rely on you. The Relations tab shows both side by side so the distinction is visible.
+- `Source/Intercolony/Reputation/ReputationService.cs` — event hooks and effects. Completing on time +4 plus a capped size bonus, late +1, failure -12, cancellation -6, purchase +2, purchase cancellation -4.
+- Effects (§28): more frequent opportunities (x0.6 to x1.5), larger lots (x0.75 to x1.4), slightly better prices (x0.95 to x1.08) and more generous deadlines (-2 to +4 days).
+- Relations tab (§57) listing settlements by score with their counters, faction and goodwill.
+- Save schema 10 -> 11 -> 12. The 11 -> 12 step re-keys reputation from faction to settlement by reading a **new node name**, so schema-11 records are simply not loaded: a faction record cannot be split across its settlements without inventing history, and the old keys would otherwise be silently misread as settlement IDs.
+
+**§28's anti-runaway constraint drove the numbers**, not balance taste:
+- Gains diminish as the score rises; penalties always land at full weight. A reputation is harder to keep than to lose.
+- Price is deliberately the smallest effect (~13% across the whole span), because it compounds with both size and frequency.
+- The size bonus for a large contract is capped, or one enormous order would outweigh years of steady trade.
+- The self-test asserts the **combined** best-case advantage, since three individually reasonable bounds can multiply into an absurd one.
+
+Not implemented:
+- No access to scarce goods, recurring contracts, lower deposits or preferred-supplier status (§28 lists them; recurring contracts are Phase 14).
+- Reputation does not decay with time or inactivity.
+- No effect on RFQ supplier response probability — reputation currently shapes the sell side only.
+- No letters or notifications on tier change.
+
+Known limitations:
+- All weights and bounds are first-pass guesses (§78).
+- Records for destroyed settlements are retained as history and shown as "(gone)". They are never pruned.
+- A settlement changing hands keeps its reputation, which is arguable either way.
+
+Manual test:
+- `dev.ps1 build` — 0 warnings, 0 errors.
+- Reputation self-test: **17 passed, 0 failed**.
+- **§106's acceptance criterion demonstrated quantitatively.** Same settlement, same seeds, 120 refresh cycles each, varying only the trade history: a trusted partner produced **101 offers averaging 213 units and 16.5-day deadlines**; a distrusted one produced **39 offers averaging 86 units and 11.1-day deadlines**. Holding everything else constant is what makes the difference attributable to reputation rather than noise.
+- Combined best-case advantage measured at **x2.27** against a neutral partner, inside the x3 bound.
+- The schema 9 -> 12 migration chain ran on a real save, walking all three steps in order.
+
+Design change during the phase:
+- Reputation was first built per faction and re-keyed to per settlement at Matteo's request. His instinct matched §8 better than my reading of §27's UI mock-up did — the mock-up's faction heading is a presentation detail, while §8 is a structural statement about who the economic actor is.
+
 Bugs found and fixed during the phase:
 - **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
 - **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.

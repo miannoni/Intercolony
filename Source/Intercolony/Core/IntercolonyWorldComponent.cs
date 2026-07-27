@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text;
+using RimWorld;
 using RimWorld.Planet;
 using Verse;
 
@@ -24,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 10;
+        public const int CurrentSaveVersion = 12;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -108,6 +109,50 @@ namespace Intercolony
             {
                 requests.Add(request);
             }
+        }
+
+        /// <summary>
+        /// Commercial reputation per settlement (DESIGN.md §27, §61), keyed by the settlement's
+        /// stable <c>WorldObject.ID</c>. §8 makes the settlement the primary economic actor, so
+        /// a specific town's opinion of you is its own — two settlements of one faction can
+        /// rate you quite differently.
+        /// </summary>
+        private Dictionary<int, CommercialReputation> reputations =
+            new Dictionary<int, CommercialReputation>();
+
+        public Dictionary<int, CommercialReputation> Reputations => reputations;
+
+        public CommercialReputation FindReputation(int settlementId)
+        {
+            return reputations.TryGetValue(settlementId, out CommercialReputation rep) ? rep : null;
+        }
+
+        /// <summary>
+        /// Reputation record for a settlement, created at neutral on first dealing. Records
+        /// are only created when something actually happens, so the list stays a history of
+        /// real trade rather than a roster of every settlement on the planet.
+        /// </summary>
+        public CommercialReputation GetOrCreateReputation(Settlement settlement)
+        {
+            if (settlement == null)
+            {
+                return null;
+            }
+
+            string factionName = settlement.Faction?.Name ?? "";
+
+            if (reputations.TryGetValue(settlement.ID, out CommercialReputation existing))
+            {
+                // Both can change — settlements are renameable and can change hands.
+                existing.settlementName = settlement.Label ?? existing.settlementName;
+                existing.factionName = factionName;
+                return existing;
+            }
+
+            CommercialReputation created = new CommercialReputation(
+                settlement.ID, settlement.Label ?? "unnamed", factionName);
+            reputations[settlement.ID] = created;
+            return created;
         }
 
         /// <summary>Paid purchase orders awaiting delivery or collection (§7.6, §61).</summary>
@@ -439,6 +484,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
+            Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -515,6 +561,11 @@ namespace Intercolony
                             $"Dropped {nullPurchases} null and {brokenPurchases} unresolvable purchase order(s) " +
                             "while loading. Any silver paid for them is gone.");
                     }
+                }
+
+                if (reputations == null)
+                {
+                    reputations = new Dictionary<int, CommercialReputation>();
                 }
 
                 if (nextId < 1)
@@ -907,6 +958,24 @@ namespace Intercolony
                 // SellerDelivery, which is what they were implicitly, so nothing changes for
                 // an order already in flight.
                 IntercolonyLog.Message("  schema 9 -> 10: fulfilment modes added; existing orders are seller-delivery.");
+            }
+
+            if (saveVersion < 11)
+            {
+                // 10 -> 11 added commercial reputation. A save with trade history behind it
+                // starts every faction at neutral: reconstructing a record from orders that
+                // were completed before reputation existed would be inventing a past.
+                IntercolonyLog.Message("  schema 10 -> 11: commercial reputation added, all parties neutral.");
+            }
+
+            if (saveVersion < 12)
+            {
+                // 11 -> 12 re-keyed reputation from faction to settlement (§8: the settlement
+                // is the primary economic actor). Schema-11 records are read under a different
+                // node name and so are simply not loaded — a faction record cannot be split
+                // across its settlements without inventing history that never happened.
+                IntercolonyLog.Message(
+                    "  schema 11 -> 12: reputation is now per settlement; any faction-level records were discarded.");
             }
 
             saveVersion = CurrentSaveVersion;

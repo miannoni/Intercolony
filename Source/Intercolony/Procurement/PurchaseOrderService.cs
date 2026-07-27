@@ -258,6 +258,7 @@ namespace Intercolony
         {
             order.status = PurchaseOrderStatus.Completed;
             order.outcomeNote = note;
+            ReputationService.NotePurchaseCompleted(IntercolonyWorldComponent.Current, order);
             IntercolonyLog.Message($"Purchase {order.id} completed. {note}");
         }
 
@@ -294,6 +295,7 @@ namespace Intercolony
             // Cancelling forfeits the payment: the supplier already produced the goods.
             order.status = PurchaseOrderStatus.Cancelled;
             order.outcomeNote = $"Cancelled by the player. {order.paidSilver} silver forfeited.";
+            ReputationService.NotePurchaseCancelled(IntercolonyWorldComponent.Current, order);
             IntercolonyLog.Message($"Purchase {order.id} cancelled; {order.paidSilver} silver forfeited.");
             return true;
         }

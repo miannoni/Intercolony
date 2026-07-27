@@ -237,6 +237,10 @@ namespace Intercolony
             order.status = SalesOrderStatus.Completed;
             order.outcomeNote = $"Delivered {order.deliveredQuantity} units for {order.paidSilver} silver.";
 
+            // §27: on-time delivery is worth more than a late one, so the distinction is made
+            // here where the deadline is still known.
+            ReputationService.NoteOrderCompleted(state, order, !order.IsOverdue(GenTicks.TicksGame));
+
             IntercolonyLog.Message($"Order {order.id} completed. {order.outcomeNote}");
             Messages.Message(
                 $"Order complete: {order.settlementName} paid {order.paidSilver} silver.",
@@ -337,6 +341,8 @@ namespace Intercolony
                     order.status = SalesOrderStatus.Completed;
                     order.outcomeNote =
                         $"Collected by the buyer. {order.deliveredQuantity} units for {order.paidSilver} silver.";
+                    ReputationService.NoteOrderCompleted(
+                        IntercolonyWorldComponent.Current, order, !order.IsOverdue(now));
                     IntercolonyLog.Message($"Order {order.id} completed by buyer pickup. {order.outcomeNote}");
                     Find.LetterStack.ReceiveLetter(
                         "Order collected",
@@ -389,6 +395,7 @@ namespace Intercolony
 
             order.status = SalesOrderStatus.Failed;
             order.outcomeNote = note;
+            ReputationService.NoteOrderFailed(IntercolonyWorldComponent.Current, order);
             IntercolonyLog.Message($"Order {order.id} failed: {note}");
             Messages.Message($"Order failed for {order.settlementName}: {note}",
                 MessageTypeDefOf.NegativeEvent, historical: true);
@@ -405,6 +412,7 @@ namespace Intercolony
 
             order.status = SalesOrderStatus.Cancelled;
             order.outcomeNote = "Cancelled by the player.";
+            ReputationService.NoteOrderCancelled(IntercolonyWorldComponent.Current, order);
             IntercolonyLog.Message($"Order {order.id} cancelled by the player.");
             return true;
         }
