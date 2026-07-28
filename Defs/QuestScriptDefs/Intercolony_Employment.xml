@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Defs>
+
+  <!--
+    Marker quest script for employment (DESIGN.md §31-§34, docs/LABOR_TECHNICAL_NOTES.md).
+
+    Intercolony never *runs* this script. It exists because an employee is modelled as a
+    vanilla quest lodger: the employment quest carries a QuestPart_ExtraFaction naming the
+    worker's real faction, which is what keeps them out of raid-point maths and stops
+    SetFaction rewriting their kindDef.
+
+    A root node is mandatory even so. Quest.CleanupQuestParts ends with
+    `if (root.hideOnCleanup)`, so a quest built by Quest.MakeRaw() with a null root throws a
+    NullReferenceException the moment it ends — i.e. every time an employee is dismissed.
+    QuestNode_Sequence with no children is the cheapest valid root.
+  -->
+  <QuestScriptDef>
+    <defName>Intercolony_Employment</defName>
+    <root Class="QuestNode_Sequence">
+      <nodes />
+    </root>
+
+    <!-- Bookkeeping, not a quest the player should read in the Quests tab. -->
+    <defaultHidden>true</defaultHidden>
+    <hideOnCleanup>true</hideOnCleanup>
+
+    <!--
+      randomlySelectable defaults to TRUE. Left alone, the storyteller could pick this as a
+      real quest and generate an employment with no employer, employee or terms.
+    -->
+    <randomlySelectable>false</randomlySelectable>
+    <affectedByPoints>false</affectedByPoints>
+  </QuestScriptDef>
+
+</Defs>

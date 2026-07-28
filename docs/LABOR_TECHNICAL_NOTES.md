@@ -17,9 +17,9 @@ non-hostile outlander faction, ideoligion "Rustican".
 
 > "Can outside employees behave like useful workers without corrupting faction/pawn state?"
 
-**Yes, via Strategy A, provided the implementation restores `kindDef` explicitly and accepts
-one unresolved side effect on storyteller population adaptation.** Control is not the hard
-part; restoration fidelity is. Details and the untested list below.
+**Yes, via Strategy A, with the employee marked as a quest lodger.** Control is not the hard
+part; restoration fidelity is — and the quest-lodger mechanism handles the worst of it for
+free. Details and the untested list below.
 
 ---
 
@@ -111,8 +111,12 @@ way back.
 Consequence if unhandled: every employee returns home permanently reclassified as a colonist
 kind, losing its original role, equipment expectations and generation identity.
 
-**Required:** capture `pawn.kindDef` before transfer and reassign it after restoring the
-faction. Cheap, but silent if forgotten — nothing errors, the pawn is simply wrong forever.
+**Two fixes, and the second is better.** Capturing `pawn.kindDef` before transfer and
+reassigning it afterwards works, but is silent if forgotten — nothing errors, the pawn is
+simply wrong forever. Marking the employee as a **quest lodger** prevents the rewrite from
+happening at all, because `SetFaction`'s `ChangeKind` call is guarded by
+`!this.IsQuestLodger()`. Prefer the lodger route and keep the capture as a belt-and-braces
+restore. See "The quest-lodger mechanism" below.
 
 *(This same asymmetry also broke the first version of this spike: it selected employers by
 `def.basicMemberKind != null`, which excluded every non-player faction in the game. Use
@@ -122,22 +126,86 @@ faction. Cheap, but silent if forgotten — nothing errors, the pawn is simply w
 
 ## Known incompatibilities and side effects
 
-### Storyteller population adaptation — unresolved, and the sharpest risk
+### Storyteller effects — CORRECTED 2026-07-27, and solved
 
-`SetFaction` into the player faction calls:
+**The first version of this note got this wrong.** It claimed the `GainedColonist`
+notification "drives raid scaling" and flagged it as the sharpest unresolved risk. Follow-up
+reading of the consuming code shows two *separate* mechanisms, only one of which matters:
 
-- `Find.StoryWatcher.watcherPopAdaptation.Notify_PawnEvent(this, PopAdaptationEvent.GainedColonist)`
-- `Find.StoryWatcher.statsRecord.UpdateGreatestPopulation()`
-- `Find.World.StoryState.RecordPopulationIncrease()`
+1. `watcherPopAdaptation.adaptDays` is merely **reset to zero** by `GainedColonist`
+   (`StoryWatcher_PopAdaptation.cs:22`). It feeds `populationIntentFactorFromPopAdaptDaysCurve`
+   → **population intent**, i.e. how keen the storyteller is to *offer you more colonists*.
+   It does **not** feed threat points. Hiring therefore suppresses new-colonist events for a
+   while — a mild, self-correcting effect, not a difficulty spiral.
+2. Threat points come from `StorytellerUtility.DefaultThreatPointsNow`, which counts
+   `IsFreeColonist` pawns. An employee in the player faction **would** add raid points. This
+   is the real effect, and it is live-computed rather than accumulated, so it reverses itself
+   when employment ends.
 
-Population adaptation drives **raid scaling**. Nothing observed reverses these on departure.
-A labor system could therefore make raids progressively harder with every worker hired, in a
-way no player would attribute to the mod. Not measured by this spike — flagged as the first
-thing to test before shipping labor.
+**Both are avoidable outright.** `DefaultThreatPointsNow` explicitly skips pawns for which
+`IsQuestLodger()` is true (`StorytellerUtility.cs:142`).
 
-Possible mitigations, in order of preference: keep employees out of the player faction for
-the *accounting* purposes only (not possible under Strategy A), patch the notification
-during a hire, or accept and document it as a balance cost of employing outsiders.
+### The quest-lodger mechanism solves three problems at once
+
+RimWorld already models "this pawn lives in your colony but belongs to someone else" — that
+is what a quest lodger *is*. Marking an employee as one requires a `Quest` carrying a
+`QuestPart_ExtraFaction` with `ExtraFactionType.HomeFaction` set to the employer.
+
+Doing so gives, from vanilla and with no patches:
+
+| Problem | Resolution |
+|---|---|
+| Employee inflates raid points | `DefaultThreatPointsNow` skips quest lodgers |
+| `kindDef` rewritten to Colonist | `SetFaction`'s `ChangeKind` call is guarded by `!this.IsQuestLodger()` — it simply does not fire |
+| Faction restoration on death | `QuestPart_ExtraFaction.Notify_PawnKilled` calls `SetFaction(pawn.HomeFaction)` automatically |
+
+That third row also partly answers §33 q14, which this spike had listed as unresolved.
+
+This is strictly better than the mitigations the first draft proposed (patch the
+notification, or accept the cost). It uses the same machinery vanilla lodger quests use, so
+mods that already understand lodgers will understand employees.
+
+**Recommendation:** an employment contract should create a lightweight quest holding a
+`QuestPart_ExtraFaction`, and end it on departure. Do not Harmony-patch the storyteller.
+
+### Building the quest — three things that are not optional
+
+Found while implementing this in Phase 16 (`Source/Intercolony/Labor/EmploymentService.cs`).
+
+1. **`quest.root` must be set.** `Quest.CleanupQuestParts` ends with `if (root.hideOnCleanup)`
+   (`Quest.cs:628`), and `Quest.MakeRaw()` leaves `root` null. The result is a
+   `NullReferenceException` every single time an employment ends — i.e. on every dismissal.
+   The Phase 15 spike hit this and reported it as a bare `EXCEPTION during spike`. Intercolony
+   ships `Defs/QuestScriptDefs/Intercolony_Employment.xml` purely to have something to point
+   `root` at; it is `randomlySelectable false` so the storyteller can never fire it.
+
+2. **Add a `QuestPart_Leave` with `leaveOnCleanup = true`.** Then ending the quest *is* the
+   departure. `QuestPart_Leave.Cleanup` calls `LeaveQuestPartUtility.MakePawnsLeave`, which
+   restores the worker's faction from the `QuestPart_ExtraFaction`, clears master and guest
+   state, drops anything they were carrying, and puts them under a `LordJob_ExitMapBest` to walk
+   off the map. Reimplementing that by hand would be strictly worse.
+
+3. **The ordering works, but only because vanilla passes `forQuest`.** `Quest.End` sets
+   `ended = true` *before* calling `CleanupQuestParts`, so by the time `QuestPart_Leave.Cleanup`
+   runs the quest is no longer `Ongoing` — and `GetExtraFactionsFromQuestParts` normally filters
+   on exactly that. It still resolves because the lookup is `quest.State == Ongoing || quest ==
+   forQuest` (`QuestUtility.cs:713`) and `MakePawnsLeave` passes the quest. Any hand-rolled
+   departure that calls `GetExtraHomeFaction()` with no argument after ending the quest will get
+   `null` and send the worker to a **randomly chosen faction** — the fallback branch in
+   `MakePawnLeave`. Do not hand-roll it.
+
+Also confirmed by reading `Quest.QuestTick`: a quest with no expiry and no activable parts never
+ends on its own, so an employment quest safely lives as long as the contract does.
+
+### Owning the worker before they arrive
+
+A hired worker travels for a few days before spawning. During that window they are a generated,
+unspawned `Pawn` that nothing in the game saves — so they must go into `Find.WorldPawns`, and
+with `PawnDiscardDecideMode.KeepForever`, not `Decide`. `Decide` leaves them exposed to
+`WorldPawnGC`, which knows nothing about the employment contract and would discard an employee
+the player has already paid for. `WorldPawns.RemovePawn` clears the forceful-keep flag, so
+spawning on arrival unpins them normally; a hire cancelled before arrival must call
+`RemoveAndDiscardPawnViaGC` or the pinned pawn is kept forever.
 
 ### Other observed effects of `SetFaction`
 
@@ -164,10 +232,13 @@ risk surface. Unproven either way.
 
 Listed as UNRESOLVED rather than guessed at, per the spike's purpose:
 
-1. **Storyteller population adaptation** (above) — highest priority.
-2. **Death (§33 q14)** — not tested. Death of a player-faction pawn triggers colonist death
-   notifications, mood effects on real colonists, and possibly faction goodwill loss.
-   §43 compensation depends on this.
+1. ~~Storyteller population adaptation~~ — **resolved**; see the corrected section above.
+   The remaining effect (threat points from an extra free colonist) is avoided by quest-lodger
+   status and reverses itself regardless.
+2. **Death (§33 q14)** — partly answered: `QuestPart_ExtraFaction.Notify_PawnKilled` restores
+   the home faction automatically for a lodger. Still untested are the colonist-death
+   notification, mood effects on real colonists, and any faction goodwill loss. §43
+   compensation depends on those.
 3. **Incapacitation (q12)** and **capture (q13)** — not tested.
 4. **Save/load mid-employment (q15)** — not tested. Employment metadata must persist
    alongside a pawn that is temporarily in the player faction.
@@ -185,11 +256,13 @@ Listed as UNRESOLVED rather than guessed at, per the spike's purpose:
 Strategy A is viable and should be the basis for the labor phases. Before any labor economy
 is built:
 
-1. Implement capture/restore of `kindDef` (and ideally the full snapshot the spike uses).
-2. Measure and resolve the population-adaptation side effect.
+1. Create a lightweight quest with a `QuestPart_ExtraFaction` (HomeFaction = employer) per
+   employment. This is the single highest-value step: it prevents the kindDef rewrite, keeps
+   the employee out of raid-point maths, and restores the faction on death.
+2. Still capture and restore the full pawn snapshot as a safety net.
 3. Run a long-form observation: hire one worker, watch it live in the colony for several
    in-game days, then fire it.
-4. Test death, downing and save/load mid-employment explicitly.
+4. Test downing, capture and save/load mid-employment explicitly.
 
 §33's instruction stands: *"Do not build the full labor economy until the control model is
 proven."* Control is proven. Lifecycle is not.

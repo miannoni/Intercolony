@@ -379,7 +379,11 @@ namespace Intercolony
             return total;
         }
 
-        private static bool TryTakeSilver(Map map, int amount)
+        /// <summary>
+        /// Removes <paramref name="amount"/> silver from colony storage. Public because
+        /// employment pays wages from the same purse (§109).
+        /// </summary>
+        public static bool TryTakeSilver(Map map, int amount)
         {
             if (map == null || amount <= 0)
             {

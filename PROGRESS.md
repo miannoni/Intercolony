@@ -627,3 +627,92 @@ Bugs found and fixed during the phase:
 - **Player short-changed by one silver.** An order advertised at 537 paid out 536. `TotalPayment` rounds while `PaymentFor` floors, so whenever `unitPrice x quantity` landed in `[n-0.5, n)` the quoted and paid totals disagreed. Flooring per delivery is deliberate — it stops a run of partial deliveries overpaying — so the fix pays the exact remainder on the delivery that *completes* the order. Regression test sweeps ~560 quantity/price combinations, delivering each in thirds, and fails unless instalments sum to the quoted total; a single hand-picked case would have missed it. Verified after the fix: an order advertised at 4,500 paid exactly 4,500.
 - **`Spawn goods for open orders` debug helper had three faults**, reported as a red error in play. It called `ThingMaker.MakeThing` with no material, so RimWorld logged `madeFromStuff but stuff=null` and assigned a default. Worse, that default bore no relation to the order's `allowedStuff`, so the helper would spawn steel sculptures against a marble order, the delivery would correctly refuse them, and the matcher would look broken when it was doing its job — a convincing false bug report. It also spawned buildings *installed* rather than crated, forcing an uninstall before they could be caravanned. All three fixed; the helper now produces goods that genuinely satisfy the order line.
 - No red errors in the in-game dev debug log window. All four §94 acceptance criteria pass.
+
+## Phase 16 — Basic temporary labor  (2026-07-27)
+
+§109's goal: "Hire one worker for a fixed period." Built on Phase 15's chosen control model —
+Strategy A (transfer into the player faction) with the worker marked a **quest lodger**.
+
+Implemented:
+- `Labor/LaborCandidate` + `Labor/LaborCandidateService` — the hireable worker pool (§35.1).
+  Wages are priced from the worker's best three skills (weighted up for passion), then adjusted
+  for travel distance, the source settlement's labor supply, and a short-term premium so a
+  short contract costs more per day (§36.1). Minimum term varies with settlement wealth.
+  The pool is session state, never scribed: an unhired candidate's pawn is generated, so
+  persisting it would either leak a world pawn or dangle on load.
+- `Labor/EmploymentContract` — persisted fixed-term employment. **Save schema 13 -> 14**, with a
+  migration step and ID validation.
+- `Labor/EmploymentService` — hire, travel, arrival, work, expiry, departure. Wages are prepaid
+  in full at hire (§37 "Prepaid"); recurring payroll and arrears are Phase 18 (§111).
+- `Defs/QuestScriptDefs/Intercolony_Employment.xml` + `Core/IntercolonyQuestDefOf` — the marker
+  quest script employment quests point `root` at. Never storyteller-selectable.
+- Hourly advance on the world component's existing beat, alongside order deadlines and purchases.
+- Debug actions: run labor self-test, list available workers, hire cheapest worker, arrive
+  employees now, expire employment now, dump employments.
+- `Debug/IntercolonyLaborSelfTest` — end-to-end through the real service, not a stand-in.
+
+The control model, confirmed in play rather than by reading:
+- The worker is transferred into the player faction, which is what makes them usable at all —
+  work priorities, drafting, bed ownership and bills all gate on `Faction.IsPlayer`.
+- Lodger status is what keeps that honest: `kindDef` is preserved (`SetFaction`'s `ChangeKind`
+  is guarded by `!IsQuestLodger()`), the worker is skipped by `DefaultThreatPointsNow`, and
+  `QuestPart_ExtraFaction.Notify_PawnKilled` restores their faction if they die.
+- **Departure is entirely vanilla.** The quest carries a `QuestPart_Leave` with
+  `leaveOnCleanup`, so ending the quest restores the faction, clears guest/master state, drops
+  carried items and walks the worker off under a `LordJob_ExitMapBest`.
+- No Harmony patch was needed for any of it.
+
+Not implemented:
+- No hiring UI. Hiring is dev-action only; §110 (Phase 17) is the labor market UI phase.
+- No recurring payroll, arrears or termination escalation — Phase 18 (§111).
+- No open-ended employment, renewal, or refusal to renew (§32, §36.4).
+- No job-posting/applicant model (§35.2); only the available-worker pool.
+- No compensation on death (§43), and no employer reputation effect from how workers are treated.
+
+Known limitations:
+- A source faction that turns hostile while the worker is travelling fails the contract at the
+  gate and forfeits the wages. That is a placeholder, not the considered policy §88 asks for;
+  Phase 18 should decide what actually happens. A faction that turns hostile *during* work is
+  not handled at all yet.
+- A worker downed at the moment of departure has their faction restored but stays on the map —
+  `MakePawnsLeave` only lords up pawns that are spawned and not downed.
+- Employment targets `destinationMap`, the map that paid. Multi-colony hiring is untested.
+- Candidate listings do not survive a save; they regenerate against the current market refresh.
+- Long-form behaviour (does the employee actually haul, cook and sleep over days?) is observed,
+  not asserted.
+
+Manual test:
+- `Run labor self-test`: **32 passed, 0 failed.** Covers pool generation (20 workers), wage
+  invariants across all 20, exact silver deduction, travelling state, world-pawn pinning,
+  arrival, player faction, free colonist, lodger status, `kindDef` preserved
+  (`Tribal_HeavyArcher` -> `Tribal_HeavyArcher`), home faction retained, work priorities,
+  drafting, term clock starting at arrival, expiry, faction restored, no longer a colonist,
+  `kindDef` intact after departure, walking off the map, no live references left on the record,
+  and early dismissal of a traveller including unpinning from the world pawn pool.
+- Hired a worker in play, pulled the arrival forward, **saved mid-employment, quit to menu and
+  reloaded**: the employee came back Active, still a lodger, `kindDef` intact, term clock
+  unchanged at 4 days remaining, `nextId` correct. This is §109's save/load criterion and the
+  one thing the self-test cannot reach.
+- Startup clean, no def errors, no red errors.
+
+Bugs found and fixed during the phase:
+- **`Quest.MakeRaw()` leaves `root` null, and `Quest.CleanupQuestParts` ends with
+  `if (root.hideOnCleanup)`.** Every employment that ended would throw a
+  `NullReferenceException` — that is, every dismissal. The Phase 15 spike hit this and reported
+  it only as a bare `EXCEPTION during spike`. Fixed by shipping a marker `QuestScriptDef`.
+- **Red error spam, ~20 lines per pool refresh.** `LaborCandidate.Discard()` called
+  `RemoveAndDiscardPawnViaGC`, whose first step is `RemovePawn`, which `Log.Error`s when the
+  pawn was never in `WorldPawns` — and a *listed* candidate never is. Guarded, with the
+  destroy-then-discard path inlined for the unlisted case.
+- **Every employment record froze `skills: no skills`.** `TryHire` read
+  `candidate.SkillSummary()` in the object initialiser, after `candidate.Release()` had already
+  nulled the pawn the summary reads from. The one field whose entire purpose is to outlive the
+  worker's departure was being filled with the fallback string. Neither this nor the error spam
+  was caught by the 28 assertions that passed on the first run — both were found by reading the
+  log. The self-test now captures the expected summary before hiring and asserts equality.
+- **Candidate pool had no ceiling: 48 pawns generated and discarded on every look**, the same
+  shape of mistake as the §5.2 opportunity flood. Capped at 20 via a seeded settlement shuffle,
+  and cached per market refresh so opening a listing no longer reshuffles who is hiring.
+- **The early-dismissal check silently skipped for want of silver**, leaving the `KeepForever`
+  unpin path unexercised — a vacuous skip of exactly the kind Phase 4 warned about. The test
+  now budgets for both hires.

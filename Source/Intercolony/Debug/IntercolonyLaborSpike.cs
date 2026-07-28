@@ -97,6 +97,10 @@ namespace Intercolony
                 sb.AppendLine("  After restoring the original faction:");
                 pawn.SetFaction(employer);
                 ReportResidue(sb, pawn, before);
+
+                // --- Strategy A+ : the same transfer, but as a quest lodger ---
+                sb.AppendLine();
+                ProbeLodgerVariant(sb, employer, map);
             }
             catch (System.Exception ex)
             {
@@ -241,6 +245,118 @@ namespace Intercolony
                 sb.AppendLine("    NOTE: kindDef is NOT restored automatically. Any implementation must " +
                               "capture and reapply it, or every employee returns home as a colonist-kind pawn.");
             }
+        }
+
+        /// <summary>
+        /// Tests the refined approach: transfer into the player faction while the pawn is a
+        /// **quest lodger**, which vanilla uses for "lives here, belongs to someone else".
+        ///
+        /// Reading the source says this should prevent the kindDef rewrite
+        /// (<c>SetFaction</c>'s ChangeKind is guarded by <c>!IsQuestLodger()</c>) and keep the
+        /// pawn out of raid-point maths (<c>DefaultThreatPointsNow</c> skips lodgers). Reading
+        /// is not evidence, so this measures it.
+        /// </summary>
+        private static void ProbeLodgerVariant(StringBuilder sb, Faction employer, Map map)
+        {
+            sb.AppendLine("  Strategy A+ (transfer while marked a quest lodger):");
+
+            Pawn pawn = null;
+            Quest quest = null;
+            try
+            {
+                PawnKindDef kind = employer.RandomPawnKind();
+                pawn = PawnGenerator.GeneratePawn(kind, employer);
+                pawn.Name = new NameSingle(ProbeName + "Lodger");
+                GenSpawn.Spawn(pawn, DropCellFinder.TradeDropSpot(map), map);
+
+                PawnKindDef originalKind = pawn.kindDef;
+
+                quest = MakeEmploymentQuest(pawn, employer);
+                sb.AppendLine($"    quest state               : {quest.State}");
+                sb.AppendLine($"    IsQuestLodger before      : {pawn.IsQuestLodger()}");
+
+                pawn.SetFaction(Faction.OfPlayer);
+
+                bool lodger = pawn.IsQuestLodger();
+                bool kindKept = pawn.kindDef == originalKind;
+
+                sb.AppendLine($"    IsQuestLodger after       : {lodger}");
+                sb.AppendLine($"    kindDef preserved         : {kindKept} " +
+                              $"({originalKind?.defName} -> {pawn.kindDef?.defName})");
+                sb.AppendLine($"    still a free colonist     : {pawn.IsFreeColonist} " +
+                              "(control must survive lodger status)");
+                sb.AppendLine($"    workSettings usable       : {pawn.workSettings != null}");
+                sb.AppendLine($"    draftable                 : {pawn.drafter != null}");
+                sb.AppendLine($"    HomeFaction               : {pawn.HomeFaction?.Name ?? "none"}");
+
+                // Threat-point exclusion is the other half of the claim.
+                sb.AppendLine($"    excluded from raid points : {lodger} " +
+                              "(DefaultThreatPointsNow skips quest lodgers)");
+
+                pawn.SetFaction(employer);
+                sb.AppendLine($"    kindDef after return      : {pawn.kindDef?.defName}");
+
+                bool verdict = lodger && kindKept && pawn.kindDef == originalKind;
+                sb.AppendLine(verdict
+                    ? "    VERDICT: lodger route works — control retained, no kindDef residue."
+                    : "    VERDICT: lodger route did NOT deliver; fall back to snapshot/restore.");
+            }
+            catch (System.Exception ex)
+            {
+                sb.AppendLine($"    EXCEPTION: {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                if (quest != null && !quest.Historical)
+                {
+                    quest.End(QuestEndOutcome.Unknown, sendLetter: false, playSound: false);
+                }
+
+                if (pawn != null && !pawn.Destroyed)
+                {
+                    if (pawn.Spawned)
+                    {
+                        pawn.DeSpawn(DestroyMode.Vanish);
+                    }
+
+                    pawn.Destroy(DestroyMode.Vanish);
+                }
+            }
+        }
+
+        /// <summary>
+        /// A minimal hidden quest carrying a <see cref="QuestPart_ExtraFaction"/>. This is the
+        /// same machinery vanilla lodger quests use; the quest exists only to hold the
+        /// employee's real allegiance while they work for the player.
+        /// </summary>
+        private static Quest MakeEmploymentQuest(Pawn pawn, Faction employer)
+        {
+            Quest quest = Quest.MakeRaw();
+            quest.name = $"Employment: {pawn.LabelShort}";
+
+            // A root is mandatory, not decorative: Quest.CleanupQuestParts ends with
+            // `if (root.hideOnCleanup)`, so a MakeRaw quest with a null root throws a
+            // NullReferenceException the moment the quest ends — which is every time an
+            // employee is dismissed. Caught by this spike's first lodger run.
+            quest.root = IntercolonyQuestDefOf.Intercolony_Employment;
+
+            // Hidden: this is bookkeeping, not a quest the player should read in the Quests tab.
+            quest.hidden = true;
+            quest.hiddenInUI = true;
+
+            QuestPart_ExtraFaction part = new QuestPart_ExtraFaction
+            {
+                quest = quest,
+                extraFaction = new ExtraFaction(employer, ExtraFactionType.HomeFaction)
+            };
+            part.affectedPawns.Add(pawn);
+            quest.AddPart(part);
+
+            Find.QuestManager.Add(quest);
+
+            // Ongoing state is what GetExtraFactionsFromQuestParts requires.
+            quest.Accept(null);
+            return quest;
         }
 
         private static PawnSnapshot Capture(Pawn pawn)

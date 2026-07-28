@@ -82,12 +82,13 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 15 complete (2026-07-26). Next: Phase 16 — Basic temporary labor (DESIGN.md §109).
+**Phase:** 16 complete (2026-07-27). Next: Phase 17 — Labor market UI (DESIGN.md §110).
 
-Phase 15's deliverable is `docs/LABOR_TECHNICAL_NOTES.md`. **Read it before writing any
-labor code** — it records the chosen control strategy and two things that must be handled
-by the implementation: `kindDef` is not restored automatically, and faction transfer
-inflates storyteller population adaptation.
+**Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
+control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation
+depends on: an employment quest must have a non-null `root`, departure must go through
+`QuestPart_Leave` rather than being hand-rolled, and a travelling worker must be pinned in
+`WorldPawns` as `KeepForever`.
 
 `docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
 Read it before touching anything that moves an individual object.

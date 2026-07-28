@@ -1,0 +1,376 @@
+using System.Collections.Generic;
+using System.Text;
+using RimWorld;
+using UnityEngine;
+using Verse;
+using Verse.AI.Group;
+
+namespace Intercolony
+{
+    /// <summary>
+    /// End-to-end check of Phase 16's acceptance criteria (DESIGN.md §109).
+    ///
+    /// This drives the **real** hire path — <see cref="EmploymentService.TryHire"/>,
+    /// <see cref="EmploymentService.Advance"/>, <see cref="EmploymentService.End"/> — rather
+    /// than a convenient stand-in. Phase 4 taught that a test built against a private copy of
+    /// the logic passes vacuously, and Phase 14 that it can also fail spuriously.
+    ///
+    /// Save/load survival is the one criterion no self-test can reach: it needs a real
+    /// save-and-reload cycle. It is checked by hand, and the manual steps are printed here so
+    /// they are not forgotten.
+    /// </summary>
+    public static class IntercolonyLaborSelfTest
+    {
+        private class Results
+        {
+            public readonly StringBuilder sb = new StringBuilder();
+            public int passed;
+            public int failed;
+
+            public void Check(bool condition, string label, string detail = null)
+            {
+                if (condition)
+                {
+                    passed++;
+                    sb.AppendLine($"  PASS  {label}{(detail == null ? "" : $"  ({detail})")}");
+                }
+                else
+                {
+                    failed++;
+                    sb.AppendLine($"  FAIL  {label}{(detail == null ? "" : $"  ({detail})")}");
+                }
+            }
+
+            public void Info(string line)
+            {
+                sb.AppendLine($"        {line}");
+            }
+        }
+
+        public static string Run(IntercolonyWorldComponent state, Map map)
+        {
+            Results r = new Results();
+            r.sb.AppendLine("Labor self-test (DESIGN.md §109)");
+
+            if (state == null || map == null)
+            {
+                r.sb.AppendLine("  No world or map. Open a colony first.");
+                return r.sb.ToString();
+            }
+
+            Zone_Stockpile temporaryZone = null;
+
+            try
+            {
+                // --- Candidate pool ---
+                List<LaborCandidate> pool = LaborCandidateService.Refresh(state);
+                r.Check(pool.Count > 0, "candidate pool is not empty", $"{pool.Count} workers offered");
+
+                if (pool.Count == 0)
+                {
+                    r.sb.AppendLine("  Cannot continue without a candidate.");
+                    return Summarize(r);
+                }
+
+                CheckPricing(r, state, pool);
+
+                // --- Hire ---
+                LaborCandidate candidate = pool[0];
+                int term = candidate.minTermDays;
+                int expectedTotal = candidate.dailyWage * term;
+
+                // Budget for the second hire too, or the early-dismissal check silently skips —
+                // which is how the KeepForever unpin path went unexercised on the first run.
+                int budget = expectedTotal;
+                if (pool.Count > 1)
+                {
+                    budget += pool[1].dailyWage * pool[1].minTermDays;
+                }
+
+                temporaryZone = EnsureSilver(r, map, budget);
+
+                int silverBefore = PurchaseOrderService.CountColonySilver(map);
+                if (silverBefore < expectedTotal)
+                {
+                    r.Check(false, "colony can afford the cheapest worker",
+                        $"{silverBefore} silver in storage, {expectedTotal} needed");
+                    return Summarize(r);
+                }
+
+                Faction employer = candidate.faction;
+                PawnKindDef originalKind = candidate.pawn.kindDef;
+                string workerName = candidate.Name;
+
+                // Captured before the hire, because hiring releases the pawn from the candidate
+                // and anything read from it afterwards is a fallback string, not the truth.
+                string expectedSkills = candidate.SkillSummary();
+
+                EmploymentContract contract = EmploymentService.TryHire(
+                    state, candidate, term, map, out string failReason);
+
+                r.Check(contract != null, "hire succeeded", failReason ?? $"{workerName}, {term} days");
+                if (contract == null)
+                {
+                    return Summarize(r);
+                }
+
+                r.Check(contract.workerSkills == expectedSkills,
+                    "the record froze the worker's real skills",
+                    $"expected \"{expectedSkills}\", got \"{contract.workerSkills}\"");
+
+                int silverAfter = PurchaseOrderService.CountColonySilver(map);
+                r.Check(silverBefore - silverAfter == contract.paidSilver,
+                    "wages were deducted exactly once",
+                    $"{silverBefore} -> {silverAfter}, contract says {contract.paidSilver}");
+                r.Check(contract.paidSilver == contract.dailyWage * contract.termDays,
+                    "total equals daily wage times term",
+                    $"{contract.dailyWage} x {contract.termDays} = {contract.paidSilver}");
+                r.Check(contract.status == EmploymentStatus.Travelling,
+                    "contract starts as travelling", contract.status.ToString());
+                r.Check(contract.pawn != null && !contract.pawn.Spawned,
+                    "worker is not on the map yet");
+                r.Check(contract.pawn != null && Find.WorldPawns.Contains(contract.pawn),
+                    "worker is parked in the world pawn pool so nothing collects them");
+
+                // --- Arrival ---
+                contract.arrivalTick = GenTicks.TicksGame;
+                EmploymentService.Advance(state.Employments);
+
+                Pawn worker = contract.pawn;
+                r.Check(contract.status == EmploymentStatus.Active,
+                    "contract went active on arrival", contract.status.ToString());
+                r.Check(worker != null && worker.Spawned, "worker is spawned on the map");
+
+                if (worker == null || !worker.Spawned)
+                {
+                    return Summarize(r);
+                }
+
+                r.Check(worker.Faction == Faction.OfPlayer, "worker is in the player faction");
+                r.Check(worker.IsFreeColonist, "worker is a free colonist (this is what makes them usable)");
+                r.Check(worker.IsQuestLodger(), "worker is a quest lodger");
+                r.Check(worker.kindDef == originalKind, "kindDef survived the transfer",
+                    $"{originalKind?.defName} -> {worker.kindDef?.defName}");
+                r.Check(worker.HomeFaction == employer, "home faction is still the employer",
+                    $"{worker.HomeFaction?.Name ?? "none"} vs {employer?.Name ?? "none"}");
+                r.Check(worker.workSettings != null, "work priorities are assignable");
+                r.Check(worker.drafter != null, "worker is draftable");
+                r.Check(contract.endTick > GenTicks.TicksGame,
+                    "term clock starts at arrival, not at hire",
+                    $"{(contract.endTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay:0.#}d remaining");
+
+                // Informational: the storyteller exclusion the lodger route buys. Threat points
+                // move with wealth too, so this is reported rather than asserted — the binding
+                // evidence is the lodger flag above, which DefaultThreatPointsNow tests directly.
+                r.Info($"threat points now: {StorytellerUtility.DefaultThreatPointsNow(map):0}");
+
+                // --- Expiry and departure ---
+                contract.endTick = GenTicks.TicksGame;
+                EmploymentService.Advance(state.Employments);
+
+                r.Check(contract.status == EmploymentStatus.Completed,
+                    "contract completed when the term ran out", contract.status.ToString());
+                r.Check(worker.Faction == employer, "faction restored to the employer",
+                    $"{worker.Faction?.Name ?? "none"}");
+                r.Check(!worker.IsColonist, "worker is no longer a colonist");
+                r.Check(worker.kindDef == originalKind, "kindDef intact after departure",
+                    $"{originalKind?.defName} -> {worker.kindDef?.defName}");
+                r.Check(worker.GetLord() != null, "worker is walking off the map");
+                r.Check(contract.pawn == null && contract.quest == null,
+                    "closed record holds no live references (nothing to dangle on load)");
+
+                // --- Dismissal before arrival ---
+                CheckEarlyDismissal(r, state, map);
+
+                r.sb.AppendLine();
+                r.sb.AppendLine("  Not covered here — check by hand:");
+                r.sb.AppendLine("    * save mid-employment, quit to menu, reload, confirm the worker is still");
+                r.sb.AppendLine("      employed, still a lodger, and the term clock did not reset (§61, §82);");
+                r.sb.AppendLine("    * that the worker actually hauls, cooks and sleeps over several days.");
+            }
+            catch (System.Exception ex)
+            {
+                r.sb.AppendLine($"  EXCEPTION: {ex}");
+                r.failed++;
+            }
+            finally
+            {
+                temporaryZone?.Delete();
+                LaborCandidateService.Clear();
+            }
+
+            return Summarize(r);
+        }
+
+        /// <summary>Wage rules that must hold regardless of which worker was rolled.</summary>
+        private static void CheckPricing(Results r, IntercolonyWorldComponent state, List<LaborCandidate> pool)
+        {
+            int positive = 0;
+            int longerIsCheaperPerDay = 0;
+            int sampled = 0;
+
+            foreach (LaborCandidate candidate in pool)
+            {
+                if (candidate.dailyWage > 0)
+                {
+                    positive++;
+                }
+
+                SettlementEconomicProfile profile =
+                    state.GetProfile(IntercolonyMarketAccess.FindSettlement(candidate.settlementId));
+
+                int shortTerm = LaborCandidateService.DailyWage(candidate.pawn, profile, candidate.distanceTiles, 3);
+                int longTerm = LaborCandidateService.DailyWage(candidate.pawn, profile, candidate.distanceTiles, 30);
+                sampled++;
+                if (longTerm <= shortTerm)
+                {
+                    longerIsCheaperPerDay++;
+                }
+            }
+
+            r.Check(positive == pool.Count, "every quoted wage is positive",
+                $"{positive}/{pool.Count}");
+            r.Check(longerIsCheaperPerDay == sampled,
+                "a longer term never costs more per day (§36.1)",
+                $"{longerIsCheaperPerDay}/{sampled} sampled");
+            r.Check(pool.TrueForAll(c => c.minTermDays > 0), "every candidate has a minimum term");
+            r.Check(pool.TrueForAll(c => c.travelDays > 0), "every candidate has a travel time");
+            r.Check(pool.TrueForAll(c => c.pawn != null && c.pawn.RaceProps.Humanlike),
+                "every candidate is a humanlike pawn");
+        }
+
+        /// <summary>
+        /// A hire cancelled before the worker arrives must not leave a pinned pawn behind.
+        /// TryHire pins them as KeepForever, which the world pawn GC obeys forever if nothing
+        /// unpins them.
+        /// </summary>
+        private static void CheckEarlyDismissal(Results r, IntercolonyWorldComponent state, Map map)
+        {
+            List<LaborCandidate> pool = LaborCandidateService.Refresh(state);
+            if (pool.Count == 0)
+            {
+                r.Info("early-dismissal check skipped: no second candidate available.");
+                return;
+            }
+
+            LaborCandidate candidate = pool[0];
+            int total = candidate.dailyWage * candidate.minTermDays;
+            if (PurchaseOrderService.CountColonySilver(map) < total)
+            {
+                r.Info($"early-dismissal check skipped: needs {total} silver.");
+                return;
+            }
+
+            EmploymentContract contract = EmploymentService.TryHire(
+                state, candidate, candidate.minTermDays, map, out string failReason);
+            if (contract == null)
+            {
+                r.Check(false, "second hire for the dismissal check succeeded", failReason);
+                return;
+            }
+
+            Pawn worker = contract.pawn;
+            EmploymentService.End(contract, EmploymentStatus.Dismissed, "dismissed by self-test");
+
+            r.Check(contract.status == EmploymentStatus.Dismissed,
+                "a travelling worker can be dismissed before arrival");
+            r.Check(worker != null && !Find.WorldPawns.Contains(worker),
+                "a dismissed traveller is unpinned from the world pawn pool");
+            r.Check(contract.pawn == null, "dismissed record holds no pawn reference");
+        }
+
+        /// <summary>
+        /// Makes sure the colony actually has the silver to run the test, and says so when it
+        /// had to add some. Silver must land in storage: CountColonySilver deliberately ignores
+        /// loose silver on the ground, so dropping a stack at the trade spot would not count.
+        /// </summary>
+        private static Zone_Stockpile EnsureSilver(Results r, Map map, int needed)
+        {
+            int available = PurchaseOrderService.CountColonySilver(map);
+            if (available >= needed)
+            {
+                return null;
+            }
+
+            int shortfall = needed - available;
+            int stacksNeeded = Mathf.CeilToInt(shortfall / (float)ThingDefOf.Silver.stackLimit);
+
+            // Each stack needs its own empty cell *inside* a storage group. Placing "near" a
+            // stockpile is not good enough — a stack that lands one tile outside the zone is
+            // not IsInAnyStorage and so does not count.
+            List<IntVec3> cells = new List<IntVec3>();
+            foreach (SlotGroup group in map.haulDestinationManager.AllGroupsListInPriorityOrder)
+            {
+                foreach (IntVec3 candidate in group.CellsList)
+                {
+                    if (candidate.Standable(map) && candidate.GetFirstItem(map) == null)
+                    {
+                        cells.Add(candidate);
+                        if (cells.Count >= stacksNeeded)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                if (cells.Count >= stacksNeeded)
+                {
+                    break;
+                }
+            }
+
+            Zone_Stockpile created = null;
+            if (cells.Count < stacksNeeded)
+            {
+                // Not enough existing storage. Make a scrap of it next to the trade spot and
+                // delete it once the test is done.
+                created = new Zone_Stockpile(StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+                map.zoneManager.RegisterZone(created);
+
+                IntVec3 root = DropCellFinder.TradeDropSpot(map);
+                foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 6f, useCenter: true))
+                {
+                    if (cells.Count >= stacksNeeded)
+                    {
+                        break;
+                    }
+
+                    if (candidate.InBounds(map) && candidate.Standable(map) &&
+                        candidate.GetFirstItem(map) == null &&
+                        map.zoneManager.ZoneAt(candidate) == null)
+                    {
+                        created.AddCell(candidate);
+                        cells.Add(candidate);
+                    }
+                }
+            }
+
+            int remaining = shortfall;
+            int placed = 0;
+            foreach (IntVec3 cell in cells)
+            {
+                if (remaining <= 0)
+                {
+                    break;
+                }
+
+                Thing silver = ThingMaker.MakeThing(ThingDefOf.Silver);
+                silver.stackCount = Mathf.Min(remaining, ThingDefOf.Silver.stackLimit);
+                remaining -= silver.stackCount;
+                placed += silver.stackCount;
+                GenSpawn.Spawn(silver, cell, map);
+            }
+
+            r.Info($"added {placed} silver to storage so the hire path could run " +
+                   $"({available} was not enough for {needed}).");
+            return created;
+        }
+
+        private static string Summarize(Results r)
+        {
+            r.sb.AppendLine();
+            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            return r.sb.ToString();
+        }
+    }
+}

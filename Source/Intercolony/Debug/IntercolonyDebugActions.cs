@@ -543,6 +543,123 @@ namespace Intercolony
             IntercolonyLog.Message(IntercolonyTradeBlacklist.DebugSummary());
         }
 
+        [DebugAction(Category, "Run labor self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 59)]
+        private static void RunLaborSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyLaborSelfTest.Run(state, Find.CurrentMap)));
+        }
+
+        [DebugAction(Category, "List available workers", allowedGameStates = AllowedGameStates.Playing, displayPriority = 46)]
+        private static void ListAvailableWorkers()
+        {
+            WithState(state =>
+            {
+                List<LaborCandidate> pool = LaborCandidateService.Refresh(state);
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Available workers ({pool.Count})");
+                foreach (LaborCandidate candidate in pool)
+                {
+                    sb.AppendLine($"  {candidate.Name,-18} {candidate.SkillSummary(),-38} " +
+                                  $"{candidate.dailyWage,4}/day  min {candidate.minTermDays,2}d  " +
+                                  $"{candidate.travelDays,2}d away  {candidate.settlementName} ({candidate.factionName})");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
+        /// <summary>
+        /// Hires the cheapest listed worker for their minimum term. Phase 17 (§110) replaces
+        /// this with a real hiring window; until then this is the only way in.
+        /// </summary>
+        [DebugAction(Category, "Hire cheapest worker", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 47)]
+        private static void HireCheapestWorker()
+        {
+            WithState(state =>
+            {
+                List<LaborCandidate> pool = LaborCandidateService.Refresh(state);
+                if (pool.Count == 0)
+                {
+                    Report("No workers available.");
+                    return;
+                }
+
+                LaborCandidate candidate = pool[0];
+                EmploymentContract contract = EmploymentService.TryHire(
+                    state, candidate, candidate.minTermDays, Find.CurrentMap, out string failReason);
+
+                // TryHire already logs and messages on success; only the failure needs reporting.
+                if (contract == null)
+                {
+                    Report($"Could not hire: {failReason}");
+                }
+            });
+        }
+
+        [DebugAction(Category, "Arrive employees now", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 48)]
+        private static void ArriveEmployeesNow()
+        {
+            WithState(state =>
+            {
+                int moved = 0;
+                foreach (EmploymentContract contract in state.Employments)
+                {
+                    if (contract.status == EmploymentStatus.Travelling)
+                    {
+                        contract.arrivalTick = GenTicks.TicksGame;
+                        moved++;
+                    }
+                }
+
+                EmploymentService.Advance(state.Employments);
+                Report(moved > 0 ? $"Pulled {moved} arrival(s) forward." : "No employees travelling.");
+            });
+        }
+
+        [DebugAction(Category, "Expire employment now", allowedGameStates = AllowedGameStates.Playing, displayPriority = 49)]
+        private static void ExpireEmploymentNow()
+        {
+            WithState(state =>
+            {
+                int moved = 0;
+                foreach (EmploymentContract contract in state.Employments)
+                {
+                    if (contract.status == EmploymentStatus.Active)
+                    {
+                        contract.endTick = GenTicks.TicksGame;
+                        moved++;
+                    }
+                }
+
+                EmploymentService.Advance(state.Employments);
+                Report(moved > 0 ? $"Expired {moved} contract(s)." : "No active employees.");
+            });
+        }
+
+        [DebugAction(Category, "Dump employments", allowedGameStates = AllowedGameStates.Playing, displayPriority = 84)]
+        private static void DumpEmployments()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Employments ({state.Employments.Count}, {state.ActiveEmployeeCount} open)");
+                foreach (EmploymentContract contract in state.Employments)
+                {
+                    sb.AppendLine($"  {contract}");
+                    sb.AppendLine($"      {contract.StatusLine()}");
+                    sb.AppendLine($"      skills: {contract.workerSkills}");
+                    sb.AppendLine($"      pawn on map: {contract.pawn?.LabelShort ?? "none"}, " +
+                                  $"faction {contract.pawn?.Faction?.Name ?? "-"}, " +
+                                  $"lodger {(contract.pawn != null && contract.pawn.IsQuestLodger())}, " +
+                                  $"kind {contract.pawn?.kindDef?.defName ?? "-"} " +
+                                  $"(hired as {contract.originalKind?.defName ?? "-"})");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
         [DebugAction(Category, "Advance refresh", allowedGameStates = AllowedGameStates.Playing, displayPriority = 95)]
         private static void AdvanceRefresh()
         {

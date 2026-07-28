@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 13;
+        public const int CurrentSaveVersion = 14;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -210,6 +210,36 @@ namespace Intercolony
             if (order != null)
             {
                 purchaseOrders.Add(order);
+            }
+        }
+
+        /// <summary>Temporary employees, travelling or working (DESIGN.md §32, §109).</summary>
+        private List<EmploymentContract> employments = new List<EmploymentContract>();
+
+        public List<EmploymentContract> Employments => employments;
+
+        public void AddEmployment(EmploymentContract contract)
+        {
+            if (contract != null)
+            {
+                employments.Add(contract);
+            }
+        }
+
+        public int ActiveEmployeeCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (EmploymentContract contract in employments)
+                {
+                    if (contract.IsOpen)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
             }
         }
 
@@ -531,6 +561,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
             Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
+            Scribe_Collections.Look(ref employments, "employments", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -632,6 +663,24 @@ namespace Intercolony
                     }
                 }
 
+                if (employments == null)
+                {
+                    employments = new List<EmploymentContract>();
+                }
+                else
+                {
+                    int nullEmployments = employments.RemoveAll(e => e == null);
+                    int brokenEmployments = employments.RemoveAll(e => !e.IsValidAfterLoad);
+                    if (nullEmployments > 0 || brokenEmployments > 0)
+                    {
+                        // An employment whose pawn did not resolve leaves a worker somewhere in
+                        // the world with no contract governing them. Loud, not quiet (§62).
+                        IntercolonyLog.Error(
+                            $"Dropped {nullEmployments} null and {brokenEmployments} unresolvable " +
+                            "employment(s) while loading. Any wages paid for them are gone.");
+                    }
+                }
+
                 if (nextId < 1)
                 {
                     IntercolonyLog.Warning($"Loaded nextId={nextId}; clamping to 1 to keep IDs positive.");
@@ -677,6 +726,13 @@ namespace Intercolony
                 if (orders.Count > 0)
                 {
                     SalesOrderService.ProcessBuyerCollections(orders);
+                }
+
+                // Employees arriving and terms expiring (§109). Hourly is fine: an hour's
+                // slack on a multi-day contract is invisible.
+                if (employments.Count > 0)
+                {
+                    EmploymentService.Advance(employments);
                 }
             }
         }
@@ -1050,6 +1106,13 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
             }
 
+            if (saveVersion < 14)
+            {
+                // 13 -> 14 added temporary employment. Purely additive: a save from schema 13
+                // has no employees, which is correct for a colony that never hired one.
+                IntercolonyLog.Message("  schema 13 -> 14: temporary employment added.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -1091,6 +1154,14 @@ namespace Intercolony
                 if (purchase.id > highest)
                 {
                     highest = purchase.id;
+                }
+            }
+
+            foreach (EmploymentContract employment in employments)
+            {
+                if (employment.id > highest)
+                {
+                    highest = employment.id;
                 }
             }
 
@@ -1150,6 +1221,12 @@ namespace Intercolony
             foreach (SalesOrder order in orders)
             {
                 sb.AppendLine($"    {order}  {(order.IsOpen ? $"{order.DaysRemaining:F1}d left" : order.outcomeNote)}");
+            }
+
+            sb.AppendLine($"  employments  : {employments.Count} ({ActiveEmployeeCount} open)");
+            foreach (EmploymentContract employment in employments)
+            {
+                sb.AppendLine($"    {employment}  {employment.StatusLine()}");
             }
 
             return sb.ToString();
