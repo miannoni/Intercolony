@@ -1096,11 +1096,23 @@ Manual test:
   really-constructed objects, including idempotence — the sweep runs hourly for as long as a war
   lasts, so re-applying must be a no-op. Employer standing and test debts restored afterwards.
 - Startup clean, schema 17, no def errors.
-- **Not covered by the self-test and needing play:** safe passage itself. Whether a released worker
-  actually reaches the map edge, whether turrets hold their fire, and what happens if they are
-  blocked are all about a spawned pawn over two in-game days, and none of it is arithmetic. The
-  "Force war with an employee's faction" debug action exists for exactly this and has not yet been
-  exercised in a real colony.
+- **Safe passage, played through end to end.** Hired a civilian (Dragon of Barxe Kinship, 48/day x
+  5d), let them travel and arrive, then forced the war from the debug menu. The full chain ran with
+  **no exceptions and no warnings anywhere in the session**:
+
+  ```
+  Hired      -> Travelling
+  Arrived    -> Active
+  War        -> Severed, factionless, walking out under safe passage
+  Border     -> Safe passage complete, faction restored, quest ended, references cleared
+  ```
+
+  The last step is the one most likely to have broken: it restores the faction on an unspawned world
+  pawn and then runs `MakePawnsLeave` a second time through `quest.End()`. No "tried to discard a
+  world pawn", no unresolved-reference error on the way out.
+- **Not yet exercised:** the safe-passage *deadline*. A worker who cannot reach the edge — walled in
+  or downed — should get the "Safe passage expired" letter and cost the colony a detention penalty
+  after two days. The happy path is proven; that branch is not.
 
 Bugs found and fixed during the phase:
 - **A failing test that was right to fail, about a claim that was wrong.** The first version of the
