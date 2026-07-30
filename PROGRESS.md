@@ -817,3 +817,91 @@ Decisions worth recording:
 - The payroll summary says "prepaid", not "payroll/day". Wages are paid in full at hire, and
   calling it payroll would read as a recurring debit the player must keep covering — which is
   Phase 18's model, not this one. Wrong labels teach wrong mental models.
+
+## Phase 18 — Payroll and arrears  (2026-07-29)
+
+§111's goal: "Make employment economically binding." Acceptance: "Insufficient silver creates
+understandable escalating consequences rather than crashes or silent deletion."
+
+Raised by Matteo after playtesting Phase 17: paying everything up front is limiting. It was
+mapped (§37, §38, §39) but §111's build list only said "payment schedule" — the *choice* of
+structure was implicit, which is how it would have been missed. Now named explicitly there.
+
+Implemented:
+- **Three wage structures (§37)**, chosen at hire in `UI/Dialog_HireWorker.cs`:
+  - Prepaid — whole term now, 10% cheaper. §37 gives prepaid a discounted total, and its stated
+    risk is real: if the worker dies or the player changes their mind, the silver is spent.
+  - Per quadrum — every 15 days worked. §37's "likely default for longer employment", and the
+    dialog's default.
+  - Daily — at the end of each day worked.
+  All three are priced side by side against the term currently selected, because §111's criterion
+  is that the trade-off is visible at the moment of hiring, not discovered later. Periodic hires
+  take nothing up front, so a long contract is no longer a lump sum the player must first raise.
+- **`Labor/PayrollService.cs`** — the pay beat on the world component's existing hourly tick. Pays
+  what the colony has, records the shortfall as arrears, advances the clock from the *scheduled*
+  time so a late payment does not drift the schedule, and settles pro rata for a partial final
+  period so a dismissed worker is neither stiffed nor overpaid.
+- **§39's escalation, in full:**
+  1. first miss — warning letter, arrears recorded, work continues;
+  2. second miss — the worker downs tools; their priorities are saved and zeroed;
+  3. third miss — the worker walks out (new `EmploymentStatus.Quit`) and the unpaid wages become
+     a `LaborDebt` that outlives the employment.
+  Paying up at any point clears the arrears, resets the counter and restores the exact priorities
+  they had rather than leaving the player to rebuild the work plan.
+- **`Labor/LaborDebt.cs`** — persisted per settlement, keeping `originalAmount` so settling
+  clears the balance without erasing the history. Phase 19 (§112) reads these.
+- **Mood penalty as a situational thought** (`Intercolony_UnpaidWages` +
+  `ThoughtWorker_UnpaidWages`), not a memory: being owed wages is a state, so it lifts the instant
+  the debt is paid instead of lingering on a timer.
+- **Labor tab**: arrears in red, per-employee "Pay N", a debt panel with "Settle N" for workers
+  already gone, next-payday countdown, structure shown per contract, and a `Labor (!)` badge on
+  the tab whenever anything is owed — §39's escalation is only playable if it is noticed without
+  going looking.
+- Debug actions: run payroll self-test, force payroll now, dump labor debts.
+- **Save schema 14 -> 15.** Existing employments migrate to Prepaid, which is exactly what they
+  were; `nextPaymentTick` stays -1 so no payroll is conjured for an already-paid worker.
+
+Not implemented:
+- No employer reputation effect from arrears, and no source-faction goodwill effect (§39 steps 7
+  and 8). Phase 19 (§112) — the record exists for it to consume.
+- No effect on future wages or applicant quality (§39 step 9). Also Phase 19.
+- No open-ended employment or renewal (§36.4) — Phase 22 (§115), raised by Matteo and mapped.
+- No death/injury compensation (§43) — Phase 20 (§113).
+
+Known limitations:
+- **Refusing work is not enforced against the player.** Priorities are zeroed once; if the player
+  sets them back, the worker works. Deliberate — §39 makes refusal a warning stage on the way to
+  the worker leaving, not a wall — but it is a soft consequence, not a hard one.
+- Prepaid is never refunded, on dismissal or death. That is §37's stated risk rather than an
+  omission, but it means an early dismissal of a prepaid worker is a total loss.
+- Arrears are paid from the map that hired the worker; multi-colony payroll is untested.
+
+Manual test:
+- `Run payroll self-test`: **39 passed, 0 failed.** The test deliberately starves the colony,
+  because §38's requirement — a shortfall creates arrears rather than blocking — cannot be proven
+  with money in the bank. Walks warning -> tools down (13 work types zeroed, mood at stage 1) ->
+  paid off (priorities restored, mood lifted immediately) -> starved again -> walk-out -> debt
+  recorded -> debt settled. §37's cost invariants are checked across 960 wage/term combinations
+  rather than one.
+- `Run labor self-test`: **36 passed, 0 failed** — Phases 16 and 17 still intact.
+- Verified in play by Matteo, including hiring on a daily wage, forcing payroll with no silver,
+  and saving/reloading while in arrears.
+- Startup clean, 7917 def nodes, no def errors.
+
+Bugs found and fixed during the phase:
+- **A Phase 16 assertion became wrong and was corrected rather than left to fail.** The labor
+  self-test asserted `paidSilver == dailyWage * termDays`; with §37's prepay discount that is no
+  longer the right expectation. It now checks `TotalCommitment` and separately asserts that
+  prepaying really is cheaper than the gross rate.
+- **18 warnings per pool refresh: "Tried to discard a world pawn X."** The previous fix guarded
+  the *removal* but hand-rolled the disposal, and `Pawn.Destroy` ends with
+  `if (!IsBeingDiscarded && !Contains) PassToWorld(this)` — so destroying an unregistered pawn
+  adds it to `WorldPawns`, and the following `Discard` then refused and did nothing, leaving all
+  18 pawns alive in the world pool. `WorldPawns.DiscardPawn` is correct only because it sets the
+  being-discarded flag first, which is exactly what inlining omits. Both branches now go through
+  vanilla. The same misunderstanding of this one method produced two different warnings across
+  two phases, so it is written up in `docs/LABOR_TECHNICAL_NOTES.md` as "never hand-roll pawn
+  disposal".
+- **`EmploymentContract.ToString` read as a zero-value contract.** "(22/day x 20d = 0)" for a
+  periodic hire, because `paidSilver` is legitimately 0 before the first payday. Now shows the
+  structure, the total commitment, what has been paid and what is owed.

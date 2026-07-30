@@ -226,6 +226,29 @@ Found while implementing this in Phase 16 (`Source/Intercolony/Labor/EmploymentS
 Also confirmed by reading `Quest.QuestTick`: a quest with no expiry and no activable parts never
 ends on its own, so an employment quest safely lives as long as the contract does.
 
+### Never hand-roll pawn disposal — CORRECTED 2026-07-29
+
+Throwing away a generated pawn that was never registered anywhere looks like two calls:
+`pawn.Destroy()` then `pawn.Discard()`. It is not. `Pawn.Destroy` ends with
+
+```csharp
+if (!worldPawns.IsBeingDiscarded(this) && !worldPawns.Contains(this))
+    worldPawns.PassToWorld(this);
+```
+
+so destroying an unregistered pawn **adds it to `WorldPawns`**, and the `Discard` that follows
+then logs "tried to discard a world pawn" and does nothing — leaving the pawn alive in the world
+pool. `WorldPawns.DiscardPawn` is correct only because it sets the being-discarded flag first,
+which is exactly the step an inlined destroy-then-discard omits.
+
+Use vanilla's routes: `RemoveAndDiscardPawnViaGC` when the pawn is in `WorldPawns`,
+`PassToWorld(pawn, PawnDiscardDecideMode.Discard)` when it is not. Both go through `DiscardPawn`.
+
+Found twice, the same underlying misunderstanding both times: first as
+"tried to remove pawn X, but it's not here" (guarding was missing), then as "tried to discard a
+world pawn X" (the guard was there but the disposal was hand-rolled). Discarding 18 unhired
+candidates produced 18 warnings each time.
+
 ### Owning the worker before they arrive
 
 A hired worker travels for a few days before spawning. During that window they are a generated,

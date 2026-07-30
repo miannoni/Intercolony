@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Defs>
+
+  <!--
+    Mood penalty for unpaid wages (DESIGN.md §39 step 3).
+
+    Situational, not a memory: the thought is true while the arrears stand and gone the moment
+    they are settled. A memory would have to be re-granted on a timer and would outlive the debt.
+
+    Deliberately mild. §39 is explicit that "the first missed payroll should not instantly destroy
+    the colony" — the mood hit is a signal, and the real consequences are downing tools and
+    walking out, which are handled in code.
+  -->
+  <ThoughtDef>
+    <defName>Intercolony_UnpaidWages</defName>
+    <workerClass>Intercolony.ThoughtWorker_UnpaidWages</workerClass>
+    <validWhileDespawned>true</validWhileDespawned>
+    <stages>
+      <li>
+        <label>unpaid wages</label>
+        <description>I came here to be paid, and I have not been. I would like to believe it is an oversight.</description>
+        <baseMoodEffect>-6</baseMoodEffect>
+      </li>
+      <li>
+        <label>cheated of wages</label>
+        <description>I have worked and worked and seen nothing for it. This is not an oversight any more. Why should I lift a finger for these people?</description>
+        <baseMoodEffect>-14</baseMoodEffect>
+      </li>
+    </stages>
+  </ThoughtDef>
+
+</Defs>

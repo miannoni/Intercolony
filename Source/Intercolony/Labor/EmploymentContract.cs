@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -19,7 +20,14 @@ namespace Intercolony
         Dismissed,
 
         /// <summary>Ended by circumstance — worker died, settlement gone, no map to arrive at.</summary>
-        Failed
+        Failed,
+
+        /// <summary>
+        /// The worker walked out over unpaid wages (§39 step 5). Distinct from
+        /// <see cref="Failed"/> because it is the player's fault and leaves a debt behind, and
+        /// Phase 19 must be able to tell the difference.
+        /// </summary>
+        Quit
     }
 
     /// <summary>
@@ -64,7 +72,29 @@ namespace Intercolony
 
         public int dailyWage;
         public int termDays;
+
+        /// <summary>Silver actually handed over so far — the whole term for prepaid, accumulating for periodic.</summary>
         public int paidSilver;
+
+        // --- Payment structure (§37, §38, §39) ---
+
+        public WageStructure wageStructure = WageStructure.Prepaid;
+
+        /// <summary>When the next pay period falls due. -1 for prepaid, or once the term is over.</summary>
+        public int nextPaymentTick = -1;
+
+        /// <summary>Wages earned but not paid, because the colony did not have the silver (§39).</summary>
+        public int arrearsSilver;
+
+        /// <summary>Consecutive pay periods that could not be met in full. Drives the escalation.</summary>
+        public int missedPayments;
+
+        /// <summary>
+        /// True once the worker has downed tools over arrears (§39 step 4). The priorities they
+        /// had are saved so paying up restores the work plan rather than leaving the player to
+        /// rebuild it.
+        /// </summary>
+        public bool refusingWork;
 
         public int hiredTick;
         public int arrivalTick;
@@ -81,6 +111,9 @@ namespace Intercolony
         /// </summary>
         public bool termLapsedNotified;
 
+        /// <summary>Work priorities saved when the worker downed tools, restored when arrears clear.</summary>
+        private Dictionary<WorkTypeDef, int> heldPriorities = new Dictionary<WorkTypeDef, int>();
+
         public EmploymentContract()
         {
         }
@@ -93,6 +126,16 @@ namespace Intercolony
             ? termDays
             : (endTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
+        public float DaysUntilPayment => nextPaymentTick < 0
+            ? -1f
+            : (nextPaymentTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
+
+        /// <summary>What the whole term costs under the chosen structure (§37).</summary>
+        public int TotalCommitment => WageStructureUtility.TotalCost(wageStructure, dailyWage, termDays);
+
+        /// <summary>Amount a single pay period costs. Zero for prepaid.</summary>
+        public int PeriodPayment => WageStructureUtility.PeriodCost(wageStructure, dailyWage);
+
         public string StatusLine()
         {
             switch (status)
@@ -100,8 +143,24 @@ namespace Intercolony
                 case EmploymentStatus.Travelling:
                     return $"travelling — arrives in {Mathf.Max(0f, DaysUntilArrival):0.#}d";
                 case EmploymentStatus.Active:
-                    return termLapsedNotified
-                        ? "term ended — away from the colony, will leave on return"
+                    if (refusingWork)
+                    {
+                        return $"REFUSING WORK — {arrearsSilver} silver in arrears";
+                    }
+
+                    if (arrearsSilver > 0)
+                    {
+                        return $"owed {arrearsSilver} silver — {Mathf.Max(0f, DaysRemaining):0.#}d left";
+                    }
+
+                    if (termLapsedNotified)
+                    {
+                        return "term ended — away from the colony, will leave on return";
+                    }
+
+                    return wageStructure.IsPeriodic()
+                        ? $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left, " +
+                          $"next pay in {Mathf.Max(0f, DaysUntilPayment):0.#}d"
                         : $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left";
                 default:
                     return outcomeNote.NullOrEmpty() ? status.ToString().ToLower() : outcomeNote;
@@ -128,6 +187,13 @@ namespace Intercolony
             Scribe_Values.Look(ref termDays, "termDays", 0);
             Scribe_Values.Look(ref paidSilver, "paidSilver", 0);
 
+            Scribe_Values.Look(ref wageStructure, "wageStructure", WageStructure.Prepaid);
+            Scribe_Values.Look(ref nextPaymentTick, "nextPaymentTick", -1);
+            Scribe_Values.Look(ref arrearsSilver, "arrearsSilver", 0);
+            Scribe_Values.Look(ref missedPayments, "missedPayments", 0);
+            Scribe_Values.Look(ref refusingWork, "refusingWork", false);
+            Scribe_Collections.Look(ref heldPriorities, "heldPriorities", LookMode.Def, LookMode.Value);
+
             Scribe_Values.Look(ref hiredTick, "hiredTick", 0);
             Scribe_Values.Look(ref arrivalTick, "arrivalTick", 0);
             Scribe_Values.Look(ref endTick, "endTick", -1);
@@ -135,6 +201,67 @@ namespace Intercolony
             Scribe_Values.Look(ref status, "status", EmploymentStatus.Travelling);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
             Scribe_Values.Look(ref termLapsedNotified, "termLapsedNotified", false);
+
+            if (Scribe.mode == LoadSaveMode.PostLoadInit && heldPriorities == null)
+            {
+                // A missing dictionary node loads as null, not empty.
+                heldPriorities = new Dictionary<WorkTypeDef, int>();
+            }
+        }
+
+        /// <summary>
+        /// Stops the worker working and remembers what they were doing (§39 step 4).
+        ///
+        /// The player can set the priorities back — nothing here fights them for it — which is a
+        /// deliberate limit rather than an oversight: §39 makes refusal a warning stage on the way
+        /// to the worker leaving, not a wall.
+        /// </summary>
+        public void HoldWork()
+        {
+            if (refusingWork || pawn?.workSettings == null || !pawn.workSettings.EverWork)
+            {
+                return;
+            }
+
+            heldPriorities.Clear();
+            foreach (WorkTypeDef work in DefDatabase<WorkTypeDef>.AllDefsListForReading)
+            {
+                int priority = pawn.workSettings.GetPriority(work);
+                if (priority > 0)
+                {
+                    heldPriorities[work] = priority;
+                    pawn.workSettings.SetPriority(work, 0);
+                }
+            }
+
+            refusingWork = true;
+        }
+
+        /// <summary>Puts the worker back on the jobs they had before they downed tools.</summary>
+        public void ResumeWork()
+        {
+            if (!refusingWork)
+            {
+                return;
+            }
+
+            refusingWork = false;
+
+            if (pawn?.workSettings == null || !pawn.workSettings.EverWork)
+            {
+                heldPriorities.Clear();
+                return;
+            }
+
+            foreach (KeyValuePair<WorkTypeDef, int> held in heldPriorities)
+            {
+                if (held.Key != null && !pawn.WorkTypeIsDisabled(held.Key))
+                {
+                    pawn.workSettings.SetPriority(held.Key, held.Value);
+                }
+            }
+
+            heldPriorities.Clear();
         }
 
         /// <summary>
@@ -146,8 +273,17 @@ namespace Intercolony
 
         public override string ToString()
         {
-            return $"Employment #{id} {workerName} from {settlementName} " +
-                   $"({dailyWage}/day × {termDays}d = {paidSilver}) [{status}]";
+            // Shows the commitment and the structure, not just paidSilver. It used to read
+            // "(22/day x 20d = 0)" for a periodic hire, which looks like a zero-value contract
+            // rather than one where nothing has been paid yet.
+            string money = $"{dailyWage}/day × {termDays}d {wageStructure.Label()}, " +
+                           $"{TotalCommitment} total, {paidSilver} paid";
+            if (arrearsSilver > 0)
+            {
+                money += $", {arrearsSilver} owed";
+            }
+
+            return $"Employment #{id} {workerName} from {settlementName} ({money}) [{status}]";
         }
     }
 }

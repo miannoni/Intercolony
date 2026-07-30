@@ -95,7 +95,10 @@ namespace Intercolony
                 Widgets.EndScrollView();
             }
 
-            y += employeeBlock + 10f;
+            y += employeeBlock + 8f;
+
+            y = DrawDebts(inRect, y, state);
+
             Widgets.DrawLineHorizontal(0f, y, inRect.width);
             y += 10f;
 
@@ -143,6 +146,83 @@ namespace Intercolony
             Widgets.EndScrollView();
         }
 
+        /// <summary>
+        /// Unpaid wages left behind by workers who have already gone (§39 step 6).
+        ///
+        /// Shown even though the employment is over, because that is the point of the record: the
+        /// obligation outlives the worker, Phase 19 will price future labor off it, and a debt the
+        /// player cannot see is one they cannot choose to make good.
+        /// </summary>
+        private float DrawDebts(Rect inRect, float y, IntercolonyWorldComponent state)
+        {
+            List<LaborDebt> unsettled = new List<LaborDebt>();
+            foreach (LaborDebt debt in state.LaborDebts)
+            {
+                if (!debt.IsSettled)
+                {
+                    unsettled.Add(debt);
+                }
+            }
+
+            if (unsettled.Count == 0)
+            {
+                return y + 2f;
+            }
+
+            unsettled.Sort((a, b) => b.amountOwed.CompareTo(a.amountOwed));
+
+            int total = 0;
+            foreach (LaborDebt debt in unsettled)
+            {
+                total += debt.amountOwed;
+            }
+
+            GUI.color = new Color(1f, 0.55f, 0.55f);
+            Widgets.Label(new Rect(0f, y, inRect.width, 24f),
+                $"Unpaid wages owed: {total} silver across {unsettled.Count} " +
+                $"worker{(unsettled.Count == 1 ? "" : "s")} who have gone home.");
+            GUI.color = Color.white;
+            y += 26f;
+
+            // Capped: the list is a prompt to settle up, not a ledger to browse. Two rows is
+            // enough to show the shape of the problem without crowding out the hiring listing.
+            int shown = Mathf.Min(unsettled.Count, 2);
+            for (int i = 0; i < shown; i++)
+            {
+                LaborDebt debt = unsettled[i];
+                Rect row = new Rect(0f, y, inRect.width, 26f);
+                Widgets.DrawHighlightIfMouseover(row);
+
+                GUI.color = new Color(1f, 1f, 1f, 0.75f);
+                Widgets.Label(new Rect(6f, y + 2f, inRect.width - 130f, 22f),
+                    $"{debt.amountOwed} silver to {debt.settlementName} for {debt.workerName} " +
+                    $"— {debt.DaysOutstanding:F0} days outstanding");
+                GUI.color = Color.white;
+
+                Rect payRect = new Rect(inRect.width - 120f, y, 110f, 24f);
+                if (Widgets.ButtonText(payRect, $"Settle {debt.amountOwed}"))
+                {
+                    if (!PayrollService.TrySettleDebt(debt, Find.CurrentMap, out string failReason))
+                    {
+                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                    }
+                }
+
+                y += 26f;
+            }
+
+            if (unsettled.Count > shown)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.5f);
+                Widgets.Label(new Rect(6f, y, inRect.width, 22f),
+                    $"...and {unsettled.Count - shown} more.");
+                GUI.color = Color.white;
+                y += 24f;
+            }
+
+            return y + 6f;
+        }
+
         private static void DrawPayrollSummary(Rect rect, List<EmploymentContract> live)
         {
             if (live.Count == 0)
@@ -151,21 +231,29 @@ namespace Intercolony
             }
 
             int daily = 0;
-            int committed = 0;
+            int paid = 0;
+            int arrears = 0;
             foreach (EmploymentContract contract in live)
             {
                 daily += contract.dailyWage;
-                committed += contract.paidSilver;
+                paid += contract.paidSilver;
+                arrears += contract.arrearsSilver;
             }
 
             Text.Anchor = TextAnchor.MiddleRight;
-            GUI.color = new Color(1f, 1f, 1f, 0.75f);
 
-            // Wages are prepaid in full at hire (§37), so "committed" is money already gone, not
-            // money owed. Saying "payroll: N/day" without that would read as a recurring debit
-            // the player has to keep covering — which is Phase 18's model, not this one.
-            Widgets.Label(rect,
-                $"{live.Count} hired   {daily} silver/day combined   {committed} silver prepaid");
+            // §38's payroll screen, compressed to a line: what is owed, what is in the bank, and
+            // the shortfall named as a shortfall. Arrears are shown in red because §38's whole
+            // point is that running out of silver has to be visible before it bites.
+            GUI.color = arrears > 0 ? new Color(1f, 0.55f, 0.55f) : new Color(1f, 1f, 1f, 0.75f);
+
+            string text = $"{live.Count} hired   {daily} silver/day combined   {paid} paid so far";
+            if (arrears > 0)
+            {
+                text += $"   —   {arrears} IN ARREARS";
+            }
+
+            Widgets.Label(rect, text);
 
             GUI.color = Color.white;
             Text.Anchor = TextAnchor.UpperLeft;
@@ -189,8 +277,8 @@ namespace Intercolony
             GUI.color = StatusColour(contract);
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, 22f),
                 $"{contract.settlementName} ({contract.factionName})   " +
-                $"{contract.dailyWage}/day × {contract.termDays}d = {contract.paidSilver} prepaid   " +
-                $"— {contract.StatusLine()}");
+                $"{contract.dailyWage}/day × {contract.termDays}d {contract.wageStructure.Label()}, " +
+                $"{contract.paidSilver} paid   — {contract.StatusLine()}");
             GUI.color = Color.white;
 
             TooltipHandler.TipRegion(rect, () => EmployeeTooltip(contract), contract.id * 7919);
@@ -201,6 +289,20 @@ namespace Intercolony
                 Widgets.ButtonInvisible(new Rect(rect.x, rect.y, textWidth, rect.height)))
             {
                 CameraJumper.TryJumpAndSelect(contract.pawn);
+            }
+
+            // Paying what is owed takes priority over dismissing: it is the action that fixes
+            // the situation, and §39's escalation is only playable if stopping it is easy to find.
+            if (contract.arrearsSilver > 0)
+            {
+                Rect payRect = new Rect(rect.xMax - actionWidth * 2f - 8f, rect.y + 11f, actionWidth, 30f);
+                if (Widgets.ButtonText(payRect, $"Pay {contract.arrearsSilver}"))
+                {
+                    if (!PayrollService.TryPayArrears(contract, Find.CurrentMap, out string failReason))
+                    {
+                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                    }
+                }
             }
 
             Rect endRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f);
@@ -473,63 +575,19 @@ namespace Intercolony
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(candidate.settlementId);
             SettlementEconomicProfile profile = settlement == null ? null : state.GetProfile(settlement);
 
-            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
-                $"Hire {candidate.Name}",
-                "Hire",
-                MaxTermDays,
-                termDays =>
-                {
-                    // Repriced for the chosen term, not quoted at the minimum and billed longer.
-                    // Phase 12's sales slider froze the per-unit price and that was a real
-                    // mispricing bug, not a cosmetic one.
-                    int wage = LaborCandidateService.DailyWage(
-                        candidate.pawn, profile, candidate.distanceTiles, termDays);
-                    int total = wage * termDays;
-                    int available = PurchaseOrderService.CountColonySilver(map);
-
-                    string body =
-                        $"{candidate.Name} of {candidate.factionName}, from {candidate.settlementName}.\n" +
-                        $"{candidate.SkillSummary(4)}\n\n" +
-                        $"Term: {termDays} days\n" +
-                        $"Wage: {wage} silver/day\n" +
-                        $"Total: {total} silver, paid in full now\n\n" +
-                        $"Travels for {candidate.travelDays} days before starting work.\n";
-
-                    if (available < total)
-                    {
-                        body += $"\nNot enough silver in storage: {available} of {total}.";
-                    }
-                    else
-                    {
-                        body += $"\nSilver in storage: {available}.";
-                    }
-
-                    if (termDays > candidate.minTermDays)
-                    {
-                        int atMinimum = LaborCandidateService.DailyWage(
-                            candidate.pawn, profile, candidate.distanceTiles, candidate.minTermDays);
-                        if (wage < atMinimum)
-                        {
-                            body += $"\n\nLonger term: {wage}/day instead of {atMinimum}/day at their " +
-                                    $"{candidate.minTermDays}-day minimum.";
-                        }
-                    }
-
-                    return body;
-                },
-                termDays =>
+            Find.WindowStack.Add(new Dialog_HireWorker(
+                candidate, profile, map, MaxTermDays,
+                (termDays, structure) =>
                 {
                     EmploymentContract contract = EmploymentService.TryHire(
-                        state, candidate, termDays, map, out string failReason);
+                        state, candidate, termDays, map, out string failReason, structure);
 
                     if (contract == null)
                     {
                         Messages.Message(failReason ?? "Could not hire.",
                             MessageTypeDefOf.RejectInput, historical: false);
                     }
-                },
-                minQuantity: candidate.minTermDays,
-                quantityLabel: "Days:"));
+                }));
         }
     }
 }

@@ -543,6 +543,50 @@ namespace Intercolony
             IntercolonyLog.Message(IntercolonyTradeBlacklist.DebugSummary());
         }
 
+        [DebugAction(Category, "Run payroll self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 60)]
+        private static void RunPayrollSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyPayrollSelfTest.Run(state, Find.CurrentMap)));
+        }
+
+        [DebugAction(Category, "Force payroll now", allowedGameStates = AllowedGameStates.Playing, displayPriority = 50)]
+        private static void ForcePayrollNow()
+        {
+            WithState(state =>
+            {
+                int moved = 0;
+                foreach (EmploymentContract contract in state.Employments)
+                {
+                    if (contract.status == EmploymentStatus.Active && contract.nextPaymentTick >= 0)
+                    {
+                        contract.nextPaymentTick = GenTicks.TicksGame;
+                        moved++;
+                    }
+                }
+
+                PayrollService.Advance(state.Employments, state.LaborDebts, state);
+                Report(moved > 0 ? $"Forced {moved} pay period(s)." : "No employee on a pay schedule.");
+            });
+        }
+
+        [DebugAction(Category, "Dump labor debts", allowedGameStates = AllowedGameStates.Playing, displayPriority = 85)]
+        private static void DumpLaborDebts()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Labor debts ({state.LaborDebts.Count}, {state.UnsettledDebtCount} unsettled, " +
+                              $"{PayrollService.TotalOwed(state)} silver owed in total)");
+                foreach (LaborDebt debt in state.LaborDebts)
+                {
+                    sb.AppendLine($"  {debt}");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
         [DebugAction(Category, "Run labor self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 59)]
         private static void RunLaborSelfTest()
         {

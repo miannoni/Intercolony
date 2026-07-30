@@ -82,7 +82,7 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 17 complete (2026-07-29). Next: Phase 18 — Payroll and arrears (DESIGN.md §111, §37-§39).
+**Phase:** 18 complete (2026-07-29). Next: Phase 19 — Employer reputation (DESIGN.md §112, §40).
 
 **Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
 control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation

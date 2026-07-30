@@ -58,8 +58,6 @@ namespace Intercolony
                 return r.sb.ToString();
             }
 
-            Zone_Stockpile temporaryZone = null;
-
             try
             {
                 // --- Candidate pool ---
@@ -87,7 +85,11 @@ namespace Intercolony
                     budget += pool[1].dailyWage * pool[1].minTermDays;
                 }
 
-                temporaryZone = EnsureSilver(r, map, budget);
+                int added = IntercolonyLaborSelfTestSupport.EnsureSilver(map, budget);
+                if (added > 0)
+                {
+                    r.Info($"added {added} silver to storage so the hire path could run.");
+                }
 
                 int silverBefore = PurchaseOrderService.CountColonySilver(map);
                 if (silverBefore < expectedTotal)
@@ -122,9 +124,15 @@ namespace Intercolony
                 r.Check(silverBefore - silverAfter == contract.paidSilver,
                     "wages were deducted exactly once",
                     $"{silverBefore} -> {silverAfter}, contract says {contract.paidSilver}");
-                r.Check(contract.paidSilver == contract.dailyWage * contract.termDays,
-                    "total equals daily wage times term",
-                    $"{contract.dailyWage} x {contract.termDays} = {contract.paidSilver}");
+                // Not dailyWage x termDays: from Phase 18 a prepaid hire carries §37's discount,
+                // so the gross rate is the wrong expectation and TotalCommitment is the right one.
+                r.Check(contract.paidSilver == contract.TotalCommitment,
+                    "the prepaid total matches the quoted commitment",
+                    $"{contract.dailyWage}/day x {contract.termDays}d = {contract.TotalCommitment} " +
+                    $"({contract.dailyWage * contract.termDays} before the prepay discount), " +
+                    $"paid {contract.paidSilver}");
+                r.Check(contract.TotalCommitment < contract.dailyWage * contract.termDays,
+                    "prepaying costs less than the gross rate (§37)");
                 r.Check(contract.status == EmploymentStatus.Travelling,
                     "contract starts as travelling", contract.status.ToString());
                 r.Check(contract.pawn != null && !contract.pawn.Spawned,
@@ -218,7 +226,6 @@ namespace Intercolony
             }
             finally
             {
-                temporaryZone?.Delete();
                 LaborCandidateService.Clear();
             }
 
@@ -300,93 +307,6 @@ namespace Intercolony
             r.Check(worker != null && !Find.WorldPawns.Contains(worker),
                 "a dismissed traveller is unpinned from the world pawn pool");
             r.Check(contract.pawn == null, "dismissed record holds no pawn reference");
-        }
-
-        /// <summary>
-        /// Makes sure the colony actually has the silver to run the test, and says so when it
-        /// had to add some. Silver must land in storage: CountColonySilver deliberately ignores
-        /// loose silver on the ground, so dropping a stack at the trade spot would not count.
-        /// </summary>
-        private static Zone_Stockpile EnsureSilver(Results r, Map map, int needed)
-        {
-            int available = PurchaseOrderService.CountColonySilver(map);
-            if (available >= needed)
-            {
-                return null;
-            }
-
-            int shortfall = needed - available;
-            int stacksNeeded = Mathf.CeilToInt(shortfall / (float)ThingDefOf.Silver.stackLimit);
-
-            // Each stack needs its own empty cell *inside* a storage group. Placing "near" a
-            // stockpile is not good enough — a stack that lands one tile outside the zone is
-            // not IsInAnyStorage and so does not count.
-            List<IntVec3> cells = new List<IntVec3>();
-            foreach (SlotGroup group in map.haulDestinationManager.AllGroupsListInPriorityOrder)
-            {
-                foreach (IntVec3 candidate in group.CellsList)
-                {
-                    if (candidate.Standable(map) && candidate.GetFirstItem(map) == null)
-                    {
-                        cells.Add(candidate);
-                        if (cells.Count >= stacksNeeded)
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                if (cells.Count >= stacksNeeded)
-                {
-                    break;
-                }
-            }
-
-            Zone_Stockpile created = null;
-            if (cells.Count < stacksNeeded)
-            {
-                // Not enough existing storage. Make a scrap of it next to the trade spot and
-                // delete it once the test is done.
-                created = new Zone_Stockpile(StorageSettingsPreset.DefaultStockpile, map.zoneManager);
-                map.zoneManager.RegisterZone(created);
-
-                IntVec3 root = DropCellFinder.TradeDropSpot(map);
-                foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 6f, useCenter: true))
-                {
-                    if (cells.Count >= stacksNeeded)
-                    {
-                        break;
-                    }
-
-                    if (candidate.InBounds(map) && candidate.Standable(map) &&
-                        candidate.GetFirstItem(map) == null &&
-                        map.zoneManager.ZoneAt(candidate) == null)
-                    {
-                        created.AddCell(candidate);
-                        cells.Add(candidate);
-                    }
-                }
-            }
-
-            int remaining = shortfall;
-            int placed = 0;
-            foreach (IntVec3 cell in cells)
-            {
-                if (remaining <= 0)
-                {
-                    break;
-                }
-
-                Thing silver = ThingMaker.MakeThing(ThingDefOf.Silver);
-                silver.stackCount = Mathf.Min(remaining, ThingDefOf.Silver.stackLimit);
-                remaining -= silver.stackCount;
-                placed += silver.stackCount;
-                GenSpawn.Spawn(silver, cell, map);
-            }
-
-            r.Info($"added {placed} silver to storage so the hire path could run " +
-                   $"({available} was not enough for {needed}).");
-            return created;
         }
 
         private static string Summarize(Results r)

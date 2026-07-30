@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 14;
+        public const int CurrentSaveVersion = 15;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -223,6 +223,28 @@ namespace Intercolony
             if (contract != null)
             {
                 employments.Add(contract);
+            }
+        }
+
+        /// <summary>Unpaid wages left behind by workers who have gone home (§39 step 6).</summary>
+        private List<LaborDebt> laborDebts = new List<LaborDebt>();
+
+        public List<LaborDebt> LaborDebts => laborDebts;
+
+        public int UnsettledDebtCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (LaborDebt debt in laborDebts)
+                {
+                    if (!debt.IsSettled)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
             }
         }
 
@@ -562,6 +584,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
             Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
             Scribe_Collections.Look(ref employments, "employments", LookMode.Deep);
+            Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -681,6 +704,24 @@ namespace Intercolony
                     }
                 }
 
+                if (laborDebts == null)
+                {
+                    laborDebts = new List<LaborDebt>();
+                }
+                else
+                {
+                    int nullDebts = laborDebts.RemoveAll(d => d == null);
+                    int brokenDebts = laborDebts.RemoveAll(d => !d.IsValidAfterLoad);
+                    if (nullDebts > 0 || brokenDebts > 0)
+                    {
+                        // A dropped debt is an obligation the player silently stops owing, which
+                        // §62 forbids as much for wages as for orders.
+                        IntercolonyLog.Error(
+                            $"Dropped {nullDebts} null and {brokenDebts} unresolvable labor debt(s) " +
+                            "while loading.");
+                    }
+                }
+
                 if (nextId < 1)
                 {
                     IntercolonyLog.Warning($"Loaded nextId={nextId}; clamping to 1 to keep IDs positive.");
@@ -733,6 +774,10 @@ namespace Intercolony
                 if (employments.Count > 0)
                 {
                     EmploymentService.Advance(employments);
+
+                    // Payroll after arrivals and expiries, so a worker who arrived this hour has
+                    // a pay clock before it is read (§38).
+                    PayrollService.Advance(employments, laborDebts, this);
                 }
             }
         }
@@ -1106,6 +1151,16 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
             }
 
+            if (saveVersion < 15)
+            {
+                // 14 -> 15 added wage structures, arrears and labor debts. Existing employments
+                // load with wageStructure = Prepaid, which is exactly what they were: Phase 16
+                // paid everything at hire. nextPaymentTick stays -1, so no payroll is ever
+                // conjured for a worker whose wage is already in their pocket.
+                IntercolonyLog.Message(
+                    "  schema 14 -> 15: wage structures added; existing employments are prepaid.");
+            }
+
             if (saveVersion < 14)
             {
                 // 13 -> 14 added temporary employment. Purely additive: a save from schema 13
@@ -1162,6 +1217,14 @@ namespace Intercolony
                 if (employment.id > highest)
                 {
                     highest = employment.id;
+                }
+            }
+
+            foreach (LaborDebt debt in laborDebts)
+            {
+                if (debt.id > highest)
+                {
+                    highest = debt.id;
                 }
             }
 
@@ -1227,6 +1290,12 @@ namespace Intercolony
             foreach (EmploymentContract employment in employments)
             {
                 sb.AppendLine($"    {employment}  {employment.StatusLine()}");
+            }
+
+            sb.AppendLine($"  labor debts  : {laborDebts.Count} ({UnsettledDebtCount} unsettled)");
+            foreach (LaborDebt debt in laborDebts)
+            {
+                sb.AppendLine($"    {debt}");
             }
 
             return sb.ToString();

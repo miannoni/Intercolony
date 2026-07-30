@@ -25,10 +25,13 @@ namespace Intercolony
     /// </summary>
     public static class EmploymentService
     {
-        /// <summary>Wages are prepaid in full at hire (§37 "Prepaid"). Payroll and arrears are Phase 18.</summary>
+        /// <summary>
+        /// Hires a worker under one of §37's wage structures. Only prepaid takes silver now;
+        /// periodic structures take nothing at hire and pay at the end of each period (§38).
+        /// </summary>
         public static EmploymentContract TryHire(
             IntercolonyWorldComponent state, LaborCandidate candidate, int termDays, Map paymentMap,
-            out string failReason)
+            out string failReason, WageStructure structure = WageStructure.Prepaid)
         {
             failReason = null;
 
@@ -69,16 +72,19 @@ namespace Intercolony
             SettlementEconomicProfile profile = state.GetProfile(settlement);
             int dailyWage = LaborCandidateService.DailyWage(
                 candidate.pawn, profile, candidate.distanceTiles, termDays);
-            int total = dailyWage * termDays;
+
+            // Only prepaid is charged now. A periodic hire that demanded the full term up front
+            // would defeat the point of offering the choice.
+            int upFront = WageStructureUtility.UpFrontCost(structure, dailyWage, termDays);
 
             int available = PurchaseOrderService.CountColonySilver(paymentMap);
-            if (available < total)
+            if (available < upFront)
             {
-                failReason = $"Not enough silver in storage: {available} of {total} needed.";
+                failReason = $"Not enough silver in storage: {available} of {upFront} needed.";
                 return null;
             }
 
-            if (!PurchaseOrderService.TryTakeSilver(paymentMap, total))
+            if (upFront > 0 && !PurchaseOrderService.TryTakeSilver(paymentMap, upFront))
             {
                 failReason = "Could not collect the silver.";
                 return null;
@@ -106,7 +112,8 @@ namespace Intercolony
                 workerSkills = skills,
                 dailyWage = dailyWage,
                 termDays = termDays,
-                paidSilver = total,
+                wageStructure = structure,
+                paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
                 arrivalTick = GenTicks.TicksGame + candidate.travelDays * GenDate.TicksPerDay,
                 status = EmploymentStatus.Travelling
@@ -126,7 +133,8 @@ namespace Intercolony
 
             Messages.Message(
                 $"Hired {contract.workerName} from {contract.settlementName} — " +
-                $"{dailyWage} silver/day × {termDays} days = {total} silver, paid up front. " +
+                $"{dailyWage} silver/day × {termDays} days, " +
+                $"{WageStructureUtility.Explain(structure, dailyWage, termDays)} " +
                 $"Arrives in {candidate.travelDays} days.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
@@ -267,6 +275,10 @@ namespace Intercolony
                 contract.status = EmploymentStatus.Active;
                 contract.endTick = GenTicks.TicksGame + contract.termDays * GenDate.TicksPerDay;
 
+                // The pay clock runs from the first day of work, not from hiring: a worker who
+                // spent a week on the road has not earned a week's wage.
+                PayrollService.BeginPayroll(contract);
+
                 Find.LetterStack.ReceiveLetter(
                     "Employee arrived",
                     $"{contract.workerName} of {contract.factionName} has arrived from {contract.settlementName} " +
@@ -306,6 +318,15 @@ namespace Intercolony
 
             Quest quest = contract.quest;
             Pawn worker = contract.pawn;
+
+            // Pay for the days actually worked since the last payday before anything else — the
+            // pawn's references are cleared below, and the arrears calculation needs them.
+            PayrollService.SettleOnEnd(contract, status, IntercolonyWorldComponent.Current?.LaborDebts,
+                IntercolonyWorldComponent.Current);
+
+            // A worker who downed tools is leaving anyway; clear the flag so a stale "refusing"
+            // state cannot outlive the contract.
+            contract.refusingWork = false;
 
             try
             {
@@ -373,6 +394,10 @@ namespace Intercolony
                 case EmploymentStatus.Dismissed:
                     label = "Employee dismissed";
                     def = LetterDefOf.NeutralEvent;
+                    break;
+                case EmploymentStatus.Quit:
+                    label = "Employee walked out";
+                    def = LetterDefOf.NegativeEvent;
                     break;
                 default:
                     label = "Employment failed";

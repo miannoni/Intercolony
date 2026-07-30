@@ -189,6 +189,13 @@ namespace Intercolony
                     int requests = state.OpenRequestCount;
                     return requests > 0 ? $"Procurement ({requests})" : "Procurement";
                 case Tab.Labor:
+                    // An unpaid-wages badge on the tab itself, because §39's escalation is only
+                    // playable if the player notices it without going looking.
+                    if (PayrollService.TotalOwed(state) > 0)
+                    {
+                        return "Labor (!)";
+                    }
+
                     int employees = state.ActiveEmployeeCount;
                     return employees > 0 ? $"Labor ({employees})" : "Labor";
                 case Tab.Contracts:

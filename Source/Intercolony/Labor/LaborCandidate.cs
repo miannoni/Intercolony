@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using Verse;
 
 namespace Intercolony
@@ -89,26 +90,29 @@ namespace Intercolony
                 return;
             }
 
-            // RemoveAndDiscardPawnViaGC is the vanilla disposal path (Verse.DebugToolsGeneral:168),
-            // but it starts with RemovePawn, which logs a red error when the pawn was never in
-            // WorldPawns — and a listed candidate never is. Unguarded, refreshing the pool once
-            // filled the log with "Tried to remove pawn X, but it's not here".
-            if (Find.WorldPawns != null && Find.WorldPawns.Contains(pawn))
+            // Both branches hand off to vanilla's own disposal rather than doing it by hand.
+            //
+            // Hand-rolling it does not work, and the reason is not obvious: Pawn.Destroy ends with
+            //   if (!worldPawns.IsBeingDiscarded(this) && !worldPawns.Contains(this))
+            //       worldPawns.PassToWorld(this);
+            // so destroying an unregistered pawn *adds it to WorldPawns*, and the Discard that
+            // follows then warns "tried to discard a world pawn". WorldPawns.DiscardPawn is
+            // correct only because it sets the being-discarded flag first, which is precisely the
+            // step an inlined destroy-then-discard leaves out. Both of these routes go through it.
+            if (Find.WorldPawns == null)
             {
+                pawn = null;
+                return;
+            }
+
+            if (Find.WorldPawns.Contains(pawn))
+            {
+                // RemovePawn first, or it logs "tried to remove pawn X, but it's not here".
                 Find.WorldPawns.RemoveAndDiscardPawnViaGC(pawn);
             }
             else
             {
-                // What RemoveAndDiscardPawnViaGC does past the removal: destroy, then discard.
-                if (!pawn.Destroyed)
-                {
-                    pawn.Destroy(DestroyMode.Vanish);
-                }
-
-                if (!pawn.Discarded)
-                {
-                    pawn.Discard(silentlyRemoveReferences: true);
-                }
+                Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
             }
 
             pawn = null;
