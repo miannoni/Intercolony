@@ -534,11 +534,31 @@ namespace Intercolony
 
             if (malformed.Count > 0)
             {
-                r.Info($"WORLD DATA NOTE: {string.Join(", ", malformed.ToArray())} " +
-                       "carr(y/ies) no relation to the player. That is a world-generation artefact, " +
-                       "not an Intercolony record — but any vanilla call that reaches " +
-                       "GoodwillSituationManager for it will throw.");
+                r.Info($"NOTE: {string.Join(", ", malformed.ToArray())} carr(y/ies) no relation to " +
+                       "the player. This was once assumed to be a world-generation artefact and was " +
+                       "not — it was a faction object leaking from a previous game. Check " +
+                       "LaborCandidateService's pool owner before blaming world data.");
             }
+
+            // The leak that produced those malformed factions: employment records must only ever
+            // reference factions this world knows about. A dead-world faction saves a reference
+            // nothing can resolve, and the pawn beside it carries another world's thing IDs.
+            int foreign = 0;
+            foreach (EmploymentContract contract in IntercolonyWorldComponent.Current?.Employments
+                                                    ?? new List<EmploymentContract>())
+            {
+                if (contract.employerFaction != null &&
+                    !factions.Contains(contract.employerFaction))
+                {
+                    foreign++;
+                    r.Info($"  employment #{contract.id} ({contract.workerName}) references " +
+                           $"{contract.employerFaction.Name}, which is not in this world.");
+                }
+            }
+
+            r.Check(foreign == 0,
+                "every employment references a faction that exists in this world",
+                foreign == 0 ? "all employer factions resolve" : $"{foreign} foreign reference(s)");
         }
 
         private static void CheckWarOnSalesOrder(Results r)

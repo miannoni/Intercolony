@@ -1084,9 +1084,10 @@ Known limitations:
   either. Out of this phase's scope; recorded so it is not rediscovered as a Phase 20 regression.
 - Suspension resumes on *any* recovery of relations, with no cooling-off period. A faction that
   flickers in and out of hostility would send paired suspend/resume letters.
-- A world that contains a faction with an empty relation table is a live hazard *for vanilla*, not
-  just for this mod: any call reaching `GoodwillSituationManager` for it throws. Intercolony no
-  longer triggers it and the self-test names the faction, but nothing here can repair the world data.
+- A faction with an empty relation table is a live hazard for vanilla, not just for this mod: any
+  call reaching `GoodwillSituationManager` for it throws. Intercolony no longer triggers it and the
+  self-test names the faction. The cause turned out to be Intercolony's own (see the stale-pool bug
+  below), but the hardening stays: a save can arrive in that state for reasons this mod cannot see.
 
 Manual test:
 - `Run combat clause self-test`: **51 passed, 0 failed.** Clause pricing driven through the real
@@ -1169,6 +1170,37 @@ Bugs found and fixed during the phase:
     contracts over. The self-test assertion that guarded the duplication is kept — it is what fails
     the day someone reintroduces the second copy — and a new one names any faction in the world whose
     player relation is missing, so this is reported rather than rediscovered.
+- **The hire pool leaked across games, and I blamed the world for it first.** Found by the save/load
+  test: reloading mid-safe-passage produced `Exception registering Verse.Pawn Bireamb ... unique
+  thing ID 13720` for the employee and both pieces of their apparel. Reading the save showed a
+  map-generation `Filth_RubbleRock13720` sharing that number — two different Things with one
+  `thingIDNumber`, and no other duplicates anywhere in the file.
+
+  `LaborCandidateService.pool` is **static**, so it lives as long as the process, while everything in
+  it — pawns, `Faction` objects, thing IDs — belongs to one game. Quitting to the menu and starting
+  another left the pool intact and pointing at a discarded world, and `poolRefreshCount` could not
+  notice: a fresh game starts at refresh 0, which is exactly what the previous game's pool was keyed
+  to. The proof is in the log: **"Barxe Kinship" is the employer faction in two different worlds**,
+  either side of an `Initializing new game`. Randomly generated faction names do not repeat.
+
+  So the worker hired in the new colony was generated in the old one, and brought with them a
+  `Faction` unregistered in the new `FactionManager` — which is why it reported a null relation with
+  *every* faction — and thing IDs from the old counter.
+
+  **This is not a Phase 20 bug.** The static pool is Phase 16 code and every earlier session had it;
+  the earlier "The Breigua Treaty" spam was the same leak one generation back. Phase 20 only made it
+  visible, by adding faction-relation reads on an hourly beat and a debug action that pointed at the
+  employer.
+
+  The pool now records which world component it belongs to and is abandoned — not `Clear`ed, because
+  `Discard` routes through the *current* game's `WorldPawns` — when that changes. `TryHire` refuses a
+  candidate whose faction is not in `FactionManager` as a backstop, and the self-test asserts that no
+  employment references a foreign faction.
+
+  **The lesson is the one that cost the most time here:** I wrote "that is a world-generation
+  artefact, not an Intercolony record" into this file and into the self-test's own output, on the
+  strength of the faction looking broken in a way my code does not touch. It was mine. Static state
+  that outlives a game is invisible precisely because every symptom appears somewhere else.
 - **Appending to PROGRESS.md with PowerShell `Add-Content -Encoding utf8` double-encoded every
   non-ASCII character**, turning each em dash into `â€"` and each `§` into `Â§` throughout the Phase
   20 entry. Caught and repaired by re-decoding; recorded because the file is the record and a

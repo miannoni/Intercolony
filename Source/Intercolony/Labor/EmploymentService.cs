@@ -67,6 +67,21 @@ namespace Intercolony
                 return null;
             }
 
+            // The candidate pool is static and outlives a game; the owner check in
+            // LaborCandidateService is what keeps it honest, and this is the backstop for any other
+            // path that could hand over a stale candidate. A contract built on a Faction from a
+            // discarded world saves a reference that cannot resolve, and its pawn carries thing IDs
+            // from another world's counter — both of which are silent until the next load.
+            if (candidate.faction != null &&
+                Find.FactionManager?.AllFactionsListForReading?.Contains(candidate.faction) == false)
+            {
+                failReason = $"{candidate.Name} is not from this world. Reopen the Labor tab.";
+                IntercolonyLog.Warning(
+                    $"Refused to hire {candidate.Name}: faction {candidate.faction.Name} is not " +
+                    "registered in this game. A stale candidate survived a game change.");
+                return null;
+            }
+
             if (!IntercolonyMarketAccess.IsAccessible(settlement, out string reason))
             {
                 failReason = $"{candidate.settlementName} will not deal with you: {reason}.";

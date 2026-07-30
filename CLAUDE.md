@@ -66,6 +66,12 @@ throwaway map instead of the main menu.
 **Every feature must be tested for save/load.** Save mid-feature, quit to menu,
 reload, verify state survived. This is not optional — see §61 and §82.
 
+**Also test across games, not just across loads.** Static state outlives a game: quit to the
+menu, start a *different* colony, and check nothing from the old one came with it.
+`LaborCandidateService`'s static pool leaked pawns and `Faction` objects between games for
+four phases before a save/load test caught it, because every symptom surfaced somewhere else
+— duplicate thing IDs, and a faction reporting a null relation with every other faction.
+
 ---
 
 ## Dependencies

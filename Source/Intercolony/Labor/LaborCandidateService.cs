@@ -48,6 +48,21 @@ namespace Intercolony
         /// <summary>Which market refresh the current pool belongs to; -1 when there is no pool.</summary>
         private static int poolRefreshCount = -1;
 
+        /// <summary>
+        /// Which *game* the pool belongs to. Null when there is no pool.
+        ///
+        /// This exists because <see cref="pool"/> is static and therefore lives as long as the
+        /// process, while everything inside it — pawns, `Faction` objects, thing IDs — belongs to
+        /// one game. Quitting to the menu and starting or loading another leaves the pool intact
+        /// and pointing at a world that no longer exists, and <see cref="poolRefreshCount"/> alone
+        /// will not notice: a fresh game starts at refresh 0, which is exactly what the previous
+        /// game's pool was last keyed to.
+        ///
+        /// A world component is created per game, on both new-game and load, so its identity is
+        /// the cheapest correct answer to "is this still the same game".
+        /// </summary>
+        private static IntercolonyWorldComponent poolOwner;
+
         public static IReadOnlyList<LaborCandidate> Pool => pool;
 
         /// <summary>
@@ -60,6 +75,18 @@ namespace Intercolony
             if (state == null || Find.WorldObjects == null)
             {
                 return pool;
+            }
+
+            // A pool built in another game is worse than no pool: every candidate carries a `Pawn`
+            // and a `Faction` from a world that has been thrown away. Hiring one writes a dead
+            // faction into a live contract and puts a pawn with another world's thing IDs onto this
+            // map — which is exactly what happened, and it surfaced as a wall of "Faction X has null
+            // relation with Y" plus duplicate-thingID errors on the next load. Checked before the
+            // refresh-count test, because that test would happily accept the stale pool.
+            if (!ReferenceEquals(poolOwner, state))
+            {
+                Abandon();
+                poolOwner = state;
             }
 
             // Keyed on the refresh count alone, deliberately not on "the pool is non-empty".
@@ -161,6 +188,28 @@ namespace Intercolony
 
             pool.Clear();
             poolRefreshCount = -1;
+        }
+
+        /// <summary>
+        /// Drops a pool belonging to a game that is no longer loaded, without touching it.
+        ///
+        /// Deliberately **not** <see cref="Clear"/>. `Discard` routes through `Find.WorldPawns`,
+        /// which now belongs to the *current* game — so discarding a previous game's pawns would
+        /// ask this world's registry to dispose of pawns it has never heard of. The old game's
+        /// object graph is unreachable and will be collected on its own; the only thing that has to
+        /// happen here is that this list stops pointing at it.
+        /// </summary>
+        private static void Abandon()
+        {
+            if (pool.Count > 0)
+            {
+                IntercolonyLog.Verbose(
+                    $"Dropped {pool.Count} candidate(s) left over from a previous game.");
+            }
+
+            pool.Clear();
+            poolRefreshCount = -1;
+            poolOwner = null;
         }
 
         /// <summary>Removes a candidate from the pool without discarding its pawn (it has been hired).</summary>
