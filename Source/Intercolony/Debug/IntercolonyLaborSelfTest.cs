@@ -164,6 +164,29 @@ namespace Intercolony
                 // evidence is the lodger flag above, which DefaultThreatPointsNow tests directly.
                 r.Info($"threat points now: {StorytellerUtility.DefaultThreatPointsNow(map):0}");
 
+                // --- Caravan eligibility (§33 q9) ---
+                // Asserted against the list the caravan dialog actually builds, not against
+                // IsFreeColonist. The Phase 15 spike checked IsFreeColonist and reported "caravan
+                // eligible: yes" while vanilla was in fact filtering employees out for being
+                // quest lodgers, and it took playtesting to notice.
+                r.Check(Dialog_FormCaravan.AllSendablePawns(map, reform: false).Contains(worker),
+                    "an employee can be loaded onto a caravan (§33 q9)");
+
+                // --- Term expiring while the worker is away from any map ---
+                // Simulated by despawning: that is exactly the state a pawn is in while inside a
+                // caravan, and it is the condition Advance tests.
+                IntVec3 restoreCell = worker.Position;
+                worker.DeSpawn();
+                contract.endTick = GenTicks.TicksGame;
+                EmploymentService.Advance(state.Employments);
+
+                r.Check(contract.status == EmploymentStatus.Active,
+                    "an expired term is held, not ended, while the worker is off-map",
+                    contract.status.ToString());
+                r.Check(contract.termLapsedNotified, "the player is told the term lapsed while away");
+
+                GenSpawn.Spawn(worker, restoreCell, map);
+
                 // --- Expiry and departure ---
                 contract.endTick = GenTicks.TicksGame;
                 EmploymentService.Advance(state.Employments);

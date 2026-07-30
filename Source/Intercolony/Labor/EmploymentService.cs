@@ -176,6 +176,27 @@ namespace Intercolony
 
                 if (contract.endTick >= 0 && now >= contract.endTick)
                 {
+                    // A worker inside a caravan cannot walk home — they are not on any map.
+                    // Ending the contract anyway would send them through
+                    // LeaveQuestPartUtility.MakePawnLeave, which pulls them out of the caravan
+                    // and leaves them unspawned in no faction's territory. Hold instead, and
+                    // tell the player once so an overdue employee is not a silent mystery.
+                    if (!contract.pawn.Spawned)
+                    {
+                        if (!contract.termLapsedNotified)
+                        {
+                            contract.termLapsedNotified = true;
+                            Find.LetterStack.ReceiveLetter(
+                                "Employment term ended",
+                                $"{contract.workerName}'s {contract.termDays}-day term has ended, but they are " +
+                                "away from the colony and cannot leave from where they are.\n\n" +
+                                "They will go home once they are back on a map. No further wages are owed.",
+                                LetterDefOf.NeutralEvent);
+                        }
+
+                        continue;
+                    }
+
                     End(contract, EmploymentStatus.Completed,
                         $"{contract.workerName} served the full {contract.termDays} days");
                 }
@@ -322,14 +343,11 @@ namespace Intercolony
                 Find.WorldPawns.RemoveAndDiscardPawnViaGC(worker);
             }
 
-            if (status == EmploymentStatus.Completed || status == EmploymentStatus.Dismissed)
-            {
-                Messages.Message(note, MessageTypeDefOf.NeutralEvent, historical: false);
-            }
-            else if (!note.NullOrEmpty())
-            {
-                Messages.Message(note, MessageTypeDefOf.NegativeEvent, historical: false);
-            }
+            // A letter, not a message. Arrival sends one, so departure must too — and a
+            // transient corner toast is the wrong weight for "the worker you were relying on is
+            // gone": it vanishes, leaves nothing in the history, and is easy to miss entirely
+            // while the camera is elsewhere.
+            SendDepartureLetter(contract, status, worker);
 
             // A closed record must not hold live references: the pawn walks off the map and may
             // be garbage-collected out of the world, and a dangling Scribe_References target
@@ -339,6 +357,92 @@ namespace Intercolony
             contract.destinationMap = null;
 
             IntercolonyLog.Message($"Ended: {contract} — {note}");
+        }
+
+        private static void SendDepartureLetter(EmploymentContract contract, EmploymentStatus status, Pawn worker)
+        {
+            string label;
+            LetterDef def;
+
+            switch (status)
+            {
+                case EmploymentStatus.Completed:
+                    label = "Employment ended";
+                    def = LetterDefOf.NeutralEvent;
+                    break;
+                case EmploymentStatus.Dismissed:
+                    label = "Employee dismissed";
+                    def = LetterDefOf.NeutralEvent;
+                    break;
+                default:
+                    label = "Employment failed";
+                    def = LetterDefOf.NegativeEvent;
+                    break;
+            }
+
+            string body = $"{contract.outcomeNote}.\n\n" +
+                          $"{contract.workerName} of {contract.factionName} " +
+                          $"({contract.workerSkills}) is returning to {contract.settlementName}.\n" +
+                          $"Term: {contract.termDays} days at {contract.dailyWage} silver/day, " +
+                          $"{contract.paidSilver} silver paid in advance.";
+
+            // Deliberately says nothing about refunds. Nothing else in RimWorld or Intercolony
+            // refunds anything, so raising the subject is what would make a player expect one.
+
+            // A worker who left the map has no target to look at; one still walking out does.
+            if (worker != null && worker.Spawned)
+            {
+                Find.LetterStack.ReceiveLetter(label, body, def, worker);
+            }
+            else
+            {
+                Find.LetterStack.ReceiveLetter(label, body, def);
+            }
+        }
+
+        /// <summary>Whether any employee is currently working. Cheap enough to call from a patch.</summary>
+        public static bool AnyActiveEmployee()
+        {
+            List<EmploymentContract> contracts = IntercolonyWorldComponent.Current?.Employments;
+            if (contracts == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < contracts.Count; i++)
+            {
+                if (contracts[i].status == EmploymentStatus.Active)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Whether this pawn is working under an Intercolony employment contract.</summary>
+        public static bool IsEmployee(Pawn pawn)
+        {
+            if (pawn == null)
+            {
+                return false;
+            }
+
+            List<EmploymentContract> contracts = IntercolonyWorldComponent.Current?.Employments;
+            if (contracts == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < contracts.Count; i++)
+            {
+                if (contracts[i].status == EmploymentStatus.Active && contracts[i].pawn == pawn)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

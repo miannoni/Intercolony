@@ -716,3 +716,49 @@ Bugs found and fixed during the phase:
 - **The early-dismissal check silently skipped for want of silver**, leaving the `KeepForever`
   unpin path unexercised — a vacuous skip of exactly the kind Phase 4 warned about. The test
   now budgets for both hires.
+
+## Phase 16 addendum — playtest findings  (2026-07-29)
+
+Matteo playtested Phase 16 and raised three points. One was a defect in the phase's own work,
+one was a wrong answer I had recorded in Phase 15, and one was already the next phase.
+
+**Employees could not be sent on caravans — and the Phase 15 spike said they could.**
+§33 q9 asks "Can the pawn join a caravan?" The spike answered yes by testing
+`pawn.IsFreeColonist`. The actual gate is `CaravanFormingUtility.AllSendablePawns`, whose
+predicate includes `(!pawn.IsQuestLodger() || allowLodgers)`, and `Dialog_FormCaravan` passes
+`allowLodgers: false` — vanilla deliberately keeps lodgers off caravans. So lodger status, which
+buys `kindDef` preservation and threat-point exclusion for free, silently cost caravan work,
+which §25.1 names as a real cost of self-delivery and §31 names as a thing hiring should buy.
+Only playtesting caught it. `docs/LABOR_TECHNICAL_NOTES.md` now records the correction.
+
+Fixed with the mod's only labor patch: a postfix on `CaravanFormingUtility.AllSendablePawns`
+that re-runs the same method with `allowLodgers: true` behind a re-entry guard and keeps only
+Intercolony employees. Vanilla's rules on downed, mental state, prisoners and lords therefore
+still apply unchanged, no other mod's lodgers are affected, and the long vanilla predicate is
+not duplicated where it could drift out of sync.
+
+That exposed a follow-on: `LeaveQuestPartUtility.MakePawnLeave` handles a caravan member with
+`caravan.RemovePawn`, which for an off-map pawn leaves them nowhere. An expired term is now
+**held open** while the worker is unspawned; the player is told once, and the worker goes home
+when they are back on a map. `EmploymentContract.termLapsedNotified` persists that (additive
+field, safe default, no schema bump needed).
+
+**No notification when employment ended.** Arrival sent a Letter; departure sent only a
+transient corner Message, which vanishes and leaves nothing in the history. Departure now sends
+a Letter for all three endings, naming the worker, their skills, the destination and the term.
+Not mapped anywhere in DESIGN.md — it was an inconsistency inside Phase 16's own work.
+
+**No employee list, contract durations or payroll view.** Already mapped: this is §110's build
+list verbatim, including "current employee list", and its acceptance criterion is exactly the
+complaint. Nothing changed; Phase 17 is next.
+
+Also reverted on Matteo's call: the dismissal letter briefly stated that prepaid wages are not
+refunded. Refunds do not exist anywhere in RimWorld or Intercolony, so naming one is what would
+create the expectation. Cut; the reasoning stays as a code comment.
+
+Manual test:
+- `Run labor self-test`: **35 passed, 0 failed** — the previous 32 plus caravan eligibility
+  asserted against `Dialog_FormCaravan.AllSendablePawns(map, reform: false)`, the off-map term
+  hold, and its release once the worker is back on a map.
+- Caravan loading confirmed in play.
+- Startup clean, Harmony patches applied, no errors.

@@ -75,6 +75,12 @@ namespace Intercolony
         public EmploymentStatus status = EmploymentStatus.Travelling;
         public string outcomeNote = "";
 
+        /// <summary>
+        /// Set once the term has run out while the worker was away from any map (in a caravan).
+        /// Stops the "term ended but they are not here" letter repeating every hour.
+        /// </summary>
+        public bool termLapsedNotified;
+
         public EmploymentContract()
         {
         }
@@ -94,7 +100,9 @@ namespace Intercolony
                 case EmploymentStatus.Travelling:
                     return $"travelling — arrives in {Mathf.Max(0f, DaysUntilArrival):0.#}d";
                 case EmploymentStatus.Active:
-                    return $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left";
+                    return termLapsedNotified
+                        ? "term ended — away from the colony, will leave on return"
+                        : $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left";
                 default:
                     return outcomeNote.NullOrEmpty() ? status.ToString().ToLower() : outcomeNote;
             }
@@ -126,6 +134,7 @@ namespace Intercolony
 
             Scribe_Values.Look(ref status, "status", EmploymentStatus.Travelling);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
+            Scribe_Values.Look(ref termLapsedNotified, "termLapsedNotified", false);
         }
 
         /// <summary>

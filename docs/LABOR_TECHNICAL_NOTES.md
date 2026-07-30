@@ -66,7 +66,7 @@ settled in code came back working:
 | 6. Areas assignable | yes |
 | 7. Draftable | yes — drafted and undrafted cleanly |
 | 8. Combat trackable | records tracker present |
-| 9. Caravan eligible | yes |
+| 9. Caravan eligible | **NO for a lodger — see below** |
 | 10. Return to colony | yes (same gate) |
 | 17. Ideoligion | **retained** — "Rustican" survived both transfers |
 
@@ -74,9 +74,10 @@ settled in code came back working:
 
 ## Patches and hooks required
 
-**None for control.** This is the headline practical finding: Strategy A needs no Harmony
-patch to make an employee work, sleep, be drafted, or join a caravan. The vanilla systems
-simply function once the faction is the player's.
+**One, and only for caravans.** Strategy A needs no Harmony patch to make an employee work,
+sleep, be drafted or be given orders — the vanilla systems simply function once the faction is
+the player's. Caravans are the single exception, and it is caused by lodger status rather than
+by the faction transfer. See "The caravan exception" below.
 
 Hooks that a labor implementation *will* need:
 
@@ -160,6 +161,34 @@ Doing so gives, from vanilla and with no patches:
 | Faction restoration on death | `QuestPart_ExtraFaction.Notify_PawnKilled` calls `SetFaction(pawn.HomeFaction)` automatically |
 
 That third row also partly answers §33 q14, which this spike had listed as unresolved.
+
+### The caravan exception — CORRECTED 2026-07-29
+
+**This note originally answered §33 q9 "Can the pawn join a caravan?" with "yes". That was
+wrong, and the mistake was in how it was measured.** The spike tested `pawn.IsFreeColonist`,
+reasoning that caravan forming lists free colonists. The actual gate is
+`CaravanFormingUtility.AllSendablePawns`, whose predicate includes
+`(!pawn.IsQuestLodger() || allowLodgers)` — and `Dialog_FormCaravan.AllSendablePawns` passes
+`allowLodgers: false`. Vanilla deliberately keeps lodgers off caravans.
+
+So lodger status, which buys `kindDef` safety and threat-point exclusion for free, costs
+caravan eligibility. It went unnoticed until Matteo played with an employee and tried to send
+them out. **The lesson is the recurring one: assert against the gate the game actually uses,
+not against a property that seems equivalent.** The self-test now checks
+`Dialog_FormCaravan.AllSendablePawns(map, reform: false).Contains(worker)`.
+
+Fixed in Phase 16 with the mod's only labor patch, a postfix on
+`CaravanFormingUtility.AllSendablePawns`. It calls the same method again with
+`allowLodgers: true` behind a re-entry guard and keeps only pawns that are Intercolony
+employees. That way vanilla's rules about downed, mental state, prisoners and lords still
+apply unchanged, no other mod's lodgers are affected, and the long vanilla predicate is not
+duplicated where it could drift.
+
+One consequence to handle: **do not end a contract whose worker is inside a caravan.**
+`LeaveQuestPartUtility.MakePawnLeave` handles a caravan member by calling
+`caravan.RemovePawn(pawn)` — which, for a pawn who is off-map and not spawned, leaves them
+nowhere. Employment therefore holds an expired term open while the worker is unspawned, tells
+the player once, and lets them go home when they are back on a map.
 
 This is strictly better than the mitigations the first draft proposed (patch the
 notification, or accept the cost). It uses the same machinery vanilla lodger quests use, so

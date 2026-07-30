@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using HarmonyLib;
+using RimWorld;
 using RimWorld.Planet;
 using Verse;
 
@@ -91,6 +92,72 @@ namespace Intercolony
             foreach (Gizmo gizmo in ours)
             {
                 yield return gizmo;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Lets Intercolony employees be sent on caravans (DESIGN.md §33 q9, §25.1 "caravan labor").
+    ///
+    /// Vanilla filters quest lodgers out of the caravan dialog:
+    /// <c>AllSendablePawns</c> tests <c>(!pawn.IsQuestLodger() || allowLodgers)</c> and
+    /// <see cref="Dialog_FormCaravan"/> passes <c>allowLodgers: false</c>. Employees are lodgers
+    /// (that is what preserves their <c>kindDef</c> and keeps them out of raid-point maths), so
+    /// without this they cannot be loaded — which defeats a large part of the point of hiring
+    /// labor, since caravan work is exactly the capacity §31 says silver should buy.
+    ///
+    /// Rather than reimplement the vanilla predicate — it is long, and other mods may have
+    /// changed it — this calls the same method again with <c>allowLodgers: true</c> behind a
+    /// re-entry guard and keeps only the pawns that are Intercolony employees. Vanilla's own
+    /// rules about downed, mental state, prisoners and lords therefore still apply unchanged,
+    /// and no other mod's lodgers are affected.
+    /// </summary>
+    [HarmonyPatch(typeof(CaravanFormingUtility), nameof(CaravanFormingUtility.AllSendablePawns))]
+    public static class CaravanFormingUtility_AllSendablePawns_Patch
+    {
+        private static bool reentering;
+
+        public static void Postfix(
+            List<Pawn> __result, Map map, bool allowEvenIfDowned, bool allowEvenIfInMentalState,
+            bool allowEvenIfPrisonerNotSecure, bool allowCapturableDownedPawns, bool allowLodgers,
+            int allowLoadAndEnterTransportersLordForGroupID)
+        {
+            // allowLodgers already includes them; reentering means this is our own inner call.
+            if (allowLodgers || reentering || __result == null || map == null)
+            {
+                return;
+            }
+
+            // Cheap bail-out for the overwhelmingly common case of no employees on the payroll.
+            if (!EmploymentService.AnyActiveEmployee())
+            {
+                return;
+            }
+
+            reentering = true;
+            try
+            {
+                List<Pawn> withLodgers = CaravanFormingUtility.AllSendablePawns(
+                    map, allowEvenIfDowned, allowEvenIfInMentalState, allowEvenIfPrisonerNotSecure,
+                    allowCapturableDownedPawns, allowLodgers: true,
+                    allowLoadAndEnterTransportersLordForGroupID);
+
+                foreach (Pawn pawn in withLodgers)
+                {
+                    if (!__result.Contains(pawn) && EmploymentService.IsEmployee(pawn))
+                    {
+                        __result.Add(pawn);
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                // A throw here would break caravan forming entirely (§86).
+                IntercolonyLog.Error("Failed to add employees to the caravan list: " + ex);
+            }
+            finally
+            {
+                reentering = false;
             }
         }
     }
