@@ -374,16 +374,26 @@ namespace Intercolony
         /// </summary>
         public static bool CancelContract(IntercolonyWorldComponent state, RecurringContract contract)
         {
-            if (contract == null || !contract.IsActive)
+            bool suspended = contract != null && contract.status == ContractStatus.Suspended;
+
+            if (contract == null || (!contract.IsActive && !suspended))
             {
                 return false;
             }
 
             contract.status = ContractStatus.Cancelled;
-            contract.outcomeNote = "Withdrawn by the player.";
+            contract.outcomeNote = suspended
+                ? "Withdrawn by the player while suspended by war."
+                : "Withdrawn by the player.";
 
-            CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-            rep?.Adjust(-10f);
+            // No reputation penalty for walking away from an agreement a war had already frozen:
+            // §88's suspension exists because the interruption was not the player's doing, and
+            // charging them for ending it would take that back.
+            if (!suspended)
+            {
+                CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
+                rep?.Adjust(-10f);
+            }
 
             IntercolonyLog.Message($"Contract {contract.id} cancelled by the player.");
             return true;

@@ -23,7 +23,15 @@ namespace Intercolony
         Cancelled,
 
         /// <summary>The supplier failed to deliver. Payment is refunded (§21 SupplierDefault).</summary>
-        SupplierDefault
+        SupplierDefault,
+
+        /// <summary>
+        /// The supplier's faction went to war before the goods arrived (§88, §113). Distinct from
+        /// <see cref="SupplierDefault"/> precisely because the payment is *not* refunded — the
+        /// silver is with an enemy now. Keeping them apart is what stops the orders list implying
+        /// the player got their money back.
+        /// </summary>
+        LostToWar
     }
 
     /// <summary>

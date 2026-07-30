@@ -106,21 +106,25 @@ namespace Intercolony
 
         private static void OnPeriodPaid(EmploymentContract contract, int paid)
         {
-            if (contract.missedPayments == 0 && !contract.refusingWork)
+            bool refusingOverWages = contract.refusingWork &&
+                                     contract.refusalReason == WorkRefusalReason.UnpaidWages;
+
+            if (contract.missedPayments == 0 && !refusingOverWages)
             {
-                // Routine payday. No letter — a message per quadrum per worker would be noise.
+                // Routine payday. No letter — a message per quadrum per worker would be noise. A
+                // worker refusing over §42 combat misuse counts as routine here on purpose: paying
+                // them does not settle that grievance and must not claim to.
                 return;
             }
 
-            bool wasRefusing = contract.refusingWork;
             contract.missedPayments = 0;
-            contract.ResumeWork();
+            contract.ResumeWork(WorkRefusalReason.UnpaidWages);
             EmployerReputationService.NoteArrearsCleared(IntercolonyWorldComponent.Current);
 
             Find.LetterStack.ReceiveLetter(
                 "Wages settled",
                 $"{contract.workerName} has been paid {paid} silver, clearing what was owed.\n\n" +
-                (wasRefusing
+                (refusingOverWages
                     ? "They are back at work, on the priorities they had before they stopped."
                     : "They are working normally again."),
                 LetterDefOf.PositiveEvent, contract.pawn);
@@ -146,7 +150,7 @@ namespace Intercolony
 
             if (contract.missedPayments >= MissesBeforeRefusingWork)
             {
-                contract.HoldWork();
+                contract.HoldWork(WorkRefusalReason.UnpaidWages);
 
                 Find.LetterStack.ReceiveLetter(
                     "Employee has stopped working",
@@ -346,11 +350,14 @@ namespace Intercolony
             contract.paidSilver += settled;
             contract.arrearsSilver = 0;
             contract.missedPayments = 0;
-            contract.ResumeWork();
+            contract.ResumeWork(WorkRefusalReason.UnpaidWages);
             EmployerReputationService.NoteArrearsCleared(IntercolonyWorldComponent.Current);
 
             Messages.Message(
-                $"Paid {contract.workerName} the {settled} silver owed. They are back at work.",
+                contract.refusingWork
+                    ? $"Paid {contract.workerName} the {settled} silver owed. They are still refusing " +
+                      "work — that is not about the money."
+                    : $"Paid {contract.workerName} the {settled} silver owed. They are back at work.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             return true;
@@ -391,7 +398,7 @@ namespace Intercolony
             Find.LetterStack.ReceiveLetter(
                 "Debt settled",
                 $"{settled} silver has been sent to {debt.settlementName} to cover " +
-                $"{debt.workerName}'s unpaid wages.\n\n" +
+                $"{debt.KindLabel()} for {debt.workerName}.\n\n" +
                 "Paying late is better than not paying, but it is on the record either way.",
                 LetterDefOf.NeutralEvent);
 

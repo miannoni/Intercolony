@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text;
 using RimWorld;
 using UnityEngine;
@@ -158,7 +158,8 @@ namespace Intercolony
             // Daily wage, so one pay period is one day and the escalation can be driven without
             // simulating a quadrum.
             EmploymentContract contract = EmploymentService.TryHire(
-                state, candidate, term, map, out string failReason, WageStructure.Daily);
+                state, candidate, term, map, out string failReason, WageStructure.Daily,
+                CombatClause.Civilian);
 
             r.Check(contract != null, "hired on a daily wage", failReason ?? "");
             if (contract == null)

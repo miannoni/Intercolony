@@ -26,6 +26,17 @@ namespace Intercolony
         private const int CandidatesPerSettlement = 2;
 
         /// <summary>
+        /// Longest term a worker will sign for (§36.2). Lives here rather than in the hiring window
+        /// because it is a labor rule with an economic consequence, not a widget bound: §42's clause
+        /// pricing only deters the meat-shield strategy *below a term length that depends on this
+        /// number*, so anything that changes it changes the balance. See
+        /// <see cref="IntercolonyCombatClauseSelfTest"/>, which asserts the margin at exactly this
+        /// cap and will fail loudly if it is raised past the crossover — which Phase 22 (§115,
+        /// long-term and open-ended contracts) is going to want to do.
+        /// </summary>
+        public const int MaxTermDays = 60;
+
+        /// <summary>
         /// Ceiling on the whole listing. Generating a pawn is not cheap, and an unbounded pool
         /// grows with the number of settlements — on a stock map that was 48 pawns built and
         /// thrown away on every look. §5.2's opportunity flood was the same shape of mistake.
@@ -260,7 +271,11 @@ namespace Intercolony
                 distanceTiles = distance,
                 travelDays = TravelDays(distance),
                 minTermDays = minTerm,
-                dailyWage = DailyWage(pawn, profile, distance, minTerm, standing)
+
+                // The listed rate is the civilian rate — the cheapest terms available, and the
+                // baseline the hiring dialog prices the other two clauses against. Listing anything
+                // else would advertise a price nobody had chosen yet.
+                dailyWage = DailyWage(pawn, profile, distance, minTerm, standing, CombatClause.Civilian)
             };
         }
 
@@ -283,9 +298,14 @@ namespace Intercolony
         /// That exact shape of bug has appeared twice before (the Phase 12 quantity slider and the
         /// Phase 10 gold bed), both times because a pricing input was easy to omit.
         /// </param>
+        /// <param name="clause">
+        /// §42's combat clause, and required for the same reason. This is the largest single
+        /// multiplier in the whole formula — a security contractor costs two and a half times a
+        /// civilian — so a defaulted value here would be the most expensive possible mispricing.
+        /// </param>
         public static int DailyWage(
             Pawn pawn, SettlementEconomicProfile profile, float distance, int termDays,
-            float employerStanding)
+            float employerStanding, CombatClause clause)
         {
             float skillValue = 0f;
             if (pawn?.skills != null)
@@ -331,6 +351,11 @@ namespace Intercolony
             // §39 step 9: a bad employer pays a risk premium, a good one gets a discount because
             // people want the job. The widest of the reputation effects, per §112's "meaningfully".
             wage *= EmployerReputationService.WageFactor(employerStanding);
+
+            // §42: "higher wage" for an armed employee, "much higher wage" for a security
+            // contractor. Applied last so it multiplies everything else — a distant soldier for a
+            // bad employer is expensive on every axis at once, which is the intent.
+            wage *= clause.WageFactor();
 
             return Mathf.Max(1, Mathf.RoundToInt(wage));
         }

@@ -1326,7 +1326,12 @@ namespace Intercolony
         {
             if (contract.IsOffer) return 0;
             if (contract.IsActive) return 1;
-            return 2;
+
+            // Suspended sorts with the live agreements, not with the dead ones. It is still an
+            // obligation the player has to plan around (§88), and burying it below cancelled
+            // contracts would suggest otherwise.
+            if (contract.status == ContractStatus.Suspended) return 2;
+            return 3;
         }
 
         private void DrawContractRow(
@@ -1367,6 +1372,14 @@ namespace Intercolony
                     colour = Color.yellow;
                 }
             }
+            else if (contract.status == ContractStatus.Suspended)
+            {
+                // Amber, not red. §88's suspension is not a failure and the colour has to say so —
+                // the agreement is intact and the remaining deliveries are still owed to the player.
+                status = $"suspended by war with {contract.factionName} — " +
+                         $"{contract.CyclesRemaining} deliveries still to come";
+                colour = new Color(1f, 0.8f, 0.4f);
+            }
             else
             {
                 status = $"{contract.status}: {contract.outcomeNote}";
@@ -1403,14 +1416,22 @@ namespace Intercolony
                     contract.TryDecline();
                 }
             }
-            else if (contract.IsActive)
+            else if (contract.IsActive || contract.status == ContractStatus.Suspended)
             {
+                // Withdrawing from a suspended agreement is allowed: the player may not want to be
+                // held to eight quadrums of rice for a faction they are now at war with, and
+                // forcing them to wait for peace to say so would be a worse kind of limbo.
+                bool suspended = contract.status == ContractStatus.Suspended;
+
                 Rect cancelRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
                 if (Widgets.ButtonText(cancelRect, "Withdraw"))
                 {
                     Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
                         $"Withdraw from the agreement with {contract.settlementName}?\n\n" +
-                        "They will think considerably less of you as a supplier.",
+                        (suspended
+                            ? "It is only suspended — it would resume on its own if relations " +
+                              "recovered. Withdrawing ends it for good."
+                            : "They will think considerably less of you as a supplier."),
                         () => ContractService.CancelContract(state, contract),
                         destructive: true));
                 }

@@ -24,16 +24,23 @@ namespace Intercolony
         private readonly LaborCandidate candidate;
         private readonly SettlementEconomicProfile profile;
         private readonly Map map;
-        private readonly Action<int, WageStructure> onConfirm;
+        private readonly Action<int, WageStructure, CombatClause> onConfirm;
         private readonly int maxTermDays;
 
         private int termDays;
         private string termBuffer;
         private WageStructure structure = WageStructure.Quadrum;
 
+        /// <summary>
+        /// §42's clause. Civilian by default because it is the cheapest and the most restrictive:
+        /// the player should have to choose to buy the right to draft someone, not discover they
+        /// had it all along.
+        /// </summary>
+        private CombatClause clause = CombatClause.Civilian;
+
         public Dialog_HireWorker(
             LaborCandidate candidate, SettlementEconomicProfile profile, Map map, int maxTermDays,
-            Action<int, WageStructure> onConfirm)
+            Action<int, WageStructure, CombatClause> onConfirm)
         {
             this.candidate = candidate;
             this.profile = profile;
@@ -58,13 +65,15 @@ namespace Intercolony
             absorbInputAroundWindow = true;
         }
 
-        public override Vector2 InitialSize => new Vector2(620f, 560f);
+        public override Vector2 InitialSize => new Vector2(620f, 760f);
 
         private float EmployerStanding =>
             EmployerReputationService.ScoreFor(IntercolonyWorldComponent.Current);
 
-        private int DailyWage => LaborCandidateService.DailyWage(
-            candidate.pawn, profile, candidate.distanceTiles, termDays, EmployerStanding);
+        private int DailyWage => WageFor(clause);
+
+        private int WageFor(CombatClause option) => LaborCandidateService.DailyWage(
+            candidate.pawn, profile, candidate.distanceTiles, termDays, EmployerStanding, option);
 
         public override void DoWindowContents(Rect inRect)
         {
@@ -127,7 +136,7 @@ namespace Intercolony
             {
                 int atMinimum = LaborCandidateService.DailyWage(
                     candidate.pawn, profile, candidate.distanceTiles, candidate.minTermDays,
-                    EmployerStanding);
+                    EmployerStanding, clause);
                 if (wage < atMinimum)
                 {
                     GUI.color = new Color(0.6f, 0.9f, 0.6f);
@@ -138,6 +147,21 @@ namespace Intercolony
             }
 
             y += 28f;
+
+            // --- Combat clause (§42) ---
+            //
+            // Above the wage structure on purpose. The clause changes the daily rate, so choosing
+            // it first means every structure below is priced against a rate the player has already
+            // settled — the same "compare, don't discover" standard §111 set.
+            Widgets.Label(new Rect(0f, y, inRect.width, 24f), "What they can be asked to do:");
+            y += 26f;
+
+            foreach (CombatClause option in CombatClauseUtility.All)
+            {
+                y = DrawClauseOption(inRect, y, option);
+            }
+
+            y += 6f;
 
             // --- Wage structure (§37) ---
             Widgets.Label(new Rect(0f, y, inRect.width, 24f), "How they are paid:");
@@ -163,7 +187,7 @@ namespace Intercolony
 
             if (Widgets.ButtonText(new Rect(0f, bottom, 170f, 36f), "Hire"))
             {
-                onConfirm?.Invoke(termDays, structure);
+                onConfirm?.Invoke(termDays, structure, clause);
                 Close();
             }
 
@@ -171,6 +195,47 @@ namespace Intercolony
             {
                 Close();
             }
+        }
+
+        /// <summary>
+        /// One radio row per combat clause, each showing its daily rate *and* what a death under it
+        /// would cost. Both numbers together are the whole of §42's economics: the cheap worker is
+        /// the expensive one to lose, and seeing that before hiring is what stops the meat-shield
+        /// strategy being discovered as a good idea and abandoned only after the bill arrives.
+        /// </summary>
+        private float DrawClauseOption(Rect inRect, float y, CombatClause option)
+        {
+            const float RowHeight = 56f;
+            Rect row = new Rect(0f, y, inRect.width, RowHeight);
+
+            if (clause == option)
+            {
+                Widgets.DrawHighlightSelected(row);
+            }
+            else
+            {
+                Widgets.DrawHighlightIfMouseover(row);
+            }
+
+            Widgets.RadioButton(new Vector2(4f, y + 14f), clause == option);
+
+            int optionWage = WageFor(option);
+            int death = optionWage * option.DeathCompensationDays();
+
+            Widgets.Label(new Rect(34f, y + 2f, inRect.width - 40f, 22f),
+                $"{option.LabelCap()} — {optionWage} silver/day, {death} silver if they die");
+
+            GUI.color = new Color(1f, 1f, 1f, 0.6f);
+            Widgets.Label(new Rect(34f, y + 24f, inRect.width - 40f, 32f), option.Explain());
+            GUI.color = Color.white;
+
+            if (Widgets.ButtonInvisible(row) && clause != option)
+            {
+                clause = option;
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
+            return y + RowHeight;
         }
 
         /// <summary>

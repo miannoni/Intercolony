@@ -318,3 +318,72 @@ is built:
 
 §33's instruction stands: *"Do not build the full labor economy until the control model is
 proven."* Control is proven. Lifecycle is not.
+
+---
+
+## Combat-use tracking without a patch — added Phase 20 (§42, §113)
+
+§113 asks for "combat-use tracking where technically feasible". It is feasible with no Harmony
+patch at all, and the mechanism is worth writing down because the obvious approaches are all worse.
+
+**Use `Pawn_MindState.lastAttackTargetTick`.** `Verb` stamps it via
+`CasterPawn.mindState.Notify_AttackedTarget(...)` on every verb a pawn casts, melee or ranged
+(`Verb.cs:485`), the field is public, and it is scribed. Sample it against `Pawn.Drafted` on a short
+beat and you have the answer §42 needs — *did the player point this worker at something* — without
+touching combat, damage, the storyteller or any other mod's surface.
+
+Two details the first draft would have got wrong:
+
+1. **`Notify_AttackedTarget` is called on `mindState` unconditionally, and on `MentalState` as an
+   *addition*, not a replacement** (`Verb.cs:483-490`). So a pawn in a mental break still stamps
+   `mindState`, and reading only `mindState` misses nothing.
+2. **Compare against a stored high-water mark, not against a sample tick.** The contract keeps
+   `countedAttackTick`, so a reload or two samples inside one firefight cannot count the same shot
+   twice. A recency window on top of that (`now - attackTick <= 120`) stops a stale tick from an
+   undrafted self-defense being charged to a draft that happened seconds later.
+
+**Drafted is the whole test, and it is a proxy.** §42 draws the line at self-defense versus
+aggressive use, and drafting is exactly that line — an undrafted worker who shoots back is defending
+themselves, a drafted one is being aimed. A player who undrafts between shots goes unrecorded. That
+is accepted rather than papered over; the alternative is patching combat.
+
+---
+
+## Safe passage: releasing an employee whose faction went to war — Phase 20 (§88, §113)
+
+§88 requires that a hostile employee not "silently become an enemy in the middle of a bedroom". The
+problem is that vanilla's departure path does exactly that, and for a good reason.
+
+`Quest.End` → `QuestPart_Leave.Cleanup` → `LeaveQuestPartUtility.MakePawnsLeave` restores the pawn's
+faction from the `QuestPart_ExtraFaction` **and then** builds the exit lord with
+`LordMaker.MakeNewLord(pawn.Faction, ...)`. The faction restore and the walk-out are one call, in
+that order. So a released worker whose home faction is at war walks out as an enemy, and the
+colony's own turrets open fire on someone the letter just promised was leaving peacefully.
+
+**What works: let vanilla do everything, then override the one thing that is wrong for this case.**
+
+1. Call `LeaveQuestPartUtility.MakePawnsLeave(pawns, sendLetter: false, quest)` **without ending the
+   quest**. It clears master and guest status, drops carried things and restores the faction. Passing
+   the quest is what makes `GetExtraHomeFaction(quest)` resolve while the quest is still Ongoing.
+2. Immediately `SetFaction(null)`. A factionless pawn is nobody's enemy — turrets hold fire and
+   drafted colonists do not auto-engage — and lodger status keeps `ChangeKind` from firing.
+3. **Build the exit lord after that, not before.** `Pawn.SetFaction` calls
+   `GetLord()?.Notify_PawnLost(this, PawnLostCondition.ChangedFaction)`, so a lord made first is
+   discarded. `LordMaker.MakeNewLord(null, new LordJob_ExitMapBest(...), ...)` is legal.
+4. Restore the real faction only once they are unspawned, then end the quest.
+
+**Do not hand-roll step 1 and skip straight to a factionless exit lord.** It looks equivalent and is
+not: an `IsColonist` pawn walking off the map edge **creates a caravan**.
+`JobDriver_Goto.TryExitMap` calls `ExitMap(allowedToJoinOrCreateCaravan: true, ...)`, and
+`CaravanExitMapUtility.CanExitMapAndJoinOrCreateCaravanNow` returns `true` unconditionally for a
+colonist (`CaravanExitMapUtility.cs:151`). Setting the faction to null first is what makes that gate
+fall through to `FindCaravanToJoinFor`, which returns null for a pawn in no faction and not hosted by
+the player (`CaravanExitMapUtility.cs:343`).
+
+**Safe passage needs a deadline, and the deadline needs a price.** A worker who cannot reach the
+edge — walled in, downed, blocked — would otherwise sit factionless in the colony forever. Two days,
+then their faction is restored. But once the employment record closes the pawn is worth nothing, so
+detaining them until the deadline would be a *cheaper* way to dispose of a worker than letting them
+go. The denial therefore carries a death-sized reputation and goodwill hit of its own. Pricing the
+detention removes the incentive; trying to police the killing afterwards would not.
+

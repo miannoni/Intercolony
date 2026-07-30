@@ -34,9 +34,29 @@ namespace Intercolony
         private const float EarlyDismissal = -2f;
         private const float DebtSettledLate = 2f;
 
+        /// <summary>
+        /// Using a worker outside their combat clause (§42). Heavier than a missed payroll: a late
+        /// wage is a cash-flow problem, and sending a bookkeeper into a firefight is a choice.
+        /// Scaled by how many times it has happened, so the first one is a warning and the third is
+        /// what the tier says about you.
+        /// </summary>
+        private const float CombatMisuse = -8f;
+
+        /// <summary>
+        /// A worker who left rather than be used as a weapon again. Deliberately as sharp as a
+        /// walk-out over unpaid wages: §40's negative list is about what the player chose to let
+        /// happen, and both of these are entirely chosen.
+        /// </summary>
+        private const float BreachWalkOut = -18f;
+
+        /// <summary>Holding a released worker past their safe conduct (§88). See NoteSafePassageDenied.</summary>
+        private const float SafePassageDenied = -12f;
+
         /// <summary>Goodwill lost with the worker's own faction when they are badly treated (§39 step 8).</summary>
         private const int GoodwillWalkOut = -8;
         private const int GoodwillDeath = -5;
+        private const int GoodwillCombatMisuse = -4;
+        private const int GoodwillSafePassageDenied = -6;
 
         public static EmployerReputation For(IntercolonyWorldComponent state)
         {
@@ -113,10 +133,135 @@ namespace Intercolony
             }
 
             rep.employeeDeaths++;
-            rep.Adjust(EmployeeDied);
 
-            AffectGoodwill(contract.employerFaction, GoodwillDeath,
+            // §42's whole purpose is that these deaths are not equal. A security contractor died
+            // doing the job they were paid a premium to do; a civilian the player drafted did not.
+            // The score reflects the clause and whether the clause was honoured.
+            float penalty = EmployeeDied * DeathSeverity(contract);
+            rep.Adjust(penalty);
+
+            AffectGoodwill(contract.employerFaction,
+                Mathf.RoundToInt(GoodwillDeath * DeathSeverity(contract)),
                 $"{contract.workerName} died working for {Faction.OfPlayer.Name}");
+        }
+
+        /// <summary>
+        /// How badly a death reflects on the colony, as a multiplier on the score and goodwill hits.
+        ///
+        /// Kept as one function so the two consequences cannot drift apart, and expressed as a
+        /// multiplier rather than three separate constants so the *ordering* is guaranteed by
+        /// construction: a breached civilian death is always worse than an honoured one, which is
+        /// always worse than a security contractor's.
+        /// </summary>
+        private static float DeathSeverity(EmploymentContract contract)
+        {
+            float severity;
+            switch (contract?.combatClause ?? CombatClause.Civilian)
+            {
+                case CombatClause.Security:
+                    severity = 0.4f;
+                    break;
+                case CombatClause.Armed:
+                    severity = 0.7f;
+                    break;
+                default:
+                    severity = 1f;
+                    break;
+            }
+
+            if (contract != null && contract.clauseBreaches > 0)
+            {
+                severity *= 1.5f;
+            }
+
+            return severity;
+        }
+
+        /// <summary>
+        /// The player drafted a worker into a fight their contract did not cover (§42).
+        ///
+        /// The escalation itself lives in <see cref="CombatUseMonitor"/>; this is only the record of
+        /// it. Repeats hurt more than the first, because a single mistake in a crisis is not the
+        /// same as a habit.
+        /// </summary>
+        public static void NoteCombatMisuse(IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            EmployerReputation rep = For(state);
+            if (rep == null || contract == null)
+            {
+                return;
+            }
+
+            rep.combatClauseBreaches++;
+            rep.Adjust(CombatMisuse * Mathf.Min(contract.clauseBreaches, 3));
+
+            AffectGoodwill(contract.employerFaction, GoodwillCombatMisuse,
+                $"{contract.workerName} was used as a fighter against their contract");
+        }
+
+        /// <summary>A worker left rather than be drafted again (§42). Counted as a walk-out, because it is one.</summary>
+        public static void NoteBreachWalkOut(IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            EmployerReputation rep = For(state);
+            if (rep == null || contract == null)
+            {
+                return;
+            }
+
+            rep.walkOuts++;
+            rep.Adjust(BreachWalkOut);
+
+            AffectGoodwill(contract.employerFaction, GoodwillWalkOut,
+                $"{contract.workerName} refused to keep fighting for {Faction.OfPlayer.Name}");
+        }
+
+        /// <summary>
+        /// A released worker was still inside the colony when their safe conduct ran out (§88).
+        ///
+        /// Weighted like a death rather than like a dismissal, and deliberately so. Once the
+        /// employment record closes, killing the pawn costs nothing — so if detaining them were free,
+        /// walling a released worker in for two days would be the cheapest possible way to be rid of
+        /// them, and §88's safe passage would become a loophole rather than a policy. Pricing the
+        /// detention itself removes the incentive instead of trying to police the killing.
+        /// </summary>
+        public static void NoteSafePassageDenied(IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            EmployerReputation rep = For(state);
+            if (rep == null || contract == null)
+            {
+                return;
+            }
+
+            rep.safePassageDenials++;
+            rep.Adjust(SafePassageDenied);
+
+            AffectGoodwill(contract.employerFaction, GoodwillSafePassageDenied,
+                $"{contract.workerName} was held in {Faction.OfPlayer.Name} past their release");
+        }
+
+        /// <summary>
+        /// Compensation the colony could not cover (§43 "debt if unpaid").
+        ///
+        /// §40 already had an "unpaid compensation" line and until now nothing produced one — the
+        /// field was filled with wage arrears for want of anything better. This is what it was for.
+        /// The score hit is proportional to the shortfall against the daily wage, so failing to pay
+        /// a large settlement hurts more than failing to pay a small one, and a colony that pays in
+        /// full takes no hit at all beyond the death itself.
+        /// </summary>
+        public static void NoteCompensationUnpaid(IntercolonyWorldComponent state,
+            EmploymentContract contract, int shortfall)
+        {
+            EmployerReputation rep = For(state);
+            if (rep == null || shortfall <= 0)
+            {
+                return;
+            }
+
+            rep.unpaidCompensation += shortfall;
+
+            int dailyWage = Mathf.Max(1, contract?.dailyWage ?? 1);
+            float daysUnpaid = shortfall / (float)dailyWage;
+            rep.Adjust(-Mathf.Clamp(daysUnpaid * 0.25f, 1f, 12f));
         }
 
         public static void NoteEarlyDismissal(IntercolonyWorldComponent state, EmploymentContract contract)

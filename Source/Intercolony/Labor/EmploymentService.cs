@@ -26,12 +26,19 @@ namespace Intercolony
     public static class EmploymentService
     {
         /// <summary>
-        /// Hires a worker under one of §37's wage structures. Only prepaid takes silver now;
-        /// periodic structures take nothing at hire and pay at the end of each period (§38).
+        /// Hires a worker under one of §37's wage structures and one of §42's combat clauses. Only
+        /// prepaid takes silver now; periodic structures take nothing at hire and pay at the end of
+        /// each period (§38).
         /// </summary>
+        /// <param name="clause">
+        /// §42's combat clause. **Required, not defaulted**, and for the reason Phase 19 recorded
+        /// about employer standing: the clause is a pricing input, and a defaulted pricing input is
+        /// how a call site ends up billing a different number than the dialog quoted. The compiler
+        /// naming every site is the point.
+        /// </param>
         public static EmploymentContract TryHire(
             IntercolonyWorldComponent state, LaborCandidate candidate, int termDays, Map paymentMap,
-            out string failReason, WageStructure structure = WageStructure.Prepaid)
+            out string failReason, WageStructure structure, CombatClause clause)
         {
             failReason = null;
 
@@ -72,7 +79,7 @@ namespace Intercolony
             SettlementEconomicProfile profile = state.GetProfile(settlement);
             int dailyWage = LaborCandidateService.DailyWage(
                 candidate.pawn, profile, candidate.distanceTiles, termDays,
-                EmployerReputationService.ScoreFor(state));
+                EmployerReputationService.ScoreFor(state), clause);
 
             // Only prepaid is charged now. A periodic hire that demanded the full term up front
             // would defeat the point of offering the choice.
@@ -113,6 +120,7 @@ namespace Intercolony
                 workerSkills = skills,
                 dailyWage = dailyWage,
                 termDays = termDays,
+                combatClause = clause,
                 wageStructure = structure,
                 paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
@@ -133,7 +141,7 @@ namespace Intercolony
             }
 
             Messages.Message(
-                $"Hired {contract.workerName} from {contract.settlementName} — " +
+                $"Hired {contract.workerName} from {contract.settlementName} as a {clause.Label()} — " +
                 $"{dailyWage} silver/day × {termDays} days, " +
                 $"{WageStructureUtility.Explain(structure, dailyWage, termDays)} " +
                 $"Arrives in {candidate.travelDays} days.",
@@ -168,6 +176,15 @@ namespace Intercolony
                     continue;
                 }
 
+                // A released worker walking out under safe passage (§88). The record is already
+                // closed; what is left is to notice when they are clear and put them back in their
+                // own faction.
+                if (contract.status == EmploymentStatus.Severed)
+                {
+                    AdvanceSafePassage(contract, now);
+                    continue;
+                }
+
                 if (contract.status != EmploymentStatus.Active)
                 {
                     continue;
@@ -178,10 +195,7 @@ namespace Intercolony
                 // record so nothing ticks a corpse.
                 if (contract.pawn == null || contract.pawn.Destroyed || contract.pawn.Dead)
                 {
-                    // §40 lists "preventable death" as a negative signal and §112 asks for
-                    // injury/death effects. Whether it was preventable is not something this can
-                    // tell — the penalty is the same either way, which is a known simplification.
-                    EmployerReputationService.NoteEmployeeDied(IntercolonyWorldComponent.Current, contract);
+                    NoteDeath(contract);
 
                     End(contract, EmploymentStatus.Failed,
                         $"{contract.workerName} died before the term ended");
@@ -217,6 +231,268 @@ namespace Intercolony
             }
         }
 
+        /// <summary>
+        /// Records a death against the colony's name and settles what §43 says it costs.
+        ///
+        /// Order matters: the compensation is computed from <c>dailyWage</c>, the combat clause and
+        /// the breach count, all of which <see cref="End"/> leaves alone — but it also needs
+        /// <c>destinationMap</c> to find silver, and that <see cref="End"/> clears. So this runs
+        /// before the record closes, every time.
+        /// </summary>
+        private static void NoteDeath(EmploymentContract contract)
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+
+            // §40 lists "preventable death" as a negative signal and §112 asks for injury/death
+            // effects. Whether it was preventable is not something this can tell — the penalty is
+            // the same either way, which is a known simplification. What §42 *can* tell is whether
+            // the player had been drafting them against the clause, and that doubles the bill.
+            EmployerReputationService.NoteEmployeeDied(state, contract);
+            CompensationService.ClaimOnDeath(state, contract);
+        }
+
+        // --- Safe passage (§88, §113) ------------------------------------------------------
+
+        /// <summary>
+        /// Ends employment because the worker's own faction went to war, and starts them walking
+        /// out without making them an enemy first (§88).
+        ///
+        /// The quest is deliberately **left running**. It is what marks the worker a lodger, and
+        /// letting it live keeps their <c>kindDef</c> safe through the faction changes and keeps the
+        /// home faction resolvable for the restore at the end. <see cref="FinishSafePassage"/> ends
+        /// it once they are clear.
+        /// </summary>
+        public static void BeginSafePassage(EmploymentContract contract, bool offMap)
+        {
+            if (contract == null || !contract.IsOpen)
+            {
+                return;
+            }
+
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+
+            // Wages for the days actually worked, exactly as any other ending. The war is not a
+            // reason to stiff someone for work already done.
+            PayrollService.SettleOnEnd(contract, EmploymentStatus.Severed, state?.LaborDebts, state);
+            CompensationService.ClaimOnEnd(state, contract);
+
+            contract.status = EmploymentStatus.Severed;
+            contract.outcomeNote =
+                $"{contract.factionName} went to war; {contract.workerName} was released";
+            contract.ResumeWork();
+            contract.refusingWork = false;
+
+            if (offMap)
+            {
+                // In a caravan: nothing to walk out of, and pulling them out of it would leave them
+                // nowhere (docs/LABOR_TECHNICAL_NOTES.md). Hold until they are back on a map.
+                contract.safePassage = false;
+                contract.safePassageEndTick = -1;
+                IntercolonyLog.Message($"Severed (held off-map): {contract}");
+                return;
+            }
+
+            contract.safePassage = true;
+            contract.safePassageEndTick =
+                GenTicks.TicksGame + HostilityPolicy.SafePassageDays * GenDate.TicksPerDay;
+
+            StartWalkingOut(contract);
+
+            IntercolonyLog.Message($"Severed (safe passage): {contract}");
+        }
+
+        /// <summary>
+        /// Sends a released worker on their way, using vanilla for everything except the one thing
+        /// vanilla gets wrong for this case.
+        ///
+        /// <c>LeaveQuestPartUtility.MakePawnsLeave</c> does all the housekeeping a departure needs
+        /// and that reimplementing badly is exactly what docs/LABOR_TECHNICAL_NOTES.md warns about:
+        /// it clears master and guest status, drops anything carried, and restores the worker's own
+        /// faction from the still-running <c>QuestPart_ExtraFaction</c>. It is called with the quest
+        /// rather than after ending it, which is what makes that lookup resolve at all.
+        ///
+        /// The one thing it cannot do is our case: it puts the worker back in a faction that is now
+        /// at war and hands them an exit lord under it, so they would walk out as an enemy and be
+        /// shot on the way by the colony's own turrets. So the faction is immediately overridden to
+        /// none — and because <c>SetFaction</c> ends the pawn's lord, the exit lord has to be made
+        /// after that, not before.
+        /// </summary>
+        private static void StartWalkingOut(EmploymentContract contract)
+        {
+            Pawn worker = contract.pawn;
+            if (worker == null || !worker.Spawned)
+            {
+                return;
+            }
+
+            try
+            {
+                if (contract.quest != null && !contract.quest.Historical)
+                {
+                    LeaveQuestPartUtility.MakePawnsLeave(
+                        new List<Pawn> { worker }, sendLetter: false, contract.quest);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                IntercolonyLog.Warning(
+                    $"Employment #{contract.id} threw preparing safe passage: {ex}");
+            }
+
+            HostilityPolicy.WalkOutFactionless(worker);
+        }
+
+        /// <summary>
+        /// Watches a released worker until they are gone, then finishes the record.
+        ///
+        /// Four ways out, all of them stated to the player when they happen: they die, they leave a
+        /// caravan and can finally walk, they reach the map edge, or safe passage runs out because
+        /// the colony would not let them go.
+        /// </summary>
+        private static void AdvanceSafePassage(EmploymentContract contract, int now)
+        {
+            Pawn worker = contract.pawn;
+            if (worker == null)
+            {
+                // Already finished, or the pawn did not survive a load. Nothing left to do.
+                contract.safePassage = false;
+                return;
+            }
+
+            if (worker.Dead || worker.Destroyed)
+            {
+                // Killed on the way out. §43's bill applies in full: a departing employee under
+                // contract is still an employee, and this is precisely the case the letter warned
+                // about. NoteDeath must run before the references are cleared.
+                NoteDeath(contract);
+                FinishSafePassage(contract,
+                    $"{contract.workerName} was killed leaving under safe passage");
+                return;
+            }
+
+            // A caravan member is not spawned but is not gone either — checked first, because the
+            // "not spawned" test below would otherwise read as "they made it home".
+            if (worker.GetCaravan() != null)
+            {
+                if (!contract.termLapsedNotified)
+                {
+                    contract.termLapsedNotified = true;
+                    Find.LetterStack.ReceiveLetter(
+                        "Released employee is away",
+                        $"{contract.workerName}'s contract has ended — their faction is at war with you " +
+                        "— but they are travelling with one of your caravans and cannot leave from " +
+                        "where they are.\n\nThey will go home once they are back on a map.",
+                        LetterDefOf.NeutralEvent);
+                }
+
+                return;
+            }
+
+            if (!worker.Spawned)
+            {
+                FinishSafePassage(contract, $"{contract.workerName} reached the border and went home");
+                return;
+            }
+
+            // Back on a map after a caravan: now they can actually walk.
+            if (!contract.safePassage)
+            {
+                contract.safePassage = true;
+                contract.safePassageEndTick = now + HostilityPolicy.SafePassageDays * GenDate.TicksPerDay;
+                StartWalkingOut(contract);
+                return;
+            }
+
+            if (now < contract.safePassageEndTick)
+            {
+                return;
+            }
+
+            // Time is up and they are still here — walled in, downed, or simply blocked. The
+            // guarantee was for the walk out, not for indefinite neutrality inside the colony.
+            contract.safePassage = false;
+
+            // Recorded as conduct, and this is not decoration. Once the record closes, killing the
+            // pawn costs nothing — so without this, walling a released worker in for two days would
+            // be a free way to dispose of them, strictly cheaper than letting them go. Charging the
+            // colony for the detention itself closes that off at the source rather than trying to
+            // keep the contract alive to catch a later death.
+            EmployerReputationService.NoteSafePassageDenied(IntercolonyWorldComponent.Current, contract);
+
+            // Says "still heading for the border" because that is what actually happens: ending the
+            // quest hands them a LordJob_ExitMapBest under their own faction, so they keep walking.
+            // What changes is that everything in the colony now counts them as an enemy while they
+            // do it. A letter promising an attack that never comes would be worse than no letter.
+            Find.LetterStack.ReceiveLetter(
+                "Safe passage expired",
+                $"{contract.workerName} did not get clear of the colony in time and has rejoined " +
+                $"{contract.factionName}.\n\n" +
+                "They are still heading for the border, but they are an enemy now — your turrets and " +
+                "any drafted colonist will treat them as one.\n\n" +
+                $"{contract.factionName} holds you responsible for not letting a released worker go, " +
+                "and other settlements have heard about it.",
+                LetterDefOf.ThreatBig, worker);
+
+            FinishSafePassage(contract,
+                $"{contract.workerName} was still in the colony when safe passage ran out");
+        }
+
+        /// <summary>
+        /// Puts the worker back in their own faction and closes the record.
+        ///
+        /// Ending the quest is what does the faction restore, through the same
+        /// <c>QuestPart_Leave</c> path every other departure uses — see
+        /// docs/LABOR_TECHNICAL_NOTES.md on why this must not be hand-rolled. By this point the
+        /// pawn is either unspawned or standing in no faction, so <c>MakePawnsLeave</c> has nothing
+        /// left to do but the bookkeeping.
+        /// </summary>
+        private static void FinishSafePassage(EmploymentContract contract, string note)
+        {
+            Pawn worker = contract.pawn;
+            Quest quest = contract.quest;
+
+            contract.outcomeNote = note ?? contract.outcomeNote;
+            contract.safePassage = false;
+            contract.safePassageEndTick = -1;
+
+            try
+            {
+                // A factionless pawn is not what MakePawnsLeave restores from — it only acts when
+                // the pawn is in the player faction. Put them back by hand first, then let the
+                // quest end do everything else.
+                if (worker != null && !worker.Destroyed && worker.Faction == null &&
+                    contract.employerFaction != null)
+                {
+                    worker.SetFaction(contract.employerFaction);
+                }
+
+                if (quest != null && !quest.Historical)
+                {
+                    quest.End(QuestEndOutcome.Fail, sendLetter: false, playSound: false);
+                }
+                else if (worker != null && !worker.Destroyed && worker.Faction == Faction.OfPlayer)
+                {
+                    worker.SetFaction(contract.employerFaction);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                IntercolonyLog.Warning($"Employment #{contract.id} threw finishing safe passage: {ex}");
+            }
+
+            if (worker != null && !worker.Destroyed && contract.originalKind != null &&
+                worker.kindDef != contract.originalKind)
+            {
+                worker.kindDef = contract.originalKind;
+            }
+
+            contract.pawn = null;
+            contract.quest = null;
+            contract.destinationMap = null;
+
+            IntercolonyLog.Message($"Safe passage complete: {contract} — {note}");
+        }
+
         /// <summary>Puts the worker on the map, in the player faction, as a quest lodger.</summary>
         public static void Arrive(EmploymentContract contract)
         {
@@ -230,14 +506,23 @@ namespace Intercolony
                 return;
             }
 
-            // §88 wants a considered policy for a source faction that turns hostile mid-contract,
-            // and that policy is Phase 18's to write. What must not happen in the meantime is
-            // spawning an enemy combatant inside the colony because the player hired them a week
-            // ago, so the contract simply fails at the gate.
-            if (contract.employerFaction != null && contract.employerFaction.HostileTo(Faction.OfPlayer))
+            // A worker whose homeland declared war does not walk through the gate. The sweep in
+            // HostilityPolicy normally catches this an hour after the declaration, well before
+            // arrival; this is the backstop for a war declared inside the same hour the worker was
+            // due, and it must answer the same way the policy does rather than inventing a second
+            // one. §113 is explicit that the two halves must not drift apart.
+            if (HostilityPolicy.IsAtWar(contract.employerFaction))
             {
-                End(contract, EmploymentStatus.Failed,
-                    $"{contract.factionName} turned hostile; {contract.workerName} never arrived");
+                HostilityPolicy.Sweep(IntercolonyWorldComponent.Current);
+
+                // The sweep releases them and sends the letter. If it somehow did not, fail closed
+                // rather than spawn an enemy in the colony.
+                if (contract.IsOpen)
+                {
+                    End(contract, EmploymentStatus.Severed,
+                        $"{contract.factionName} went to war; {contract.workerName} turned back");
+                }
+
                 return;
             }
 
@@ -281,6 +566,15 @@ namespace Intercolony
                 contract.status = EmploymentStatus.Active;
                 contract.endTick = GenTicks.TicksGame + contract.termDays * GenDate.TicksPerDay;
 
+                // §43 pays for harm the colony did, so what they walked in with does not count.
+                // Snapshotted here rather than at hire because the journey is not the colony's
+                // responsibility either.
+                contract.permanentInjuriesOnArrival = CompensationService.CountPermanentInjuries(worker);
+
+                // Any attack recorded before employment belongs to their previous life. Without
+                // this, a mercenary generated mid-firefight would arrive already in breach.
+                contract.countedAttackTick = worker.mindState?.lastAttackTargetTick ?? -99999;
+
                 // The pay clock runs from the first day of work, not from hiring: a worker who
                 // spent a week on the road has not earned a week's wage.
                 PayrollService.BeginPayroll(contract);
@@ -290,9 +584,12 @@ namespace Intercolony
                     $"{contract.workerName} of {contract.factionName} has arrived from {contract.settlementName} " +
                     $"to work for {contract.termDays} days.\n\n" +
                     $"Skills: {contract.workerSkills}\n" +
-                    $"Wage: {contract.dailyWage} silver/day, {contract.paidSilver} silver paid in advance.\n\n" +
-                    "They can be assigned work, drafted and given a bed like a colonist, but they are not one: " +
-                    "they belong to their own faction and will leave when the term ends.",
+                    $"Wage: {contract.dailyWage} silver/day, {contract.paidSilver} silver paid in advance.\n" +
+                    $"Terms: {contract.combatClause.LabelCap()}. {contract.combatClause.Explain()}\n\n" +
+                    "They can be assigned work and given a bed like a colonist, but they are not one: " +
+                    "they belong to their own faction and will leave when the term ends.\n\n" +
+                    $"If they die while employed, {contract.settlementName} expects " +
+                    $"{CompensationService.DeathCompensation(contract)} silver in compensation.",
                     LetterDefOf.PositiveEvent, worker);
 
                 IntercolonyLog.Message($"Arrived: {contract}");
@@ -330,9 +627,18 @@ namespace Intercolony
             PayrollService.SettleOnEnd(contract, status, IntercolonyWorldComponent.Current?.LaborDebts,
                 IntercolonyWorldComponent.Current);
 
+            // §43's injury half, for every ending except a death — a death payout already covers
+            // everything that happened to them. Runs here for the same reason payroll does: it
+            // needs the pawn and the map, and both are cleared below.
+            if (status != EmploymentStatus.Failed)
+            {
+                CompensationService.ClaimOnEnd(IntercolonyWorldComponent.Current, contract);
+            }
+
             // A worker who downed tools is leaving anyway; clear the flag so a stale "refusing"
             // state cannot outlive the contract.
             contract.refusingWork = false;
+            contract.refusalReason = WorkRefusalReason.None;
 
             // Conduct is recorded here rather than at each call site, so no future caller can end
             // an employment without it counting (§40). Quit is already recorded by PayrollService,
@@ -401,6 +707,14 @@ namespace Intercolony
 
         private static void SendDepartureLetter(EmploymentContract contract, EmploymentStatus status, Pawn worker)
         {
+            // Severance sends its own letter from HostilityPolicy, which can say what a generic
+            // departure letter cannot: which faction went to war, and what happened to the money.
+            // A second letter here would just repeat it worse.
+            if (status == EmploymentStatus.Severed)
+            {
+                return;
+            }
+
             string label;
             LetterDef def;
 

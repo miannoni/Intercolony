@@ -3703,6 +3703,17 @@ Support stable recurring workforces.
 - renewal;
 - voluntary non-renewal;
 - termination rules.
+- **A combat-clause rebalance, forced by the term length this phase raises.** Phase 20 measured
+  where §42's pricing stops deterring the meat-shield strategy: a drafted civilian who dies costs
+  more than a security contractor *up to a 99-day term*, and past that the arithmetic reverses,
+  because compensation is a fixed number of days' wage while both wage bills grow with the term.
+  The current 60-day cap sits safely below it. **Any phase that raises `MaxTermDays` past 99 —
+  which "long fixed-term" and especially "open-ended" both imply — makes drafting a civilian the
+  cheapest way to field a fighter on pure cost.** `IntercolonyCombatClauseSelfTest` locates the
+  crossover on every run and fails when the cap crosses it, so this cannot pass unnoticed; but the
+  fix is a design decision, not a constant. Above the crossover the only remaining deterrent is
+  §42's walk-out, and an open-ended contract needs compensation that scales with tenure rather
+  than with the daily wage alone.
 - **Recurring *supply* contract renewal, which §107 listed and Phase 14 did not build.** A
   completed agreement currently just ends. Renewal belongs here rather than back in §107 because
   this phase builds renewal, voluntary non-renewal and termination anyway — and one renewal

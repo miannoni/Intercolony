@@ -82,9 +82,14 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 19 complete (2026-07-29). Next: Phase 20 — Combat clauses and compensation
-(DESIGN.md §113, §42, §43). **§113 also owns the §88 hostility policy**, and must replace the
-Phase 16 placeholder that fails a travelling worker's contract and forfeits the wage.
+**Phase:** 20 complete (2026-07-29). Next: Phase 21 — Job postings and applicants
+(DESIGN.md §114, §35.2). Turns labor into a two-sided market: the player states skill needs,
+positions, duration and wage, and applicants arrive after a delay. Phase 19 already built the
+reputation effects the acceptance criterion measures.
+
+**Before raising `LaborCandidateService.MaxTermDays` past 99, read §115's rebalance note.** Phase 20
+measured the point where §42's combat-clause pricing stops deterring the meat-shield strategy, and
+`IntercolonyCombatClauseSelfTest` fails when the cap crosses it.
 
 **Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
 control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation
@@ -118,9 +123,12 @@ do not let them quietly expire.
   builds renewal and non-renewal for employment anyway. One renewal mechanism, both contract
   kinds. No longer floating.
 
-- ~~**Hostile source faction mid-contract has no policy (§88).**~~ **MAPPED (2026-07-29) into
-  Phase 20 (§113)**, trade and labor halves together. Phase 16 shipped a placeholder — a
-  travelling worker's contract fails and forfeits the wage — that §113 must replace.
+- ~~**Hostile source faction mid-contract has no policy (§88).**~~ **KEPT in Phase 20 (2026-07-29).**
+  Both halves shipped in one file, `Core/HostilityPolicy.cs`, under one stated principle: a war ends
+  what has not been performed, whoever holds the other side's value keeps it, and the player is told
+  exactly that. Employee released under safe passage in no faction; sales order cancelled at no cost
+  and not as a breach; prepaid purchase order lost with the silver named; supply agreement suspended
+  and resumable. The Phase 16 placeholder is gone.
 
 Nothing is currently floating outside the plan. When a promise is made to Matteo that does not
 fit the current phase, either map it into a numbered phase in `DESIGN.md` or list it here — the

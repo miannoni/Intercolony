@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 16;
+        public const int CurrentSaveVersion = 17;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -761,12 +761,27 @@ namespace Intercolony
                 DoRefresh("scheduled");
             }
 
+            // Combat use is sampled far finer than everything else here, and has to be: a firefight
+            // is over in seconds, and the question §42 asks — was this worker drafted when they
+            // fired — cannot be answered an hour later. The loop is over active employments only,
+            // which is normally none (§84).
+            if (employments.Count > 0 && GenTicks.IsTickInterval(CombatUseMonitor.SampleIntervalTicks))
+            {
+                CombatUseMonitor.Sample(employments, this);
+            }
+
             // Deadlines are checked hourly rather than on the daily refresh. §17 is explicit
             // that an order must not silently fail; noticing up to a day late would make the
             // failure message arrive long after the moment it describes. Still coarse enough
             // to be free (§84).
             if (GenTicks.IsTickInterval(DeadlineCheckIntervalTicks))
             {
+                // §88's policy runs *before* the deadline and expiry checks, so a commitment killed
+                // by a war is reported as lost to the war rather than as the player's failure to
+                // deliver on time. The ordering is the policy: same hour, two very different
+                // letters, and only one of them is an accusation.
+                HostilityPolicy.Sweep(this);
+
                 if (orders.Count > 0)
                 {
                     SalesOrderService.FailOverdue(orders);
@@ -1166,6 +1181,22 @@ namespace Intercolony
             {
                 // 12 -> 13 added recurring contracts. Purely additive.
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
+            }
+
+            if (saveVersion < 17)
+            {
+                // 16 -> 17 added combat clauses, compensation and the §88 war policy. Additive by
+                // construction: every scribed field defaults to what the old behaviour actually was
+                // — clause Civilian (the rate every existing contract was priced at), zero breaches,
+                // and debts of kind Wages, which is the only kind that could have existed. Nothing
+                // is reconstructed, so no employment retroactively acquires a discount or a crime.
+                //
+                // One live case is worth naming: an employment already in flight loads as a civilian
+                // contract, so drafting that worker after the update is a breach. That is the honest
+                // reading — they never agreed to fight — rather than a migration defect.
+                IntercolonyLog.Message(
+                    "  schema 16 -> 17: combat clauses and compensation added; existing employments " +
+                    "are civilian contracts with no breaches, and existing debts are unpaid wages.");
             }
 
             if (saveVersion < 16)

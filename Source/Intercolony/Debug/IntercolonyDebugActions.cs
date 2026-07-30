@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using LudeonTK;
@@ -550,6 +550,70 @@ namespace Intercolony
                 IntercolonyEmployerReputationSelfTest.Run(state, Find.CurrentMap)));
         }
 
+        [DebugAction(Category, "Run combat clause self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 62)]
+        private static void RunCombatClauseSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyCombatClauseSelfTest.Run(state, Find.CurrentMap)));
+        }
+
+        /// <summary>
+        /// Declares war on an employee's own faction, so §88's safe passage can be watched rather
+        /// than only asserted.
+        ///
+        /// This exists because safe passage is the one part of Phase 20 a self-test cannot prove:
+        /// it is about what a spawned pawn does over the next two in-game days, whether the turrets
+        /// hold their fire, and whether they actually reach the map edge. None of that is arithmetic.
+        ///
+        /// It changes real faction relations, which is why it says so and asks first.
+        /// </summary>
+        [DebugAction(Category, "Force war with an employee's faction", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 40)]
+        private static void ForceWarWithEmployer()
+        {
+            WithState(state =>
+            {
+                EmploymentContract target = null;
+                foreach (EmploymentContract contract in state.Employments)
+                {
+                    if (contract.IsOpen && contract.employerFaction != null &&
+                        !HostilityPolicy.IsAtWar(contract.employerFaction))
+                    {
+                        target = contract;
+                        break;
+                    }
+                }
+
+                if (target == null)
+                {
+                    Report("No employee whose faction is not already at war. Hire someone first.");
+                    return;
+                }
+
+                Faction faction = target.employerFaction;
+
+                Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                    $"Declare war between {faction.Name} and your colony?\n\n" +
+                    $"{target.workerName} is employed from {target.settlementName}, and §88's policy " +
+                    "will release them under safe passage within the hour.\n\n" +
+                    "This permanently changes real faction relations in this save. Use a throwaway " +
+                    "colony.",
+                    () =>
+                    {
+                        faction.TryAffectGoodwillWith(Faction.OfPlayer,
+                            faction.GoodwillToMakeHostile(Faction.OfPlayer),
+                            canSendMessage: true, canSendHostilityLetter: true);
+
+                        // Run the sweep immediately rather than waiting up to an hour, so the
+                        // outcome is observable straight away.
+                        HostilityPolicy.Sweep(state);
+
+                        Report($"{faction.Name} is now at war ({faction.PlayerGoodwill} goodwill). " +
+                               $"{target.workerName}: {target.status} — {target.StatusLine()}");
+                    },
+                    destructive: true));
+            });
+        }
+
         [DebugAction(Category, "Dump employer standing", allowedGameStates = AllowedGameStates.Playing, displayPriority = 86)]
         private static void DumpEmployerStanding()
         {
@@ -653,7 +717,8 @@ namespace Intercolony
 
                 LaborCandidate candidate = pool[0];
                 EmploymentContract contract = EmploymentService.TryHire(
-                    state, candidate, candidate.minTermDays, Find.CurrentMap, out string failReason);
+                    state, candidate, candidate.minTermDays, Find.CurrentMap, out string failReason,
+                    WageStructure.Prepaid, CombatClause.Civilian);
 
                 // TryHire already logs and messages on success; only the failure needs reporting.
                 if (contract == null)

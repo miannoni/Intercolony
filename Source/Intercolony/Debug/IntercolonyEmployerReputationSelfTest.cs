@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text;
 using RimWorld;
 using UnityEngine;
@@ -290,13 +290,13 @@ namespace Intercolony
 
                 int atWorst = LaborCandidateService.DailyWage(
                     probe.pawn, probeProfile, probe.distanceTiles, probe.minTermDays,
-                    EmployerReputation.MinScore);
+                    EmployerReputation.MinScore, CombatClause.Civilian);
                 int atBest = LaborCandidateService.DailyWage(
                     probe.pawn, probeProfile, probe.distanceTiles, probe.minTermDays,
-                    EmployerReputation.MaxScore);
+                    EmployerReputation.MaxScore, CombatClause.Civilian);
                 int atNeutral = LaborCandidateService.DailyWage(
                     probe.pawn, probeProfile, probe.distanceTiles, probe.minTermDays,
-                    EmployerReputation.StartingScore);
+                    EmployerReputation.StartingScore, CombatClause.Civilian);
 
                 r.Check(atWorst > atNeutral && atNeutral > atBest,
                     "the same worker costs a bad employer more and a good one less",

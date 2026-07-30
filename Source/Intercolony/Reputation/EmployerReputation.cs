@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using Verse;
 
 namespace Intercolony
@@ -52,6 +52,12 @@ namespace Intercolony
         public int walkOuts;
         public int earlyDismissals;
 
+        /// <summary>Times a worker was drafted into a fight their combat clause did not cover (§42).</summary>
+        public int combatClauseBreaches;
+
+        /// <summary>Released workers who were still in the colony when their safe conduct lapsed (§88).</summary>
+        public int safePassageDenials;
+
         public float Score => score;
 
         public int ScoreDisplay => Mathf.RoundToInt(score);
@@ -97,6 +103,8 @@ namespace Intercolony
             Scribe_Values.Look(ref unpaidCompensation, "unpaidCompensation", 0);
             Scribe_Values.Look(ref walkOuts, "walkOuts", 0);
             Scribe_Values.Look(ref earlyDismissals, "earlyDismissals", 0);
+            Scribe_Values.Look(ref combatClauseBreaches, "combatClauseBreaches", 0);
+            Scribe_Values.Look(ref safePassageDenials, "safePassageDenials", 0);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -113,6 +121,8 @@ namespace Intercolony
                    $"Contracts completed: {contractsCompleted}\n" +
                    $"Late payroll incidents: {latePayrollIncidents}\n" +
                    $"Employee deaths: {employeeDeaths}\n" +
+                   $"Combat clause breaches: {combatClauseBreaches}\n" +
+                   $"Released workers detained: {safePassageDenials}\n" +
                    $"Unpaid compensation: {unpaidCompensation}";
         }
 
@@ -120,7 +130,9 @@ namespace Intercolony
         {
             return $"Employer {ScoreDisplay}/100 ({TierLabel()}) — {contractsCompleted} completed, " +
                    $"{latePayrollIncidents} late payroll, {walkOuts} walk-outs, " +
-                   $"{employeeDeaths} deaths, {unpaidCompensation} unpaid";
+                   $"{employeeDeaths} deaths, {combatClauseBreaches} clause breaches, " +
+                   $"{safePassageDenials} detentions, " +
+                   $"{unpaidCompensation} unpaid";
         }
     }
 }

@@ -20,7 +20,15 @@ namespace Intercolony
         Cancelled,
 
         /// <summary>Proposal lapsed unanswered.</summary>
-        Declined
+        Declined,
+
+        /// <summary>
+        /// Paused because the counterparty went to war (§88, §113). Not terminal: no deliveries are
+        /// due, none count as missed, and the agreement resumes with every remaining cycle intact if
+        /// relations recover. See <see cref="HostilityPolicy"/> for why war suspends a relationship
+        /// but cancels a transaction.
+        /// </summary>
+        Suspended
     }
 
     /// <summary>
@@ -67,6 +75,12 @@ namespace Intercolony
 
         /// <summary>Tick this proposal stops being available.</summary>
         public int offerExpiryTick;
+
+        /// <summary>
+        /// When a war suspended the agreement, or 0. Read on resume to move the cycle clock forward
+        /// by the length of the outage, so no delivery is lost to the suspension (§88, §113).
+        /// </summary>
+        public int suspendedTick;
 
         /// <summary>Id of the sales order for the cycle currently in flight, or 0.</summary>
         public int activeOrderId;
@@ -164,6 +178,7 @@ namespace Intercolony
             Scribe_Values.Look(ref status, "status", ContractStatus.Offered);
             Scribe_Values.Look(ref nextCycleTick, "nextCycleTick", 0);
             Scribe_Values.Look(ref offerExpiryTick, "offerExpiryTick", 0);
+            Scribe_Values.Look(ref suspendedTick, "suspendedTick", 0);
             Scribe_Values.Look(ref activeOrderId, "activeOrderId", 0);
             Scribe_Values.Look(ref consecutiveFailures, "consecutiveFailures", 0);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");

@@ -27,7 +27,30 @@ namespace Intercolony
         /// <see cref="Failed"/> because it is the player's fault and leaves a debt behind, and
         /// Phase 19 must be able to tell the difference.
         /// </summary>
-        Quit
+        Quit,
+
+        /// <summary>
+        /// Ended because the worker's own faction went to war with the colony (§88, §113).
+        ///
+        /// Unlike every other terminal status this one is a *transitional* state: the record is
+        /// closed but the worker is still walking out under safe passage, so
+        /// <see cref="EmploymentContract.pawn"/> stays live until they are off the map. See
+        /// <see cref="HostilityPolicy"/>.
+        /// </summary>
+        Severed
+    }
+
+    /// <summary>
+    /// Why an employee has downed tools. Needed because two different escalations end in the
+    /// same visible state (§39's unpaid wages, §42's combat misuse) and only one of them can be
+    /// fixed by handing over silver — a payroll payment must not put a worker back to work who
+    /// stopped because you drafted them.
+    /// </summary>
+    public enum WorkRefusalReason
+    {
+        None,
+        UnpaidWages,
+        CombatMisuse
     }
 
     /// <summary>
@@ -73,6 +96,37 @@ namespace Intercolony
         public int dailyWage;
         public int termDays;
 
+        // --- Combat clause (§42, §43, §113) ------------------------------------------------
+
+        /// <summary>What the worker agreed to be pointed at. Priced into <see cref="dailyWage"/>.</summary>
+        public CombatClause combatClause = CombatClause.Civilian;
+
+        /// <summary>
+        /// Fights the worker was drafted into, whether or not the clause allowed it. §113 asks
+        /// for "combat-use tracking where technically feasible", and a security contractor's
+        /// count is a record of service rather than of misconduct.
+        /// </summary>
+        public int combatIncidents;
+
+        /// <summary>Fights outside the clause's terms. Drives the escalation and doubles compensation.</summary>
+        public int clauseBreaches;
+
+        /// <summary>
+        /// Highest <c>lastAttackTargetTick</c> already counted. Comparing against it is what makes
+        /// the sampler idempotent: a reload, or two samples inside one firefight, cannot count the
+        /// same shot twice.
+        /// </summary>
+        public int countedAttackTick = -99999;
+
+        /// <summary>When the last incident was opened, so one skirmish is one incident.</summary>
+        public int lastIncidentTick = -99999;
+
+        /// <summary>Permanent injuries the worker already had on arrival. Compensation pays for the difference.</summary>
+        public int permanentInjuriesOnArrival;
+
+        /// <summary>Death or injury compensation actually handed over (§43).</summary>
+        public int compensationPaid;
+
         /// <summary>Silver actually handed over so far — the whole term for prepaid, accumulating for periodic.</summary>
         public int paidSilver;
 
@@ -96,6 +150,9 @@ namespace Intercolony
         /// </summary>
         public bool refusingWork;
 
+        /// <summary>Why they stopped. Only <see cref="WorkRefusalReason.UnpaidWages"/> can be paid off.</summary>
+        public WorkRefusalReason refusalReason = WorkRefusalReason.None;
+
         public int hiredTick;
         public int arrivalTick;
 
@@ -110,6 +167,22 @@ namespace Intercolony
         /// Stops the "term ended but they are not here" letter repeating every hour.
         /// </summary>
         public bool termLapsedNotified;
+
+        // --- Safe passage (§88, §113) ------------------------------------------------------
+
+        /// <summary>
+        /// True while a severed worker is walking out in no faction at all. That is what makes
+        /// "they will not be hostile until they are off the map" true rather than a promise: a
+        /// factionless pawn is nobody's enemy, so turrets hold their fire.
+        /// </summary>
+        public bool safePassage;
+
+        /// <summary>
+        /// When safe passage runs out. A worker who is still standing in the colony after this —
+        /// walled in, downed, or simply blocked — reverts to their now-hostile faction, which is
+        /// the stated consequence of not letting them leave.
+        /// </summary>
+        public int safePassageEndTick = -1;
 
         /// <summary>Work priorities saved when the worker downed tools, restored when arrears clear.</summary>
         private Dictionary<WorkTypeDef, int> heldPriorities = new Dictionary<WorkTypeDef, int>();
@@ -136,6 +209,17 @@ namespace Intercolony
         /// <summary>Amount a single pay period costs. Zero for prepaid.</summary>
         public int PeriodPayment => WageStructureUtility.PeriodCost(wageStructure, dailyWage);
 
+        /// <summary>
+        /// Whether the worker is severed and still on their way out. Not <see cref="IsOpen"/>:
+        /// the employment is over, nothing more is earned, and no payroll runs — but the pawn
+        /// reference is still live and must be finished off.
+        /// </summary>
+        public bool IsLeavingUnderSafePassage => status == EmploymentStatus.Severed && pawn != null;
+
+        /// <summary>Whether drafting this worker into a fight right now is within the terms (§42).</summary>
+        public bool CombatUsePermittedNow =>
+            combatClause.PermitsCombat(CombatClauseUtility.IsOnPlayerHomeMap(pawn));
+
         public string StatusLine()
         {
             switch (status)
@@ -145,7 +229,9 @@ namespace Intercolony
                 case EmploymentStatus.Active:
                     if (refusingWork)
                     {
-                        return $"REFUSING WORK — {arrearsSilver} silver in arrears";
+                        return refusalReason == WorkRefusalReason.CombatMisuse
+                            ? $"REFUSING WORK — drafted into combat {clauseBreaches}x against the clause"
+                            : $"REFUSING WORK — {arrearsSilver} silver in arrears";
                     }
 
                     if (arrearsSilver > 0)
@@ -162,6 +248,10 @@ namespace Intercolony
                         ? $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left, " +
                           $"next pay in {Mathf.Max(0f, DaysUntilPayment):0.#}d"
                         : $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left";
+                case EmploymentStatus.Severed:
+                    return pawn == null
+                        ? outcomeNote.NullOrEmpty() ? "released — their faction went to war" : outcomeNote
+                        : "released — leaving under safe passage";
                 default:
                     return outcomeNote.NullOrEmpty() ? status.ToString().ToLower() : outcomeNote;
             }
@@ -187,11 +277,23 @@ namespace Intercolony
             Scribe_Values.Look(ref termDays, "termDays", 0);
             Scribe_Values.Look(ref paidSilver, "paidSilver", 0);
 
+            // Pre-Phase-20 saves have no clause node. Civilian is the right default for them:
+            // it is what every existing contract was priced as, so an old save does not
+            // retroactively acquire a discount it never paid for.
+            Scribe_Values.Look(ref combatClause, "combatClause", CombatClause.Civilian);
+            Scribe_Values.Look(ref combatIncidents, "combatIncidents", 0);
+            Scribe_Values.Look(ref clauseBreaches, "clauseBreaches", 0);
+            Scribe_Values.Look(ref countedAttackTick, "countedAttackTick", -99999);
+            Scribe_Values.Look(ref lastIncidentTick, "lastIncidentTick", -99999);
+            Scribe_Values.Look(ref permanentInjuriesOnArrival, "permanentInjuriesOnArrival", 0);
+            Scribe_Values.Look(ref compensationPaid, "compensationPaid", 0);
+
             Scribe_Values.Look(ref wageStructure, "wageStructure", WageStructure.Prepaid);
             Scribe_Values.Look(ref nextPaymentTick, "nextPaymentTick", -1);
             Scribe_Values.Look(ref arrearsSilver, "arrearsSilver", 0);
             Scribe_Values.Look(ref missedPayments, "missedPayments", 0);
             Scribe_Values.Look(ref refusingWork, "refusingWork", false);
+            Scribe_Values.Look(ref refusalReason, "refusalReason", WorkRefusalReason.None);
             Scribe_Collections.Look(ref heldPriorities, "heldPriorities", LookMode.Def, LookMode.Value);
 
             Scribe_Values.Look(ref hiredTick, "hiredTick", 0);
@@ -201,11 +303,23 @@ namespace Intercolony
             Scribe_Values.Look(ref status, "status", EmploymentStatus.Travelling);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
             Scribe_Values.Look(ref termLapsedNotified, "termLapsedNotified", false);
+            Scribe_Values.Look(ref safePassage, "safePassage", false);
+            Scribe_Values.Look(ref safePassageEndTick, "safePassageEndTick", -1);
 
-            if (Scribe.mode == LoadSaveMode.PostLoadInit && heldPriorities == null)
+            if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
-                // A missing dictionary node loads as null, not empty.
-                heldPriorities = new Dictionary<WorkTypeDef, int>();
+                if (heldPriorities == null)
+                {
+                    // A missing dictionary node loads as null, not empty.
+                    heldPriorities = new Dictionary<WorkTypeDef, int>();
+                }
+
+                // A pre-Phase-20 save has refusingWork but no reason. Everything that could set
+                // the flag before this phase was payroll, so that is what it was.
+                if (refusingWork && refusalReason == WorkRefusalReason.None)
+                {
+                    refusalReason = WorkRefusalReason.UnpaidWages;
+                }
             }
         }
 
@@ -216,14 +330,28 @@ namespace Intercolony
         /// deliberate limit rather than an oversight: §39 makes refusal a warning stage on the way
         /// to the worker leaving, not a wall.
         /// </summary>
-        public void HoldWork()
+        public void HoldWork(WorkRefusalReason reason)
         {
-            if (refusingWork || pawn?.workSettings == null || !pawn.workSettings.EverWork)
+            if (refusingWork)
             {
                 return;
             }
 
+            // The refusal is a fact about the contract, not about the work tab, so it is recorded
+            // before anything is known about the pawn's priorities. It used to be set only as a
+            // side effect of successfully zeroing them, which meant a worker with no usable work
+            // types got the "they have downed tools" letter while the contract still read as
+            // working normally — and the next payroll run would have "resumed" a refusal that was
+            // never recorded.
+            refusingWork = true;
+            refusalReason = reason;
             heldPriorities.Clear();
+
+            if (pawn?.workSettings == null || !pawn.workSettings.EverWork)
+            {
+                return;
+            }
+
             foreach (WorkTypeDef work in DefDatabase<WorkTypeDef>.AllDefsListForReading)
             {
                 int priority = pawn.workSettings.GetPriority(work);
@@ -233,19 +361,31 @@ namespace Intercolony
                     pawn.workSettings.SetPriority(work, 0);
                 }
             }
-
-            refusingWork = true;
         }
 
-        /// <summary>Puts the worker back on the jobs they had before they downed tools.</summary>
-        public void ResumeWork()
+        /// <summary>
+        /// Puts the worker back on the jobs they had before they downed tools.
+        ///
+        /// <paramref name="becauseOf"/> must match why they stopped. Settling arrears cannot
+        /// un-refuse a worker who downed tools because they were drafted into a firefight — there
+        /// is nothing to pay, and §42's penalty would otherwise be cancelled by an unrelated
+        /// payroll run. <see cref="WorkRefusalReason.None"/> resumes regardless, for the paths
+        /// that clear the flag because the employment is ending anyway.
+        /// </summary>
+        public void ResumeWork(WorkRefusalReason becauseOf = WorkRefusalReason.None)
         {
             if (!refusingWork)
             {
                 return;
             }
 
+            if (becauseOf != WorkRefusalReason.None && becauseOf != refusalReason)
+            {
+                return;
+            }
+
             refusingWork = false;
+            refusalReason = WorkRefusalReason.None;
 
             if (pawn?.workSettings == null || !pawn.workSettings.EverWork)
             {
@@ -267,6 +407,10 @@ namespace Intercolony
         /// <summary>
         /// An active contract whose pawn failed to resolve on load is unrecoverable: there is no
         /// employee left to manage. The world component drops these rather than tick them.
+        ///
+        /// A severed contract mid-safe-passage is *not* dropped when the pawn is missing: the
+        /// record has already closed and the only thing left is a walk to the map edge, so losing
+        /// the pawn simply means it finished. <see cref="EmploymentService.Advance"/> tidies it.
         /// </summary>
         public bool IsValidAfterLoad =>
             status != EmploymentStatus.Active || pawn != null;
@@ -283,7 +427,19 @@ namespace Intercolony
                 money += $", {arrearsSilver} owed";
             }
 
-            return $"Employment #{id} {workerName} from {settlementName} ({money}) [{status}]";
+            if (compensationPaid > 0)
+            {
+                money += $", {compensationPaid} compensation";
+            }
+
+            string clause = combatClause.Label();
+            if (clauseBreaches > 0)
+            {
+                clause += $", {clauseBreaches} breach(es)";
+            }
+
+            return $"Employment #{id} {workerName} from {settlementName} " +
+                   $"({clause}; {money}) [{status}]";
         }
     }
 }

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -27,8 +27,12 @@ namespace Intercolony
         private const float EmployeeRowHeight = 52f;
         private const float CandidateRowHeight = 32f;
 
-        /// <summary>The longest term the player may commit to in Phase 16/17 terms (§36.3 is Phase 22).</summary>
-        private const int MaxTermDays = 60;
+        /// <summary>
+        /// The longest term on offer. Delegated to <see cref="LaborCandidateService.MaxTermDays"/>
+        /// rather than duplicated: it is a balance number the combat-clause economics depend on, and
+        /// two copies would let the window offer a term the balance was never checked against.
+        /// </summary>
+        private const int MaxTermDays = LaborCandidateService.MaxTermDays;
 
         private enum WorkerColumn
         {
@@ -51,7 +55,10 @@ namespace Intercolony
             List<EmploymentContract> live = new List<EmploymentContract>();
             foreach (EmploymentContract contract in state.Employments)
             {
-                if (contract.IsOpen)
+                // A worker released by a war is still on the map and still the player's problem
+                // until they are clear of it, so they stay on this list even though the employment
+                // itself has ended (§88).
+                if (contract.IsOpen || contract.IsLeavingUnderSafePassage)
                 {
                     live.Add(contract);
                 }
@@ -244,10 +251,20 @@ namespace Intercolony
                 total += debt.amountOwed;
             }
 
+            int compensation = 0;
+            foreach (LaborDebt debt in unsettled)
+            {
+                if (debt.kind == LaborDebtKind.Compensation)
+                {
+                    compensation += debt.amountOwed;
+                }
+            }
+
             GUI.color = new Color(1f, 0.55f, 0.55f);
             Widgets.Label(new Rect(0f, y, inRect.width, 24f),
-                $"Unpaid wages owed: {total} silver across {unsettled.Count} " +
-                $"worker{(unsettled.Count == 1 ? "" : "s")} who have gone home.");
+                $"Owed to settlements: {total} silver across {unsettled.Count} " +
+                $"worker{(unsettled.Count == 1 ? "" : "s")} who have gone home" +
+                (compensation > 0 ? $" — {compensation} of it compensation for the dead and maimed." : "."));
             GUI.color = Color.white;
             y += 26f;
 
@@ -262,8 +279,8 @@ namespace Intercolony
 
                 GUI.color = new Color(1f, 1f, 1f, 0.75f);
                 Widgets.Label(new Rect(6f, y + 2f, inRect.width - 130f, 22f),
-                    $"{debt.amountOwed} silver to {debt.settlementName} for {debt.workerName} " +
-                    $"— {debt.DaysOutstanding:F0} days outstanding");
+                    $"{debt.amountOwed} silver to {debt.settlementName} — {debt.KindLabel()} for " +
+                    $"{debt.workerName}, {debt.DaysOutstanding:F0} days outstanding");
                 GUI.color = Color.white;
 
                 Rect payRect = new Rect(inRect.width - 120f, y, 110f, 24f);
@@ -341,6 +358,20 @@ namespace Intercolony
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 3f, textWidth, 22f),
                 $"{contract.workerName}  —  {contract.workerSkills}");
 
+            // The clause goes on the name line, not buried in the detail line: it is the thing the
+            // player needs to know before they hit the draft key, and a tooltip is too late.
+            string clause = contract.combatClause.LabelCap();
+            if (contract.clauseBreaches > 0)
+            {
+                clause += $", {contract.clauseBreaches} BREACHED";
+            }
+
+            GUI.color = contract.clauseBreaches > 0 ? new Color(1f, 0.55f, 0.55f) : new Color(1f, 1f, 1f, 0.6f);
+            Text.Anchor = TextAnchor.UpperRight;
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 3f, textWidth - 6f, 22f), clause);
+            Text.Anchor = TextAnchor.UpperLeft;
+            GUI.color = Color.white;
+
             GUI.color = StatusColour(contract);
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, 22f),
                 $"{contract.settlementName} ({contract.factionName})   " +
@@ -372,6 +403,19 @@ namespace Intercolony
                 }
             }
 
+            // A severed worker cannot be dismissed — the employment is already over and they are
+            // walking out. Showing a live button that does nothing would be worse than no button.
+            if (contract.status == EmploymentStatus.Severed)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.5f);
+                Text.Anchor = TextAnchor.MiddleCenter;
+                Widgets.Label(new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f),
+                    "leaving");
+                Text.Anchor = TextAnchor.UpperLeft;
+                GUI.color = Color.white;
+                return;
+            }
+
             Rect endRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f);
             if (Widgets.ButtonText(endRect, contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss"))
             {
@@ -384,6 +428,11 @@ namespace Intercolony
             if (contract.status == EmploymentStatus.Travelling)
             {
                 return new Color(0.6f, 0.9f, 1f);
+            }
+
+            if (contract.status == EmploymentStatus.Severed)
+            {
+                return new Color(1f, 0.7f, 0.4f);
             }
 
             if (contract.termLapsedNotified)
@@ -403,19 +452,58 @@ namespace Intercolony
                 $"Home settlement: {contract.settlementName}\n" +
                 $"Skills at hire: {contract.workerSkills}\n\n" +
                 $"Term: {contract.termDays} days at {contract.dailyWage} silver/day\n" +
-                $"Paid in advance: {contract.paidSilver} silver\n";
+                $"Paid in advance: {contract.paidSilver} silver\n\n" +
+
+                // §42 and §43 in the tooltip, together, because they are one decision: what you may
+                // ask of them, and what it costs if it goes wrong.
+                $"Clause: {contract.combatClause.LabelCap()}\n" +
+                $"{contract.combatClause.Explain()}\n" +
+                $"Compensation on death: {CompensationService.DeathCompensation(contract)} silver\n";
+
+            if (contract.combatIncidents > 0)
+            {
+                text += $"Fights drafted into: {contract.combatIncidents}";
+                text += contract.clauseBreaches > 0
+                    ? $", {contract.clauseBreaches} of them outside the clause\n"
+                    : ", all within the clause\n";
+            }
+
+            if (contract.compensationPaid > 0)
+            {
+                text += $"Compensation already paid: {contract.compensationPaid} silver\n";
+            }
 
             if (contract.status == EmploymentStatus.Travelling)
             {
                 text += $"\nArrives in {Mathf.Max(0f, contract.DaysUntilArrival):0.#} days.\n" +
                         "Cancelling now does not return the wage — they are already on the road.";
             }
+            else if (contract.status == EmploymentStatus.Severed)
+            {
+                text += $"\n{contract.factionName} is at war with you, so this contract is over.\n\n" +
+                        "They are walking out in no faction at all and will not fight. Nothing in " +
+                        "the colony will shoot them unless you order it — and if they die on the " +
+                        "way out, compensation is owed in full.";
+
+                if (contract.safePassageEndTick > 0)
+                {
+                    float daysLeft = (contract.safePassageEndTick - GenTicks.TicksGame) /
+                                     (float)GenDate.TicksPerDay;
+                    text += $"\n\nSafe passage lasts another {Mathf.Max(0f, daysLeft):0.#} days. " +
+                            "After that they rejoin their own people, here.";
+                }
+            }
             else
             {
                 text += $"\n{Mathf.Max(0f, contract.DaysRemaining):0.#} days left on the term.\n\n" +
-                        "They can be given work priorities, drafted, assigned a bed and sent on " +
-                        "caravans like a colonist — but they are not one. They belong to their own " +
-                        "faction and go home when the term ends.";
+                        "They can be given work priorities, assigned a bed and sent on caravans " +
+                        "like a colonist — but they are not one. They belong to their own faction " +
+                        "and go home when the term ends.";
+
+                if (!contract.CombatUsePermittedNow)
+                {
+                    text += "\n\nDrafting them into a fight breaches their contract.";
+                }
             }
 
             return text;
@@ -587,7 +675,9 @@ namespace Intercolony
 
             Cell((int)WorkerColumn.Worker, candidate.Name);
             Cell((int)WorkerColumn.Skills, candidate.SkillSummary());
-            Cell((int)WorkerColumn.Wage, candidate.dailyWage.ToString());
+            // "from" because the listed rate is the civilian rate (§42's cheapest clause) and the
+            // hiring dialog can only price it upwards. A bare number here would read as the price.
+            Cell((int)WorkerColumn.Wage, $"from {candidate.dailyWage}");
             Cell((int)WorkerColumn.MinTerm, $"{candidate.minTermDays}d");
             Cell((int)WorkerColumn.Travel, $"{candidate.travelDays}d");
             Cell((int)WorkerColumn.Source, candidate.settlementName);
@@ -624,9 +714,11 @@ namespace Intercolony
                 text += "\n";
             }
 
-            text += $"Asks {candidate.dailyWage} silver/day for their {candidate.minTermDays}-day minimum, " +
-                    "paid in full up front.\n" +
-                    "Longer terms cost less per day.\n" +
+            text += $"Asks {candidate.dailyWage} silver/day for their {candidate.minTermDays}-day minimum " +
+                    "as a civilian.\n" +
+                    "Longer terms cost less per day. Agreeing to fight costs more:\n" +
+                    $"  armed employee {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Armed.WageFactor())}/day, " +
+                    $"security contractor {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Security.WageFactor())}/day.\n" +
                     $"Takes {candidate.travelDays} days to reach the colony.";
 
             return text;
@@ -644,10 +736,10 @@ namespace Intercolony
 
             Find.WindowStack.Add(new Dialog_HireWorker(
                 candidate, profile, map, MaxTermDays,
-                (termDays, structure) =>
+                (termDays, structure, clause) =>
                 {
                     EmploymentContract contract = EmploymentService.TryHire(
-                        state, candidate, termDays, map, out string failReason, structure);
+                        state, candidate, termDays, map, out string failReason, structure, clause);
 
                     if (contract == null)
                     {

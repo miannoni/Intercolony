@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text;
 using RimWorld;
 using UnityEngine;
@@ -108,7 +108,8 @@ namespace Intercolony
                 string expectedSkills = candidate.SkillSummary();
 
                 EmploymentContract contract = EmploymentService.TryHire(
-                    state, candidate, term, map, out string failReason);
+                    state, candidate, term, map, out string failReason,
+                    WageStructure.Prepaid, CombatClause.Civilian);
 
                 r.Check(contract != null, "hire succeeded", failReason ?? $"{workerName}, {term} days");
                 if (contract == null)
@@ -251,9 +252,11 @@ namespace Intercolony
 
                 float standing = EmployerReputationService.ScoreFor(state);
                 int shortTerm = LaborCandidateService.DailyWage(
-                    candidate.pawn, profile, candidate.distanceTiles, 3, standing);
+                    candidate.pawn, profile, candidate.distanceTiles, 3, standing,
+                    CombatClause.Civilian);
                 int longTerm = LaborCandidateService.DailyWage(
-                    candidate.pawn, profile, candidate.distanceTiles, 30, standing);
+                    candidate.pawn, profile, candidate.distanceTiles, 30, standing,
+                    CombatClause.Civilian);
                 sampled++;
                 if (longTerm <= shortTerm)
                 {
@@ -295,7 +298,8 @@ namespace Intercolony
             }
 
             EmploymentContract contract = EmploymentService.TryHire(
-                state, candidate, candidate.minTermDays, map, out string failReason);
+                state, candidate, candidate.minTermDays, map, out string failReason,
+                WageStructure.Prepaid, CombatClause.Civilian);
             if (contract == null)
             {
                 r.Check(false, "second hire for the dismissal check succeeded", failReason);
