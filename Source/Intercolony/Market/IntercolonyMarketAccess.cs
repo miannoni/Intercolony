@@ -41,15 +41,14 @@ namespace Intercolony
             }
 
             // People shooting at you do not post purchase orders.
-            if (faction.HostileTo(Faction.OfPlayer))
+            //
+            // Delegated to §88's policy rather than repeated here. The two used to carry the same
+            // pair of tests independently, which meant a change to one could leave the market
+            // trading happily with a faction the policy was busy ending contracts over — exactly
+            // the drift §113 warns about. One definition, one place to fix.
+            if (HostilityPolicy.IsAtWar(faction))
             {
                 reason = $"{faction.Name} is hostile";
-                return false;
-            }
-
-            if (faction.PlayerRelationKind == FactionRelationKind.Hostile)
-            {
-                reason = $"{faction.Name} relations are hostile";
                 return false;
             }
 

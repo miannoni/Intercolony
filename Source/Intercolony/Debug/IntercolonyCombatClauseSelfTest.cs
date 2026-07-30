@@ -433,12 +433,19 @@ namespace Intercolony
         // --- §88: the war policy -----------------------------------------------------------
 
         /// <summary>
-        /// The contradiction guard §113 specifically warns about.
+        /// The contradiction guard §113 warns about, plus the malformed-faction case that produced
+        /// it in practice.
         ///
-        /// If <see cref="HostilityPolicy.IsAtWar"/> and
-        /// <see cref="IntercolonyMarketAccess.IsAccessible"/> ever disagree, the mod can be
-        /// simultaneously ending contracts because of a war and generating fresh business with the
-        /// same faction. Checked against every settlement in the live world, not a contrived one.
+        /// <see cref="IntercolonyMarketAccess.IsAccessible"/> now calls
+        /// <see cref="HostilityPolicy.IsAtWar"/> rather than repeating its tests, so the first
+        /// assertion is structural rather than empirical — and it is kept anyway, because it is the
+        /// assertion that fails the day someone reintroduces the second copy.
+        ///
+        /// The second part is the one with teeth. `Faction.RelationWith` does not fail quietly when
+        /// a relation is missing: it writes a red `Log.Error` and returns a dummy whose `other` is
+        /// null, which is enough to make `GoodwillSituationManager` throw further down. A world
+        /// containing such a faction turned every hostility check in the mod into an error in the
+        /// player's log, and the hourly sweep asks about every settlement. So the test names them.
         /// </summary>
         private static void CheckWarAgreesWithMarketAccess(Results r)
         {
@@ -461,8 +468,7 @@ namespace Intercolony
                 }
 
                 checkedCount++;
-                bool war = HostilityPolicy.IsAtWar(settlement.Faction);
-                if (!war)
+                if (!HostilityPolicy.IsAtWar(settlement.Faction))
                 {
                     continue;
                 }
@@ -481,6 +487,58 @@ namespace Intercolony
             r.Check(contradictions == 0,
                 "no faction is at war and still open for business (§113's contradiction guard)",
                 $"{checkedCount} settlements, {atWar} at war, {contradictions} contradictions");
+
+            // --- Factions with no relation to the player at all ---
+            List<Faction> factions = Find.FactionManager?.AllFactionsListForReading;
+            if (factions == null)
+            {
+                return;
+            }
+
+            List<string> malformed = new List<string>();
+            bool threw = false;
+
+            foreach (Faction faction in factions)
+            {
+                if (faction == null || faction.IsPlayer)
+                {
+                    continue;
+                }
+
+                if (faction.RelationWith(Faction.OfPlayer, allowNull: true) != null)
+                {
+                    continue;
+                }
+
+                malformed.Add(faction.Name ?? faction.def?.defName ?? "<unnamed>");
+
+                try
+                {
+                    // Must answer, quietly, rather than throw or write to the error log.
+                    if (HostilityPolicy.IsAtWar(faction))
+                    {
+                        threw = true;
+                    }
+                }
+                catch (System.Exception)
+                {
+                    threw = true;
+                }
+            }
+
+            r.Check(!threw,
+                "a faction with no player relation is answered quietly, not with an error (§88)",
+                malformed.Count == 0
+                    ? "no malformed factions in this world"
+                    : $"{malformed.Count}: {string.Join(", ", malformed.ToArray())}");
+
+            if (malformed.Count > 0)
+            {
+                r.Info($"WORLD DATA NOTE: {string.Join(", ", malformed.ToArray())} " +
+                       "carr(y/ies) no relation to the player. That is a world-generation artefact, " +
+                       "not an Intercolony record — but any vanilla call that reaches " +
+                       "GoodwillSituationManager for it will throw.");
+            }
         }
 
         private static void CheckWarOnSalesOrder(Results r)

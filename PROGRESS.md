@@ -988,41 +988,41 @@ Bugs found and fixed during the phase:
 - **`git checkout` on a file to undo two lines discarded the whole schema-16 change.** Caught
   immediately and re-applied; recorded here because the mistake was mine and not the tool's.
 
-## Phase 20 â€” Combat clauses and compensation  (2026-07-29)
+## Phase 20 — Combat clauses and compensation  (2026-07-29)
 
-Â§113's goal: "Prevent hired workers from becoming economically optimal disposable shields."
+§113's goal: "Prevent hired workers from becoming economically optimal disposable shields."
 Acceptance: (a) "Using civilian workers aggressively in combat has meaningful cost." (b) "A source
 faction turning hostile mid-contract produces a stated, understandable outcome for both the employee
-and any booked trade obligations â€” never a silently voided obligation."
+and any booked trade obligations — never a silently voided obligation."
 
-Â§113 bundles three things on purpose and all three shipped together: Â§42's combat clauses, Â§43's
-death and injury compensation, and the whole of Â§88's hostility policy â€” trade half and labor half in
-one file, which is the thing Â§113 is explicit about ("a policy split across two phases is how the
+§113 bundles three things on purpose and all three shipped together: §42's combat clauses, §43's
+death and injury compensation, and the whole of §88's hostility policy — trade half and labor half in
+one file, which is the thing §113 is explicit about ("a policy split across two phases is how the
 trade half and the labor half end up contradicting each other").
 
 Implemented:
-- **Three combat clauses (Â§42)**, priced as the largest multiplier in the wage formula: civilian x1,
+- **Three combat clauses (§42)**, priced as the largest multiplier in the wage formula: civilian x1,
   armed employee x1.5, security contractor x2.5. Chosen in the hiring dialog above the wage
   structure, so the structures below are priced against a rate the player has already settled. Each
-  row shows the daily rate *and* what a death under it would cost, side by side â€” that pairing is the
-  whole of Â§42's economics and it has to be visible before hiring, not after.
-- **Armed and security differ by place, not just activity.** Â§42 gives an armed employee "colony
+  row shows the daily rate *and* what a death under it would cost, side by side — that pairing is the
+  whole of §42's economics and it has to be visible before hiring, not after.
+- **Armed and security differ by place, not just activity.** §42 gives an armed employee "colony
   defense", so drafting them on a player home map is within terms and marching them to someone
   else's map is not. Security has no restriction.
 - **Breach detection with no Harmony patch.** `Pawn_MindState.lastAttackTargetTick` is stamped by
   `Verb` on every verb a pawn casts, melee or ranged (Verb.cs:485), and it is saved. Sampling it
-  against `Pawn.Drafted` every 60 ticks answers exactly the question Â§42 poses â€” did the player point
-  this worker at something â€” without touching combat, damage or the storyteller. Drafted is the whole
-  test, and that is the design: Â§42 says self-defense is acceptable and aggressive use is not, and
+  against `Pawn.Drafted` every 60 ticks answers exactly the question §42 poses — did the player point
+  this worker at something — without touching combat, damage or the storyteller. Drafted is the whole
+  test, and that is the design: §42 says self-defense is acceptable and aggressive use is not, and
   drafting is precisely that line.
-- **Escalation reusing Â§39's shape** â€” warn, down tools, walk out â€” so it reads as a mechanic the
+- **Escalation reusing §39's shape** — warn, down tools, walk out — so it reads as a mechanic the
   player already knows. First breach: letter, reputation, goodwill. Second: refuses work. Third:
   leaves mid-term. A one-hour incident cooldown makes a firefight one breach rather than fifty.
 - **A combat refusal cannot be bought off.** `WorkRefusalReason` exists because two escalations end
   in the same visible state and only one is about money; paying wages must not put a worker back to
   work who stopped because you drafted them.
-- **Death and injury compensation (Â§43)**, at dailyWage x days-per-clause: 60 days civilian, 30 armed,
-  12 security. A civilian at 40 silver/day is 2,400 â€” Â§43's own worked example, reproduced rather
+- **Death and injury compensation (§43)**, at dailyWage x days-per-clause: 60 days civilian, 30 armed,
+  12 security. A civilian at 40 silver/day is 2,400 — §43's own worked example, reproduced rather
   than invented. Permanent injuries pay a quarter of that each, capped at the death figure so a
   maimed worker is never dearer than a dead one. Snapshotted on arrival, so the colony pays only for
   harm it did.
@@ -1031,14 +1031,14 @@ Implemented:
   contractor's 2.5x wage eventually overtakes a fixed civilian payout, which would have made the
   meat-shield strategy correct on exactly the long contracts a player uses it on. Now 1+breaches,
   capped at 4x, and asserted across seven term lengths.
-- **Compensation shortfalls become `LaborDebt`** of a new `Compensation` kind, feeding Â§40's
-  "unpaid compensation" line â€” which existed since Phase 19 with nothing to fill it but wage arrears.
+- **Compensation shortfalls become `LaborDebt`** of a new `Compensation` kind, feeding §40's
+  "unpaid compensation" line — which existed since Phase 19 with nothing to fill it but wage arrears.
 - **Death reputation is now clause-aware.** A security contractor's death costs 0.4x what a
   civilian's does, and any breach multiplies it. Expressed as one multiplier rather than three
   constants so the ordering is guaranteed by construction.
-- **Â§88 labor half â€” safe passage.** An employee whose faction declares war has their contract ended,
+- **§88 labor half — safe passage.** An employee whose faction declares war has their contract ended,
   and then walks out **in no faction at all**. A factionless pawn is nobody's enemy, so turrets hold
-  fire and colonists do not auto-engage â€” which is what makes "they will not be hostile until they
+  fire and colonists do not auto-engage — which is what makes "they will not be hostile until they
   are off the map" true rather than a promise. Their real faction is restored only once they are
   clear. Vanilla `LeaveQuestPartUtility.MakePawnsLeave` does all the housekeeping (master, guest
   status, carried things, faction restore); the one thing overridden is the faction, because vanilla
@@ -1048,14 +1048,14 @@ Implemented:
   hit for the detention. That is not decoration: once the record closes, killing the pawn costs
   nothing, so without it, walling a released worker in for two days would be strictly cheaper than
   letting them go.
-- **Â§88 trade half.** Sales orders are cancelled and cost nothing (they pay on delivery, so nothing
+- **§88 trade half.** Sales orders are cancelled and cost nothing (they pay on delivery, so nothing
   had changed hands) and are explicitly *not* a breach. Prepaid purchase orders end as a new
-  `LostToWar` status with the silver forfeited and named in the letter â€” kept separate from
+  `LostToWar` status with the silver forfeited and named in the letter — kept separate from
   `SupplierDefault` precisely because that one refunds. Recurring agreements are **suspended, not
   broken**, with the cycle clock pushed forward by the outage so every remaining delivery survives;
   they resume on their own if relations recover, and withdrawing while suspended costs no reputation.
-- **The travelling-worker placeholder from Phase 16 is replaced.** The outcome is the same â€” they turn
-  back and the prepaid wage is not recovered â€” but it is now a decision, with a letter that names the
+- **The travelling-worker placeholder from Phase 16 is replaced.** The outcome is the same — they turn
+  back and the prepaid wage is not recovered — but it is now a decision, with a letter that names the
   faction and the exact silver rather than a contract quietly failing at a gate.
 - Schema 17, additive by construction: old contracts load as civilian with zero breaches, old debts
   as `Wages`. Nothing is reconstructed, so no past employment acquires a discount or a crime.
@@ -1063,13 +1063,13 @@ Implemented:
   real relations) so safe passage can be watched rather than only asserted.
 
 Not implemented:
-- Security contractor as a **separate labor category** with its own applicant pool. Â§42 lists that as
-  "may eventually be" â€” the clause is a contract term here, not a different kind of worker. Applicant
-  flow is Phase 21 (Â§114).
-- Capture and incapacitation of an employee (Â§33 q12, q13) are still untested and unhandled. A downed
+- Security contractor as a **separate labor category** with its own applicant pool. §42 lists that as
+  "may eventually be" — the clause is a contract term here, not a different kind of worker. Applicant
+  flow is Phase 21 (§114).
+- Capture and incapacitation of an employee (§33 q12, q13) are still untested and unhandled. A downed
   employee is treated as any other; a captured one is not modelled at all.
-- Preventable vs unpreventable death is still not distinguished â€” carried over from Phase 19 and
-  unchanged. What Â§42 *can* now tell is whether the player had been drafting them against the clause.
+- Preventable vs unpreventable death is still not distinguished — carried over from Phase 19 and
+  unchanged. What §42 *can* now tell is whether the player had been drafting them against the clause.
 - No mood or thought effect on real colonists from an employee's death or from a clause breach.
 
 Known limitations:
@@ -1078,22 +1078,22 @@ Known limitations:
   is recorded as a breach. The 60-tick sample keeps the window tight, but the proxy is a proxy.
 - **The escalation is not the player's cheapest way out.** A breached civilian who has downed tools is
   dead weight for the rest of the term and still paid, so the cheapest response to a second breach is
-  to dismiss them â€” which costs less reputation than the walk-out would have.
+  to dismiss them — which costs less reputation than the walk-out would have.
 - **A worker's bed stays claimed after they leave.** Pre-existing since Phase 16 and not introduced
   here: `Pawn.ExitMap` only unclaims ownership for prisoners and slaves, and `MakePawnLeave` does not
   either. Out of this phase's scope; recorded so it is not rediscovered as a Phase 20 regression.
 - Suspension resumes on *any* recovery of relations, with no cooling-off period. A faction that
   flickers in and out of hostility would send paired suspend/resume letters.
-- `HostilityPolicy.IsAtWar` duplicates `IntercolonyMarketAccess.IsAccessible`'s hostility test rather
-  than sharing one function. Deliberate for now and guarded by a self-test assertion over every
-  settlement in the world, but it is two places that must agree.
+- A world that contains a faction with an empty relation table is a live hazard *for vanilla*, not
+  just for this mod: any call reaching `GoodwillSituationManager` for it throws. Intercolony no
+  longer triggers it and the self-test names the faction, but nothing here can repair the world data.
 
 Manual test:
 - `Run combat clause self-test`: **51 passed, 0 failed.** Clause pricing driven through the real
   wage formula on a live candidate (28 / 43 / 71 silver per day, x2.54 civilian to security). The
-  Â§88 contradiction guard checked against all 94 settlements in the world: 69 at war, 0 of them still
-  open for business. Every Â§88 transition driven through the real `HostilityPolicy` on
-  really-constructed objects, including idempotence â€” the sweep runs hourly for as long as a war
+  §88 contradiction guard checked against all 94 settlements in the world: 69 at war, 0 of them still
+  open for business. Every §88 transition driven through the real `HostilityPolicy` on
+  really-constructed objects, including idempotence — the sweep runs hourly for as long as a war
   lasts, so re-applying must be a no-op. Employer standing and test debts restored afterwards.
 - Startup clean, schema 17, no def errors.
 - **Not covered by the self-test and needing play:** safe passage itself. Whether a released worker
@@ -1108,25 +1108,56 @@ Bugs found and fixed during the phase:
   term length. It failed at 120 days, and no choice of constants can fix it: the shield costs
   `w*T + C_civ` against `2.5*w*T + C_sec`, so a long enough term always favours the shield because
   compensation is fixed while both wage bills grow. Raising the surcharge moves the crossover, it
-  cannot remove it. The criterion is now defended in two parts â€” money below the hiring cap, and
-  the walk-out above it â€” and the test *locates* the crossover (100 days) rather than assuming it, so
+  cannot remove it. The criterion is now defended in two parts — money below the hiring cap, and
+  the walk-out above it — and the test *locates* the crossover (100 days) rather than assuming it, so
   raising `MaxTermDays` fails loudly instead of quietly making the exploit correct. The tempting
   wrong move was to weaken the assertion until it passed; what it actually needed was for the claim
   to become true.
 - **`HoldWork` recorded the refusal only as a side effect of succeeding.** It returned early when the
-  pawn had no usable `workSettings`, *before* setting `refusingWork` and `refusalReason` â€” so a worker
+  pawn had no usable `workSettings`, *before* setting `refusingWork` and `refusalReason` — so a worker
   with no usable work types would get the "they have downed tools" letter while the contract still
   read as working normally, and the next payroll run would have "resumed" a refusal that was never
   recorded. The flags are a fact about the contract and are now set first; only the priority-saving
   depends on the pawn. Found by the self-test running the escalation against a pawnless contract,
   which is exactly the case that exposed it.
-- **A flat 2x breach surcharge inverted the economics on long contracts** â€” see above. Now
+- **A flat 2x breach surcharge inverted the economics on long contracts** — see above. Now
   `1 + breaches`, capped at 4x.
 - **`MaxTermDays` was a private UI constant that the balance depends on.** Moved to
   `LaborCandidateService` with a comment saying why, because two copies would let the hiring window
   offer a term the combat-clause balance was never checked against.
 - **The safe-passage-expired letter promised something false.** It said killing the worker would still
-  cost compensation, but the record is closed by then, so it costs nothing â€” which also meant walling
+  cost compensation, but the record is closed by then, so it costs nothing — which also meant walling
   a released worker in for two days was strictly cheaper than letting them go. Fixed at the source
   rather than in the wording: denying safe passage now carries its own death-sized reputation and
   goodwill penalty, and the letter says that instead.
+- **`Faction.RelationWith` does not fail quietly, and that detonated the war debug action.** Clicking
+  confirm threw a `NullReferenceException` inside RimWorld. The chain is worth recording because none
+  of it is Intercolony's: `RelationWith` returns a **dummy `FactionRelation` whose `other` is null**
+  when no relation exists, and `GoodwillToMakeHostile` walks `GoodwillWith` → `GetMaxGoodwill` →
+  `GetSituations` → `Recalculate` → `CheckHostilityChanged` → `Notify_GoodwillSituationsChanged` →
+  `CheckKindThresholds`, which calls `GoodwillWith(relation.other)` — null — and
+  `GoodwillSituationManager.GetSituations(null)` returns null for `GetMaxGoodwill` to dereference.
+  Any faction with an empty relation table detonates that whole path, and this test world has one:
+  "The Breigua Treaty" reports a null relation with every faction including the player. The action
+  now uses `Faction.SetRelation`, which *rebuilds* the entry on both sides instead of reading it,
+  guards with `CanChangeGoodwillFor`, and catches — an exception escaping a `Dialog_MessageBox`
+  callback becomes "Exception filling window" and repeats every frame until the dialog is closed.
+  - Both sides get `baseGoodwill` set explicitly: `SetRelation` copies only `kind` to the mirror,
+    leaving it at the default +100, which `CheckKindThresholds` would flip back to neutral within a
+    thousand ticks. A dev tool whose effect silently undoes itself is worse than one that fails.
+- **The mod turned that broken world into a wall of red errors.** `Faction.HostileTo` and
+  `PlayerRelationKind` both call `RelationWith` with `allowNull: false`, which writes a `Log.Error`
+  when the relation is missing — and the §88 sweep asks about every settlement every hour. 29 red
+  errors in one short session, which is exactly the noise that hides a real one. The check now probes
+  with `allowNull: true` first and answers "not at war", which is the truthful reading for a faction
+  with no recorded relation.
+  - Fixing it collapsed the duplication listed as a known limitation an hour earlier:
+    `IntercolonyMarketAccess.IsAccessible` now **calls** `HostilityPolicy.IsAtWar` rather than
+    repeating its two tests, so the market cannot keep trading with a faction the policy is ending
+    contracts over. The self-test assertion that guarded the duplication is kept — it is what fails
+    the day someone reintroduces the second copy — and a new one names any faction in the world whose
+    player relation is missing, so this is reported rather than rediscovered.
+- **Appending to PROGRESS.md with PowerShell `Add-Content -Encoding utf8` double-encoded every
+  non-ASCII character**, turning each em dash into `â€"` and each `§` into `Â§` throughout the Phase
+  20 entry. Caught and repaired by re-decoding; recorded because the file is the record and a
+  corrupted record is worse than a missing one. Write it with the file tools, not the shell.

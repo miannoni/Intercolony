@@ -305,6 +305,20 @@ namespace Intercolony
                 return;
             }
 
+            // Vanilla's own pre-check, and it earns its place: `TryAffectGoodwillWith` walks
+            // `GoodwillSituationManager`, which throws a NullReferenceException outright for any
+            // faction whose relation table is empty — `RelationWith` hands back a dummy relation
+            // with a null `other`, and `GetSituations(null)` returns null for `GetMaxGoodwill` to
+            // dereference. Asking first is cheaper than catching, and it also skips permanent
+            // enemies, defeated factions and quest-locked goodwill, none of which we should be
+            // nudging over a labor dispute anyway.
+            if (!faction.CanChangeGoodwillFor(Faction.OfPlayer, delta))
+            {
+                IntercolonyLog.Verbose(
+                    $"Goodwill with {faction.Name} unchanged ({delta:+0;-0}): it cannot be changed. {reason}.");
+                return;
+            }
+
             try
             {
                 // No hostility letter: goodwill loss over a labor dispute should not be the thing

@@ -597,21 +597,79 @@ namespace Intercolony
                     "will release them under safe passage within the hour.\n\n" +
                     "This permanently changes real faction relations in this save. Use a throwaway " +
                     "colony.",
-                    () =>
-                    {
-                        faction.TryAffectGoodwillWith(Faction.OfPlayer,
-                            faction.GoodwillToMakeHostile(Faction.OfPlayer),
-                            canSendMessage: true, canSendHostilityLetter: true);
-
-                        // Run the sweep immediately rather than waiting up to an hour, so the
-                        // outcome is observable straight away.
-                        HostilityPolicy.Sweep(state);
-
-                        Report($"{faction.Name} is now at war ({faction.PlayerGoodwill} goodwill). " +
-                               $"{target.workerName}: {target.status} — {target.StatusLine()}");
-                    },
+                    () => DeclareWar(state, faction, target),
                     destructive: true));
             });
+        }
+
+        /// <summary>
+        /// Sets the relation to hostile directly instead of pushing goodwill down until vanilla
+        /// notices.
+        ///
+        /// The first version did the natural thing —
+        /// <c>faction.TryAffectGoodwillWith(player, faction.GoodwillToMakeHostile(player), ...)</c>
+        /// — and it threw a NullReferenceException inside RimWorld. The cause is worth recording
+        /// because nothing about it is Intercolony's:
+        ///
+        /// <c>Faction.RelationWith</c> returns a **dummy `FactionRelation` whose `other` is null**
+        /// when no relation exists, rather than failing. `GoodwillToMakeHostile` walks
+        /// `GoodwillWith` → `GetMaxGoodwill` → `GetSituations` → `Recalculate` →
+        /// `CheckHostilityChanged` → `Notify_GoodwillSituationsChanged` → `CheckKindThresholds`,
+        /// which calls `faction.GoodwillWith(relation.other)` — null for a dummy — and
+        /// `GoodwillSituationManager.GetSituations(null)` returns null, so `GetMaxGoodwill`
+        /// dereferences it. Any faction in the world with an empty relation table detonates that
+        /// whole path. This save has one ("The Breigua Treaty" reports a null relation with every
+        /// faction including the player), which is why the debug menu found it first.
+        ///
+        /// <c>Faction.SetRelation</c> avoids all of it: it rebuilds the entry on both sides rather
+        /// than reading it, so it works on a faction whose table is empty and never touches the
+        /// goodwill situation cache. Both sides get their goodwill set explicitly, because
+        /// `SetRelation` copies only `kind` to the mirror — leaving the mirror at the default +100,
+        /// which `CheckKindThresholds` would quietly flip back to neutral within a thousand ticks.
+        /// </summary>
+        private static void DeclareWar(
+            IntercolonyWorldComponent state, Faction faction, EmploymentContract target)
+        {
+            try
+            {
+                if (!faction.CanChangeGoodwillFor(Faction.OfPlayer, -200))
+                {
+                    Report($"{faction.Name} cannot have its goodwill changed " +
+                           "(permanent enemy, defeated, no goodwill, or locked by a quest). " +
+                           "Hire from a different faction.");
+                    return;
+                }
+
+                const int Hostile = -100;
+
+                faction.SetRelation(new FactionRelation(Faction.OfPlayer, FactionRelationKind.Hostile)
+                {
+                    baseGoodwill = Hostile
+                });
+
+                FactionRelation mirror = Faction.OfPlayer.RelationWith(faction, allowNull: true);
+                if (mirror != null)
+                {
+                    mirror.kind = FactionRelationKind.Hostile;
+                    mirror.baseGoodwill = Hostile;
+                }
+
+                // Immediately, rather than waiting up to an hour for the beat, so the outcome is
+                // observable while the player is still looking at it.
+                HostilityPolicy.Sweep(state);
+
+                Report($"{faction.Name} is now at war (goodwill {faction.PlayerGoodwill}, " +
+                       $"hostile {faction.HostileTo(Faction.OfPlayer)}). " +
+                       $"{target.workerName}: {target.status} — {target.StatusLine()}");
+            }
+            catch (System.Exception ex)
+            {
+                // This runs inside Dialog_MessageBox's paint callback, where an escaping exception
+                // becomes "Exception filling window" and repeats every frame until the dialog is
+                // closed. Catching it keeps a dev tool's failure to one line in the log.
+                Report($"Could not declare war on {faction?.Name}: {ex.Message}");
+                IntercolonyLog.Warning($"Force-war debug action threw: {ex}");
+            }
         }
 
         [DebugAction(Category, "Dump employer standing", allowedGameStates = AllowedGameStates.Playing, displayPriority = 86)]

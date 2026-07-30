@@ -158,6 +158,10 @@ Manual test:
 
 This is the guard against hallucinated completion. Do not skip it.
 
+**Append it with the file tools, not the shell.** PowerShell's `Add-Content -Encoding utf8` on
+already-UTF-8 text double-encodes it, so every em dash becomes `â€"` and every `§` becomes `Â§`.
+That happened to the whole Phase 20 entry and had to be repaired by re-decoding.
+
 ---
 
 ## Commits

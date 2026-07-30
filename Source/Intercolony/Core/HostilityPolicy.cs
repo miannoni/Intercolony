@@ -428,14 +428,27 @@ namespace Intercolony
         /// <summary>
         /// Whether this faction is at war with the colony right now.
         ///
-        /// Checks both <c>HostileTo</c> and <c>PlayerRelationKind</c>, matching
-        /// <see cref="IntercolonyMarketAccess.IsAccessible"/> exactly. That is not redundancy — it
-        /// is the reason the two never disagree about who counts as an enemy, which is the specific
-        /// contradiction §113 warns about.
+        /// **The single definition of "at war" for the whole mod.**
+        /// <see cref="IntercolonyMarketAccess.IsAccessible"/> calls this rather than repeating the
+        /// test, which is what makes it impossible for the market to keep trading with a faction
+        /// this policy is ending contracts over — the specific contradiction §113 warns about.
         /// </summary>
         public static bool IsAtWar(Faction faction)
         {
             if (faction == null || faction.IsPlayer)
+            {
+                return false;
+            }
+
+            // Probe with allowNull first. `Faction.HostileTo` and `PlayerRelationKind` both go
+            // through `RelationWith(other)` with allowNull false, which does not fail quietly — it
+            // writes a red `Log.Error` and hands back a dummy relation. A world containing a faction
+            // with an empty relation table therefore turns every hostility check in the mod into an
+            // error in the player's log, and the hourly sweep asks about every settlement.
+            //
+            // A faction with no recorded relation is not at war with anyone, so answering "no"
+            // costs nothing and is the truthful reading.
+            if (faction.RelationWith(Faction.OfPlayer, allowNull: true) == null)
             {
                 return false;
             }
