@@ -3631,10 +3631,29 @@ Prevent hired workers from becoming economically optimal disposable shields.
 - security contractor;
 - death/injury compensation;
 - combat-use tracking where technically feasible.
+- **§88 hostility policy — the whole of it, trade and labor.** §88 requires a dedicated
+  edge-case policy "before public labor release" and this is the phase whose subject matter it
+  is: an employee whose home faction turns hostile is exactly §88's "enemies in the middle of a
+  bedroom" case, and it is a combat-clause question before it is anything else.
+  - active employment when the source faction turns hostile: suspend, terminate, or a special
+    state — decided deliberately, not by whatever `SetFaction` happens to do;
+  - in-flight sales orders, purchase orders and recurring contracts with a faction that turns
+    hostile: currently `IntercolonyMarketAccess.IsAccessible` blocks *new* business but says
+    nothing about obligations already booked and paid for;
+  - kept in one phase on purpose: a policy split across two phases is how the trade half and
+    the labor half end up contradicting each other.
+  - **Phase 16 shipped a placeholder that must be replaced here:** a worker whose faction turns
+    hostile while still travelling has the contract failed at the gate and forfeits the prepaid
+    wage. That avoids spawning an enemy inside the colony; it is not a considered policy. A
+    faction that turns hostile while the worker is already on the map is not handled at all.
 
 ## Acceptance criteria
 
 Using civilian workers aggressively in combat has meaningful cost.
+
+A source faction turning hostile mid-contract produces a stated, understandable outcome for
+both the employee and any booked trade obligations — never a silent enemy inside the colony,
+and never a silently voided obligation.
 
 ---
 
@@ -3674,10 +3693,19 @@ Support stable recurring workforces.
 - renewal;
 - voluntary non-renewal;
 - termination rules.
+- **Recurring *supply* contract renewal, which §107 listed and Phase 14 did not build.** A
+  completed agreement currently just ends. Renewal belongs here rather than back in §107 because
+  this phase builds renewal, voluntary non-renewal and termination anyway — and one renewal
+  mechanism serving both employment and supply agreements is strictly better than two partial
+  ones that drift apart. Either side must be able to decline, and reputation should influence
+  whether the other side offers.
 
 ## Acceptance criteria
 
 Employees can remain for long periods without faction-state drift or save corruption.
+
+A recurring supply agreement that runs its course either renews or is declined for a stated
+reason. Neither employment nor supply agreements end by silently lapsing.
 
 ---
 
@@ -3755,6 +3783,14 @@ Prepare for broad public use.
 - save migration;
 - compatibility notes;
 - documentation.
+- **Resolve dangling mechanisms — decide or delete.** Code that is implemented and honoured but
+  never exercised is a liability: it looks like a feature, is never tested by play, and rots.
+  Each one gets a decision here, not a deferral.
+  - `OrderLine.minHitPointsPercent` — enforced by the matcher since Phase 6, but no generator
+    ever produces a demand that uses it, so used/damaged-goods trading does not exist in
+    practice. Either generate secondhand demand (see the new §125 Goods question) or remove the
+    field and its matcher branch. Deliberately landed in this phase and not earlier: it is a
+    loose end, not a feature the economy is waiting on.
 
 ---
 
@@ -3969,6 +4005,9 @@ These should be resolved through implementation and playtesting.
 - How should unique modded comps be serialized?
 - Should buyers care about artist identity?
 - Should material preferences be hard requirements or bonuses?
+- Should there be a market for used or damaged goods? The constraint exists in code
+  (`OrderLine.minHitPointsPercent`) and is honoured, but nothing generates demand for it. If the
+  answer is yes it becomes real work; if no, the field should go. Decided in Phase 25 (§118).
 
 ### Procurement
 

@@ -108,14 +108,21 @@ do not let them quietly expire.
   remains and is not a gap: **non-minifiable buildings** cannot be crated, so a caravan
   physically cannot carry them. No future phase changes that.
 
-- **Condition constraints are enforced but never generated.** `OrderLine.minHitPointsPercent`
-  works and the matcher honours it, but nothing produces a demand that uses it, so
-  used/damaged-goods trading does not exist in practice. Low priority; raise it if a phase
-  touches order generation again.
+- ~~**Condition constraints are enforced but never generated.**~~ **MAPPED (2026-07-29) into
+  Phase 25 (§118)** as a decide-or-delete task, with the design question added to §125 Goods.
+  No longer floating.
 
-- **Recurring contracts never renew.** §107 lists renewal in its build list; a completed
-  agreement currently just ends. Raise when a phase next touches contracts — the natural
-  moment is whenever reputation or contract terms get extended.
+- ~~**Recurring contracts never renew.**~~ **MAPPED (2026-07-29) into Phase 22 (§115)**, which
+  builds renewal and non-renewal for employment anyway. One renewal mechanism, both contract
+  kinds. No longer floating.
+
+- ~~**Hostile source faction mid-contract has no policy (§88).**~~ **MAPPED (2026-07-29) into
+  Phase 20 (§113)**, trade and labor halves together. Phase 16 shipped a placeholder — a
+  travelling worker's contract fails and forfeits the wage — that §113 must replace.
+
+Nothing is currently floating outside the plan. When a promise is made to Matteo that does not
+fit the current phase, either map it into a numbered phase in `DESIGN.md` or list it here — the
+first is better, because this list is only read when someone remembers to look.
 
 ---
 
