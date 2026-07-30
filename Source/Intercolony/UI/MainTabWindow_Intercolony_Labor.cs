@@ -109,10 +109,7 @@ namespace Intercolony
             Widgets.Label(new Rect(0f, y, 400f, 34f), "Workers for hire");
             Text.Font = GameFont.Small;
 
-            GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(400f, y + 8f, inRect.width - 400f, 24f),
-                "Who is hiring changes when the market refreshes.");
-            GUI.color = Color.white;
+            DrawEmployerStanding(new Rect(360f, y + 4f, inRect.width - 360f, 28f), state);
             y += 38f;
 
             if (pool.Count == 0)
@@ -144,6 +141,76 @@ namespace Intercolony
             }
 
             Widgets.EndScrollView();
+        }
+
+        /// <summary>
+        /// Standing as an employer (§40), shown against the hiring listing because that is where
+        /// it acts: the score sets wages, how many settlements are willing to send anyone, and
+        /// whether the colony gets first pick of the workers it does see.
+        /// </summary>
+        private static void DrawEmployerStanding(Rect rect, IntercolonyWorldComponent state)
+        {
+            EmployerReputation rep = state.EmployerStanding;
+            if (rep == null)
+            {
+                return;
+            }
+
+            float wageFactor = EmployerReputationService.WageFactor(rep.Score);
+            int wagePercent = Mathf.RoundToInt((wageFactor - 1f) * 100f);
+
+            Text.Anchor = TextAnchor.MiddleRight;
+            GUI.color = TierColour(rep.Tier);
+
+            string effect = wagePercent == 0
+                ? "wages at the going rate"
+                : wagePercent > 0
+                    ? $"wages +{wagePercent}%"
+                    : $"wages {wagePercent}%";
+
+            Widgets.Label(rect, $"{rep.TierLabel()} — {rep.ScoreDisplay}/100, {effect}");
+
+            GUI.color = Color.white;
+            Text.Anchor = TextAnchor.UpperLeft;
+
+            int availabilityPercent =
+                Mathf.RoundToInt(EmployerReputationService.AvailabilityFactor(rep.Score) * 100f);
+
+            TooltipHandler.TipRegion(rect, () =>
+                rep.Summary() + "\n\n" +
+                $"Workers ask {(wagePercent >= 0 ? "+" : "")}{wagePercent}% against the base rate.\n" +
+                $"Roughly {availabilityPercent}% of the labor a neutral employer would see is on offer.\n" +
+                QualityNote(rep.Score) + "\n\n" +
+                "Paying on time and seeing contracts through raises this. Missed payroll, workers " +
+                "walking out and deaths on the job lower it. A settlement still owed wages sends " +
+                "nobody at all until the debt is settled.\n\n" +
+                "Who is hiring also changes when the market refreshes.",
+                rect.GetHashCode());
+        }
+
+        private static string QualityNote(float score)
+        {
+            int bias = EmployerReputationService.CandidateQualityBias(score);
+            if (bias > 0)
+            {
+                return "Good workers come to you first — you see the better of two candidates.";
+            }
+
+            return bias < 0
+                ? "Only the workers nobody else wants will consider you."
+                : "No pick of the crop either way.";
+        }
+
+        private static Color TierColour(EmployerTier tier)
+        {
+            switch (tier)
+            {
+                case EmployerTier.Exploitative: return new Color(1f, 0.45f, 0.45f);
+                case EmployerTier.Poor: return new Color(1f, 0.7f, 0.45f);
+                case EmployerTier.Good: return new Color(0.7f, 0.95f, 0.7f);
+                case EmployerTier.SoughtAfter: return new Color(0.55f, 0.95f, 0.85f);
+                default: return new Color(1f, 1f, 1f, 0.7f);
+            }
         }
 
         /// <summary>

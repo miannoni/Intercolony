@@ -249,8 +249,11 @@ namespace Intercolony
                 SettlementEconomicProfile profile =
                     state.GetProfile(IntercolonyMarketAccess.FindSettlement(candidate.settlementId));
 
-                int shortTerm = LaborCandidateService.DailyWage(candidate.pawn, profile, candidate.distanceTiles, 3);
-                int longTerm = LaborCandidateService.DailyWage(candidate.pawn, profile, candidate.distanceTiles, 30);
+                float standing = EmployerReputationService.ScoreFor(state);
+                int shortTerm = LaborCandidateService.DailyWage(
+                    candidate.pawn, profile, candidate.distanceTiles, 3, standing);
+                int longTerm = LaborCandidateService.DailyWage(
+                    candidate.pawn, profile, candidate.distanceTiles, 30, standing);
                 sampled++;
                 if (longTerm <= shortTerm)
                 {

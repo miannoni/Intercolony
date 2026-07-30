@@ -82,7 +82,9 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 18 complete (2026-07-29). Next: Phase 19 — Employer reputation (DESIGN.md §112, §40).
+**Phase:** 19 complete (2026-07-29). Next: Phase 20 — Combat clauses and compensation
+(DESIGN.md §113, §42, §43). **§113 also owns the §88 hostility policy**, and must replace the
+Phase 16 placeholder that fails a travelling worker's contract and forfeits the wage.
 
 **Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
 control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation

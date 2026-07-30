@@ -64,6 +64,13 @@ namespace Intercolony
             Clear();
             poolRefreshCount = state.RefreshCount;
 
+            // §39 step 9, the general half: a bad employer sees fewer workers on offer at all.
+            float standing = EmployerReputationService.ScoreFor(state);
+            int ceiling = Mathf.Clamp(
+                Mathf.RoundToInt(MaxCandidates * EmployerReputationService.AvailabilityFactor(standing)),
+                2, MaxCandidates);
+            int qualityBias = EmployerReputationService.CandidateQualityBias(standing);
+
             List<Settlement> sources = new List<Settlement>();
             foreach (Settlement settlement in Find.WorldObjects.Settlements)
             {
@@ -72,10 +79,20 @@ namespace Intercolony
                     continue;
                 }
 
-                if (IntercolonyMarketAccess.IsAccessible(settlement))
+                if (!IntercolonyMarketAccess.IsAccessible(settlement))
                 {
-                    sources.Add(settlement);
+                    continue;
                 }
+
+                // §39 step 9, the specific half: a settlement still owed wages does not send
+                // another worker. The grievance outranks the general reputation, which is why it
+                // is checked per settlement rather than folded into the score.
+                if (!EmployerReputationService.WillSupplyLabor(state, settlement.ID, out _))
+                {
+                    continue;
+                }
+
+                sources.Add(settlement);
             }
 
             // Seeded shuffle, so which settlements are hiring this cycle varies but is stable
@@ -93,7 +110,7 @@ namespace Intercolony
 
                 foreach (Settlement settlement in sources)
                 {
-                    if (pool.Count >= MaxCandidates)
+                    if (pool.Count >= ceiling)
                     {
                         break;
                     }
@@ -104,9 +121,9 @@ namespace Intercolony
                         continue;
                     }
 
-                    for (int i = 0; i < CandidatesPerSettlement && pool.Count < MaxCandidates; i++)
+                    for (int i = 0; i < CandidatesPerSettlement && pool.Count < ceiling; i++)
                     {
-                        LaborCandidate candidate = Generate(settlement, profile);
+                        LaborCandidate candidate = GenerateBiased(settlement, profile, standing, qualityBias);
                         if (candidate != null)
                         {
                             pool.Add(candidate);
@@ -141,7 +158,59 @@ namespace Intercolony
             pool.Remove(candidate);
         }
 
-        private static LaborCandidate Generate(Settlement settlement, SettlementEconomicProfile profile)
+        /// <summary>
+        /// Draws a candidate, and at the extremes of employer reputation draws twice and keeps the
+        /// better or worse of the two (§112 "a bad employer experiences meaningfully worse hiring
+        /// conditions"). In the middle it draws once, so the ordinary case costs nothing extra —
+        /// generating pawns is the expensive part of building this listing.
+        /// </summary>
+        private static LaborCandidate GenerateBiased(
+            Settlement settlement, SettlementEconomicProfile profile, float standing, int bias)
+        {
+            LaborCandidate first = Generate(settlement, profile, standing);
+            if (bias == 0 || first == null)
+            {
+                return first;
+            }
+
+            LaborCandidate second = Generate(settlement, profile, standing);
+            if (second == null)
+            {
+                return first;
+            }
+
+            int firstBest = BestSkillLevel(first);
+            int secondBest = BestSkillLevel(second);
+
+            bool keepSecond = bias > 0 ? secondBest > firstBest : secondBest < firstBest;
+            LaborCandidate kept = keepSecond ? second : first;
+            LaborCandidate discarded = keepSecond ? first : second;
+
+            discarded.Discard();
+            return kept;
+        }
+
+        private static int BestSkillLevel(LaborCandidate candidate)
+        {
+            if (candidate?.pawn?.skills == null)
+            {
+                return 0;
+            }
+
+            int best = 0;
+            foreach (SkillRecord skill in candidate.pawn.skills.skills)
+            {
+                if (!skill.TotallyDisabled && skill.Level > best)
+                {
+                    best = skill.Level;
+                }
+            }
+
+            return best;
+        }
+
+        private static LaborCandidate Generate(
+            Settlement settlement, SettlementEconomicProfile profile, float standing)
         {
             Faction faction = settlement.Faction;
 
@@ -191,7 +260,7 @@ namespace Intercolony
                 distanceTiles = distance,
                 travelDays = TravelDays(distance),
                 minTermDays = minTerm,
-                dailyWage = DailyWage(pawn, profile, distance, minTerm)
+                dailyWage = DailyWage(pawn, profile, distance, minTerm, standing)
             };
         }
 
@@ -207,7 +276,16 @@ namespace Intercolony
         /// Silver per day. Priced off the worker's best skills, then adjusted for how far they
         /// must travel, how much spare labor the settlement has, and how short the term is.
         /// </summary>
-        public static int DailyWage(Pawn pawn, SettlementEconomicProfile profile, float distance, int termDays)
+        /// <param name="employerStanding">
+        /// Colony employer reputation (§40). Deliberately **required**, not defaulted: a default
+        /// would let a call site silently price at neutral while the listing showed a bad
+        /// employer's premium, and the hire would then charge a different number than it quoted.
+        /// That exact shape of bug has appeared twice before (the Phase 12 quantity slider and the
+        /// Phase 10 gold bed), both times because a pricing input was easy to omit.
+        /// </param>
+        public static int DailyWage(
+            Pawn pawn, SettlementEconomicProfile profile, float distance, int termDays,
+            float employerStanding)
         {
             float skillValue = 0f;
             if (pawn?.skills != null)
@@ -249,6 +327,10 @@ namespace Intercolony
 
             // §36.1: short contracts are "relatively expensive per day".
             wage *= ShortTermPremium(termDays);
+
+            // §39 step 9: a bad employer pays a risk premium, a good one gets a discount because
+            // people want the job. The widest of the reputation effects, per §112's "meaningfully".
+            wage *= EmployerReputationService.WageFactor(employerStanding);
 
             return Mathf.Max(1, Mathf.RoundToInt(wage));
         }

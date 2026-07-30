@@ -71,7 +71,8 @@ namespace Intercolony
             // — the same mistake the sales confirmation slider made in Phase 12.
             SettlementEconomicProfile profile = state.GetProfile(settlement);
             int dailyWage = LaborCandidateService.DailyWage(
-                candidate.pawn, profile, candidate.distanceTiles, termDays);
+                candidate.pawn, profile, candidate.distanceTiles, termDays,
+                EmployerReputationService.ScoreFor(state));
 
             // Only prepaid is charged now. A periodic hire that demanded the full term up front
             // would defeat the point of offering the choice.
@@ -177,6 +178,11 @@ namespace Intercolony
                 // record so nothing ticks a corpse.
                 if (contract.pawn == null || contract.pawn.Destroyed || contract.pawn.Dead)
                 {
+                    // §40 lists "preventable death" as a negative signal and §112 asks for
+                    // injury/death effects. Whether it was preventable is not something this can
+                    // tell — the penalty is the same either way, which is a known simplification.
+                    EmployerReputationService.NoteEmployeeDied(IntercolonyWorldComponent.Current, contract);
+
                     End(contract, EmploymentStatus.Failed,
                         $"{contract.workerName} died before the term ended");
                     continue;
@@ -327,6 +333,19 @@ namespace Intercolony
             // A worker who downed tools is leaving anyway; clear the flag so a stale "refusing"
             // state cannot outlive the contract.
             contract.refusingWork = false;
+
+            // Conduct is recorded here rather than at each call site, so no future caller can end
+            // an employment without it counting (§40). Quit is already recorded by PayrollService,
+            // which knows the arrears figure; Failed covers deaths, recorded at detection.
+            IntercolonyWorldComponent standingOwner = IntercolonyWorldComponent.Current;
+            if (status == EmploymentStatus.Completed)
+            {
+                EmployerReputationService.NoteContractCompleted(standingOwner, contract);
+            }
+            else if (status == EmploymentStatus.Dismissed)
+            {
+                EmployerReputationService.NoteEarlyDismissal(standingOwner, contract);
+            }
 
             try
             {

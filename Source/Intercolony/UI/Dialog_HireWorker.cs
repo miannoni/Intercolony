@@ -60,8 +60,11 @@ namespace Intercolony
 
         public override Vector2 InitialSize => new Vector2(620f, 560f);
 
+        private float EmployerStanding =>
+            EmployerReputationService.ScoreFor(IntercolonyWorldComponent.Current);
+
         private int DailyWage => LaborCandidateService.DailyWage(
-            candidate.pawn, profile, candidate.distanceTiles, termDays);
+            candidate.pawn, profile, candidate.distanceTiles, termDays, EmployerStanding);
 
         public override void DoWindowContents(Rect inRect)
         {
@@ -123,7 +126,8 @@ namespace Intercolony
             if (termDays > candidate.minTermDays)
             {
                 int atMinimum = LaborCandidateService.DailyWage(
-                    candidate.pawn, profile, candidate.distanceTiles, candidate.minTermDays);
+                    candidate.pawn, profile, candidate.distanceTiles, candidate.minTermDays,
+                    EmployerStanding);
                 if (wage < atMinimum)
                 {
                     GUI.color = new Color(0.6f, 0.9f, 0.6f);

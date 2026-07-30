@@ -905,3 +905,85 @@ Bugs found and fixed during the phase:
 - **`EmploymentContract.ToString` read as a zero-value contract.** "(22/day x 20d = 0)" for a
   periodic hire, because `paidSilver` is legitimately 0 before the first payday. Now shows the
   structure, the total commitment, what has been paid and what is owed.
+
+## Phase 19 — Employer reputation  (2026-07-29)
+
+§112's goal: "Make treatment of workers affect future labor supply." Acceptance: "A bad employer
+experiences meaningfully worse hiring conditions."
+
+This is the missing tail of Phase 18's escalation. §39 lists nine steps; steps 1–6 shipped in
+Phase 18, and steps 7–9 (reputation falls, source faction goodwill falls, future workers become
+more expensive or unavailable) land here.
+
+Implemented:
+- **`Reputation/EmployerReputation.cs`** — one colony-wide score, 0–100, starting neutral, with
+  the five tiers §40 implies ("Tier: Decent Employer") and §40's four on-screen counters:
+  contracts completed, late payroll incidents, employee deaths, unpaid compensation. Plus walk-outs
+  and early dismissals, which the escalation produces.
+- **Colony-wide, unlike `CommercialReputation`, which is per settlement.** The asymmetry is
+  deliberate. A trading record is bilateral — a settlement knows whether *it* was paid. How a
+  colony treats the people who work there is not private between two parties; it is a reputation,
+  and word gets around. §40 illustrates it as a single score for that reason.
+- **Per-settlement grievance still exists where it belongs.** A settlement still owed wages sends
+  nobody at all until the debt is settled, carried by the existing `LaborDebt` rather than by a
+  second score. The specific grievance outranks the general standing.
+- **`Reputation/EmployerReputationService.cs`** — event-driven throughout, per §40's "avoid
+  expensive continuous calculations when event-driven updates are sufficient". Nothing is computed
+  on a tick.
+- **Effects, sized for §112's "meaningfully":**
+  - wages ×1.25 at the bottom to ×0.85 at the top — a 40% spread;
+  - labor on offer 35% to 115% of what a neutral employer sees;
+  - candidate quality bias: at the extremes the generator draws twice and keeps the better or the
+    worse worker. A neutral employer draws once, so the common case costs no extra pawn generation.
+- **Faction goodwill (§39 step 8)** — the worker's own faction loses goodwill on a walk-out (−8) or
+  a death on the job (−5).
+- Conduct is recorded in `EmploymentService.End` rather than at each call site, so no future caller
+  can end an employment without it counting. Negatives outweigh positives: a walk-out costs more
+  than a completed contract earns, which is asserted rather than assumed.
+- **Labor tab** shows tier, score and the wage effect beside "Workers for hire", with §40's screen
+  and the full effect breakdown in the tooltip.
+- Debug actions: run employer reputation self-test, dump employer standing.
+- **Save schema 15 -> 16.** A colony with a labor history starts neutral rather than having a score
+  reconstructed from past employments — §40 is a record of conduct, and inventing conduct that was
+  never recorded would be inventing a past. Same call schema 10 -> 11 made for trading records.
+
+Not implemented:
+- No living-conditions or medical-treatment signals, though §40 lists them as positive. Measuring
+  them is §41's subject and is not in §112's build list.
+- Preventable vs unpreventable death is not distinguished — any employee death carries the same
+  penalty. §40 says "preventable death"; telling the difference needs damage-source attribution.
+- No effect on applicant quantity/quality in the job-posting sense (§35.2) — that flow is Phase 21
+  (§114). What exists is the effect on the available-worker pool.
+- No renewal willingness effect (§40 lists "voluntary renewal" as a positive) — renewal itself is
+  Phase 22 (§115).
+
+Known limitations:
+- The quality bias is a best-of-two draw, not a distribution shift. It reads correctly in play but
+  is a coarse instrument.
+- Goodwill changes are applied without a custom `HistoryEventDef`, so the vanilla goodwill panel
+  shows them without a labor-specific reason string.
+- Reputation is not shown outside the Labor tab; the Relations tab still covers trading only.
+
+Manual test:
+- `Run employer reputation self-test`: **33 passed, 0 failed.** Effect curves checked at every
+  point from 0 to 100 for monotonicity rather than at the endpoints. Every §40 signal driven
+  through the real service. Same world priced twice, as a sought-after and as an exploitative
+  employer: 20 workers versus 7, average best skill 11.5 versus 8.4. Score restored and test debts
+  removed afterwards, so a dev check does not brand the colony.
+- Startup clean, schema 16, no def errors.
+
+Bugs found and fixed during the phase:
+- **A new pricing input with a default value is a bug waiting to happen.** `DailyWage` first took
+  employer standing as an optional parameter defaulting to neutral. It compiled clean, which was
+  the problem: every existing call site would have priced at neutral while the listing showed a bad
+  employer's premium, so the hire would charge a different number than it quoted. Same shape as the
+  Phase 12 quantity slider and the Phase 10 gold bed, both of which were mispricings caused by an
+  input that was easy to omit. The parameter is now required so the compiler names every site.
+- **A self-test assertion that could pass or fail on luck.** "A bad employer pays more on average"
+  compared two *different* candidate pools — a bad employer sees fewer, weaker workers, and a weak
+  worker is individually cheap even at a premium. It passed on the first draw and would eventually
+  have failed for no reason. Replaced with the invariant that cannot flake: the *same* pawn priced
+  at 0, 50 and 100 must cost strictly more, then less. The cross-pool comparison is now reported as
+  information, and the pool claim that does hold — average best skill — is asserted instead.
+- **`git checkout` on a file to undo two lines discarded the whole schema-16 change.** Caught
+  immediately and re-applied; recorded here because the mistake was mine and not the tool's.

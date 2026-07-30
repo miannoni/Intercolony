@@ -543,6 +543,28 @@ namespace Intercolony
             IntercolonyLog.Message(IntercolonyTradeBlacklist.DebugSummary());
         }
 
+        [DebugAction(Category, "Run employer reputation self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 61)]
+        private static void RunEmployerReputationSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyEmployerReputationSelfTest.Run(state, Find.CurrentMap)));
+        }
+
+        [DebugAction(Category, "Dump employer standing", allowedGameStates = AllowedGameStates.Playing, displayPriority = 86)]
+        private static void DumpEmployerStanding()
+        {
+            WithState(state =>
+            {
+                EmployerReputation rep = state.EmployerStanding;
+                float score = rep.Score;
+                IntercolonyLog.Message(
+                    rep.Summary() + "\n" +
+                    $"  wage factor        : x{EmployerReputationService.WageFactor(score):0.00}\n" +
+                    $"  availability factor: x{EmployerReputationService.AvailabilityFactor(score):0.00}\n" +
+                    $"  quality bias       : {EmployerReputationService.CandidateQualityBias(score)}");
+            });
+        }
+
         [DebugAction(Category, "Run payroll self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 60)]
         private static void RunPayrollSelfTest()
         {

@@ -100,6 +100,7 @@ namespace Intercolony
             }
 
             contract.missedPayments++;
+            EmployerReputationService.NotePayrollMissed(state, contract);
             OnPeriodMissed(contract, paid, shortfall, available, debts, state);
         }
 
@@ -114,6 +115,7 @@ namespace Intercolony
             bool wasRefusing = contract.refusingWork;
             contract.missedPayments = 0;
             contract.ResumeWork();
+            EmployerReputationService.NoteArrearsCleared(IntercolonyWorldComponent.Current);
 
             Find.LetterStack.ReceiveLetter(
                 "Wages settled",
@@ -132,8 +134,10 @@ namespace Intercolony
 
             if (contract.missedPayments >= MissesBeforeQuitting)
             {
-                // §39 steps 5 and 6: the worker leaves, and the debt does not.
+                // §39 steps 5 to 8: the worker leaves, the debt does not, the colony's name as an
+                // employer takes the sharpest hit available, and the worker's own faction hears.
                 RecordDebt(contract, debts, state);
+                EmployerReputationService.NoteWalkOut(state, contract);
 
                 EmploymentService.End(contract, EmploymentStatus.Quit,
                     $"{contract.workerName} walked out over {contract.arrearsSilver} silver in unpaid wages");
@@ -343,6 +347,7 @@ namespace Intercolony
             contract.arrearsSilver = 0;
             contract.missedPayments = 0;
             contract.ResumeWork();
+            EmployerReputationService.NoteArrearsCleared(IntercolonyWorldComponent.Current);
 
             Messages.Message(
                 $"Paid {contract.workerName} the {settled} silver owed. They are back at work.",
@@ -381,6 +386,7 @@ namespace Intercolony
 
             int settled = debt.amountOwed;
             debt.amountOwed = 0;
+            EmployerReputationService.NoteDebtSettled(IntercolonyWorldComponent.Current, debt);
 
             Find.LetterStack.ReceiveLetter(
                 "Debt settled",

@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 15;
+        public const int CurrentSaveVersion = 16;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -225,6 +225,15 @@ namespace Intercolony
                 employments.Add(contract);
             }
         }
+
+        /// <summary>
+        /// Colony-wide standing as an employer (§40). One record, not one per settlement — see
+        /// <see cref="EmployerReputation"/> for why that asymmetry with commercial reputation is
+        /// deliberate. Never null: a fresh colony starts neutral.
+        /// </summary>
+        private EmployerReputation employerStanding = new EmployerReputation();
+
+        public EmployerReputation EmployerStanding => employerStanding;
 
         /// <summary>Unpaid wages left behind by workers who have gone home (§39 step 6).</summary>
         private List<LaborDebt> laborDebts = new List<LaborDebt>();
@@ -585,6 +594,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
             Scribe_Collections.Look(ref employments, "employments", LookMode.Deep);
             Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
+            Scribe_Deep.Look(ref employerStanding, "employerStanding");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -702,6 +712,13 @@ namespace Intercolony
                             $"Dropped {nullEmployments} null and {brokenEmployments} unresolvable " +
                             "employment(s) while loading. Any wages paid for them are gone.");
                     }
+                }
+
+                if (employerStanding == null)
+                {
+                    // Absent in a pre-schema-16 save, and Scribe_Deep gives null rather than a
+                    // fresh instance. Everything downstream assumes it exists.
+                    employerStanding = new EmployerReputation();
                 }
 
                 if (laborDebts == null)
@@ -1151,6 +1168,16 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
             }
 
+            if (saveVersion < 16)
+            {
+                // 15 -> 16 added employer reputation. A colony with a labor history behind it
+                // starts neutral rather than having a score reconstructed from past employments:
+                // §40 is a record of conduct, and inventing conduct that was never recorded would
+                // be inventing a past (the same call schema 10 -> 11 made for trading records).
+                IntercolonyLog.Message(
+                    "  schema 15 -> 16: employer reputation added, starting neutral.");
+            }
+
             if (saveVersion < 15)
             {
                 // 14 -> 15 added wage structures, arrears and labor debts. Existing employments
@@ -1292,6 +1319,7 @@ namespace Intercolony
                 sb.AppendLine($"    {employment}  {employment.StatusLine()}");
             }
 
+            sb.AppendLine($"  employer     : {employerStanding}");
             sb.AppendLine($"  labor debts  : {laborDebts.Count} ({UnsettledDebtCount} unsettled)");
             foreach (LaborDebt debt in laborDebts)
             {
