@@ -3591,10 +3591,20 @@ Make employment economically binding.
 - warnings;
 - termination escalation;
 - debt record.
+- **A choice of wage structure at hire, per §37 — prepaid, periodic (quadrum), or daily.** This
+  was implicit in "payment schedule" and is now named, because it is the player-facing half of
+  the phase and the reason the phase matters. Phase 16 shipped prepaid-only as a deliberate
+  scoping decision, which makes a long contract a large lump sum the player may not be able to
+  raise, and removes the risk §37 lists as prepaid's whole downside ("employee may die").
+  Prepaid should stay available and be *cheaper in total* — that is its stated benefit — with
+  periodic payment as the default for anything long.
 
 ## Acceptance criteria
 
 Insufficient silver creates understandable escalating consequences rather than crashes or silent deletion.
+
+A player can choose how a worker is paid, and the trade-off between structures is visible at
+the moment of hiring rather than discovered afterwards.
 
 ---
 

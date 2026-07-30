@@ -51,7 +51,12 @@ namespace Intercolony
                 return pool;
             }
 
-            if (!force && poolRefreshCount == state.RefreshCount && pool.Count > 0)
+            // Keyed on the refresh count alone, deliberately not on "the pool is non-empty".
+            // Two reasons: GUI code runs at least twice per frame, so a pool emptied by hiring
+            // would otherwise regenerate 20 pawns every frame; and a player who could drain the
+            // listing and have it instantly repopulate could re-roll until a great worker
+            // appeared. Who is hiring changes when the market does, and not before.
+            if (!force && poolRefreshCount == state.RefreshCount)
             {
                 return pool;
             }

@@ -24,26 +24,40 @@ namespace Intercolony
         private readonly string title;
         private readonly string confirmLabel;
         private readonly int maxQuantity;
+        private readonly int minQuantity;
+        private readonly string quantityLabel;
         private readonly Func<int, string> bodyBuilder;
         private readonly Action<int> onConfirm;
 
         private int quantity;
         private string buffer;
 
+        /// <param name="minQuantity">
+        /// Floor on the commitment. Hiring needs it: a worker with a five-day minimum term must
+        /// not be hirable for two, and the floor belongs in the one dialog every commitment goes
+        /// through rather than as a second near-identical dialog.
+        /// </param>
+        /// <param name="quantityLabel">Caption for the numeric field. "Quantity:" suits goods, "Days:" suits a term.</param>
         public Dialog_ConfirmQuantity(
             string title,
             string confirmLabel,
             int maxQuantity,
             Func<int, string> bodyBuilder,
-            Action<int> onConfirm)
+            Action<int> onConfirm,
+            int minQuantity = 1,
+            string quantityLabel = "Quantity:")
         {
             this.title = title;
             this.confirmLabel = confirmLabel;
-            this.maxQuantity = Mathf.Max(1, maxQuantity);
+            this.minQuantity = Mathf.Max(1, minQuantity);
+            this.maxQuantity = Mathf.Max(this.minQuantity, maxQuantity);
             this.bodyBuilder = bodyBuilder;
             this.onConfirm = onConfirm;
+            this.quantityLabel = quantityLabel;
 
-            quantity = this.maxQuantity;
+            // Open at the floor, not the ceiling, when there is a real floor: the minimum term is
+            // the cheapest commitment, and the player should have to choose to spend more.
+            quantity = this.minQuantity > 1 ? this.minQuantity : this.maxQuantity;
             buffer = quantity.ToString();
 
             doCloseX = true;
@@ -69,28 +83,40 @@ namespace Intercolony
 
             float bottom = inRect.height - 122f;
 
-            Widgets.Label(new Rect(0f, bottom, 110f, 28f), "Quantity:");
-            Widgets.TextFieldNumeric(new Rect(112f, bottom, 90f, 28f), ref quantity, ref buffer, 1, maxQuantity);
+            Widgets.Label(new Rect(0f, bottom, 110f, 28f), quantityLabel);
+            Widgets.TextFieldNumeric(
+                new Rect(112f, bottom, 90f, 28f), ref quantity, ref buffer, minQuantity, maxQuantity);
 
+            // "All" reads correctly for goods ("all of my stock"); for a term it does not, so a
+            // floored commitment says "Max" instead.
             Rect allRect = new Rect(212f, bottom, 60f, 28f);
-            if (Widgets.ButtonText(allRect, "All"))
+            if (Widgets.ButtonText(allRect, minQuantity > 1 ? "Max" : "All"))
             {
                 SetQuantity(maxQuantity);
             }
 
-            Rect halfRect = new Rect(276f, bottom, 60f, 28f);
-            if (Widgets.ButtonText(halfRect, "Half"))
+            // With a floor, "Min" is the useful shortcut; without one, "Half" is.
+            Rect secondRect = new Rect(276f, bottom, 60f, 28f);
+            if (minQuantity > 1)
+            {
+                if (Widgets.ButtonText(secondRect, "Min"))
+                {
+                    SetQuantity(minQuantity);
+                }
+            }
+            else if (Widgets.ButtonText(secondRect, "Half"))
             {
                 SetQuantity(Mathf.Max(1, maxQuantity / 2));
             }
 
             GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(344f, bottom + 3f, inRect.width - 350f, 24f), $"of {maxQuantity}");
+            Widgets.Label(new Rect(344f, bottom + 3f, inRect.width - 350f, 24f),
+                minQuantity > 1 ? $"{minQuantity} to {maxQuantity}" : $"of {maxQuantity}");
             GUI.color = Color.white;
 
             bottom += 34f;
             int slid = Mathf.RoundToInt(Widgets.HorizontalSlider(
-                new Rect(0f, bottom + 4f, inRect.width, 20f), quantity, 1f, maxQuantity));
+                new Rect(0f, bottom + 4f, inRect.width, 20f), quantity, minQuantity, maxQuantity));
             if (slid != quantity)
             {
                 SetQuantity(slid);
@@ -100,7 +126,7 @@ namespace Intercolony
             Rect confirmRect = new Rect(0f, bottom, 170f, 36f);
             if (Widgets.ButtonText(confirmRect, confirmLabel))
             {
-                onConfirm?.Invoke(Mathf.Clamp(quantity, 1, maxQuantity));
+                onConfirm?.Invoke(Mathf.Clamp(quantity, minQuantity, maxQuantity));
                 Close();
             }
 
@@ -113,7 +139,7 @@ namespace Intercolony
 
         private void SetQuantity(int value)
         {
-            quantity = Mathf.Clamp(value, 1, maxQuantity);
+            quantity = Mathf.Clamp(value, minQuantity, maxQuantity);
             buffer = quantity.ToString();
             SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
         }

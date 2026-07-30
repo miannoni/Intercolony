@@ -762,3 +762,58 @@ Manual test:
   hold, and its release once the worker is back on a map.
 - Caravan loading confirmed in play.
 - Startup clean, Harmony patches applied, no errors.
+
+## Phase 17 — Labor market UI  (2026-07-29)
+
+§110's goal: "Make hiring a proper gameplay loop." Acceptance: "A player can make a hiring
+decision without dev tools or hidden information."
+
+Implemented:
+- New **Labor** tab (`UI/MainTabWindow_Intercolony_Labor.cs`), with a count badge for live
+  employees. Split into its own file — the main window was already 75 KB of six tabs.
+- **On the payroll** (top): every live contract with worker name, skills frozen at hire, source
+  settlement and faction, wage, prepaid total, and status — travelling with an arrival
+  countdown, working with days left, term-lapsed-while-away in yellow, under two days left in
+  amber. Clicking a row jumps to and selects the worker. Per-row Dismiss, or Cancel before
+  arrival, both behind a confirmation. Summary line gives headcount, combined silver/day and
+  total prepaid.
+- **Workers for hire** (bottom, §35.1): sortable on all six columns — worker, best skills,
+  silver/day, minimum term, arrives in, source. Tooltip lists every skill with passion spelled
+  out, plus distance and the pricing rule.
+- **Hire dialog**: the shared `Dialog_ConfirmQuantity` with the term slider on the pop-up, where
+  Matteo asked all commitment sliders to live. Opens at the worker's minimum term, reprices for
+  the chosen term, and states the discount explicitly ("27/day instead of 31/day at their 8-day
+  minimum") rather than leaving it to be inferred.
+- `Dialog_ConfirmQuantity` gained `minQuantity` and a configurable field caption, so hiring uses
+  the same commitment dialog as goods rather than a second near-identical one. "All"/"Half"
+  become "Max"/"Min" only when there is a real floor, so the goods flows are unchanged.
+- Tab bar rebuilt data-driven. It was seven hand-computed rects at a fixed 150px, positioned
+  relative to each other in a different order than they appeared on screen; six already exceeded
+  the 920px window, so a seventh could not fit. Adding a tab is now one array entry.
+- Window grew to 1040x620 to hold seven tabs and two stacked tables.
+
+Not implemented:
+- No choice of wage structure — everything is prepaid in full. Phase 18 (§111), now explicitly
+  named there after Matteo raised it.
+- No long-term or open-ended employment, and no way to hire a recurring worker. Phase 22 (§115).
+- No job-posting/applicant flow (§35.2) — that is Phase 21 (§114).
+- No employer reputation shown, because there is none yet (§112).
+
+Known limitations:
+- The listing has no refresh button, deliberately: it is cached per market refresh, and a
+  re-roll button would let the player drain and repopulate the pool until a great worker
+  appeared. The tab states that hiring availability changes with the market.
+- Candidate skills shown in the listing are the live pawn's; the employee list shows the summary
+  frozen at hire. They can differ once a worker has been in the colony long enough to improve.
+- Dismissing a traveller forfeits the wage. Stated in the confirmation and the tooltip; the
+  actual early-termination policy is Phase 18's.
+
+Manual test:
+- Verified in play by Matteo: layout holds with nobody hired and with employees present, column
+  sorting works, and hiring through the dialog reprices as the term changes.
+- Startup clean, Harmony patches applied, no errors.
+
+Decisions worth recording:
+- The payroll summary says "prepaid", not "payroll/day". Wages are paid in full at hire, and
+  calling it payroll would read as a recurring debit the player must keep covering — which is
+  Phase 18's model, not this one. Wrong labels teach wrong mental models.

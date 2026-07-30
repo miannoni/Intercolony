@@ -16,7 +16,7 @@ namespace Intercolony
     /// Deliberately read-only: accepting an opportunity turns it into a binding Sales Order,
     /// which is Phase 5 (§98). Nothing here commits the player to anything.
     /// </summary>
-    public class MainTabWindow_Intercolony : MainTabWindow
+    public partial class MainTabWindow_Intercolony : MainTabWindow
     {
         private Vector2 scrollPosition;
 
@@ -47,7 +47,8 @@ namespace Intercolony
 
         private bool sortDescending;
 
-        public override Vector2 RequestedTabSize => new Vector2(920f, 560f);
+        // Seven tabs, and the Labor tab shows two tables stacked. 920x560 left both cramped.
+        public override Vector2 RequestedTabSize => new Vector2(1040f, 620f);
 
         /// <summary>Which top-level view is showing (DESIGN.md §52, §53, §54).</summary>
         private enum Tab
@@ -56,6 +57,7 @@ namespace Intercolony
             Orders,
             FindBuyer,
             Procurement,
+            Labor,
             Contracts,
             Relations
         }
@@ -139,6 +141,12 @@ namespace Intercolony
                 return;
             }
 
+            if (tab == Tab.Labor)
+            {
+                DrawLabor(body, state);
+                return;
+            }
+
             if (tab == Tab.Relations)
             {
                 DrawRelations(body, state);
@@ -148,61 +156,88 @@ namespace Intercolony
             DrawMarket(body, state);
         }
 
+        /// <summary>
+        /// Tab order, left to right. Adding a tab means adding it here and nowhere else.
+        ///
+        /// This used to be seven hand-computed <see cref="Rect"/>s at a fixed 150px, positioned
+        /// relative to each other in a different order than they appeared on screen. Six tabs at
+        /// 150px plus gaps already exceeded the window width, so Labor could not be added without
+        /// overflowing, and the arithmetic was one edit away from overlapping buttons.
+        /// </summary>
+        private static readonly Tab[] TabOrder =
+        {
+            Tab.Market,
+            Tab.Orders,
+            Tab.FindBuyer,
+            Tab.Procurement,
+            Tab.Labor,
+            Tab.Contracts,
+            Tab.Relations
+        };
+
+        /// <summary>Tab caption, including a count badge where one is useful.</summary>
+        private static string TabLabel(Tab which, IntercolonyWorldComponent state)
+        {
+            switch (which)
+            {
+                case Tab.Orders:
+                    int orders = state.OpenOrderCount;
+                    return orders > 0 ? $"Orders ({orders})" : "Orders";
+                case Tab.FindBuyer:
+                    return "Find buyer";
+                case Tab.Procurement:
+                    int requests = state.OpenRequestCount;
+                    return requests > 0 ? $"Procurement ({requests})" : "Procurement";
+                case Tab.Labor:
+                    int employees = state.ActiveEmployeeCount;
+                    return employees > 0 ? $"Labor ({employees})" : "Labor";
+                case Tab.Contracts:
+                    int contracts = state.ActiveContractCount;
+                    return contracts > 0 ? $"Contracts ({contracts})" : "Contracts";
+                default:
+                    return which.ToString();
+            }
+        }
+
         private float DrawTabSelector(Rect inRect, IntercolonyWorldComponent state)
         {
-            const float ButtonWidth = 150f;
             const float ButtonHeight = 30f;
+            const float Gap = 6f;
+            const float MaxButtonWidth = 150f;
 
-            Rect marketRect = new Rect(0f, 0f, ButtonWidth, ButtonHeight);
-            Rect ordersRect = new Rect(ButtonWidth + 6f, 0f, ButtonWidth, ButtonHeight);
+            float available = inRect.width - Gap * (TabOrder.Length - 1);
+            float buttonWidth = Mathf.Min(MaxButtonWidth, available / TabOrder.Length);
 
-            int open = state.OpenOrderCount;
-            if (Widgets.ButtonText(marketRect, "Market", drawBackground: tab != Tab.Market))
+            float x = 0f;
+            foreach (Tab which in TabOrder)
             {
-                tab = Tab.Market;
+                Rect rect = new Rect(x, 0f, buttonWidth, ButtonHeight);
+                if (Widgets.ButtonText(rect, TabLabel(which, state), drawBackground: tab != which))
+                {
+                    SelectTab(which, state);
+                }
+
+                x += buttonWidth + Gap;
             }
 
-            if (Widgets.ButtonText(ordersRect, open > 0 ? $"Orders ({open})" : "Orders",
-                    drawBackground: tab != Tab.Orders))
-            {
-                tab = Tab.Orders;
-            }
+            return ButtonHeight + 8f;
+        }
 
-            Rect findRect = new Rect(ordersRect.xMax + 6f, 0f, ButtonWidth, ButtonHeight);
-            if (Widgets.ButtonText(findRect, "Find buyer", drawBackground: tab != Tab.FindBuyer))
-            {
-                tab = Tab.FindBuyer;
+        private void SelectTab(Tab which, IntercolonyWorldComponent state)
+        {
+            tab = which;
 
+            if (which == Tab.FindBuyer)
+            {
                 // Re-scan once on entry so the list is current without being live.
                 stockCache = null;
                 findBuyerCache = null;
             }
-
-            Rect contractsRect = new Rect(findRect.xMax + 6f + ButtonWidth + 6f, 0f, ButtonWidth, ButtonHeight);
-            int liveContracts = state.ActiveContractCount;
-            if (Widgets.ButtonText(contractsRect,
-                    liveContracts > 0 ? $"Contracts ({liveContracts})" : "Contracts",
-                    drawBackground: tab != Tab.Contracts))
+            else if (which == Tab.Labor)
             {
-                tab = Tab.Contracts;
+                // Cheap: the pool is cached per market refresh and only built when stale.
+                LaborCandidateService.Refresh(state);
             }
-
-            Rect relationsRect = new Rect(contractsRect.xMax + 6f, 0f, ButtonWidth, ButtonHeight);
-            if (Widgets.ButtonText(relationsRect, "Relations", drawBackground: tab != Tab.Relations))
-            {
-                tab = Tab.Relations;
-            }
-
-            Rect procureRect = new Rect(findRect.xMax + 6f, 0f, ButtonWidth, ButtonHeight);
-            int openRequests = state.OpenRequestCount;
-            if (Widgets.ButtonText(procureRect,
-                    openRequests > 0 ? $"Procurement ({openRequests})" : "Procurement",
-                    drawBackground: tab != Tab.Procurement))
-            {
-                tab = Tab.Procurement;
-            }
-
-            return ButtonHeight + 8f;
         }
 
         private void DrawMarket(Rect inRect, IntercolonyWorldComponent state)
