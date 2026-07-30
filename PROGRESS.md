@@ -1127,12 +1127,35 @@ Manual test:
 
   Zero exceptions, zero warnings, zero unresolved references in the whole session, where the same
   path previously produced three duplicate-thingID errors and a continuous null-relation flood.
-- **Not yet exercised:** the safe-passage *deadline*. A worker who cannot reach the edge — walled in
-  or downed — should get the "Safe passage expired" letter and cost the colony a detention penalty
-  after two days. The happy path is proven; that branch is not.
-- **Worth one more pass:** saving while a contract is `Severed` and the worker is still walking out.
-  It was tested, and it was clean apart from the stale-pool damage — but that damage was in the same
-  save, so the transitional state has not had an uncontaminated run.
+- **Death during safe passage, and §43 paying out in play.** Vince (civilian, 19 silver/day) was
+  killed while walking out. The bill came to `19 x 60 = 1140` exactly, of which 800 was taken from
+  storage and 340 booked as a `Compensation` debt, with the matching goodwill and reputation hits.
+  That is the specific case the release letter warns about — *"if you kill them on the way out,
+  compensation is owed exactly as if they had died working for you"* — and it is now the branch
+  proven rather than the promise.
+
+  ```
+  Goodwill with Delrofenler -5: Vince died working for New Arrivals.
+  Compensation (death) for Vince: 1140 owed, 800 paid, 340 outstanding.
+  Safe passage complete: ... — Vince was killed leaving under safe passage
+  ```
+- **The safe-passage deadline.** On a second run the worker did not get clear, and after two days
+  (two market refreshes, ticks 60000 and 120000) the expiry fired: the detention penalty landed and
+  the pawn rejoined their own faction while still standing in the colony. That last part is the
+  stated consequence, not a defect — the worker becomes an enemy on the map, which is what the
+  letter says will happen.
+
+  ```
+  Goodwill with Delrofenler -6: Vince was held in New Arrivals past their release.
+  Safe passage complete: ... — Vince was still in the colony when safe passage ran out
+  ```
+- **The `Severed` state across save/load.** An autosave containing a severed contract — a closed
+  record still holding a live pawn reference, past its deadline — was loaded twice. Both times the
+  reference resolved and the contract finished on the next hourly beat. Zero unresolved references
+  and zero exceptions in the whole session. This was the riskiest state Phase 20 added.
+- **Not measured:** why the worker failed to reach the map edge on the expiry run. The happy path
+  works (an earlier worker walked out normally), so the exit lord functions; whether that run was
+  blocked deliberately, downed, or pathing-stuck was not established.
 
 Bugs found and fixed during the phase:
 - **A failing test that was right to fail, about a claim that was wrong.** The first version of the
