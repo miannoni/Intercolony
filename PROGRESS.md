@@ -1111,9 +1111,28 @@ Manual test:
   The last step is the one most likely to have broken: it restores the faction on an unspawned world
   pawn and then runs `MakePawnsLeave` a second time through `quest.End()`. No "tried to discard a
   world pawn", no unresolved-reference error on the way out.
+- **Save/load, and the cross-game path that broke it.** Reproduced the exact sequence that had
+  failed: quicktest world, quit to menu, new colony, open the Labor tab, hire, let them arrive, save,
+  quit to menu, reload.
+
+  ```
+  State initialized fresh                                  quicktest world, pool built
+  State initialized fresh                                  new colony
+  Dropped 15 candidate(s) left over from a previous game    the fix firing
+  Hired Vince from Devil's River                            a candidate of this world
+  Arrived -> Active
+  Loading game from file New Arrivals22
+  State loaded (schema 17, nextId 2)
+  ```
+
+  Zero exceptions, zero warnings, zero unresolved references in the whole session, where the same
+  path previously produced three duplicate-thingID errors and a continuous null-relation flood.
 - **Not yet exercised:** the safe-passage *deadline*. A worker who cannot reach the edge — walled in
   or downed — should get the "Safe passage expired" letter and cost the colony a detention penalty
   after two days. The happy path is proven; that branch is not.
+- **Worth one more pass:** saving while a contract is `Severed` and the worker is still walking out.
+  It was tested, and it was clean apart from the stale-pool damage — but that damage was in the same
+  save, so the transitional state has not had an uncontaminated run.
 
 Bugs found and fixed during the phase:
 - **A failing test that was right to fail, about a claim that was wrong.** The first version of the
