@@ -17,6 +17,45 @@ gets an answer instead of silence.
 
 ## Outstanding
 
+### Self-tests written but never run
+
+These are dev actions, not play-tests, but they are outstanding verification and belong on the same
+list. All of them: **F12** → **orange bug icon** (top-right toolbar) → type the search term → click
+the action. Output goes to the debug log; no need to copy anything out, the dev script reads it.
+
+| Search for | Action | Covers |
+|---|---|---|
+| `transition` | Run transition self-test | Phase 23 — eligibility gates, fee scaling, negotiation cap, defection cost |
+
+### Phase 23 — a worker becomes a colonist (§44, §116)
+
+**This is the riskiest code in the phase and has never been run.** The conversion works by removing
+the pawn from the quest's departure list *before* ending the quest. If that is wrong, the brand-new
+colonist walks off the map — which is exactly what every other employment ending is supposed to do.
+
+**Reaching it.** A worker must serve **30 days** (two quadrums) with a spotless record: no missed
+payroll, no arrears, never drafted against their combat clause, and employer standing at Decent or
+better. Hover an employee's row in **Intercolony → Labor → Employees** — the tooltip shows how far
+off they are, e.g. *"Settling here permanently: Served 12 of 30 days."*
+
+Fastest route: hire someone open-ended on a **daily** wage, keep silver in storage so payroll never
+misses, never draft them, and let 30 days pass.
+
+**Expect.** A letter, *"(name) has grown attached"*, and **Keep them** / **Not now** buttons on their
+row.
+
+**Then test all three routes** (on separate saves, or reload between them):
+
+1. **Pay the fee.** Expect them to become a normal colonist — still standing there, no wage, no
+   term, no departure. **Watch for them walking off the map, which is the failure this is testing
+   for.** Check afterwards that they can be drafted and sent on a caravan like any colonist.
+2. **Keep them without paying.** Expect their faction's goodwill to collapse and probably turn
+   hostile, and expect everything you had booked with them to be voided in the same moment.
+3. **Not now.** They should carry on working as an employee, and ask again about 30 days later.
+
+**Also worth a look:** the fee dialog shows the asking price and what your best Social colonist
+negotiates it down to. Worth checking the saving feels worth having a negotiator for.
+
 ### Phase 22 — open-ended employment and notice (§36.4)
 
 **Steps.** Intercolony → Labor → Hire → hire someone → in the pop-up tick **"No end date"** (top

@@ -1421,3 +1421,84 @@ Bugs found and fixed during the phase:
 - **Open-ended hires were rejected by the minimum-term check**, since 0 is below every candidate's
   minimum — and would have been priced with §36.1's short-term premium if they had got past it. Both
   found by reading the hire path rather than by the test, which never reached it.
+
+## Phase 23 — Employee-to-colonist transition  (2026-07-30)
+
+§116's goal: "Add late-game narrative conversion." Acceptance: "Conversion is rare/meaningful and
+cannot be exploited as cheap recruitment."
+
+**Status: implemented, not yet verified.** The self-test is written and registered but has not been
+run, and none of the pawn-side behaviour has been played. Both are listed in
+`docs/PENDING_PLAYTESTS.md`. Nothing in this entry should be read as proven.
+
+Implemented:
+- **All five of §44's outcomes.** A worker who has served two quadrums with a spotless record asks
+  to stay for good; the player pays the release fee, negotiates it down with Social, keeps them
+  without paying (defection), or declines. The worker asks — the same direction as §115's renewal,
+  because attachment is renewal's larger sibling and the player earning the offer is the point.
+- **Two quadrums as the eligibility bar**, chosen over a full year: long enough that both sides have
+  committed, short enough that a player running the labour system well actually sees it, with the
+  fee rather than the wait doing the work of keeping it out of reach.
+- **The release fee is 180 days of the worker's own wage**, which already encodes their skills,
+  passions, distance and the colony's reputation from Phases 16–19. So the fee tracks all of it for
+  free, and the workers most worth keeping are exactly the ones hardest to afford. A flat fee would
+  have made this a shop — cheap for precisely the people a player would want to exploit it on.
+  Modified by the source faction's goodwill: a faction that likes you parts with a citizen more
+  easily.
+- **Social negotiation cuts the fee**, up to 35% at Social 20, and is capped for the same reason the
+  fee is scaled: talking can make it cheaper, never cheap. The dialog shows the asking price and the
+  negotiated one together, so having a good negotiator is visibly worth something.
+- **Defection is available and priced in diplomacy** (§44 "pawn defects, causing diplomacy
+  consequences"). Keeping someone without settling costs 80 goodwill — enough to turn a neutral
+  faction hostile — at which point §88's policy takes over the wreckage on the same beat, so a
+  player who just started a war finds out immediately what it cost them.
+- **Declining is not an ending.** They keep working under the contract they have and may ask again
+  after 30 days.
+- Progress towards attachment is shown in the employee tooltip. §116 wants this rare, which makes it
+  worth showing how far off it is — a rare outcome nobody can see approaching is indistinguishable
+  from one that does not exist.
+- Schema 20, additive.
+
+The technical part — turning a quest lodger into a colonist in place:
+- The worker is already in the player faction; that is how they work at all. Joining is therefore
+  not a faction change, it is the **removal of lodger status**, and lodger status is the quest.
+- Ending the quest normally would send them home, because `QuestPart_Leave` carries
+  `leaveOnCleanup` — that is how every other departure in this mod works. So the pawn is removed
+  from that part's list first, and only then is the quest ended.
+- `QuestPart_ExtraFaction.Cleanup` is safe to run: it only sets a relations-gain cooldown.
+- Once the quest is no longer `Ongoing`, `QuestUtility.IsQuestLodger` goes false because it resolves
+  through `HasExtraHomeFaction`. The pawn is then a colonist by every test the game applies — threat
+  points count them, caravans take them, nothing holds a claim.
+- Deliberately **not** routed through `EmploymentService.End`, which restores the original `kindDef`
+  and sends the worker home. Both correct for a departure; both wrong here.
+
+Not implemented:
+- **The worker cannot refuse.** §44's "source faction agrees" is modelled as a price rather than a
+  decision — pay it and they are released. A faction that simply says no was the alternative and was
+  rejected: a refusal after the player has committed to a plan is frustrating in a way a high price
+  is not.
+- No counter-offer or haggling round. Negotiation is one number, computed from the best available
+  negotiator.
+- Nothing distinguishes *which* colonist negotiated beyond their Social level — no trait, gear or
+  ideology effects, though `TradePriceImprovement` would be the vanilla stat to use if this is ever
+  deepened.
+- No mood or thought effect on the new colonist, or on the colony, from a conversion or a defection.
+
+Known limitations:
+- **The conversion mechanism is the riskiest code in the phase and has never been run.** If the pawn
+  is not removed from `QuestPart_Leave.pawns` before the quest ends, the brand-new colonist walks off
+  the map. The self-test deliberately does not exercise it — joining someone permanently to the
+  colony is not a side effect a dev check should have — so this is a play-test, not an assertion.
+- A defection that turns the faction hostile while the pawn is mid-conversion has not been reasoned
+  through against §88's safe passage. The contract is closed before the goodwill hit lands, so the
+  sweep should find nothing to release, but that ordering is unproven.
+- The fee ignores the worker's actual skills except through their wage. Two workers on the same wage
+  cost the same to keep even if one is far more useful to this particular colony.
+- Eligibility is checked on the hourly beat, so an offer can arrive up to an hour after the moment it
+  describes. Invisible at this scale, but it is why the letter says "has worked here N days" rather
+  than naming a threshold.
+
+Manual test:
+- **None run.** Startup is clean on schema 20 with no def errors, and the build succeeds — that is
+  all that is currently known. See `docs/PENDING_PLAYTESTS.md` for the self-test and the four
+  play-tests this phase needs.
