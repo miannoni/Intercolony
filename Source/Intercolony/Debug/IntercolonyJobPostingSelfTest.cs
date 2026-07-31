@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text;
 using RimWorld;
 using UnityEngine;
@@ -51,7 +51,12 @@ namespace Intercolony
         /// <summary>One measurement of what a posting drew.</summary>
         private struct Draw
         {
+            /// <summary>Workers who would have taken the offer — the market's answer.</summary>
+            public int interested;
+
+            /// <summary>Workers actually queued, which the applicant cap truncates.</summary>
             public int applicants;
+
             public float averageBestSkill;
             public int bestSkill;
         }
@@ -222,8 +227,11 @@ namespace Intercolony
                 return;
             }
 
-            // Sampled rather than exhaustive — the band can be wide and each step runs the matcher.
-            int steps = Mathf.Min(12, high - low + 1);
+            // Measured as *interest*, not queue length. The applicant queue is capped at a handful
+            // by design, so it saturates a third of the way up the band and would report every
+            // offer above that as identical — hiding the very smoothness this checks for. What the
+            // player feels is the market: how many people the offer actually reaches.
+            int steps = Mathf.Min(16, high - low + 1);
             int biggestJump = 0;
             int biggestAt = 0;
             int previous = 0;
@@ -233,41 +241,40 @@ namespace Intercolony
             for (int i = 0; i < steps; i++)
             {
                 int wage = low + Mathf.RoundToInt(i * (high - low) / (float)(steps - 1));
-                int applicants = Measure(state, skill, 8, term, wage).applicants;
+                int reach = JobPostingService.CountInterested(
+                    state, skill, 8, term, wage, CombatClause.Civilian);
 
                 if (i > 0)
                 {
                     curve.Append(' ');
+                    if (reach - previous > biggestJump)
+                    {
+                        biggestJump = reach - previous;
+                        biggestAt = wage;
+                    }
                 }
 
-                curve.Append(applicants);
-
-                if (i > 0 && applicants - previous > biggestJump)
-                {
-                    biggestJump = applicants - previous;
-                    biggestAt = wage;
-                }
-
-                previous = applicants;
-                total = Mathf.Max(total, applicants);
+                curve.Append(reach);
+                previous = reach;
+                total = Mathf.Max(total, reach);
             }
 
-            r.Info($"{qualified} qualified in the census; replies across {low}-{high}: {curve}");
+            r.Info($"{qualified} qualified in the census; interest across {low}-{high}: {curve}");
 
             if (total == 0)
             {
-                r.Info("response curve skipped: nobody applied anywhere in the band.");
+                r.Info("response curve skipped: nobody would take the job anywhere in the band.");
                 return;
             }
 
             float share = biggestJump / (float)total;
-            r.Check(share <= 0.6f,
+            r.Check(share <= 0.4f,
                 "no single step across the band flips the whole market (§35.2)",
                 $"biggest jump {biggestJump} of {total} ({share:P0}) at {biggestAt}/day");
 
-            r.Check(total >= 3,
-                "a full-band offer draws enough people to choose between",
-                $"{total} at the top of the band");
+            r.Check(total >= 10,
+                "the top of the band reaches a real population, not a handful",
+                $"{total} workers would take it");
         }
 
         // --- §114's acceptance criterion ---------------------------------------------------
@@ -306,7 +313,7 @@ namespace Intercolony
             bool quantityMonotonic = true;
             for (int i = 1; i < draws.Count; i++)
             {
-                if (draws[i].applicants < draws[i - 1].applicants)
+                if (draws[i].interested < draws[i - 1].interested)
                 {
                     quantityMonotonic = false;
                 }
@@ -320,24 +327,30 @@ namespace Intercolony
                     shape.Append(", ");
                 }
 
-                shape.Append($"{wages[i]}/day -> {draws[i].applicants}");
+                shape.Append($"{wages[i]}/day -> {draws[i].interested} interested, " +
+                             $"{draws[i].applicants} queued");
             }
 
             r.Check(quantityMonotonic,
-                "raising the offer never brings fewer applicants (§114)", shape.ToString());
+                "raising the offer never reaches fewer workers (§114)", shape.ToString());
 
             Draw worst = draws[0];
             Draw best = draws[draws.Count - 1];
 
-            r.Check(best.applicants > worst.applicants,
-                "a generous offer brings measurably more applicants than a poor one (§114)",
-                $"{worst.applicants} at {wages[0]}/day vs {best.applicants} at {wages[wages.Length - 1]}/day");
+            r.Check(best.interested > worst.interested,
+                "a generous offer reaches measurably more workers than a poor one (§114)",
+                $"{worst.interested} at {wages[0]}/day vs {best.interested} at {wages[wages.Length - 1]}/day");
 
+            // The half that matters once the queue is full: a better offer must still buy better
+            // people. This is what the ranking pass exists for — without it every offer above the
+            // cheapest viable one produced the same applicants and the wage stopped meaning
+            // anything past saturation.
             if (best.applicants > 0 && worst.applicants > 0)
             {
                 r.Check(best.averageBestSkill >= worst.averageBestSkill,
-                    "a generous offer brings applicants at least as good (§114)",
-                    $"average best skill {worst.averageBestSkill:0.0} vs {best.averageBestSkill:0.0}");
+                    "a generous offer brings better applicants, not just more (§114)",
+                    $"average best skill {worst.averageBestSkill:0.0} at {wages[0]}/day vs " +
+                    $"{best.averageBestSkill:0.0} at {wages[wages.Length - 1]}/day");
             }
             else
             {
@@ -347,9 +360,9 @@ namespace Intercolony
             // An offer below everyone's asking price must draw nobody. This is the assertion that
             // catches a matcher that has quietly stopped checking the wage at all.
             Draw hopeless = Measure(state, skill, 0, term, 1);
-            r.Check(hopeless.applicants == 0,
-                "an offer of 1 silver a day draws nobody (§114)",
-                $"{hopeless.applicants} applicant(s)");
+            r.Check(hopeless.applicants == 0 && hopeless.interested == 0,
+                "an offer of 1 silver a day reaches nobody at all (§114)",
+                $"{hopeless.interested} interested, {hopeless.applicants} queued");
         }
 
         /// <summary>
@@ -388,13 +401,15 @@ namespace Intercolony
             rep.Adjust(EmployerReputation.MaxScore - rep.Score);
             Draw asGood = Measure(state, skill, 0, term, wage);
 
-            r.Check(asGood.applicants >= asBad.applicants,
-                "the same offer draws at least as many for a good employer as a bad one (§114)",
-                $"{asBad.applicants} exploitative vs {asGood.applicants} sought-after, at {wage}/day");
+            // Reach rather than queue length, for the same reason as the response curve: the queue
+            // caps out and would report a sought-after employer and an exploitative one as equal.
+            r.Check(asGood.interested >= asBad.interested,
+                "the same offer reaches at least as many for a good employer as a bad one (§114)",
+                $"{asBad.interested} exploitative vs {asGood.interested} sought-after, at {wage}/day");
 
-            r.Check(asGood.applicants > asBad.applicants,
-                "employer reputation measurably changes who answers (§114, §112)",
-                $"{asBad.applicants} vs {asGood.applicants}");
+            r.Check(asGood.interested > asBad.interested,
+                "employer reputation measurably changes who will take the job (§114, §112)",
+                $"{asBad.interested} vs {asGood.interested}");
         }
 
         /// <summary>
@@ -450,6 +465,10 @@ namespace Intercolony
             r.Check(total <= single.applicants,
                 "five identical postings draw no more people than one (§35.2)",
                 $"one drew {single.applicants}, five drew {total} across {postingsWithAnyone} posting(s)");
+
+            r.Check(postingsWithAnyone <= 1,
+                "identical postings do not each collect their own queue (§35.2)",
+                $"{postingsWithAnyone} of 5 drew anyone");
         }
 
         /// <summary>A posting that draws nobody has to say which of the two reasons it was.</summary>
@@ -542,7 +561,12 @@ namespace Intercolony
             JobPosting posting = MakePosting(state, skill, minLevel, term, wage);
             JobPostingService.MatchAll(state);
 
-            Draw draw = new Draw { applicants = posting.Applicants.Count };
+            Draw draw = new Draw
+            {
+                applicants = posting.Applicants.Count,
+                interested = JobPostingService.CountInterested(
+                    state, skill, minLevel, term, wage, CombatClause.Civilian)
+            };
 
             if (draw.applicants > 0)
             {

@@ -1247,3 +1247,88 @@ Bugs found and fixed during the phase:
   non-ASCII character**, turning each em dash into `â€"` and each `§` into `Â§` throughout the Phase
   20 entry. Caught and repaired by re-decoding; recorded because the file is the record and a
   corrupted record is worse than a missing one. Write it with the file tools, not the shell.
+
+## Phase 21 — Job postings and applicants  (2026-07-30)
+
+§114's goal: "Turn labor into a two-sided market." Acceptance: "Higher wages and better employer
+reputation measurably improve applicant quantity/quality."
+
+Implemented:
+- **Job postings (§35.2)**, the inversion of the existing listing: the player names the skill
+  requirement, positions, term, wage, wage structure and combat clause, and the world decides whether
+  that is enough. §35 wants both workflows, so the Hire listing is untouched.
+- **One rule does the matching, and it is the existing pricing formula.** A worker applies if they
+  meet the skill bar and the offered wage clears what they would have charged on the open market.
+  §114's acceptance criterion falls out of that rather than being tuned: better workers ask more, so
+  a higher offer clears more of them and better ones; and Phase 19's `WageFactor` already multiplies
+  every ask by employer reputation, so a bad employer's offer clears fewer people with no separate
+  mechanism. A purpose-built "attractiveness" model was the obvious approach and the wrong one —
+  two models of what a worker is worth would drift, and the two tabs would quote different numbers
+  for the same person.
+- **A labor census, roughly 40x the advertised listing.** Up to 900 lightweight `LaborProspect`
+  records, 30 per settlement, built lazily and only when a posting exists. A real pawn is generated
+  only for the few who actually apply, then aligned to the record so the person who turns up is the
+  person the market described.
+- **Two-phase matching.** Every worker picks their preferred posting ignoring whether it is full,
+  then each posting takes the *best* of the people who want it. Ignoring room is what makes ten
+  identical postings behave like one; ranking is what keeps a generous offer worth making once the
+  queue is full.
+- **Standing orders**: a posting is re-examined against every market refresh until filled or lapsed,
+  which is what makes it worth placing over watching the Hire tab.
+- **A measured going-rate band** in the posting dialog — it asks the matcher's own question of the
+  matcher's own census, so the numbers shown are the numbers that decide who applies. Shown as a band
+  because the requirement genuinely spans one.
+- **A posting that draws nobody says which of the two reasons it was** — the wage is below what
+  anyone with that skill will take, or nobody reachable has the skill. Measured, not guessed.
+- Labor tab split into **Hire | Posts | Employees** sub-tabs (§56), with an applicants badge on the
+  main tab because applicants have a patience and will go home unanswered.
+- Schema 18, additive.
+
+Not implemented:
+- **Housing and safety** as applicant factors, which §35.2 lists. They are §41's subject, still
+  unmeasured since Phase 19, and Phase 22's renewal work wants them too — half-building a
+  living-conditions model here would mean building it twice.
+- Multiple requirements per posting (§35.2 shows one). Category or "any of" requirements are a later
+  addition, not a gap.
+- Counter-offers or negotiation. An applicant accepts the posted wage or does not apply.
+
+Known limitations:
+- **Two populations, one formula.** The Hire tab still generates real pawns and does not draw from
+  the census, so its prices are a separate small sample rather than a slice of the band. Unifying
+  them would be better architecture but means rewriting the working Phase 16-19 hire path.
+- **A hired applicant reappears in the next cycle's census**, which regenerates from the seed. The
+  Hire listing already behaves that way so it is at least consistent, but the world does not remember
+  who it has already sent.
+- The applicant queue is capped at positions + 3. Above that a better offer buys better applicants
+  rather than more, which is intended — but it does mean the player never sees how deep their reach
+  actually was.
+- Census skill distribution is modelled rather than sampled from `PawnGenerator`, so it approximates
+  what real pawn generation produces rather than matching it. The self-test asserts a spread and that
+  both representations price through one formula, which catches drift but not calibration.
+
+Manual test:
+- `Run job posting self-test`: **25 passed, 0 failed.** Census of 594 workers across 30 settlements,
+  39.6x the advertised listing, skill values spanning 13.0 to 58.9. Interest across the going-rate
+  band `1 2 4 18 32 45 67 83 94 105 110 118 119 119 120 122` — biggest single step 18% of the total.
+  Reputation moved the same offer from 115 workers to 744. Five identical postings drew 9 between
+  them, all on one posting. No world pawns leaked.
+- Startup clean, schema 18, no def errors.
+
+Bugs found and fixed during the phase:
+- **The pool was too shallow to be a market, found in play.** Moving a posted wage one silver took a
+  posting from nobody interested to every qualified worker, because there were three of them and they
+  all charged about the same. Fixed by the census — depth without pawn generation, since the matcher
+  never needed pawns, only "can they do the work" and "what do they charge".
+- **The matcher took the first N workers in census order, not the best.** So above the queue cap a
+  generous offer bought nothing at all: 145 workers qualified and the player got the same arbitrary 9
+  whether they offered 32 or 68. The deep census was working and the last step threw the signal away.
+  Fixed by ranking each posting's interested workers by the advertised skill.
+- **Identical postings were spilling into each other.** Because room was checked while choosing, a
+  full posting pushed workers onto the next identical notice — so five postings collected five queues
+  and advertising the same job repeatedly multiplied the labor supply out of nothing. Fixed by
+  deciding preference before considering room.
+- **Three self-test assertions were measuring the queue, not the market.** The queue is capped by
+  design, so it saturated a third of the way up the band and reported every offer above that as
+  identical — hiding the smoothness the census exists to create. Quantity and reputation are now
+  measured as reach, quality on the ranked queue. The lesson is the recurring one: assert against the
+  thing the design is about, not the nearest number to hand.

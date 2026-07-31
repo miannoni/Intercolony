@@ -147,6 +147,15 @@ namespace Intercolony
             List<LaborProspect> world = LaborCandidateService.Census(state);
             Dictionary<int, int> gained = new Dictionary<int, int>();
 
+            // Phase one: every worker picks the one posting that suits them best, without regard
+            // to whether it already has a queue.
+            //
+            // Ignoring room here is deliberate and is what makes ten identical postings behave like
+            // one. If a full posting pushed workers onto the next identical notice, advertising the
+            // same job five times would collect five queues, and the market would stop being the
+            // scarce thing. A worker who wanted the job that filled up simply does not apply.
+            Dictionary<int, List<Interest>> interested = new Dictionary<int, List<Interest>>();
+
             foreach (LaborProspect worker in world)
             {
                 if (worker == null)
@@ -160,7 +169,7 @@ namespace Intercolony
 
                 foreach (JobPosting posting in open)
                 {
-                    if (!HasRoom(posting) || !posting.MeetsRequirement(worker))
+                    if (!posting.MeetsRequirement(worker))
                     {
                         continue;
                     }
@@ -187,13 +196,47 @@ namespace Intercolony
                     continue;
                 }
 
-                // One worker, one application. This is what makes ten identical postings behave
-                // exactly like one — they compete for the same people rather than each summoning
-                // their own.
-                if (Apply(best, worker, bestAsk))
+                if (!interested.TryGetValue(best.id, out List<Interest> queue))
                 {
-                    gained.TryGetValue(best.id, out int n);
-                    gained[best.id] = n + 1;
+                    queue = new List<Interest>();
+                    interested[best.id] = queue;
+                }
+
+                queue.Add(new Interest { worker = worker, ask = bestAsk });
+            }
+
+            // Phase two: each posting takes the **best** of the people who want it, not the first
+            // few the census happened to list.
+            //
+            // This is what keeps a generous offer worth making once the queue is full. Below the
+            // cap a better wage buys more replies; above it, it buys better ones — because a higher
+            // offer clears stronger workers who would not have applied at all, and they now
+            // displace the weaker ones rather than arriving behind them. Taking the first N in
+            // census order threw that away and made every offer above the cheapest look identical.
+            foreach (JobPosting posting in open)
+            {
+                if (!interested.TryGetValue(posting.id, out List<Interest> queue))
+                {
+                    continue;
+                }
+
+                queue.Sort((a, b) => Desirability(b.worker, posting).CompareTo(
+                    Desirability(a.worker, posting)));
+
+                int room = Room(posting);
+                int taken = 0;
+
+                for (int i = 0; i < queue.Count && taken < room; i++)
+                {
+                    if (Apply(posting, queue[i].worker, queue[i].ask))
+                    {
+                        taken++;
+                    }
+                }
+
+                if (taken > 0)
+                {
+                    gained[posting.id] = taken;
                 }
             }
 
@@ -204,9 +247,32 @@ namespace Intercolony
             }
         }
 
-        private static bool HasRoom(JobPosting posting)
+        /// <summary>One worker's willingness to take one posting, before anyone has been chosen.</summary>
+        private struct Interest
         {
-            return posting.Applicants.Count < posting.PositionsRemaining + ApplicantSlack;
+            public LaborProspect worker;
+            public int ask;
+        }
+
+        /// <summary>How many more applicants this posting will hold.</summary>
+        private static int Room(JobPosting posting)
+        {
+            return Mathf.Max(0,
+                posting.PositionsRemaining + ApplicantSlack - posting.Applicants.Count);
+        }
+
+        /// <summary>
+        /// How much an employer would want this worker for this job.
+        ///
+        /// The advertised skill comes first, because that is what the posting asked for: a
+        /// Construction 16 generalist beats a Construction 11 prodigy when the job is building.
+        /// Overall ability breaks the tie, so between two equally qualified applicants the more
+        /// capable one is the one who turns up.
+        /// </summary>
+        private static float Desirability(LaborProspect worker, JobPosting posting)
+        {
+            float required = posting.skill == null ? 0f : worker.LevelOf(posting.skill);
+            return required * 100f + worker.pricedSkillValue;
         }
 
         /// <summary>
@@ -513,6 +579,52 @@ namespace Intercolony
         {
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
             return settlement == null ? null : state.GetProfile(settlement);
+        }
+
+        /// <summary>
+        /// How many workers in the census would take these terms — the market's response before the
+        /// applicant queue truncates it.
+        ///
+        /// The player never sees this number: they see the queue, and §35.2's screen shows
+        /// applicants rather than interest. It exists so the self-test can measure the *market*
+        /// rather than the queue length, which saturates at the cap and would hide the very
+        /// smoothness the census was built to produce.
+        /// </summary>
+        public static int CountInterested(
+            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int termDays,
+            int wageOffered, CombatClause clause)
+        {
+            if (state == null)
+            {
+                return 0;
+            }
+
+            float standing = EmployerReputationService.ScoreFor(state);
+            int count = 0;
+
+            foreach (LaborProspect worker in LaborCandidateService.Census(state))
+            {
+                if (worker == null)
+                {
+                    continue;
+                }
+
+                if (skill != null && (!worker.CanDo(skill) || worker.LevelOf(skill) < minLevel))
+                {
+                    continue;
+                }
+
+                int ask = LaborCandidateService.DailyWageFor(
+                    worker.pricedSkillValue, ProfileFor(state, worker.settlementId),
+                    worker.distanceTiles, termDays, standing, clause);
+
+                if (wageOffered >= ask)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         /// <summary>
