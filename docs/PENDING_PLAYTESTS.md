@@ -27,12 +27,12 @@ the action. Output goes to the debug log; no need to copy anything out, the dev 
 
 ### Phase 23 — a worker becomes a colonist (§44, §116)
 
-**This is the riskiest code in the phase and has never been run.** The conversion works by removing
-the pawn from the quest's departure list *before* ending the quest. If that is wrong, the brand-new
-colonist walks off the map — which is exactly what every other employment ending is supposed to do.
+**The self-test passes 21/21**, so the gates, the fee, negotiation and the defection cost are proven.
+What is left is entirely about the pawn, and it is the riskiest code in the phase.
 
-**The self-test already passes (21/21)**, so the gates, the fee, negotiation and the defection cost
-are proven. What is left is entirely about the pawn.
+The conversion works by removing the pawn from the quest's departure list *before* ending the quest.
+If that is wrong, the brand-new colonist walks off the map — which is exactly what every other
+employment ending is supposed to do.
 
 **Setup — about two minutes, no waiting.** All four steps are **F12** → **orange bug icon** → search
 → click:
