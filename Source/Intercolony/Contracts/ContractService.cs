@@ -213,6 +213,22 @@ namespace Intercolony
                     continue;
                 }
 
+                // A renewal offer left unanswered lapses, and says so. §115 forbids silent endings,
+                // and an offer that quietly evaporated would be exactly that.
+                if (contract.renewalOffered && now >= contract.renewalExpiryTick)
+                {
+                    contract.renewalOffered = false;
+                    contract.renewalExpiryTick = 0;
+                    contract.outcomeNote += " Renewal offer lapsed unanswered.";
+
+                    Find.LetterStack.ReceiveLetter(
+                        "Renewal offer lapsed",
+                        $"{contract.settlementName}'s offer to renew your supply agreement has expired " +
+                        "unanswered.\n\nThey have made other arrangements.",
+                        LetterDefOf.NeutralEvent);
+                    continue;
+                }
+
                 if (!contract.IsActive)
                 {
                     continue;
@@ -243,6 +259,117 @@ namespace Intercolony
             }
         }
 
+        /// <summary>
+        /// A completed agreement either gets offered again or is closed with a reason (§115, §107).
+        ///
+        /// §115's acceptance criterion says an agreement that runs its course *"either renews or is
+        /// declined for a stated reason. Neither employment nor supply agreements end by silently
+        /// lapsing."* Before this, a completed agreement simply stopped — §107 listed renewal and
+        /// Phase 14 did not build it.
+        ///
+        /// Deliberately the same shape as the employment renewal in <see cref="RenewalService"/>:
+        /// the *counterparty* offers, and whether they offer depends on the player's record with
+        /// them. The two use different reputations — commercial here, employer there — because a
+        /// settlement's opinion of you as a supplier is per settlement (§8) while your name as an
+        /// employer is not, but the mechanism and the wording are one.
+        /// </summary>
+        private static void OfferRenewal(IntercolonyWorldComponent state, RecurringContract contract)
+        {
+            CommercialReputation standing = ReputationService.ForSettlement(state, contract.settlementId);
+            float score = standing?.Score ?? CommercialReputation.StartingScore;
+
+            // Reliability rather than the score alone: a run with missed deliveries in it is a
+            // reason not to re-sign even if the relationship survived them.
+            bool clean = contract.cyclesFailed == 0;
+            bool trusted = score >= MinimumReputation;
+
+            if (!clean || !trusted)
+            {
+                contract.outcomeNote += !clean
+                    ? $" Not renewed: {contract.cyclesFailed} missed deliver" +
+                      (contract.cyclesFailed == 1 ? "y." : "ies.")
+                    : " Not renewed: they do not trust the arrangement enough to repeat it.";
+
+                Find.LetterStack.ReceiveLetter(
+                    "Supply agreement fulfilled",
+                    $"You completed every remaining delivery of your agreement with " +
+                    $"{contract.settlementName}.\n\n" + contract.outcomeNote + "\n\n" +
+                    (clean
+                        ? "Build your standing with them and they may propose another."
+                        : "A run without a missed delivery is what gets one renewed."),
+                    LetterDefOf.NeutralEvent);
+                return;
+            }
+
+            contract.renewalOffered = true;
+            contract.renewalExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay;
+
+            Find.LetterStack.ReceiveLetter(
+                "Supply agreement — renewal offered",
+                $"You completed every delivery of your agreement with {contract.settlementName}, " +
+                $"{contract.cyclesCompleted} of {contract.totalCycles}, without missing one.\n\n" +
+                $"They would sign again on the same terms: {contract.quantityPerCycle}x " +
+                $"{contract.ItemLabel()} every {contract.CadenceDays:F0} days, " +
+                $"{contract.totalCycles} more times at {contract.unitPrice:F2} each.\n\n" +
+                $"Answer in the Contracts tab within {OfferLifespanDays} days.",
+                LetterDefOf.PositiveEvent);
+
+            IntercolonyLog.Message($"Renewal offered on contract {contract.id} by {contract.settlementName}.");
+        }
+
+        /// <summary>Takes up a renewal offer: the same agreement, its counters reset for a fresh run.</summary>
+        public static bool AcceptRenewal(IntercolonyWorldComponent state, RecurringContract contract)
+        {
+            if (contract == null || !contract.renewalOffered ||
+                contract.status != ContractStatus.Completed)
+            {
+                return false;
+            }
+
+            contract.status = ContractStatus.Active;
+            contract.outcomeNote = "";
+            contract.cyclesCompleted = 0;
+            contract.cyclesFailed = 0;
+            contract.consecutiveFailures = 0;
+            contract.activeOrderId = 0;
+            contract.nextCycleTick = GenTicks.TicksGame;
+            contract.renewalOffered = false;
+            contract.renewalExpiryTick = 0;
+            contract.renewals++;
+
+            CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
+            rep?.Adjust(4f);
+
+            Messages.Message(
+                $"Renewed the supply agreement with {contract.settlementName}: " +
+                $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
+                $"{contract.CadenceDays:F0} days, {contract.totalCycles} more times.",
+                MessageTypeDefOf.PositiveEvent, historical: false);
+
+            IntercolonyLog.Message($"Contract {contract.id} renewed (run {contract.renewals + 1}).");
+            return true;
+        }
+
+        /// <summary>
+        /// Turns a renewal down. §115 calls this voluntary non-renewal, and it is not a breach —
+        /// the agreement was completed. Declining costs nothing but the relationship's momentum.
+        /// </summary>
+        public static void DeclineRenewal(RecurringContract contract)
+        {
+            if (contract == null || !contract.renewalOffered)
+            {
+                return;
+            }
+
+            contract.renewalOffered = false;
+            contract.renewalExpiryTick = 0;
+            contract.outcomeNote += " Renewal declined.";
+
+            Messages.Message(
+                $"Declined to renew with {contract.settlementName}.",
+                MessageTypeDefOf.NeutralEvent, historical: false);
+        }
+
         private static void ResolveCycle(
             IntercolonyWorldComponent state, RecurringContract contract, SalesOrder order)
         {
@@ -262,11 +389,7 @@ namespace Intercolony
                     CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
                     rep?.Adjust(8f);
 
-                    Find.LetterStack.ReceiveLetter(
-                        "Supply agreement fulfilled",
-                        $"You completed every delivery of your agreement with {contract.settlementName}.\n\n" +
-                        contract.outcomeNote,
-                        LetterDefOf.PositiveEvent);
+                    OfferRenewal(state, contract);
                 }
 
                 return;

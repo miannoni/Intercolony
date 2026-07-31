@@ -41,6 +41,51 @@ namespace Intercolony
             return breaches == 0 ? 1f : Mathf.Min(1f + breaches, MaxBreachMultiplier);
         }
 
+        /// <summary>
+        /// Extra days of wage owed per day served, by clause (§43, §115).
+        ///
+        /// **Phase 22 had to add this, and the reason is arithmetic rather than flavour.** Phase 20
+        /// measured that a drafted civilian stops being the expensive option past a 99-day
+        /// engagement: compensation was a fixed number of days' wage while both wage bills grow with
+        /// the term, so a long enough contract always favoured the shield. That was safe while the
+        /// cap was 60 days. §36.4's open-ended employment has no term at all, so it is not safe any
+        /// more — and no constant fixes a fixed figure.
+        ///
+        /// Tenure does. A civilian accrues severance six times faster than a security contractor,
+        /// so the gap between them widens with every day served rather than being outrun by wages.
+        /// It also reads correctly on its own terms: someone who has worked here a year is owed more
+        /// than someone who arrived on Tuesday.
+        /// </summary>
+        public static float SeveranceDaysPerDayServed(CombatClause clause)
+        {
+            switch (clause)
+            {
+                case CombatClause.Armed:
+                    return 0.25f;
+                case CombatClause.Security:
+                    return 0.1f;
+                default:
+                    return 0.6f;
+            }
+        }
+
+        /// <summary>
+        /// Days of wage owed for length of service, on top of the clause's base figure.
+        ///
+        /// Uncapped on purpose. A cap would restore exactly the flat-figure problem this exists to
+        /// solve, just further out — and an employer who has kept someone for years genuinely does
+        /// owe them more than one who has not.
+        /// </summary>
+        public static float SeveranceDays(EmploymentContract contract)
+        {
+            if (contract == null)
+            {
+                return 0f;
+            }
+
+            return contract.TenureDays * SeveranceDaysPerDayServed(contract.combatClause);
+        }
+
         /// <summary>Silver owed if this worker dies now (§43).</summary>
         public static int DeathCompensation(EmploymentContract contract)
         {
@@ -49,7 +94,8 @@ namespace Intercolony
                 return 0;
             }
 
-            float owed = contract.dailyWage * contract.combatClause.DeathCompensationDays();
+            float days = contract.combatClause.DeathCompensationDays() + SeveranceDays(contract);
+            float owed = contract.dailyWage * days;
             return Mathf.Max(0, Mathf.RoundToInt(owed * BreachMultiplier(contract)));
         }
 
@@ -127,9 +173,10 @@ namespace Intercolony
             }
 
             // A worker who never arrived has no snapshot to compare against, so every injury they
-            // were generated with would read as one the colony inflicted. endTick is set exactly
-            // once, on arrival, which makes it the honest test for "did they ever work here".
-            if (contract.endTick < 0)
+            // were generated with would read as one the colony inflicted. arrivedTick is set exactly
+            // once, on arrival — endTick used to serve as this test and cannot any more, because an
+            // open-ended contract never sets one.
+            if (contract.arrivedTick < 0)
             {
                 return;
             }

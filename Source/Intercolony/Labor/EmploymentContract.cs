@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -94,6 +94,15 @@ namespace Intercolony
         public string workerSkills = "";
 
         public int dailyWage;
+
+        /// <summary>
+        /// Length of the engagement, or **0 for open-ended** (§36.4): the worker stays until one
+        /// side ends it under the rules.
+        ///
+        /// Zero rather than a separate flag because every existing term calculation already reads
+        /// this field, and a flag would mean auditing all of them for the case where the two
+        /// disagree. <see cref="IsOpenEnded"/> is the readable test.
+        /// </summary>
         public int termDays;
 
         // --- Combat clause (§42, §43, §113) ------------------------------------------------
@@ -156,6 +165,42 @@ namespace Intercolony
         public int hiredTick;
         public int arrivalTick;
 
+        /// <summary>
+        /// When the worker actually started, or -1 if they never arrived.
+        ///
+        /// Distinct from <see cref="arrivalTick"/>, which is the *expected* arrival set at hire and
+        /// is a future tick while they travel. Tenure and §43's compensation both need to know when
+        /// service began, and "endTick is still -1" used to stand in for "never arrived" — which
+        /// stops being true the moment open-ended contracts exist, because those never set one.
+        /// </summary>
+        public int arrivedTick = -1;
+
+        /// <summary>
+        /// When a dismissal notice runs out (§36.4). -1 when none is being served.
+        ///
+        /// An open-ended worker is not sent home the instant the player clicks: they work out the
+        /// notice, or it is paid off. That is what makes open-ended employment a commitment on the
+        /// colony's side too, rather than strictly better than a fixed term.
+        /// </summary>
+        public int noticeEndTick = -1;
+
+        // --- Renewal (§115) ----------------------------------------------------------------
+
+        /// <summary>Set once the renewal question has been raised, so it is asked once per term.</summary>
+        public bool renewalOffered;
+
+        /// <summary>The worker did not ask to stay. §115: an ending must never be silent.</summary>
+        public bool renewalDeclinedByWorker;
+
+        /// <summary>The player said no. Voluntary non-renewal — they serve out the term and go.</summary>
+        public bool renewalDeclinedByPlayer;
+
+        /// <summary>What they want for another term. 0 when no offer is live.</summary>
+        public int renewalWage;
+
+        /// <summary>How many terms this worker has signed on for beyond the first.</summary>
+        public int renewals;
+
         /// <summary>Set on arrival: the term runs from the first day of work, not from hiring.</summary>
         public int endTick = -1;
 
@@ -195,16 +240,44 @@ namespace Intercolony
 
         public float DaysUntilArrival => (arrivalTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
-        public float DaysRemaining => endTick < 0
-            ? termDays
-            : (endTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
+        /// <summary>§36.4 — no agreed end date. Runs until one side terminates under the rules.</summary>
+        public bool IsOpenEnded => termDays <= 0;
+
+        /// <summary>Days actually served so far. 0 before arrival; the basis for §43's severance.</summary>
+        public float TenureDays => arrivedTick < 0
+            ? 0f
+            : Mathf.Max(0f, (GenTicks.TicksGame - arrivedTick) / (float)GenDate.TicksPerDay);
+
+        /// <summary>Whether a dismissal notice is currently running down.</summary>
+        public bool ServingNotice => noticeEndTick >= 0;
+
+        public float DaysOfNoticeLeft => noticeEndTick < 0
+            ? 0f
+            : Mathf.Max(0f, (noticeEndTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay);
+
+        /// <summary>
+        /// Days left on the term. Meaningless for an open-ended contract, which reports
+        /// <see cref="float.MaxValue"/> so that every "is this nearly over" test answers no rather
+        /// than accidentally answering yes on a zero term.
+        /// </summary>
+        public float DaysRemaining => IsOpenEnded
+            ? float.MaxValue
+            : endTick < 0
+                ? termDays
+                : (endTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
         public float DaysUntilPayment => nextPaymentTick < 0
             ? -1f
             : (nextPaymentTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
         /// <summary>What the whole term costs under the chosen structure (§37).</summary>
-        public int TotalCommitment => WageStructureUtility.TotalCost(wageStructure, dailyWage, termDays);
+        /// <summary>
+        /// What the whole term costs (§37). An open-ended contract has no whole term, so this is
+        /// its cost per pay period instead — the only figure that means anything for one.
+        /// </summary>
+        public int TotalCommitment => IsOpenEnded
+            ? PeriodPayment
+            : WageStructureUtility.TotalCost(wageStructure, dailyWage, termDays);
 
         /// <summary>Amount a single pay period costs. Zero for prepaid.</summary>
         public int PeriodPayment => WageStructureUtility.PeriodCost(wageStructure, dailyWage);
@@ -298,6 +371,13 @@ namespace Intercolony
 
             Scribe_Values.Look(ref hiredTick, "hiredTick", 0);
             Scribe_Values.Look(ref arrivalTick, "arrivalTick", 0);
+            Scribe_Values.Look(ref arrivedTick, "arrivedTick", -1);
+            Scribe_Values.Look(ref noticeEndTick, "noticeEndTick", -1);
+            Scribe_Values.Look(ref renewalOffered, "renewalOffered", false);
+            Scribe_Values.Look(ref renewalDeclinedByWorker, "renewalDeclinedByWorker", false);
+            Scribe_Values.Look(ref renewalDeclinedByPlayer, "renewalDeclinedByPlayer", false);
+            Scribe_Values.Look(ref renewalWage, "renewalWage", 0);
+            Scribe_Values.Look(ref renewals, "renewals", 0);
             Scribe_Values.Look(ref endTick, "endTick", -1);
 
             Scribe_Values.Look(ref status, "status", EmploymentStatus.Travelling);

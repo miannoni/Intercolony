@@ -58,6 +58,12 @@ namespace Intercolony
         /// <summary>Released workers who were still in the colony when their safe conduct lapsed (§88).</summary>
         public int safePassageDenials;
 
+        /// <summary>Terms a worker asked to serve again (§40's "voluntary renewal", §115).</summary>
+        public int renewals;
+
+        /// <summary>Open-ended workers let go without the notice they were owed (§36.4).</summary>
+        public int noticesSkipped;
+
         public float Score => score;
 
         public int ScoreDisplay => Mathf.RoundToInt(score);
@@ -105,6 +111,8 @@ namespace Intercolony
             Scribe_Values.Look(ref earlyDismissals, "earlyDismissals", 0);
             Scribe_Values.Look(ref combatClauseBreaches, "combatClauseBreaches", 0);
             Scribe_Values.Look(ref safePassageDenials, "safePassageDenials", 0);
+            Scribe_Values.Look(ref renewals, "renewals", 0);
+            Scribe_Values.Look(ref noticesSkipped, "noticesSkipped", 0);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {

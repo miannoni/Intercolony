@@ -710,6 +710,28 @@ namespace Intercolony
                 return;
             }
 
+            // A live renewal offer outranks the dismiss button: it expires on its own, and it is
+            // the thing the player is being asked about (§115).
+            if (RenewalService.HasLiveOffer(contract))
+            {
+                Rect renewRect = new Rect(rect.xMax - actionWidth * 2f - 8f, rect.y + 11f, actionWidth, 30f);
+                if (Widgets.ButtonText(renewRect, $"Renew {contract.renewalWage}"))
+                {
+                    if (!RenewalService.Accept(contract, out string failReason))
+                    {
+                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                    }
+                }
+
+                Rect declineRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f);
+                if (Widgets.ButtonText(declineRect, "Let go"))
+                {
+                    RenewalService.Decline(contract);
+                }
+
+                return;
+            }
+
             Rect endRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f);
             if (Widgets.ButtonText(endRect, contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss"))
             {
@@ -805,6 +827,16 @@ namespace Intercolony
 
         private void ConfirmDismiss(EmploymentContract contract)
         {
+            // §36.4: an open-ended worker is owed notice, and the player picks how to settle it.
+            // Three routes rather than a yes/no, because the interesting decision is whether the
+            // colony wants the remaining labour, the silver, or neither.
+            if (contract.IsOpenEnded && contract.status == EmploymentStatus.Active &&
+                !contract.ServingNotice)
+            {
+                ConfirmOpenEndedDismiss(contract);
+                return;
+            }
+
             bool travelling = contract.status == EmploymentStatus.Travelling;
 
             string body = travelling
@@ -822,6 +854,44 @@ namespace Intercolony
                         ? $"{contract.workerName}'s contract was cancelled before they arrived"
                         : $"{contract.workerName} was dismissed early"),
                 destructive: true));
+        }
+
+        /// <summary>
+        /// Ending an open-ended engagement (§36.4). Work the notice, pay it off, or skip it and
+        /// wear the consequence — the last is deliberately available, because the rules are meant
+        /// to price the decision rather than remove it.
+        /// </summary>
+        private void ConfirmOpenEndedDismiss(EmploymentContract contract)
+        {
+            int days = RenewalService.NoticeDays(contract);
+            int inLieu = RenewalService.PayInLieu(contract);
+
+            string body =
+                $"{contract.workerName} is on an open-ended contract and has served " +
+                $"{contract.TenureDays:0} days.\n\n" +
+                $"Notice owed: {days} days ({inLieu} silver).";
+
+            Find.WindowStack.Add(new Dialog_MessageBox(
+                body,
+                $"Work out the {days} days",
+                () => RenewalService.GiveNotice(contract),
+                $"Pay {inLieu} and end it now",
+                () =>
+                {
+                    if (!RenewalService.TryPayInLieu(contract, Find.CurrentMap, out string failReason))
+                    {
+                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                    }
+                })
+            {
+                buttonCText = "Dismiss with no notice",
+                buttonCAction = () => Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                    $"Send {contract.workerName} home today, owing them {days} days' notice?\n\n" +
+                    "Word gets around. Your standing as an employer will suffer, and so will " +
+                    $"{contract.factionName}'s opinion of you.",
+                    () => RenewalService.DismissWithoutNotice(contract),
+                    destructive: true))
+            });
         }
 
         private void DrawWorkerHeader(Rect rect)

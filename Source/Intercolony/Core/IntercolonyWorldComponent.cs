@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 18;
+        public const int CurrentSaveVersion = 19;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -1270,6 +1270,19 @@ namespace Intercolony
             {
                 // 12 -> 13 added recurring contracts. Purely additive.
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
+            }
+
+            if (saveVersion < 19)
+            {
+                // 18 -> 19 added open-ended employment, renewal and notice periods. Additive by
+                // construction: every new field defaults to the old behaviour — no renewal offered,
+                // no notice being served, and termDays > 0 on every existing contract, so nothing
+                // becomes open-ended retroactively. arrivedTick is the one to watch: it defaults to
+                // -1, so an employment already in flight reads as tenure zero and accrues severance
+                // only from now. That is the honest reading rather than inventing a start date.
+                IntercolonyLog.Message(
+                    "  schema 18 -> 19: open-ended employment, renewal and notice periods added; " +
+                    "existing employments keep their fixed terms and start accruing tenure now.");
             }
 
             if (saveVersion < 18)

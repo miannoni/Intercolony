@@ -1,4 +1,4 @@
-using RimWorld;
+﻿using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -81,6 +81,20 @@ namespace Intercolony
         /// by the length of the outage, so no delivery is lost to the suspension (§88, §113).
         /// </summary>
         public int suspendedTick;
+
+        // --- Renewal (§115, §107) ----------------------------------------------------------
+
+        /// <summary>The settlement has offered another run of the same agreement.</summary>
+        public bool renewalOffered;
+
+        /// <summary>When that offer lapses. §115: an offer must not sit unanswered forever.</summary>
+        public int renewalExpiryTick;
+
+        /// <summary>Runs of this agreement beyond the first.</summary>
+        public int renewals;
+
+        public float DaysUntilRenewalExpires =>
+            (renewalExpiryTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
         /// <summary>Id of the sales order for the cycle currently in flight, or 0.</summary>
         public int activeOrderId;
@@ -179,6 +193,9 @@ namespace Intercolony
             Scribe_Values.Look(ref nextCycleTick, "nextCycleTick", 0);
             Scribe_Values.Look(ref offerExpiryTick, "offerExpiryTick", 0);
             Scribe_Values.Look(ref suspendedTick, "suspendedTick", 0);
+            Scribe_Values.Look(ref renewalOffered, "renewalOffered", false);
+            Scribe_Values.Look(ref renewalExpiryTick, "renewalExpiryTick", 0);
+            Scribe_Values.Look(ref renewals, "renewals", 0);
             Scribe_Values.Look(ref activeOrderId, "activeOrderId", 0);
             Scribe_Values.Look(ref consecutiveFailures, "consecutiveFailures", 0);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");

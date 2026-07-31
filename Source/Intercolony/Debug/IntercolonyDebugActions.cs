@@ -550,6 +550,13 @@ namespace Intercolony
                 IntercolonyEmployerReputationSelfTest.Run(state, Find.CurrentMap)));
         }
 
+        [DebugAction(Category, "Run long-term employment self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 64)]
+        private static void RunLongTermSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyLongTermSelfTest.Run(state, Find.CurrentMap)));
+        }
+
         [DebugAction(Category, "Run job posting self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 63)]
         private static void RunJobPostingSelfTest()
         {

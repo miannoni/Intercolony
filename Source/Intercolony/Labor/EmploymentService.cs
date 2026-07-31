@@ -54,9 +54,21 @@ namespace Intercolony
                 return null;
             }
 
-            if (termDays < candidate.minTermDays)
+            // 0 means open-ended (§36.4), which is longer than any minimum by definition — so the
+            // minimum-term check must not reject it for being small.
+            bool openEnded = termDays <= 0;
+
+            if (!openEnded && termDays < candidate.minTermDays)
             {
                 failReason = $"{candidate.Name} will not work for less than {candidate.minTermDays} days.";
+                return null;
+            }
+
+            if (openEnded && structure == WageStructure.Prepaid)
+            {
+                // There is no whole term to pay up front. Refused rather than silently converted,
+                // because the wage structure is a commitment the player made deliberately (§37).
+                failReason = "An open-ended contract cannot be prepaid — there is no term to pay for.";
                 return null;
             }
 
@@ -92,8 +104,14 @@ namespace Intercolony
             // longer contract at the same daily rate would sell the short-term premium for free
             // — the same mistake the sales confirmation slider made in Phase 12.
             SettlementEconomicProfile profile = state.GetProfile(settlement);
+
+            // Open-ended work is priced as the longest engagement rather than as a zero-day one.
+            // Passing 0 straight into the formula would hit §36.1's short-term premium and make
+            // permanent employment the *most* expensive per day, which is backwards.
+            int pricingTerm = openEnded ? LaborCandidateService.MaxTermDays : termDays;
+
             int dailyWage = LaborCandidateService.DailyWage(
-                candidate.pawn, profile, candidate.distanceTiles, termDays,
+                candidate.pawn, profile, candidate.distanceTiles, pricingTerm,
                 EmployerReputationService.ScoreFor(state), clause);
 
             // Only prepaid is charged now. A periodic hire that demanded the full term up front
@@ -333,7 +351,16 @@ namespace Intercolony
                     continue;
                 }
 
-                if (contract.endTick >= 0 && now >= contract.endTick)
+                // Renewal is offered before expiry, not at it (§115): a worker who would stay says
+                // so while there is still time to answer.
+                RenewalService.Advance(contract);
+
+                // An open-ended contract has no expiry to reach; a dismissal notice does, and
+                // reaching it ends the employment the same way a served term would.
+                int ends = contract.ServingNotice ? contract.noticeEndTick : contract.endTick;
+                bool byNotice = contract.ServingNotice;
+
+                if (ends >= 0 && now >= ends)
                 {
                     // A worker inside a caravan cannot walk home — they are not on any map.
                     // Ending the contract anyway would send them through
@@ -346,9 +373,9 @@ namespace Intercolony
                         {
                             contract.termLapsedNotified = true;
                             Find.LetterStack.ReceiveLetter(
-                                "Employment term ended",
-                                $"{contract.workerName}'s {contract.termDays}-day term has ended, but they are " +
-                                "away from the colony and cannot leave from where they are.\n\n" +
+                                "Employment ended",
+                                $"{contract.workerName}'s {(byNotice ? "notice" : "term")} has ended, but they " +
+                                "are away from the colony and cannot leave from where they are.\n\n" +
                                 "They will go home once they are back on a map. No further wages are owed.",
                                 LetterDefOf.NeutralEvent);
                         }
@@ -356,8 +383,11 @@ namespace Intercolony
                         continue;
                     }
 
-                    End(contract, EmploymentStatus.Completed,
-                        $"{contract.workerName} served the full {contract.termDays} days");
+                    End(contract,
+                        byNotice ? EmploymentStatus.Dismissed : EmploymentStatus.Completed,
+                        byNotice
+                            ? $"{contract.workerName} worked out their notice and left"
+                            : $"{contract.workerName} served the full {contract.termDays} days");
                 }
             }
         }
@@ -695,7 +725,14 @@ namespace Intercolony
                 }
 
                 contract.status = EmploymentStatus.Active;
-                contract.endTick = GenTicks.TicksGame + contract.termDays * GenDate.TicksPerDay;
+                contract.arrivedTick = GenTicks.TicksGame;
+
+                // An open-ended engagement has no end tick at all (§36.4). Everything that reads
+                // endTick already treats -1 as "no deadline", so this needs no special case beyond
+                // not setting one.
+                contract.endTick = contract.IsOpenEnded
+                    ? -1
+                    : GenTicks.TicksGame + contract.termDays * GenDate.TicksPerDay;
 
                 // §43 pays for harm the colony did, so what they walked in with does not count.
                 // Snapshotted here rather than at hire because the journey is not the colony's

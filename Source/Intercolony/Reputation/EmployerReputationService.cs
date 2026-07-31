@@ -1,4 +1,4 @@
-using RimWorld;
+﻿using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -52,11 +52,15 @@ namespace Intercolony
         /// <summary>Holding a released worker past their safe conduct (§88). See NoteSafePassageDenied.</summary>
         private const float SafePassageDenied = -12f;
 
+        /// <summary>Letting an open-ended worker go without the notice they were owed (§36.4).</summary>
+        private const float NoticeSkipped = -9f;
+
         /// <summary>Goodwill lost with the worker's own faction when they are badly treated (§39 step 8).</summary>
         private const int GoodwillWalkOut = -8;
         private const int GoodwillDeath = -5;
         private const int GoodwillCombatMisuse = -4;
         private const int GoodwillSafePassageDenied = -6;
+        private const int GoodwillNoticeSkipped = -4;
 
         public static EmployerReputation For(IntercolonyWorldComponent state)
         {
@@ -237,6 +241,50 @@ namespace Intercolony
 
             AffectGoodwill(contract.employerFaction, GoodwillSafePassageDenied,
                 $"{contract.workerName} was held in {Faction.OfPlayer.Name} past their release");
+        }
+
+        /// <summary>
+        /// A worker asked to stay on and was taken up on it (§115, §40's "voluntary renewal").
+        ///
+        /// §40 lists voluntary renewal as a positive signal and nothing produced one until now.
+        /// Weighted like a completed contract, because that is what it is — with the worker's own
+        /// judgement of the place attached.
+        /// </summary>
+        public static void NoteRenewal(IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            EmployerReputation rep = For(state);
+            if (rep == null || contract == null)
+            {
+                return;
+            }
+
+            rep.renewals++;
+
+            // Compounding slightly with each renewal: a worker on their third term is a stronger
+            // statement about the colony than one on their second.
+            rep.Adjust(ContractCompleted * (1f + Mathf.Clamp(contract.renewals * 0.25f, 0f, 1f)));
+        }
+
+        /// <summary>
+        /// An open-ended worker was let go without the notice they were owed (§36.4).
+        ///
+        /// Between an early dismissal and a walk-out in severity. It is the player's right to do it
+        /// — §36.4's rules price the decision rather than block it — but a colony that does it
+        /// routinely is one word gets around about.
+        /// </summary>
+        public static void NoteNoticeSkipped(IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            EmployerReputation rep = For(state);
+            if (rep == null || contract == null)
+            {
+                return;
+            }
+
+            rep.noticesSkipped++;
+            rep.Adjust(NoticeSkipped);
+
+            AffectGoodwill(contract.employerFaction, GoodwillNoticeSkipped,
+                $"{contract.workerName} was dismissed without notice");
         }
 
         /// <summary>

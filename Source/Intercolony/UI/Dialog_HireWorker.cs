@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -37,6 +37,13 @@ namespace Intercolony
         /// had it all along.
         /// </summary>
         private CombatClause clause = CombatClause.Civilian;
+
+        /// <summary>
+        /// §36.4 — no agreed end date. The term slider still sets the *pricing* term, because a
+        /// worker signing on indefinitely prices like a long engagement rather than a day rate; what
+        /// changes is that nothing expires.
+        /// </summary>
+        private bool openEnded;
 
         public Dialog_HireWorker(
             LaborCandidate candidate, SettlementEconomicProfile profile, Map map, int maxTermDays,
@@ -128,8 +135,20 @@ namespace Intercolony
 
             y += 32f;
 
+            // §36.4. Offered as a toggle beside the term rather than a fourth wage structure,
+            // because it is not a way of paying — it is the absence of an end date.
+            Rect openRect = new Rect(inRect.width - 220f, y - 34f, 210f, 28f);
+            bool wasOpenEnded = openEnded;
+            Widgets.CheckboxLabeled(openRect, "No end date", ref openEnded);
+            if (openEnded != wasOpenEnded)
+            {
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
             Widgets.Label(new Rect(0f, y, inRect.width, 24f),
-                $"{wage} silver/day for {termDays} days.");
+                openEnded
+                    ? $"{wage} silver/day, open-ended \u2014 they stay until one of you ends it."
+                    : $"{wage} silver/day for {termDays} days.");
             y += 26f;
 
             if (termDays > candidate.minTermDays)
@@ -172,6 +191,13 @@ namespace Intercolony
             y = DrawStructureOption(inRect, y, WageStructure.Daily, wage);
 
             // --- Commit ---
+            if (openEnded && structure == WageStructure.Prepaid)
+            {
+                // Nothing to prepay when there is no agreed end. Silently corrected rather than
+                // disabled, so the player is not left staring at a greyed-out row wondering why.
+                structure = WageStructure.Quadrum;
+            }
+
             int upFront = WageStructureUtility.UpFrontCost(structure, wage, termDays);
             int available = PurchaseOrderService.CountColonySilver(map);
             bool affordable = available >= upFront;
@@ -187,7 +213,7 @@ namespace Intercolony
 
             if (Widgets.ButtonText(new Rect(0f, bottom, 170f, 36f), "Hire"))
             {
-                onConfirm?.Invoke(termDays, structure, clause);
+                onConfirm?.Invoke(openEnded ? 0 : termDays, structure, clause);
                 Close();
             }
 

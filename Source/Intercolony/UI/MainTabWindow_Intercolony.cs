@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
@@ -1334,6 +1334,11 @@ namespace Intercolony
         private static int ContractRank(RecurringContract contract)
         {
             if (contract.IsOffer) return 0;
+
+            // A renewal waiting on an answer sorts to the top with new offers: it expires, so it is
+            // the thing the player needs to see (§115).
+            if (contract.renewalOffered) return 0;
+
             if (contract.IsActive) return 1;
 
             // Suspended sorts with the live agreements, not with the dead ones. It is still an
@@ -1381,6 +1386,11 @@ namespace Intercolony
                     colour = Color.yellow;
                 }
             }
+            else if (contract.renewalOffered)
+            {
+                status = $"they would sign again — {contract.DaysUntilRenewalExpires:F1}d to answer";
+                colour = new Color(0.65f, 0.95f, 0.65f);
+            }
             else if (contract.status == ContractStatus.Suspended)
             {
                 // Amber, not red. §88's suspension is not a failure and the colour has to say so —
@@ -1411,7 +1421,23 @@ namespace Intercolony
                 $"Missing {RecurringContract.BreachThreshold} deliveries in a row ends the " +
                 "agreement and badly damages your standing.");
 
-            if (contract.IsOffer)
+            // A renewal offer is answered here rather than through a separate flow (§115): it is the
+            // same agreement, on the same terms, and it expires if left alone.
+            if (contract.renewalOffered)
+            {
+                Rect renewRect = new Rect(rect.xMax - 200f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(renewRect, "Renew"))
+                {
+                    ContractService.AcceptRenewal(state, contract);
+                }
+
+                Rect declineRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(declineRect, "Decline"))
+                {
+                    ContractService.DeclineRenewal(contract);
+                }
+            }
+            else if (contract.IsOffer)
             {
                 Rect acceptRect = new Rect(rect.xMax - 200f, rect.y + 20f, 92f, 30f);
                 if (Widgets.ButtonText(acceptRect, "Accept"))
