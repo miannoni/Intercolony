@@ -387,3 +387,57 @@ detaining them until the deadline would be a *cheaper* way to dispose of a worke
 go. The denial therefore carries a death-sized reputation and goodwill hit of its own. Pricing the
 detention removes the incentive; trying to police the killing afterwards would not.
 
+---
+
+## A third owner of unspawned pawns — added Phase 21 (§35.2, §114)
+
+Until job postings there were two ways this mod could be holding a pawn nothing else saves: a
+travelling employee (pinned `KeepForever`, owned by the contract) and an unhired candidate (owned by
+a static listing, discarded every refresh). Postings add a third, and it is the awkward one: a
+**job applicant** is saved, survives reloads, and belongs to a posting rather than to a contract.
+
+Three consequences worth knowing before touching it:
+
+1. **`JobPosting` deep-saves its applicants.** It is the only place in the mod that deep-saves a
+   pawn, because it is the only owner — an applicant is on no map, in no caravan, and attached to no
+   world object. Everything else uses `Scribe_References` precisely because something else owns the
+   pawn.
+2. **Applicants are pinned `KeepForever`, so every exit must discard.** Hired, rejected, timed out,
+   posting withdrawn, posting expired, posting filled — six paths, and a missed one leaks a pawn the
+   world pawn GC has been told never to collect. Invisible in play until a save file is
+   inexplicably large. `IntercolonyJobPostingSelfTest` measures `Find.WorldPawns.AllPawnsAliveOrDead`
+   before and after for exactly this reason.
+3. **Do not generate a pawn to answer a question about a pawn.** The matcher needs two things per
+   worker — can they do the work, what do they charge — and both are numbers. Generating hundreds of
+   pawns per refresh to ask them is not affordable; `PawnGenerator.GeneratePawn` is the expensive
+   call, which is why the advertised listing is capped at twenty in the first place. The census
+   (`LaborProspect`) is hundreds of records deep and materialises a real pawn only for the few who
+   apply, then aligns its skills to the record so the person who arrives is the person the market
+   described.
+
+## Sentinels, and one that switched off three features at once — Phase 22 (§36.4, §115)
+
+`EmploymentContract.TenureDays` guarded with `arrivedTick < 0`, meaning "never arrived". That is
+true only because a live game's tick is positive, and it is the kind of assumption that holds right
+up until something constructs a contract with a backdated start — a self-test, a migration, a
+scenario. Then a negative tick means the opposite of what the sign test concludes.
+
+The failure mode is what makes it worth recording: it reads as **tenure zero forever**, which
+silently disables severance, notice-period growth and renewal eligibility together, and nothing
+throws. Six self-test failures, one cause. The field now compares against an explicit
+`EmploymentContract.NotArrived` constant.
+
+The same shape had already bitten once, and the fix is the same: **`endTick < 0` used to stand in
+for "the worker never arrived"**, which stopped being true the moment §36.4's open-ended contracts
+existed, because those never set an end tick at all. If a field is a sentinel, compare it to the
+sentinel.
+
+## Open-ended contracts: two things that look like edge cases and are not
+
+1. **A zero term must not be priced as a zero-day term.** `DailyWage` applies §36.1's short-term
+   premium, so passing 0 straight through makes permanent employment the *most* expensive work per
+   day. Open-ended hires are priced at `MaxTermDays` instead.
+2. **`DaysRemaining` has to report something enormous, not zero.** Every "is this nearly over" test
+   in the mod reads it, and a zero-term contract falling back to `termDays` would have been ended on
+   the next hourly beat. It returns `float.MaxValue` for open-ended.
+

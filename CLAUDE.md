@@ -98,6 +98,11 @@ depends on: an employment quest must have a non-null `root`, departure must go t
 `QuestPart_Leave` rather than being hand-rolled, and a travelling worker must be pinned in
 `WorldPawns` as `KeepForever`.
 
+`docs/PENDING_PLAYTESTS.md` lists what has shipped but has never been seen working — the things a
+self-test cannot settle. **Add to it when a phase completes, and check it before claiming a system
+is proven.** Asking Matteo to play something and then losing the request when the conversation
+moves on is how a system ends up believed-working and untested.
+
 `docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
 Read it before touching anything that moves an individual object.
 
@@ -140,6 +145,9 @@ first is better, because this list is only read when someone remembers to look.
 ## Milestone records
 
 At the end of each milestone, append to `PROGRESS.md`:
+
+Anything the phase could not prove without a human at the keyboard goes in
+`docs/PENDING_PLAYTESTS.md` at the same time.
 
 ```
 ## Phase N — <name>  (YYYY-MM-DD)
