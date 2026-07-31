@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 17;
+        public const int CurrentSaveVersion = 18;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -223,6 +223,60 @@ namespace Intercolony
             if (contract != null)
             {
                 employments.Add(contract);
+            }
+        }
+
+        /// <summary>
+        /// Job postings the colony has advertised (§35.2, §114).
+        ///
+        /// Saved, unlike the candidate listing, because a posting is a standing order: it must
+        /// outlive the market refresh that created it and be re-examined against later ones. Its
+        /// applicants come with it, which makes this the only list in the mod that deep-saves pawns
+        /// — see <see cref="JobApplicant"/> for why they have no other owner.
+        /// </summary>
+        private List<JobPosting> postings = new List<JobPosting>();
+
+        public List<JobPosting> Postings => postings;
+
+        public void AddPosting(JobPosting posting)
+        {
+            if (posting != null)
+            {
+                postings.Add(posting);
+            }
+        }
+
+        public int OpenPostingCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (JobPosting posting in postings)
+                {
+                    if (posting.IsOpen)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
+        }
+
+        public int WaitingApplicantCount
+        {
+            get
+            {
+                int count = 0;
+                foreach (JobPosting posting in postings)
+                {
+                    if (posting.IsOpen)
+                    {
+                        count += posting.Applicants.Count;
+                    }
+                }
+
+                return count;
             }
         }
 
@@ -593,6 +647,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
             Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
             Scribe_Collections.Look(ref employments, "employments", LookMode.Deep);
+            Scribe_Collections.Look(ref postings, "postings", LookMode.Deep);
             Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
             Scribe_Deep.Look(ref employerStanding, "employerStanding");
 
@@ -714,6 +769,25 @@ namespace Intercolony
                     }
                 }
 
+                if (postings == null)
+                {
+                    postings = new List<JobPosting>();
+                }
+                else
+                {
+                    int nullPostings = postings.RemoveAll(p => p == null);
+                    int brokenPostings = postings.RemoveAll(p => !p.IsValidAfterLoad);
+                    if (nullPostings > 0 || brokenPostings > 0)
+                    {
+                        // A lost posting costs the player nothing already spent, so this is a
+                        // warning rather than an error — unlike an employment or an order, nothing
+                        // has been paid for it yet.
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullPostings} null and {brokenPostings} unusable job " +
+                            "posting(s) while loading.");
+                    }
+                }
+
                 if (employerStanding == null)
                 {
                     // Absent in a pre-schema-16 save, and Scribe_Deep gives null rather than a
@@ -811,6 +885,14 @@ namespace Intercolony
                     // a pay clock before it is read (§38).
                     PayrollService.Advance(employments, laborDebts, this);
                 }
+
+                // Applicants withdrawing and postings lapsing (§35.2). Hourly rather than on the
+                // refresh, because an applicant's patience is measured in days and the player
+                // should not be told about it a day late.
+                if (postings.Count > 0)
+                {
+                    JobPostingService.Advance(this);
+                }
             }
         }
 
@@ -843,6 +925,13 @@ namespace Intercolony
             ContractService.AdvanceContracts(this);
             ContractService.OfferContracts(this);
             PurchaseOrderService.AdvanceOrders(purchaseOrders);
+
+            // The world takes a look at the colony's job advertisements (§35.2). On the refresh
+            // rather than the hourly beat, and deliberately: the refresh is when the labor pool
+            // itself changes, so "who is looking for work" and "who saw your posting" are one
+            // event. It is also what makes a standing order worth placing — every cycle brings new
+            // people past the notice.
+            JobPostingService.MatchAll(this);
 
             IntercolonyLog.Verbose(
                 $"Refresh #{refreshCount} ({cause}) at tick {lastRefreshTick}: " +
@@ -1183,6 +1272,15 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
             }
 
+            if (saveVersion < 18)
+            {
+                // 17 -> 18 added job postings. Purely additive: a save from schema 17 has none,
+                // which is correct for a colony that never advertised one. Nothing existing changes
+                // meaning — the candidate listing and its pricing are untouched, and postings sit
+                // alongside them as §35's second workflow rather than replacing the first.
+                IntercolonyLog.Message("  schema 17 -> 18: job postings and applicants added.");
+            }
+
             if (saveVersion < 17)
             {
                 // 16 -> 17 added combat clauses, compensation and the §88 war policy. Additive by
@@ -1286,6 +1384,14 @@ namespace Intercolony
                 }
             }
 
+            foreach (JobPosting posting in postings)
+            {
+                if (posting.id > highest)
+                {
+                    highest = posting.id;
+                }
+            }
+
             foreach (PurchaseRequest request in requests)
             {
                 if (request.id > highest)
@@ -1348,6 +1454,17 @@ namespace Intercolony
             foreach (EmploymentContract employment in employments)
             {
                 sb.AppendLine($"    {employment}  {employment.StatusLine()}");
+            }
+
+            sb.AppendLine($"  postings     : {postings.Count} ({OpenPostingCount} open, " +
+                          $"{WaitingApplicantCount} applicant(s) waiting)");
+            foreach (JobPosting posting in postings)
+            {
+                sb.AppendLine($"    {posting}");
+                foreach (JobApplicant applicant in posting.Applicants)
+                {
+                    sb.AppendLine($"      {applicant}");
+                }
             }
 
             sb.AppendLine($"  employer     : {employerStanding}");

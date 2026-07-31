@@ -196,6 +196,15 @@ namespace Intercolony
                         return "Labor (!)";
                     }
 
+                    // Applicants waiting are the other thing worth interrupting for: they have a
+                    // patience and will go home unanswered, so a badge is the difference between a
+                    // standing order working and quietly wasting itself (§35.2).
+                    int waiting = state.WaitingApplicantCount;
+                    if (waiting > 0)
+                    {
+                        return $"Labor ({waiting} applicant{(waiting == 1 ? "" : "s")})";
+                    }
+
                     int employees = state.ActiveEmployeeCount;
                     return employees > 0 ? $"Labor ({employees})" : "Labor";
                 case Tab.Contracts:

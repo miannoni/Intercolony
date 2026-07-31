@@ -3,6 +3,7 @@ using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
 using Verse;
+using Verse.Sound;
 
 namespace Intercolony
 {
@@ -47,7 +48,155 @@ namespace Intercolony
         private WorkerColumn workerSortColumn = WorkerColumn.Wage;
         private bool workerSortDescending;
 
+        /// <summary>
+        /// The three faces of the labor market (DESIGN.md §56, §35).
+        ///
+        /// Sub-tabs rather than one long page, because §35 describes two *complementary* hiring
+        /// workflows and §56 lists seven sections in total — a single scroll would put the thing the
+        /// player came for below three things they did not. Hire and Posts are the two workflows;
+        /// Employees is what came of them.
+        /// </summary>
+        private enum LaborPage
+        {
+            Hire,
+            Posts,
+            Employees
+        }
+
+        private LaborPage laborPage = LaborPage.Hire;
+        private Vector2 postingScroll;
+
+        private const float LaborTabRowHeight = 30f;
+
         private void DrawLabor(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            DrawLaborTabs(new Rect(0f, y, inRect.width, LaborTabRowHeight), state);
+            y += LaborTabRowHeight + 8f;
+
+            Rect body = new Rect(inRect.x, y, inRect.width, inRect.yMax - y);
+
+            switch (laborPage)
+            {
+                case LaborPage.Posts:
+                    DrawPostsPage(body, state);
+                    break;
+                case LaborPage.Employees:
+                    DrawEmployeesPage(body, state);
+                    break;
+                default:
+                    DrawHirePage(body, state);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// The sub-tab strip. Each label carries its own count, so the player can see there are
+        /// applicants waiting without opening the page to find out.
+        /// </summary>
+        private void DrawLaborTabs(Rect rect, IntercolonyWorldComponent state)
+        {
+            int employees = 0;
+            foreach (EmploymentContract contract in state.Employments)
+            {
+                if (contract.IsOpen || contract.IsLeavingUnderSafePassage)
+                {
+                    employees++;
+                }
+            }
+
+            int posts = state.OpenPostingCount;
+            int applicants = state.WaitingApplicantCount;
+
+            string postLabel = applicants > 0
+                ? $"Posts ({posts}) — {applicants} waiting"
+                : posts > 0 ? $"Posts ({posts})" : "Posts";
+
+            DrawLaborTab(new Rect(rect.x, rect.y, 150f, rect.height), LaborPage.Hire, "Hire", false);
+            DrawLaborTab(new Rect(rect.x + 154f, rect.y, 220f, rect.height), LaborPage.Posts,
+                postLabel, applicants > 0);
+            DrawLaborTab(new Rect(rect.x + 378f, rect.y, 180f, rect.height), LaborPage.Employees,
+                employees > 0 ? $"Employees ({employees})" : "Employees", false);
+
+            Widgets.DrawLineHorizontal(rect.x, rect.yMax, rect.width);
+        }
+
+        private void DrawLaborTab(Rect rect, LaborPage page, string label, bool attention)
+        {
+            bool selected = laborPage == page;
+
+            if (selected)
+            {
+                Widgets.DrawHighlightSelected(rect);
+            }
+            else
+            {
+                Widgets.DrawHighlightIfMouseover(rect);
+            }
+
+            // Attention colour only when something is actually waiting on the player. A tab that is
+            // always highlighted stops meaning anything.
+            GUI.color = attention && !selected ? new Color(0.65f, 0.95f, 0.65f) : Color.white;
+            Text.Anchor = TextAnchor.MiddleCenter;
+            Widgets.Label(rect, label);
+            Text.Anchor = TextAnchor.UpperLeft;
+            GUI.color = Color.white;
+
+            if (!selected && Widgets.ButtonInvisible(rect))
+            {
+                laborPage = page;
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+        }
+
+        /// <summary>§35.1 — who is on the market right now, at their asking price.</summary>
+        private void DrawHirePage(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            List<LaborCandidate> pool = new List<LaborCandidate>(LaborCandidateService.Refresh(state));
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, 400f, 34f), "Workers for hire");
+            Text.Font = GameFont.Small;
+
+            DrawEmployerStanding(new Rect(360f, y + 4f, inRect.width - 360f, 28f), state);
+            y += 38f;
+
+            if (pool.Count == 0)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(6f, y, inRect.width - 12f, 76f),
+                    "No workers on offer.\n\n" +
+                    "Settlements you can reach are not releasing labor at the moment. The listing " +
+                    "changes with the market — check back after the next refresh, or post a job and " +
+                    "let people come to you.");
+                GUI.color = Color.white;
+                return;
+            }
+
+            SortCandidates(pool);
+
+            Rect headerRect = new Rect(0f, y, inRect.width - 16f, HeaderHeight);
+            DrawWorkerHeader(headerRect);
+            y += HeaderHeight + 2f;
+
+            Rect listRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            Rect listView = new Rect(0f, 0f, inRect.width - 16f, pool.Count * CandidateRowHeight);
+            Widgets.BeginScrollView(listRect, ref candidateScroll, listView);
+
+            float candidateY = 0f;
+            for (int i = 0; i < pool.Count; i++)
+            {
+                DrawCandidateRow(new Rect(0f, candidateY, listView.width, CandidateRowHeight), pool[i], i, state);
+                candidateY += CandidateRowHeight;
+            }
+
+            Widgets.EndScrollView();
+        }
+
+        private void DrawEmployeesPage(Rect inRect, IntercolonyWorldComponent state)
         {
             float y = inRect.y;
 
@@ -75,19 +224,20 @@ namespace Intercolony
 
             // Height is content-driven up to a cap, so one employee does not leave a huge empty
             // panel and eight do not push the listing off screen.
-            float employeeBlock = live.Count == 0
-                ? 46f
-                : Mathf.Min(live.Count * EmployeeRowHeight, EmployeeRowHeight * 4f);
-
             if (live.Count == 0)
             {
                 GUI.color = Color.gray;
                 Widgets.Label(new Rect(6f, y, inRect.width - 12f, 44f),
-                    "Nobody hired. Workers below will come and work for a fixed term, then go home.");
+                    "Nobody hired. Find someone under Hire, or post a job and let them come to you.");
                 GUI.color = Color.white;
+                y += 48f;
             }
             else
             {
+                // The page is the employees' now, so the list gets the room rather than a quarter
+                // of it — the four-row cap existed because two other sections were below it.
+                float employeeBlock = Mathf.Min(live.Count * EmployeeRowHeight, inRect.height - 140f);
+
                 Rect outRect = new Rect(0f, y, inRect.width, employeeBlock);
                 Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, live.Count * EmployeeRowHeight);
                 Widgets.BeginScrollView(outRect, ref employeeScroll, viewRect);
@@ -100,54 +250,198 @@ namespace Intercolony
                 }
 
                 Widgets.EndScrollView();
+                y += employeeBlock + 8f;
             }
 
-            y += employeeBlock + 8f;
+            DrawDebts(inRect, y, state);
+        }
 
-            y = DrawDebts(inRect, y, state);
-
-            Widgets.DrawLineHorizontal(0f, y, inRect.width);
-            y += 10f;
-
-            // --- Available workers (§35.1) ---
-            List<LaborCandidate> pool = new List<LaborCandidate>(LaborCandidateService.Refresh(state));
+        /// <summary>
+        /// §35.2 — what the colony is advertising, and who has answered.
+        ///
+        /// Applicants are drawn *under* their posting rather than in a list of their own, because
+        /// an applicant only means anything in the context of what they applied to: the same worker
+        /// is a bargain against one offer and an overpayment against another.
+        /// </summary>
+        private void DrawPostsPage(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, 400f, 34f), "Workers for hire");
+            Widgets.Label(new Rect(0f, y, 400f, 34f), "Job posts");
             Text.Font = GameFont.Small;
 
-            DrawEmployerStanding(new Rect(360f, y + 4f, inRect.width - 360f, 28f), state);
+            if (Widgets.ButtonText(new Rect(inRect.width - 160f, y + 2f, 150f, 30f), "New posting"))
+            {
+                Find.WindowStack.Add(new Dialog_CreateJobPosting(state,
+                    (skill, minLevel, positions, termDays, wage, structure, clause, lifespan) =>
+                    {
+                        if (JobPostingService.TryPost(state, skill, minLevel, positions, termDays,
+                                wage, structure, clause, lifespan, out string failReason) == null)
+                        {
+                            Messages.Message(failReason ?? "Could not post.",
+                                MessageTypeDefOf.RejectInput, historical: false);
+                        }
+                    }));
+            }
+
             y += 38f;
 
-            if (pool.Count == 0)
+            List<JobPosting> live = new List<JobPosting>();
+            foreach (JobPosting posting in state.Postings)
+            {
+                if (posting.IsOpen)
+                {
+                    live.Add(posting);
+                }
+            }
+
+            live.Sort((a, b) => a.id.CompareTo(b.id));
+
+            if (live.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(6f, y, inRect.width - 12f, 60f),
-                    "No workers on offer.\n\n" +
-                    "Settlements you can reach are not releasing labor at the moment. The listing " +
-                    "changes with the market — check back after the next refresh.");
+                Widgets.Label(new Rect(6f, y, inRect.width - 12f, 120f),
+                    "Nothing advertised.\n\n" +
+                    "A posting says what you need and what you will pay. Workers who can do the job, " +
+                    "and who will work for that, apply as the market brings them past — including " +
+                    "people who are not advertising themselves and would never appear under Hire.\n\n" +
+                    "It costs nothing to leave one up. There are only so many workers in the world, " +
+                    "so posting the same job twice gets you the same people.");
                 GUI.color = Color.white;
                 return;
             }
 
-            SortCandidates(pool);
-
-            Rect headerRect = new Rect(0f, y, inRect.width - 16f, HeaderHeight);
-            DrawWorkerHeader(headerRect);
-            y += HeaderHeight + 2f;
-
-            Rect listRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect listView = new Rect(0f, 0f, inRect.width - 16f, pool.Count * CandidateRowHeight);
-            Widgets.BeginScrollView(listRect, ref candidateScroll, listView);
-
-            float candidateY = 0f;
-            for (int i = 0; i < pool.Count; i++)
+            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            float height = 0f;
+            foreach (JobPosting posting in live)
             {
-                DrawCandidateRow(new Rect(0f, candidateY, listView.width, CandidateRowHeight), pool[i], i, state);
-                candidateY += CandidateRowHeight;
+                height += PostingBlockHeight(posting);
+            }
+
+            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, height);
+            Widgets.BeginScrollView(outRect, ref postingScroll, viewRect);
+
+            float rowY = 0f;
+            for (int i = 0; i < live.Count; i++)
+            {
+                float blockHeight = PostingBlockHeight(live[i]);
+                DrawPostingBlock(new Rect(0f, rowY, viewRect.width, blockHeight), live[i], state, i);
+                rowY += blockHeight;
             }
 
             Widgets.EndScrollView();
+        }
+
+        private const float PostingHeaderHeight = 54f;
+        private const float ApplicantRowHeight = 46f;
+
+        private static float PostingBlockHeight(JobPosting posting)
+        {
+            return PostingHeaderHeight + posting.Applicants.Count * ApplicantRowHeight + 8f;
+        }
+
+        private void DrawPostingBlock(
+            Rect rect, JobPosting posting, IntercolonyWorldComponent state, int index)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, PostingHeaderHeight));
+            }
+
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 3f, rect.width - 280f, 22f), posting.Headline());
+
+            GUI.color = posting.Applicants.Count > 0
+                ? new Color(0.65f, 0.95f, 0.65f)
+                : new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, rect.width - 280f, 22f),
+                posting.StatusLine());
+            GUI.color = Color.white;
+
+            TooltipHandler.TipRegion(new Rect(rect.x, rect.y, rect.width, PostingHeaderHeight),
+                () => PostingTooltip(posting, state), posting.id * 5701);
+
+            Rect withdrawRect = new Rect(rect.xMax - 120f, rect.y + 12f, 110f, 30f);
+            if (Widgets.ButtonText(withdrawRect, "Withdraw"))
+            {
+                Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                    $"Take down this posting?\n\n{posting.Headline()}\n\n" +
+                    (posting.Applicants.Count > 0
+                        ? $"{posting.Applicants.Count} applicant(s) are waiting on it and will go home."
+                        : "Nobody is waiting on it."),
+                    () => JobPostingService.Withdraw(posting),
+                    destructive: true));
+            }
+
+            float y = rect.y + PostingHeaderHeight;
+            for (int i = posting.Applicants.Count - 1; i >= 0; i--)
+            {
+                DrawApplicantRow(new Rect(rect.x, y, rect.width, ApplicantRowHeight),
+                    posting, posting.Applicants[i], state);
+                y += ApplicantRowHeight;
+            }
+        }
+
+        private void DrawApplicantRow(
+            Rect rect, JobPosting posting, JobApplicant applicant, IntercolonyWorldComponent state)
+        {
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            float actionWidth = 100f;
+            float textWidth = rect.width - actionWidth * 2f - 20f;
+
+            Widgets.Label(new Rect(rect.x + 24f, rect.y + 2f, textWidth, 22f),
+                $"{applicant.Name}  —  {applicant.SkillSummary(4)}");
+
+            // The bargain is the useful number: they accepted your wage, but what were they worth?
+            int bargain = applicant.Bargain(posting.wageOffered);
+            string value = bargain > 0
+                ? $"asks {applicant.openMarketAsk}/day on the open market — you are paying " +
+                  $"{bargain} over"
+                : $"asks {applicant.openMarketAsk}/day on the open market — your offer matches";
+
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(new Rect(rect.x + 24f, rect.y + 22f, textWidth, 22f),
+                $"{applicant.settlementName} ({applicant.factionName}), {applicant.travelDays}d away — " +
+                value);
+            GUI.color = Color.white;
+
+            Rect hireRect = new Rect(rect.xMax - actionWidth * 2f - 14f, rect.y + 8f, actionWidth, 30f);
+            if (Widgets.ButtonText(hireRect, "Take on"))
+            {
+                if (JobPostingService.TryAccept(state, posting, applicant, Find.CurrentMap,
+                        out string failReason) == null)
+                {
+                    Messages.Message(failReason ?? "Could not hire.",
+                        MessageTypeDefOf.RejectInput, historical: false);
+                }
+            }
+
+            Rect rejectRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 8f, actionWidth, 30f);
+            if (Widgets.ButtonText(rejectRect, "Turn away"))
+            {
+                JobPostingService.Reject(posting, applicant);
+            }
+        }
+
+        private static string PostingTooltip(JobPosting posting, IntercolonyWorldComponent state)
+        {
+            string text =
+                $"{posting.Headline()}\n\n" +
+                $"Posted {posting.DaysPosted:0.#} days ago, " +
+                $"{Mathf.Max(0f, posting.DaysUntilExpiry):0.#} days left.\n" +
+                $"{posting.hired} of {posting.positions} filled.\n\n" +
+                $"If every position is filled and served out: {posting.TotalCommitment} silver.\n" +
+                $"Compensation if one of them dies: " +
+                $"{posting.wageOffered * posting.combatClause.DeathCompensationDays()} silver each.";
+
+            if (posting.Applicants.Count == 0 && posting.emptyCycles > 0)
+            {
+                text += "\n\n" + JobPostingService.ExplainSilence(
+                    state, posting, EmployerReputationService.ScoreFor(state));
+            }
+
+            return text;
         }
 
         /// <summary>

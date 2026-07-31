@@ -167,6 +167,122 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Hires someone who answered a job posting (§35.2, §114).
+        ///
+        /// Deliberately a separate entry point from <see cref="TryHire"/> rather than an overload
+        /// with an optional wage. The two hires are different transactions: a candidate quotes a
+        /// price and this method's caller *set* one, so the wage arrives as data rather than being
+        /// computed. Folding them together behind a nullable wage would recreate exactly the
+        /// hazard Phase 19 recorded — a pricing input easy to omit, and a hire that silently
+        /// charges a number the player never saw.
+        /// </summary>
+        public static EmploymentContract TryHireApplicant(
+            IntercolonyWorldComponent state, JobApplicant applicant, JobPosting posting,
+            Map paymentMap, out string failReason)
+        {
+            failReason = null;
+
+            if (state == null || applicant?.pawn == null || posting == null)
+            {
+                failReason = "No applicant.";
+                return null;
+            }
+
+            if (paymentMap == null)
+            {
+                failReason = "No colony to pay from or send the worker to.";
+                return null;
+            }
+
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(applicant.settlementId);
+            if (settlement == null)
+            {
+                failReason = $"{applicant.settlementName} no longer exists.";
+                return null;
+            }
+
+            if (!IntercolonyMarketAccess.IsAccessible(settlement, out string reason))
+            {
+                failReason = $"{applicant.settlementName} will not deal with you: {reason}.";
+                return null;
+            }
+
+            // Same backstop as TryHire: never write a faction from a discarded world into a live
+            // contract. An applicant survives saves, so it has more chances to go stale than a
+            // candidate does.
+            if (applicant.faction != null &&
+                Find.FactionManager?.AllFactionsListForReading?.Contains(applicant.faction) == false)
+            {
+                failReason = $"{applicant.Name} is not from this world.";
+                IntercolonyLog.Warning(
+                    $"Refused to hire applicant {applicant.Name}: faction {applicant.faction.Name} " +
+                    "is not registered in this game.");
+                return null;
+            }
+
+            // The posted wage, not a computed one. This is the whole of §35.2's inversion: the
+            // player named the price and the worker accepted it.
+            int dailyWage = posting.wageOffered;
+            int upFront = WageStructureUtility.UpFrontCost(posting.wageStructure, dailyWage, posting.termDays);
+
+            int available = PurchaseOrderService.CountColonySilver(paymentMap);
+            if (available < upFront)
+            {
+                failReason = $"Not enough silver in storage: {available} of {upFront} needed.";
+                return null;
+            }
+
+            if (upFront > 0 && !PurchaseOrderService.TryTakeSilver(paymentMap, upFront))
+            {
+                failReason = "Could not collect the silver.";
+                return null;
+            }
+
+            string skills = applicant.SkillSummary();
+            Pawn worker = applicant.Release();
+
+            EmploymentContract contract = new EmploymentContract
+            {
+                id = state.NextId(),
+                settlementId = applicant.settlementId,
+                settlementName = applicant.settlementName,
+                factionName = applicant.factionName,
+                pawn = worker,
+                employerFaction = worker.Faction ?? applicant.faction,
+                originalKind = worker.kindDef,
+                destinationMap = paymentMap,
+                workerName = worker.LabelShortCap,
+                workerSkills = skills,
+                dailyWage = dailyWage,
+                termDays = posting.termDays,
+                combatClause = posting.combatClause,
+                wageStructure = posting.wageStructure,
+                paidSilver = upFront,
+                hiredTick = GenTicks.TicksGame,
+                arrivalTick = GenTicks.TicksGame + applicant.travelDays * GenDate.TicksPerDay,
+                status = EmploymentStatus.Travelling
+            };
+
+            state.AddEmployment(contract);
+
+            // Already pinned as an applicant, but a posting that is closed in the same tick would
+            // have discarded them — so the pin is asserted here rather than assumed.
+            if (!Find.WorldPawns.Contains(worker))
+            {
+                Find.WorldPawns.PassToWorld(worker, PawnDiscardDecideMode.KeepForever);
+            }
+
+            Messages.Message(
+                $"Hired {contract.workerName} from {contract.settlementName} as a {posting.combatClause.Label()} " +
+                $"at your posted {dailyWage} silver/day × {posting.termDays} days. " +
+                $"Arrives in {applicant.travelDays} days.",
+                MessageTypeDefOf.PositiveEvent, historical: false);
+
+            IntercolonyLog.Message($"Hired from posting #{posting.id}: {contract}");
+            return contract;
+        }
+
+        /// <summary>
         /// Arrivals and expiries. Called on the world component's hourly beat — a worker
         /// arriving or leaving up to an hour late is invisible, and per-tick checks are not
         /// worth the cost (§84).

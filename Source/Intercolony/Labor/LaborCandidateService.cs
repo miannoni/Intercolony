@@ -43,7 +43,28 @@ namespace Intercolony
         /// </summary>
         private const int MaxCandidates = 20;
 
+        /// <summary>
+        /// Ceiling on the whole world labor pool, of which <see cref="MaxCandidates"/> is the part
+        /// actually advertised (§35.1) and the rest is reachable only by a job posting (§35.2).
+        ///
+        /// That split is what gives the two workflows different jobs. Browsing shows who is on the
+        /// market right now and costs their asking price; a posting reaches people who are not
+        /// advertising at all, and costs time instead. Without it a posting could only ever surface
+        /// workers the player could already see and hire immediately, which would make it pointless.
+        /// </summary>
+        private const int MaxWorldPool = 45;
+
         private static readonly List<LaborCandidate> pool = new List<LaborCandidate>();
+
+        /// <summary>
+        /// Workers who are not advertising but would move for the right offer. **Built lazily**, only
+        /// when a refresh finds an open posting — pawn generation is the expensive part of building
+        /// any listing, and a player who never posts a job should not pay for a pool they cannot see.
+        /// </summary>
+        private static readonly List<LaborCandidate> latent = new List<LaborCandidate>();
+
+        /// <summary>Which refresh <see cref="latent"/> belongs to; -1 when it has not been built.</summary>
+        private static int latentRefreshCount = -1;
 
         /// <summary>Which market refresh the current pool belongs to; -1 when there is no pool.</summary>
         private static int poolRefreshCount = -1;
@@ -109,29 +130,7 @@ namespace Intercolony
                 2, MaxCandidates);
             int qualityBias = EmployerReputationService.CandidateQualityBias(standing);
 
-            List<Settlement> sources = new List<Settlement>();
-            foreach (Settlement settlement in Find.WorldObjects.Settlements)
-            {
-                if (settlement.Faction == null || settlement.Faction.IsPlayer)
-                {
-                    continue;
-                }
-
-                if (!IntercolonyMarketAccess.IsAccessible(settlement))
-                {
-                    continue;
-                }
-
-                // §39 step 9, the specific half: a settlement still owed wages does not send
-                // another worker. The grievance outranks the general reputation, which is why it
-                // is checked per settlement rather than folded into the score.
-                if (!EmployerReputationService.WillSupplyLabor(state, settlement.ID, out _))
-                {
-                    continue;
-                }
-
-                sources.Add(settlement);
-            }
+            List<Settlement> sources = EligibleSources(state);
 
             // Seeded shuffle, so which settlements are hiring this cycle varies but is stable
             // for the cycle, and so the draw does not perturb the global RNG stream (§60).
@@ -178,7 +177,150 @@ namespace Intercolony
             return pool;
         }
 
-        /// <summary>Discards every unhired candidate and empties the pool.</summary>
+        /// <summary>
+        /// Settlements willing to supply labor to this colony at all. Shared by the advertised
+        /// listing and the latent pool so the two can never disagree about who is dealing with the
+        /// player — a settlement owed wages must not quietly reappear as an applicant.
+        /// </summary>
+        private static List<Settlement> EligibleSources(IntercolonyWorldComponent state)
+        {
+            List<Settlement> sources = new List<Settlement>();
+            if (Find.WorldObjects == null)
+            {
+                return sources;
+            }
+
+            foreach (Settlement settlement in Find.WorldObjects.Settlements)
+            {
+                if (settlement.Faction == null || settlement.Faction.IsPlayer)
+                {
+                    continue;
+                }
+
+                if (!IntercolonyMarketAccess.IsAccessible(settlement))
+                {
+                    continue;
+                }
+
+                // §39 step 9, the specific half: a settlement still owed wages does not send
+                // another worker. The grievance outranks the general reputation, which is why it
+                // is checked per settlement rather than folded into the score.
+                if (!EmployerReputationService.WillSupplyLabor(state, settlement.ID, out _))
+                {
+                    continue;
+                }
+
+                sources.Add(settlement);
+            }
+
+            return sources;
+        }
+
+        /// <summary>
+        /// Everyone a job posting can reach this cycle: the advertised listing plus the latent pool
+        /// (§35.2, §114).
+        ///
+        /// **One pool, exposed to every posting.** That is what makes posting ten identical jobs no
+        /// different from posting one — the world has the workers it has, and they are the scarce
+        /// thing rather than the advertisements. It also means no cap or fee on postings is needed:
+        /// the market limits itself.
+        ///
+        /// The latent half is built on first call in a cycle and reused for the rest of it, so every
+        /// posting answered in the same refresh sees exactly the same people.
+        /// </summary>
+        public static List<LaborCandidate> WorldPool(IntercolonyWorldComponent state)
+        {
+            List<LaborCandidate> all = new List<LaborCandidate>(Refresh(state));
+
+            if (state == null || Find.WorldObjects == null)
+            {
+                return all;
+            }
+
+            EnsureLatent(state);
+            all.AddRange(latent);
+            return all;
+        }
+
+        /// <summary>
+        /// Builds the workers who are not advertising, once per refresh.
+        ///
+        /// Seeded from a different salt than the advertised listing so the two are independent
+        /// draws rather than the same people twice, but seeded all the same — a posting answered
+        /// before a save and re-examined after it must see the same world.
+        /// </summary>
+        private static void EnsureLatent(IntercolonyWorldComponent state)
+        {
+            if (latentRefreshCount == state.RefreshCount)
+            {
+                return;
+            }
+
+            ClearLatent();
+            latentRefreshCount = state.RefreshCount;
+
+            float standing = EmployerReputationService.ScoreFor(state);
+
+            // Reputation gates reach as well as advertising (§39 step 9). A colony nobody wants to
+            // work for does not get to bypass that by posting a notice.
+            int ceiling = Mathf.Clamp(
+                Mathf.RoundToInt((MaxWorldPool - MaxCandidates) *
+                                 EmployerReputationService.AvailabilityFactor(standing)),
+                0, MaxWorldPool - MaxCandidates);
+
+            if (ceiling <= 0)
+            {
+                return;
+            }
+
+            int qualityBias = EmployerReputationService.CandidateQualityBias(standing);
+            List<Settlement> sources = EligibleSources(state);
+
+            Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ 0x4C41_5445);
+            try
+            {
+                for (int i = sources.Count - 1; i > 0; i--)
+                {
+                    int j = Rand.RangeInclusive(0, i);
+                    Settlement swap = sources[i];
+                    sources[i] = sources[j];
+                    sources[j] = swap;
+                }
+
+                foreach (Settlement settlement in sources)
+                {
+                    if (latent.Count >= ceiling)
+                    {
+                        break;
+                    }
+
+                    SettlementEconomicProfile profile = state.GetProfile(settlement);
+                    if (profile == null)
+                    {
+                        continue;
+                    }
+
+                    for (int i = 0; i < CandidatesPerSettlement && latent.Count < ceiling; i++)
+                    {
+                        LaborCandidate candidate = GenerateBiased(settlement, profile, standing, qualityBias);
+                        if (candidate != null)
+                        {
+                            latent.Add(candidate);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            IntercolonyLog.Verbose(
+                $"Latent labor pool built for refresh {state.RefreshCount}: {latent.Count} worker(s) " +
+                "reachable only by a job posting.");
+        }
+
+        /// <summary>Discards every unhired candidate and empties both halves of the pool.</summary>
         public static void Clear()
         {
             foreach (LaborCandidate candidate in pool)
@@ -188,6 +330,25 @@ namespace Intercolony
 
             pool.Clear();
             poolRefreshCount = -1;
+
+            ClearLatent();
+        }
+
+        private static void ClearLatent()
+        {
+            foreach (LaborCandidate candidate in latent)
+            {
+                candidate.Discard();
+            }
+
+            latent.Clear();
+            latentRefreshCount = -1;
+        }
+
+        /// <summary>Removes a latent worker without discarding its pawn (it has been taken on as an applicant).</summary>
+        public static void TakeLatent(LaborCandidate candidate)
+        {
+            latent.Remove(candidate);
         }
 
         /// <summary>
@@ -201,21 +362,31 @@ namespace Intercolony
         /// </summary>
         private static void Abandon()
         {
-            if (pool.Count > 0)
+            if (pool.Count + latent.Count > 0)
             {
                 IntercolonyLog.Verbose(
-                    $"Dropped {pool.Count} candidate(s) left over from a previous game.");
+                    $"Dropped {pool.Count + latent.Count} candidate(s) left over from a previous game.");
             }
 
             pool.Clear();
             poolRefreshCount = -1;
+
+            latent.Clear();
+            latentRefreshCount = -1;
+
             poolOwner = null;
         }
 
         /// <summary>Removes a candidate from the pool without discarding its pawn (it has been hired).</summary>
         public static void Take(LaborCandidate candidate)
         {
-            pool.Remove(candidate);
+            // Tried against both halves, because a worker taken on as an applicant to a posting
+            // comes from the latent pool rather than the advertised one, and either way the pool
+            // must stop owning the pawn or it will be discarded out from under the contract.
+            if (!pool.Remove(candidate))
+            {
+                latent.Remove(candidate);
+            }
         }
 
         /// <summary>
