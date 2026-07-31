@@ -88,14 +88,13 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 23 **logic verified, pawn behaviour not** (2026-07-31). The transition self-test passes
-21/21 against a live save. The conversion itself — whether a quest lodger becomes a colonist *in
-place* rather than walking off the map — has still never been observed, and is the one thing in the
-phase that could be quietly wrong. Queued in `docs/PENDING_PLAYTESTS.md` with two debug actions
-(**Force attachment offer**, **Verify converted employees**) that make it a two-minute check instead
-of a thirty-day wait.
+**Phase:** 23 complete (2026-07-31). Self-test 21/21 and all three of §44's routes played through,
+conversion included. Next: Phase 24 — Economic integration and dashboard (DESIGN.md §117, §45).
 
-Next once that passes: Phase 24 — Economic integration and dashboard (DESIGN.md §117, §45).
+**Play-testing is done by a Dispatch computer-use session, not by Matteo at the keyboard.** The
+handoff runs through `DISPATCH_NOTES.md` — append-only, timestamped, game output verbatim. Claude
+Code does not read it automatically; Matteo nudges with "read DISPATCH_NOTES.md and continue". Write
+requests there with exact steps, and reply in the same file.
 
 **Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
 control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation

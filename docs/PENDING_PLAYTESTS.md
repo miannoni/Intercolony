@@ -25,54 +25,6 @@ the action. Output goes to the debug log; no need to copy anything out, the dev 
 
 *(none outstanding — all written self-tests have been run.)*
 
-### Phase 23 — a worker becomes a colonist (§44, §116)
-
-**The self-test passes 21/21**, so the gates, the fee, negotiation and the defection cost are proven.
-What is left is entirely about the pawn, and it is the riskiest code in the phase.
-
-The conversion works by removing the pawn from the quest's departure list *before* ending the quest.
-If that is wrong, the brand-new colonist walks off the map — which is exactly what every other
-employment ending is supposed to do.
-
-**Setup — about two minutes, no waiting.** All four steps are **F12** → **orange bug icon** → search
-→ click:
-
-1. search `hire` → **Hire cheapest worker**
-2. search `arrive` → **Arrive employees now**
-3. search `attachment` → **Force attachment offer** — backdates their tenure past the 30-day bar and
-   makes them ask immediately. It reports the release fee in the log.
-4. Open **Intercolony → Labor → Employees**. Their row should show **Keep them** / **Not now**.
-
-**Silver is handled.** Steps 1 and 3 grant what they need and say so in the log — a fresh
-`-quicktest` world starts with none, and a play-test that fails at step 1 is not a play-test.
-
-Do **not** try to fix a silver shortfall by spawning stacks with the vanilla debug tool: the mod
-counts only silver where `IsInAnyStorage()` is true, so stacks on open ground leave the readout at
-zero and look exactly like a broken mod. The grant routes through the same helper the self-tests use,
-which builds a temporary stockpile if the map has none.
-
-*(Doing it the slow way instead: hire someone open-ended on a daily wage, keep silver in storage so
-payroll never misses, never draft them, and let 30 days pass. The employee tooltip shows progress —
-"Settling here permanently: Served 12 of 30 days.")*
-
-**Expect.** A letter, *"(name) has grown attached"*, and **Keep them** / **Not now** buttons on their
-row.
-
-**Then test all three routes** (on separate saves, or reload between them):
-
-1. **Pay the fee.** Expect them to become a normal colonist — still standing there, no wage, no
-   term, no departure. **Watch for them walking off the map, which is the failure this is testing
-   for.** Then search `verify` → **Verify converted employees**, which checks it properly: still on a
-   map, player faction, no longer a quest lodger, `IsColonist` true, drafter present. It prints PASS
-   or names the failing line. Eyeballing is not enough here — a pawn that has been handed an exit
-   order looks fine for a while before it leaves.
-2. **Keep them without paying.** Expect their faction's goodwill to collapse and probably turn
-   hostile, and expect everything you had booked with them to be voided in the same moment.
-3. **Not now.** They should carry on working as an employee, and ask again about 30 days later.
-
-**Also worth a look:** the fee dialog shows the asking price and what your best Social colonist
-negotiates it down to. Worth checking the saving feels worth having a negotiator for.
-
 ### Phase 22 — open-ended employment and notice (§36.4)
 
 **Steps.** Intercolony → Labor → Hire → hire someone → in the pop-up tick **"No end date"** (top
@@ -159,6 +111,11 @@ No pawn-control mod has ever been loaded alongside this. The risk surface is any
   penalty applied and they rejoined their own faction on the map, as the letter says they will.
 - ~~**Severed contract across save/load**~~ — 2026-07-30. An autosave holding a closed record with a
   live pawn reference, past its deadline, loaded twice and resolved both times.
+- ~~**Phase 23 — a worker becomes a colonist (§44, §116)**~~ — 2026-07-31, all three routes. Paid:
+  colonist in place, 3,583 debited exactly as quoted. Defected: colonist in place, faction hostile at
+  -80, bookings voided, nothing paid. Declined: stays an employee. `Verify converted employees`
+  reported PASS on both conversions, and again after four in-game hours at 3x — the pawn does not
+  drift to the map edge, which was the whole risk.
 - ~~**Cross-game state leak**~~ — 2026-07-30. Quicktest world → new colony → hire → save → reload,
   which previously produced duplicate thing IDs and a null-relation flood. Clean.
 

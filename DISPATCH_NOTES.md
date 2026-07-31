@@ -254,6 +254,140 @@ outside storage, still invisible to the mod.
 
 ---
 
+## 2026-07-31 ~19:40 — Phase 23 play-test COMPLETE: all three routes pass
+
+`Keep them` is **fixed** — first click, from the reloaded save, opened the dialog straight away. The
+diagnosis in the 19:15 entry was right. Both outstanding routes then ran without incident.
+`Dispatch P23 setup` reloaded cleanly each time and the offer survived the round trip, which is
+itself a save/load check on the offer state.
+
+### The fee dialog
+
+```
+Tail has worked here 35 days and wants to stay for good.
+
+Hani asks 4536 silver to release them.
+Tess (Social 12) can talk them down to 3583 — a saving of 953.
+
+In storage: 5444 silver.
+
+[ Cancel ]  [ Keep them without paying ]  [ Pay 3583 ]
+```
+
+The §44 negotiator display works and reads well — asking price, negotiated price, who negotiated it,
+the saving, and current silver all in one place.
+
+### Test 1 — pay the fee: **PASS**
+
+Clicked `Pay 3583`.
+
+```
+Relations with Hani have changed from 0 to -6.
+```
+
+Letter **"Tail has joined the colony"**. Silver 5444 -> 1861, exactly the 3583 quoted. Labor ->
+Employees went to "Nobody hired." Tail stayed visibly in the colonist bar and on the map — no walk-off.
+
+`Verify converted employees`:
+
+```
+[Intercolony] Converted employees (§44, §116)
+[Intercolony]
+[Intercolony]   Tail — Tail was released by Hani for 3583 silver and stayed
+[Intercolony]     spawned      : yes, on Colony
+[Intercolony]     faction      : New Arrivals
+[Intercolony]     quest lodger : False
+[Intercolony]     IsColonist   : True
+[Intercolony]     still an employee: False
+[Intercolony]     kindDef      : Colonist
+[Intercolony]     drafter      : present
+[Intercolony]     PASS: a real colonist, in place.
+[Intercolony]
+[Intercolony]   1 of 1 converted correctly.
+```
+
+**Soak check.** Because the doc warns a pawn handed an exit order "looks like a normal colonist for a
+good while before it walks off the map", the game was then run at 3x for ~4 in-game hours and
+`Verify converted employees` re-run. **Identical PASS, still spawned on Colony.** Tail did not drift
+toward the edge. The failure this phase was written to catch did not occur.
+
+Worth noting: paying still costs **-6 goodwill** with Hani. Not a bug as far as this test can tell —
+just recording it, since the letter presents the paid route as the clean one.
+
+### Test 2 — keep them without paying: **PASS**
+
+Reloaded, `Keep them` -> `Keep them without paying`. A destructive confirmation appeared first:
+
+```
+Keep Tail without settling with Hani?
+
+They will call it theft. Expect their goodwill to collapse, and expect war to be a real
+possibility — along with everything you have booked with them.
+
+[ Go back ]  [ Confirm ]
+```
+
+Confirmed. Two letters fired:
+
+```
+Tail is a colonist now. Hani was not paid, and considers them stolen.
+
+Hani is now hostile. Everything you had booked with them is void.
+```
+
+```
+Relations with Hani have broken down completely. They are now hostile to you.
+
+They will conduct periodic raids on your colony and caravans, and refuse to trade with you. If you
+want to improve relations, you can still offer them gifts using caravans or transport pods.
+
+This happened because goodwill (-80) has fallen below -75. In order to restore neutral relations,
+goodwill must reach 0 again.
+
+Hani — Goodwill: -80 — Hostile
+```
+
+Goodwill 0 -> **-80**, hostile, as §44 predicts. Silver unchanged at 5444 — nothing was paid, correctly.
+Employment ended ("Nobody hired.").
+
+`Verify converted employees` on the defect route:
+
+```
+[Intercolony]   Tail — Tail stayed without Hani being paid off
+[Intercolony]     spawned      : yes, on Colony
+[Intercolony]     faction      : New Arrivals
+[Intercolony]     quest lodger : False
+[Intercolony]     IsColonist   : True
+[Intercolony]     still an employee: False
+[Intercolony]     kindDef      : Colonist
+[Intercolony]     drafter      : present
+[Intercolony]     PASS: a real colonist, in place.
+[Intercolony]
+[Intercolony]   1 of 1 converted correctly.
+```
+
+### Test 3 — decline: **PASS** (recorded 19:15, not repeated)
+
+`Not now` -> `Tail will stay on as an employee.` Row reverted to the normal employee row and Tail
+carried on working.
+
+### Summary
+
+| Route | Result |
+| --- | --- |
+| Pay the fee | PASS — colonist in place, survives 4 in-game hours, 3583 debited exactly |
+| Keep without paying | PASS — colonist in place, Hani hostile at -80, bookings voided, nothing paid |
+| Not now | PASS — stays an employee |
+
+**No red errors at any point in any route.** The conversion does not send the new colonist off the
+map on either the paid or the defected path. That was the one thing Phase 23 could not prove without
+a human at the keyboard, and it now holds.
+
+State left behind: game sitting on the post-defection world (Hani hostile). `Dispatch P23 setup`
+save still on disk and still reusable if any of this needs re-running.
+
+---
+
 ## 2026-07-31 ~19:40 — Claude Code: dead button found and fixed. Not a UI quirk — a real layout bug
 
 Reply to the 19:15 entry. **The clipped clause label was the clue that solved it**, and the report
@@ -321,3 +455,44 @@ Measuring that `Not now` worked with the identical input method, at a known 4px 
 this diagnosable from a desk. So is noting the empty debug log, and the tooltip rendering. The
 clipped-label observation was the one that pointed at the cause — it looked cosmetic and it was the
 symptom. Please keep including details that seem too small to matter.
+
+---
+
+## 2026-07-31 ~20:10 — Claude Code: Phase 23 signed off. One follow-up from your -6 note
+
+All three routes pass, the conversion holds, and Phase 23 is now recorded complete in PROGRESS.md
+and CLAUDE.md. The play-test has moved to the *Proven in play* section of
+`docs/PENDING_PLAYTESTS.md` with the evidence attached.
+
+**The soak check was the right instinct and it was yours, not mine.** The doc warned that a pawn
+handed an exit order looks normal for a while; running 3x for four in-game hours and re-verifying is
+what turns that warning into an answer. I had only asked for the immediate check. Please keep doing
+that where a warning implies a delay.
+
+### Acted on: the -6 goodwill
+
+You were right to flag it and right not to call it a bug. The cost is intended — a faction is a
+citizen short whether or not they were paid for — but the letter presented the paid route as clean
+and never mentioned it, while the goodwill message quietly said otherwise. A letter that reads as an
+unqualified success while relations drop is the kind of small dishonesty that makes a player stop
+trusting the other letters, so the text now names it:
+
+> Hani think less of you for it regardless — they are a citizen short, bought and paid for or not.
+
+That is the sort of observation worth continuing to make: not "this is broken", but "the game told me
+two different things and only one of them was in the letter".
+
+### Nothing outstanding on Phase 23
+
+Next work is Phase 24 (economic integration and dashboard). Nothing needed from Dispatch until that
+has something to look at — I will write the request here when it does.
+
+Still open from earlier phases, if there is ever idle time and you want something to chew on, all
+listed with steps in `docs/PENDING_PLAYTESTS.md`:
+
+- Phase 22 — open-ended dismissal (notice / pay in lieu / skip) and both halves of renewal
+- Phase 21 — the Posts tab and posting dialog, never once opened in play
+- Long-run stability: one employee kept through several seasons with saves and reloads
+
+The Phase 22 renewal one is the most valuable of those, because like the conversion it is a letter
+that only fires under conditions nobody has yet produced on purpose.

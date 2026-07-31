@@ -313,8 +313,13 @@ namespace Intercolony
                 "obligations to them.\n\n" +
                 "They are a colonist now — no wage, no term, no going home.\n\n" +
                 (negotiator != null
-                    ? $"{negotiator.LabelShortCap} negotiated the price down."
-                    : "Nobody was available to negotiate the price."),
+                    ? $"{negotiator.LabelShortCap} negotiated the price down.\n\n"
+                    : "Nobody was available to negotiate the price.\n\n") +
+                // Named because it happens either way and the player will see the goodwill move.
+                // A letter that reads as an unqualified success while relations quietly drop is the
+                // kind of small dishonesty that makes a player distrust every other letter.
+                $"{faction} think less of you for it regardless — they are a citizen short, bought " +
+                "and paid for or not.",
                 LetterDefOf.PositiveEvent);
 
             return true;

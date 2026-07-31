@@ -1427,10 +1427,8 @@ Bugs found and fixed during the phase:
 §116's goal: "Add late-game narrative conversion." Acceptance: "Conversion is rare/meaningful and
 cannot be exploited as cheap recruitment."
 
-**Status: logic verified, pawn behaviour not.** The self-test passes (21/21) against a live save,
-so the eligibility gates, fee scaling, negotiation cap and defection cost are proven. What is *not*
-proven is the conversion itself — whether a quest lodger becomes a colonist in place. That is queued
-in `docs/PENDING_PLAYTESTS.md` and is the one thing in this phase that could be quietly wrong.
+**Status: verified.** Self-test 21/21, and all three of §44's routes played through — including the
+conversion itself, which was the one thing here that could have been quietly wrong.
 
 Implemented:
 - **All five of §44's outcomes.** A worker who has served two quadrums with a spotless record asks
@@ -1517,6 +1515,11 @@ Bugs found and fixed during the phase:
   a button people would actually click into the dead zone. Fixed structurally: an
   `EmployeeRowLayout` computes the text width *from* the button positions, and every button on the
   row is routed through it, so a future two-button state cannot reintroduce it.
+- **The paid route's letter read as an unqualified success while relations quietly dropped 6.** The
+  goodwill cost is intended — a faction is a citizen short either way — but a letter that does not
+  mention it is the kind of small dishonesty that makes a player stop trusting the other letters.
+  Now named in the text. Caught by a play-test noting the discrepancy rather than assuming it was a
+  bug.
 
 Manual test:
 - `Run transition self-test`: **21 passed, 0 failed** (2026-07-31, run in a live save at schema 20,
@@ -1524,12 +1527,26 @@ Manual test:
   fee scaling proven on the comparison §116 is really about — 14,400 to keep an 80/day worker against
   4,800 for a year of employing them; negotiation capped at 65% of asking; defection costing more
   (-20) than settling gains (+10).
-- **The conversion itself is still unproven.** The self-test is deliberately synthetic — joining a
-  real pawn permanently to the colony is not a side effect a dev check should have — so whether a
-  quest lodger actually becomes a colonist *in place*, rather than walking off the map, has not been
-  observed. That is the one risk in the phase and it is queued in `docs/PENDING_PLAYTESTS.md`.
-- Play-test partially run (2026-07-31): setup and the **decline** route pass. The pay and defect
-  routes were blocked by the dead-button bug above and are queued for a re-run.
+- **All three of §44's routes played through** (2026-07-31), on a fresh world, no red errors anywhere:
+
+  | Route | Result |
+  |---|---|
+  | Pay the fee | colonist in place; 3,583 debited exactly as quoted |
+  | Keep without paying | colonist in place; faction hostile at -80; bookings voided; nothing paid |
+  | Not now | stays an employee |
+
+  The negotiator display read well in play — asking price, negotiated price, who negotiated it, the
+  saving and current silver all in one place (`Hani asks 4536... Tess (Social 12) can talk them down
+  to 3583 — a saving of 953`).
+- **The conversion is proven, including the failure it was written to catch.** `Verify converted
+  employees` reported *spawned on Colony, faction New Arrivals, quest lodger False, IsColonist True,
+  still an employee False, kindDef Colonist, drafter present* on both the paid and defected routes.
+  Then, because the doc warns a pawn handed an exit order looks normal for a while before leaving,
+  the game was run at 3x for four in-game hours and re-verified: identical PASS, no drift toward the
+  map edge. Removing the pawn from `QuestPart_Leave` before ending the quest does what it was meant
+  to.
+- The offer state survived a save/load round trip — the play-test reloaded the same save point before
+  each route and the pending offer came back intact each time.
 - Two debug actions added afterwards to make that play-test practical rather than a thirty-day wait:
   **Force attachment offer** backdates an active employment past the tenure bar (backdating
   `arrivedTick` rather than setting a flag, so severance, notice and the gates all price the worker
