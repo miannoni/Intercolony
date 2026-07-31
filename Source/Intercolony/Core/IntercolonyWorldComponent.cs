@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 19;
+        public const int CurrentSaveVersion = 20;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -1270,6 +1270,15 @@ namespace Intercolony
             {
                 // 12 -> 13 added recurring contracts. Purely additive.
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
+            }
+
+            if (saveVersion < 20)
+            {
+                // 19 -> 20 added the employee-to-colonist transition. Additive: no existing
+                // employment has an offer pending, and transitionOfferedTick defaults to -1 so
+                // anyone already eligible is asked on the next beat rather than never.
+                IntercolonyLog.Message(
+                    "  schema 19 -> 20: employee-to-colonist transition added.");
             }
 
             if (saveVersion < 19)

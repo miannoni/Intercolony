@@ -37,7 +37,14 @@ namespace Intercolony
         /// <see cref="EmploymentContract.pawn"/> stays live until they are off the map. See
         /// <see cref="HostilityPolicy"/>.
         /// </summary>
-        Severed
+        Severed,
+
+        /// <summary>
+        /// The worker stayed for good (§44, §116). Terminal, and unlike every other ending it does
+        /// not mean the pawn left — they are a colonist standing on the map. The record is kept so
+        /// the colony remembers who someone used to be.
+        /// </summary>
+        Converted
     }
 
     /// <summary>
@@ -213,6 +220,17 @@ namespace Intercolony
         /// <summary>How many terms this worker has signed on for beyond the first.</summary>
         public int renewals;
 
+        // --- Attachment (§44, §116) ---------------------------------------------------------
+
+        /// <summary>A live offer to stay permanently is waiting on the player.</summary>
+        public bool transitionOffered;
+
+        /// <summary>When it was last raised, so a declined offer waits before coming back. -1 for never.</summary>
+        public int transitionOfferedTick = -1;
+
+        /// <summary>Settled or defected. Terminal either way — the question is not asked twice.</summary>
+        public bool transitionResolved;
+
         /// <summary>Set on arrival: the term runs from the first day of work, not from hiring.</summary>
         public int endTick = -1;
 
@@ -333,6 +351,8 @@ namespace Intercolony
                         ? $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left, " +
                           $"next pay in {Mathf.Max(0f, DaysUntilPayment):0.#}d"
                         : $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left";
+                case EmploymentStatus.Converted:
+                    return outcomeNote.NullOrEmpty() ? "stayed for good" : outcomeNote;
                 case EmploymentStatus.Severed:
                     return pawn == null
                         ? outcomeNote.NullOrEmpty() ? "released — their faction went to war" : outcomeNote
@@ -390,6 +410,9 @@ namespace Intercolony
             Scribe_Values.Look(ref renewalDeclinedByPlayer, "renewalDeclinedByPlayer", false);
             Scribe_Values.Look(ref renewalWage, "renewalWage", 0);
             Scribe_Values.Look(ref renewals, "renewals", 0);
+            Scribe_Values.Look(ref transitionOffered, "transitionOffered", false);
+            Scribe_Values.Look(ref transitionOfferedTick, "transitionOfferedTick", -1);
+            Scribe_Values.Look(ref transitionResolved, "transitionResolved", false);
             Scribe_Values.Look(ref endTick, "endTick", -1);
 
             Scribe_Values.Look(ref status, "status", EmploymentStatus.Travelling);

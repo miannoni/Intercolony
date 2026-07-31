@@ -64,6 +64,12 @@ namespace Intercolony
         /// <summary>Open-ended workers let go without the notice they were owed (§36.4).</summary>
         public int noticesSkipped;
 
+        /// <summary>Employees who stayed for good (§44), however it was settled.</summary>
+        public int transitions;
+
+        /// <summary>How many of those were kept without their faction being paid off.</summary>
+        public int defections;
+
         public float Score => score;
 
         public int ScoreDisplay => Mathf.RoundToInt(score);
@@ -113,6 +119,8 @@ namespace Intercolony
             Scribe_Values.Look(ref safePassageDenials, "safePassageDenials", 0);
             Scribe_Values.Look(ref renewals, "renewals", 0);
             Scribe_Values.Look(ref noticesSkipped, "noticesSkipped", 0);
+            Scribe_Values.Look(ref transitions, "transitions", 0);
+            Scribe_Values.Look(ref defections, "defections", 0);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {

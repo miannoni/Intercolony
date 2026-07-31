@@ -710,6 +710,25 @@ namespace Intercolony
                 return;
             }
 
+            // An offer to stay for good outranks everything, including renewal: it is the rarest
+            // thing this tab ever shows and it is a decision the player has earned (§44).
+            if (TransitionService.HasLiveOffer(contract))
+            {
+                Rect settleRect = new Rect(rect.xMax - actionWidth * 2f - 8f, rect.y + 11f, actionWidth, 30f);
+                if (Widgets.ButtonText(settleRect, "Keep them"))
+                {
+                    OpenTransitionDialog(contract);
+                }
+
+                Rect laterRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f);
+                if (Widgets.ButtonText(laterRect, "Not now"))
+                {
+                    TransitionService.Decline(contract);
+                }
+
+                return;
+            }
+
             // A live renewal offer outranks the dismiss button: it expires on its own, and it is
             // the thing the player is being asked about (§115).
             if (RenewalService.HasLiveOffer(contract))
@@ -782,6 +801,17 @@ namespace Intercolony
                 text += contract.clauseBreaches > 0
                     ? $", {contract.clauseBreaches} of them outside the clause\n"
                     : ", all within the clause\n";
+            }
+
+            if (contract.status == EmploymentStatus.Active)
+            {
+                // §116 wants this rare, which makes it worth showing how far off it is — a rare
+                // outcome nobody can see approaching is indistinguishable from one that does not
+                // exist.
+                text += TransitionService.IsEligible(
+                    IntercolonyWorldComponent.Current, contract, out string blocker)
+                    ? "\nThey have grown attached and would stay permanently.\n"
+                    : $"\nSettling here permanently: {blocker}\n";
             }
 
             if (contract.compensationPaid > 0)
@@ -890,6 +920,57 @@ namespace Intercolony
                     "Word gets around. Your standing as an employer will suffer, and so will " +
                     $"{contract.factionName}'s opinion of you.",
                     () => RenewalService.DismissWithoutNotice(contract),
+                    destructive: true))
+            });
+        }
+
+        /// <summary>
+        /// §44's decision, with all three of its routes on one screen.
+        ///
+        /// The negotiated figure and the unnegotiated one are shown together rather than the player
+        /// being told only the final number — seeing that a Social 14 colonist saved 2,800 silver is
+        /// the whole reward for having one.
+        /// </summary>
+        private void OpenTransitionDialog(EmploymentContract contract)
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            Map map = Find.CurrentMap;
+
+            int asking = TransitionService.ReleaseFee(state, contract);
+            Pawn negotiator = TransitionService.BestNegotiator(map);
+            int fee = TransitionService.NegotiatedFee(state, contract, negotiator);
+
+            string body =
+                $"{contract.workerName} has worked here {contract.TenureDays:0} days and wants to stay " +
+                $"for good.\n\n" +
+                $"{contract.factionName} asks {asking} silver to release them.\n" +
+                (negotiator != null && fee < asking
+                    ? $"{negotiator.LabelShortCap} (Social " +
+                      $"{negotiator.skills.GetSkill(SkillDefOf.Social).Level}) can talk them down to " +
+                      $"{fee} — a saving of {asking - fee}.\n"
+                    : "Nobody here can negotiate the price down.\n") +
+                $"\nIn storage: {PurchaseOrderService.CountColonySilver(map)} silver.";
+
+            Find.WindowStack.Add(new Dialog_MessageBox(
+                body,
+                $"Pay {fee}",
+                () =>
+                {
+                    if (!TransitionService.TrySettle(state, contract, negotiator, map,
+                            out string failReason))
+                    {
+                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                    }
+                },
+                "Cancel",
+                null)
+            {
+                buttonCText = "Keep them without paying",
+                buttonCAction = () => Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                    $"Keep {contract.workerName} without settling with {contract.factionName}?\n\n" +
+                    "They will call it theft. Expect their goodwill to collapse, and expect war to " +
+                    "be a real possibility — along with everything you have booked with them.",
+                    () => TransitionService.Defect(state, contract),
                     destructive: true))
             });
         }

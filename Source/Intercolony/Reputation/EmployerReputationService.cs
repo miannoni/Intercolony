@@ -55,12 +55,32 @@ namespace Intercolony
         /// <summary>Letting an open-ended worker go without the notice they were owed (§36.4).</summary>
         private const float NoticeSkipped = -9f;
 
+        /// <summary>
+        /// A worker liked the colony enough to settle here permanently (§44). The strongest positive
+        /// available, and the only one a player cannot manufacture — it takes two quadrums of
+        /// spotless treatment to reach.
+        /// </summary>
+        private const float TransitionSettled = 10f;
+
+        /// <summary>Keeping someone without settling with their people (§44 "pawn defects").</summary>
+        private const float Defection = -20f;
+
         /// <summary>Goodwill lost with the worker's own faction when they are badly treated (§39 step 8).</summary>
         private const int GoodwillWalkOut = -8;
         private const int GoodwillDeath = -5;
         private const int GoodwillCombatMisuse = -4;
         private const int GoodwillSafePassageDenied = -6;
         private const int GoodwillNoticeSkipped = -4;
+
+        /// <summary>Losing a citizen, but properly bought out. A cost, not an insult.</summary>
+        private const int GoodwillTransitionSettled = -6;
+
+        /// <summary>
+        /// Losing a citizen to what the faction reads as theft (§44). Large enough that a neutral
+        /// faction goes hostile — which is the whole point: §116 says conversion must not be cheap
+        /// recruitment, and the cheapest route of all is simply not paying.
+        /// </summary>
+        private const int GoodwillDefection = -80;
 
         public static EmployerReputation For(IntercolonyWorldComponent state)
         {
@@ -285,6 +305,40 @@ namespace Intercolony
 
             AffectGoodwill(contract.employerFaction, GoodwillNoticeSkipped,
                 $"{contract.workerName} was dismissed without notice");
+        }
+
+        /// <summary>A worker settled here for good, bought out cleanly (§44, §116).</summary>
+        public static void NoteTransitionSettled(IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            EmployerReputation rep = For(state);
+            if (rep == null || contract == null)
+            {
+                return;
+            }
+
+            rep.transitions++;
+            rep.Adjust(TransitionSettled);
+
+            AffectGoodwill(contract.employerFaction, GoodwillTransitionSettled,
+                $"{contract.workerName} left {contract.factionName} to settle in " +
+                $"{Faction.OfPlayer.Name}");
+        }
+
+        /// <summary>A worker was kept without their people being paid off (§44).</summary>
+        public static void NoteDefection(IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            EmployerReputation rep = For(state);
+            if (rep == null || contract == null)
+            {
+                return;
+            }
+
+            rep.transitions++;
+            rep.defections++;
+            rep.Adjust(Defection);
+
+            AffectGoodwill(contract.employerFaction, GoodwillDefection,
+                $"{contract.workerName} was kept without {contract.factionName} being paid");
         }
 
         /// <summary>
