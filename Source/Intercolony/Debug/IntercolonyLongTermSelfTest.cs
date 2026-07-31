@@ -194,8 +194,10 @@ namespace Intercolony
 
         private static void CheckOpenEndedContract(Results r)
         {
+            // Set up the way Arrive leaves an open-ended contract: no term and no expiry tick.
             EmploymentContract open = Synthetic(CombatClause.Civilian, 40, 30);
             open.termDays = 0;
+            open.endTick = -1;
 
             r.Check(open.IsOpenEnded, "a zero term means open-ended (§36.4)");
 

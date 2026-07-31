@@ -173,7 +173,19 @@ namespace Intercolony
         /// service began, and "endTick is still -1" used to stand in for "never arrived" — which
         /// stops being true the moment open-ended contracts exist, because those never set one.
         /// </summary>
-        public int arrivedTick = -1;
+        public int arrivedTick = NotArrived;
+
+        /// <summary>
+        /// Sentinel for <see cref="arrivedTick"/>, compared exactly rather than by sign.
+        ///
+        /// "Negative means never arrived" is the obvious test and it is wrong: a tick is only
+        /// non-negative because the game has been running a while, and any code that constructs a
+        /// contract with a backdated start — a self-test, a migration, a future scenario — lands on
+        /// a negative tick that means the opposite of what the sign test concludes. Getting that
+        /// wrong reads as tenure zero forever, which silently switches off severance, notice growth
+        /// and renewal eligibility all at once, with nothing throwing.
+        /// </summary>
+        public const int NotArrived = -1;
 
         /// <summary>
         /// When a dismissal notice runs out (§36.4). -1 when none is being served.
@@ -244,7 +256,7 @@ namespace Intercolony
         public bool IsOpenEnded => termDays <= 0;
 
         /// <summary>Days actually served so far. 0 before arrival; the basis for §43's severance.</summary>
-        public float TenureDays => arrivedTick < 0
+        public float TenureDays => arrivedTick == NotArrived
             ? 0f
             : Mathf.Max(0f, (GenTicks.TicksGame - arrivedTick) / (float)GenDate.TicksPerDay);
 
@@ -371,7 +383,7 @@ namespace Intercolony
 
             Scribe_Values.Look(ref hiredTick, "hiredTick", 0);
             Scribe_Values.Look(ref arrivalTick, "arrivalTick", 0);
-            Scribe_Values.Look(ref arrivedTick, "arrivedTick", -1);
+            Scribe_Values.Look(ref arrivedTick, "arrivedTick", NotArrived);
             Scribe_Values.Look(ref noticeEndTick, "noticeEndTick", -1);
             Scribe_Values.Look(ref renewalOffered, "renewalOffered", false);
             Scribe_Values.Look(ref renewalDeclinedByWorker, "renewalDeclinedByWorker", false);

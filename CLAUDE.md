@@ -1,4 +1,4 @@
-# Intercolony — Agent Context
+﻿# Intercolony — Agent Context
 
 RimWorld mod. Hobby project. See `DESIGN.md` for the product spec.
 
@@ -88,15 +88,9 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 21 complete (2026-07-30). Next: Phase 22 — Long-term employment
-(DESIGN.md §115, §36.3). Long fixed-term and open-ended contracts, renewal, voluntary
-non-renewal and termination rules — plus the recurring *supply* contract renewal §107 listed
-and Phase 14 never built, deliberately sharing one renewal mechanism.
-
-**Read §115's rebalance note before raising `LaborCandidateService.MaxTermDays` past 99.**
-Phase 20 measured where §42's combat-clause pricing stops deterring the meat-shield strategy, and
-`IntercolonyCombatClauseSelfTest` fails when the cap crosses it. "Long fixed-term" and "open-ended"
-both imply raising it.
+**Phase:** 22 complete (2026-07-30). Next: Phase 23 — Employee-to-colonist transition
+(DESIGN.md §116, §44). Late-game narrative conversion: eligibility, the player's offer, the
+worker's answer, and what it costs their home faction.
 
 **Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
 control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation

@@ -1332,3 +1332,92 @@ Bugs found and fixed during the phase:
   identical — hiding the smoothness the census exists to create. Quantity and reputation are now
   measured as reach, quality on the ranked queue. The lesson is the recurring one: assert against the
   thing the design is about, not the nearest number to hand.
+
+## Phase 22 — Long-term employment  (2026-07-30)
+
+§115's goal: "Support stable recurring workforces." Acceptance: employees can remain for long
+periods without faction-state drift or save corruption; and neither employment nor supply
+agreements end by silently lapsing.
+
+**A correction to §115's own premise, found before building.** A RimWorld year is 60 days
+(`GenDate.DaysPerYear`) and `MaxTermDays` was already 60 — so §36.3's "long fixed-term contract:
+one year" was already reachable, and the balance warning Phase 20 left applied to a narrower case
+than it sounded. Only §36.4's open-ended employment breaks it, because a contract with no term has
+no term for compensation to scale against.
+
+Implemented:
+- **Open-ended contracts (§36.4).** `termDays` 0, no expiry tick, ended only by rule. Priced as the
+  longest engagement rather than a zero-day one — passing 0 into the wage formula would have hit
+  §36.1's short-term premium and made permanent employment the *dearest* per day, which is
+  backwards. Prepaid is refused rather than silently converted: there is no term to pay for.
+- **Tenure-scaled severance (§43, §115), which is the structural fix Phase 20's dated warning
+  demanded.** Compensation was a fixed number of days' wage while both wage bills grow with the
+  term, so past 99 days a drafted civilian became the cheap way to field a fighter. §36.4 removes
+  the cap rather than raising it, so no constant could fix it. Severance now accrues per day served
+  — 0.6 days of wage for a civilian against 0.1 for a security contractor — so the gap widens with
+  tenure instead of being outrun by wages. Uncapped on purpose: a cap would restore the same problem
+  further out.
+- **Notice periods (§36.4).** Growing with service, 3 to 20 days, settled by working them out or
+  paying in lieu at exactly the same cost — the choice is whether the colony wants the labour or the
+  silver. Skipping notice entirely is deliberately available and is remembered against §40. Without
+  a cost, open-ended employment would be strictly better for the player than any fixed term, and
+  §36.2 and §36.3 would be dead options.
+- **Renewal, one mechanism for both contract kinds (§115, §107).** The counterparty offers and the
+  player answers; whether an offer comes at all depends on the player's record. A worker who was
+  paid late, is still owed arrears, or was drafted against their clause does not ask to stay — and
+  the letter says which. Renewal a player could simply buy would have made §40's reputation
+  decorative.
+- **Supply-agreement renewal**, the half §107 listed and Phase 14 never built. Same shape, gated on
+  commercial reputation and a clean delivery run instead of employer standing. Offers expire and say
+  so.
+- **Voluntary non-renewal** on both sides, distinct from dismissal: the worker serves out the term
+  they agreed to and goes home on time.
+- Accepting a renewal extends the same employment in place — no departure, no second arrival, no
+  faction round trip. The safest way not to drift across a renewal is not to touch the pawn at all.
+- Schema 19, additive. `arrivedTick` replaces "endTick is still -1" as the test for whether a worker
+  ever started, which stops being true once contracts have no end.
+
+Not implemented:
+- **Worker-initiated resignation.** §36.4 says "either side terminates", and only the colony's side
+  has rules. A worker still leaves over unpaid wages (§39) or combat misuse (§42), but nothing makes
+  a well-treated long-term employee decide to go home on their own.
+- **Living conditions as a renewal input.** §41 lists housing and safety, and §40 lists them as
+  reputation signals. Still unmeasured since Phase 19; renewal reads conduct the code already
+  records rather than adding a half-built model.
+- Renegotiating terms at renewal — the worker names one wage and the answer is yes or no. No
+  counter-offer.
+- Long fixed terms beyond a year. The cap stays at 60 days because a year is 60 days; open-ended
+  covers everything longer.
+
+Known limitations:
+- **The long-run stability claim is not proven.** §115's first acceptance criterion is about
+  hundreds of days of play, which no self-test settles — what is proven is that the arithmetic
+  governing long engagements does not break, out to five in-game years. Whether a quest lodger
+  survives that long in practice is still the open question the technical notes have carried since
+  Phase 15.
+- Severance is uncapped, so a worker kept for many years becomes very expensive to lose. That is
+  intended, but it has not been played.
+- A renewal offer is raised once per term. Declining it and changing your mind before the term ends
+  is not possible.
+- The notice period does not interact with §88's safe passage: a war during a notice period severs
+  the contract and the notice simply stops mattering.
+
+Manual test:
+- `Run long-term employment self-test`: **30 passed, 0 failed.** The shield economics hold at every
+  tenure from 5 to 300 days, tightest at 300 days and still 1.19x — where Phase 20 recorded a
+  crossover at 99. At 100 days specifically: shield 18,400 against contractor 12,200, where the two
+  were exactly equal before. Notice grows 3 days at one week served to 20 at 180 days. Every refusal
+  to renew carries a stated reason.
+- Startup clean, schema 19, no def errors.
+
+Bugs found and fixed during the phase:
+- **A sign test used as a sentinel switched off three features at once, silently.** `TenureDays`
+  guarded with `arrivedTick < 0`, treating any negative tick as "never arrived". That is only true
+  because a live game's tick is positive — anything constructing a contract with a backdated start
+  lands on a negative tick meaning the opposite. The result read as tenure zero forever, which
+  disabled severance, notice growth *and* renewal eligibility together, with nothing throwing. Now
+  compared against an explicit `NotArrived` constant. Six of the self-test's failures were this one
+  cause.
+- **Open-ended hires were rejected by the minimum-term check**, since 0 is below every candidate's
+  minimum — and would have been priced with §36.1's short-term premium if they had got past it. Both
+  found by reading the hire path rather than by the test, which never reached it.

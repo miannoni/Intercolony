@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -176,7 +176,7 @@ namespace Intercolony
             // were generated with would read as one the colony inflicted. arrivedTick is set exactly
             // once, on arrival — endTick used to serve as this test and cannot any more, because an
             // open-ended contract never sets one.
-            if (contract.arrivedTick < 0)
+            if (contract.arrivedTick == EmploymentContract.NotArrived)
             {
                 return;
             }
