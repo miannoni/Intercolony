@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -144,15 +144,12 @@ namespace Intercolony
             }
 
             float standing = EmployerReputationService.ScoreFor(state);
-            List<LaborCandidate> world = LaborCandidateService.WorldPool(state);
-
-            // Snapshot: taking a worker on as an applicant removes them from the pool.
-            List<LaborCandidate> available = new List<LaborCandidate>(world);
+            List<LaborProspect> world = LaborCandidateService.Census(state);
             Dictionary<int, int> gained = new Dictionary<int, int>();
 
-            foreach (LaborCandidate worker in available)
+            foreach (LaborProspect worker in world)
             {
-                if (worker?.pawn == null)
+                if (worker == null)
                 {
                     continue;
                 }
@@ -163,28 +160,20 @@ namespace Intercolony
 
                 foreach (JobPosting posting in open)
                 {
-                    if (!HasRoom(posting) || !posting.MeetsRequirement(worker.pawn))
+                    if (!HasRoom(posting) || !posting.MeetsRequirement(worker))
                     {
                         continue;
                     }
 
-                    SettlementEconomicProfile profile = ProfileFor(state, worker.settlementId);
-
-                    // Priced for *this* posting's term and clause, not the worker's advertised
-                    // minimum — a 60-day civilian job and a 5-day security job are different work
-                    // and the same person charges differently for them.
-                    int ask = LaborCandidateService.DailyWage(
-                        worker.pawn, profile, worker.distanceTiles, posting.termDays, standing,
-                        posting.combatClause);
-
+                    int ask = Ask(state, worker, posting, standing);
                     int surplus = posting.wageOffered - ask;
                     if (surplus < 0)
                     {
                         continue;
                     }
 
-                    // Ties broken by posting id so the outcome is reproducible: the same pool and
-                    // the same postings must produce the same applicants after a reload.
+                    // Ties broken by posting id so the outcome is reproducible: the same census
+                    // and the same postings must produce the same applicants after a reload.
                     if (surplus > bestSurplus || (surplus == bestSurplus && best != null && posting.id < best.id))
                     {
                         best = posting;
@@ -201,9 +190,11 @@ namespace Intercolony
                 // One worker, one application. This is what makes ten identical postings behave
                 // exactly like one — they compete for the same people rather than each summoning
                 // their own.
-                Apply(best, worker, bestAsk);
-                gained.TryGetValue(best.id, out int n);
-                gained[best.id] = n + 1;
+                if (Apply(best, worker, bestAsk))
+                {
+                    gained.TryGetValue(best.id, out int n);
+                    gained[best.id] = n + 1;
+                }
             }
 
             foreach (JobPosting posting in open)
@@ -218,13 +209,24 @@ namespace Intercolony
             return posting.Applicants.Count < posting.PositionsRemaining + ApplicantSlack;
         }
 
-        private static void Apply(JobPosting posting, LaborCandidate worker, int ask)
+        /// <summary>
+        /// Turns a census record into an actual applicant - the only point at which a pawn is built.
+        ///
+        /// This is what makes a deep market affordable. The census can be hundreds of workers
+        /// because none of them exist until one of them applies for something; generating a pawn is
+        /// the expensive call, and it happens once per applicant rather than once per worker
+        /// considered.
+        /// </summary>
+        private static bool Apply(JobPosting posting, LaborProspect worker, int ask)
         {
-            Pawn pawn = worker.Release();
-            LaborCandidateService.Take(worker);
+            Pawn pawn = worker.Materialise();
+            if (pawn == null)
+            {
+                return false;
+            }
 
-            // The pool would otherwise discard this pawn at the next refresh, and the posting is
-            // now its only owner. KeepForever rather than Decide for the reason the notes give:
+            // Nothing else owns this pawn - it was built for this list. KeepForever rather than
+            // Decide for the reason the notes give:
             // WorldPawnGC knows nothing about a job posting and would collect an applicant the
             // player is still deciding about.
             if (!Find.WorldPawns.Contains(pawn))
@@ -245,6 +247,23 @@ namespace Intercolony
                 openMarketAsk = ask,
                 appliedTick = GenTicks.TicksGame
             });
+
+            return true;
+        }
+
+        /// <summary>
+        /// What this worker charges for this particular job.
+        ///
+        /// Priced for the posting's own term and clause rather than any advertised minimum - a
+        /// 60-day civilian job and a 5-day security job are different work, and the same person
+        /// charges differently for them.
+        /// </summary>
+        private static int Ask(IntercolonyWorldComponent state, LaborProspect worker,
+            JobPosting posting, float standing)
+        {
+            return LaborCandidateService.DailyWageFor(
+                worker.pricedSkillValue, ProfileFor(state, worker.settlementId),
+                worker.distanceTiles, posting.termDays, standing, posting.combatClause);
         }
 
         /// <summary>
@@ -303,24 +322,21 @@ namespace Intercolony
         public static string ExplainSilence(IntercolonyWorldComponent state, JobPosting posting,
             float standing)
         {
-            List<LaborCandidate> world = LaborCandidateService.WorldPool(state);
+            List<LaborProspect> world = LaborCandidateService.Census(state);
 
             int qualified = 0;
             int cheapestAsk = int.MaxValue;
 
-            foreach (LaborCandidate worker in world)
+            foreach (LaborProspect worker in world)
             {
-                if (worker?.pawn == null || !posting.MeetsRequirement(worker.pawn))
+                if (worker == null || !posting.MeetsRequirement(worker))
                 {
                     continue;
                 }
 
                 qualified++;
 
-                int ask = LaborCandidateService.DailyWage(
-                    worker.pawn, ProfileFor(state, worker.settlementId), worker.distanceTiles,
-                    posting.termDays, standing, posting.combatClause);
-
+                int ask = Ask(state, worker, posting, standing);
                 if (ask < cheapestAsk)
                 {
                     cheapestAsk = ask;
@@ -521,32 +537,28 @@ namespace Intercolony
             }
 
             float standing = EmployerReputationService.ScoreFor(state);
-            List<LaborCandidate> world = LaborCandidateService.WorldPool(state);
+            List<LaborProspect> world = LaborCandidateService.Census(state);
 
             int min = int.MaxValue;
             int max = 0;
 
-            foreach (LaborCandidate worker in world)
+            foreach (LaborProspect worker in world)
             {
-                if (worker?.pawn == null)
+                if (worker == null)
                 {
                     continue;
                 }
 
-                if (skill != null)
+                if (skill != null && (!worker.CanDo(skill) || worker.LevelOf(skill) < minLevel))
                 {
-                    SkillRecord record = worker.pawn.skills?.GetSkill(skill);
-                    if (record == null || record.TotallyDisabled || record.Level < minLevel)
-                    {
-                        continue;
-                    }
+                    continue;
                 }
 
                 qualified++;
 
-                int ask = LaborCandidateService.DailyWage(
-                    worker.pawn, ProfileFor(state, worker.settlementId), worker.distanceTiles,
-                    termDays, standing, clause);
+                int ask = LaborCandidateService.DailyWageFor(
+                    worker.pricedSkillValue, ProfileFor(state, worker.settlementId),
+                    worker.distanceTiles, termDays, standing, clause);
 
                 if (ask < min)
                 {

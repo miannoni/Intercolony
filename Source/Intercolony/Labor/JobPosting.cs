@@ -290,6 +290,21 @@ namespace Intercolony
             return record != null && !record.TotallyDisabled && record.Level >= minSkillLevel;
         }
 
+        /// <summary>
+        /// The census-record twin of <see cref="MeetsRequirement(Pawn)"/>. Kept beside it so the
+        /// two rules stay visibly the same: a worker who qualifies as a record must still qualify
+        /// once they are a pawn, or the applicant who arrives is not the one who was advertised.
+        /// </summary>
+        public bool MeetsRequirement(LaborProspect prospect)
+        {
+            if (skill == null)
+            {
+                return true;
+            }
+
+            return prospect != null && prospect.CanDo(skill) && prospect.LevelOf(skill) >= minSkillLevel;
+        }
+
         public int SkillLevelOf(Pawn pawn)
         {
             if (skill == null || pawn?.skills == null)

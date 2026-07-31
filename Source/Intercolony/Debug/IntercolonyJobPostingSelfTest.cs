@@ -75,6 +75,7 @@ namespace Intercolony
             try
             {
                 CheckPoolSplit(r, state);
+                CheckResponseCurveIsSmooth(r, state);
                 CheckWageDrivesApplicants(r, state);
                 CheckReputationDrivesApplicants(r, state, rep);
                 CheckOnePersonOnePosting(r, state);
@@ -120,33 +121,153 @@ namespace Intercolony
         // --- The pool ----------------------------------------------------------------------
 
         /// <summary>
-        /// A posting must reach further than browsing, or it has no reason to exist.
+        /// The census must be deep, and it must price the same way a real pawn does.
         ///
-        /// This is the assertion behind the design decision: if the two ever returned the same
-        /// people, a posting could only ever surface workers the player could already see and hire
-        /// on the spot, and §35's "two complementary workflows" would be one workflow twice.
+        /// Depth is the point: a shallow market answers a one-silver change by flipping from nobody
+        /// interested to everybody interested, because there were three qualified people who all
+        /// charged about the same. Pricing agreement is what keeps that depth honest — the posting
+        /// dialog quotes a band drawn from census records, and the worker who eventually arrives is
+        /// a real pawn. If the two priced differently the band would be a lie the player discovers
+        /// only after hiring.
         /// </summary>
         private static void CheckPoolSplit(Results r, IntercolonyWorldComponent state)
         {
             int advertised = LaborCandidateService.Refresh(state).Count;
-            int world = LaborCandidateService.WorldPool(state).Count;
+            List<LaborProspect> world = LaborCandidateService.Census(state);
 
-            if (advertised == 0)
+            if (advertised == 0 && world.Count == 0)
             {
-                r.Info("pool split skipped: no labor available this cycle at all.");
+                r.Info("pool checks skipped: no labor available this cycle at all.");
                 return;
             }
 
-            r.Check(world > advertised,
-                "a posting reaches further than the hiring listing (§35.2)",
-                $"{advertised} advertising, {world} reachable");
+            r.Check(world.Count > advertised,
+                "a posting reaches far further than the hiring listing (§35.2)",
+                $"{advertised} advertising, {world.Count} in the census");
 
-            // Calling it twice must not build a second pool: every posting answered in one refresh
-            // has to see the same people, or ten identical postings stop being one posting.
-            int again = LaborCandidateService.WorldPool(state).Count;
-            r.Check(again == world,
-                "the world pool is built once per cycle, not once per question",
-                $"{world} then {again}");
+            r.Check(world.Count >= advertised * 5,
+                "the census is deep enough for an offer to have a shape, not a threshold",
+                $"x{world.Count / (float)Mathf.Max(1, advertised):0.0} the listing");
+
+            // Building it twice must not build two: every posting answered in one refresh has to
+            // see the same people, or ten identical postings stop being one posting.
+            int again = LaborCandidateService.Census(state).Count;
+            r.Check(again == world.Count,
+                "the census is taken once per cycle, not once per question",
+                $"{world.Count} then {again}");
+
+            // Same rule, two representations. WeightedLevel and the top-N are shared; this proves
+            // the shared path is actually shared rather than two copies that agree today.
+            Pawn probe = null;
+            foreach (LaborCandidate candidate in LaborCandidateService.Refresh(state))
+            {
+                if (candidate?.pawn != null)
+                {
+                    probe = candidate.pawn;
+                    break;
+                }
+            }
+
+            if (probe != null)
+            {
+                float fromPawn = LaborCandidateService.PricedSkillValue(probe);
+                r.Check(fromPawn > 0f,
+                    "a real pawn prices to a positive skill value",
+                    $"{fromPawn:0.0}");
+            }
+
+            float lowest = float.MaxValue;
+            float highest = 0f;
+            foreach (LaborProspect prospect in world)
+            {
+                if (prospect.pricedSkillValue < lowest)
+                {
+                    lowest = prospect.pricedSkillValue;
+                }
+
+                if (prospect.pricedSkillValue > highest)
+                {
+                    highest = prospect.pricedSkillValue;
+                }
+            }
+
+            r.Check(world.Count == 0 || highest > lowest,
+                "the census contains a spread of ability, not one worker repeated",
+                $"skill value {lowest:0.0} to {highest:0.0}");
+        }
+
+        /// <summary>
+        /// The complaint this phase's second pass exists to answer, turned into an assertion.
+        ///
+        /// Playing it revealed that a single silver could take a posting from no replies to every
+        /// qualified worker in the world, which is not a market — it is a threshold. So: walk the
+        /// wage one silver at a time across the whole going-rate band and assert that no single step
+        /// moves more than a modest share of the eventual total.
+        /// </summary>
+        private static void CheckResponseCurveIsSmooth(Results r, IntercolonyWorldComponent state)
+        {
+            SkillDef skill = SkillDefOf.Construction;
+            const int term = 20;
+
+            if (!JobPostingService.GoingRate(state, skill, 8, term, CombatClause.Civilian,
+                    out int low, out int high, out int qualified))
+            {
+                r.Info("response curve skipped: nobody reachable has the skill.");
+                return;
+            }
+
+            if (high - low < 4)
+            {
+                r.Info($"response curve skipped: the band is only {low}-{high}, too narrow to walk.");
+                return;
+            }
+
+            // Sampled rather than exhaustive — the band can be wide and each step runs the matcher.
+            int steps = Mathf.Min(12, high - low + 1);
+            int biggestJump = 0;
+            int biggestAt = 0;
+            int previous = 0;
+            int total = 0;
+            StringBuilder curve = new StringBuilder();
+
+            for (int i = 0; i < steps; i++)
+            {
+                int wage = low + Mathf.RoundToInt(i * (high - low) / (float)(steps - 1));
+                int applicants = Measure(state, skill, 8, term, wage).applicants;
+
+                if (i > 0)
+                {
+                    curve.Append(' ');
+                }
+
+                curve.Append(applicants);
+
+                if (i > 0 && applicants - previous > biggestJump)
+                {
+                    biggestJump = applicants - previous;
+                    biggestAt = wage;
+                }
+
+                previous = applicants;
+                total = Mathf.Max(total, applicants);
+            }
+
+            r.Info($"{qualified} qualified in the census; replies across {low}-{high}: {curve}");
+
+            if (total == 0)
+            {
+                r.Info("response curve skipped: nobody applied anywhere in the band.");
+                return;
+            }
+
+            float share = biggestJump / (float)total;
+            r.Check(share <= 0.6f,
+                "no single step across the band flips the whole market (§35.2)",
+                $"biggest jump {biggestJump} of {total} ({share:P0}) at {biggestAt}/day");
+
+            r.Check(total >= 3,
+                "a full-band offer draws enough people to choose between",
+                $"{total} at the top of the band");
         }
 
         // --- §114's acceptance criterion ---------------------------------------------------

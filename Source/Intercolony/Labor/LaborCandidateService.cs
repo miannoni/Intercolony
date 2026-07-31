@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -44,27 +44,34 @@ namespace Intercolony
         private const int MaxCandidates = 20;
 
         /// <summary>
-        /// Ceiling on the whole world labor pool, of which <see cref="MaxCandidates"/> is the part
-        /// actually advertised (§35.1) and the rest is reachable only by a job posting (§35.2).
+        /// Workers per settlement in the census — the deep population a job posting is answered by
+        /// (§35.2).
         ///
-        /// That split is what gives the two workflows different jobs. Browsing shows who is on the
-        /// market right now and costs their asking price; a posting reaches people who are not
-        /// advertising at all, and costs time instead. Without it a posting could only ever surface
-        /// workers the player could already see and hire immediately, which would make it pointless.
+        /// **This is thirty times the advertised listing on purpose.** A market only behaves like
+        /// one when it is deep: with a few dozen workers in the world, moving a posted wage by a
+        /// single silver takes it from nobody interested to everybody interested, because there were
+        /// three qualified people and they all charged about the same. Hundreds of workers give an
+        /// offer a shape, so raising it buys a few more replies rather than flipping a switch.
+        ///
+        /// Affordable only because a census record is not a pawn — see <see cref="LaborProspect"/>.
         /// </summary>
-        private const int MaxWorldPool = 45;
+        private const int ProspectsPerSettlement = 30;
+
+        /// <summary>Hard ceiling on the census, so a huge world map cannot make a refresh expensive.</summary>
+        private const int MaxCensus = 900;
 
         private static readonly List<LaborCandidate> pool = new List<LaborCandidate>();
 
         /// <summary>
-        /// Workers who are not advertising but would move for the right offer. **Built lazily**, only
-        /// when a refresh finds an open posting — pawn generation is the expensive part of building
-        /// any listing, and a player who never posts a job should not pay for a pool they cannot see.
+        /// Everyone in the world who would consider working here, as lightweight records.
+        ///
+        /// **Built lazily**, only when something actually asks — a player who never posts a job pays
+        /// nothing for it.
         /// </summary>
-        private static readonly List<LaborCandidate> latent = new List<LaborCandidate>();
+        private static readonly List<LaborProspect> census = new List<LaborProspect>();
 
-        /// <summary>Which refresh <see cref="latent"/> belongs to; -1 when it has not been built.</summary>
-        private static int latentRefreshCount = -1;
+        /// <summary>Which refresh <see cref="census"/> belongs to; -1 when it has not been built.</summary>
+        private static int censusRefreshCount = -1;
 
         /// <summary>Which market refresh the current pool belongs to; -1 when there is no pool.</summary>
         private static int poolRefreshCount = -1;
@@ -120,7 +127,9 @@ namespace Intercolony
                 return pool;
             }
 
-            Clear();
+            // Only the listing — the census is keyed to the same refresh and rebuilding it here
+            // would throw away work that is about to be redone identically.
+            ClearPool();
             poolRefreshCount = state.RefreshCount;
 
             // §39 step 9, the general half: a bad employer sees fewer workers on offer at all.
@@ -217,96 +226,95 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Everyone a job posting can reach this cycle: the advertised listing plus the latent pool
-        /// (§35.2, §114).
+        /// Everyone a job posting can reach this cycle (§35.2, §114).
         ///
-        /// **One pool, exposed to every posting.** That is what makes posting ten identical jobs no
-        /// different from posting one — the world has the workers it has, and they are the scarce
-        /// thing rather than the advertisements. It also means no cap or fee on postings is needed:
-        /// the market limits itself.
+        /// **One census, exposed to every posting.** That is what makes posting ten identical jobs
+        /// no different from posting one — the world has the workers it has, and they are the scarce
+        /// thing rather than the advertisements. It is also why nothing caps or charges for
+        /// advertising: the market limits itself.
         ///
-        /// The latent half is built on first call in a cycle and reused for the rest of it, so every
-        /// posting answered in the same refresh sees exactly the same people.
+        /// Built on first call in a cycle and reused for the rest of it, so every posting answered
+        /// in the same refresh sees exactly the same people.
         /// </summary>
-        public static List<LaborCandidate> WorldPool(IntercolonyWorldComponent state)
+        public static List<LaborProspect> Census(IntercolonyWorldComponent state)
         {
-            List<LaborCandidate> all = new List<LaborCandidate>(Refresh(state));
-
             if (state == null || Find.WorldObjects == null)
             {
-                return all;
+                return census;
             }
 
-            EnsureLatent(state);
-            all.AddRange(latent);
-            return all;
+            if (!ReferenceEquals(poolOwner, state))
+            {
+                Abandon();
+                poolOwner = state;
+            }
+
+            EnsureCensus(state);
+            return census;
         }
 
         /// <summary>
-        /// Builds the workers who are not advertising, once per refresh.
+        /// Takes the world's labor census for this refresh.
         ///
-        /// Seeded from a different salt than the advertised listing so the two are independent
-        /// draws rather than the same people twice, but seeded all the same — a posting answered
-        /// before a save and re-examined after it must see the same world.
+        /// Seeded like everything else in the economy (§60), so a posting answered before a save and
+        /// re-examined after it sees the same world — the census is never persisted, only
+        /// reproduced.
         /// </summary>
-        private static void EnsureLatent(IntercolonyWorldComponent state)
+        private static void EnsureCensus(IntercolonyWorldComponent state)
         {
-            if (latentRefreshCount == state.RefreshCount)
+            if (censusRefreshCount == state.RefreshCount)
             {
                 return;
             }
 
-            ClearLatent();
-            latentRefreshCount = state.RefreshCount;
+            census.Clear();
+            censusRefreshCount = state.RefreshCount;
 
             float standing = EmployerReputationService.ScoreFor(state);
 
             // Reputation gates reach as well as advertising (§39 step 9). A colony nobody wants to
             // work for does not get to bypass that by posting a notice.
-            int ceiling = Mathf.Clamp(
-                Mathf.RoundToInt((MaxWorldPool - MaxCandidates) *
-                                 EmployerReputationService.AvailabilityFactor(standing)),
-                0, MaxWorldPool - MaxCandidates);
+            float availability = EmployerReputationService.AvailabilityFactor(standing);
+            int perSettlement = Mathf.Max(1, Mathf.RoundToInt(ProspectsPerSettlement * availability));
 
-            if (ceiling <= 0)
+            List<Settlement> sources = EligibleSources(state);
+            if (sources.Count == 0)
             {
                 return;
             }
 
-            int qualityBias = EmployerReputationService.CandidateQualityBias(standing);
-            List<Settlement> sources = EligibleSources(state);
+            List<SkillDef> skills = DefDatabase<SkillDef>.AllDefsListForReading;
+            int skillCount = 0;
+            foreach (SkillDef skill in skills)
+            {
+                if (skill.index >= skillCount)
+                {
+                    skillCount = skill.index + 1;
+                }
+            }
 
             Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ 0x4C41_5445);
             try
             {
-                for (int i = sources.Count - 1; i > 0; i--)
-                {
-                    int j = Rand.RangeInclusive(0, i);
-                    Settlement swap = sources[i];
-                    sources[i] = sources[j];
-                    sources[j] = swap;
-                }
-
                 foreach (Settlement settlement in sources)
                 {
-                    if (latent.Count >= ceiling)
+                    if (census.Count >= MaxCensus)
                     {
                         break;
                     }
 
                     SettlementEconomicProfile profile = state.GetProfile(settlement);
-                    if (profile == null)
+                    if (profile == null || settlement.Faction == null)
                     {
                         continue;
                     }
 
-                    for (int i = 0; i < CandidatesPerSettlement && latent.Count < ceiling; i++)
+                    float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+                    int travel = TravelDays(distance);
+
+                    for (int i = 0; i < perSettlement && census.Count < MaxCensus; i++)
                     {
-                        LaborCandidate candidate = GenerateBiased(settlement, profile, standing, qualityBias);
-                        if (candidate != null)
-                        {
-                            latent.Add(candidate);
-                        }
+                        census.Add(GenerateProspect(settlement, profile, distance, travel, skills, skillCount));
                     }
                 }
             }
@@ -316,12 +324,156 @@ namespace Intercolony
             }
 
             IntercolonyLog.Verbose(
-                $"Latent labor pool built for refresh {state.RefreshCount}: {latent.Count} worker(s) " +
-                "reachable only by a job posting.");
+                $"Labor census taken for refresh {state.RefreshCount}: {census.Count} worker(s) " +
+                $"across {sources.Count} settlement(s).");
         }
 
-        /// <summary>Discards every unhired candidate and empties both halves of the pool.</summary>
+        /// <summary>
+        /// One census record.
+        ///
+        /// The shape aims at what pawn generation actually produces rather than a flat roll: most
+        /// people are unremarkable at most things and good at one or two. That matters because the
+        /// posting dialog quotes a band drawn from these records and the applicants who arrive are
+        /// priced by the same formula — if the census were uniformly average, every offer would draw
+        /// either nobody or everybody, which is the problem the census exists to fix.
+        /// </summary>
+        private static LaborProspect GenerateProspect(
+            Settlement settlement, SettlementEconomicProfile profile, float distance, int travel,
+            List<SkillDef> skills, int skillCount)
+        {
+            int[] levels = new int[skillCount];
+            Passion[] passions = new Passion[skillCount];
+
+            for (int i = 0; i < skillCount; i++)
+            {
+                levels[i] = -1;
+            }
+
+            // A couple of skills the backstory ruled out entirely, as real pawns have.
+            int disabled = Rand.RangeInclusive(0, 3);
+
+            List<SkillDef> shuffled = new List<SkillDef>(skills);
+            for (int i = shuffled.Count - 1; i > 0; i--)
+            {
+                int j = Rand.RangeInclusive(0, i);
+                SkillDef swap = shuffled[i];
+                shuffled[i] = shuffled[j];
+                shuffled[j] = swap;
+            }
+
+            // Wealthier settlements release better-trained people; §35.1 already prices labor
+            // supply, and this is the same idea applied to who exists rather than what they cost.
+            int specialityBonus = profile?.wealthTier == IntercolonyWealthTier.Wealthy ? 3
+                : profile?.wealthTier == IntercolonyWealthTier.Destitute ? -2
+                : 0;
+
+            int specialities = Rand.RangeInclusive(1, 3);
+
+            for (int i = 0; i < shuffled.Count; i++)
+            {
+                SkillDef skill = shuffled[i];
+                if (skill.index >= skillCount)
+                {
+                    continue;
+                }
+
+                if (i < disabled)
+                {
+                    levels[skill.index] = -1;
+                    continue;
+                }
+
+                bool speciality = i >= disabled && i < disabled + specialities;
+
+                int level = speciality
+                    ? Mathf.Clamp(Rand.RangeInclusive(7, 17) + specialityBonus, 0, 20)
+                    : Mathf.Clamp(Rand.RangeInclusive(0, 8) + Mathf.Min(0, specialityBonus), 0, 20);
+
+                levels[skill.index] = level;
+
+                if (speciality)
+                {
+                    float roll = Rand.Value;
+                    passions[skill.index] = roll < 0.18f ? Passion.Major
+                        : roll < 0.45f ? Passion.Minor
+                        : Passion.None;
+                }
+            }
+
+            LaborProspect prospect = new LaborProspect
+            {
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "unnamed",
+                factionName = settlement.Faction.Name ?? "",
+                faction = settlement.Faction,
+                distanceTiles = distance,
+                travelDays = travel,
+                skillLevels = levels,
+                passions = passions
+            };
+
+            prospect.pricedSkillValue = PricedSkillValue(prospect, skillCount);
+            return prospect;
+        }
+
+        /// <summary>
+        /// The census-record twin of <see cref="PricedSkillValue(Pawn)"/>. Same rule, same top-N,
+        /// same passion weighting — the two must not drift or the advertised band stops matching
+        /// the workers who arrive.
+        /// </summary>
+        private static float PricedSkillValue(LaborProspect prospect, int skillCount)
+        {
+            List<int> ranked = new List<int>();
+            List<Passion> rankedPassions = new List<Passion>();
+
+            for (int i = 0; i < skillCount; i++)
+            {
+                if (prospect.skillLevels[i] >= 0)
+                {
+                    ranked.Add(prospect.skillLevels[i]);
+                    rankedPassions.Add(prospect.passions[i]);
+                }
+            }
+
+            // Sort both together, descending by level.
+            for (int i = 0; i < ranked.Count; i++)
+            {
+                for (int j = i + 1; j < ranked.Count; j++)
+                {
+                    if (ranked[j] > ranked[i])
+                    {
+                        int level = ranked[i];
+                        ranked[i] = ranked[j];
+                        ranked[j] = level;
+
+                        Passion passion = rankedPassions[i];
+                        rankedPassions[i] = rankedPassions[j];
+                        rankedPassions[j] = passion;
+                    }
+                }
+            }
+
+            float value = 0f;
+            for (int i = 0; i < SkillsPriced && i < ranked.Count; i++)
+            {
+                value += WeightedLevel(ranked[i], rankedPassions[i]);
+            }
+
+            return value;
+        }
+
+        /// <summary>Discards every unhired candidate and empties the listing and the census.</summary>
         public static void Clear()
+        {
+            ClearPool();
+
+            // Census records own nothing — no pawn, no faction claim — so they are dropped rather
+            // than discarded. That is the whole reason a census can be hundreds deep.
+            census.Clear();
+            censusRefreshCount = -1;
+        }
+
+        private static void ClearPool()
         {
             foreach (LaborCandidate candidate in pool)
             {
@@ -330,25 +482,6 @@ namespace Intercolony
 
             pool.Clear();
             poolRefreshCount = -1;
-
-            ClearLatent();
-        }
-
-        private static void ClearLatent()
-        {
-            foreach (LaborCandidate candidate in latent)
-            {
-                candidate.Discard();
-            }
-
-            latent.Clear();
-            latentRefreshCount = -1;
-        }
-
-        /// <summary>Removes a latent worker without discarding its pawn (it has been taken on as an applicant).</summary>
-        public static void TakeLatent(LaborCandidate candidate)
-        {
-            latent.Remove(candidate);
         }
 
         /// <summary>
@@ -362,17 +495,17 @@ namespace Intercolony
         /// </summary>
         private static void Abandon()
         {
-            if (pool.Count + latent.Count > 0)
+            if (pool.Count > 0)
             {
                 IntercolonyLog.Verbose(
-                    $"Dropped {pool.Count + latent.Count} candidate(s) left over from a previous game.");
+                    $"Dropped {pool.Count} candidate(s) left over from a previous game.");
             }
 
             pool.Clear();
             poolRefreshCount = -1;
 
-            latent.Clear();
-            latentRefreshCount = -1;
+            census.Clear();
+            censusRefreshCount = -1;
 
             poolOwner = null;
         }
@@ -383,10 +516,7 @@ namespace Intercolony
             // Tried against both halves, because a worker taken on as an applicant to a posting
             // comes from the latent pool rather than the advertised one, and either way the pool
             // must stop owning the pawn or it will be discarded out from under the contract.
-            if (!pool.Remove(candidate))
-            {
-                latent.Remove(candidate);
-            }
+            pool.Remove(candidate);
         }
 
         /// <summary>
@@ -527,32 +657,65 @@ namespace Intercolony
             Pawn pawn, SettlementEconomicProfile profile, float distance, int termDays,
             float employerStanding, CombatClause clause)
         {
-            float skillValue = 0f;
-            if (pawn?.skills != null)
+            return DailyWageFor(PricedSkillValue(pawn), profile, distance, termDays,
+                employerStanding, clause);
+        }
+
+        /// <summary>
+        /// What a pawn's skills are worth to the wage formula: their best few, weighted for passion.
+        ///
+        /// Split out so a <see cref="LaborProspect"/> — a census record with no pawn behind it — can
+        /// produce the same number from the same rule. The two **must** agree: the posting dialog
+        /// quotes a going-rate band computed from census records, and the worker who eventually
+        /// arrives is a real pawn. If the two priced differently, the band would be a lie the player
+        /// only discovers after hiring.
+        /// </summary>
+        public static float PricedSkillValue(Pawn pawn)
+        {
+            if (pawn?.skills == null)
             {
-                List<SkillRecord> ranked = new List<SkillRecord>(pawn.skills.skills);
-                ranked.RemoveAll(s => s.TotallyDisabled);
-                ranked.Sort((a, b) => b.Level.CompareTo(a.Level));
-
-                for (int i = 0; i < SkillsPriced && i < ranked.Count; i++)
-                {
-                    float level = ranked[i].Level;
-
-                    // Passion is worth paying for: it is the difference between a skill that
-                    // stays where it is and one that grows over a long contract.
-                    if (ranked[i].passion == Passion.Major)
-                    {
-                        level *= 1.15f;
-                    }
-                    else if (ranked[i].passion == Passion.Minor)
-                    {
-                        level *= 1.07f;
-                    }
-
-                    skillValue += level;
-                }
+                return 0f;
             }
 
+            List<SkillRecord> ranked = new List<SkillRecord>(pawn.skills.skills);
+            ranked.RemoveAll(s => s.TotallyDisabled);
+            ranked.Sort((a, b) => b.Level.CompareTo(a.Level));
+
+            float skillValue = 0f;
+            for (int i = 0; i < SkillsPriced && i < ranked.Count; i++)
+            {
+                skillValue += WeightedLevel(ranked[i].Level, ranked[i].passion);
+            }
+
+            return skillValue;
+        }
+
+        /// <summary>
+        /// Passion is worth paying for: it is the difference between a skill that stays where it is
+        /// and one that grows over a long contract.
+        /// </summary>
+        public static float WeightedLevel(int level, Passion passion)
+        {
+            if (passion == Passion.Major)
+            {
+                return level * 1.15f;
+            }
+
+            return passion == Passion.Minor ? level * 1.07f : level;
+        }
+
+        /// <summary>How many of a worker's best skills the wage prices.</summary>
+        public static int PricedSkillCount => SkillsPriced;
+
+        /// <summary>
+        /// The wage formula proper, given an already-computed skill value. Everything that is not
+        /// the worker themselves — distance, the settlement's spare labor, term length, employer
+        /// standing, combat clause — is applied here, once, for pawns and census records alike.
+        /// </summary>
+        public static int DailyWageFor(
+            float skillValue, SettlementEconomicProfile profile, float distance, int termDays,
+            float employerStanding, CombatClause clause)
+        {
             float wage = BaseDailyWage + skillValue * SilverPerSkillLevel;
 
             // Travel is unpaid time the worker still has to live through, so distant labor
