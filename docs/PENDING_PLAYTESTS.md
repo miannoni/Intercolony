@@ -43,6 +43,14 @@ employment ending is supposed to do.
    makes them ask immediately. It reports the release fee in the log.
 4. Open **Intercolony → Labor → Employees**. Their row should show **Keep them** / **Not now**.
 
+**Silver is handled.** Steps 1 and 3 grant what they need and say so in the log — a fresh
+`-quicktest` world starts with none, and a play-test that fails at step 1 is not a play-test.
+
+Do **not** try to fix a silver shortfall by spawning stacks with the vanilla debug tool: the mod
+counts only silver where `IsInAnyStorage()` is true, so stacks on open ground leave the readout at
+zero and look exactly like a broken mod. The grant routes through the same helper the self-tests use,
+which builds a temporary stockpile if the map has none.
+
 *(Doing it the slow way instead: hire someone open-ended on a daily wage, keep silver in storage so
 payroll never misses, never draft them, and let 30 days pass. The employee tooltip shows progress —
 "Settling here permanently: Served 12 of 30 days.")*

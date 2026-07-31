@@ -597,6 +597,13 @@ namespace Intercolony
 
                 TransitionService.Advance(state, target);
 
+                // The offer is worthless without the means to take it up, and the fee is large by
+                // design (§116) — 180 days of the worker's wage. Granted here so the play-test can
+                // reach the part that matters, which is what happens to the pawn.
+                GrantSilver(Find.CurrentMap,
+                    Mathf.CeilToInt(TransitionService.ReleaseFee(state, target) * 1.2f),
+                    "the release fee");
+
                 if (!TransitionService.HasLiveOffer(target))
                 {
                     TransitionService.MeetsTerms(state, target, out string blocker);
@@ -945,6 +952,37 @@ namespace Intercolony
         /// Hires the cheapest listed worker for their minimum term. Phase 17 (§110) replaces
         /// this with a real hiring window; until then this is the only way in.
         /// </summary>
+        /// <summary>
+        /// Tops the colony up so a debug action can actually do the thing it says it does.
+        ///
+        /// Added after a play-test ran aground on it. \"Hire cheapest worker\" reported *Not enough
+        /// silver in storage: 0 of 234 needed* on a fresh world, which is correct behaviour and a
+        /// useless dev tool — and the obvious workaround does not work either, because
+        /// <see cref="PurchaseOrderService.CountColonySilver"/> counts only silver where
+        /// <c>IsInAnyStorage()</c> is true. Spawning stacks on open ground leaves the readout at
+        /// zero, which reads exactly like a broken mod.
+        ///
+        /// <see cref="IntercolonyLaborSelfTestSupport.AddSilver"/> already solved this for the
+        /// self-tests, stockpile and all, so it is reused rather than reinvented. The ledger is
+        /// reset afterwards because a debug grant is a deliberate gift, not a test loan — leaving it
+        /// negative would let a later self-test's RestoreLedger take the silver back out.
+        /// </summary>
+        private static void GrantSilver(Map map, int needed, string purpose)
+        {
+            if (map == null || needed <= 0)
+            {
+                return;
+            }
+
+            int added = IntercolonyLaborSelfTestSupport.EnsureSilver(map, needed);
+            IntercolonyLaborSelfTestSupport.ResetLedger();
+
+            if (added > 0)
+            {
+                Report($"Granted {added} silver for {purpose} (needed {needed}).");
+            }
+        }
+
         [DebugAction(Category, "Hire cheapest worker", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 47)]
         private static void HireCheapestWorker()
         {
@@ -958,8 +996,18 @@ namespace Intercolony
                 }
 
                 LaborCandidate candidate = pool[0];
+                Map map = Find.CurrentMap;
+
+                // Prepaid takes the whole term at once, so the grant has to cover it. Computed from
+                // the same helper TryHire will use rather than guessed at, and padded a little
+                // because the hire re-prices for the chosen term and can land slightly above the
+                // listed rate.
+                int upFront = WageStructureUtility.TotalCost(
+                    WageStructure.Prepaid, candidate.dailyWage, candidate.minTermDays);
+                GrantSilver(map, Mathf.CeilToInt(upFront * 1.5f), "the hire");
+
                 EmploymentContract contract = EmploymentService.TryHire(
-                    state, candidate, candidate.minTermDays, Find.CurrentMap, out string failReason,
+                    state, candidate, candidate.minTermDays, map, out string failReason,
                     WageStructure.Prepaid, CombatClause.Civilian);
 
                 // TryHire already logs and messages on success; only the failure needs reporting.
