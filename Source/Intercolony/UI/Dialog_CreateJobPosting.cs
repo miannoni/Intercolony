@@ -35,7 +35,6 @@ namespace Intercolony
         private CombatClause clause = CombatClause.Civilian;
 
         private string wageBuffer;
-        private Vector2 scroll;
 
         /// <summary>Cached band, recomputed only when an input that feeds it changes.</summary>
         private int rateLow;

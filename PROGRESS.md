@@ -1499,6 +1499,25 @@ Known limitations:
   describes. Invisible at this scale, but it is why the letter says "has worked here N days" rather
   than naming a threshold.
 
+Bugs found and fixed during the phase:
+- **A button that did nothing, and had been dead since Phase 18.** The employee row reserved text
+  width for *one* action button (`rect.width - actionWidth - 12f`) while several row states draw two,
+  and the row's click-to-jump `ButtonInvisible` spans that text width. It is drawn first, so it took
+  the mouse-up for anything underneath — leaving 106 of the left-hand button's 110 pixels dead. The
+  right-hand button sat clear and worked perfectly, which made it look like one broken button rather
+  than a broken layout.
+
+  Nothing threw and nothing logged; the only visible trace was the combat-clause label clipping
+  behind the button, which is the same over-wide text width showing itself somewhere it could be
+  seen. Found from a play-test report that measured the working button was 4px away and used the
+  identical input, noted the debug log was empty, and mentioned the clipped label as an aside.
+
+  Phase 23 did not introduce it — `Pay {arrears}` has been dead the same way since Phase 18, unhit
+  because paying arrears mid-term is rare and that button was never play-tested. Phase 23 merely put
+  a button people would actually click into the dead zone. Fixed structurally: an
+  `EmployeeRowLayout` computes the text width *from* the button positions, and every button on the
+  row is routed through it, so a future two-button state cannot reintroduce it.
+
 Manual test:
 - `Run transition self-test`: **21 passed, 0 failed** (2026-07-31, run in a live save at schema 20,
   no red errors). Every eligibility gate driven separately and each reporting what is missing; the
@@ -1509,6 +1528,8 @@ Manual test:
   real pawn permanently to the colony is not a side effect a dev check should have — so whether a
   quest lodger actually becomes a colonist *in place*, rather than walking off the map, has not been
   observed. That is the one risk in the phase and it is queued in `docs/PENDING_PLAYTESTS.md`.
+- Play-test partially run (2026-07-31): setup and the **decline** route pass. The pay and defect
+  routes were blocked by the dead-button bug above and are queued for a re-run.
 - Two debug actions added afterwards to make that play-test practical rather than a thirty-day wait:
   **Force attachment offer** backdates an active employment past the tenure bar (backdating
   `arrivedTick` rather than setting a flag, so severance, notice and the gates all price the worker

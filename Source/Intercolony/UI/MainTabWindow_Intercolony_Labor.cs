@@ -637,6 +637,52 @@ namespace Intercolony
             Text.Anchor = TextAnchor.UpperLeft;
         }
 
+        /// <summary>
+        /// One employee row's geometry, computed in a single place so the clickable text region and
+        /// the action buttons cannot disagree about where they are.
+        ///
+        /// **This type exists because they did disagree, and it cost a play-test.** The text width
+        /// reserved room for *one* button, but several row states draw two — pay + dismiss, renew +
+        /// let go, keep + not now. The row's invisible click-to-jump region spans the text width, is
+        /// drawn before the buttons, and therefore took the mouse-up for anything underneath it. The
+        /// left-hand button was 106 of its 110 pixels under that region and was simply dead; the
+        /// right-hand one sat clear and worked perfectly, which made it look like a problem with one
+        /// specific button rather than with the layout.
+        ///
+        /// Nothing threw, nothing logged, and the only visible clue was the clause label clipping
+        /// behind the button — the same over-wide text width showing itself in a way that could be
+        /// seen. Deriving all of it from one place is what stops the next state that wants two
+        /// buttons from reintroducing it.
+        /// </summary>
+        private struct EmployeeRowLayout
+        {
+            public const float ActionWidth = 110f;
+
+            /// <summary>Width available for labels *and* the click-to-jump region.</summary>
+            public float textWidth;
+
+            /// <summary>Where a second-from-right button goes, when the row draws two.</summary>
+            public Rect leftAction;
+
+            /// <summary>Where the rightmost button goes.</summary>
+            public Rect rightAction;
+
+            public static EmployeeRowLayout For(Rect rect)
+            {
+                EmployeeRowLayout layout = new EmployeeRowLayout
+                {
+                    rightAction = new Rect(rect.xMax - ActionWidth - 4f, rect.y + 11f, ActionWidth, 30f),
+                    leftAction = new Rect(rect.xMax - ActionWidth * 2f - 8f, rect.y + 11f, ActionWidth, 30f)
+                };
+
+                // Always reserved for two, even on rows that draw one. A row that reserved space
+                // conditionally would put the click region back under a button the moment a new
+                // state added a second one.
+                layout.textWidth = layout.leftAction.x - rect.x - 6f;
+                return layout;
+            }
+        }
+
         private void DrawEmployeeRow(Rect rect, EmploymentContract contract, int index)
         {
             if (index % 2 == 1)
@@ -646,8 +692,8 @@ namespace Intercolony
 
             Widgets.DrawHighlightIfMouseover(rect);
 
-            float actionWidth = 110f;
-            float textWidth = rect.width - actionWidth - 12f;
+            EmployeeRowLayout layout = EmployeeRowLayout.For(rect);
+            float textWidth = layout.textWidth;
 
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 3f, textWidth, 22f),
                 $"{contract.workerName}  —  {contract.workerSkills}");
@@ -687,7 +733,7 @@ namespace Intercolony
             // the situation, and §39's escalation is only playable if stopping it is easy to find.
             if (contract.arrearsSilver > 0)
             {
-                Rect payRect = new Rect(rect.xMax - actionWidth * 2f - 8f, rect.y + 11f, actionWidth, 30f);
+                Rect payRect = layout.leftAction;
                 if (Widgets.ButtonText(payRect, $"Pay {contract.arrearsSilver}"))
                 {
                     if (!PayrollService.TryPayArrears(contract, Find.CurrentMap, out string failReason))
@@ -703,8 +749,7 @@ namespace Intercolony
             {
                 GUI.color = new Color(1f, 1f, 1f, 0.5f);
                 Text.Anchor = TextAnchor.MiddleCenter;
-                Widgets.Label(new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f),
-                    "leaving");
+                Widgets.Label(layout.rightAction, "leaving");
                 Text.Anchor = TextAnchor.UpperLeft;
                 GUI.color = Color.white;
                 return;
@@ -714,13 +759,13 @@ namespace Intercolony
             // thing this tab ever shows and it is a decision the player has earned (§44).
             if (TransitionService.HasLiveOffer(contract))
             {
-                Rect settleRect = new Rect(rect.xMax - actionWidth * 2f - 8f, rect.y + 11f, actionWidth, 30f);
+                Rect settleRect = layout.leftAction;
                 if (Widgets.ButtonText(settleRect, "Keep them"))
                 {
                     OpenTransitionDialog(contract);
                 }
 
-                Rect laterRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f);
+                Rect laterRect = layout.rightAction;
                 if (Widgets.ButtonText(laterRect, "Not now"))
                 {
                     TransitionService.Decline(contract);
@@ -733,7 +778,7 @@ namespace Intercolony
             // the thing the player is being asked about (§115).
             if (RenewalService.HasLiveOffer(contract))
             {
-                Rect renewRect = new Rect(rect.xMax - actionWidth * 2f - 8f, rect.y + 11f, actionWidth, 30f);
+                Rect renewRect = layout.leftAction;
                 if (Widgets.ButtonText(renewRect, $"Renew {contract.renewalWage}"))
                 {
                     if (!RenewalService.Accept(contract, out string failReason))
@@ -742,7 +787,7 @@ namespace Intercolony
                     }
                 }
 
-                Rect declineRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f);
+                Rect declineRect = layout.rightAction;
                 if (Widgets.ButtonText(declineRect, "Let go"))
                 {
                     RenewalService.Decline(contract);
@@ -751,7 +796,7 @@ namespace Intercolony
                 return;
             }
 
-            Rect endRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 11f, actionWidth, 30f);
+            Rect endRect = layout.rightAction;
             if (Widgets.ButtonText(endRect, contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss"))
             {
                 ConfirmDismiss(contract);
