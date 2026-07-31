@@ -88,13 +88,14 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 23 **implemented but not verified** (2026-07-30). The self-test is written and
-registered but has never been run, and none of the pawn-side behaviour has been played — see
-`docs/PENDING_PLAYTESTS.md`. Do not treat §116 as done, and do not start Phase 24 until the
-transition self-test has passed: the riskiest code in the phase turns a quest lodger into a colonist
-in place, and if it is wrong the new colonist walks off the map.
+**Phase:** 23 **logic verified, pawn behaviour not** (2026-07-31). The transition self-test passes
+21/21 against a live save. The conversion itself — whether a quest lodger becomes a colonist *in
+place* rather than walking off the map — has still never been observed, and is the one thing in the
+phase that could be quietly wrong. Queued in `docs/PENDING_PLAYTESTS.md` with two debug actions
+(**Force attachment offer**, **Verify converted employees**) that make it a two-minute check instead
+of a thirty-day wait.
 
-Next once verified: Phase 24 — Economic integration and dashboard (DESIGN.md §117, §45).
+Next once that passes: Phase 24 — Economic integration and dashboard (DESIGN.md §117, §45).
 
 **Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
 control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation

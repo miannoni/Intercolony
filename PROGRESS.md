@@ -1427,9 +1427,10 @@ Bugs found and fixed during the phase:
 §116's goal: "Add late-game narrative conversion." Acceptance: "Conversion is rare/meaningful and
 cannot be exploited as cheap recruitment."
 
-**Status: implemented, not yet verified.** The self-test is written and registered but has not been
-run, and none of the pawn-side behaviour has been played. Both are listed in
-`docs/PENDING_PLAYTESTS.md`. Nothing in this entry should be read as proven.
+**Status: logic verified, pawn behaviour not.** The self-test passes (21/21) against a live save,
+so the eligibility gates, fee scaling, negotiation cap and defection cost are proven. What is *not*
+proven is the conversion itself — whether a quest lodger becomes a colonist in place. That is queued
+in `docs/PENDING_PLAYTESTS.md` and is the one thing in this phase that could be quietly wrong.
 
 Implemented:
 - **All five of §44's outcomes.** A worker who has served two quadrums with a spotless record asks
@@ -1499,6 +1500,18 @@ Known limitations:
   than naming a threshold.
 
 Manual test:
-- **None run.** Startup is clean on schema 20 with no def errors, and the build succeeds — that is
-  all that is currently known. See `docs/PENDING_PLAYTESTS.md` for the self-test and the four
-  play-tests this phase needs.
+- `Run transition self-test`: **21 passed, 0 failed** (2026-07-31, run in a live save at schema 20,
+  no red errors). Every eligibility gate driven separately and each reporting what is missing; the
+  fee scaling proven on the comparison §116 is really about — 14,400 to keep an 80/day worker against
+  4,800 for a year of employing them; negotiation capped at 65% of asking; defection costing more
+  (-20) than settling gains (+10).
+- **The conversion itself is still unproven.** The self-test is deliberately synthetic — joining a
+  real pawn permanently to the colony is not a side effect a dev check should have — so whether a
+  quest lodger actually becomes a colonist *in place*, rather than walking off the map, has not been
+  observed. That is the one risk in the phase and it is queued in `docs/PENDING_PLAYTESTS.md`.
+- Two debug actions added afterwards to make that play-test practical rather than a thirty-day wait:
+  **Force attachment offer** backdates an active employment past the tenure bar (backdating
+  `arrivedTick` rather than setting a flag, so severance, notice and the gates all price the worker
+  as genuinely long-serving), and **Verify converted employees** checks faction, lodger status,
+  `IsColonist` and whether the pawn is still on a map at all — which is the failure worth catching,
+  and one that eyeballing would miss if the pawn simply wandered off later.

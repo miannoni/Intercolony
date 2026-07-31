@@ -550,6 +550,169 @@ namespace Intercolony
                 IntercolonyEmployerReputationSelfTest.Run(state, Find.CurrentMap)));
         }
 
+        /// <summary>
+        /// Backdates an active employment past §116's tenure bar so the attachment offer fires now.
+        ///
+        /// Exists because the thing worth testing about §44 is what happens to the *pawn* — whether a
+        /// quest lodger really becomes a colonist in place, or walks off the map like every other
+        /// employment ending does — and that was gated behind thirty in-game days of waiting. The
+        /// wait is the design; it is not the part that can be wrong.
+        ///
+        /// Backdating `arrivedTick` rather than setting a flag, so every downstream reading is the
+        /// real one: severance, notice length and the eligibility gates all price this worker as
+        /// genuinely long-serving, because as far as the contract is concerned they are.
+        /// </summary>
+        [DebugAction(Category, "Force attachment offer", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 39)]
+        private static void ForceAttachmentOffer()
+        {
+            WithState(state =>
+            {
+                EmploymentContract target = null;
+                foreach (EmploymentContract contract in state.Employments)
+                {
+                    if (contract.status == EmploymentStatus.Active && contract.pawn != null &&
+                        !contract.transitionResolved)
+                    {
+                        target = contract;
+                        break;
+                    }
+                }
+
+                if (target == null)
+                {
+                    Report("No active employee to attach. Hire one and use \"Arrive employees now\".");
+                    return;
+                }
+
+                target.arrivedTick = GenTicks.TicksGame -
+                                     (TransitionService.RequiredTenureDays + 5) * GenDate.TicksPerDay;
+
+                // Clear the conduct gates too, so the offer is not blocked by a payroll that
+                // happened to slip while the test was being set up.
+                target.arrearsSilver = 0;
+                target.missedPayments = 0;
+                target.clauseBreaches = 0;
+                target.transitionOffered = false;
+                target.transitionOfferedTick = -1;
+
+                TransitionService.Advance(state, target);
+
+                if (!TransitionService.HasLiveOffer(target))
+                {
+                    TransitionService.MeetsTerms(state, target, out string blocker);
+                    Report($"{target.workerName} still will not settle: {blocker}");
+                    return;
+                }
+
+                Report($"{target.workerName} now has {target.TenureDays:0} days' tenure and has asked " +
+                       $"to stay. Release fee {TransitionService.ReleaseFee(state, target)} silver. " +
+                       "Answer on their row in Labor -> Employees.");
+            });
+        }
+
+        /// <summary>
+        /// Checks that a converted employee actually became a colonist, rather than looking like one.
+        ///
+        /// The failure this exists to catch is specific and quiet: if the pawn is not removed from
+        /// the quest's <c>QuestPart_Leave</c> before the quest ends, they are handed a
+        /// <c>LordJob_ExitMapBest</c> and walk off the map — exactly what every other employment
+        /// ending is meant to do. Watching them for a minute would show it; so would this, instantly
+        /// and without doubt.
+        ///
+        /// The contract's pawn reference is cleared on conversion (it must be — a closed record
+        /// holding a live pawn is how saves grow dangling references), so the worker is found again
+        /// by the name the record froze at hire.
+        /// </summary>
+        [DebugAction(Category, "Verify converted employees", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 38)]
+        private static void VerifyConvertedEmployees()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("Converted employees (§44, §116)");
+
+                int converted = 0;
+                int sound = 0;
+
+                foreach (EmploymentContract contract in state.Employments)
+                {
+                    if (contract.status != EmploymentStatus.Converted)
+                    {
+                        continue;
+                    }
+
+                    converted++;
+
+                    Pawn found = null;
+                    foreach (Map map in Find.Maps)
+                    {
+                        foreach (Pawn pawn in map.mapPawns.AllPawnsSpawned)
+                        {
+                            if (pawn.LabelShortCap == contract.workerName)
+                            {
+                                found = pawn;
+                                break;
+                            }
+                        }
+
+                        if (found != null)
+                        {
+                            break;
+                        }
+                    }
+
+                    sb.AppendLine();
+                    sb.AppendLine($"  {contract.workerName} — {contract.outcomeNote}");
+
+                    if (found == null)
+                    {
+                        sb.AppendLine("    FAIL: not on any map. They left — the conversion did not " +
+                                      "take them off the quest's departure list.");
+                        continue;
+                    }
+
+                    bool playerFaction = found.Faction == Faction.OfPlayer;
+                    bool lodger = found.IsQuestLodger();
+                    bool stillEmployee = EmploymentService.IsEmployee(found);
+                    bool colonist = found.IsColonist;
+
+                    sb.AppendLine($"    spawned      : yes, on {found.Map?.Parent?.Label ?? "a map"}");
+                    sb.AppendLine($"    faction      : {found.Faction?.Name ?? "none"}" +
+                                  (playerFaction ? "" : "   <-- FAIL, should be yours"));
+                    sb.AppendLine($"    quest lodger : {lodger}" +
+                                  (lodger ? "   <-- FAIL, should be false" : ""));
+                    sb.AppendLine($"    IsColonist   : {colonist}" +
+                                  (colonist ? "" : "   <-- FAIL"));
+                    sb.AppendLine($"    still an employee: {stillEmployee}" +
+                                  (stillEmployee ? "   <-- FAIL" : ""));
+                    sb.AppendLine($"    kindDef      : {found.kindDef?.defName}");
+                    sb.AppendLine($"    drafter      : {(found.drafter != null ? "present" : "MISSING")}");
+
+                    bool ok = playerFaction && !lodger && !stillEmployee && colonist;
+                    if (ok)
+                    {
+                        sound++;
+                    }
+
+                    sb.AppendLine(ok
+                        ? "    PASS: a real colonist, in place."
+                        : "    FAIL: see the marked lines above.");
+                }
+
+                if (converted == 0)
+                {
+                    sb.AppendLine("  None yet. Use \"Force attachment offer\", then Keep them.");
+                }
+                else
+                {
+                    sb.AppendLine();
+                    sb.AppendLine($"  {sound} of {converted} converted correctly.");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
         [DebugAction(Category, "Run transition self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 65)]
         private static void RunTransitionSelfTest()
         {

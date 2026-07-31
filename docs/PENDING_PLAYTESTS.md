@@ -23,9 +23,7 @@ These are dev actions, not play-tests, but they are outstanding verification and
 list. All of them: **F12** → **orange bug icon** (top-right toolbar) → type the search term → click
 the action. Output goes to the debug log; no need to copy anything out, the dev script reads it.
 
-| Search for | Action | Covers |
-|---|---|---|
-| `transition` | Run transition self-test | Phase 23 — eligibility gates, fee scaling, negotiation cap, defection cost |
+*(none outstanding — all written self-tests have been run.)*
 
 ### Phase 23 — a worker becomes a colonist (§44, §116)
 
@@ -33,13 +31,21 @@ the action. Output goes to the debug log; no need to copy anything out, the dev 
 the pawn from the quest's departure list *before* ending the quest. If that is wrong, the brand-new
 colonist walks off the map — which is exactly what every other employment ending is supposed to do.
 
-**Reaching it.** A worker must serve **30 days** (two quadrums) with a spotless record: no missed
-payroll, no arrears, never drafted against their combat clause, and employer standing at Decent or
-better. Hover an employee's row in **Intercolony → Labor → Employees** — the tooltip shows how far
-off they are, e.g. *"Settling here permanently: Served 12 of 30 days."*
+**The self-test already passes (21/21)**, so the gates, the fee, negotiation and the defection cost
+are proven. What is left is entirely about the pawn.
 
-Fastest route: hire someone open-ended on a **daily** wage, keep silver in storage so payroll never
-misses, never draft them, and let 30 days pass.
+**Setup — about two minutes, no waiting.** All four steps are **F12** → **orange bug icon** → search
+→ click:
+
+1. search `hire` → **Hire cheapest worker**
+2. search `arrive` → **Arrive employees now**
+3. search `attachment` → **Force attachment offer** — backdates their tenure past the 30-day bar and
+   makes them ask immediately. It reports the release fee in the log.
+4. Open **Intercolony → Labor → Employees**. Their row should show **Keep them** / **Not now**.
+
+*(Doing it the slow way instead: hire someone open-ended on a daily wage, keep silver in storage so
+payroll never misses, never draft them, and let 30 days pass. The employee tooltip shows progress —
+"Settling here permanently: Served 12 of 30 days.")*
 
 **Expect.** A letter, *"(name) has grown attached"*, and **Keep them** / **Not now** buttons on their
 row.
@@ -48,7 +54,10 @@ row.
 
 1. **Pay the fee.** Expect them to become a normal colonist — still standing there, no wage, no
    term, no departure. **Watch for them walking off the map, which is the failure this is testing
-   for.** Check afterwards that they can be drafted and sent on a caravan like any colonist.
+   for.** Then search `verify` → **Verify converted employees**, which checks it properly: still on a
+   map, player faction, no longer a quest lodger, `IsColonist` true, drafter present. It prints PASS
+   or names the failing line. Eyeballing is not enough here — a pawn that has been handed an exit
+   order looks fine for a while before it leaves.
 2. **Keep them without paying.** Expect their faction's goodwill to collapse and probably turn
    hostile, and expect everything you had booked with them to be voided in the same moment.
 3. **Not now.** They should carry on working as an employee, and ask again about 30 days later.
