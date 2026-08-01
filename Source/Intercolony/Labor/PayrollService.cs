@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -84,6 +84,9 @@ namespace Intercolony
             {
                 PurchaseOrderService.TryTakeSilver(map, paid);
                 contract.paidSilver += paid;
+
+                LedgerService.Record(LedgerKind.WagePayment, -paid, contract.settlementName,
+                    $"{contract.workerName}, {contract.wageStructure.Label()} wages");
             }
 
             int shortfall = due - paid;
@@ -260,6 +263,9 @@ namespace Intercolony
             {
                 PurchaseOrderService.TryTakeSilver(map, paid);
                 contract.paidSilver += paid;
+
+                LedgerService.Record(LedgerKind.WagePayment, -paid, contract.settlementName,
+                    $"{contract.workerName}, final settlement");
             }
 
             contract.arrearsSilver = owed - paid;
@@ -348,6 +354,9 @@ namespace Intercolony
 
             int settled = contract.arrearsSilver;
             contract.paidSilver += settled;
+
+            LedgerService.Record(LedgerKind.WagePayment, -settled, contract.settlementName,
+                $"{contract.workerName}, arrears cleared");
             contract.arrearsSilver = 0;
             contract.missedPayments = 0;
             contract.ResumeWork(WorkRefusalReason.UnpaidWages);
@@ -393,6 +402,9 @@ namespace Intercolony
 
             int settled = debt.amountOwed;
             debt.amountOwed = 0;
+
+            LedgerService.Record(LedgerKind.DebtSettlement, -settled, debt.settlementName,
+                $"{debt.workerName}, {debt.KindLabel()}");
             EmployerReputationService.NoteDebtSettled(IntercolonyWorldComponent.Current, debt);
 
             Find.LetterStack.ReceiveLetter(

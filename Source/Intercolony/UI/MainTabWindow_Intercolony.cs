@@ -53,6 +53,12 @@ namespace Intercolony
         /// <summary>Which top-level view is showing (DESIGN.md §52, §53, §54).</summary>
         private enum Tab
         {
+            /// <summary>
+            /// §117's dashboard. First because by this point in the mod's life "how is the business
+            /// doing" is the question a player opens the window to answer (§45).
+            /// </summary>
+            Business,
+
             Market,
             Orders,
             FindBuyer,
@@ -62,7 +68,7 @@ namespace Intercolony
             Relations
         }
 
-        private Tab tab = Tab.Market;
+        private Tab tab = Tab.Business;
 
         private Vector2 ordersScroll;
 
@@ -117,6 +123,12 @@ namespace Intercolony
             float tabY = DrawTabSelector(inRect, state);
             Rect body = new Rect(0f, tabY, inRect.width, inRect.height - tabY);
 
+            if (tab == Tab.Business)
+            {
+                DrawBusiness(body, state);
+                return;
+            }
+
             if (tab == Tab.Orders)
             {
                 DrawOrders(body, state);
@@ -166,6 +178,7 @@ namespace Intercolony
         /// </summary>
         private static readonly Tab[] TabOrder =
         {
+            Tab.Business,
             Tab.Market,
             Tab.Orders,
             Tab.FindBuyer,
@@ -180,6 +193,10 @@ namespace Intercolony
         {
             switch (which)
             {
+                case Tab.Business:
+                    // No count badge. Every other tab counts things waiting on the player; this one
+                    // is a report, and a number beside it would imply an inbox.
+                    return "Business";
                 case Tab.Orders:
                     int orders = state.OpenOrderCount;
                     return orders > 0 ? $"Orders ({orders})" : "Orders";

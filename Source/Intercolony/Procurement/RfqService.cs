@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -349,6 +349,15 @@ namespace Intercolony
         /// spread runs against them — a settlement with little of a good charges more for it,
         /// which is how scarcity shows up in the price rather than only in availability (§46).
         /// </summary>
+        /// <summary>
+        /// What a supplier adds over a good's base value for selling it to you.
+        ///
+        /// Named because §45's margin estimate has to answer "should I buy inputs or produce them?"
+        /// with the same number a real quote would use. Two copies of it would let the dashboard
+        /// recommend buying at a price procurement does not actually offer.
+        /// </summary>
+        public const float SupplierMargin = 1.15f;
+
         private static float QuotedUnitPrice(
             PurchaseRequest request,
             ThingDef stuff,
@@ -371,7 +380,7 @@ namespace Intercolony
             }
 
             // Buyer's spread: the counterparty is selling, so they mark up.
-            factors.Add(new PriceFactor("Supplier margin", 1.15f));
+            factors.Add(new PriceFactor("Supplier margin", SupplierMargin));
 
             // Scarcity: a supplier with plenty charges less than one scraping the barrel.
             float scarcity = Mathf.Clamp(1.6f - supply * 0.5f, 0.9f, 1.6f);

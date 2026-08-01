@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -303,6 +303,9 @@ namespace Intercolony
 
             string worker = contract.workerName;
             string faction = contract.factionName;
+
+            LedgerService.Record(state, LedgerKind.ReleaseFee, -fee, contract.settlementName,
+                $"{worker} released permanently");
 
             EmployerReputationService.NoteTransitionSettled(state, contract);
             Convert(contract, $"{worker} was released by {faction} for {fee} silver and stayed");

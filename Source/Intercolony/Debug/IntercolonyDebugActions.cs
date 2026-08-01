@@ -720,6 +720,13 @@ namespace Intercolony
             });
         }
 
+        [DebugAction(Category, "Run ledger self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 66)]
+        private static void RunLedgerSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyLedgerSelfTest.Run(state, Find.CurrentMap)));
+        }
+
         [DebugAction(Category, "Run transition self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 65)]
         private static void RunTransitionSelfTest()
         {

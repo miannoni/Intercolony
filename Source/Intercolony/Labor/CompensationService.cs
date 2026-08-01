@@ -210,6 +210,9 @@ namespace Intercolony
             if (paid > 0 && PurchaseOrderService.TryTakeSilver(map, paid))
             {
                 contract.compensationPaid += paid;
+
+                LedgerService.Record(LedgerKind.Compensation, -paid, contract.settlementName,
+                    $"{contract.workerName}, {kindWord}");
             }
             else
             {

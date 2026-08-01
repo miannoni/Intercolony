@@ -1,4 +1,4 @@
-using RimWorld;
+﻿using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -319,6 +319,9 @@ namespace Intercolony
             }
 
             contract.paidSilver += owed;
+
+            LedgerService.Record(LedgerKind.WagePayment, -owed, contract.settlementName,
+                $"{contract.workerName}, {NoticeDays(contract)}d notice paid in lieu");
 
             EmploymentService.End(contract, EmploymentStatus.Dismissed,
                 $"{contract.workerName} was dismissed with {NoticeDays(contract)} days paid in lieu of notice");

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -85,6 +85,9 @@ namespace Intercolony
                     MessageTypeDefOf.RejectInput, historical: false);
                 return null;
             }
+
+            LedgerService.Record(state, LedgerKind.PurchasePayment, -price, quote.settlementName,
+                $"{quantity}x {request?.thingDef?.label ?? "goods"}");
 
             if (!TryTakeSilver(paymentMap, price))
             {
@@ -277,6 +280,9 @@ namespace Intercolony
             if (map != null && order.paidSilver > 0)
             {
                 GiveSilver(map, order.paidSilver);
+
+                LedgerService.Record(LedgerKind.Refund, order.paidSilver, order.settlementName,
+                    $"{order.quantity}x {order.thingDef?.label ?? "goods"} refunded");
             }
 
             IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {order.paidSilver} silver.");

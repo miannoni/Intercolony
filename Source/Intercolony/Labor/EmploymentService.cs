@@ -131,6 +131,12 @@ namespace Intercolony
                 return null;
             }
 
+            if (upFront > 0)
+            {
+                LedgerService.Record(LedgerKind.WagePayment, -upFront, candidate.settlementName,
+                    $"{candidate.Name}, {termDays}d prepaid");
+            }
+
             // Read the skill summary *before* Release(): releasing nulls the candidate's pawn,
             // and the summary is computed from it. Doing this the other way round froze the
             // string "no skills" into every completed record.
@@ -254,6 +260,12 @@ namespace Intercolony
             {
                 failReason = "Could not collect the silver.";
                 return null;
+            }
+
+            if (upFront > 0)
+            {
+                LedgerService.Record(LedgerKind.WagePayment, -upFront, applicant.settlementName,
+                    $"{applicant.Name}, {posting.termDays}d prepaid from a posting");
             }
 
             string skills = applicant.SkillSummary();

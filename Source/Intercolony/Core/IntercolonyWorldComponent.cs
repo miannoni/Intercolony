@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 20;
+        public const int CurrentSaveVersion = 21;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -278,6 +278,29 @@ namespace Intercolony
 
                 return count;
             }
+        }
+
+        /// <summary>
+        /// Every movement of silver, newest last (§75, §117).
+        ///
+        /// Persisted, because §117's whole screen is "what happened last quadrum" and nothing else
+        /// in the mod records *when* money moved — every other figure is a cumulative total on an
+        /// entity. Pruned to a rolling year on the daily refresh so it cannot grow without bound.
+        /// </summary>
+        private List<LedgerEntry> ledger = new List<LedgerEntry>();
+
+        public List<LedgerEntry> Ledger => ledger;
+
+        /// <summary>
+        /// When the first entry was recorded, or -1 before any. Read by the dashboard so a young
+        /// colony's report says "12 days of history" rather than presenting a confident quarter.
+        /// </summary>
+        private int ledgerStartTick = -1;
+
+        public int LedgerStartTick
+        {
+            get => ledgerStartTick;
+            set => ledgerStartTick = value;
         }
 
         /// <summary>
@@ -649,6 +672,8 @@ namespace Intercolony
             Scribe_Collections.Look(ref employments, "employments", LookMode.Deep);
             Scribe_Collections.Look(ref postings, "postings", LookMode.Deep);
             Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
+            Scribe_Collections.Look(ref ledger, "ledger", LookMode.Deep);
+            Scribe_Values.Look(ref ledgerStartTick, "ledgerStartTick", -1);
             Scribe_Deep.Look(ref employerStanding, "employerStanding");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
@@ -767,6 +792,15 @@ namespace Intercolony
                             $"Dropped {nullEmployments} null and {brokenEmployments} unresolvable " +
                             "employment(s) while loading. Any wages paid for them are gone.");
                     }
+                }
+
+                if (ledger == null)
+                {
+                    ledger = new List<LedgerEntry>();
+                }
+                else
+                {
+                    ledger.RemoveAll(e => e == null);
                 }
 
                 if (postings == null)
@@ -917,6 +951,8 @@ namespace Intercolony
             lastRefreshTick = GenTicks.TicksGame;
             refreshCount++;
             PruneProfileCache();
+
+            LedgerService.Prune(this);
 
             int expired = ExpireStaleOpportunities();
             int withdrawn = DropInaccessibleOpportunities();
@@ -1272,6 +1308,16 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
             }
 
+            if (saveVersion < 21)
+            {
+                // 20 -> 21 added the transaction ledger (§75). Additive, and deliberately *not*
+                // backfilled: the cumulative totals on orders and contracts know how much but not
+                // when, so any history reconstructed from them would be invented dates presented as
+                // a record. The dashboard says how far back its history actually goes instead.
+                IntercolonyLog.Message(
+                    "  schema 20 -> 21: transaction ledger added; history starts now.");
+            }
+
             if (saveVersion < 20)
             {
                 // 19 -> 20 added the employee-to-colonist transition. Additive: no existing
@@ -1489,6 +1535,10 @@ namespace Intercolony
                 }
             }
 
+            sb.AppendLine($"  ledger       : {ledger.Count} entr(ies)" +
+                          (ledgerStartTick < 0
+                              ? ", no history yet"
+                              : $", since tick {ledgerStartTick}"));
             sb.AppendLine($"  employer     : {employerStanding}");
             sb.AppendLine($"  labor debts  : {laborDebts.Count} ({UnsettledDebtCount} unsettled)");
             foreach (LaborDebt debt in laborDebts)

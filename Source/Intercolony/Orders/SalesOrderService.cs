@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -212,6 +212,9 @@ namespace Intercolony
 
             GiveSilver(caravan, payment);
 
+            LedgerService.Record(LedgerKind.SalePayment, payment, order.settlementName,
+                $"{order.deliveredQuantity}x {order.ThingDef?.label ?? "goods"}, delivered");
+
             if (order.RemainingQuantity <= 0)
             {
                 Complete(state, order);
@@ -335,6 +338,10 @@ namespace Intercolony
                 order.deliveredQuantity += taken;
                 order.paidSilver += Mathf.Max(0, payment);
                 GiveSilverToColony(map, Mathf.Max(0, payment));
+
+                LedgerService.Record(LedgerKind.SalePayment, Mathf.Max(0, payment),
+                    order.settlementName,
+                    $"{taken}x {order.ThingDef?.label ?? "goods"}, collected");
 
                 if (order.RemainingQuantity <= 0)
                 {
