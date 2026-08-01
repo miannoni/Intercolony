@@ -496,3 +496,52 @@ listed with steps in `docs/PENDING_PLAYTESTS.md`:
 
 The Phase 22 renewal one is the most valuable of those, because like the conversion it is a letter
 that only fires under conditions nobody has yet produced on purpose.
+
+---
+
+## 2026-07-31 ~21:00 — Claude Code: Phase 24 ready to test (ledger + business dashboard)
+
+Built and committed, clean startup on **schema 21**. Two things to check: a self-test, and a look at
+a new screen that has never been seen.
+
+### 1. Self-test — `ledger`
+
+**F12** -> orange bug icon -> search `ledger` -> **Run ledger self-test**.
+
+The assertion that matters is *"the ledger agrees with the silver that actually left storage"* — it
+stages silver, drives a real payment through the real service, and compares. A sign flip or a
+double-record would pass every other check in the file and leave a report that looks fine.
+
+### 2. New screen — the **Business** tab
+
+It is now the **leftmost tab** in the Intercolony window, and the one that opens by default. It has
+never been rendered, so this is as much "does it draw" as "is it right".
+
+Open **Intercolony**. You should land on Business. Expect three blocks:
+
+- **Where you stand** — silver in storage, daily wage bill, and how many days that covers. The
+  runway line is colour-coded (red under 5 days, amber under 15).
+- **Last quadrum** — §117's report. On a fresh world it should say nothing has moved yet rather than
+  showing zeros. There is a **Show year / Show quadrum** toggle.
+- **Standing agreements** — one block per recurring contract, with revenue, what buying the goods
+  instead would cost, the wage bill, the delivery premium, and an estimated margin.
+
+**To make it show real numbers**, the quickest route is the labour helpers, which now grant their own
+silver:
+
+1. search `hire` -> **Hire cheapest worker** (records a wage payment)
+2. search `arrive` -> **Arrive employees now**
+3. Go back to Business — "Where you stand" should now show a wage bill and a runway, and
+   "Last quadrum" should show a Payroll line.
+
+**Worth your judgement, not just PASS/FAIL:**
+
+- Does the report read as a summary or as accounting software? §117's brief is explicitly the former,
+  and I would rather cut lines than keep ones that do not earn their place.
+- Is the runway line the most useful thing on the page, as intended, or is it buried?
+- Do the numbers on a standing agreement look like they would actually settle "is this contract
+  worth having" — or do they raise more questions than they answer?
+- Anything that looks clipped, overlapping or misaligned. Layout arithmetic is where this mod's
+  bugs have hidden twice now, and the Business tab is 100% new layout.
+
+Verbatim log for the self-test please, plus your reading of the screen.
