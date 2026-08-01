@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -32,6 +32,20 @@ namespace Intercolony
         /// </summary>
         public const int MaxEntries = 2000;
 
+        /// <summary>
+        /// Value of <see cref="IntercolonyWorldComponent.LedgerStartTick"/> meaning "nothing has
+        /// been recorded yet", compared exactly rather than by sign.
+        ///
+        /// **This is the second time this exact mistake has been made in this mod.** Phase 22's
+        /// `arrivedTick < 0` meant "never arrived" and silently switched off three features when a
+        /// test backdated it; this was `< 0` meaning "no history" and did the same to the report's
+        /// period coverage. A tick is only non-negative because the game has been running a while —
+        /// anything that constructs a backdated value on a young map lands below zero and means the
+        /// opposite of what the sign test concludes. If a field is a sentinel, compare it to the
+        /// sentinel.
+        /// </summary>
+        public const int NoHistory = -1;
+
         // --- Recording ---------------------------------------------------------------------
 
         /// <summary>
@@ -48,7 +62,7 @@ namespace Intercolony
 
             state.Ledger.Add(new LedgerEntry(kind, amount, counterparty, note));
 
-            if (state.LedgerStartTick < 0)
+            if (state.LedgerStartTick == NoHistory)
             {
                 state.LedgerStartTick = GenTicks.TicksGame;
             }
@@ -179,7 +193,7 @@ namespace Intercolony
             }
 
             int start = state.LedgerStartTick;
-            if (start < 0)
+            if (start == NoHistory)
             {
                 report.partial = true;
                 report.daysCovered = 0f;

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -23,12 +23,28 @@ namespace Intercolony
         private int businessWindowDays = BusinessReportService.QuadrumDays;
         private Vector2 businessScroll;
 
+        /// <summary>
+        /// Height of the content as actually drawn last pass.
+        ///
+        /// Measured rather than predicted. The first version computed it from a formula — so many
+        /// pixels per block, so many per contract — and the formula was simply wrong, which handed
+        /// the scroll view a viewport taller than anything in it: the page scrolled with nothing
+        /// below to reach, and the thumb sat at the bottom of a track it had no reason to fill.
+        /// Every draw method returns its final y, so the real number is available for free and
+        /// cannot drift out of step with the layout the way a constant does.
+        /// </summary>
+        private float businessContentHeight = 400f;
+
         private const float LineHeight = 24f;
 
         private void DrawBusiness(Rect inRect, IntercolonyWorldComponent state)
         {
             Rect outRect = new Rect(inRect.x, inRect.y, inRect.width, inRect.height);
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 20f, BusinessContentHeight(state));
+
+            // A viewport no taller than the panel means no scrollbar and no scrolling when the
+            // content fits, which is the common case for this page.
+            float viewHeight = Mathf.Max(businessContentHeight, outRect.height);
+            Rect viewRect = new Rect(0f, 0f, inRect.width - 20f, viewHeight);
 
             Widgets.BeginScrollView(outRect, ref businessScroll, viewRect);
 
@@ -37,15 +53,11 @@ namespace Intercolony
             y += 12f;
             y = DrawPeriodReport(viewRect, y, state);
             y += 12f;
-            DrawContractEstimates(viewRect, y, state);
+            y = DrawContractEstimates(viewRect, y, state);
 
             Widgets.EndScrollView();
-        }
 
-        private float BusinessContentHeight(IntercolonyWorldComponent state)
-        {
-            int contracts = BusinessReportService.ActiveEstimates(state).Count;
-            return 150f + 260f + 60f + Mathf.Max(1, contracts) * 130f;
+            businessContentHeight = y + 12f;
         }
 
         /// <summary>
@@ -107,7 +119,9 @@ namespace Intercolony
                 businessWindowDays == BusinessReportService.QuadrumDays ? "Last quadrum" : "Last year");
             Text.Font = GameFont.Small;
 
-            if (Widgets.ButtonText(new Rect(300f, y + 2f, 120f, 28f),
+            // Nudged down a couple of pixels so the button's centre lines up with the medium-font
+            // heading's cap height rather than its box.
+            if (Widgets.ButtonText(new Rect(300f, y + 4f, 120f, 26f),
                     businessWindowDays == BusinessReportService.QuadrumDays ? "Show year" : "Show quadrum"))
             {
                 businessWindowDays = businessWindowDays == BusinessReportService.QuadrumDays
@@ -124,7 +138,7 @@ namespace Intercolony
             {
                 GUI.color = new Color(1f, 1f, 1f, 0.6f);
                 Widgets.Label(new Rect(6f, y, inRect.width, 44f),
-                    state.LedgerStartTick < 0
+                    state.LedgerStartTick == LedgerService.NoHistory
                         ? "Nothing has moved yet. Sell something, hire someone, and this fills in."
                         : "No money moved in this period.");
                 GUI.color = Color.white;
@@ -138,7 +152,9 @@ namespace Intercolony
             {
                 GUI.color = new Color(1f, 0.9f, 0.6f);
                 Widgets.Label(new Rect(6f, y, inRect.width, LineHeight),
-                    $"Only {report.daysCovered:0} days of history so far — this is not a full period.");
+                    $"Only {report.daysCovered:0} " +
+                    (Mathf.RoundToInt(report.daysCovered) == 1 ? "day" : "days") +
+                    " of history so far — this is not a full period.");
                 GUI.color = Color.white;
                 y += LineHeight;
             }
@@ -179,7 +195,7 @@ namespace Intercolony
         /// <summary>
         /// §45's screen: each standing agreement, and whether it is worth having.
         /// </summary>
-        private void DrawContractEstimates(Rect inRect, float y, IntercolonyWorldComponent state)
+        private float DrawContractEstimates(Rect inRect, float y, IntercolonyWorldComponent state)
         {
             Text.Font = GameFont.Medium;
             Widgets.Label(new Rect(0f, y, 400f, 32f), "Standing agreements");
@@ -195,7 +211,7 @@ namespace Intercolony
                 Widgets.Label(new Rect(6f, y, inRect.width, 44f),
                     "No standing agreements. Build a trading record and settlements will propose them.");
                 GUI.color = Color.white;
-                return;
+                return y + 44f;
             }
 
             GUI.color = new Color(1f, 1f, 1f, 0.6f);
@@ -208,6 +224,8 @@ namespace Intercolony
             {
                 y = DrawEstimate(new Rect(0f, y, inRect.width, 126f), estimate);
             }
+
+            return y;
         }
 
         private float DrawEstimate(Rect rect, BusinessReportService.ContractEstimate estimate)

@@ -295,7 +295,7 @@ namespace Intercolony
         /// When the first entry was recorded, or -1 before any. Read by the dashboard so a young
         /// colony's report says "12 days of history" rather than presenting a confident quarter.
         /// </summary>
-        private int ledgerStartTick = -1;
+        private int ledgerStartTick = LedgerService.NoHistory;
 
         public int LedgerStartTick
         {
@@ -673,7 +673,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref postings, "postings", LookMode.Deep);
             Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
             Scribe_Collections.Look(ref ledger, "ledger", LookMode.Deep);
-            Scribe_Values.Look(ref ledgerStartTick, "ledgerStartTick", -1);
+            Scribe_Values.Look(ref ledgerStartTick, "ledgerStartTick", LedgerService.NoHistory);
             Scribe_Deep.Look(ref employerStanding, "employerStanding");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
@@ -1536,7 +1536,7 @@ namespace Intercolony
             }
 
             sb.AppendLine($"  ledger       : {ledger.Count} entr(ies)" +
-                          (ledgerStartTick < 0
+                          (ledgerStartTick == LedgerService.NoHistory
                               ? ", no history yet"
                               : $", since tick {ledgerStartTick}"));
             sb.AppendLine($"  employer     : {employerStanding}");
