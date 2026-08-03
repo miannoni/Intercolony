@@ -25,48 +25,6 @@ the action. Output goes to the debug log; no need to copy anything out, the dev 
 
 *(none outstanding — all written self-tests have been run.)*
 
-### Phase 22 — open-ended employment and notice (§36.4)
-
-**Steps.** Intercolony → Labor → Hire → hire someone → in the pop-up tick **"No end date"** (top
-right, beside the term slider) → wait for them to arrive → Labor → Employees → **Dismiss** on their
-row.
-
-**Expect.** Three options rather than a yes/no confirm: work out the notice, pay it in lieu at the
-same cost, or dismiss with none. Notice length grows with how long they served (3 days minimum, 20
-maximum). Dismissing with no notice costs employer reputation and faction goodwill.
-
-**Worth watching.** Whether an open-ended worker behaves normally over several days with no end
-tick — nothing should ever report them as "nearly finished", and payroll should keep running.
-
-### Phase 22 — renewal (§115)
-
-**Steps — no waiting any more.** F12 → orange bug icon → search → click:
-`hire` → **Hire cheapest worker** (pick a *fixed* term), `arrive` → **Arrive employees now**,
-then `renewal` → **Force renewal offer**. It winds the term to within a few days of its end and
-raises the question, reporting in the log either the offer or the reason there is none.
-
-*(The slow way, if you want the letter to arrive on its own: hire on a fixed term, treat them
-properly — pay every period on time, never draft them — and wait until 5 days before the term ends.)*
-
-**Expect.** A letter titled "*(name)* would like to stay", and Renew / Let go buttons on their row in
-Labor → Employees. Renewing extends the same employment in place at about 5% more per day.
-
-**The other half.** Do the same but mistreat them — miss a payroll, or draft a civilian into a fight
-— and expect a *different* letter saying no offer is coming, naming which of those it was.
-
-### Phase 22 — supply agreement renewal (§115, §107)
-
-**Steps — no waiting any more.** If you have no agreement: `offer contract` →
-**Offer contract (force)**, then `accept` → **Accept first offer**. Then `supply` →
-**Force supply agreement to complete**, which credits every remaining cycle as delivered and lets the
-settlement decide.
-
-*(The slow way: complete every delivery of a recurring agreement without missing one.)*
-
-**Expect.** The settlement offers another run on the same terms, answerable in the Contracts tab, and
-the offer expires after 8 days if ignored. A run with any missed delivery should produce a
-completion letter that says renewal was *not* offered and why.
-
 ### §115's first acceptance criterion — long-run stability
 
 > *"Employees can remain for long periods without faction-state drift or save corruption."*
@@ -122,6 +80,18 @@ No pawn-control mod has ever been loaded alongside this. The risk surface is any
   penalty applied and they rejoined their own faction on the map, as the letter says they will.
 - ~~**Severed contract across save/load**~~ — 2026-07-30. An autosave holding a closed record with a
   live pawn reference, past its deadline, loaded twice and resolved both times.
+- ~~**Phase 22 — open-ended employment and notice (§36.4)**~~ — 2026-08-03. All three dismissal
+  options present and correct: 3-day minimum notice, pay-in-lieu arithmetic verified at 3 x 23 = 69,
+  letter clear. Found a display bug in the same pass — the row printed the open-ended sentinels raw
+  as `0d ... 34028230000000000000000000000000000000d left`, and never showed that notice was
+  running. Both fixed; *the corrected row display has not itself been re-checked.*
+- ~~**Phase 22 — renewal, both halves (§115)**~~ — 2026-08-03. Treated well, the worker asked to stay
+  at 26/day against 25 and renewing extended the same employment in place. Treated badly — one
+  drafted civilian — no offer came, and the refusal named exactly which thing caused it.
+- ~~**Phase 22 — supply agreement renewal (§115, §107)**~~ — 2026-08-03. Offer created, accepted,
+  agreement credited to completion, and the settlement offered another run answerable in the
+  Contracts tab. Found a real bug on the first attempt: completion was unreachable except through an
+  order resolving, so a credited agreement sat Active forever with an empty reason string.
 - ~~**Phase 24 — ledger and Business tab**~~ — 2026-08-03. Ledger self-test 23/23, including the
   assertion that it agrees with real silver leaving storage. Business tab reviewed empty and
   populated and judged "a summary, not accounting software"; the runway line works and was called the

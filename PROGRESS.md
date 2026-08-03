@@ -1410,7 +1410,32 @@ Manual test:
   to renew carries a stated reason.
 - Startup clean, schema 19, no def errors.
 
+Play-tested (2026-08-03), all three outstanding items:
+- **Open-ended dismissal** — three options present and correct, 3-day minimum notice, pay-in-lieu
+  arithmetic verified at 3 x 23 = 69, letter clear.
+- **Renewal, both halves** — treated well, the worker asked to stay at 26/day against 25, and
+  renewing extended the same employment in place. Treated badly (one drafted civilian), no offer came
+  and the refusal named exactly which thing caused it. That second half is the one worth having: it
+  proves §40's record is load-bearing rather than decorative.
+- **Supply agreement renewal** — offer created, accepted, agreement credited to completion, another
+  run offered and answerable in the Contracts tab.
+
 Bugs found and fixed during the phase:
+- **A supply agreement could be credited as delivered and never complete.** Found by the play-test:
+  the log read `Ellis completed (4 cycle(s) credited). No renewal offered:` with an empty reason, then
+  three further runs crediting nothing. Completion lived inline in `ResolveCycle`, which only runs
+  when an *order* resolves — so crediting cycles directly could never reach it, the status stayed
+  Active with nothing left to deliver, and the empty reason was `outcomeNote`, which nothing had
+  written. Completion is now its own method and the only route to `Completed`, and
+  `AdvanceContracts` rescues any agreement stranded with no cycles and no order in flight. Normal
+  play could not reach that state, which is exactly why it went unnoticed.
+- **The employee row printed two sentinels raw.** `termDays = 0` and `DaysRemaining = float.MaxValue`
+  are how §36.4 says "open-ended", and the row rendered them as
+  `23/day × 0d daily ... 34028230000000000000000000000000000000d left`. The contract now has
+  `TermLabel` and `RemainingLabel` and the display cannot reach the raw fields. Third occurrence of
+  this class in the project; the first two were silent.
+- **A worker under notice looked exactly like one who was not.** `StatusLine` had no case for it,
+  despite the notice period being the whole of §36.4's dismissal rules.
 - **A sign test used as a sentinel switched off three features at once, silently.** `TenureDays`
   guarded with `arrivedTick < 0`, treating any negative tick as "never arrived". That is only true
   because a live game's tick is positive — anything constructing a contract with a backdated start
