@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -252,11 +252,49 @@ namespace Intercolony
                     }
                 }
 
-                if (now >= contract.nextCycleTick && contract.CyclesRemaining > 0)
+                if (contract.CyclesRemaining <= 0)
+                {
+                    // Nothing left to deliver and no order in flight. Normal play cannot reach this
+                    // — the last cycle's order resolves and completes it — but anything that credits
+                    // cycles without an order would otherwise strand the agreement Active forever.
+                    Complete(state, contract);
+                    continue;
+                }
+
+                if (now >= contract.nextCycleTick)
                 {
                     RaiseCycleOrder(state, contract);
                 }
             }
+        }
+
+        /// <summary>
+        /// Closes an agreement that has run its course, and asks whether it carries on.
+        ///
+        /// **The only way a contract becomes Completed**, deliberately. It used to be inline in
+        /// <see cref="ResolveCycle"/>, which meant it could only ever be reached by an order
+        /// finishing — so a debug helper that credited the remaining cycles directly left the
+        /// contract Active with nothing left to deliver and no way out. One entry point, so
+        /// crediting cycles and completing cannot come apart again.
+        /// </summary>
+        public static void Complete(IntercolonyWorldComponent state, RecurringContract contract)
+        {
+            if (contract == null || contract.status == ContractStatus.Completed)
+            {
+                return;
+            }
+
+            contract.status = ContractStatus.Completed;
+            contract.activeOrderId = 0;
+            contract.outcomeNote =
+                $"All {contract.totalCycles} deliveries met. {contract.TotalValue} silver total.";
+
+            // §27 lists repeated business as a positive; seeing an agreement through
+            // is the strongest version of that.
+            CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
+            rep?.Adjust(8f);
+
+            OfferRenewal(state, contract);
         }
 
         /// <summary>
@@ -380,16 +418,7 @@ namespace Intercolony
 
                 if (contract.CyclesRemaining <= 0)
                 {
-                    contract.status = ContractStatus.Completed;
-                    contract.outcomeNote =
-                        $"All {contract.totalCycles} deliveries met. {contract.TotalValue} silver total.";
-
-                    // §27 lists repeated business as a positive; seeing an agreement through
-                    // is the strongest version of that.
-                    CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-                    rep?.Adjust(8f);
-
-                    OfferRenewal(state, contract);
+                    Complete(state, contract);
                 }
 
                 return;

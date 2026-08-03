@@ -633,6 +633,41 @@ namespace Intercolony
         /// weighs a genuinely clean run — and a contract with a missed delivery in its history still
         /// correctly gets no offer, which is the half of the behaviour worth checking.
         /// </summary>
+        /// <summary>
+        /// Accepts the first standing-agreement proposal on the table.
+        ///
+        /// Distinct from "Accept first offer", which takes a *market opportunity* and produces a
+        /// one-off sales order. The two were easy to confuse — a play-test followed the wrong one
+        /// and got "No acceptable offer found" from an action that was working perfectly on a
+        /// different kind of offer entirely.
+        /// </summary>
+        [DebugAction(Category, "Accept first contract offer", allowedGameStates = AllowedGameStates.Playing, displayPriority = 51)]
+        private static void AcceptFirstContractOffer()
+        {
+            WithState(state =>
+            {
+                foreach (RecurringContract contract in state.Contracts)
+                {
+                    if (!contract.IsOffer)
+                    {
+                        continue;
+                    }
+
+                    if (ContractService.AcceptOffer(state, contract))
+                    {
+                        Report($"Accepted the agreement with {contract.settlementName}: " +
+                               $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
+                               $"{contract.CadenceDays:F0} days, {contract.totalCycles} times.");
+                        return;
+                    }
+                }
+
+                Report("No standing-agreement proposal on the table. Use \"Offer contract (force)\" " +
+                       "first. (Note: \"Accept first offer\" is a different thing — it takes a market " +
+                       "opportunity, not an agreement.)");
+            });
+        }
+
         [DebugAction(Category, "Force supply agreement to complete", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 36)]
         private static void ForceContractCompletion()
         {
@@ -658,15 +693,32 @@ namespace Intercolony
                 int remaining = target.CyclesRemaining;
                 target.cyclesCompleted += remaining;
                 target.consecutiveFailures = 0;
-                target.activeOrderId = 0;
 
-                ContractService.AdvanceContracts(state);
+                // Withdraw any order still in flight, or it would resolve as a miss against an
+                // agreement that has just been credited as fully delivered.
+                if (target.activeOrderId != 0)
+                {
+                    SalesOrder inFlight = state.FindOrder(target.activeOrderId);
+                    if (inFlight != null && inFlight.IsOpen)
+                    {
+                        inFlight.status = SalesOrderStatus.Cancelled;
+                        inFlight.outcomeNote = "Withdrawn by a debug action.";
+                    }
+
+                    target.activeOrderId = 0;
+                }
+
+                // The real completion path, not a hand-rolled imitation of it. Crediting the cycles
+                // and calling AdvanceContracts was not enough: AdvanceContracts only completes a
+                // contract when an *order* resolves, so the agreement stayed Active with nothing
+                // left to deliver and no renewal was ever offered.
+                ContractService.Complete(state, target);
 
                 Report(target.renewalOffered
                     ? $"{target.settlementName} completed ({remaining} cycle(s) credited) and has " +
                       "offered to renew. Answer in the Contracts tab."
                     : $"{target.settlementName} completed ({remaining} cycle(s) credited). " +
-                      $"No renewal offered: {target.outcomeNote}");
+                      $"No renewal offered — {target.outcomeNote.Trim()}");
             });
         }
 
