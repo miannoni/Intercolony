@@ -1553,3 +1553,103 @@ Manual test:
   as genuinely long-serving), and **Verify converted employees** checks faction, lodger status,
   `IsColonist` and whether the pawn is still on a map at all — which is the failure worth catching,
   and one that eyeballing would miss if the pawn simply wandered off later.
+
+## Phase 24 — Economic integration and dashboard  (2026-08-03)
+
+§117's goal: "Help the player understand the business without turning the mod into accounting
+software." §45 calls it "the heart of the finished product".
+
+Implemented:
+- **§75's transaction ledger, which had to come first.** Every cash figure already existed as a
+  cumulative total on an entity — `SalesOrder.paidSilver`, `EmploymentContract.compensationPaid` —
+  which answers "how much in total" and cannot answer "how much last quadrum". §117's whole screen is
+  the second question. Seven movement kinds, recorded at every point silver actually moves: sales,
+  purchases, wages (prepaid, periodic, arrears, final settlement, notice in lieu), compensation,
+  release fees, refunds, debt settlements.
+- **History starts now, and says so.** An old save's totals know how much but not when, and
+  reconstructing dates would be fiction presented as a record. A twelve-day-old colony reading "last
+  quadrum: +180" is not reporting a quiet quadrum, so the report names how far back it actually goes.
+- **A Business tab**, leftmost and the default. Two short blocks and a list rather than a
+  spreadsheet — §117's brief is half warning. Every figure sits next to the thing that makes it a
+  decision: silver next to how many days of payroll it covers, contract revenue next to what buying
+  the goods instead would cost, the delivery premium next to the hauling that earned it.
+- **§45's contract estimate**, with inputs priced as "what buying them instead would cost" through
+  procurement's own supplier margin — now a named constant rather than a literal, so the dashboard
+  cannot recommend buying at a price procurement would not offer. The mod cannot see what a player's
+  rice costs to grow, and any number invented for that would be fiction with a decimal point.
+- **The transport line is the delivery premium**, which is the only honest cash answer available:
+  caravans cost time and risk, not silver, but seller-delivery is priced above buyer-pickup and that
+  gap is what hauling earns. A quadrum of pickup orders shows nothing there, correctly.
+- Ledger pruned to a rolling year on the daily refresh, with a hard entry ceiling as a backstop.
+- Schema 21, additive.
+
+Not implemented:
+- No graphs or trend lines. §117 shows a table; anything more is the accounting software it warns
+  against.
+- No per-contract payroll apportionment. The mod does not know who works on what, and a made-up
+  allocation would look precise while being invented. The wage bill is shown whole and labelled as
+  such.
+- No real caravan cost model — food consumed, time spent, risk. Considered and rejected as a system
+  of its own for the sake of one line.
+- Nothing spends the ledger's history: no "compare to last quadrum", no alerts.
+
+Known limitations:
+- **The going-rate band and the applicants who arrive are two samples of one formula**, so they do
+  not match exactly. Measured in play at 8 workers/125 silver against 4/118 — noticeable, judged
+  acceptable. Unifying them means rewriting the Phase 16–19 hire path.
+- The estimate assumes the whole wage bill is chargeable against each agreement, so a colony with
+  several contracts sees the same payroll subtracted from each. Correct as "does this cover the
+  workforce", misleading if read as "this contract's share".
+- Partial-period reporting is a sentence, not a scaled figure. The report does not pro-rate.
+
+Manual test:
+- `Run ledger self-test`: **23 passed, 0 failed** after the fixes below. The load-bearing assertion
+  is not that the arithmetic adds up but that the ledger agrees with the colony's *real* silver — a
+  real payment through the real service, storage measured either side. Verified at -300 recorded
+  against storage falling by 300, in both magnitude and sign.
+- **Business tab reviewed in play**, empty and populated. Read as intended: "a summary, not
+  accounting software... empty states are written as instructions rather than rows of zeroes". The
+  runway line ("covered for about 6 more days at the current rate") was judged the best line on the
+  screen and the one to protect if it ever gets crowded — placed under the two numbers it derives
+  from, hedged, and coloured apart from the facts above it.
+- **Not yet seen:** the report with revenue, purchases and payroll all present at once. That is where
+  crowding would actually show.
+
+Bugs found and fixed during the phase:
+- **The sentinel mistake, for the third time — and this one reached the screen.** `ledgerStartTick`
+  used `< 0` to mean "no history". A test backdating it 200 days on a young map lands about twelve
+  million below zero, which reads as "no history" and forces the period to report as partial with
+  zero days covered. So one assertion could not pass, and *the one above it was passing while
+  measuring nothing* — which the play-test correctly suspected before withdrawing its specific
+  hypothesis.
+
+  Separately, §36.4's open-ended contracts use `termDays = 0` and `DaysRemaining = float.MaxValue` as
+  sentinels, and the employee row printed both raw:
+  `23/day × 0d daily ... 34028230000000000000000000000000000000d left`. Fixed by giving the contract
+  `TermLabel` and `RemainingLabel` and never formatting the raw fields — the display cannot reach the
+  sentinel any more.
+
+  Three occurrences now: `arrivedTick < 0`, `ledgerStartTick < 0`, and formatting `DaysRemaining`.
+  The first two were silent. The reasoning is written into `LedgerService.NoHistory` and
+  `EmploymentContract.TermLabel` so a fourth has something to run into.
+- **A scroll view that scrolled with nothing to scroll.** The Business tab's content height came from
+  a formula — so many pixels per block, so many per contract — and the formula was wrong, handing the
+  view a viewport taller than its content: the page scrolled into blank space and the thumb sat at
+  the bottom of a track it had no reason to fill. It now measures, since every draw method already
+  returned its final y, and clamps to the panel height so content that fits gets no scrollbar.
+- **A worker under notice looked exactly like one who was not.** `StatusLine` had no case for it
+  despite the notice period being the whole of §36.4's dismissal rules.
+- **Selection was invisible on the posting dialog's clause and payment rows.**
+  `Widgets.ButtonText` paints its own background, so a `DrawHighlightSelected` drawn *before* it is
+  simply covered up. The hire dialog looked right because it highlights a plain row rather than a
+  button. Now drawn after, via one shared helper.
+- Two hint strings clipped at the posting dialog's right edge; shortened and given room.
+- "Only 1 days of history" — plural.
+
+Tooling added afterwards:
+- **`Force renewal offer` and `Force supply agreement to complete`.** Four of the six remaining
+  play-tests were blocked on the same gap: nothing could fast-forward a contract, so renewal and
+  supply renewal needed sitting through real in-game weeks. A feature that can only be tested by
+  waiting is a feature that does not get tested. Both move the clock rather than setting a flag, so
+  the eligibility rules weigh the record they actually find — including refusing when the record is
+  bad, which is the half worth checking.

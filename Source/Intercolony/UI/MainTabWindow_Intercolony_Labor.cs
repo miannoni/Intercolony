@@ -715,7 +715,7 @@ namespace Intercolony
             GUI.color = StatusColour(contract);
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, 22f),
                 $"{contract.settlementName} ({contract.factionName})   " +
-                $"{contract.dailyWage}/day × {contract.termDays}d {contract.wageStructure.Label()}, " +
+                $"{contract.dailyWage}/day × {contract.TermLabel} {contract.wageStructure.Label()}, " +
                 $"{contract.paidSilver} paid   — {contract.StatusLine()}");
             GUI.color = Color.white;
 
@@ -886,7 +886,7 @@ namespace Intercolony
             }
             else
             {
-                text += $"\n{Mathf.Max(0f, contract.DaysRemaining):0.#} days left on the term.\n\n" +
+                text += $"\n{contract.RemainingLabel} on the term.\n\n" +
                         "They can be given work priorities, assigned a bed and sent on caravans " +
                         "like a colonist — but they are not one. They belong to their own faction " +
                         "and go home when the term ends.";

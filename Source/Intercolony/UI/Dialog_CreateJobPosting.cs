@@ -110,8 +110,8 @@ namespace Intercolony
             positions = Mathf.RoundToInt(slots);
 
             GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(344f, y + 3f, inRect.width - 348f, 24f),
-                "The posting stays up until every position is filled or it lapses.");
+            Widgets.Label(new Rect(344f, y, inRect.width - 348f, 40f),
+                "Stays up until filled, or until it lapses.");
             GUI.color = Color.white;
             y += 34f;
 
@@ -151,19 +151,7 @@ namespace Intercolony
             float x = 92f;
             foreach (CombatClause option in CombatClauseUtility.All)
             {
-                Rect button = new Rect(x, y, 150f, 28f);
-                if (clause == option)
-                {
-                    Widgets.DrawHighlightSelected(button);
-                }
-
-                if (Widgets.ButtonText(button, option.LabelCap()) && clause != option)
-                {
-                    clause = option;
-                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
-                }
-
-                x += 154f;
+                x = DrawChoice(x, y, option.LabelCap(), clause == option, () => clause = option);
             }
 
             y += 34f;
@@ -174,19 +162,9 @@ namespace Intercolony
             foreach (WageStructure option in
                      new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
             {
-                Rect button = new Rect(x, y, 150f, 28f);
-                if (structure == option)
-                {
-                    Widgets.DrawHighlightSelected(button);
-                }
-
-                if (Widgets.ButtonText(button, option.Label().CapitalizeFirst()) && structure != option)
-                {
-                    structure = option;
-                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
-                }
-
-                x += 154f;
+                WageStructure captured = option;
+                x = DrawChoice(x, y, option.Label().CapitalizeFirst(), structure == option,
+                    () => structure = captured);
             }
 
             y += 40f;
@@ -259,6 +237,32 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// One choice in a row of them, drawn so the chosen one actually looks chosen.
+        ///
+        /// The highlight has to go **after** the button, not before. `Widgets.ButtonText` paints its
+        /// own background, so a `DrawHighlightSelected` drawn first is simply covered up — which is
+        /// why the clause and payment rows showed no selection at all while the hire dialog, which
+        /// highlights a plain row rather than a button, looked right.
+        /// </summary>
+        private static float DrawChoice(float x, float y, string label, bool selected, Action choose)
+        {
+            Rect button = new Rect(x, y, 150f, 28f);
+
+            if (Widgets.ButtonText(button, label) && !selected)
+            {
+                choose();
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
+            if (selected)
+            {
+                Widgets.DrawHighlightSelected(button);
+            }
+
+            return x + 154f;
+        }
+
+        /// <summary>
         /// The going rate, and a plain sentence about where the offer sits in it.
         ///
         /// The sentence matters more than the numbers. "34 to 46" tells a player who already
@@ -280,10 +284,10 @@ namespace Intercolony
             }
 
             GUI.color = new Color(1f, 1f, 1f, 0.75f);
-            Widgets.Label(new Rect(0f, y, inRect.width, 24f),
-                $"{qualified} reachable worker{(qualified == 1 ? "" : "s")} can do this. They ask " +
-                $"{rateLow} to {rateHigh} silver a day for a {termDays}-day " +
-                $"{clause.Label()} contract.");
+            Widgets.Label(new Rect(0f, y, inRect.width, 44f),
+                $"{qualified} reachable worker{(qualified == 1 ? "" : "s")} can do this. " +
+                $"For {termDays} days as a {clause.Label()} they ask " +
+                $"{rateLow} to {rateHigh} silver a day.");
             GUI.color = Color.white;
             y += 26f;
 

@@ -562,6 +562,114 @@ namespace Intercolony
         /// real one: severance, notice length and the eligibility gates all price this worker as
         /// genuinely long-serving, because as far as the contract is concerned they are.
         /// </summary>
+        /// <summary>
+        /// Winds an employment forward to the brink of its term so §115's renewal question fires now.
+        ///
+        /// **Added because four of the six remaining play-tests were blocked on the same thing:**
+        /// nothing could fast-forward a contract, so renewal, supply renewal and the long-run checks
+        /// all required sitting through real in-game weeks. A feature that can only be tested by
+        /// waiting is a feature that does not get tested.
+        ///
+        /// Moves the clock rather than setting a flag, so everything downstream reads the real
+        /// thing: the worker has genuinely served nearly the whole term, payroll has genuinely run,
+        /// and <see cref="RenewalService.WouldRenew"/> weighs the record it actually finds.
+        /// </summary>
+        [DebugAction(Category, "Force renewal offer", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 37)]
+        private static void ForceRenewalOffer()
+        {
+            WithState(state =>
+            {
+                EmploymentContract target = null;
+                foreach (EmploymentContract contract in state.Employments)
+                {
+                    if (contract.status == EmploymentStatus.Active && contract.pawn != null &&
+                        !contract.renewalOffered && !contract.ServingNotice)
+                    {
+                        target = contract;
+                        break;
+                    }
+                }
+
+                if (target == null)
+                {
+                    Report("No employee awaiting a renewal decision. Hire one on a *fixed* term and " +
+                           "use \"Arrive employees now\".");
+                    return;
+                }
+
+                if (target.IsOpenEnded)
+                {
+                    Report($"{target.workerName} is on an open-ended contract — there is no term to " +
+                           "renew. Hire someone on a fixed term instead.");
+                    return;
+                }
+
+                // Far enough back that the term is nearly served, and past the three-day floor
+                // WouldRenew applies to workers who have barely arrived.
+                target.arrivedTick = GenTicks.TicksGame -
+                                     (target.termDays - RenewalService.OfferLeadDays + 1) * GenDate.TicksPerDay;
+                target.endTick = GenTicks.TicksGame +
+                                 (RenewalService.OfferLeadDays - 1) * GenDate.TicksPerDay;
+
+                RenewalService.Advance(target);
+
+                if (RenewalService.HasLiveOffer(target))
+                {
+                    Report($"{target.workerName} has asked to stay on at {target.renewalWage}/day " +
+                           $"(was {target.dailyWage}). Answer on their row in Labor -> Employees.");
+                    return;
+                }
+
+                RenewalService.WouldRenew(state, target, out string refusal);
+                Report($"{target.workerName} was asked and will not re-sign: {refusal} " +
+                       "(that is the other half of the test — the letter should say the same).");
+            });
+        }
+
+        /// <summary>
+        /// Completes a recurring supply agreement so §115's renewal offer fires on it.
+        ///
+        /// Marks every remaining cycle delivered rather than faking the offer, so the settlement
+        /// weighs a genuinely clean run — and a contract with a missed delivery in its history still
+        /// correctly gets no offer, which is the half of the behaviour worth checking.
+        /// </summary>
+        [DebugAction(Category, "Force supply agreement to complete", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 36)]
+        private static void ForceContractCompletion()
+        {
+            WithState(state =>
+            {
+                RecurringContract target = null;
+                foreach (RecurringContract contract in state.Contracts)
+                {
+                    if (contract.IsActive)
+                    {
+                        target = contract;
+                        break;
+                    }
+                }
+
+                if (target == null)
+                {
+                    Report("No active supply agreement. Use \"Offer contract (force)\" then " +
+                           "\"Accept first offer\" to get one, then run this.");
+                    return;
+                }
+
+                int remaining = target.CyclesRemaining;
+                target.cyclesCompleted += remaining;
+                target.consecutiveFailures = 0;
+                target.activeOrderId = 0;
+
+                ContractService.AdvanceContracts(state);
+
+                Report(target.renewalOffered
+                    ? $"{target.settlementName} completed ({remaining} cycle(s) credited) and has " +
+                      "offered to renew. Answer in the Contracts tab."
+                    : $"{target.settlementName} completed ({remaining} cycle(s) credited). " +
+                      $"No renewal offered: {target.outcomeNote}");
+            });
+        }
+
         [DebugAction(Category, "Force attachment offer", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 39)]
         private static void ForceAttachmentOffer()
         {

@@ -88,8 +88,14 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 23 complete (2026-07-31). Self-test 21/21 and all three of §44's routes played through,
-conversion included. Next: Phase 24 — Economic integration and dashboard (DESIGN.md §117, §45).
+**Phase:** 24 complete (2026-08-03). Next: Phase 25 — Polish and compatibility (DESIGN.md §118),
+which also owns the decide-or-delete task for condition constraints (§125 Goods).
+
+**Sentinels have bitten three times now. Compare them exactly, and never format them.**
+`arrivedTick < 0`, `ledgerStartTick < 0` and printing `DaysRemaining` for an open-ended contract were
+all the same mistake: a value chosen to mean "none" being read as a quantity. A tick is only
+non-negative because the game has been running a while, and `float.MaxValue` renders as
+34028230000000000000000000000000000000. Two of the three were silent.
 
 **Play-testing is done by a Dispatch computer-use session, not by Matteo at the keyboard.** The
 handoff runs through `DISPATCH_NOTES.md` — append-only, timestamped, game output verbatim. Claude

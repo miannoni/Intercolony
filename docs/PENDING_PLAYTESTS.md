@@ -40,8 +40,13 @@ tick — nothing should ever report them as "nearly finished", and payroll shoul
 
 ### Phase 22 — renewal (§115)
 
-**Steps.** Hire on a **fixed** term, treat them properly — pay every period on time, never draft
-them — and wait until 5 days before the term ends.
+**Steps — no waiting any more.** F12 → orange bug icon → search → click:
+`hire` → **Hire cheapest worker** (pick a *fixed* term), `arrive` → **Arrive employees now**,
+then `renewal` → **Force renewal offer**. It winds the term to within a few days of its end and
+raises the question, reporting in the log either the offer or the reason there is none.
+
+*(The slow way, if you want the letter to arrive on its own: hire on a fixed term, treat them
+properly — pay every period on time, never draft them — and wait until 5 days before the term ends.)*
 
 **Expect.** A letter titled "*(name)* would like to stay", and Renew / Let go buttons on their row in
 Labor → Employees. Renewing extends the same employment in place at about 5% more per day.
@@ -51,25 +56,16 @@ Labor → Employees. Renewing extends the same employment in place at about 5% m
 
 ### Phase 22 — supply agreement renewal (§115, §107)
 
-**Steps.** Complete every delivery of a recurring supply agreement without missing one.
+**Steps — no waiting any more.** If you have no agreement: `offer contract` →
+**Offer contract (force)**, then `accept` → **Accept first offer**. Then `supply` →
+**Force supply agreement to complete**, which credits every remaining cycle as delivered and lets the
+settlement decide.
+
+*(The slow way: complete every delivery of a recurring agreement without missing one.)*
 
 **Expect.** The settlement offers another run on the same terms, answerable in the Contracts tab, and
 the offer expires after 8 days if ignored. A run with any missed delivery should produce a
 completion letter that says renewal was *not* offered and why.
-
-### Phase 21 — the Posts tab and posting dialog (§35.2)
-
-Never seen in play; only the self-test has exercised the matcher.
-
-**Steps.** Intercolony → Labor → **Posts** → **New posting**.
-
-**Expect.** The going-rate band updates live as skill, level, term and clause change, with a verdict
-line placing your offer in it. Post below the band and expect a "No applicants" letter naming the
-reason. Applicants arrive on market refreshes and appear under their posting with a "Take on" button.
-
-**Worth watching.** Whether the band's numbers feel right against what the Hire tab is charging —
-they are two separate samples of one formula, so they will not match exactly, and it is worth knowing
-whether the gap is noticeable.
 
 ### §115's first acceptance criterion — long-run stability
 
@@ -85,11 +81,26 @@ along the way. Renew a fixed-term worker two or three times.
 **Watch for.** Their `kindDef` staying correct, ideoligion intact, no raid-point inflation, and no
 "could not resolve reference" on load.
 
+### The Business report at full density (§117)
+
+The only judgement still outstanding on the dashboard. Reviewed empty and with payroll alone; never
+seen with **revenue, purchases and payroll on the report at once**, which is where crowding would
+actually show and where §117's "not accounting software" line gets its real test.
+
+**Steps.** Sell something (Find buyer → accept → deliver), buy something (Procurement), and have an
+employee on payroll — then open **Business**. Ideally let a quadrum pass so the figures are real
+rather than one movement each.
+
+**Worth watching.** Whether four or five rows plus a rule and a net line still reads as a summary, or
+starts to look like a table. If it tips, cutting a row is the right answer rather than shrinking the
+font.
+
 ### Employee edge cases never exercised (§33 q12, q13, q20)
 
 Carried from the Phase 15 spike and still open:
 
-- **Downed employee** — what happens if one is incapacitated but not killed.
+- **Downed employee** — what happens if one is incapacitated but not killed. *(A test was armed on
+  a target on 2026-08-03 but the session ended before any result; nothing should be read into that.)*
 - **Captured employee** — not modelled at all; unknown what the game does.
 - **Social relations formed during employment** — the spike's probe pawn had zero relations, so
   "unchanged 0 → 0" was weak evidence. A worker who forms bonds and then leaves is untested.
@@ -111,6 +122,15 @@ No pawn-control mod has ever been loaded alongside this. The risk surface is any
   penalty applied and they rejoined their own faction on the map, as the letter says they will.
 - ~~**Severed contract across save/load**~~ — 2026-07-30. An autosave holding a closed record with a
   live pawn reference, past its deadline, loaded twice and resolved both times.
+- ~~**Phase 24 — ledger and Business tab**~~ — 2026-08-03. Ledger self-test 23/23, including the
+  assertion that it agrees with real silver leaving storage. Business tab reviewed empty and
+  populated and judged "a summary, not accounting software"; the runway line works and was called the
+  best line on the screen. Three layout bugs found and fixed. **Still unseen:** the report with
+  revenue, purchases and payroll present at once, which is where crowding would show.
+- ~~**Phase 21 — the Posts tab and posting dialog (§35.2)**~~ — 2026-08-03. Band updates live
+  (skill 8→18 moved 139 workers to 8, and the band 25–84 to 50–71; switching to security contractor
+  took it to 125–177). Verdict escalates amber→red. The no-applicants letter names the reason. Two
+  clipped strings and an invisible selection state found and fixed.
 - ~~**Phase 23 — a worker becomes a colonist (§44, §116)**~~ — 2026-07-31, all three routes. Paid:
   colonist in place, 3,583 debited exactly as quoted. Defected: colonist in place, faction hostile at
   -80, bookings voided, nothing paid. Declined: stays an employee. `Verify converted employees`

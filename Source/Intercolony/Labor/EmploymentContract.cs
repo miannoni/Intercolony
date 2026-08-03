@@ -323,6 +323,34 @@ namespace Intercolony
         public bool CombatUsePermittedNow =>
             combatClause.PermitsCombat(CombatClauseUtility.IsOnPlayerHomeMap(pawn));
 
+        /// <summary>
+        /// The term, for display. **Never format <see cref="termDays"/> or
+        /// <see cref="DaysRemaining"/> directly.**
+        ///
+        /// An open-ended contract is 0 days with <see cref="float.MaxValue"/> remaining, and both of
+        /// those are sentinels rather than quantities. Printed raw they produced
+        /// "0d ... 34028230000000000000000000000000000000d left" on the employee row — the third
+        /// time in this mod a sentinel has been read as a number. The other two were silent; this
+        /// one at least had the decency to be visible.
+        /// </summary>
+        public string TermLabel => IsOpenEnded ? "open-ended" : $"{termDays}d";
+
+        /// <summary>How much is left, in words. Handles open-ended and notice; never prints a sentinel.</summary>
+        public string RemainingLabel
+        {
+            get
+            {
+                if (ServingNotice)
+                {
+                    return $"{Mathf.Max(0f, DaysOfNoticeLeft):0.#}d notice left";
+                }
+
+                return IsOpenEnded
+                    ? "no end date"
+                    : $"{Mathf.Max(0f, DaysRemaining):0.#}d left";
+            }
+        }
+
         public string StatusLine()
         {
             switch (status)
@@ -339,7 +367,7 @@ namespace Intercolony
 
                     if (arrearsSilver > 0)
                     {
-                        return $"owed {arrearsSilver} silver — {Mathf.Max(0f, DaysRemaining):0.#}d left";
+                        return $"owed {arrearsSilver} silver — {RemainingLabel}";
                     }
 
                     if (termLapsedNotified)
@@ -347,10 +375,17 @@ namespace Intercolony
                         return "term ended — away from the colony, will leave on return";
                     }
 
+                    // Under notice the countdown *is* the status. It was missing entirely, so a
+                    // worker given notice looked exactly like one who was not.
+                    if (ServingNotice)
+                    {
+                        return $"leaving — {RemainingLabel}, then home";
+                    }
+
                     return wageStructure.IsPeriodic()
-                        ? $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left, " +
+                        ? $"working — {RemainingLabel}, " +
                           $"next pay in {Mathf.Max(0f, DaysUntilPayment):0.#}d"
-                        : $"working — {Mathf.Max(0f, DaysRemaining):0.#}d left";
+                        : $"working — {RemainingLabel}";
                 case EmploymentStatus.Converted:
                     return outcomeNote.NullOrEmpty() ? "stayed for good" : outcomeNote;
                 case EmploymentStatus.Severed:
@@ -535,7 +570,7 @@ namespace Intercolony
             // Shows the commitment and the structure, not just paidSilver. It used to read
             // "(22/day x 20d = 0)" for a periodic hire, which looks like a zero-value contract
             // rather than one where nothing has been paid yet.
-            string money = $"{dailyWage}/day × {termDays}d {wageStructure.Label()}, " +
+            string money = $"{dailyWage}/day × {TermLabel} {wageStructure.Label()}, " +
                            $"{TotalCommitment} total, {paidSilver} paid";
             if (arrearsSilver > 0)
             {

@@ -388,6 +388,172 @@ save still on disk and still reusable if any of this needs re-running.
 
 ---
 
+## 2026-08-02 ~08:30 — Phase 24 re-run verified, then a sweep of `PENDING_PLAYTESTS.md`
+
+Fresh **Dev quicktest** world on the rebuilt assembly. Colonists Dome / Noah / Tail, 6th of Aprimay
+5500. Asked to work through the outstanding play-tests; the two re-run checks were folded in first
+since they were on the way.
+
+### Re-run checks — both fixes confirmed
+
+1. **Ledger self-test: 23 passed, 0 failed.** The previously failing line now passes, and the
+   adjacent one reports properly:
+
+```
+PASS  a five-day-old ledger reports a quadrum as partial (§117) (5 days covered)
+PASS  an established ledger reports a full period
+```
+
+   `5 days covered` where it used to say `0`. The `ledgerStartTick < 0` diagnosis was right.
+
+2. **Business tab scrollbar is gone.** Empty state draws with no scrollbar, and scrolling with the
+   wheel over the panel moves nothing. Content that fits no longer scrolls.
+
+### Phase 21 — Posts tab and posting dialog: **PASS**, with three findings
+
+The core behaviour is right and the screen is good. The band is live and genuinely informative.
+
+**Band updates live, and meaningfully.** Raising `Skill: Construction at least` from 8 to 18:
+
+| | before | after |
+| --- | --- | --- |
+| reachable workers | 139 | 8 |
+| asking band | 25–84 | 50–71 |
+| `Match top` | 84 | 71 |
+| wage slider max | 168 | 142 |
+
+Switching clause Civilian -> Security contractor moved the band again, 50–71 -> **125–177**, `Match
+top` to 177, slider max to 354. Roughly 2.5x for the same worker, which reads as a real decision.
+
+**The verdict line escalates, with colour.** At 30 silver against a 25–84 band it read amber:
+`Your offer sits low in that band — expect few replies, and not the strongest.` Against 125–177 it
+turned red: `Your offer is below all of them. Expect no replies until the market changes — the
+cheapest wants 125.` That escalation is the best thing on the screen.
+
+**The No-applicants path works and names the reason.** Posted deliberately below band, then
+`Advance refresh`:
+
+```
+Your posting — Construction 18+ — 1 position, 20d, 30 silver/day daily, security contractor
+— drew no replies.
+
+4 workers reachable can do the job, but the cheapest of them wants 118 silver a day and you
+offered 30.
+```
+
+Now the findings.
+
+**FINDING 1 — two strings are clipped at the dialog's right edge.**
+
+```
+The posting stays up until every position is          <- cut; presumably "...is filled."
+```
+
+and, with a long clause name selected:
+
+```
+8 reachable workers can do this. They ask 125 to 177 silver a day for a 20-day security contractor
+```
+
+With `Civilian` the same line reads `...for a 20-day civilian contract.` — so the word `contract.`
+is lost once the clause name is long enough. Both truncate hard with no ellipsis. The hint column
+and the band line need either wrapping or a wider budget.
+
+**FINDING 2 — neither the Clause row nor the Paid row shows which option is selected.** All six
+buttons render identically. `Security contractor` was active (the band proved it) and looked exactly
+like the two inactive ones. Same for `Paid` — the posting summary afterwards read `30 silver/day
+daily`, so **Daily** was selected the whole time, and nothing on screen ever said so. This is not
+cosmetic: the clause changes the asking band by 2.5x and the payment basis changes when silver
+leaves. Worth noting that **the Hire dialog gets this right** — its clause and payment options are
+radio buttons with a filled green marker and a highlighted row. The two dialogs disagree with each
+other.
+
+**FINDING 3 — the band and the letter disagree, mildly.** The dialog said *8 reachable, 125–177*;
+the letter three seconds later said *4 reachable, cheapest 118*. `PENDING_PLAYTESTS.md` predicts this
+("two separate samples of one formula... worth knowing whether the gap is noticeable"). Answer:
+noticeable but not alarming — the worker count halved, the cheapest moved 125 -> 118. A player who
+reads both will notice; nobody would call it broken.
+
+### Phase 22 — open-ended employment and notice: **PASS on the dialog, one real bug in the row**
+
+Hired Naomi open-ended (ticked `No end date`; the summary correctly became `25 silver/day,
+open-ended — they stay until one of you ends it.`), pulled her arrival forward, then `Dismiss`.
+
+**The three options are exactly as documented:**
+
+```
+Naomi is on an open-ended contract and has served 0 days.
+Notice owed: 3 days (69 silver).
+
+[ Pay 69 and end it now ]  [ Dismiss with no notice ]  [ Work out the 3 days ]
+```
+
+3-day minimum as specified, and 3 x 23/day = 69 checks out. Chose `Work out the 3 days`, which fired
+a **Notice given** letter:
+
+```
+Naomi has been given 3 days' notice.
+
+They keep working and keep drawing wages until it runs out, then go home. Nothing is owed beyond
+the wages for those days.
+```
+
+**FINDING 4 (bug) — the sentinel leaks into the employee row.** Verbatim, on the open-ended contract:
+
+```
+Minron (Thiberon)  23/day × 0d daily, 0 paid   — working — 34028230000000000000000000000000000000d left,
+```
+
+`34028230000000000000000000000000000000` is `float.MaxValue` rendered as days remaining, and the
+term reads `× 0d`. Note the trailing comma with nothing after it.
+
+This is the concern `PENDING_PLAYTESTS.md` raises under "Worth watching" — *"nothing should ever
+report them as 'nearly finished'"* — landing in the opposite direction: it reports them as finishing
+in 3.4e38 days. **It is also a third occurrence of the sentinel class** already fixed twice
+(`arrivedTick < 0` in Phase 22, `ledgerStartTick < 0` in Phase 24). The employee row's
+days-remaining path never got the same treatment.
+
+**FINDING 5 — the row does not show that notice is running.** After accepting `Work out the 3 days`
+the letter fired, but the row still reads `— working —` with the same sentinel and still offers a
+live `Dismiss` button. There is no "under notice, 3d left" state, even though the code has a
+`Severed` branch that renders `leaving`. The player has no in-tab way to see that a countdown
+started.
+
+### Employee edge cases — downed employee: **STARTED, NOT FINISHED**
+
+Set up (open-ended employee present, `T: Damage Until Down` tool armed and confirmed on target —
+the readout showed `Naomi, Scout`), but the result was not observed before the session was
+interrupted. **No conclusion. Nothing about the downed case should be read into this file yet.**
+
+Captured employee and social-relations-formed-during-employment were not attempted at all.
+
+### Not run, and why
+
+| Play-test | Why not |
+| --- | --- |
+| Phase 22 renewal (§115) | Needs a fixed-term worker within 5 days of term end. **There is no debug helper for it** — the action list has `Expire employment now` but nothing to advance a contract to near-expiry. Reachable only by letting a short term run down in real time, or by adding a `Force renewal offer` helper (the Phase 23 `Force attachment offer` precedent). |
+| Phase 22 supply agreement renewal | Needs *every* delivery of a recurring agreement completed. That is caravan-scale play, not a session task. |
+| §115 long-run stability | "Several seasons, saving and reloading along the way." Genuinely long; the useful shortcut would be a helper that ages a contract. |
+| Captured employee (§33 q13) | Needs a hostile faction to capture the employee — a raid, a downed pawn, and a prisoner cell. Multi-step and slow. |
+| Social relations during employment (§33 q20) | Needs an employee who has *formed* bonds over time, so it inherits the long-run problem. |
+| Mod compatibility (§33 q18) | **Not testable here.** No pawn-control mod is installed, and installing third-party mods is outside what Dispatch should do unprompted. |
+
+**The pattern worth acting on:** four of the six unreachable tests are unreachable for the same
+reason — nothing can fast-forward a contract. One helper (`Force renewal offer`, or a general
+"advance this employment by N days") would unlock renewal, both halves of the mistreatment variant,
+and most of the long-run check. That is the highest-leverage dev action left in the labor system.
+
+### Dispatch error worth recording
+
+RimWorld was already running with **two** instances when this session resumed; the taskbar icon
+showed no running-indicator in a zoomed check, that was misread as "not running", and a third
+instance was launched. Caught and closed immediately, and the correct world was re-entered — but
+this is the second time a duplicate has been launched off a taskbar-icon reading. **Reading the
+taskbar underline is not reliable evidence.** Hovering the icon to see the window previews is, and
+should be the check from now on.
+
+---
+
 ## 2026-07-31 ~22:30 — Phase 24: ledger self-test (22/1) + Business tab review (partial)
 
 Fresh `-quicktest` world on schema 21, colonists Masahiro / Tater / Blackjack, 7th of Aprimay 5500.
