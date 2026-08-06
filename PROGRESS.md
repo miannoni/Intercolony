@@ -1678,3 +1678,98 @@ Tooling added afterwards:
   waiting is a feature that does not get tested. Both move the clock rather than setting a flag, so
   the eligibility rules weigh the record they actually find — including refusing when the record is
   bad, which is the half worth checking.
+
+## Phase 25 — Polish and compatibility, pass A of three  (2026-08-06)
+
+**This entry is deliberately partial.** §118 is eleven tasks plus a decide-or-delete, and was cut
+into three passes rather than built in one. Pass A took the items that stop *other people's* games
+breaking. Pass B (settings, tooltip polish, UI scaling) and pass C (DLC matrix, modded-content
+tests, compatibility notes, documentation) are not started. The phase is not complete and this
+entry does not claim it is.
+
+Implemented:
+- **A crash found in play, fixed.** Taking on the top of two applicants threw
+  `ArgumentOutOfRangeException` out of the draw pass: `DrawPostingBlock` iterates `Applicants`
+  descending while `TryAccept`, closing a filled posting, clears that same list mid-loop. Phase 21
+  play-tested this screen and missed it, because it only ever took the *bottom* row — the one
+  arrangement that cannot fail, being the last iteration. Hire, turn away and withdraw now record
+  intent and run after the loop and after the scroll view closes.
+- **§125's used-goods question decided: kept, as a quality floor.** The question posed a false
+  choice. `minHitPointsPercent` is a *minimum*, so making it real never required a secondhand
+  market — only buyers who will not accept a nearly-broken chair. One demand in five on durable
+  finished goods now carries a floor of 60/75/85%, never 100%. Enforced since Phase 6, generated
+  since now.
+- **Schema 22, and the migration chain put back in ascending order.** It ran 2→13 then 22→14. That
+  is harmless while every step from 14 on is a bare log line, but the "falls through to the next"
+  contract was false for half the chain, and the first migration that actually moves data would
+  have run out of order silently. Reordered while every step is still a no-op.
+- **A draw-time exception can no longer flood the log or strand the player.** The tab selector
+  draws outside the guard, so a broken page can be navigated away from; the failure is logged once
+  with its stack, keyed on page plus exception plus stack; scroll views and text/colour state are
+  restored. A debug action deliberately breaks a page so the guard can be watched working.
+- **Performance profiled at real scale**, with a `Run performance profile` debug action reporting
+  cold and warm separately — a warm figure alone hides what the player pays on first hit.
+- Three per-frame costs removed, the significant one being dynamic tooltips building their full
+  strings for every rendered row every frame regardless of hover. `TooltipHandler` applies that
+  gate only *after* receiving the text.
+- Colony order validation switched from scanning every thing on the map to RimWorld's per-def
+  index, covering minified furniture explicitly.
+
+Not implemented:
+- **Localization: dropped, not deferred.** The mod is English-only and §118 has been amended to say
+  so. Its text is composed prose built at runtime from fragments; keying it well means rewriting
+  how those sentences are assembled.
+- Passes B and C in full.
+- A true secondhand market. Undesigned and unbuilt; it would need its own pricing story.
+- Caching for the six pages that rebuild and sort temporary lists every draw, and for Business's
+  per-draw ledger aggregates. These need lifecycle-aware invalidation and were measured as not
+  currently worth it.
+
+Known limitations:
+- **The guard's repeat suppression is bounded by player action, not by frames.** A failed page is
+  latched and never redrawn, so there is no per-frame spam. But closing and reopening the window
+  clears the latch, and a persistently broken page logs again — with a placeholder trace, because
+  Harmony renders full frames only on first access. The first report after a log clear is the one
+  with the usable stack.
+- The condition floor is not generated on supply agreements. Their generator sets neither quality
+  nor material either, and a constraint that repeats every cycle is a different proposition.
+- The seller-delivery/caravan condition refusal has never been seen. It shares the validator with
+  buyer pickup but has its own gizmo.
+
+Manual test:
+- **The crash**, retested with a two-applicant posting: hired clean, no exception in the session.
+- **The condition floor**, both halves: an order generated as `2x Psychic insanity lance (60%+
+  cond)`, and delivery refused with `2 offered below the condition floor (25% offered; 60%
+  required)` via the buyer-pickup path.
+- **Save migration**, better than asked for: a **schema 17** save walked five steps to 22 in one
+  load — job postings, open-ended employment, transition, ledger, condition floors — with no errors.
+- **The guard**, via the deliberate-failure action: fallback message shown, other tabs navigable,
+  one log line across many frames, and after the fix a real stack trace naming `DrawBusiness`,
+  `DrawPage` and `DrawPageGuarded` with offsets.
+- **Performance, on the real save** (252 settlements, 900 workers, 25,416 map things): full daily
+  refresh **3.1 ms**, market generation 0.9 ms, classification 6.5 ms cold and ~0 warm, settlement
+  profiles 0.94 ms cold and 0.03 ms warm, labor census 5.6 ms cold and ~0 warm.
+- **Not yet verified:** that the indexed validator is actually faster than the 1.777 ms it
+  replaced, and that minified furniture is still found by it.
+
+Bugs found and fixed during the pass:
+- **The guard was eating its own evidence.** It logged failures with no stack trace, which is a net
+  loss against the red screen it replaced — that screen's trace is how the posting-hire crash was
+  localized in the first place. Harmony's RimWorld mod patches `Environment.GetStackTrace` and
+  returns full frames only on first access, a `[Ref X] Duplicate stacktrace` placeholder after. The
+  guard read `exception.StackTrace` to build its suppression key, consuming the one good rendering
+  on a string it never printed, so `ToString()` got the placeholder. It destroyed the evidence by
+  measuring it. Now `ToString()` is called once and reused for both.
+- **Two methods orphaned by this phase's own work**, `CountMatchingInColony` and
+  `CountMatching(SalesOrder, Caravan)`, whose callers had been replaced by the validator. Removed.
+  A refactor that replaces a call site is how dead code is created, so that check belongs in the
+  same change rather than a later audit.
+
+Worth recording about method:
+- **Measuring beat predicting, including against me.** The first profile ran on a quicktest map and
+  reported a 42 ms daily refresh; the prediction from that was "expect 2–3× worse at real scale".
+  The real save came back at 3.1 ms — 14× *better*. The 42 ms was a cold-start artifact: a fresh
+  map generating ten opportunities against empty caches, where the steady state generates one
+  against warm ones. Reporting the quicktest figure as representative would have sent the next pass
+  optimizing market generation, which is not a problem. The only genuine finding was the one item
+  the first run skipped.

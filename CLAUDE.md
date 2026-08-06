@@ -88,8 +88,12 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 24 complete (2026-08-03). Next: Phase 25 — Polish and compatibility (DESIGN.md §118),
-which also owns the decide-or-delete task for condition constraints (§125 Goods).
+**Phase:** 25 in progress — pass A of three complete (2026-08-06). §118 is eleven tasks plus a
+decide-or-delete, cut into three passes rather than built in one. Pass A (robustness) is done and
+committed: the decide-or-delete resolved, schema 22, draw guards, performance profiled at real
+scale. Next: pass B — settings, tooltip polish, UI scaling. Then pass C — DLC matrix, modded-content
+tests, compatibility notes, documentation. **Localization was dropped, not deferred: the mod is
+English-only** and §118 is amended to say so.
 
 **Sentinels have bitten three times now. Compare them exactly, and never format them.**
 `arrivedTick < 0`, `ledgerStartTick < 0` and printing `DaysRemaining` for an open-ended contract were

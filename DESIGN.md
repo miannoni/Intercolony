@@ -3791,7 +3791,12 @@ Prepare for broad public use.
 
 ## Tasks
 
-- localization framework;
+- ~~localization framework~~ — **dropped 2026-08-05. The mod is English-only.** Not deferred, not
+  a gap to close later: a decision. The player-facing text here is composed prose, built at runtime
+  from fragments (`Headline()`, `StatusLine()`, letter bodies, refusal messages), across ~24,000
+  lines. Keying that well means rewriting how those sentences are assembled, which is a phase of
+  work, and keying it badly produces stilted translations of a mod whose writing is most of its
+  character. Recorded in the compatibility notes so it is stated rather than discovered.
 - settings;
 - tooltip polish;
 - error handling;
@@ -3805,11 +3810,17 @@ Prepare for broad public use.
 - **Resolve dangling mechanisms — decide or delete.** Code that is implemented and honoured but
   never exercised is a liability: it looks like a feature, is never tested by play, and rots.
   Each one gets a decision here, not a deferral.
-  - `OrderLine.minHitPointsPercent` — enforced by the matcher since Phase 6, but no generator
-    ever produces a demand that uses it, so used/damaged-goods trading does not exist in
-    practice. Either generate secondhand demand (see the new §125 Goods question) or remove the
-    field and its matcher branch. Deliberately landed in this phase and not earlier: it is a
-    loose end, not a feature the economy is waiting on.
+  - ~~`OrderLine.minHitPointsPercent`~~ — **RESOLVED 2026-08-05: kept and generated as a quality
+    floor.** See §125 Goods for the reasoning. The question as originally posed offered a false
+    choice between building a secondhand market and deleting the field; a minimum condition is a
+    quality floor, which made "generate it" a generator change rather than a feature. Enforced
+    since Phase 6, generated since now, and proven in play the same day.
+
+  Two more dangling mechanisms were found and removed while doing the above, both orphaned by this
+  phase's own work rather than pre-existing: `CountMatchingInColony` and
+  `CountMatching(SalesOrder, Caravan)`, whose callers had been replaced by the validator. Worth
+  noting as a pattern — a refactor that replaces a call site is how dead code is created, so the
+  check belongs in the same change, not a later audit.
 
 ---
 
@@ -4024,9 +4035,18 @@ These should be resolved through implementation and playtesting.
 - How should unique modded comps be serialized?
 - Should buyers care about artist identity?
 - Should material preferences be hard requirements or bonuses?
-- Should there be a market for used or damaged goods? The constraint exists in code
-  (`OrderLine.minHitPointsPercent`) and is honoured, but nothing generates demand for it. If the
-  answer is yes it becomes real work; if no, the field should go. Decided in Phase 25 (§118).
+- ~~Should there be a market for used or damaged goods?~~ **DECIDED in Phase 25, 2026-08-05: no
+  secondhand market, but the field stays and is now generated as a quality floor.** The question
+  contained a false choice. `minHitPointsPercent` is a *minimum*, so generating it never required a
+  market for worn goods at a discount — only buyers who will not accept a nearly-broken chair, which
+  is a generator change rather than a feature. Roughly one demand in five on durable finished goods
+  (weapons, apparel, furniture, capital equipment, art — never bulk commodities) now carries a floor
+  of 60%, 75% or 85%; never 100%, because a floor only perfect goods clear reads as arbitrary.
+  Proven in play the same day: an order generated as `2x Psychic insanity lance (60%+ cond)` and a
+  delivery refused with `2 offered below the condition floor (25% offered; 60% required)`.
+  A true secondhand market — buyers wanting worn goods cheaply, priced by condition — remains
+  undesigned and unbuilt. It would need its own pricing story and belongs in a numbered phase if it
+  is ever wanted.
 
 ### Procurement
 

@@ -242,7 +242,7 @@ namespace Intercolony
 
             int required = order.RemainingQuantity;
             int found = 0;
-            foreach (Thing thing in map.listerThings.AllThings)
+            foreach (Thing thing in ColonyCandidates(map, order.line.thingDef))
             {
                 if (!thing.IsInAnyStorage())
                 {
@@ -301,7 +301,7 @@ namespace Intercolony
 
             // Snapshot first: destroying things mutates the lister mid-iteration.
             List<Thing> matching = new List<Thing>();
-            foreach (Thing thing in map.listerThings.AllThings)
+            foreach (Thing thing in ColonyCandidates(map, order.line.thingDef))
             {
                 if (thing.IsInAnyStorage() && Matches(order.line, thing, out _))
                 {
@@ -330,6 +330,25 @@ namespace Intercolony
             }
 
             return wanted - remaining;
+        }
+
+        private static IEnumerable<Thing> ColonyCandidates(Map map, ThingDef requestedDef)
+        {
+            // The requested def's index cannot contain minified furniture because the wrapper
+            // has a MinifiedThing def. Include that narrow group so installed and packed forms
+            // still answer the same order without scanning every thing on the map.
+            if (!ThingRequestGroup.MinifiedThing.Includes(requestedDef))
+            {
+                foreach (Thing thing in map.listerThings.ThingsOfDef(requestedDef))
+                {
+                    yield return thing;
+                }
+            }
+
+            foreach (Thing thing in map.listerThings.ThingsInGroup(ThingRequestGroup.MinifiedThing))
+            {
+                yield return thing;
+            }
         }
 
         /// <summary>
