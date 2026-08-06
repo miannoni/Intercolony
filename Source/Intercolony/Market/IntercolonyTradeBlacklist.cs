@@ -49,6 +49,15 @@ namespace Intercolony
             IntercolonyProductClassifier.Invalidate();
         }
 
+        /// <summary>
+        /// Resets this dependent cache without calling back into the classifier, for a complete
+        /// first-pass timing of product classification.
+        /// </summary>
+        internal static void InvalidateForPerformanceProfile()
+        {
+            cache = null;
+        }
+
         /// <summary>Excludes a def for this session. Debug tooling; not persisted.</summary>
         public static void AddRuntimeExclusion(ThingDef def, string reason = "excluded at runtime")
         {

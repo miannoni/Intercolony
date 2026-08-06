@@ -68,7 +68,7 @@ namespace Intercolony
         /// **Built lazily**, only when something actually asks — a player who never posts a job pays
         /// nothing for it.
         /// </summary>
-        private static readonly List<LaborProspect> census = new List<LaborProspect>();
+        private static List<LaborProspect> census = new List<LaborProspect>();
 
         /// <summary>Which refresh <see cref="census"/> belongs to; -1 when it has not been built.</summary>
         private static int censusRefreshCount = -1;
@@ -470,6 +470,18 @@ namespace Intercolony
             // Census records own nothing — no pawn, no faction claim — so they are dropped rather
             // than discarded. That is the whole reason a census can be hundreds deep.
             census.Clear();
+            censusRefreshCount = -1;
+        }
+
+        /// <summary>
+        /// Resets only the derived census so cold-cache profiling does not discard the advertised
+        /// pawn pool. Rebuilding produces the same records for the current refresh.
+        /// </summary>
+        internal static void InvalidateCensusForPerformanceProfile()
+        {
+            // Clear retains capacity and would understate the first population of a 900-record
+            // census. The empty-list construction remains outside the timed region.
+            census = new List<LaborProspect>();
             censusRefreshCount = -1;
         }
 

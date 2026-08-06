@@ -65,6 +65,7 @@ namespace Intercolony
 
         private LaborPage laborPage = LaborPage.Hire;
         private Vector2 postingScroll;
+        private readonly float[] candidateColumnWidths = new float[6];
 
         private const float LaborTabRowHeight = 30f;
 
@@ -179,7 +180,8 @@ namespace Intercolony
             SortCandidates(pool);
 
             Rect headerRect = new Rect(0f, y, inRect.width - 16f, HeaderHeight);
-            DrawWorkerHeader(headerRect);
+            SetCandidateColumnWidths(headerRect.width, candidateColumnWidths);
+            DrawWorkerHeader(headerRect, candidateColumnWidths);
             y += HeaderHeight + 2f;
 
             Rect listRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
@@ -189,7 +191,8 @@ namespace Intercolony
             float candidateY = 0f;
             for (int i = 0; i < pool.Count; i++)
             {
-                DrawCandidateRow(new Rect(0f, candidateY, listView.width, CandidateRowHeight), pool[i], i, state);
+                DrawCandidateRow(new Rect(0f, candidateY, listView.width, CandidateRowHeight), pool[i], i,
+                    state, candidateColumnWidths);
                 candidateY += CandidateRowHeight;
             }
 
@@ -370,8 +373,12 @@ namespace Intercolony
                 posting.StatusLine());
             GUI.color = Color.white;
 
-            TooltipHandler.TipRegion(new Rect(rect.x, rect.y, rect.width, PostingHeaderHeight),
-                () => PostingTooltip(posting, state), posting.id * 5701);
+            Rect tipRect = new Rect(rect.x, rect.y, rect.width, PostingHeaderHeight);
+            if (ShouldBuildTooltip(tipRect))
+            {
+                TooltipHandler.TipRegion(
+                    tipRect, new TipSignal(PostingTooltip(posting, state), posting.id * 5701));
+            }
 
             Rect withdrawRect = new Rect(rect.xMax - 120f, rect.y + 12f, 110f, 30f);
             if (Widgets.ButtonText(withdrawRect, "Withdraw"))
@@ -493,16 +500,18 @@ namespace Intercolony
             int availabilityPercent =
                 Mathf.RoundToInt(EmployerReputationService.AvailabilityFactor(rep.Score) * 100f);
 
-            TooltipHandler.TipRegion(rect, () =>
-                rep.Summary() + "\n\n" +
-                $"Workers ask {(wagePercent >= 0 ? "+" : "")}{wagePercent}% against the base rate.\n" +
-                $"Roughly {availabilityPercent}% of the labor a neutral employer would see is on offer.\n" +
-                QualityNote(rep.Score) + "\n\n" +
-                "Paying on time and seeing contracts through raises this. Missed payroll, workers " +
-                "walking out and deaths on the job lower it. A settlement still owed wages sends " +
-                "nobody at all until the debt is settled.\n\n" +
-                "Who is hiring also changes when the market refreshes.",
-                rect.GetHashCode());
+            if (ShouldBuildTooltip(rect))
+            {
+                string tooltip = rep.Summary() + "\n\n" +
+                    $"Workers ask {(wagePercent >= 0 ? "+" : "")}{wagePercent}% against the base rate.\n" +
+                    $"Roughly {availabilityPercent}% of the labor a neutral employer would see is on offer.\n" +
+                    QualityNote(rep.Score) + "\n\n" +
+                    "Paying on time and seeing contracts through raises this. Missed payroll, workers " +
+                    "walking out and deaths on the job lower it. A settlement still owed wages sends " +
+                    "nobody at all until the debt is settled.\n\n" +
+                    "Who is hiring also changes when the market refreshes.";
+                TooltipHandler.TipRegion(rect, new TipSignal(tooltip, rect.GetHashCode()));
+            }
         }
 
         private static string QualityNote(float score)
@@ -735,7 +744,11 @@ namespace Intercolony
                 $"{contract.paidSilver} paid   — {contract.StatusLine()}");
             GUI.color = Color.white;
 
-            TooltipHandler.TipRegion(rect, () => EmployeeTooltip(contract), contract.id * 7919);
+            if (ShouldBuildTooltip(rect))
+            {
+                TooltipHandler.TipRegion(
+                    rect, new TipSignal(EmployeeTooltip(contract), contract.id * 7919));
+            }
 
             // Click the row to jump to the worker, the way the colonist bar does. Only useful
             // once they are actually on a map.
@@ -1036,11 +1049,10 @@ namespace Intercolony
             });
         }
 
-        private void DrawWorkerHeader(Rect rect)
+        private void DrawWorkerHeader(Rect rect, float[] widths)
         {
             Widgets.DrawBoxSolid(rect, new Color(0.16f, 0.16f, 0.16f));
 
-            float[] widths = CandidateColumnWidths(rect.width);
             float x = rect.x;
 
             for (int i = 0; i < widths.Length; i++)
@@ -1087,19 +1099,16 @@ namespace Intercolony
         }
 
         /// <summary>Column widths, proportional so the table fits whatever the window is.</summary>
-        private static float[] CandidateColumnWidths(float total)
+        private static void SetCandidateColumnWidths(float total, float[] widths)
         {
             float action = 90f;
             float usable = total - action;
-            return new[]
-            {
-                usable * 0.16f, // Worker
-                usable * 0.34f, // Skills
-                usable * 0.11f, // Wage
-                usable * 0.11f, // Min term
-                usable * 0.11f, // Travel
-                usable * 0.17f  // Source
-            };
+            widths[(int)WorkerColumn.Worker] = usable * 0.16f;
+            widths[(int)WorkerColumn.Skills] = usable * 0.34f;
+            widths[(int)WorkerColumn.Wage] = usable * 0.11f;
+            widths[(int)WorkerColumn.MinTerm] = usable * 0.11f;
+            widths[(int)WorkerColumn.Travel] = usable * 0.11f;
+            widths[(int)WorkerColumn.Source] = usable * 0.17f;
         }
 
         private void SortCandidates(List<LaborCandidate> pool)
@@ -1161,7 +1170,7 @@ namespace Intercolony
         }
 
         private void DrawCandidateRow(
-            Rect rect, LaborCandidate candidate, int index, IntercolonyWorldComponent state)
+            Rect rect, LaborCandidate candidate, int index, IntercolonyWorldComponent state, float[] widths)
         {
             if (index % 2 == 1)
             {
@@ -1170,7 +1179,6 @@ namespace Intercolony
 
             Widgets.DrawHighlightIfMouseover(rect);
 
-            float[] widths = CandidateColumnWidths(rect.width);
             float x = rect.x;
 
             void Cell(int column, string text)
@@ -1188,7 +1196,11 @@ namespace Intercolony
             Cell((int)WorkerColumn.Travel, $"{candidate.travelDays}d");
             Cell((int)WorkerColumn.Source, candidate.settlementName);
 
-            TooltipHandler.TipRegion(rect, () => CandidateTooltip(candidate), candidate.GetHashCode());
+            if (ShouldBuildTooltip(rect))
+            {
+                TooltipHandler.TipRegion(
+                    rect, new TipSignal(CandidateTooltip(candidate), candidate.GetHashCode()));
+            }
 
             Rect hireRect = new Rect(rect.xMax - 86f, rect.y + 2f, 80f, 28f);
             if (Widgets.ButtonText(hireRect, "Hire"))

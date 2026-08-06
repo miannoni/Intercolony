@@ -894,6 +894,13 @@ namespace Intercolony
                 IntercolonyLedgerSelfTest.Run(state, Find.CurrentMap)));
         }
 
+        [DebugAction(Category, "Run performance profile", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 67)]
+        private static void RunPerformanceProfile()
+        {
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyPerformanceProfile.Run(state, Find.CurrentMap)));
+        }
+
         [DebugAction(Category, "Run transition self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 65)]
         private static void RunTransitionSelfTest()
         {

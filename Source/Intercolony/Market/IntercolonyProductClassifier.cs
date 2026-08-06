@@ -19,7 +19,7 @@ namespace Intercolony
         /// Classification is pure and defs never change at runtime, so results are cached.
         /// Rebuilt on demand; there is no def reload during a session.
         /// </summary>
-        private static readonly Dictionary<ThingDef, IntercolonyProductCategory?> cache =
+        private static Dictionary<ThingDef, IntercolonyProductCategory?> cache =
             new Dictionary<ThingDef, IntercolonyProductCategory?>();
 
         private static List<ThingDef> tradableCache;
@@ -180,6 +180,17 @@ namespace Intercolony
         public static void Invalidate()
         {
             cache.Clear();
+            tradableCache = null;
+        }
+
+        /// <summary>
+        /// Replaces the private containers so cold profiling includes their first capacity growth.
+        /// Ordinary invalidation keeps its existing behavior and reuse characteristics.
+        /// </summary>
+        internal static void InvalidateForPerformanceProfile()
+        {
+            IntercolonyTradeBlacklist.InvalidateForPerformanceProfile();
+            cache = new Dictionary<ThingDef, IntercolonyProductCategory?>();
             tradableCache = null;
         }
 

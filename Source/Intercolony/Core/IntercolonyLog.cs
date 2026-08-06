@@ -9,11 +9,22 @@ namespace Intercolony
     public static class IntercolonyLog
     {
         private const string Prefix = "[Intercolony] ";
+        private static int verboseSuppressionDepth;
 
         /// <summary>
         /// Verbose logging is gated on dev mode until mod settings exist (DESIGN.md §66).
         /// </summary>
-        public static bool VerboseEnabled => Prefs.DevMode;
+        public static bool VerboseEnabled => Prefs.DevMode && verboseSuppressionDepth == 0;
+
+        /// <summary>
+        /// Repeated benchmarks must not measure or flood the dev log. Suppression is scoped so an
+        /// exception cannot leave ordinary diagnostics disabled for the rest of the session.
+        /// </summary>
+        internal static System.IDisposable SuppressVerbose()
+        {
+            verboseSuppressionDepth++;
+            return new VerboseSuppression();
+        }
 
         /// <summary>
         /// Prefixes every line, not just the first.
@@ -72,6 +83,22 @@ namespace Intercolony
             if (VerboseEnabled)
             {
                 Log.Message(WithPrefix(text));
+            }
+        }
+
+        private sealed class VerboseSuppression : System.IDisposable
+        {
+            private bool disposed;
+
+            public void Dispose()
+            {
+                if (disposed)
+                {
+                    return;
+                }
+
+                disposed = true;
+                verboseSuppressionDepth = System.Math.Max(0, verboseSuppressionDepth - 1);
             }
         }
     }

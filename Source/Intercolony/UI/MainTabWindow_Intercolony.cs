@@ -242,10 +242,13 @@ namespace Intercolony
 
         private void ReportPageFailure(Tab page, Exception exception, string context)
         {
-            string key = page + "\n" + exception.GetType().FullName + "\n" + exception.StackTrace;
+            // Harmony returns the full enhanced stack only on its first formatting. Reusing that
+            // text keeps the diagnostic that would otherwise be replaced by a duplicate ref.
+            string exceptionText = exception.ToString();
+            string key = page + "\n" + exception.GetType().FullName + "\n" + exceptionText;
             if (loggedPageFailures.Add(key))
             {
-                IntercolonyLog.Error($"{context} '{page}': {exception}");
+                IntercolonyLog.Error($"{context} '{page}': {exceptionText}");
             }
         }
 
@@ -733,12 +736,9 @@ namespace Intercolony
             // breakdown was computed once at generation time and stored on the opportunity.
             // The deadline wording lives here rather than in the column, which is too narrow
             // to hold an explanation without colliding with the Accept button.
-            TooltipHandler.TipRegion(rect, BuildListingTooltip(opportunity));
-
-            float[] w = new float[ColumnWidths.Length];
-            for (int i = 0; i < ColumnWidths.Length; i++)
+            if (ShouldBuildTooltip(rect))
             {
-                w[i] = rect.width * ColumnWidths[i];
+                TooltipHandler.TipRegion(rect, BuildListingTooltip(opportunity));
             }
 
             Rect Cell(int i)
@@ -746,13 +746,14 @@ namespace Intercolony
                 float cellX = 0f;
                 for (int k = 0; k < i; k++)
                 {
-                    cellX += w[k];
+                    cellX += rect.width * ColumnWidths[k];
                 }
 
                 // Leave a gutter so a long value abuts the next column instead of running
                 // underneath it. RimWorld clips labels to their rect, so this is what turns
                 // an overlapping mess into honest truncation.
-                return new Rect(cellX, rect.y + 4f, w[i] - 4f, rect.height - 4f);
+                return new Rect(cellX, rect.y + 4f, rect.width * ColumnWidths[i] - 4f,
+                    rect.height - 4f);
             }
 
             Widgets.Label(Cell(0), opportunity.settlementName);
@@ -839,6 +840,16 @@ namespace Intercolony
             sb.AppendLine();
             sb.Append(opportunity.priceExplanation);
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Dynamic tooltip text can be substantial. TooltipHandler applies the same gate after it
+        /// receives the text, which is too late to avoid building every row's string.
+        /// </summary>
+        private static bool ShouldBuildTooltip(Rect rect)
+        {
+            return Event.current.type == EventType.Repaint &&
+                   (Mouse.IsOver(rect) || DebugViewSettings.drawTooltipEdges);
         }
 
         /// <summary>
@@ -1262,11 +1273,15 @@ namespace Intercolony
             Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[4] - 4f, 24f),
                 offer.distanceTiles < 0f ? "?" : $"{offer.distanceTiles:F0} t");
 
-            TooltipHandler.TipRegion(rect,
-                $"{offer.settlement?.Label} would take up to {offer.maxQuantity} " +
-                $"{selectedStockDef?.label}.\n" +
-                $"Selling {offer.quantity} at {offer.unitPrice:F2} each = {offer.TotalPrice} silver.\n\n" +
-                IntercolonyPricing.Explain(offer.def, offer.stuff, offer.quantity, offer.unitPrice, offer.factors));
+            if (ShouldBuildTooltip(rect))
+            {
+                TooltipHandler.TipRegion(rect,
+                    $"{offer.settlement?.Label} would take up to {offer.maxQuantity} " +
+                    $"{selectedStockDef?.label}.\n" +
+                    $"Selling {offer.quantity} at {offer.unitPrice:F2} each = {offer.TotalPrice} silver.\n\n" +
+                    IntercolonyPricing.Explain(
+                        offer.def, offer.stuff, offer.quantity, offer.unitPrice, offer.factors));
+            }
 
             Rect sellRect = new Rect(rect.xMax - 84f, rect.y + 4f, 78f, 26f);
             if (Widgets.ButtonText(sellRect, "Sell"))
@@ -1427,12 +1442,15 @@ namespace Intercolony
                     statusText);
                 GUI.color = Color.white;
 
-                TooltipHandler.TipRegion(row,
-                    $"{order.quantity}x {order.ItemLabel()} from {order.settlementName}\n" +
-                    $"Paid {order.paidSilver} silver.\n" +
-                    (order.supplierDelivers
-                        ? "They deliver to your colony."
-                        : "Send a caravan to collect. Use the caravan's Collect button at the settlement."));
+                if (ShouldBuildTooltip(row))
+                {
+                    TooltipHandler.TipRegion(row,
+                        $"{order.quantity}x {order.ItemLabel()} from {order.settlementName}\n" +
+                        $"Paid {order.paidSilver} silver.\n" +
+                        (order.supplierDelivers
+                            ? "They deliver to your colony."
+                            : "Send a caravan to collect. Use the caravan's Collect button at the settlement."));
+                }
 
                 y += 26f;
             }
@@ -1569,14 +1587,17 @@ namespace Intercolony
                 $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — {status}");
             GUI.color = Color.white;
 
-            TooltipHandler.TipRegion(rect,
-                $"{contract.settlementName} ({contract.factionName})\n\n" +
-                $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
-                $"{contract.CadenceDays:F0} days, {contract.totalCycles} times.\n" +
-                $"{contract.unitPrice:F2} silver each — above spot, because they are buying certainty.\n\n" +
-                "Each cycle raises a delivery order with the full cadence as its deadline. " +
-                $"Missing {RecurringContract.BreachThreshold} deliveries in a row ends the " +
-                "agreement and badly damages your standing.");
+            if (ShouldBuildTooltip(rect))
+            {
+                TooltipHandler.TipRegion(rect,
+                    $"{contract.settlementName} ({contract.factionName})\n\n" +
+                    $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
+                    $"{contract.CadenceDays:F0} days, {contract.totalCycles} times.\n" +
+                    $"{contract.unitPrice:F2} silver each — above spot, because they are buying certainty.\n\n" +
+                    "Each cycle raises a delivery order with the full cadence as its deadline. " +
+                    $"Missing {RecurringContract.BreachThreshold} deliveries in a row ends the " +
+                    "agreement and badly damages your standing.");
+            }
 
             // A renewal offer is answered here rather than through a separate flow (§115): it is the
             // same agreement, on the same terms, and it expires if left alone.
@@ -1739,13 +1760,16 @@ namespace Intercolony
                 $"{rep.purchasesCompleted} purchases");
             GUI.color = Color.white;
 
-            TooltipHandler.TipRegion(rect,
-                $"{rep.factionName}\n" +
-                $"Commercial reputation: {rep.ScoreDisplay}/100 ({rep.TierLabel()})\n\n" +
-                "A better record means larger orders, more frequent offers, slightly better " +
-                "prices and more generous deadlines.\n\n" +
-                "This is separate from faction goodwill, and it is held by this settlement " +
-                "rather than its faction: another town of the same faction forms its own view.");
+            if (ShouldBuildTooltip(rect))
+            {
+                TooltipHandler.TipRegion(rect,
+                    $"{rep.factionName}\n" +
+                    $"Commercial reputation: {rep.ScoreDisplay}/100 ({rep.TierLabel()})\n\n" +
+                    "A better record means larger orders, more frequent offers, slightly better " +
+                    "prices and more generous deadlines.\n\n" +
+                    "This is separate from faction goodwill, and it is held by this settlement " +
+                    "rather than its faction: another town of the same faction forms its own view.");
+            }
         }
 
         private static Color TierColour(ReputationTier tier)
@@ -1862,14 +1886,19 @@ namespace Intercolony
                     quote.distanceTiles < 0f ? "?" : $"{quote.distanceTiles:F0} t");
             }
 
-            TooltipHandler.TipRegion(rect,
-                $"{quote.settlementName} ({quote.factionName})\n" +
-                $"{quote.quantityOffered} of {request.quantityRequested} requested\n" +
-                (quote.offeredQuality.HasValue ? $"Quality: {quote.offeredQuality.Value.GetLabel()}\n" : "") +
-                (quote.offeredStuff != null ? $"Material: {quote.offeredStuff.label}\n" : "") +
-                $"{(quote.supplierDelivers ? "They deliver it" : "You collect it")}, " +
-                $"ready in {quote.leadTimeDays} days\n\n" +
-                quote.priceExplanation);
+            if (ShouldBuildTooltip(rect))
+            {
+                TooltipHandler.TipRegion(rect,
+                    $"{quote.settlementName} ({quote.factionName})\n" +
+                    $"{quote.quantityOffered} of {request.quantityRequested} requested\n" +
+                    (quote.offeredQuality.HasValue
+                        ? $"Quality: {quote.offeredQuality.Value.GetLabel()}\n"
+                        : "") +
+                    (quote.offeredStuff != null ? $"Material: {quote.offeredStuff.label}\n" : "") +
+                    $"{(quote.supplierDelivers ? "They deliver it" : "You collect it")}, " +
+                    $"ready in {quote.leadTimeDays} days\n\n" +
+                    quote.priceExplanation);
+            }
         }
 
         /// <summary>
@@ -1999,10 +2028,13 @@ namespace Intercolony
                     SalesOrderService.MarkReadyForPickup(order, map);
                 }
 
-                TooltipHandler.TipRegion(readyRect, enough
-                    ? $"Tell {order.settlementName} the goods are ready. Their caravan will " +
-                      "come and collect them from your storage."
-                    : validation.Summary());
+                if (ShouldBuildTooltip(readyRect))
+                {
+                    TooltipHandler.TipRegion(readyRect, enough
+                        ? $"Tell {order.settlementName} the goods are ready. Their caravan will " +
+                          "come and collect them from your storage."
+                        : validation.Summary());
+                }
             }
 
             Rect cancelRect = new Rect(rect.xMax - 90f, rect.y + 14f, 80f, 28f);

@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
@@ -56,7 +57,7 @@ namespace Intercolony
         /// regenerating from <see cref="economySeed"/> reproduces it exactly (§96). Purely a
         /// cache so profile lookups are not recomputing rolls every frame (§84).
         /// </summary>
-        private readonly Dictionary<int, SettlementEconomicProfile> profileCache =
+        private Dictionary<int, SettlementEconomicProfile> profileCache =
             new Dictionary<int, SettlementEconomicProfile>();
 
         /// <summary>Tick of the last refresh, or -1 if none has run yet.</summary>
@@ -577,6 +578,18 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// A silent reset lets repeated cold-cache timings exclude log rendering while leaving
+        /// the public debug action's feedback unchanged.
+        /// </summary>
+        internal void InvalidateProfileCacheForPerformanceProfile()
+        {
+            // Clear retains the old buckets, hiding capacity growth that a real first population
+            // pays. Constructing the empty container is outside the timed region, just as it is
+            // when the world component itself is constructed.
+            profileCache = new Dictionary<int, SettlementEconomicProfile>();
+        }
+
+        /// <summary>
         /// Replaces the economy seed with a random one, regenerating every profile. Debug-only:
         /// this rewrites the character of every settlement in the world. Unlike the derived
         /// default this does draw from <see cref="Rand"/>, which is acceptable precisely because
@@ -946,7 +959,30 @@ namespace Intercolony
             DoRefresh("forced");
         }
 
-        private void DoRefresh(string cause)
+        /// <summary>
+        /// Runs the exact refresh body used by the scheduled tick, with timers around the whole
+        /// operation and its opportunity-generation phase. This advances live state once, just
+        /// like the existing forced-refresh debug action; keeping the timer here avoids profiling
+        /// a hand-built approximation of the daily path.
+        /// </summary>
+        internal RefreshPerformanceSample RunRefreshForPerformanceProfile()
+        {
+            RefreshPerformanceSample sample = new RefreshPerformanceSample();
+            Stopwatch timer = Stopwatch.StartNew();
+            DoRefresh("performance profile", sample);
+            timer.Stop();
+            sample.totalMilliseconds = timer.Elapsed.TotalMilliseconds;
+            return sample;
+        }
+
+        internal sealed class RefreshPerformanceSample
+        {
+            public double totalMilliseconds;
+            public double opportunityGenerationMilliseconds;
+            public int opportunitiesCreated;
+        }
+
+        private void DoRefresh(string cause, RefreshPerformanceSample performance = null)
         {
             lastRefreshTick = GenTicks.TicksGame;
             refreshCount++;
@@ -956,7 +992,17 @@ namespace Intercolony
 
             int expired = ExpireStaleOpportunities();
             int withdrawn = DropInaccessibleOpportunities();
+
+            Stopwatch opportunityTimer = performance == null ? null : Stopwatch.StartNew();
             int created = GenerateOpportunities();
+            if (opportunityTimer != null)
+            {
+                opportunityTimer.Stop();
+                performance.opportunityGenerationMilliseconds =
+                    opportunityTimer.Elapsed.TotalMilliseconds;
+                performance.opportunitiesCreated = created;
+            }
+
             RfqService.ExpireStale(requests);
             ContractService.AdvanceContracts(this);
             ContractService.OfferContracts(this);
