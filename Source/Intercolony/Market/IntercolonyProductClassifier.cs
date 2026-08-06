@@ -207,6 +207,28 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Whether wear is a meaningful term for generated demand. Many bulk goods technically
+        /// have hit points, but asking for "healthy" meat or steel would only add noise.
+        /// </summary>
+        public static bool CanHaveConditionFloor(ThingDef def)
+        {
+            if (def == null || !def.useHitPoints || !IsFungibleTradeItem(def))
+            {
+                return false;
+            }
+
+            if (def.IsWeapon || def.IsApparel)
+            {
+                return true;
+            }
+
+            IntercolonyProductCategory? category = Classify(def);
+            return category == IntercolonyProductCategory.Furniture ||
+                   category == IntercolonyProductCategory.CapitalEquipment ||
+                   category == IntercolonyProductCategory.ArtAndUnique;
+        }
+
+        /// <summary>
         /// All defs eligible for opportunity generation, computed once per session.
         /// Enumerating DefDatabase is not something to do per refresh (§84).
         /// </summary>

@@ -359,6 +359,48 @@ namespace Intercolony
                     sb.AppendLine($"  ({withConstraint} of {qualityCapable} quality-capable offers " +
                                   $"carried a minimum quality)");
 
+                    // A condition floor must be a real generated term, but only on durable
+                    // finished goods. Zero remains the exact sentinel for every other offer.
+                    int conditionCapable = 0;
+                    int withCondition = 0;
+                    int conditionOnIneligible = 0;
+                    int invalidConditionFloor = 0;
+                    foreach (MarketOpportunity o in sampleSet)
+                    {
+                        bool eligible = IntercolonyProductClassifier.CanHaveConditionFloor(o.thingDef);
+                        if (eligible)
+                        {
+                            conditionCapable++;
+                        }
+
+                        if (o.HasConditionConstraint)
+                        {
+                            withCondition++;
+                            if (!eligible)
+                            {
+                                conditionOnIneligible++;
+                            }
+
+                            if (o.minHitPointsPercent != 0.6f &&
+                                o.minHitPointsPercent != 0.75f &&
+                                o.minHitPointsPercent != 0.85f)
+                            {
+                                invalidConditionFloor++;
+                            }
+                        }
+                    }
+
+                    Check("condition-capable goods appear in generated demand", conditionCapable > 0,
+                        $"none of {sampleSet.Count} sampled offers had meaningful condition");
+                    Check("some durable-goods demands carry a condition floor", withCondition > 0,
+                        $"0 of {conditionCapable} eligible offers asked for a floor");
+                    Check("no condition floor on bulk or raw goods", conditionOnIneligible == 0,
+                        $"{conditionOnIneligible} ineligible offer(s)");
+                    Check("condition floors use the modest allowed set", invalidConditionFloor == 0,
+                        $"{invalidConditionFloor} invalid floor(s)");
+                    sb.AppendLine($"  ({withCondition} of {conditionCapable} condition-capable offers " +
+                                  $"carried a condition floor)");
+
                     // --- §101 finished goods: crated buildings reach the market ---
                     int cratedGoods = 0;
                     int oversizedCratedLot = 0;

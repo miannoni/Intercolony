@@ -23,6 +23,13 @@ namespace Intercolony
             IntercolonyDebugWindow.Toggle();
         }
 
+        [DebugAction(Category, "Break Business page draw (DESTRUCTIVE)", allowedGameStates = AllowedGameStates.Playing, displayPriority = 99)]
+        private static void BreakBusinessPageDraw()
+        {
+            MainTabWindow_Intercolony.ArmBusinessPageDrawFailureForDebug();
+            Report("Armed a one-shot Business page draw failure. Open that Intercolony tab to trigger it.");
+        }
+
         [DebugAction(Category, "Dump state", allowedGameStates = AllowedGameStates.Playing, displayPriority = 90)]
         private static void DumpState()
         {

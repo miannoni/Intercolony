@@ -207,6 +207,9 @@ namespace Intercolony
                     Check("accepted order records the offer", accepted.opportunityId == offerId);
                     Check("accepted order price matches the offer",
                         Mathf.Abs(accepted.unitPrice - offer.unitPrice) < 0.001f);
+                    Check("accepted order preserves the condition floor",
+                        accepted.line.minHitPointsPercent == offer.minHitPointsPercent,
+                        $"{accepted.line.minHitPointsPercent} vs {offer.minHitPointsPercent}");
                     Check("offer was consumed", state.Opportunities.Count == before - 1,
                         $"{state.Opportunities.Count} vs {before - 1}");
                     Check("offer cannot be accepted twice", SalesOrderService.Accept(state, offer) == null);

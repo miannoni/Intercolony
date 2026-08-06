@@ -83,7 +83,8 @@ namespace Intercolony
                     // Constraints advertised in the market must carry into the binding order,
                     // or the player could be held to terms different from the ones shown.
                     minQuality = opportunity.minQuality,
-                    allowedStuff = opportunity.stuffDef
+                    allowedStuff = opportunity.stuffDef,
+                    minHitPointsPercent = opportunity.minHitPointsPercent
                 },
                 // Re-priced for the quantity actually accepted, so the order matches what the
                 // confirmation showed. A smaller lot earns a better rate (§13).
@@ -265,12 +266,11 @@ namespace Intercolony
                 return false;
             }
 
-            int available = OrderValidator.CountMatchingInColony(order, map);
-            if (available < order.RemainingQuantity)
+            OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
+            if (!validation.Success)
             {
                 Messages.Message(
-                    $"Only {available} of {order.RemainingQuantity} {order.line.thingDef.label} " +
-                    "in storage that meet the requirements.",
+                    $"Order #{order.id}: {validation.Summary()}",
                     MessageTypeDefOf.RejectInput, historical: false);
                 return false;
             }

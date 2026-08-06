@@ -65,13 +65,46 @@ Carried from the Phase 15 spike and still open:
 
 ### Mod compatibility (§33 q18)
 
-No pawn-control mod has ever been loaded alongside this. The risk surface is anything assuming
-"player faction implies permanent colonist" — colonist bars, work tab replacements, roster mods.
+**Partially answered, 2026-08-05, incidentally rather than by design.** The play-test session for
+Phase 25 was running with **Hospitality, Common Sense, RT Fuse, Tilled Soil and FSF Filth Vanishes**
+active alongside Intercolony. A full hire ran through that load order — posting, applicants, take-on,
+travelling employment — with no exception in the session. Hospitality is squarely in the risk class
+named below, since it manages non-colonist pawns on the player's map.
+
+Treat this as evidence, not a test: nobody exercised the interaction deliberately, and an absence of
+exceptions in one session is not the same as checking that a colonist bar or work tab replacement
+renders an employee correctly.
+
+Still unexercised: anything assuming "player faction implies permanent colonist" — colonist bars,
+work tab replacements, roster mods. A deliberate test wants one of those installed and an employee
+on the map, looking at whether the employee appears where a colonist would and whether the mod
+tries to assign them work.
 
 ---
 
 ## Proven in play
 
+- ~~**Phase 25 — hiring from a job posting with several applicants**~~ — 2026-08-05. The Phase 21
+  play-test had exercised this, but only ever by taking on the *bottom* applicant row, which is the
+  one arrangement that could not fail: `DrawPostingBlock` iterates applicants descending, and
+  `TryAccept` closing a filled posting clears that same list mid-loop. Taking the top row of two
+  threw `ArgumentOutOfRangeException` out of the draw pass. Fixed by deferring hire, turn-away and
+  withdraw until after the loop and after `EndScrollView`, which is now in a `finally` so a future
+  exception cannot leave the GUI stack unbalanced. Re-tested with a two-applicant posting: hired
+  clean, no exception anywhere in the session.
+- ~~**Phase 25 — condition floors, generated and refused**~~ — 2026-08-05. §118's decide-or-delete on
+  `OrderLine.minHitPointsPercent`, resolved as *keep and make real*. Seen end to end: an order
+  generated as `2x Psychic insanity lance (60%+ cond)`, and delivery refused with
+  `2 offered below the condition floor (25% offered; 60% required)`. Buyer-pickup path confirmed via
+  the disabled **Mark ready** tooltip. **Not seen:** the seller-delivery/caravan refusal path, which
+  shares the same validator but has its own gizmo.
+- ~~**Phase 25 — save migration across five schema versions**~~ — 2026-08-05. A **schema 17** save
+  loaded and walked 17 → 22 in one pass: job postings, open-ended employment, transition, ledger and
+  condition floors. No errors, nothing dropped. Better evidence than the single-step 21 → 22 that was
+  asked for. It also surfaced that the migration chain runs ascending 2→13 then *descending* 22→14 —
+  harmless today because every step from 14 on is a bare log line, but a false contract against the
+  "falls through to the next" comment. Reordered rather than left for the first migration that
+  actually moves data.
 - ~~**§88 safe passage, happy path**~~ — 2026-07-29. Hired, arrived, forced a war; worker walked out
   factionless and reached the border. No exceptions or warnings in the session.
 - ~~**§43 death compensation during safe passage**~~ — 2026-07-30. A civilian on 19/day was killed

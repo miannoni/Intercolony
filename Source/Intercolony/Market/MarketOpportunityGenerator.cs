@@ -24,6 +24,8 @@ namespace Intercolony
         private const int MinDeadlineDays = 6;
         private const int MaxDeadlineDays = 20;
 
+        private static readonly float[] ConditionFloors = { 0.6f, 0.75f, 0.85f };
+
         /// <summary>
         /// Generates opportunities for one settlement. Returns an empty list if the settlement
         /// already has enough outstanding, or if the dice say nothing this cycle.
@@ -110,6 +112,7 @@ namespace Intercolony
                 PickQuantity(def, stuff, profile) *
                 ReputationService.OpportunitySizeFactor(reputation)));
             QualityCategory? minQuality = PickMinimumQuality(def, profile);
+            float minHitPointsPercent = PickMinimumCondition(def, profile);
 
             // Buyers closer to the player are likelier to fetch goods themselves; a buyer on
             // the far side of the planet expects delivery.
@@ -155,6 +158,7 @@ namespace Intercolony
                 distanceTiles = distance,
                 minQuality = minQuality,
                 stuffDef = stuff,
+                minHitPointsPercent = minHitPointsPercent,
                 fulfillment = fulfillment,
                 state = MarketOpportunityState.Available,
                 priceExplanation = IntercolonyPricing.Explain(def, stuff, quantity, unitPrice, factors)
@@ -232,6 +236,31 @@ namespace Intercolony
             }
 
             return QualityCategory.Normal;
+        }
+
+        /// <summary>
+        /// A minimum condition demand, or zero when the buyer does not care.
+        ///
+        /// Only durable finished goods qualify. The modest floors reject genuinely worn stock
+        /// without turning a scratch into a failed order, and never demand factory perfection.
+        /// Must be called inside a pushed Rand state.
+        /// </summary>
+        private static float PickMinimumCondition(ThingDef def, SettlementEconomicProfile profile)
+        {
+            if (!IntercolonyProductClassifier.CanHaveConditionFloor(def))
+            {
+                return 0f;
+            }
+
+            // Pickier settlements ask for serviceable stock a little more often, while most
+            // durable-goods demand remains indifferent to ordinary wear.
+            float demandChance = 0.15f + profile.qualityPreference * 0.1f;
+            if (Rand.Value > demandChance)
+            {
+                return 0f;
+            }
+
+            return ConditionFloors[Rand.Range(0, ConditionFloors.Length)];
         }
 
         /// <summary>

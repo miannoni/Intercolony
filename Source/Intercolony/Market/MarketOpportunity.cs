@@ -57,6 +57,9 @@ namespace Intercolony
         /// <summary>Required material, or null for any (§101 material-aware valuation).</summary>
         public ThingDef stuffDef;
 
+        /// <summary>Minimum condition as a fraction of max hit points, or zero for any.</summary>
+        public float minHitPointsPercent;
+
         /// <summary>
         /// Who moves the goods (§25). Advertised before acceptance because it changes both the
         /// price and what the player has to do — it is half the decision.
@@ -93,6 +96,8 @@ namespace Intercolony
         public float DaysRemaining => TicksRemaining / (float)GenDate.TicksPerDay;
 
         public bool IsAvailable => state == MarketOpportunityState.Available;
+
+        public bool HasConditionConstraint => minHitPointsPercent != 0f;
 
         public bool HasExpired(int nowTick)
         {
@@ -149,6 +154,7 @@ namespace Intercolony
             Scribe_Values.Look(ref distanceTiles, "distanceTiles", -1f);
             Scribe_Values.Look(ref minQuality, "minQuality");
             Scribe_Defs.Look(ref stuffDef, "stuffDef");
+            Scribe_Values.Look(ref minHitPointsPercent, "minHitPointsPercent", 0f);
             Scribe_Values.Look(ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(ref state, "state", MarketOpportunityState.Available);
             Scribe_Values.Look(ref priceExplanation, "priceExplanation", "");
@@ -177,7 +183,7 @@ namespace Intercolony
         public string ItemLabel()
         {
             string label = thingDef?.LabelCap.ToString() ?? "<missing def>";
-            if (stuffDef == null && !minQuality.HasValue)
+            if (stuffDef == null && !minQuality.HasValue && !HasConditionConstraint)
             {
                 return label;
             }
@@ -191,6 +197,11 @@ namespace Intercolony
             if (minQuality.HasValue)
             {
                 parts.Add(minQuality.Value.GetLabel() + "+");
+            }
+
+            if (HasConditionConstraint)
+            {
+                parts.Add($"{Mathf.RoundToInt(minHitPointsPercent * 100f)}%+ cond");
             }
 
             return $"{label} ({string.Join(", ", parts.ToArray())})";

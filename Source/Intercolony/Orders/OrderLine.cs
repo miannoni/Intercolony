@@ -50,7 +50,7 @@ namespace Intercolony
 
         public bool HasStuffConstraint => allowedStuff != null;
 
-        public bool HasConditionConstraint => minHitPointsPercent > 0f;
+        public bool HasConditionConstraint => minHitPointsPercent != 0f;
 
         public bool HasAnyConstraint => HasQualityConstraint || HasStuffConstraint || HasConditionConstraint;
 

@@ -49,10 +49,34 @@ namespace Intercolony
         /// </summary>
         public readonly Dictionary<MatchFailure, int> rejected = new Dictionary<MatchFailure, int>();
 
+        private bool hasConditionRejection;
+        private float lowestRejectedCondition;
+        private float highestRejectedCondition;
+        private float requiredCondition;
+
         public void NoteRejected(MatchFailure reason, int count)
         {
             rejected.TryGetValue(reason, out int existing);
             rejected[reason] = existing + count;
+        }
+
+        public void NoteConditionRejected(int count, float offeredCondition, float required)
+        {
+            NoteRejected(MatchFailure.TooDamaged, count);
+
+            if (!hasConditionRejection)
+            {
+                hasConditionRejection = true;
+                lowestRejectedCondition = offeredCondition;
+                highestRejectedCondition = offeredCondition;
+            }
+            else
+            {
+                lowestRejectedCondition = Mathf.Min(lowestRejectedCondition, offeredCondition);
+                highestRejectedCondition = Mathf.Max(highestRejectedCondition, offeredCondition);
+            }
+
+            requiredCondition = required;
         }
 
         public string Summary()
@@ -78,7 +102,7 @@ namespace Intercolony
             return sb.ToString();
         }
 
-        private static string DescribeRejection(MatchFailure reason, int count)
+        private string DescribeRejection(MatchFailure reason, int count)
         {
             switch (reason)
             {
@@ -87,7 +111,16 @@ namespace Intercolony
                 case MatchFailure.WrongStuff:
                     return $"{count} carried in the wrong material";
                 case MatchFailure.TooDamaged:
-                    return $"{count} carried too damaged";
+                    if (!hasConditionRejection)
+                    {
+                        return $"{count} offered below the required condition";
+                    }
+
+                    int lowest = Mathf.RoundToInt(lowestRejectedCondition * 100f);
+                    int highest = Mathf.RoundToInt(highestRejectedCondition * 100f);
+                    string offered = lowest == highest ? $"{lowest}%" : $"{lowest}–{highest}%";
+                    return $"{count} offered below the condition floor " +
+                           $"({offered} offered; {Mathf.RoundToInt(requiredCondition * 100f)}% required)";
                 default:
                     return $"{count} rejected";
             }
@@ -155,7 +188,7 @@ namespace Intercolony
                 else if (failure != MatchFailure.WrongDef)
                 {
                     // Right item, failed a constraint — worth telling the player about.
-                    result.NoteRejected(failure, CountableUnits(thing));
+                    NoteRejected(result, order.line, thing, failure);
                 }
             }
 
@@ -173,29 +206,87 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Units in colony storage that satisfy the line (§25.2 buyer pickup).
-        ///
-        /// Storage only, for the same reason Find Buyer counts storage only: goods strewn
-        /// across the map are not stock the player has set aside, and a buyer's caravan
-        /// should not strip a half-built wall of its blocks.
+        /// Checks colony storage for a buyer-pickup order with the same rejection detail as a
+        /// caravan delivery. Declaring goods ready is still a delivery decision to the player.
         /// </summary>
-        public static int CountMatchingInColony(SalesOrder order, Map map)
+        public static OrderValidationResult ValidateColony(SalesOrder order, Map map)
         {
-            if (order?.line?.thingDef == null || map == null)
+            OrderValidationResult result = new OrderValidationResult();
+
+            if (order == null)
             {
-                return 0;
+                result.failures.Add("Order no longer exists.");
+                return result;
             }
 
-            int total = 0;
+            if (order.line?.thingDef == null)
+            {
+                result.failures.Add("The requested item no longer exists in this game's content.");
+                result.missingQuantity = order.RemainingQuantity;
+                return result;
+            }
+
+            if (!order.IsOpen)
+            {
+                result.failures.Add($"Order is {order.status}, not open.");
+                result.missingQuantity = order.RemainingQuantity;
+                return result;
+            }
+
+            if (map == null)
+            {
+                result.failures.Add("No colony map.");
+                result.missingQuantity = order.RemainingQuantity;
+                return result;
+            }
+
+            int required = order.RemainingQuantity;
+            int found = 0;
             foreach (Thing thing in map.listerThings.AllThings)
             {
-                if (thing.IsInAnyStorage() && Matches(order.line, thing, out _))
+                if (!thing.IsInAnyStorage())
                 {
-                    total += CountableUnits(thing);
+                    continue;
+                }
+
+                if (Matches(order.line, thing, out MatchFailure failure))
+                {
+                    found += CountableUnits(thing);
+                }
+                else if (failure != MatchFailure.WrongDef)
+                {
+                    NoteRejected(result, order.line, thing, failure);
                 }
             }
 
-            return total;
+            result.matchedQuantity = Mathf.Min(found, required);
+            result.missingQuantity = Mathf.Max(0, required - found);
+            if (result.missingQuantity > 0 && result.rejected.Count == 0)
+            {
+                result.failures.Add(
+                    $"{result.missingQuantity} more {order.line.thingDef.label} needed " +
+                    $"({found} stored, {required} required).");
+            }
+
+            return result;
+        }
+
+        private static void NoteRejected(
+            OrderValidationResult result, OrderLine line, Thing thing, MatchFailure failure)
+        {
+            int count = CountableUnits(thing);
+            if (failure == MatchFailure.TooDamaged)
+            {
+                Thing inner = thing.GetInnerIfMinified();
+                float condition = inner.MaxHitPoints > 0
+                    ? inner.HitPoints / (float)inner.MaxHitPoints
+                    : 1f;
+                result.NoteConditionRejected(count, condition, line.minHitPointsPercent);
+            }
+            else
+            {
+                result.NoteRejected(failure, count);
+            }
         }
 
         /// <summary>
@@ -239,27 +330,6 @@ namespace Intercolony
             }
 
             return wanted - remaining;
-        }
-
-        /// <summary>Total units carried that satisfy the line.</summary>
-        public static int CountMatching(SalesOrder order, Caravan caravan)
-        {
-            if (order?.line?.thingDef == null || caravan == null)
-            {
-                return 0;
-            }
-
-            int total = 0;
-            List<Thing> items = CaravanInventoryUtility.AllInventoryItems(caravan);
-            for (int i = 0; i < items.Count; i++)
-            {
-                if (Matches(order.line, items[i], out _))
-                {
-                    total += CountableUnits(items[i]);
-                }
-            }
-
-            return total;
         }
 
         /// <summary>

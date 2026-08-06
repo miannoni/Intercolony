@@ -80,7 +80,8 @@ namespace Intercolony
         private static Command BuildCommand(
             Caravan caravan, Settlement settlement, SalesOrder order, IntercolonyWorldComponent state)
         {
-            int carried = OrderValidator.CountMatching(order, caravan);
+            OrderValidationResult validation = OrderValidator.ValidateCaravan(order, caravan);
+            int carried = validation.matchedQuantity;
             int owed = order.RemainingQuantity;
 
             Command_Action command = new Command_Action
@@ -114,7 +115,7 @@ namespace Intercolony
             }
             else if (carried <= 0)
             {
-                command.Disable($"This caravan is carrying no {order.ThingDef?.label ?? "goods"}.");
+                command.Disable(validation.Summary());
             }
 
             return command;

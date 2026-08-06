@@ -46,7 +46,16 @@ namespace Intercolony
             float viewHeight = Mathf.Max(businessContentHeight, outRect.height);
             Rect viewRect = new Rect(0f, 0f, inRect.width - 20f, viewHeight);
 
-            Widgets.BeginScrollView(outRect, ref businessScroll, viewRect);
+            BeginPageScrollView(outRect, ref businessScroll, viewRect);
+
+            if (debugThrowOnNextBusinessDraw)
+            {
+                // Deliberately throw after opening the scroll view so the debug action proves the
+                // guard repairs GUI state as well as replacing the page and suppressing repeats.
+                debugThrowOnNextBusinessDraw = false;
+                throw new System.InvalidOperationException(
+                    "Deliberate Intercolony Business page draw failure.");
+            }
 
             float y = 0f;
             y = DrawCashPosition(viewRect, y, state);
@@ -55,7 +64,7 @@ namespace Intercolony
             y += 12f;
             y = DrawContractEstimates(viewRect, y, state);
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
 
             businessContentHeight = y + 12f;
         }

@@ -25,7 +25,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 21;
+        public const int CurrentSaveVersion = 22;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -1308,45 +1308,31 @@ namespace Intercolony
                 IntercolonyLog.Message("  schema 12 -> 13: recurring contracts added.");
             }
 
-            if (saveVersion < 21)
+            if (saveVersion < 14)
             {
-                // 20 -> 21 added the transaction ledger (§75). Additive, and deliberately *not*
-                // backfilled: the cumulative totals on orders and contracts know how much but not
-                // when, so any history reconstructed from them would be invented dates presented as
-                // a record. The dashboard says how far back its history actually goes instead.
-                IntercolonyLog.Message(
-                    "  schema 20 -> 21: transaction ledger added; history starts now.");
+                // 13 -> 14 added temporary employment. Purely additive: a save from schema 13
+                // has no employees, which is correct for a colony that never hired one.
+                IntercolonyLog.Message("  schema 13 -> 14: temporary employment added.");
             }
 
-            if (saveVersion < 20)
+            if (saveVersion < 15)
             {
-                // 19 -> 20 added the employee-to-colonist transition. Additive: no existing
-                // employment has an offer pending, and transitionOfferedTick defaults to -1 so
-                // anyone already eligible is asked on the next beat rather than never.
+                // 14 -> 15 added wage structures, arrears and labor debts. Existing employments
+                // load with wageStructure = Prepaid, which is exactly what they were: Phase 16
+                // paid everything at hire. nextPaymentTick stays -1, so no payroll is ever
+                // conjured for a worker whose wage is already in their pocket.
                 IntercolonyLog.Message(
-                    "  schema 19 -> 20: employee-to-colonist transition added.");
+                    "  schema 14 -> 15: wage structures added; existing employments are prepaid.");
             }
 
-            if (saveVersion < 19)
+            if (saveVersion < 16)
             {
-                // 18 -> 19 added open-ended employment, renewal and notice periods. Additive by
-                // construction: every new field defaults to the old behaviour — no renewal offered,
-                // no notice being served, and termDays > 0 on every existing contract, so nothing
-                // becomes open-ended retroactively. arrivedTick is the one to watch: it defaults to
-                // -1, so an employment already in flight reads as tenure zero and accrues severance
-                // only from now. That is the honest reading rather than inventing a start date.
+                // 15 -> 16 added employer reputation. A colony with a labor history behind it
+                // starts neutral rather than having a score reconstructed from past employments:
+                // §40 is a record of conduct, and inventing conduct that was never recorded would
+                // be inventing a past (the same call schema 10 -> 11 made for trading records).
                 IntercolonyLog.Message(
-                    "  schema 18 -> 19: open-ended employment, renewal and notice periods added; " +
-                    "existing employments keep their fixed terms and start accruing tenure now.");
-            }
-
-            if (saveVersion < 18)
-            {
-                // 17 -> 18 added job postings. Purely additive: a save from schema 17 has none,
-                // which is correct for a colony that never advertised one. Nothing existing changes
-                // meaning — the candidate listing and its pricing are untouched, and postings sit
-                // alongside them as §35's second workflow rather than replacing the first.
-                IntercolonyLog.Message("  schema 17 -> 18: job postings and applicants added.");
+                    "  schema 15 -> 16: employer reputation added, starting neutral.");
             }
 
             if (saveVersion < 17)
@@ -1365,31 +1351,53 @@ namespace Intercolony
                     "are civilian contracts with no breaches, and existing debts are unpaid wages.");
             }
 
-            if (saveVersion < 16)
+            if (saveVersion < 18)
             {
-                // 15 -> 16 added employer reputation. A colony with a labor history behind it
-                // starts neutral rather than having a score reconstructed from past employments:
-                // §40 is a record of conduct, and inventing conduct that was never recorded would
-                // be inventing a past (the same call schema 10 -> 11 made for trading records).
-                IntercolonyLog.Message(
-                    "  schema 15 -> 16: employer reputation added, starting neutral.");
+                // 17 -> 18 added job postings. Purely additive: a save from schema 17 has none,
+                // which is correct for a colony that never advertised one. Nothing existing changes
+                // meaning — the candidate listing and its pricing are untouched, and postings sit
+                // alongside them as §35's second workflow rather than replacing the first.
+                IntercolonyLog.Message("  schema 17 -> 18: job postings and applicants added.");
             }
 
-            if (saveVersion < 15)
+            if (saveVersion < 19)
             {
-                // 14 -> 15 added wage structures, arrears and labor debts. Existing employments
-                // load with wageStructure = Prepaid, which is exactly what they were: Phase 16
-                // paid everything at hire. nextPaymentTick stays -1, so no payroll is ever
-                // conjured for a worker whose wage is already in their pocket.
+                // 18 -> 19 added open-ended employment, renewal and notice periods. Additive by
+                // construction: every new field defaults to the old behaviour — no renewal offered,
+                // no notice being served, and termDays > 0 on every existing contract, so nothing
+                // becomes open-ended retroactively. arrivedTick is the one to watch: it defaults to
+                // -1, so an employment already in flight reads as tenure zero and accrues severance
+                // only from now. That is the honest reading rather than inventing a start date.
                 IntercolonyLog.Message(
-                    "  schema 14 -> 15: wage structures added; existing employments are prepaid.");
+                    "  schema 18 -> 19: open-ended employment, renewal and notice periods added; " +
+                    "existing employments keep their fixed terms and start accruing tenure now.");
             }
 
-            if (saveVersion < 14)
+            if (saveVersion < 20)
             {
-                // 13 -> 14 added temporary employment. Purely additive: a save from schema 13
-                // has no employees, which is correct for a colony that never hired one.
-                IntercolonyLog.Message("  schema 13 -> 14: temporary employment added.");
+                // 19 -> 20 added the employee-to-colonist transition. Additive: no existing
+                // employment has an offer pending, and transitionOfferedTick defaults to -1 so
+                // anyone already eligible is asked on the next beat rather than never.
+                IntercolonyLog.Message(
+                    "  schema 19 -> 20: employee-to-colonist transition added.");
+            }
+
+            if (saveVersion < 21)
+            {
+                // 20 -> 21 added the transaction ledger (§75). Additive, and deliberately *not*
+                // backfilled: the cumulative totals on orders and contracts know how much but not
+                // when, so any history reconstructed from them would be invented dates presented as
+                // a record. The dashboard says how far back its history actually goes instead.
+                IntercolonyLog.Message(
+                    "  schema 20 -> 21: transaction ledger added; history starts now.");
+            }
+
+            if (saveVersion < 22)
+            {
+                // 21 -> 22 added opportunity condition floors. Missing values already load as
+                // 0f, whose exact meaning is no condition constraint, so there is nothing to backfill.
+                IntercolonyLog.Message(
+                    "  schema 21 -> 22: opportunity condition floors added; existing opportunities have no condition constraint.");
             }
 
             saveVersion = CurrentSaveVersion;

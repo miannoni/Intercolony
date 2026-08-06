@@ -120,12 +120,13 @@ namespace Intercolony
                 return FloatMenuAcceptanceReport.WithFailReason("buyer is hostile");
             }
 
-            if (OrderValidator.CountMatching(order, caravan) <= 0)
+            OrderValidationResult validation = OrderValidator.ValidateCaravan(order, caravan);
+            if (validation.matchedQuantity <= 0)
             {
                 // Shown greyed-out with the reason, rather than hidden: a player who took a
                 // caravan out specifically to deliver needs to know why the option is absent.
                 return FloatMenuAcceptanceReport.WithFailReason(
-                    $"carrying no {order.ThingDef?.label ?? "goods"}");
+                    validation.Summary());
             }
 
             return true;

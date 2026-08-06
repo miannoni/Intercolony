@@ -184,7 +184,7 @@ namespace Intercolony
 
             Rect listRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             Rect listView = new Rect(0f, 0f, inRect.width - 16f, pool.Count * CandidateRowHeight);
-            Widgets.BeginScrollView(listRect, ref candidateScroll, listView);
+            BeginPageScrollView(listRect, ref candidateScroll, listView);
 
             float candidateY = 0f;
             for (int i = 0; i < pool.Count; i++)
@@ -193,7 +193,7 @@ namespace Intercolony
                 candidateY += CandidateRowHeight;
             }
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
         }
 
         private void DrawEmployeesPage(Rect inRect, IntercolonyWorldComponent state)
@@ -240,7 +240,7 @@ namespace Intercolony
 
                 Rect outRect = new Rect(0f, y, inRect.width, employeeBlock);
                 Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, live.Count * EmployeeRowHeight);
-                Widgets.BeginScrollView(outRect, ref employeeScroll, viewRect);
+                BeginPageScrollView(outRect, ref employeeScroll, viewRect);
 
                 float rowY = 0f;
                 for (int i = 0; i < live.Count; i++)
@@ -249,7 +249,7 @@ namespace Intercolony
                     rowY += EmployeeRowHeight;
                 }
 
-                Widgets.EndScrollView();
+                EndPageScrollView();
                 y += employeeBlock + 8f;
             }
 
@@ -320,17 +320,28 @@ namespace Intercolony
             }
 
             Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, height);
-            Widgets.BeginScrollView(outRect, ref postingScroll, viewRect);
+            System.Action pendingAction = null;
+            BeginPageScrollView(outRect, ref postingScroll, viewRect);
 
-            float rowY = 0f;
-            for (int i = 0; i < live.Count; i++)
+            try
             {
-                float blockHeight = PostingBlockHeight(live[i]);
-                DrawPostingBlock(new Rect(0f, rowY, viewRect.width, blockHeight), live[i], state, i);
-                rowY += blockHeight;
+                float rowY = 0f;
+                for (int i = 0; i < live.Count; i++)
+                {
+                    float blockHeight = PostingBlockHeight(live[i]);
+                    DrawPostingBlock(new Rect(0f, rowY, viewRect.width, blockHeight), live[i],
+                        state, i, ref pendingAction);
+                    rowY += blockHeight;
+                }
+            }
+            finally
+            {
+                EndPageScrollView();
             }
 
-            Widgets.EndScrollView();
+            // Posting actions can change the applicant list that supplied both the measured height
+            // and these rows. Let the draw pass finish against one stable collection first.
+            pendingAction?.Invoke();
         }
 
         private const float PostingHeaderHeight = 54f;
@@ -342,7 +353,8 @@ namespace Intercolony
         }
 
         private void DrawPostingBlock(
-            Rect rect, JobPosting posting, IntercolonyWorldComponent state, int index)
+            Rect rect, JobPosting posting, IntercolonyWorldComponent state, int index,
+            ref System.Action pendingAction)
         {
             if (index % 2 == 1)
             {
@@ -364,26 +376,27 @@ namespace Intercolony
             Rect withdrawRect = new Rect(rect.xMax - 120f, rect.y + 12f, 110f, 30f);
             if (Widgets.ButtonText(withdrawRect, "Withdraw"))
             {
-                Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
-                    $"Take down this posting?\n\n{posting.Headline()}\n\n" +
-                    (posting.Applicants.Count > 0
-                        ? $"{posting.Applicants.Count} applicant(s) are waiting on it and will go home."
-                        : "Nobody is waiting on it."),
-                    () => JobPostingService.Withdraw(posting),
-                    destructive: true));
+                pendingAction = () => Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                        $"Take down this posting?\n\n{posting.Headline()}\n\n" +
+                        (posting.Applicants.Count > 0
+                            ? $"{posting.Applicants.Count} applicant(s) are waiting on it and will go home."
+                            : "Nobody is waiting on it."),
+                        () => JobPostingService.Withdraw(posting),
+                        destructive: true));
             }
 
             float y = rect.y + PostingHeaderHeight;
             for (int i = posting.Applicants.Count - 1; i >= 0; i--)
             {
                 DrawApplicantRow(new Rect(rect.x, y, rect.width, ApplicantRowHeight),
-                    posting, posting.Applicants[i], state);
+                    posting, posting.Applicants[i], state, ref pendingAction);
                 y += ApplicantRowHeight;
             }
         }
 
         private void DrawApplicantRow(
-            Rect rect, JobPosting posting, JobApplicant applicant, IntercolonyWorldComponent state)
+            Rect rect, JobPosting posting, JobApplicant applicant, IntercolonyWorldComponent state,
+            ref System.Action pendingAction)
         {
             Widgets.DrawHighlightIfMouseover(rect);
 
@@ -409,18 +422,21 @@ namespace Intercolony
             Rect hireRect = new Rect(rect.xMax - actionWidth * 2f - 14f, rect.y + 8f, actionWidth, 30f);
             if (Widgets.ButtonText(hireRect, "Take on"))
             {
-                if (JobPostingService.TryAccept(state, posting, applicant, Find.CurrentMap,
-                        out string failReason) == null)
+                pendingAction = () =>
                 {
-                    Messages.Message(failReason ?? "Could not hire.",
-                        MessageTypeDefOf.RejectInput, historical: false);
-                }
+                    if (JobPostingService.TryAccept(state, posting, applicant, Find.CurrentMap,
+                            out string failReason) == null)
+                    {
+                        Messages.Message(failReason ?? "Could not hire.",
+                            MessageTypeDefOf.RejectInput, historical: false);
+                    }
+                };
             }
 
             Rect rejectRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 8f, actionWidth, 30f);
             if (Widgets.ButtonText(rejectRect, "Turn away"))
             {
-                JobPostingService.Reject(posting, applicant);
+                pendingAction = () => JobPostingService.Reject(posting, applicant);
             }
         }
 

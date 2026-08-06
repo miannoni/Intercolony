@@ -70,6 +70,13 @@ namespace Intercolony
 
         private Tab tab = Tab.Business;
 
+        // A page is latched off after a failure because DoWindowContents runs every frame; retrying
+        // immediately would recreate both the exception and any half-finished GUI state forever.
+        private readonly HashSet<Tab> failedPages = new HashSet<Tab>();
+        private readonly HashSet<string> loggedPageFailures = new HashSet<string>();
+        private int openPageScrollViews;
+        private static bool debugThrowOnNextBusinessDraw;
+
         private Vector2 ordersScroll;
 
         /// <summary>Category filter (§53, §101). Null means "all categories".</summary>
@@ -111,6 +118,17 @@ namespace Intercolony
         /// <summary>Minimum total value filter (§53 "minimum value").</summary>
         private int minValueFilter;
 
+        public override void PreOpen()
+        {
+            base.PreOpen();
+
+            // Reopening is an intentional retry boundary. A transient failure should not disable
+            // its page for the rest of the play session.
+            failedPages.Clear();
+            loggedPageFailures.Clear();
+            openPageScrollViews = 0;
+        }
+
         public override void DoWindowContents(Rect inRect)
         {
             IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
@@ -123,49 +141,165 @@ namespace Intercolony
             float tabY = DrawTabSelector(inRect, state);
             Rect body = new Rect(0f, tabY, inRect.width, inRect.height - tabY);
 
+            DrawPageGuarded(body, state);
+        }
+
+        private void DrawPageGuarded(Rect inRect, IntercolonyWorldComponent state)
+        {
+            Tab drawingPage = tab;
+            if (failedPages.Contains(drawingPage))
+            {
+                DrawPageFailure(inRect);
+                return;
+            }
+
+            Exception drawException = null;
+            Exception cleanupException = null;
+            try
+            {
+                DrawPage(inRect, state);
+            }
+            catch (Exception ex)
+            {
+                drawException = ex;
+                failedPages.Add(drawingPage);
+            }
+            finally
+            {
+                // A throw between BeginScrollView and EndScrollView otherwise poisons Verse's
+                // mouse-position stack, and the altered text/colour state leaks into later windows.
+                cleanupException = CloseOpenPageScrollViews();
+                Text.Font = GameFont.Small;
+                Text.Anchor = TextAnchor.UpperLeft;
+                GUI.color = Color.white;
+            }
+
+            if (drawException != null)
+            {
+                ReportPageFailure(drawingPage, drawException, "Could not draw page");
+            }
+
+            if (cleanupException != null)
+            {
+                failedPages.Add(drawingPage);
+                ReportPageFailure(drawingPage, cleanupException,
+                    "Could not restore the page's scroll view");
+            }
+
+            if (failedPages.Contains(drawingPage))
+            {
+                DrawPageFailure(inRect);
+            }
+        }
+
+        private void DrawPage(Rect inRect, IntercolonyWorldComponent state)
+        {
+
             if (tab == Tab.Business)
             {
-                DrawBusiness(body, state);
+                DrawBusiness(inRect, state);
                 return;
             }
 
             if (tab == Tab.Orders)
             {
-                DrawOrders(body, state);
+                DrawOrders(inRect, state);
                 return;
             }
 
             if (tab == Tab.FindBuyer)
             {
-                DrawFindBuyer(body, state);
+                DrawFindBuyer(inRect, state);
                 return;
             }
 
             if (tab == Tab.Procurement)
             {
-                DrawProcurement(body, state);
+                DrawProcurement(inRect, state);
                 return;
             }
 
             if (tab == Tab.Contracts)
             {
-                DrawContracts(body, state);
+                DrawContracts(inRect, state);
                 return;
             }
 
             if (tab == Tab.Labor)
             {
-                DrawLabor(body, state);
+                DrawLabor(inRect, state);
                 return;
             }
 
             if (tab == Tab.Relations)
             {
-                DrawRelations(body, state);
+                DrawRelations(inRect, state);
                 return;
             }
 
-            DrawMarket(body, state);
+            DrawMarket(inRect, state);
+        }
+
+        private void ReportPageFailure(Tab page, Exception exception, string context)
+        {
+            string key = page + "\n" + exception.GetType().FullName + "\n" + exception.StackTrace;
+            if (loggedPageFailures.Add(key))
+            {
+                IntercolonyLog.Error($"{context} '{page}': {exception}");
+            }
+        }
+
+        private static void DrawPageFailure(Rect inRect)
+        {
+            Text.Font = GameFont.Small;
+            Text.Anchor = TextAnchor.UpperLeft;
+            GUI.color = Color.white;
+            Widgets.Label(inRect.ContractedBy(12f),
+                "This page could not be drawn. Details are in the log.");
+        }
+
+        private void BeginPageScrollView(Rect outRect, ref Vector2 position, Rect viewRect)
+        {
+            Widgets.BeginScrollView(outRect, ref position, viewRect);
+            openPageScrollViews++;
+        }
+
+        private void EndPageScrollView()
+        {
+            try
+            {
+                Widgets.EndScrollView();
+            }
+            finally
+            {
+                openPageScrollViews--;
+            }
+        }
+
+        private Exception CloseOpenPageScrollViews()
+        {
+            Exception firstException = null;
+            while (openPageScrollViews > 0)
+            {
+                try
+                {
+                    EndPageScrollView();
+                }
+                catch (Exception ex)
+                {
+                    if (firstException == null)
+                    {
+                        firstException = ex;
+                    }
+                }
+            }
+
+            return firstException;
+        }
+
+        internal static void ArmBusinessPageDrawFailureForDebug()
+        {
+            debugThrowOnNextBusinessDraw = true;
         }
 
         /// <summary>
@@ -324,7 +458,7 @@ namespace Intercolony
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, live.Count * RowHeight);
 
-            Widgets.BeginScrollView(outRect, ref scrollPosition, viewRect);
+            BeginPageScrollView(outRect, ref scrollPosition, viewRect);
             float rowY = 0f;
             for (int i = 0; i < live.Count; i++)
             {
@@ -332,7 +466,7 @@ namespace Intercolony
                 rowY += RowHeight;
             }
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
         }
 
         /// <summary>
@@ -678,6 +812,12 @@ namespace Intercolony
                 sb.AppendLine($"Must be made of {opportunity.stuffDef.label}.");
             }
 
+            if (opportunity.HasConditionConstraint)
+            {
+                sb.AppendLine($"Minimum condition: " +
+                              $"{Mathf.RoundToInt(opportunity.minHitPointsPercent * 100f)}%.");
+            }
+
             // §105: the mode is half the decision, so it belongs in the listing detail.
             sb.AppendLine(opportunity.fulfillment == FulfillmentMode.BuyerPickup
                 ? "The buyer collects: no caravan needed, but they pay less for handling it."
@@ -813,7 +953,7 @@ namespace Intercolony
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, orders.Count * OrderRowHeight);
 
-            Widgets.BeginScrollView(outRect, ref ordersScroll, viewRect);
+            BeginPageScrollView(outRect, ref ordersScroll, viewRect);
             float rowY = 0f;
             for (int i = 0; i < orders.Count; i++)
             {
@@ -821,7 +961,7 @@ namespace Intercolony
                 rowY += OrderRowHeight;
             }
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
         }
 
         /// <summary>
@@ -890,7 +1030,7 @@ namespace Intercolony
             Rect outRect = new Rect(rect.x, rect.y + 26f, rect.width, rect.height - 26f);
             Rect viewRect = new Rect(0f, 0f, rect.width - 16f, stock.Count * 28f);
 
-            Widgets.BeginScrollView(outRect, ref stockScroll, viewRect);
+            BeginPageScrollView(outRect, ref stockScroll, viewRect);
             float rowY = 0f;
             foreach (KeyValuePair<ThingDef, int> entry in stock)
             {
@@ -920,7 +1060,7 @@ namespace Intercolony
                 rowY += 28f;
             }
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
         }
 
         private void DrawBuyerOffers(Rect rect, IntercolonyWorldComponent state)
@@ -961,7 +1101,7 @@ namespace Intercolony
             Rect outRect = new Rect(rect.x, y, rect.width, rect.yMax - y);
             Rect viewRect = new Rect(0f, 0f, rect.width - 16f, findBuyerCache.Count * 34f);
 
-            Widgets.BeginScrollView(outRect, ref buyerScroll, viewRect);
+            BeginPageScrollView(outRect, ref buyerScroll, viewRect);
             float rowY = 0f;
             for (int i = 0; i < findBuyerCache.Count; i++)
             {
@@ -969,7 +1109,7 @@ namespace Intercolony
                 rowY += 34f;
             }
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
         }
 
         private static readonly float[] BuyerColumnWidths = { 0.28f, 0.16f, 0.14f, 0.16f, 0.12f, 0.14f };
@@ -1222,7 +1362,7 @@ namespace Intercolony
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contentHeight);
 
-            Widgets.BeginScrollView(outRect, ref procurementScroll, viewRect);
+            BeginPageScrollView(outRect, ref procurementScroll, viewRect);
             float rowY = 0f;
             foreach (PurchaseRequest request in requests)
             {
@@ -1231,7 +1371,7 @@ namespace Intercolony
                 rowY += height;
             }
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
         }
 
         /// <summary>
@@ -1337,7 +1477,7 @@ namespace Intercolony
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contracts.Count * 74f);
 
-            Widgets.BeginScrollView(outRect, ref contractsScroll, viewRect);
+            BeginPageScrollView(outRect, ref contractsScroll, viewRect);
             float rowY = 0f;
             for (int i = 0; i < contracts.Count; i++)
             {
@@ -1345,7 +1485,7 @@ namespace Intercolony
                 rowY += 74f;
             }
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
         }
 
         private static int ContractRank(RecurringContract contract)
@@ -1553,7 +1693,7 @@ namespace Intercolony
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, records.Count * 58f);
 
-            Widgets.BeginScrollView(outRect, ref relationsScroll, viewRect);
+            BeginPageScrollView(outRect, ref relationsScroll, viewRect);
             float rowY = 0f;
             for (int i = 0; i < records.Count; i++)
             {
@@ -1561,7 +1701,7 @@ namespace Intercolony
                 rowY += 58f;
             }
 
-            Widgets.EndScrollView();
+            EndPageScrollView();
         }
 
         private void DrawRelationRow(Rect rect, CommercialReputation rep, int index)
@@ -1850,8 +1990,8 @@ namespace Intercolony
             if (order.CanMarkReady)
             {
                 Map map = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
-                int have = OrderValidator.CountMatchingInColony(order, map);
-                bool enough = have >= order.RemainingQuantity;
+                OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
+                bool enough = validation.Success;
 
                 Rect readyRect = new Rect(rect.xMax - 210f, rect.y + 14f, 110f, 28f);
                 if (Widgets.ButtonText(readyRect, "Mark ready", active: enough))
@@ -1862,7 +2002,7 @@ namespace Intercolony
                 TooltipHandler.TipRegion(readyRect, enough
                     ? $"Tell {order.settlementName} the goods are ready. Their caravan will " +
                       "come and collect them from your storage."
-                    : $"Storage holds {have} of {order.RemainingQuantity} matching items.");
+                    : validation.Summary());
             }
 
             Rect cancelRect = new Rect(rect.xMax - 90f, rect.y + 14f, 80f, 28f);
