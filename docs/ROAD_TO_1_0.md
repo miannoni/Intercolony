@@ -124,9 +124,34 @@ that boundary. Evidence outside it is not implied.
   `EmployerReputationService.WageFactor` affects hiring. `IntercolonyEmployerReputationSelfTest`
   checks every score from 0 to 100 and measured the same world at 20 versus 7 available workers,
   with a corresponding skill difference (`PROGRESS.md:967-972`).
+- **Combat and death risks are accounted for.** `CombatUseMonitor` records clause breaches, while
+  `CompensationService` prices death, permanent injury and capture. Death compensation and debt were
+  already played end to end (`docs/PENDING_PLAYTESTS.md`, **§43 death compensation during safe
+  passage**), and the compensation self-test covers permanent-injury and capture arithmetic. On
+  2026-08-08, two separate downings produced **Employee downed — treatment needed**; rescue and
+  treatment left employment active and wages running. A term that expired while its worker was
+  downed produced **Employee term ended — recovery needed** and was held instead of attempting the
+  vanilla departure that excludes downed pawns. Capture then produced **Employee captured — 1441
+  silver compensation**, paid 800 from storage and booked 641 as debt, and closed the record as
+  `Captured` without calling the worker dead (`docs/PENDING_PLAYTESTS.md`, **Employee edge cases**).
+  This proves downing, recovery during an active term, deferred completion while incapacitated,
+  capture, partial compensation and distinct capture reporting on the recorded load order. It does
+  not prove a permanent-injury payout in ordinary play, distinguish preventable from unavoidable
+  death, or establish colonist mood effects; those are not required to show that the employment and
+  compensation risks have defined outcomes.
 
 ### Reliability
 
+- **Major edge cases degrade gracefully.** The UI draw guard degrades a broken page to a usable
+  fallback (`Source/Intercolony/UI/MainTabWindow_Intercolony.cs:175-220`), Harmony postfixes are
+  guarded, and `EmploymentService.End` contains both quest-teardown and faction-restore fallbacks.
+  The labor cases that kept this criterion incomplete are now implemented and played: a downed
+  worker remained employed, rescued, treated and paid; an expired term was held while the worker
+  could not walk; and a captured worker closed as `Captured`, with a partial compensation payment
+  becoming explicit debt. The 2026-08-08 session logged zero exceptions
+  (`docs/PENDING_PLAYTESTS.md`, **Employee edge cases**). This proves graceful outcomes for the known
+  labor edge-case cluster, not that the teardown-exception fallback itself has been forced in play
+  or that every future edge case is covered.
 - **Performance is acceptable in the tested large modded world.** `IntercolonyPerformanceProfile.Run`
   executes the production refresh, classification, profile and census paths. On the verified load
   order, a real save with 252 settlements, 900 workers and 25,416 map things measured a 3.1 ms daily
@@ -181,6 +206,21 @@ that boundary. Evidence outside it is not implied.
   with otherwise comparable offers where price, deadline or mode makes the nearer or farther option
   preferable. The current measure is approximate tile distance, not routed caravan time
   (`PROGRESS.md:174-177`).
+
+### Labor
+
+- **Employees leave cleanly.** Normal and safe-passage exits are implemented in
+  `EmploymentService.End` and `FinishSafePassage`
+  (`Source/Intercolony/Labor/EmploymentService.cs:873-1012`, `:800-863`), and ordinary exits are
+  self-tested. The former blockers are now covered substantially: capture closes under its own
+  status and language; bed ownership is released and was confirmed in play; and a lover relation
+  formed during employment survived departure with the former worker restored to their faction and
+  carrying neither lodger nor employee state. A term expiring while its worker was downed was also
+  correctly held rather than attempting a departure vanilla cannot perform
+  (`docs/PENDING_PLAYTESTS.md`, **Employee edge cases**). This moves the criterion out of **not met**,
+  but not into **met and proven**: the evidence does not say that the term-expired, downed worker
+  later recovered and completed the final walk-off. That recovery-to-departure branch, and the
+  several-season employment test, remain unplayed.
 
 ### Reliability
 
@@ -240,60 +280,29 @@ that boundary. Evidence outside it is not implied.
   at several UI scales with simultaneous near-term sale, RFQ, purchase pickup, employment and
   contract deadlines, including while the Business report is dense.
 
-## Not met
-
-### Labor
-
-- **Combat and death risks are accounted for.** The implemented part is substantial:
-  `CombatUseMonitor` escalates clause breaches and `CompensationService` prices death and permanent
-  injury. A civilian death and compensation debt were played end to end
-  (`docs/PENDING_PLAYTESTS.md:149-150`). The criterion is still partial because incapacitation is
-  unhandled and capture is not modelled (`PROGRESS.md:1065-1073`); the pending-play record also says
-  neither has been exercised (`docs/PENDING_PLAYTESTS.md:80-88`). Matteo should decide whether
-  “risks” was intended to include these states. Under the conservative reading, code and tests for
-  downing, recovery, capture, release and contract/payroll outcomes are missing.
-- **Employees leave cleanly.** Normal and safe-passage exits are implemented in
-  `EmploymentService.End` and `FinishSafePassage`
-  (`Source/Intercolony/Labor/EmploymentService.cs:629-674`, `:800-893`), and ordinary exits are
-  self-tested. It is not complete: a downed worker can have their faction restored while remaining
-  on the map, capture has no model, social relations formed during employment have not been checked,
-  and the worker's bed remains claimed after departure (`PROGRESS.md:1069-1084`,
-  `docs/PENDING_PLAYTESTS.md:80-88`). Departure needs an explicit downed/captured policy, bed
-  ownership cleanup, and a relation-preservation play-test.
-
-### Reliability
-
-- **Major edge cases degrade gracefully.** The UI draw guard does degrade a broken page to a usable
-  fallback (`Source/Intercolony/UI/MainTabWindow_Intercolony.cs:175-220`), Harmony postfixes are
-  guarded, and `EmploymentService.End` now catches quest-teardown failure, reports it as an error and
-  makes a separately guarded attempt to restore a still-player-faction worker before references are
-  cleared (`Source/Intercolony/Labor/EmploymentService.cs:844-916`). The criterion still does not
-  move: downed and captured employees remain unhandled and need defined outcomes.
-
 ## Summary
 
-- **Met and proven:** 23
-- **Met but unproven:** 10
-- **Not met:** 3
+- **Met and proven:** 25
+- **Met but unproven:** 11
+- **Not met:** 0
 - **Total criteria audited:** 36
 
 ## Shortest path to 1.0
 
 ### Code work
 
-1. Define and implement downed and captured employee lifecycles: contract state, payroll, medical or
-   compensation treatment, recovery, release, faction restoration and player-facing outcome.
-2. Explicitly unclaim the employee's bed on final departure.
-3. Add focused self-tests for those transitions, including save/load while downed or captured.
-
-Those changes close all three criteria currently in **not met**, subject to the ambiguity about how
-broad “combat/death risks” was intended to be.
+No missing implementation is currently demonstrated among the 36 audited criteria. The downed,
+captured, bed-release and relation-preservation gaps are implemented, and the letter log now records
+both shown and suppressed letters so later verification is not built on a false negative. Keep code
+work reactive: fix concrete defects found by the remaining tests rather than adding another feature
+to stand in for missing evidence.
 
 ### Play-testing
 
-1. Run the several-season employment test with repeated saves, reloads and renewals. Include a worker
-   who forms social relations, and repeat the downed/captured departures after the code exists.
-2. Run an all-entity schema-23 save/load matrix.
+1. Finish the one labor branch not established by the 2026-08-08 evidence: let a worker whose term
+   expired while downed recover, then confirm the final departure, faction restoration and released
+   bed. Separately run the several-season employment test with repeated saves, reloads and renewals.
+2. Run an all-entity current-schema save/load matrix, including active downed employment if practical.
 3. Exercise buyer pickup across save/load and a partial or failed collection, then make a real
    distance-driven choice between counterparties.
 4. Judge demand and procurement scarcity over several colonies and refreshes. Record decisions, not
@@ -303,8 +312,8 @@ broad “combat/death risks” was intended to be.
 6. Run the obligation, failure-reason and deadline UX checks at multiple UI scales, with the Business
    report populated by revenue, purchases and payroll at once.
 
-Phase 26 still requires public beta play by other people. The code work above is small compared with
-the evidence gap; coding cannot substitute for those independent sessions.
+Phase 26 still requires public beta play by other people. The shortest path is now evidence work;
+coding cannot substitute for those independent sessions.
 
 ## Questions that need clarification
 
@@ -312,8 +321,6 @@ the evidence gap; coding cannot substitute for those independent sessions.
   or a minimum frequency over a defined play period?
 - Does “capital equipment” mean the classifier category, any minifiable production building, or a
   narrower named set? The current proof uses a crated electric stove.
-- Does “combat/death risks” require explicit downed and captured outcomes, and must preventable death
-  be distinguished from unavoidable death?
 - What scope makes save/load “robust” and performance acceptable in a “large modded world”? This
   audit used the one recorded load order and the 252-settlement save.
 - Does “common modded items work generically” mean correct classification or a completed physical

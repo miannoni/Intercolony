@@ -77,16 +77,6 @@ rather than one movement each.
 starts to look like a table. If it tips, cutting a row is the right answer rather than shrinking the
 font.
 
-### Employee edge cases never exercised (§33 q12, q13, q20)
-
-Carried from the Phase 15 spike and still open:
-
-- **Downed employee** — what happens if one is incapacitated but not killed. *(A test was armed on
-  a target on 2026-08-03 but the session ended before any result; nothing should be read into that.)*
-- **Captured employee** — not modelled at all; unknown what the game does.
-- **Social relations formed during employment** — the spike's probe pawn had zero relations, so
-  "unchanged 0 → 0" was weak evidence. A worker who forms bonds and then leaves is untested.
-
 ### Mod compatibility (§33 q18)
 
 **Partially answered, 2026-08-05, incidentally rather than by design.** The play-test session for
@@ -108,6 +98,26 @@ tries to assign them work.
 
 ## Proven in play
 
+- ~~**Employee edge cases (§33 q12, q13, q20)**~~ — 2026-08-08, one session, zero exceptions.
+  **Downed:** **Employee downed — treatment needed** fired twice for separate events. Eric was
+  rescued and treated; employment stayed Active and wages continued. When a term expired while its
+  worker was downed, **Employee term ended — recovery needed** fired and departure was held instead
+  of attempting the vanilla exit path that excludes downed pawns. **Not yet seen:** that
+  term-expired worker recovering and completing the final departure. **Captured:** **Employee
+  captured — 1441 silver compensation** named Octopus as captured, not dead; 1441 was owed, 800 was
+  paid from storage and 641 became debt to Brío Valley. Player.log recorded
+  `Compensation (captured) for Octopus: 1441 owed, 800 paid, 641 outstanding.` and the closed
+  employment as `[Captured]`. **Cleanup:** bed release was confirmed in play. **Relations:** while
+  active, `Verify converted employees` reported `Blue: lover with Bolton (started tick 272486,
+  formed during employment)`; after departure it reported Bolton's lover relation with former
+  employee Blue as surviving, with counterpart faction The Nelou Treaty, `destroyed False`,
+  `lodger False`, `employee False`, and no `REVIEW ANOMALY` marker.
+
+  **Verification lesson:** shown letters previously went only to the letter stack, while Player.log
+  recorded only suppressed letters. Searching the log for a shown letter therefore returned nothing
+  and was misread as the test not having run. `IntercolonyLetters` now records every letter and marks
+  each line as shown or not shown; do not treat an older log's silence as evidence that a letter did
+  not fire.
 - ~~**Phase 25 — hiring from a job posting with several applicants**~~ — 2026-08-05. The Phase 21
   play-test had exercised this, but only ever by taking on the *bottom* applicant row, which is the
   one arrangement that could not fail: `DrawPostingBlock` iterates applicants descending, and

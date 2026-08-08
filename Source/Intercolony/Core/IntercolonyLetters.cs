@@ -19,10 +19,11 @@ namespace Intercolony
             if (ShouldShow(importance))
             {
                 Find.LetterStack.ReceiveLetter(label, text, def);
+                LogLetter(importance, label, text, shown: true);
                 return;
             }
 
-            LogSuppressed(importance, label, text);
+            LogLetter(importance, label, text, shown: false);
         }
 
         public static void Send(
@@ -32,10 +33,11 @@ namespace Intercolony
             if (ShouldShow(importance))
             {
                 Find.LetterStack.ReceiveLetter(label, text, def, lookTargets);
+                LogLetter(importance, label, text, shown: true);
                 return;
             }
 
-            LogSuppressed(importance, label, text);
+            LogLetter(importance, label, text, shown: false);
         }
 
         private static bool ShouldShow(IntercolonyLetterImportance importance)
@@ -55,11 +57,13 @@ namespace Intercolony
             return volume == IntercolonyLetterVolume.Everything;
         }
 
-        private static void LogSuppressed(
-            IntercolonyLetterImportance importance, string label, string text)
+        private static void LogLetter(
+            IntercolonyLetterImportance importance, string label, string text, bool shown)
         {
             IntercolonyLog.Message(
-                $"Letter kept in log ({importance}, not shown): {label}\n{text}");
+                shown
+                    ? $"Letter shown ({importance}): {label}\n{text}"
+                    : $"Letter kept in log ({importance}, not shown): {label}\n{text}");
         }
     }
 }
