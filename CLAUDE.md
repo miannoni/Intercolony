@@ -88,15 +88,47 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 25 complete (2026-08-08). Save schema 23. Next: Phase 26 — public beta (§119).
+**Phase:** 25 complete (2026-08-08). Save schema 24. Next: Phase 26 — public beta (§119),
+shipping as a **0.9.0 pre-release**.
 
-**`docs/ROAD_TO_1_0.md` audits §120's 36 criteria: 23 met and proven, 10 met but unproven, 3 not
+**`docs/ROAD_TO_1_0.md` audits §120's 36 criteria: 25 met and proven, 11 met but unproven, 0 not
 met.** Read it before planning anything — it is the honest picture of how far 1.0 actually is.
-The three not met are one cluster: **what happens to an employee when something goes wrong with the
-pawn** — downed employees unhandled, capture not modelled, beds left claimed on departure. That is
-the only genuine code gap; everything else outstanding needs play-testing, and §119's focus
-(balance, exploits, compatibility, UX, unexpected pawn interactions) needs *other people playing it*,
-which no amount of coding substitutes for.
+
+**There is no known missing implementation for 1.0.** The three criteria that were once "not met"
+were one cluster — downed employees, capture, beds left claimed on departure — and all three were
+implemented and confirmed in play on 2026-08-08. **Do not reopen them.** The one branch still
+unproven is narrow and named in `ROAD_TO_1_0.md`: a worker whose term expired while downed
+recovering and then actually walking off. The hold was observed; the completion was not.
+
+### The 11 unproven criteria are beta targets, not release blockers
+
+This is the standing policy and it should not be re-litigated each session. "Met but unproven" means
+the code path exists and looks right but nobody has *seen* it work. That is exactly what a beta is
+for. **Do not treat an unproven criterion as a blocker to shipping 0.9.0, and do not build more code
+to substitute for missing evidence** — that is how a project grows features instead of confidence.
+
+Only an actual serious defect blocks the release: save corruption, a crash on a normal path, silent
+loss of the player's silver or obligations, or anything that destroys the player's things. Ordinary
+bugs found in beta get fixed in a point release; that is what a pre-release flag is for.
+
+§119's focus — balance, exploits, compatibility, UX, unexpected pawn interactions — needs *other
+people playing it*, which no amount of coding substitutes for. The remaining work is play-testing
+and distribution, not development.
+
+### 0.9.0 release state
+
+Decided: version **0.9.0**, marked **pre-release**, **GitHub first and Steam Workshop about a week
+later**. Release notes must state their own limits, the same rule `docs/COMPATIBILITY.md` follows.
+
+Built and verified, do not redo: `package.ps1` produces `dist/Intercolony-0.9.0.zip` — 9 files,
+0.20 MiB, asserted free of `Source/`, `reference/`, `docs/`, `.git`, `dev.ps1` and any junction.
+**It exists because the repo root is also the mod folder**, and `reference/vanilla-defs` is a
+junction to RimWorld's entire `Data` directory while `reference/mods` holds other authors' work.
+Never point a Workshop upload at the repo folder. `docs/BETA_QUESTIONS.md` holds the feedback set.
+
+**Nothing has been tagged, released or uploaded.** Remaining before publishing: replace
+`About/Preview.png` (4.5 KB, a placeholder) and draft the release notes. Both need Matteo's sign-off
+before anything goes public.
 
 **Localization was dropped, not deferred: the mod is English-only** and §118 is amended to say so.
 
