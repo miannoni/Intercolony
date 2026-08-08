@@ -80,11 +80,13 @@ namespace Intercolony
                 width, ref y, draw);
 
             float refreshDays = Settings.refreshDays;
-            string refreshValue = refreshDays == 1f
-                ? "New market activity: every 1 day"
-                : $"New market activity: every {refreshDays:0.##} days";
+            string refreshValue = RefreshDaysLabel(refreshDays);
             Slider(
-                refreshValue, ref refreshDays, IntercolonySettings.MinRefreshDays,
+                refreshValue,
+                TallestTextHeight(
+                    width, IntercolonySettings.MinRefreshDays,
+                    IntercolonySettings.MaxRefreshDays, 0.25f, RefreshDaysLabel),
+                ref refreshDays, IntercolonySettings.MinRefreshDays,
                 IntercolonySettings.MaxRefreshDays, 0.25f, width, ref y, draw);
             if (draw)
             {
@@ -93,7 +95,12 @@ namespace Intercolony
 
             float active = Settings.activeOpportunities;
             Slider(
-                $"Open opportunities kept active: {Settings.activeOpportunities}", ref active,
+                ActiveOpportunitiesLabel(active),
+                TallestTextHeight(
+                    width, IntercolonySettings.MinActiveOpportunities,
+                    IntercolonySettings.MaxActiveOpportunities, 1f,
+                    ActiveOpportunitiesLabel),
+                ref active,
                 IntercolonySettings.MinActiveOpportunities,
                 IntercolonySettings.MaxActiveOpportunities, 1f, width, ref y, draw);
             if (draw)
@@ -104,9 +111,19 @@ namespace Intercolony
             SectionGap(ref y);
             SectionTitle("Economy difficulty", width, ref y, draw);
             float difficulty = Settings.economyDifficulty;
-            Paragraph(EconomyDifficultyDescription(difficulty), width, ref y, draw);
+            Paragraph(
+                EconomyDifficultyDescription(difficulty), width, ref y, draw,
+                TallestTextHeight(
+                    width, IntercolonySettings.MinEconomyDifficulty,
+                    IntercolonySettings.MaxEconomyDifficulty, 0.01f,
+                    EconomyDifficultyDescription));
             Slider(
-                $"Difficulty on new trades: {Mathf.RoundToInt(difficulty * 100f)}%", ref difficulty,
+                EconomyDifficultyLabel(difficulty),
+                TallestTextHeight(
+                    width, IntercolonySettings.MinEconomyDifficulty,
+                    IntercolonySettings.MaxEconomyDifficulty, 0.05f,
+                    EconomyDifficultyLabel),
+                ref difficulty,
                 IntercolonySettings.MinEconomyDifficulty,
                 IntercolonySettings.MaxEconomyDifficulty, 0.05f, width, ref y, draw);
             if (draw)
@@ -115,6 +132,23 @@ namespace Intercolony
             }
 
             return y;
+        }
+
+        private static string RefreshDaysLabel(float refreshDays)
+        {
+            return refreshDays == 1f
+                ? "New market activity: every 1 day"
+                : $"New market activity: every {refreshDays:0.##} days";
+        }
+
+        private static string ActiveOpportunitiesLabel(float activeOpportunities)
+        {
+            return $"Open opportunities kept active: {Mathf.RoundToInt(activeOpportunities)}";
+        }
+
+        private static string EconomyDifficultyLabel(float difficulty)
+        {
+            return $"Difficulty on new trades: {Mathf.RoundToInt(difficulty * 100f)}%";
         }
 
         private static string EconomyDifficultyDescription(float difficulty)
@@ -139,6 +173,21 @@ namespace Intercolony
                    "than they would otherwise. Higher is harder." + existingTerms;
         }
 
+        private static float TallestTextHeight(
+            float width, float min, float max, float step,
+            System.Func<float, string> textForValue)
+        {
+            Text.Font = GameFont.Small;
+            float height = 0f;
+            int stepCount = Mathf.RoundToInt((max - min) / step);
+            for (int i = 0; i <= stepCount; i++)
+            {
+                height = Mathf.Max(height, Text.CalcHeight(textForValue(min + i * step), width));
+            }
+
+            return height;
+        }
+
         private static void SectionTitle(string text, float width, ref float y, bool draw)
         {
             Text.Font = GameFont.Medium;
@@ -152,13 +201,15 @@ namespace Intercolony
             Text.Font = GameFont.Small;
         }
 
-        private static void Paragraph(string text, float width, ref float y, bool draw)
+        private static void Paragraph(
+            string text, float width, ref float y, bool draw, float reservedHeight = 0f)
         {
             Text.Font = GameFont.Small;
-            float height = Text.CalcHeight(text, width);
+            float textHeight = Text.CalcHeight(text, width);
+            float height = Mathf.Max(textHeight, reservedHeight);
             if (draw)
             {
-                Widgets.Label(new Rect(0f, y, width, height), text);
+                Widgets.Label(new Rect(0f, y + height - textHeight, width, textHeight), text);
             }
 
             y += height + 8f;
@@ -178,15 +229,19 @@ namespace Intercolony
         }
 
         private static void Slider(
-            string label, ref float value, float min, float max, float roundTo,
+            string label, float reservedLabelHeight, ref float value,
+            float min, float max, float roundTo,
             float width, ref float y, bool draw)
         {
-            float labelHeight = Text.CalcHeight(label, width);
+            float textHeight = Text.CalcHeight(label, width);
+            float labelHeight = Mathf.Max(textHeight, reservedLabelHeight);
             if (draw)
             {
-                Widgets.Label(new Rect(0f, y, width, labelHeight), label);
+                Widgets.Label(new Rect(0f, y + labelHeight - textHeight, width, textHeight), label);
             }
 
+            // Measure every generated variant rather than predicting line counts, but reserve the
+            // maximum: text changed by a control must never move that control's rect mid-drag.
             y += labelHeight;
             float sliderHeight = Mathf.Max(22f, Text.LineHeight);
             if (draw)

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using RimWorld;
 using Verse;
@@ -308,6 +309,16 @@ namespace Intercolony
         {
             Dictionary<IntercolonyProductCategory, int> counts =
                 new Dictionary<IntercolonyProductCategory, int>();
+            List<DebugSourceSummary> sources = new List<DebugSourceSummary>();
+
+            // Seed every active content pack, including mods which contribute zero eligible
+            // defs. Otherwise their absence from the report would be ambiguous: zero could look
+            // exactly like "the dump forgot this mod".
+            foreach (ModContentPack pack in LoadedModManager.RunningModsListForReading)
+            {
+                sources.Add(new DebugSourceSummary(pack));
+            }
+
             foreach (ThingDef def in TradableDefs)
             {
                 IntercolonyProductCategory? c = Classify(def);
@@ -315,8 +326,13 @@ namespace Intercolony
                 {
                     counts.TryGetValue(c.Value, out int n);
                     counts[c.Value] = n + 1;
+
+                    DebugSourceSummary source = FindSourceSummary(sources, def.modContentPack);
+                    source.Add(def, c.Value);
                 }
             }
+
+            sources.Sort(CompareSources);
 
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine($"Tradable fungible defs: {TradableDefs.Count}");
@@ -341,7 +357,120 @@ namespace Intercolony
                 }
             }
 
+            sb.AppendLine();
+            sb.AppendLine("By source");
+            sb.AppendLine(
+                "  category columns: commodities | intermediate | manufactured | furniture | " +
+                "capital equip | art/unique");
+            foreach (DebugSourceSummary source in sources)
+            {
+                sb.AppendLine($"  {source.Name} [{source.Kind}] ({source.PackageId})");
+                sb.AppendLine(
+                    $"    total {source.Total,4} | " +
+                    $"{source.Count(IntercolonyProductCategory.Commodities),3} | " +
+                    $"{source.Count(IntercolonyProductCategory.IntermediateGoods),3} | " +
+                    $"{source.Count(IntercolonyProductCategory.ManufacturedGoods),3} | " +
+                    $"{source.Count(IntercolonyProductCategory.Furniture),3} | " +
+                    $"{source.Count(IntercolonyProductCategory.CapitalEquipment),3} | " +
+                    $"{source.Count(IntercolonyProductCategory.ArtAndUnique),3}");
+                sb.AppendLine(
+                    source.Examples.Count == 0
+                        ? "    examples: (none)"
+                        : "    examples: " + string.Join(", ", source.Examples));
+            }
+
             return sb.ToString();
+        }
+
+        private static DebugSourceSummary FindSourceSummary(
+            List<DebugSourceSummary> sources, ModContentPack pack)
+        {
+            foreach (DebugSourceSummary source in sources)
+            {
+                if (ReferenceEquals(source.Pack, pack))
+                {
+                    return source;
+                }
+            }
+
+            // Def.modContentPack should be assigned by the loader. Keep an explicit bucket if a
+            // generated or unusual modded def reaches us without one rather than mislabelling it.
+            DebugSourceSummary added = new DebugSourceSummary(pack);
+            sources.Add(added);
+            return added;
+        }
+
+        private static int CompareSources(DebugSourceSummary left, DebugSourceSummary right)
+        {
+            int rank = left.SortRank.CompareTo(right.SortRank);
+            if (rank != 0)
+            {
+                return rank;
+            }
+
+            int name = StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name);
+            return name != 0
+                ? name
+                : StringComparer.OrdinalIgnoreCase.Compare(left.PackageId, right.PackageId);
+        }
+
+        private sealed class DebugSourceSummary
+        {
+            private const int ExampleLimit = 6;
+            private readonly Dictionary<IntercolonyProductCategory, int> counts =
+                new Dictionary<IntercolonyProductCategory, int>();
+
+            public DebugSourceSummary(ModContentPack pack)
+            {
+                Pack = pack;
+            }
+
+            public ModContentPack Pack { get; }
+
+            public int Total { get; private set; }
+
+            public List<string> Examples { get; } = new List<string>();
+
+            public string Name => Pack == null || string.IsNullOrEmpty(Pack.Name)
+                ? "Unknown source"
+                : Pack.Name;
+
+            public string PackageId => Pack == null || string.IsNullOrEmpty(Pack.PackageId)
+                ? "no package ID"
+                : Pack.PackageId;
+
+            public string Kind => Pack == null
+                ? "unknown"
+                : Pack.IsCoreMod
+                    ? "Core"
+                    : Pack.IsOfficialMod
+                        ? "official DLC"
+                        : "mod";
+
+            public int SortRank => Pack == null
+                ? 3
+                : Pack.IsCoreMod
+                    ? 0
+                    : Pack.IsOfficialMod
+                        ? 1
+                        : 2;
+
+            public void Add(ThingDef def, IntercolonyProductCategory category)
+            {
+                Total++;
+                counts.TryGetValue(category, out int count);
+                counts[category] = count + 1;
+                if (Examples.Count < ExampleLimit)
+                {
+                    Examples.Add(def.defName);
+                }
+            }
+
+            public int Count(IntercolonyProductCategory category)
+            {
+                counts.TryGetValue(category, out int count);
+                return count;
+            }
         }
     }
 }
