@@ -441,3 +441,6 @@ Assemblies/
 
 .dev-log-offset
 .dev-log-marks
+
+# Clean release packages produced by package.ps1.
+dist/
