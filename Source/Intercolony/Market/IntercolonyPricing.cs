@@ -79,9 +79,9 @@ namespace Intercolony
 
             float baseValue = BaseValue(def, stuff);
 
-            // Local appetite for this category. Weights sit around 1.0, so this is already a
-            // multiplier; clamped so an extreme roll cannot produce a silly price.
-            float demand = Mathf.Clamp(profile.DemandFor(category), 0.4f, 2.0f);
+            // The category supplies the settlement's broad economic character; the good-specific
+            // perturbation keeps that character from making every item in the category rank alike.
+            float demand = Mathf.Clamp(profile.DemandFor(def, category), 0.4f, 2.0f);
             factors.Add(new PriceFactor("Local demand", demand));
 
             float wealth = WealthFactor(profile.wealthTier);

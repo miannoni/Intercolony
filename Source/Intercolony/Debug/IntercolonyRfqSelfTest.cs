@@ -189,6 +189,64 @@ namespace Intercolony
                 "no supplier ever fell short — partial quotes are a §20 outcome");
             Check("full quotes occur", fullQuotes > 0, "no supplier ever covered a full request");
 
+            // Fulfillment is a term of the request, not a fresh coin flip on each response.
+            int forcedDeliveryQuotes = 0;
+            int forcedPickupQuotes = 0;
+            int wrongForcedModes = 0;
+            int missingLogisticsFactors = 0;
+            for (int i = 0; i < tradable.Count && i < 8; i++)
+            {
+                ThingDef def = tradable[i];
+                PurchaseRequest delivery = RfqService.CreateRequest(
+                    state, def, null, 20, 15,
+                    ProcurementFulfillmentPreference.SupplierDelivers);
+                PurchaseRequest pickup = RfqService.CreateRequest(
+                    state, def, null, 20, 15,
+                    ProcurementFulfillmentPreference.PlayerPickup);
+                if (delivery != null)
+                {
+                    created.Add(delivery);
+                    foreach (Quotation quote in delivery.quotes)
+                    {
+                        forcedDeliveryQuotes++;
+                        if (!quote.supplierDelivers) wrongForcedModes++;
+                        if (!quote.priceExplanation.Contains("Supplier delivery"))
+                        {
+                            missingLogisticsFactors++;
+                        }
+                    }
+                }
+
+                if (pickup != null)
+                {
+                    created.Add(pickup);
+                    foreach (Quotation quote in pickup.quotes)
+                    {
+                        forcedPickupQuotes++;
+                        if (quote.supplierDelivers) wrongForcedModes++;
+                        if (!quote.priceExplanation.Contains("You collect"))
+                        {
+                            missingLogisticsFactors++;
+                        }
+                    }
+                }
+
+                if (forcedDeliveryQuotes > 0 && forcedPickupQuotes > 0)
+                {
+                    break;
+                }
+            }
+
+            Check("forced delivery requests produce delivery quotes", forcedDeliveryQuotes > 0);
+            Check("forced pickup requests produce pickup quotes", forcedPickupQuotes > 0);
+            Check("forced fulfillment terms are honored", wrongForcedModes == 0,
+                $"{wrongForcedModes} quote(s) contradicted the request");
+            Check("quote explanations include fulfillment cost", missingLogisticsFactors == 0,
+                $"{missingLogisticsFactors} quote(s) omitted it");
+            Check("supplier delivery costs more than collection",
+                RfqService.ProcurementLogisticsFactor(true).multiplier >
+                RfqService.ProcurementLogisticsFactor(false).multiplier);
+
             sb.AppendLine($"  ({totalRequests} requests: {emptyRequests} empty, " +
                           $"{fullQuotes} full quotes, {partialQuotes} partial; " +
                           $"{distinctPriceRequests} had differing prices, " +

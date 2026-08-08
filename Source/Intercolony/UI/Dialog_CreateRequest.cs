@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
+using Verse.Sound;
 
 namespace Intercolony
 {
@@ -23,6 +24,8 @@ namespace Intercolony
         private int quantity = 40;
         private string deadlineBuffer = "15";
         private int deadlineDays = 15;
+        private ProcurementFulfillmentPreference fulfillmentPreference =
+            ProcurementFulfillmentPreference.Either;
 
         private List<ThingDef> cachedMatches;
         private string cachedSearch;
@@ -62,8 +65,11 @@ namespace Intercolony
 
             y += 34f;
 
+            const float BottomControlsHeight = 168f;
+            float controlsTop = inRect.height - BottomControlsHeight;
+
             List<ThingDef> matches = Matches();
-            Rect listRect = new Rect(0f, y, inRect.width, inRect.height - y - 150f);
+            Rect listRect = new Rect(0f, y, inRect.width, controlsTop - y - 8f);
             Rect viewRect = new Rect(0f, 0f, listRect.width - 16f, matches.Count * 26f);
 
             Widgets.BeginScrollView(listRect, ref scroll, viewRect);
@@ -94,7 +100,20 @@ namespace Intercolony
 
             Widgets.EndScrollView();
 
-            float bottom = inRect.height - 108f;
+            float bottom = controlsTop;
+
+            Widgets.Label(new Rect(0f, bottom, inRect.width, 22f), "Fulfillment:");
+            bottom += 24f;
+
+            const float ChoiceGap = 8f;
+            float choiceWidth = (inRect.width - ChoiceGap * 2f) / 3f;
+            DrawFulfillmentChoice(new Rect(0f, bottom, choiceWidth, 28f),
+                "Supplier delivers", ProcurementFulfillmentPreference.SupplierDelivers);
+            DrawFulfillmentChoice(new Rect(choiceWidth + ChoiceGap, bottom, choiceWidth, 28f),
+                "We collect", ProcurementFulfillmentPreference.PlayerPickup);
+            DrawFulfillmentChoice(new Rect((choiceWidth + ChoiceGap) * 2f, bottom, choiceWidth, 28f),
+                "Either", ProcurementFulfillmentPreference.Either);
+            bottom += 36f;
 
             Widgets.Label(new Rect(0f, bottom, 120f, 28f), "Quantity:");
             Widgets.TextFieldNumeric(new Rect(124f, bottom, 100f, 28f), ref quantity, ref quantityBuffer, 1, 5000);
@@ -123,7 +142,8 @@ namespace Intercolony
             }
             else if (Widgets.ButtonText(sendRect, "Send request"))
             {
-                RfqService.CreateRequest(state, selected, null, quantity, deadlineDays);
+                RfqService.CreateRequest(
+                    state, selected, null, quantity, deadlineDays, fulfillmentPreference);
                 Close();
             }
 
@@ -131,6 +151,22 @@ namespace Intercolony
             if (Widgets.ButtonText(cancelRect, "Cancel"))
             {
                 Close();
+            }
+        }
+
+        private void DrawFulfillmentChoice(
+            Rect rect, string label, ProcurementFulfillmentPreference preference)
+        {
+            bool selectedChoice = fulfillmentPreference == preference;
+            if (Widgets.ButtonText(rect, label) && !selectedChoice)
+            {
+                fulfillmentPreference = preference;
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
+            if (selectedChoice)
+            {
+                Widgets.DrawHighlightSelected(rect);
             }
         }
 

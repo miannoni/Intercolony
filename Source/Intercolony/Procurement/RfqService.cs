@@ -31,7 +31,9 @@ namespace Intercolony
             ThingDef def,
             ThingDef stuff,
             int quantity,
-            int desiredDays)
+            int desiredDays,
+            ProcurementFulfillmentPreference fulfillmentPreference =
+                ProcurementFulfillmentPreference.Either)
         {
             if (state == null || def == null || quantity <= 0)
             {
@@ -47,7 +49,8 @@ namespace Intercolony
                 desiredDays = Mathf.Max(1, desiredDays),
                 createdTick = GenTicks.TicksGame,
                 expiryTick = GenTicks.TicksGame + RequestLifespanDays * GenDate.TicksPerDay,
-                status = PurchaseRequestStatus.Open
+                status = PurchaseRequestStatus.Open,
+                fulfillmentPreference = fulfillmentPreference
             };
 
             GenerateResponses(state, request);
@@ -210,10 +213,12 @@ namespace Intercolony
                 return null;
             }
 
+            bool delivers = request.fulfillmentPreference ==
+                                ProcurementFulfillmentPreference.SupplierDelivers ||
+                            (request.fulfillmentPreference == ProcurementFulfillmentPreference.Either &&
+                             Rand.Value < DeliveryChance(profile, distance));
             float unitPrice = QuotedUnitPrice(request, offeredStuff, offeredQuality, profile,
-                category, supply, distance, out string explanation);
-
-            bool delivers = Rand.Value < DeliveryChance(profile, distance);
+                category, supply, distance, delivers, out string explanation);
             int leadTime = LeadTimeDays(distance, delivers, supply);
 
             return new Quotation
@@ -366,6 +371,7 @@ namespace Intercolony
             IntercolonyProductCategory category,
             float supply,
             float distance,
+            bool delivers,
             out string explanation)
         {
             List<PriceFactor> factors = new List<PriceFactor>();
@@ -398,6 +404,8 @@ namespace Intercolony
 
             factors.Add(new PriceFactor("Negotiation", Rand.Range(0.94f, 1.1f)));
 
+            factors.Add(ProcurementLogisticsFactor(delivers));
+
             float price = baseValue;
             foreach (PriceFactor factor in factors)
             {
@@ -408,6 +416,17 @@ namespace Intercolony
             explanation = IntercolonyPricing.Explain(
                 request.thingDef, stuff, request.quantityRequested, price, factors);
             return price;
+        }
+
+        /// <summary>
+        /// Supplier delivery is a paid service; collection carries no logistics fee because
+        /// the player's caravan absorbs that cost instead.
+        /// </summary>
+        public static PriceFactor ProcurementLogisticsFactor(bool supplierDelivers)
+        {
+            return supplierDelivers
+                ? new PriceFactor("Supplier delivery", 1.12f)
+                : new PriceFactor("You collect", 1f);
         }
 
         /// <summary>What a supplier charges for better work. Mirrors the sell-side premium.</summary>

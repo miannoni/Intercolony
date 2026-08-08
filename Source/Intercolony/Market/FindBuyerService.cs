@@ -59,7 +59,7 @@ namespace Intercolony
         /// which made §12's "No current interest" outcome dead code and flattened the ranking:
         /// if everyone buys everything, choosing a buyer stops being a decision.
         /// </summary>
-        private const float InterestThreshold = 0.9f;
+        internal const float InterestThreshold = 0.9f;
 
         /// <summary>
         /// Who would buy <paramref name="quantity"/> of this good, best offer first.
@@ -152,7 +152,7 @@ namespace Intercolony
                 distanceTiles = MarketOpportunityGenerator.DistanceToPlayer(settlement)
             };
 
-            float demand = profile.DemandFor(category);
+            float demand = profile.DemandFor(def, category);
             if (demand < InterestThreshold)
             {
                 offer.noInterestReason = "no current interest";
@@ -187,18 +187,42 @@ namespace Intercolony
             float budget = WealthBudget(profile.wealthTier) * demand;
             float unitValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(def, stuff));
             int units = Mathf.RoundToInt(budget / unitValue);
+            int tier = (int)profile.wealthTier;
 
             if (def.category == ThingCategory.Building)
             {
-                return Mathf.Clamp(units, 0, 8);
+                return Mathf.Clamp(units, 0, AppetiteCeiling(
+                    profile, def, stuff, 1 + tier * 2, 3 + tier * 3));
             }
 
             if (def.stackLimit <= 1)
             {
-                return Mathf.Clamp(units, 0, 15);
+                return Mathf.Clamp(units, 0, AppetiteCeiling(
+                    profile, def, stuff, 2 + tier * 3, 5 + tier * 5));
             }
 
-            return Mathf.Clamp(units, 0, 5000);
+            return Mathf.Clamp(units, 0, AppetiteCeiling(
+                profile, def, stuff, 2000 + tier * 750, 2750 + tier * 750));
+        }
+
+        /// <summary>
+        /// Stable per-settlement variation keeps low-volume goods from exposing one universal
+        /// clamp while leaving RimWorld's global random stream untouched.
+        /// </summary>
+        private static int AppetiteCeiling(
+            SettlementEconomicProfile profile, ThingDef def, ThingDef stuff, int min, int max)
+        {
+            int seed = Gen.HashCombineInt(
+                profile.seed, def.shortHash, stuff?.shortHash ?? 0, 0x4150_5045);
+            Rand.PushState(seed);
+            try
+            {
+                return Rand.RangeInclusive(min, max);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
         }
 
         private static float WealthBudget(IntercolonyWealthTier wealth)
@@ -234,7 +258,7 @@ namespace Intercolony
                     continue;
                 }
 
-                if (!thing.IsInAnyStorage())
+                if (!OrderValidator.IsAvailableColonyStock(thing))
                 {
                     continue;
                 }

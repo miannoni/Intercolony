@@ -128,7 +128,8 @@ namespace Intercolony
         /// could reference a settlement that has since turned hostile or been destroyed.
         /// </summary>
         public static SalesOrder CreateFromOffer(
-            IntercolonyWorldComponent state, BuyerOffer offer, int quantity, int deadlineDays)
+            IntercolonyWorldComponent state, BuyerOffer offer, int quantity, int deadlineDays,
+            FulfillmentMode fulfillment)
         {
             if (state == null || offer?.settlement == null || quantity <= 0)
             {
@@ -156,6 +157,7 @@ namespace Intercolony
                 },
                 unitPrice = offer.unitPrice,
                 acceptedTick = GenTicks.TicksGame,
+                fulfillment = fulfillment,
                 deadlineTick = GenTicks.TicksGame + deadlineDays * GenDate.TicksPerDay,
                 status = SalesOrderStatus.Accepted
             };
@@ -164,10 +166,14 @@ namespace Intercolony
 
             IntercolonyLog.Message(
                 $"Created order {order.id} from Find Buyer: {quantity}x {offer.def.label} " +
-                $"for {order.settlementName}, {order.TotalPayment} silver, {deadlineDays}d.");
+                $"for {order.settlementName}, {order.TotalPayment} silver, {deadlineDays}d, " +
+                $"{fulfillment}.");
+            string nextStep = fulfillment == FulfillmentMode.BuyerPickup
+                ? $"Mark the goods ready within {deadlineDays} days."
+                : $"Deliver within {deadlineDays} days.";
             Messages.Message(
                 $"Order created: {quantity}x {offer.def.label} for {order.settlementName}. " +
-                $"Deliver within {deadlineDays} days.",
+                nextStep,
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             return order;

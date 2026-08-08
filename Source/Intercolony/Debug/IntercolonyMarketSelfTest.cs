@@ -132,6 +132,108 @@ namespace Intercolony
                 IntercolonyProductCategory category =
                     IntercolonyProductClassifier.Classify(sample) ?? IntercolonyProductCategory.Commodities;
 
+                // Goods within one category must inherit its broad appetite without collapsing
+                // back to one shared number, and repeated reads must be save/load-stable.
+                List<ThingDef> sameCategoryGoods = null;
+                IntercolonyProductCategory demandProbeCategory = category;
+                foreach (IntercolonyProductCategory candidateCategory in
+                         IntercolonyProductCategoryUtility.All)
+                {
+                    List<ThingDef> candidates =
+                        IntercolonyProductClassifier.DefsInCategory(candidateCategory);
+                    if (candidates.Count >= 3)
+                    {
+                        sameCategoryGoods = candidates;
+                        demandProbeCategory = candidateCategory;
+                        break;
+                    }
+                }
+
+                bool perGoodDemandStable = true;
+                bool perGoodDemandDiffers = false;
+                bool perGoodDemandBounded = true;
+                if (sameCategoryGoods != null)
+                {
+                    foreach (SettlementEconomicProfile candidateProfile in profiles)
+                    {
+                        float categoryDemand = candidateProfile.DemandFor(demandProbeCategory);
+                        float first = candidateProfile.DemandFor(
+                            sameCategoryGoods[0], demandProbeCategory);
+                        float low = first;
+                        float high = first;
+                        for (int i = 0; i < 3; i++)
+                        {
+                            float demand = candidateProfile.DemandFor(
+                                sameCategoryGoods[i], demandProbeCategory);
+                            float repeated = candidateProfile.DemandFor(
+                                sameCategoryGoods[i], demandProbeCategory);
+                            perGoodDemandStable &= Mathf.Abs(demand - repeated) < 0.0001f;
+                            perGoodDemandBounded &= demand >= categoryDemand * 0.55f - 0.0001f &&
+                                                    demand <= categoryDemand * 1.45f + 0.0001f;
+                            low = Mathf.Min(low, demand);
+                            high = Mathf.Max(high, demand);
+                        }
+
+                        perGoodDemandDiffers |= high - low > 0.05f;
+                    }
+                }
+
+                Check("same good has stable demand", perGoodDemandStable);
+                Check("same-category goods have distinct demand", perGoodDemandDiffers,
+                    sameCategoryGoods == null ? "no category had three goods" : null);
+                Check("per-good demand remains a bounded category perturbation", perGoodDemandBounded);
+
+                SettlementEconomicProfile[] demandProbes = new SettlementEconomicProfile[5];
+                bool[] seenInterested = new bool[demandProbes.Length];
+                bool[] seenUninterested = new bool[demandProbes.Length];
+                for (int i = 0; i < demandProbes.Length; i++)
+                {
+                    demandProbes[i] = new SettlementEconomicProfile
+                    {
+                        seed = Gen.HashCombineInt(4242, 700 + i)
+                    };
+                    demandProbes[i].demandWeights[(int)demandProbeCategory] = 1f;
+                }
+
+                int firstBest = -1;
+                bool demandRankingChanges = false;
+                for (ushort shortHash = 1; shortHash <= 64; shortHash++)
+                {
+                    ThingDef good = new ThingDef { shortHash = shortHash };
+                    int best = -1;
+                    float bestDemand = float.MinValue;
+                    for (int i = 0; i < demandProbes.Length; i++)
+                    {
+                        float demand = demandProbes[i].DemandFor(good, demandProbeCategory);
+                        seenInterested[i] |= demand >= FindBuyerService.InterestThreshold;
+                        seenUninterested[i] |= demand < FindBuyerService.InterestThreshold;
+                        if (demand > bestDemand)
+                        {
+                            bestDemand = demand;
+                            best = i;
+                        }
+                    }
+
+                    if (firstBest < 0)
+                    {
+                        firstBest = best;
+                    }
+                    else
+                    {
+                        demandRankingChanges |= best != firstBest;
+                    }
+                }
+
+                bool crossesInterestThreshold = false;
+                for (int i = 0; i < demandProbes.Length; i++)
+                {
+                    crossesInterestThreshold |= seenInterested[i] && seenUninterested[i];
+                }
+
+                Check("per-good demand crosses the interest threshold both ways",
+                    crossesInterestThreshold);
+                Check("per-good demand changes settlement ordering", demandRankingChanges);
+
                 float price = IntercolonyPricing.UnitPrice(
                     sample, 500, profile, category, 25f, null, out List<PriceFactor> factors);
 

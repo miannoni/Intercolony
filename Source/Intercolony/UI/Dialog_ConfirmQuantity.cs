@@ -28,9 +28,13 @@ namespace Intercolony
         private readonly string quantityLabel;
         private readonly Func<int, string> bodyBuilder;
         private readonly Action<int> onConfirm;
+        private readonly Func<int, FulfillmentMode, string> fulfillmentBodyBuilder;
+        private readonly Action<int, FulfillmentMode> fulfillmentOnConfirm;
+        private readonly bool chooseFulfillment;
 
         private int quantity;
         private string buffer;
+        private FulfillmentMode fulfillment;
 
         /// <param name="minQuantity">
         /// Floor on the commitment. Hiring needs it: a worker with a five-day minimum term must
@@ -46,6 +50,40 @@ namespace Intercolony
             Action<int> onConfirm,
             int minQuantity = 1,
             string quantityLabel = "Quantity:")
+            : this(title, confirmLabel, maxQuantity, bodyBuilder, onConfirm, null, null,
+                FulfillmentMode.SellerDelivery, minQuantity, quantityLabel)
+        {
+        }
+
+        /// <summary>
+        /// Find Buyer variant: quantity and logistics are one commitment, so both choices live
+        /// on the same confirmation surface and feed the same live terms preview.
+        /// </summary>
+        public Dialog_ConfirmQuantity(
+            string title,
+            string confirmLabel,
+            int maxQuantity,
+            Func<int, FulfillmentMode, string> bodyBuilder,
+            Action<int, FulfillmentMode> onConfirm,
+            FulfillmentMode initialFulfillment = FulfillmentMode.SellerDelivery,
+            int minQuantity = 1,
+            string quantityLabel = "Quantity:")
+            : this(title, confirmLabel, maxQuantity, null, null, bodyBuilder, onConfirm,
+                initialFulfillment, minQuantity, quantityLabel)
+        {
+        }
+
+        private Dialog_ConfirmQuantity(
+            string title,
+            string confirmLabel,
+            int maxQuantity,
+            Func<int, string> bodyBuilder,
+            Action<int> onConfirm,
+            Func<int, FulfillmentMode, string> fulfillmentBodyBuilder,
+            Action<int, FulfillmentMode> fulfillmentOnConfirm,
+            FulfillmentMode initialFulfillment,
+            int minQuantity,
+            string quantityLabel)
         {
             this.title = title;
             this.confirmLabel = confirmLabel;
@@ -53,6 +91,10 @@ namespace Intercolony
             this.maxQuantity = Mathf.Max(this.minQuantity, maxQuantity);
             this.bodyBuilder = bodyBuilder;
             this.onConfirm = onConfirm;
+            this.fulfillmentBodyBuilder = fulfillmentBodyBuilder;
+            this.fulfillmentOnConfirm = fulfillmentOnConfirm;
+            chooseFulfillment = fulfillmentBodyBuilder != null;
+            fulfillment = initialFulfillment;
             this.quantityLabel = quantityLabel;
 
             // Open at the floor, not the ceiling, when there is a real floor: the minimum term is
@@ -65,7 +107,7 @@ namespace Intercolony
             absorbInputAroundWindow = true;
         }
 
-        public override Vector2 InitialSize => new Vector2(520f, 420f);
+        public override Vector2 InitialSize => new Vector2(520f, chooseFulfillment ? 478f : 420f);
 
         public override void DoWindowContents(Rect inRect)
         {
@@ -78,10 +120,34 @@ namespace Intercolony
 
             // Body is rebuilt for the current quantity, so the price the player is agreeing to
             // updates as they move the slider rather than describing the original amount.
-            Rect bodyRect = new Rect(0f, y, inRect.width, inRect.height - y - 130f);
-            Widgets.Label(bodyRect, bodyBuilder(quantity));
+            const float QuantityControlsHeight = 122f;
+            const float FulfillmentControlsHeight = 58f;
+            float controlsHeight = QuantityControlsHeight +
+                                   (chooseFulfillment ? FulfillmentControlsHeight : 0f);
+            float controlsTop = inRect.height - controlsHeight;
 
-            float bottom = inRect.height - 122f;
+            Rect bodyRect = new Rect(0f, y, inRect.width, controlsTop - y - 8f);
+            Widgets.Label(bodyRect, chooseFulfillment
+                ? fulfillmentBodyBuilder(quantity, fulfillment)
+                : bodyBuilder(quantity));
+
+            float bottom = controlsTop;
+
+            if (chooseFulfillment)
+            {
+                Widgets.Label(new Rect(0f, bottom, inRect.width, 22f), "Fulfillment:");
+
+                float choiceWidth = (inRect.width - 8f) / 2f;
+                DrawFulfillmentChoice(
+                    new Rect(0f, bottom + 24f, choiceWidth, 28f),
+                    "You deliver", FulfillmentMode.SellerDelivery, Color.white);
+                DrawFulfillmentChoice(
+                    new Rect(choiceWidth + 8f, bottom + 24f, choiceWidth, 28f),
+                    "Buyer collects", FulfillmentMode.BuyerPickup,
+                    new Color(0.6f, 0.85f, 1f));
+
+                bottom += FulfillmentControlsHeight;
+            }
 
             Widgets.Label(new Rect(0f, bottom, 110f, 28f), quantityLabel);
             Widgets.TextFieldNumeric(
@@ -126,7 +192,15 @@ namespace Intercolony
             Rect confirmRect = new Rect(0f, bottom, 170f, 36f);
             if (Widgets.ButtonText(confirmRect, confirmLabel))
             {
-                onConfirm?.Invoke(Mathf.Clamp(quantity, minQuantity, maxQuantity));
+                int confirmedQuantity = Mathf.Clamp(quantity, minQuantity, maxQuantity);
+                if (chooseFulfillment)
+                {
+                    fulfillmentOnConfirm?.Invoke(confirmedQuantity, fulfillment);
+                }
+                else
+                {
+                    onConfirm?.Invoke(confirmedQuantity);
+                }
                 Close();
             }
 
@@ -142,6 +216,26 @@ namespace Intercolony
             quantity = Mathf.Clamp(value, minQuantity, maxQuantity);
             buffer = quantity.ToString();
             SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+        }
+
+        private void DrawFulfillmentChoice(
+            Rect rect, string label, FulfillmentMode mode, Color colour)
+        {
+            bool selected = fulfillment == mode;
+            GUI.color = colour;
+            if (Widgets.ButtonText(rect, label) && !selected)
+            {
+                fulfillment = mode;
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
+            // ButtonText paints its own background, so the selection must be drawn afterwards.
+            if (selected)
+            {
+                Widgets.DrawHighlightSelected(rect);
+            }
+
+            GUI.color = Color.white;
         }
     }
 }

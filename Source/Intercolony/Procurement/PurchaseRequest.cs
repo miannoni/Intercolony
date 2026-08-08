@@ -18,6 +18,19 @@ namespace Intercolony
         Cancelled
     }
 
+    /// <summary>Logistics terms stated by the player when an RFQ is raised.</summary>
+    public enum ProcurementFulfillmentPreference
+    {
+        /// <summary>Each supplier chooses whether to deliver or offer collection.</summary>
+        Either,
+
+        /// <summary>Only supplier-delivery quotations are requested.</summary>
+        SupplierDelivers,
+
+        /// <summary>Only quotations for collection by the player are requested.</summary>
+        PlayerPickup
+    }
+
     /// <summary>
     /// One supplier's answer to a request (DESIGN.md §7.5, §19).
     ///
@@ -124,6 +137,9 @@ namespace Intercolony
 
         public PurchaseRequestStatus status = PurchaseRequestStatus.Open;
 
+        public ProcurementFulfillmentPreference fulfillmentPreference =
+            ProcurementFulfillmentPreference.Either;
+
         public List<Quotation> quotes = new List<Quotation>();
 
         /// <summary>Set when nobody answered, so the UI can explain rather than show an empty list.</summary>
@@ -206,6 +222,8 @@ namespace Intercolony
             Scribe_Values.Look(ref createdTick, "createdTick", 0);
             Scribe_Values.Look(ref expiryTick, "expiryTick", 0);
             Scribe_Values.Look(ref status, "status", PurchaseRequestStatus.Open);
+            Scribe_Values.Look(ref fulfillmentPreference, "fulfillmentPreference",
+                ProcurementFulfillmentPreference.Either);
             Scribe_Values.Look(ref noResponseReason, "noResponseReason", "");
             Scribe_Collections.Look(ref quotes, "quotes", LookMode.Deep);
 

@@ -26,7 +26,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 22;
+        public const int CurrentSaveVersion = 23;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
@@ -1444,6 +1444,14 @@ namespace Intercolony
                 // 0f, whose exact meaning is no condition constraint, so there is nothing to backfill.
                 IntercolonyLog.Message(
                     "  schema 21 -> 22: opportunity condition floors added; existing opportunities have no condition constraint.");
+            }
+
+            if (saveVersion < 23)
+            {
+                // The enum's zero/default value is Either, preserving every existing request's
+                // mix of stored delivery and pickup quotations without rewriting its responses.
+                IntercolonyLog.Message(
+                    "  schema 22 -> 23: procurement fulfilment preference added; existing requests allow either.");
             }
 
             saveVersion = CurrentSaveVersion;

@@ -1,5 +1,7 @@
 using System.Text;
 using RimWorld;
+using UnityEngine;
+using Verse;
 
 namespace Intercolony
 {
@@ -84,6 +86,31 @@ namespace Intercolony
         public float DemandFor(IntercolonyProductCategory category)
         {
             return demandWeights[(int)category];
+        }
+
+        /// <summary>
+        /// Stable appetite for one good, layered over the settlement's category identity.
+        /// The broad weight still leads; the bounded modifier represents local shortages and
+        /// preferences that make two goods in the same category genuinely different markets.
+        /// </summary>
+        public float DemandFor(ThingDef def, IntercolonyProductCategory category)
+        {
+            float categoryDemand = DemandFor(category);
+            if (def == null)
+            {
+                return categoryDemand;
+            }
+
+            int demandSeed = Gen.HashCombineInt(seed, def.shortHash, 0x4445_4D44, 0);
+            Rand.PushState(demandSeed);
+            try
+            {
+                return Mathf.Max(0.02f, categoryDemand * Rand.Range(0.55f, 1.45f));
+            }
+            finally
+            {
+                Rand.PopState();
+            }
         }
 
         public float SupplyFor(IntercolonyProductCategory category)

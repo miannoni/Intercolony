@@ -244,7 +244,7 @@ namespace Intercolony
             int found = 0;
             foreach (Thing thing in ColonyCandidates(map, order.line.thingDef))
             {
-                if (!thing.IsInAnyStorage())
+                if (!IsAvailableColonyStock(thing))
                 {
                     continue;
                 }
@@ -303,7 +303,7 @@ namespace Intercolony
             List<Thing> matching = new List<Thing>();
             foreach (Thing thing in ColonyCandidates(map, order.line.thingDef))
             {
-                if (thing.IsInAnyStorage() && Matches(order.line, thing, out _))
+                if (IsAvailableColonyStock(thing) && Matches(order.line, thing, out _))
                 {
                     matching.Add(thing);
                 }
@@ -332,11 +332,27 @@ namespace Intercolony
             return wanted - remaining;
         }
 
+        /// <summary>
+        /// Whether a map Thing is stored stock that can physically leave the colony.
+        /// </summary>
+        public static bool IsAvailableColonyStock(Thing thing)
+        {
+            if (thing == null || !thing.IsInAnyStorage())
+            {
+                return false;
+            }
+
+            // A storage building occupies its own storage cells and therefore reports stored.
+            // Only its MinifiedThing wrapper represents a packed building that can travel.
+            return thing is MinifiedThing || thing.def.category != ThingCategory.Building;
+        }
+
         private static IEnumerable<Thing> ColonyCandidates(Map map, ThingDef requestedDef)
         {
             // The requested def's index cannot contain minified furniture because the wrapper
-            // has a MinifiedThing def. Include that narrow group so installed and packed forms
-            // still answer the same order without scanning every thing on the map.
+            // has a MinifiedThing def. Include that narrow group so packed forms answer the
+            // same order without scanning every thing on the map; installed forms are rejected
+            // by IsAvailableColonyStock.
             if (!ThingRequestGroup.MinifiedThing.Includes(requestedDef))
             {
                 foreach (Thing thing in map.listerThings.ThingsOfDef(requestedDef))

@@ -115,6 +115,20 @@ namespace Intercolony
         private BuyerColumn buyerSortColumn = BuyerColumn.Total;
         private bool buyerSortDescending = true;
 
+        private enum QuoteColumn
+        {
+            Supplier = 0,
+            Quantity = 1,
+            UnitPrice = 2,
+            Total = 3,
+            LeadTime = 4,
+            Fulfillment = 5,
+            Distance = 6
+        }
+
+        private QuoteColumn quoteSortColumn = QuoteColumn.Quantity;
+        private bool quoteSortDescending = true;
+
         /// <summary>Minimum total value filter (§53 "minimum value").</summary>
         private int minValueFilter;
 
@@ -856,19 +870,26 @@ namespace Intercolony
         /// Unit rate a buyer pays for this lot size. Re-computed rather than reused, so the
         /// confirmation slider moves the per-unit price the way saturation says it should (§13).
         /// </summary>
-        private static float SellRateFor(BuyerOffer offer, int quantity)
+        private static float SellRateFor(
+            BuyerOffer offer, int quantity, FulfillmentMode fulfillment)
         {
+            float rate;
             if (offer?.def == null || offer.profile == null)
             {
-                return offer?.unitPrice ?? 0f;
+                rate = offer?.unitPrice ?? 0f;
+            }
+            else
+            {
+                IntercolonyProductCategory category =
+                    IntercolonyProductClassifier.Classify(offer.def)
+                    ?? IntercolonyProductCategory.Commodities;
+
+                rate = IntercolonyPricing.UnitPrice(
+                    offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
+                    category, offer.distanceTiles, null, out _);
             }
 
-            IntercolonyProductCategory category =
-                IntercolonyProductClassifier.Classify(offer.def) ?? IntercolonyProductCategory.Commodities;
-
-            return IntercolonyPricing.UnitPrice(
-                offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
-                category, offer.distanceTiles, null, out _);
+            return rate * IntercolonyPricing.LogisticsFactor(fulfillment).multiplier;
         }
 
         /// <summary>Profile for a settlement id, or null if it is gone. Used for live re-pricing.</summary>
@@ -1298,22 +1319,27 @@ namespace Intercolony
                 "Sell to this buyer?",
                 "Create order",
                 offer.quantity,
-                qty =>
+                (qty, fulfillment) =>
                 {
-                    float rate = SellRateFor(offer, qty);
-                    return $"Commit to delivering {qty}x {offer.def.LabelCap} to " +
+                    float rate = SellRateFor(offer, qty, fulfillment);
+                    string logistics = fulfillment == FulfillmentMode.BuyerPickup
+                        ? "The buyer collects: no caravan needed, but they pay less for handling it."
+                        : "You deliver: a caravan trip, paid at a premium for taking it on.";
+                    return $"Commit to supplying {qty}x {offer.def.LabelCap} to " +
                            $"{offer.settlement?.Label} within {DeadlineDays} days.\n\n" +
                            $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
                            $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
+                           logistics + "\n\n" +
                            "This is a binding order. Your stock is not reserved — anything the colony " +
                            "consumes in the meantime still has to be replaced before the deadline." +
                            (qty < offer.quantity ? "\n\nA smaller lot earns a better rate per unit." : "");
                 },
-                qty =>
+                (qty, fulfillment) =>
                 {
                     BuyerOffer priced = offer;
-                    priced.unitPrice = SellRateFor(offer, qty);
-                    if (SalesOrderService.CreateFromOffer(state, priced, qty, DeadlineDays) != null)
+                    priced.unitPrice = SellRateFor(offer, qty, fulfillment);
+                    if (SalesOrderService.CreateFromOffer(
+                            state, priced, qty, DeadlineDays, fulfillment) != null)
                     {
                         tab = Tab.Orders;
                         findBuyerCache = null;
@@ -1784,8 +1810,16 @@ namespace Intercolony
             }
         }
 
-        private const float RequestHeaderHeight = 46f;
+        private const float RequestSummaryHeight = 46f;
+        private const float QuoteHeaderHeight = 24f;
+        private const float RequestHeaderHeight = RequestSummaryHeight + QuoteHeaderHeight;
         private const float QuoteRowHeight = 26f;
+
+        private static readonly float[] QuoteColumnWidths =
+            { 0.23f, 0.12f, 0.11f, 0.12f, 0.10f, 0.13f, 0.08f, 0.11f };
+
+        private static readonly string[] QuoteColumnLabels =
+            { "Supplier", "Offered", "Unit", "Total", "Lead", "Terms", "Dist", "" };
 
         private static float RequestBlockHeight(PurchaseRequest request)
         {
@@ -1795,7 +1829,7 @@ namespace Intercolony
 
         private void DrawRequestBlock(Rect rect, PurchaseRequest request, IntercolonyWorldComponent state)
         {
-            Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, RequestHeaderHeight));
+            Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, RequestSummaryHeight));
 
             string header = $"#{request.id}  {request.quantityRequested}x {request.ItemLabel()}";
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width - 200f, 22f), header);
@@ -1805,7 +1839,8 @@ namespace Intercolony
             if (request.IsOpen)
             {
                 sub = request.AnyQuotes
-                    ? $"{request.quotes.Count} quote(s) — offers stand for {request.DaysRemaining:F1}d"
+                    ? $"{request.quotes.Count} quote(s) — offers stand for {request.DaysRemaining:F1}d — " +
+                      RequestFulfillmentLabel(request.fulfillmentPreference)
                     : $"No supplier answered: {request.noResponseReason}";
                 if (!request.AnyQuotes)
                 {
@@ -1831,6 +1866,10 @@ namespace Intercolony
                 }
             }
 
+            Rect quoteArea = new Rect(
+                rect.x + 16f, rect.y + RequestSummaryHeight, rect.width - 24f, QuoteHeaderHeight);
+            DrawQuoteHeader(quoteArea);
+
             float rowY = rect.y + RequestHeaderHeight;
             if (request.quotes.Count == 0)
             {
@@ -1841,7 +1880,9 @@ namespace Intercolony
                 return;
             }
 
-            foreach (Quotation quote in request.quotes)
+            List<Quotation> quotes = new List<Quotation>(request.quotes);
+            SortQuotes(quotes);
+            foreach (Quotation quote in quotes)
             {
                 DrawQuoteRow(new Rect(rect.x + 16f, rowY, rect.width - 24f, QuoteRowHeight),
                     quote, request);
@@ -1855,35 +1896,43 @@ namespace Intercolony
 
             bool partial = quote.quantityOffered < request.quantityRequested;
 
-            Widgets.Label(new Rect(rect.x, rect.y + 2f, rect.width * 0.26f, 22f), quote.settlementName);
+            Rect Cell(int index)
+            {
+                float x = rect.x;
+                for (int i = 0; i < index; i++)
+                {
+                    x += rect.width * QuoteColumnWidths[i];
+                }
+
+                return new Rect(x, rect.y + 2f,
+                    rect.width * QuoteColumnWidths[index] - 4f, 22f);
+            }
+
+            Widgets.Label(Cell(0), quote.settlementName);
 
             // A partial quote is flagged, not hidden: §20 makes partial answers a first-class
             // outcome, and combining two suppliers is a legitimate move.
             GUI.color = partial ? new Color(0.9f, 0.8f, 0.5f) : Color.white;
-            Widgets.Label(new Rect(rect.x + rect.width * 0.26f, rect.y + 2f, rect.width * 0.16f, 22f),
+            Widgets.Label(Cell(1),
                 partial
                     ? $"{quote.quantityOffered} of {request.quantityRequested}"
                     : $"{quote.quantityOffered}");
             GUI.color = Color.white;
 
-            Widgets.Label(new Rect(rect.x + rect.width * 0.42f, rect.y + 2f, rect.width * 0.14f, 22f),
-                $"{quote.unitPrice:F2}");
-            Widgets.Label(new Rect(rect.x + rect.width * 0.56f, rect.y + 2f, rect.width * 0.14f, 22f),
-                quote.TotalPrice.ToString());
-            Widgets.Label(new Rect(rect.x + rect.width * 0.70f, rect.y + 2f, rect.width * 0.16f, 22f),
-                $"{quote.FulfillmentLabel}, {quote.leadTimeDays}d");
+            Widgets.Label(Cell(2), $"{quote.unitPrice:F2}");
+            Widgets.Label(Cell(3), quote.TotalPrice.ToString());
+            Widgets.Label(Cell(4), $"{quote.leadTimeDays}d");
+            Widgets.Label(Cell(5), quote.FulfillmentLabel);
+            Widgets.Label(Cell(6), quote.distanceTiles < 0f ? "?" : $"{quote.distanceTiles:F0} t");
             if (request.IsOpen)
             {
-                Rect buyRect = new Rect(rect.xMax - 66f, rect.y + 1f, 62f, 24f);
+                Rect actionCell = Cell(7);
+                Rect buyRect = new Rect(
+                    actionCell.x, rect.y + 1f, Mathf.Min(62f, actionCell.width), 24f);
                 if (Widgets.ButtonText(buyRect, "Buy"))
                 {
                     ConfirmPurchase(request, quote);
                 }
-            }
-            else
-            {
-                Widgets.Label(new Rect(rect.x + rect.width * 0.86f, rect.y + 2f, rect.width * 0.14f, 22f),
-                    quote.distanceTiles < 0f ? "?" : $"{quote.distanceTiles:F0} t");
             }
 
             if (ShouldBuildTooltip(rect))
@@ -1898,6 +1947,108 @@ namespace Intercolony
                     $"{(quote.supplierDelivers ? "They deliver it" : "You collect it")}, " +
                     $"ready in {quote.leadTimeDays} days\n\n" +
                     quote.priceExplanation);
+            }
+        }
+
+        private void DrawQuoteHeader(Rect rect)
+        {
+            float x = rect.x;
+            for (int i = 0; i < QuoteColumnLabels.Length; i++)
+            {
+                float width = rect.width * QuoteColumnWidths[i];
+                Rect cell = new Rect(x, rect.y, width - 4f, rect.height);
+                if (i >= QuoteColumnLabels.Length - 1)
+                {
+                    x += width;
+                    continue;
+                }
+
+                bool active = (int)quoteSortColumn == i;
+                Widgets.DrawHighlightIfMouseover(cell);
+                GUI.color = active ? Color.white : new Color(1f, 1f, 1f, 0.6f);
+                Widgets.Label(cell,
+                    QuoteColumnLabels[i] + (active ? (quoteSortDescending ? " v" : " ^") : ""));
+                GUI.color = Color.white;
+
+                if (Widgets.ButtonInvisible(cell))
+                {
+                    if (active)
+                    {
+                        quoteSortDescending = !quoteSortDescending;
+                    }
+                    else
+                    {
+                        quoteSortColumn = (QuoteColumn)i;
+                        quoteSortDescending = quoteSortColumn == QuoteColumn.Quantity ||
+                                              quoteSortColumn == QuoteColumn.UnitPrice ||
+                                              quoteSortColumn == QuoteColumn.Total;
+                    }
+
+                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+                }
+
+                x += width;
+            }
+        }
+
+        private void SortQuotes(List<Quotation> quotes)
+        {
+            Comparison<Quotation> comparison;
+            switch (quoteSortColumn)
+            {
+                case QuoteColumn.Supplier:
+                    comparison = (a, b) => string.Compare(
+                        a.settlementName ?? "", b.settlementName ?? "",
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case QuoteColumn.Quantity:
+                    comparison = (a, b) => a.quantityOffered.CompareTo(b.quantityOffered);
+                    break;
+                case QuoteColumn.UnitPrice:
+                    comparison = (a, b) => a.unitPrice.CompareTo(b.unitPrice);
+                    break;
+                case QuoteColumn.LeadTime:
+                    comparison = (a, b) => a.leadTimeDays.CompareTo(b.leadTimeDays);
+                    break;
+                case QuoteColumn.Fulfillment:
+                    comparison = (a, b) => a.supplierDelivers.CompareTo(b.supplierDelivers);
+                    break;
+                case QuoteColumn.Distance:
+                    comparison = (a, b) => SortableQuoteDistance(a).CompareTo(SortableQuoteDistance(b));
+                    break;
+                default:
+                    comparison = (a, b) => a.TotalPrice.CompareTo(b.TotalPrice);
+                    break;
+            }
+
+            quotes.Sort((a, b) =>
+            {
+                int result = comparison(a, b);
+                if (result != 0)
+                {
+                    return quoteSortDescending ? -result : result;
+                }
+
+                return a.id.CompareTo(b.id);
+            });
+        }
+
+        private static float SortableQuoteDistance(Quotation quote)
+        {
+            return quote.distanceTiles < 0f ? float.MaxValue : quote.distanceTiles;
+        }
+
+        private static string RequestFulfillmentLabel(
+            ProcurementFulfillmentPreference preference)
+        {
+            switch (preference)
+            {
+                case ProcurementFulfillmentPreference.SupplierDelivers:
+                    return "supplier delivery only";
+                case ProcurementFulfillmentPreference.PlayerPickup:
+                    return "collection only";
+                default:
+                    return "delivery or collection";
             }
         }
 
