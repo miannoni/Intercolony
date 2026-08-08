@@ -124,7 +124,8 @@ namespace Intercolony
             contract.ResumeWork(WorkRefusalReason.UnpaidWages);
             EmployerReputationService.NoteArrearsCleared(IntercolonyWorldComponent.Current);
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
                 "Wages settled",
                 $"{contract.workerName} has been paid {paid} silver, clearing what was owed.\n\n" +
                 (refusingOverWages
@@ -155,7 +156,8 @@ namespace Intercolony
             {
                 contract.HoldWork(WorkRefusalReason.UnpaidWages);
 
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
                     "Employee has stopped working",
                     $"{contract.workerName} has not been paid {contract.missedPayments} times running and " +
                     "has downed tools.\n\n" + money + "\n\n" +
@@ -168,7 +170,8 @@ namespace Intercolony
             }
 
             // §39 step 2: a warning, before anything actually breaks.
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Payroll missed",
                 $"{contract.workerName}'s wages could not be paid in full.\n\n" + money + "\n\n" +
                 $"They are owed {contract.arrearsSilver} silver, payable from the Labor tab. " +
@@ -407,7 +410,8 @@ namespace Intercolony
                 $"{debt.workerName}, {debt.KindLabel()}");
             EmployerReputationService.NoteDebtSettled(IntercolonyWorldComponent.Current, debt);
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
                 "Debt settled",
                 $"{settled} silver has been sent to {debt.settlementName} to cover " +
                 $"{debt.KindLabel()} for {debt.workerName}.\n\n" +

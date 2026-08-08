@@ -194,6 +194,7 @@ namespace Intercolony
             int forcedPickupQuotes = 0;
             int wrongForcedModes = 0;
             int missingLogisticsFactors = 0;
+            int missingEconomyFactors = 0;
             for (int i = 0; i < tradable.Count && i < 8; i++)
             {
                 ThingDef def = tradable[i];
@@ -214,6 +215,10 @@ namespace Intercolony
                         {
                             missingLogisticsFactors++;
                         }
+                        if (!quote.priceExplanation.Contains("Economy difficulty"))
+                        {
+                            missingEconomyFactors++;
+                        }
                     }
                 }
 
@@ -227,6 +232,10 @@ namespace Intercolony
                         if (!quote.priceExplanation.Contains("You collect"))
                         {
                             missingLogisticsFactors++;
+                        }
+                        if (!quote.priceExplanation.Contains("Economy difficulty"))
+                        {
+                            missingEconomyFactors++;
                         }
                     }
                 }
@@ -243,6 +252,8 @@ namespace Intercolony
                 $"{wrongForcedModes} quote(s) contradicted the request");
             Check("quote explanations include fulfillment cost", missingLogisticsFactors == 0,
                 $"{missingLogisticsFactors} quote(s) omitted it");
+            Check("quote explanations name the economy difficulty setting", missingEconomyFactors == 0,
+                $"{missingEconomyFactors} quote(s) omitted it");
             Check("supplier delivery costs more than collection",
                 RfqService.ProcurementLogisticsFactor(true).multiplier >
                 RfqService.ProcurementLogisticsFactor(false).multiplier);

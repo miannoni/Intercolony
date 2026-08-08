@@ -168,7 +168,8 @@ namespace Intercolony
             {
                 contract.HoldWork(WorkRefusalReason.CombatMisuse);
 
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
                     "Employee refuses to work",
                     terms + "\n\n" + exposure + "\n\n" +
                     "They have downed tools and will not pick them up again this term. There is " +
@@ -179,7 +180,8 @@ namespace Intercolony
                 return;
             }
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Combat clause breached",
                 terms + "\n\n" + exposure + "\n\n" +
                 "Word of this reaches other settlements, and their opinion of you as an employer " +

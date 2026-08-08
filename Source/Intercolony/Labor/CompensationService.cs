@@ -232,7 +232,8 @@ namespace Intercolony
                   "covered and is now a debt to " + contract.settlementName + "."
                 : $"{owed} silver has been paid to {contract.settlementName}.";
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 shortfall > 0 ? "Compensation unpaid" : "Compensation paid",
                 explanation + "\n\n" + money,
                 shortfall > 0 ? LetterDefOf.NegativeEvent : LetterDefOf.NeutralEvent);

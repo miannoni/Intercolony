@@ -114,16 +114,25 @@ namespace Intercolony
                 ? $"Posts ({posts}) — {applicants} waiting"
                 : posts > 0 ? $"Posts ({posts})" : "Posts";
 
-            DrawLaborTab(new Rect(rect.x, rect.y, 150f, rect.height), LaborPage.Hire, "Hire", false);
-            DrawLaborTab(new Rect(rect.x + 154f, rect.y, 220f, rect.height), LaborPage.Posts,
-                postLabel, applicants > 0);
-            DrawLaborTab(new Rect(rect.x + 378f, rect.y, 180f, rect.height), LaborPage.Employees,
-                employees > 0 ? $"Employees ({employees})" : "Employees", false);
+            string employeeLabel = employees > 0 ? $"Employees ({employees})" : "Employees";
+            string[] labels = { "Hire", postLabel, employeeLabel };
+            float[] widths = MeasureTabWidths(rect.width, labels, 4f);
+
+            float x = rect.x;
+            DrawLaborTab(new Rect(x, rect.y, widths[0], rect.height), LaborPage.Hire, labels[0],
+                false, state);
+            x += widths[0] + 4f;
+            DrawLaborTab(new Rect(x, rect.y, widths[1], rect.height), LaborPage.Posts, labels[1],
+                applicants > 0, state);
+            x += widths[1] + 4f;
+            DrawLaborTab(new Rect(x, rect.y, widths[2], rect.height), LaborPage.Employees, labels[2],
+                false, state);
 
             Widgets.DrawLineHorizontal(rect.x, rect.yMax, rect.width);
         }
 
-        private void DrawLaborTab(Rect rect, LaborPage page, string label, bool attention)
+        private void DrawLaborTab(
+            Rect rect, LaborPage page, string label, bool attention, IntercolonyWorldComponent state)
         {
             bool selected = laborPage == page;
 
@@ -147,6 +156,7 @@ namespace Intercolony
             if (!selected && Widgets.ButtonInvisible(rect))
             {
                 laborPage = page;
+                SelectTab(Tab.Labor, state);
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
             }
         }

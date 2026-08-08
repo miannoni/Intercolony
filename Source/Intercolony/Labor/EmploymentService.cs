@@ -388,7 +388,8 @@ namespace Intercolony
                         if (!contract.termLapsedNotified)
                         {
                             contract.termLapsedNotified = true;
-                            Find.LetterStack.ReceiveLetter(
+                            IntercolonyLetters.Send(
+                                IntercolonyLetterImportance.Important,
                                 "Employment ended",
                                 $"{contract.workerName}'s {(byNotice ? "notice" : "term")} has ended, but they " +
                                 "are away from the colony and cannot leave from where they are.\n\n" +
@@ -554,7 +555,8 @@ namespace Intercolony
                 if (!contract.termLapsedNotified)
                 {
                     contract.termLapsedNotified = true;
-                    Find.LetterStack.ReceiveLetter(
+                    IntercolonyLetters.Send(
+                        IntercolonyLetterImportance.Always,
                         "Released employee is away",
                         $"{contract.workerName}'s contract has ended — their faction is at war with you " +
                         "— but they are travelling with one of your caravans and cannot leave from " +
@@ -600,7 +602,8 @@ namespace Intercolony
             // quest hands them a LordJob_ExitMapBest under their own faction, so they keep walking.
             // What changes is that everything in the colony now counts them as an enemy while they
             // do it. A letter promising an attack that never comes would be worse than no letter.
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Safe passage expired",
                 $"{contract.workerName} did not get clear of the colony in time and has rejoined " +
                 $"{contract.factionName}.\n\n" +
@@ -763,7 +766,8 @@ namespace Intercolony
                 // spent a week on the road has not earned a week's wage.
                 PayrollService.BeginPayroll(contract);
 
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Important,
                     "Employee arrived",
                     $"{contract.workerName} of {contract.factionName} has arrived from {contract.settlementName} " +
                     $"to work for {contract.termDays} days.\n\n" +
@@ -928,17 +932,22 @@ namespace Intercolony
                           $"Term: {contract.termDays} days at {contract.dailyWage} silver/day, " +
                           $"{contract.paidSilver} silver paid in advance.";
 
+            IntercolonyLetterImportance importance =
+                status == EmploymentStatus.Completed || status == EmploymentStatus.Dismissed
+                    ? IntercolonyLetterImportance.Important
+                    : IntercolonyLetterImportance.Always;
+
             // Deliberately says nothing about refunds. Nothing else in RimWorld or Intercolony
             // refunds anything, so raising the subject is what would make a player expect one.
 
             // A worker who left the map has no target to look at; one still walking out does.
             if (worker != null && worker.Spawned)
             {
-                Find.LetterStack.ReceiveLetter(label, body, def, worker);
+                IntercolonyLetters.Send(importance, label, body, def, worker);
             }
             else
             {
-                Find.LetterStack.ReceiveLetter(label, body, def);
+                IntercolonyLetters.Send(importance, label, body, def);
             }
         }
 

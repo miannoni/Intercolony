@@ -103,7 +103,8 @@ namespace Intercolony
                   "settlement holding it is now an enemy, and there is nobody left to ask."
                 : "\n\nNothing had been paid, so nothing is lost.";
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Employee turned back",
                 $"{contract.factionName} is now at war with your colony.\n\n" +
                 $"{contract.workerName}, who was travelling here from {contract.settlementName} to work " +
@@ -143,7 +144,8 @@ namespace Intercolony
             // out of the caravan and leave them nowhere. Hold, and finish when they are back.
             bool offMap = !worker.Spawned;
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Employee released — war",
                 $"{contract.factionName} is now at war with your colony.\n\n" +
                 $"{contract.workerName}'s contract ends today. They are not a combatant and will not " +
@@ -231,7 +233,8 @@ namespace Intercolony
 
             if (sendLetter)
             {
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
                     "Order cancelled — war",
                     $"{order.settlementName} is now at war with your colony. Your order for " +
                     $"{order.Quantity}x {order.ThingDef?.label ?? "goods"} is void.\n\n" +
@@ -289,7 +292,8 @@ namespace Intercolony
 
             if (sendLetter)
             {
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
                     "Order lost to war",
                     $"{order.settlementName} is now at war with your colony. Your order for " +
                     $"{order.quantity}x {order.ItemLabel()} is void.\n\n" +
@@ -368,7 +372,8 @@ namespace Intercolony
 
             if (sendLetter)
             {
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
                     "Supply agreement suspended",
                     $"{contract.settlementName} is now at war with your colony.\n\n" +
                     $"Your agreement — {contract.quantityPerCycle}x {contract.ItemLabel()} every " +
@@ -408,7 +413,8 @@ namespace Intercolony
                 return true;
             }
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Supply agreement resumed",
                 $"Relations with {contract.settlementName} have recovered and your supply agreement " +
                 "is live again.\n\n" +

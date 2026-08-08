@@ -78,7 +78,8 @@ namespace Intercolony
                 // so, and says why, while the player can still do something about the next one.
                 contract.renewalDeclinedByWorker = true;
 
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Important,
                     "No renewal offered",
                     $"{contract.workerName}'s term ends in {Mathf.Max(0f, contract.DaysRemaining):0.#} days, " +
                     "and they have not asked to stay on.\n\n" + refusal,
@@ -88,7 +89,8 @@ namespace Intercolony
 
             contract.renewalWage = RenewalWage(contract);
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 $"{contract.workerName} would like to stay",
                 $"{contract.workerName}'s {contract.termDays}-day term ends in " +
                 $"{Mathf.Max(0f, contract.DaysRemaining):0.#} days, and they have asked to stay on.\n\n" +
@@ -276,7 +278,8 @@ namespace Intercolony
             contract.renewalOffered = true;
             contract.renewalDeclinedByPlayer = true;
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
                 "Notice given",
                 $"{contract.workerName} has been given {days} days' notice.\n\n" +
                 "They keep working and keep drawing wages until it runs out, then go home. Nothing " +

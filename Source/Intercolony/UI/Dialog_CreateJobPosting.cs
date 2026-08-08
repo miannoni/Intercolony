@@ -210,27 +210,32 @@ namespace Intercolony
             y = DrawRateAdvice(inRect, y);
 
             // --- Commit ---
-            float bottom = inRect.height - 40f;
-
             int total = WageStructureUtility.TotalCost(structure, wageOffered, termDays) * positions;
             int death = wageOffered * clause.DeathCompensationDays();
+            string totalSummary =
+                $"If every position is filled and served out: {total} silver across {positions} " +
+                $"worker{(positions == 1 ? "" : "s")}.";
+            string deathSummary = $"Compensation if one of them dies: {death} silver each.";
+            float totalSummaryHeight = Text.CalcHeight(totalSummary, inRect.width);
+            float deathSummaryHeight = Text.CalcHeight(deathSummary, inRect.width);
+
+            y += 8f;
 
             GUI.color = new Color(1f, 1f, 1f, 0.7f);
-            Widgets.Label(new Rect(0f, bottom - 48f, inRect.width, 24f),
-                $"If every position is filled and served out: {total} silver across {positions} " +
-                $"worker{(positions == 1 ? "" : "s")}.");
-            Widgets.Label(new Rect(0f, bottom - 26f, inRect.width, 24f),
-                $"Compensation if one of them dies: {death} silver each.");
+            Widgets.Label(new Rect(0f, y, inRect.width, totalSummaryHeight), totalSummary);
+            y += totalSummaryHeight + 2f;
+            Widgets.Label(new Rect(0f, y, inRect.width, deathSummaryHeight), deathSummary);
             GUI.color = Color.white;
+            y += deathSummaryHeight + 8f;
 
-            if (Widgets.ButtonText(new Rect(0f, bottom, 170f, 36f), "Post"))
+            if (Widgets.ButtonText(new Rect(0f, y, 170f, 36f), "Post"))
             {
                 onConfirm?.Invoke(skill, minLevel, positions, termDays, wageOffered, structure,
                     clause, lifespanDays);
                 Close();
             }
 
-            if (Widgets.ButtonText(new Rect(inRect.width - 130f, bottom, 120f, 36f), "Cancel"))
+            if (Widgets.ButtonText(new Rect(inRect.width - 130f, y, 120f, 36f), "Cancel"))
             {
                 Close();
             }
@@ -273,23 +278,26 @@ namespace Intercolony
         {
             if (!rateValid)
             {
+                string advice = skill == null
+                    ? "Nobody is reachable for work at all right now. Check the Hire tab."
+                    : $"Nobody reachable has {skill.skillLabel.CapitalizeFirst()} {minLevel}+. " +
+                      "You can still post — the market changes — but expect a wait.";
+                float adviceHeight = Text.CalcHeight(advice, inRect.width);
                 GUI.color = new Color(1f, 0.8f, 0.5f);
-                Widgets.Label(new Rect(0f, y, inRect.width, 44f),
-                    skill == null
-                        ? "Nobody is reachable for work at all right now. Check the Hire tab."
-                        : $"Nobody reachable has {skill.skillLabel.CapitalizeFirst()} {minLevel}+. " +
-                          "You can still post — the market changes — but expect a wait.");
+                Widgets.Label(new Rect(0f, y, inRect.width, adviceHeight), advice);
                 GUI.color = Color.white;
-                return y + 48f;
+                return y + adviceHeight + 4f;
             }
 
-            GUI.color = new Color(1f, 1f, 1f, 0.75f);
-            Widgets.Label(new Rect(0f, y, inRect.width, 44f),
+            string marketGuidance =
                 $"{qualified} reachable worker{(qualified == 1 ? "" : "s")} can do this. " +
                 $"For {termDays} days as a {clause.Label()} they ask " +
-                $"{rateLow} to {rateHigh} silver a day.");
+                $"{rateLow} to {rateHigh} silver a day.";
+            float marketGuidanceHeight = Text.CalcHeight(marketGuidance, inRect.width);
+            GUI.color = new Color(1f, 1f, 1f, 0.75f);
+            Widgets.Label(new Rect(0f, y, inRect.width, marketGuidanceHeight), marketGuidance);
             GUI.color = Color.white;
-            y += 26f;
+            y += marketGuidanceHeight + 4f;
 
             string verdict;
             Color colour;
@@ -317,9 +325,10 @@ namespace Intercolony
             }
 
             GUI.color = colour;
-            Widgets.Label(new Rect(0f, y, inRect.width, 44f), verdict);
+            float verdictHeight = Text.CalcHeight(verdict, inRect.width);
+            Widgets.Label(new Rect(0f, y, inRect.width, verdictHeight), verdict);
             GUI.color = Color.white;
-            return y + 48f;
+            return y + verdictHeight + 4f;
         }
 
         /// <summary>

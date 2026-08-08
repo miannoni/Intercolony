@@ -205,8 +205,33 @@ namespace Intercolony
                 {
                     Check("accepted order is open", accepted.IsOpen);
                     Check("accepted order records the offer", accepted.opportunityId == offerId);
-                    Check("accepted order price matches the offer",
-                        Mathf.Abs(accepted.unitPrice - offer.unitPrice) < 0.001f);
+                    float expectedAcceptedPrice = IntercolonyPricing.RepriceForQuantity(
+                        offer,
+                        state.GetProfile(IntercolonyMarketAccess.FindSettlement(offer.settlementId)),
+                        offer.quantity,
+                        out _);
+                    Check("accepted order price matches the current quoted terms",
+                        Mathf.Abs(accepted.unitPrice - expectedAcceptedPrice) < 0.001f);
+
+                    float agreedUnitPrice = accepted.unitPrice;
+                    int agreedPayment = accepted.TotalPayment;
+                    float previousEconomyDifficulty = IntercolonyMod.Settings.economyDifficulty;
+                    try
+                    {
+                        IntercolonyMod.Settings.economyDifficulty = previousEconomyDifficulty ==
+                            IntercolonySettings.MinEconomyDifficulty
+                                ? IntercolonySettings.MaxEconomyDifficulty
+                                : IntercolonySettings.MinEconomyDifficulty;
+                        Check("accepted price survives an economy difficulty change",
+                            Mathf.Approximately(accepted.unitPrice, agreedUnitPrice) &&
+                            accepted.TotalPayment == agreedPayment,
+                            $"{accepted.unitPrice:F2} each, {accepted.TotalPayment} total");
+                    }
+                    finally
+                    {
+                        IntercolonyMod.Settings.economyDifficulty = previousEconomyDifficulty;
+                    }
+
                     Check("accepted order preserves the condition floor",
                         accepted.line.minHitPointsPercent == offer.minHitPointsPercent,
                         $"{accepted.line.minHitPointsPercent} vs {offer.minHitPointsPercent}");

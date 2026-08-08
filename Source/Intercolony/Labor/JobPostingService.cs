@@ -347,7 +347,8 @@ namespace Intercolony
                 posting.emptyCycles = 0;
                 posting.noAnswerNotified = false;
 
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
                     arrived == 1 ? "1 applicant" : $"{arrived} applicants",
                     $"Your posting — {posting.Headline()} — drew " +
                     (arrived == 1 ? "an applicant" : $"{arrived} applicants") + ".\n\n" +
@@ -370,7 +371,8 @@ namespace Intercolony
 
             posting.noAnswerNotified = true;
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Chatty,
                 "No applicants",
                 $"Your posting — {posting.Headline()} — drew no replies.\n\n" +
                 ExplainSilence(state, posting, standing),
@@ -477,7 +479,8 @@ namespace Intercolony
                             ? $"Expired after filling {posting.hired} of {posting.positions}."
                             : "Expired without filling any position.");
 
-                    Find.LetterStack.ReceiveLetter(
+                    IntercolonyLetters.Send(
+                        IntercolonyLetterImportance.Important,
                         "Job posting expired",
                         $"Your posting — {posting.Headline()} — has come down.\n\n" +
                         posting.outcomeNote,

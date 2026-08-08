@@ -74,7 +74,8 @@ namespace Intercolony
                     state.AddContract(contract);
                     created++;
 
-                    Find.LetterStack.ReceiveLetter(
+                    IntercolonyLetters.Send(
+                        IntercolonyLetterImportance.Always,
                         "Supply agreement offered",
                         $"{settlement.Label} proposes a standing agreement:\n\n" +
                         $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
@@ -209,7 +210,7 @@ namespace Intercolony
             {
                 if (contract.IsOffer && now >= contract.offerExpiryTick)
                 {
-                    contract.TryDecline();
+                    contract.TryDecline("Offer lapsed unanswered.");
                     continue;
                 }
 
@@ -221,7 +222,8 @@ namespace Intercolony
                     contract.renewalExpiryTick = 0;
                     contract.outcomeNote += " Renewal offer lapsed unanswered.";
 
-                    Find.LetterStack.ReceiveLetter(
+                    IntercolonyLetters.Send(
+                        IntercolonyLetterImportance.Important,
                         "Renewal offer lapsed",
                         $"{contract.settlementName}'s offer to renew your supply agreement has expired " +
                         "unanswered.\n\nThey have made other arrangements.",
@@ -328,7 +330,8 @@ namespace Intercolony
                       (contract.cyclesFailed == 1 ? "y." : "ies.")
                     : " Not renewed: they do not trust the arrangement enough to repeat it.";
 
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Important,
                     "Supply agreement fulfilled",
                     $"You completed every remaining delivery of your agreement with " +
                     $"{contract.settlementName}.\n\n" + contract.outcomeNote + "\n\n" +
@@ -342,7 +345,8 @@ namespace Intercolony
             contract.renewalOffered = true;
             contract.renewalExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay;
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Supply agreement — renewal offered",
                 $"You completed every delivery of your agreement with {contract.settlementName}, " +
                 $"{contract.cyclesCompleted} of {contract.totalCycles}, without missing one.\n\n" +
@@ -437,7 +441,8 @@ namespace Intercolony
                 CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
                 rep?.Adjust(-20f);
 
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
                     "Supply agreement broken",
                     $"{contract.settlementName} has terminated your supply agreement after " +
                     $"{contract.consecutiveFailures} consecutive missed deliveries.\n\n" +
@@ -446,7 +451,8 @@ namespace Intercolony
             }
             else
             {
-                Find.LetterStack.ReceiveLetter(
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
                     "Delivery missed",
                     $"You missed a delivery to {contract.settlementName}. One more in a row and " +
                     "the agreement ends.",
@@ -493,7 +499,8 @@ namespace Intercolony
             contract.activeOrderId = order.id;
             contract.nextCycleTick = GenTicks.TicksGame + contract.cadenceTicks;
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Contract delivery due",
                 $"Delivery {contract.cyclesCompleted + contract.cyclesFailed + 1} of " +
                 $"{contract.totalCycles} for {contract.settlementName}:\n\n" +

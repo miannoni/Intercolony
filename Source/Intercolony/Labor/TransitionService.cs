@@ -155,7 +155,8 @@ namespace Intercolony
 
             int fee = ReleaseFee(state, contract);
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
                 $"{contract.workerName} has grown attached",
                 $"{contract.workerName} has worked here for {contract.TenureDays:0} days and would " +
                 "like to remain permanently.\n\n" +
@@ -310,7 +311,8 @@ namespace Intercolony
             EmployerReputationService.NoteTransitionSettled(state, contract);
             Convert(contract, $"{worker} was released by {faction} for {fee} silver and stayed");
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
                 $"{worker} has joined the colony",
                 $"{fee} silver has been paid to {faction}, and {worker} is released from their " +
                 "obligations to them.\n\n" +
@@ -353,7 +355,8 @@ namespace Intercolony
 
             bool nowHostile = HostilityPolicy.IsAtWar(employer);
 
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 $"{worker} has stayed",
                 $"{worker} is a colonist now. {faction} was not paid, and considers them stolen.\n\n" +
                 (nowHostile

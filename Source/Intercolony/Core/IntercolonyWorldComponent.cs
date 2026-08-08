@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
+using UnityEngine;
 using Verse;
 
 namespace Intercolony
@@ -29,10 +30,11 @@ namespace Intercolony
         public const int CurrentSaveVersion = 23;
 
         /// <summary>
-        /// How often the scheduled refresh fires, in ticks. One in-game day (60,000 ticks).
-        /// Coarse by design: never regenerate the economy per tick (DESIGN.md §59, §84).
+        /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
+        /// changes the next absolute-tick schedule without touching world state.
         /// </summary>
-        public const int RefreshIntervalTicks = 60000;
+        public static int RefreshIntervalTicks =>
+            Mathf.RoundToInt(IntercolonyMod.Settings.refreshDays * GenDate.TicksPerDay);
 
         /// <summary>Version this state was last written at. 0 means "predates versioning".</summary>
         private int saveVersion = CurrentSaveVersion;
@@ -1173,9 +1175,10 @@ namespace Intercolony
         /// The per-settlement cap alone is not enough: total demand scaled with the number of
         /// settlements, which is invisible on a small test map and produced 695 live offers on
         /// a full-size world. A flat ceiling keeps the market readable and keeps the refresh
-        /// cheap. The exact number is a first-pass guess; balance is §78.
+        /// cheap. This only gates new listings: lowering it never removes an existing listing or
+        /// reaches the separate collection of accepted orders.
         /// </summary>
-        public const int MaxLiveOpportunities = 60;
+        public static int MaxLiveOpportunities => IntercolonyMod.Settings.activeOpportunities;
 
         /// <summary>
         /// Fisher-Yates using a local seeded RNG, so shuffling cannot disturb the global

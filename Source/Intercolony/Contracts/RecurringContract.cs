@@ -163,14 +163,23 @@ namespace Intercolony
             return true;
         }
 
-        public bool TryDecline()
+        public bool TryDecline(string reason)
         {
             if (status != ContractStatus.Offered)
             {
                 return false;
             }
 
+            // A terminal agreement without an explanation is not a complete state: the Contracts
+            // tab cannot tell whether the player answered or the offer simply lapsed.
+            if (string.IsNullOrEmpty(reason))
+            {
+                IntercolonyLog.Warning($"Contract {id} cannot be declined without a reason.");
+                return false;
+            }
+
             status = ContractStatus.Declined;
+            outcomeNote = reason;
             return true;
         }
 

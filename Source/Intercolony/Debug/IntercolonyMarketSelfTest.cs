@@ -239,6 +239,11 @@ namespace Intercolony
 
                 Check("unit price is positive", price > 0f, price.ToString("F3"));
                 Check("breakdown has factors", factors.Count >= 3, $"count {factors.Count}");
+                PriceFactor economy = factors.Find(f => f.label == "Economy difficulty");
+                Check("breakdown names the economy difficulty setting",
+                    economy.label == "Economy difficulty" &&
+                    Mathf.Approximately(
+                        economy.multiplier, IntercolonyMod.Settings.economyDifficulty));
 
                 float reconstructed = sample.BaseMarketValue;
                 foreach (PriceFactor factor in factors)
@@ -672,14 +677,20 @@ namespace Intercolony
             // Regression guard: the per-settlement cap alone let total demand scale with world
             // size, reaching 695 live offers on a full-size map.
             int beforeRefreshes = state.Opportunities.Count;
+            int liveBeforeRefreshes = state.ActiveOpportunityCount;
             for (int i = 0; i < 12; i++)
             {
                 state.GenerateOpportunities();
             }
 
+            // Lowering the setting deliberately leaves existing offers alive. In that case the
+            // regression is growth above the starting count, not being temporarily over the new cap.
+            int effectiveCeiling = Mathf.Max(
+                liveBeforeRefreshes, IntercolonyWorldComponent.MaxLiveOpportunities);
             Check("live offers stay under the global ceiling",
-                state.ActiveOpportunityCount <= IntercolonyWorldComponent.MaxLiveOpportunities,
-                $"{state.ActiveOpportunityCount} live, ceiling {IntercolonyWorldComponent.MaxLiveOpportunities}");
+                state.ActiveOpportunityCount <= effectiveCeiling,
+                $"{state.ActiveOpportunityCount} live, ceiling " +
+                $"{IntercolonyWorldComponent.MaxLiveOpportunities}, started {liveBeforeRefreshes}");
             sb.AppendLine($"  (12 extra refreshes took live offers from {beforeRefreshes} to " +
                           $"{state.ActiveOpportunityCount}, ceiling {IntercolonyWorldComponent.MaxLiveOpportunities})");
 

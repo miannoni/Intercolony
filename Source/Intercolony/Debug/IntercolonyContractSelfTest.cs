@@ -61,10 +61,17 @@ namespace Intercolony
             Check("accepting an offer succeeds", probe.TryAccept());
             Check("accepted contract is active", probe.IsActive);
             Check("a second accept is refused", !probe.TryAccept());
-            Check("an active contract cannot be declined", !probe.TryDecline());
+            Check("an active contract cannot be declined",
+                !probe.TryDecline("Declined by the self-test."));
             Check("first delivery is a full cadence away",
                 probe.nextCycleTick >= GenTicks.TicksGame + probe.cadenceTicks - 10,
                 $"{probe.DaysUntilNextCycle:F1}d");
+
+            RecurringContract declined = MakeContract(state, subject, 3);
+            created.Add(declined);
+            Check("declining an offer records why",
+                declined.TryDecline("Declined by the self-test.") &&
+                declined.outcomeNote == "Declined by the self-test.");
 
             // --- Cycle machinery: does a multi-cycle contract actually cycle? ---
             RecurringContract runner = MakeContract(state, subject, 3);

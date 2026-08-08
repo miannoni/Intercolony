@@ -21,6 +21,9 @@ namespace Intercolony
     /// </summary>
     public class Dialog_HireWorker : Window
     {
+        private const float OptionsHeaderHeight = 26f;
+        private const float OptionsSectionGap = 6f;
+
         private readonly LaborCandidate candidate;
         private readonly SettlementEconomicProfile profile;
         private readonly Map map;
@@ -30,6 +33,7 @@ namespace Intercolony
         private int termDays;
         private string termBuffer;
         private WageStructure structure = WageStructure.Quadrum;
+        private Vector2 optionsScroll;
 
         /// <summary>
         /// §42's clause. Civilian by default because it is the cheapest and the most restrictive:
@@ -91,12 +95,14 @@ namespace Intercolony
             y += 36f;
             Text.Font = GameFont.Small;
 
-            GUI.color = new Color(1f, 1f, 1f, 0.75f);
-            Widgets.Label(new Rect(0f, y, inRect.width, 44f),
+            string candidateSummary =
                 $"{candidate.factionName}, from {candidate.settlementName}\n" +
-                $"{candidate.SkillSummary(4)}");
+                $"{candidate.SkillSummary(4)}";
+            float candidateSummaryHeight = Text.CalcHeight(candidateSummary, inRect.width);
+            GUI.color = new Color(1f, 1f, 1f, 0.75f);
+            Widgets.Label(new Rect(0f, y, inRect.width, candidateSummaryHeight), candidateSummary);
             GUI.color = Color.white;
-            y += 48f;
+            y += candidateSummaryHeight + 4f;
 
             int wage = DailyWage;
 
@@ -120,12 +126,16 @@ namespace Intercolony
                 SetTerm(maxTermDays);
             }
 
+            string termGuidance =
+                $"{candidate.minTermDays} to {maxTermDays} — they will not work for less";
+            float termGuidanceWidth = inRect.width - 288f;
+            float termGuidanceHeight = Text.CalcHeight(termGuidance, termGuidanceWidth);
             GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(282f, y + 3f, inRect.width - 288f, 24f),
-                $"{candidate.minTermDays} to {maxTermDays} — they will not work for less");
+            Widgets.Label(new Rect(282f, y + 3f, termGuidanceWidth, termGuidanceHeight),
+                termGuidance);
             GUI.color = Color.white;
 
-            y += 32f;
+            y += Mathf.Max(32f, termGuidanceHeight + 7f);
             int slid = Mathf.RoundToInt(Widgets.HorizontalSlider(
                 new Rect(0f, y + 4f, inRect.width, 20f), termDays, candidate.minTermDays, maxTermDays));
             if (slid != termDays)
@@ -145,11 +155,12 @@ namespace Intercolony
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
             }
 
-            Widgets.Label(new Rect(0f, y, inRect.width, 24f),
-                openEnded
-                    ? $"{wage} silver/day, open-ended \u2014 they stay until one of you ends it."
-                    : $"{wage} silver/day for {termDays} days.");
-            y += 26f;
+            string wageSummary = openEnded
+                ? $"{wage} silver/day, open-ended \u2014 they stay until one of you ends it."
+                : $"{wage} silver/day for {termDays} days.";
+            float wageSummaryHeight = Text.CalcHeight(wageSummary, inRect.width);
+            Widgets.Label(new Rect(0f, y, inRect.width, wageSummaryHeight), wageSummary);
+            y += wageSummaryHeight + 2f;
 
             if (termDays > candidate.minTermDays)
             {
@@ -158,37 +169,15 @@ namespace Intercolony
                     EmployerStanding, clause);
                 if (wage < atMinimum)
                 {
+                    string longerTerm =
+                        $"Longer term: {wage}/day instead of {atMinimum}/day at their minimum.";
+                    float longerTermHeight = Text.CalcHeight(longerTerm, inRect.width);
                     GUI.color = new Color(0.6f, 0.9f, 0.6f);
-                    Widgets.Label(new Rect(0f, y, inRect.width, 24f),
-                        $"Longer term: {wage}/day instead of {atMinimum}/day at their minimum.");
+                    Widgets.Label(new Rect(0f, y, inRect.width, longerTermHeight), longerTerm);
                     GUI.color = Color.white;
+                    y += longerTermHeight + 4f;
                 }
             }
-
-            y += 28f;
-
-            // --- Combat clause (§42) ---
-            //
-            // Above the wage structure on purpose. The clause changes the daily rate, so choosing
-            // it first means every structure below is priced against a rate the player has already
-            // settled — the same "compare, don't discover" standard §111 set.
-            Widgets.Label(new Rect(0f, y, inRect.width, 24f), "What they can be asked to do:");
-            y += 26f;
-
-            foreach (CombatClause option in CombatClauseUtility.All)
-            {
-                y = DrawClauseOption(inRect, y, option);
-            }
-
-            y += 6f;
-
-            // --- Wage structure (§37) ---
-            Widgets.Label(new Rect(0f, y, inRect.width, 24f), "How they are paid:");
-            y += 26f;
-
-            y = DrawStructureOption(inRect, y, WageStructure.Prepaid, wage);
-            y = DrawStructureOption(inRect, y, WageStructure.Quadrum, wage);
-            y = DrawStructureOption(inRect, y, WageStructure.Daily, wage);
 
             // --- Commit ---
             if (openEnded && structure == WageStructure.Prepaid)
@@ -203,6 +192,34 @@ namespace Intercolony
             bool affordable = available >= upFront;
 
             float bottom = inRect.height - 40f;
+            float optionsBottom = bottom - 34f;
+            Rect optionsRect = new Rect(0f, y, inRect.width, Mathf.Max(1f, optionsBottom - y));
+            float optionsWidth = optionsRect.width - 16f;
+            float optionsHeight = OptionsHeight(optionsWidth, wage);
+            Rect optionsView = new Rect(0f, 0f, optionsWidth, optionsHeight);
+
+            Widgets.BeginScrollView(optionsRect, ref optionsScroll, optionsView);
+            float optionY = 0f;
+
+            // The clause changes the daily rate, so it stays above the payment structures whose
+            // prices it controls. Only these choices scroll, keeping the commitment in view.
+            Widgets.Label(new Rect(0f, optionY, optionsWidth, 24f),
+                "What they can be asked to do:");
+            optionY += OptionsHeaderHeight;
+
+            foreach (CombatClause option in CombatClauseUtility.All)
+            {
+                optionY = DrawClauseOption(optionsWidth, optionY, option);
+            }
+
+            optionY += OptionsSectionGap;
+            Widgets.Label(new Rect(0f, optionY, optionsWidth, 24f), "How they are paid:");
+            optionY += OptionsHeaderHeight;
+
+            optionY = DrawStructureOption(optionsWidth, optionY, WageStructure.Prepaid, wage);
+            optionY = DrawStructureOption(optionsWidth, optionY, WageStructure.Quadrum, wage);
+            DrawStructureOption(optionsWidth, optionY, WageStructure.Daily, wage);
+            Widgets.EndScrollView();
 
             GUI.color = affordable ? new Color(1f, 1f, 1f, 0.7f) : new Color(1f, 0.6f, 0.6f);
             Widgets.Label(new Rect(0f, bottom - 26f, inRect.width, 24f),
@@ -229,10 +246,17 @@ namespace Intercolony
         /// the expensive one to lose, and seeing that before hiring is what stops the meat-shield
         /// strategy being discovered as a good idea and abandoned only after the bill arrives.
         /// </summary>
-        private float DrawClauseOption(Rect inRect, float y, CombatClause option)
+        private float DrawClauseOption(float width, float y, CombatClause option)
         {
-            const float RowHeight = 56f;
-            Rect row = new Rect(0f, y, inRect.width, RowHeight);
+            int optionWage = WageFor(option);
+            int death = optionWage * option.DeathCompensationDays();
+            string title = $"{option.LabelCap()} — {optionWage} silver/day, {death} silver if they die";
+            string explanation = option.Explain();
+            float textWidth = width - 40f;
+            float titleHeight = Text.CalcHeight(title, textWidth);
+            float explanationHeight = Text.CalcHeight(explanation, textWidth);
+            float rowHeight = OptionHeight(title, explanation, textWidth);
+            Rect row = new Rect(0f, y, width, rowHeight);
 
             if (clause == option)
             {
@@ -243,16 +267,13 @@ namespace Intercolony
                 Widgets.DrawHighlightIfMouseover(row);
             }
 
-            Widgets.RadioButton(new Vector2(4f, y + 14f), clause == option);
+            Widgets.RadioButton(new Vector2(4f, y + (rowHeight - 24f) / 2f), clause == option);
 
-            int optionWage = WageFor(option);
-            int death = optionWage * option.DeathCompensationDays();
-
-            Widgets.Label(new Rect(34f, y + 2f, inRect.width - 40f, 22f),
-                $"{option.LabelCap()} — {optionWage} silver/day, {death} silver if they die");
+            Widgets.Label(new Rect(34f, y + 2f, textWidth, titleHeight), title);
 
             GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(34f, y + 24f, inRect.width - 40f, 32f), option.Explain());
+            Widgets.Label(new Rect(34f, y + 4f + titleHeight, textWidth, explanationHeight),
+                explanation);
             GUI.color = Color.white;
 
             if (Widgets.ButtonInvisible(row) && clause != option)
@@ -261,7 +282,7 @@ namespace Intercolony
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
             }
 
-            return y + RowHeight;
+            return y + rowHeight;
         }
 
         /// <summary>
@@ -269,10 +290,15 @@ namespace Intercolony
         /// three at once is the point: the player compares, rather than picking blind and
         /// discovering the cost later.
         /// </summary>
-        private float DrawStructureOption(Rect inRect, float y, WageStructure option, int wage)
+        private float DrawStructureOption(float width, float y, WageStructure option, int wage)
         {
-            const float RowHeight = 52f;
-            Rect row = new Rect(0f, y, inRect.width, RowHeight);
+            string title = StructureTitle(option, wage);
+            string explanation = WageStructureUtility.Explain(option, wage, termDays);
+            float textWidth = width - 40f;
+            float titleHeight = Text.CalcHeight(title, textWidth);
+            float explanationHeight = Text.CalcHeight(explanation, textWidth);
+            float rowHeight = OptionHeight(title, explanation, textWidth);
+            Rect row = new Rect(0f, y, width, rowHeight);
 
             if (structure == option)
             {
@@ -283,14 +309,14 @@ namespace Intercolony
                 Widgets.DrawHighlightIfMouseover(row);
             }
 
-            Widgets.RadioButton(new Vector2(4f, y + 12f), structure == option);
+            Widgets.RadioButton(new Vector2(4f, y + (rowHeight - 24f) / 2f), structure == option);
 
-            Rect textRect = new Rect(34f, y + 2f, inRect.width - 40f, 22f);
-            Widgets.Label(textRect, StructureTitle(option, wage));
+            Rect textRect = new Rect(34f, y + 2f, textWidth, titleHeight);
+            Widgets.Label(textRect, title);
 
             GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(34f, y + 24f, inRect.width - 40f, 26f),
-                WageStructureUtility.Explain(option, wage, termDays));
+            Widgets.Label(new Rect(34f, y + 4f + titleHeight, textWidth, explanationHeight),
+                explanation);
             GUI.color = Color.white;
 
             if (Widgets.ButtonInvisible(row) && structure != option)
@@ -299,7 +325,38 @@ namespace Intercolony
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
             }
 
-            return y + RowHeight;
+            return y + rowHeight;
+        }
+
+        private float OptionsHeight(float width, int wage)
+        {
+            float textWidth = width - 40f;
+            float height = OptionsHeaderHeight;
+            foreach (CombatClause option in CombatClauseUtility.All)
+            {
+                int optionWage = WageFor(option);
+                int death = optionWage * option.DeathCompensationDays();
+                height += OptionHeight(
+                    $"{option.LabelCap()} — {optionWage} silver/day, {death} silver if they die",
+                    option.Explain(), textWidth);
+            }
+
+            height += OptionsSectionGap + OptionsHeaderHeight;
+            foreach (WageStructure option in
+                     new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
+            {
+                height += OptionHeight(
+                    StructureTitle(option, wage),
+                    WageStructureUtility.Explain(option, wage, termDays),
+                    textWidth);
+            }
+
+            return height;
+        }
+
+        private static float OptionHeight(string title, string explanation, float textWidth)
+        {
+            return 8f + Text.CalcHeight(title, textWidth) + Text.CalcHeight(explanation, textWidth);
         }
 
         private string StructureTitle(WageStructure option, int wage)

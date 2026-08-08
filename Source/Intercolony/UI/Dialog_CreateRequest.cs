@@ -66,17 +66,21 @@ namespace Intercolony
             y += 34f;
 
             const float BottomControlsHeight = 168f;
+            const float ItemRowHeight = 26f;
             float controlsTop = inRect.height - BottomControlsHeight;
 
             List<ThingDef> matches = Matches();
-            Rect listRect = new Rect(0f, y, inRect.width, controlsTop - y - 8f);
-            Rect viewRect = new Rect(0f, 0f, listRect.width - 16f, matches.Count * 26f);
+            float availableListHeight = controlsTop - y - 8f;
+            float listHeight = Mathf.Floor(availableListHeight / ItemRowHeight) * ItemRowHeight;
+            Rect listRect = new Rect(0f, y, inRect.width, listHeight);
+            Rect viewRect = new Rect(
+                0f, 0f, listRect.width - 16f, matches.Count * ItemRowHeight);
 
             Widgets.BeginScrollView(listRect, ref scroll, viewRect);
             float rowY = 0f;
             foreach (ThingDef def in matches)
             {
-                Rect row = new Rect(0f, rowY, viewRect.width, 26f);
+                Rect row = new Rect(0f, rowY, viewRect.width, ItemRowHeight);
                 if (selected == def)
                 {
                     Widgets.DrawHighlightSelected(row);
@@ -95,7 +99,7 @@ namespace Intercolony
                     selected = def;
                 }
 
-                rowY += 26f;
+                rowY += ItemRowHeight;
             }
 
             Widgets.EndScrollView();

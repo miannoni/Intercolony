@@ -154,6 +154,13 @@ Nothing is currently floating outside the plan. When a promise is made to Matteo
 fit the current phase, either map it into a numbered phase in `DESIGN.md` or list it here — the
 first is better, because this list is only read when someone remembers to look.
 
+**Ideas that are not promises go in `docs/BACKLOG.md`**, not here and not into the current phase.
+That file is for work worth doing that is not mapped to a numbered phase — read it when planning a
+phase, and add to it rather than widening the phase in flight. The first entry is Matteo's, from
+2026-08-07: procurement should eventually be as complete a system as selling (a supplier market,
+a purchase-orders screen, and recurring procurement contracts the player offers to suppliers).
+Deliberately deferred until after 1.0.
+
 ---
 
 ## Milestone records

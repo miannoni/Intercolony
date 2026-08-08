@@ -20,7 +20,7 @@ namespace Intercolony
     {
         private Vector2 scrollPosition;
 
-        private const float RowHeight = 30f;
+        private const float MarketMinRowHeight = 30f;
         private const float HeaderHeight = 26f;
 
         /// <summary>Column indices, matching <see cref="ColumnLabels"/>.</summary>
@@ -47,7 +47,7 @@ namespace Intercolony
 
         private bool sortDescending;
 
-        // Seven tabs, and the Labor tab shows two tables stacked. 920x560 left both cramped.
+        // The selling tables and Labor's stacked views both need more room than 920x560 allowed.
         public override Vector2 RequestedTabSize => new Vector2(1040f, 620f);
 
         /// <summary>Which top-level view is showing (DESIGN.md §52, §53, §54).</summary>
@@ -68,7 +68,21 @@ namespace Intercolony
             Relations
         }
 
+        /// <summary>
+        /// Groups pages by the player's intent: selling keeps every outward-sales workflow
+        /// together, while procurement stays separate so the direction of the money is legible.
+        /// </summary>
+        private enum TabGroup
+        {
+            Business,
+            Selling,
+            Procurement,
+            Labor,
+            Relations
+        }
+
         private Tab tab = Tab.Business;
+        private Tab sellingTab = Tab.Market;
 
         // A page is latched off after a failure because DoWindowContents runs every frame; retrying
         // immediately would recreate both the exception and any half-finished GUI state forever.
@@ -319,24 +333,21 @@ namespace Intercolony
             debugThrowOnNextBusinessDraw = true;
         }
 
-        /// <summary>
-        /// Tab order, left to right. Adding a tab means adding it here and nowhere else.
-        ///
-        /// This used to be seven hand-computed <see cref="Rect"/>s at a fixed 150px, positioned
-        /// relative to each other in a different order than they appeared on screen. Six tabs at
-        /// 150px plus gaps already exceeded the window width, so Labor could not be added without
-        /// overflowing, and the arithmetic was one edit away from overlapping buttons.
-        /// </summary>
-        private static readonly Tab[] TabOrder =
+        private static readonly TabGroup[] GroupOrder =
         {
-            Tab.Business,
+            TabGroup.Business,
+            TabGroup.Selling,
+            TabGroup.Procurement,
+            TabGroup.Labor,
+            TabGroup.Relations
+        };
+
+        private static readonly Tab[] SellingTabOrder =
+        {
             Tab.Market,
-            Tab.Orders,
             Tab.FindBuyer,
-            Tab.Procurement,
-            Tab.Labor,
+            Tab.Orders,
             Tab.Contracts,
-            Tab.Relations
         };
 
         /// <summary>Tab caption, including a count badge where one is useful.</summary>
@@ -383,33 +394,166 @@ namespace Intercolony
             }
         }
 
+        private static TabGroup GroupFor(Tab which)
+        {
+            switch (which)
+            {
+                case Tab.Market:
+                case Tab.FindBuyer:
+                case Tab.Orders:
+                case Tab.Contracts:
+                    return TabGroup.Selling;
+                case Tab.Procurement:
+                    return TabGroup.Procurement;
+                case Tab.Labor:
+                    return TabGroup.Labor;
+                case Tab.Relations:
+                    return TabGroup.Relations;
+                default:
+                    return TabGroup.Business;
+            }
+        }
+
+        private static string GroupLabel(TabGroup which, IntercolonyWorldComponent state)
+        {
+            switch (which)
+            {
+                case TabGroup.Selling:
+                    // Orders and contracts are the only selling children that report badges.
+                    int selling = state.OpenOrderCount + state.ActiveContractCount;
+                    return selling > 0 ? $"Selling ({selling})" : "Selling";
+                case TabGroup.Procurement:
+                    return TabLabel(Tab.Procurement, state);
+                case TabGroup.Labor:
+                    return TabLabel(Tab.Labor, state);
+                case TabGroup.Relations:
+                    return TabLabel(Tab.Relations, state);
+                default:
+                    return TabLabel(Tab.Business, state);
+            }
+        }
+
         private float DrawTabSelector(Rect inRect, IntercolonyWorldComponent state)
         {
             const float ButtonHeight = 30f;
             const float Gap = 6f;
-            const float MaxButtonWidth = 150f;
+            const float RowSpacing = 8f;
 
-            float available = inRect.width - Gap * (TabOrder.Length - 1);
-            float buttonWidth = Mathf.Min(MaxButtonWidth, available / TabOrder.Length);
-
-            float x = 0f;
-            foreach (Tab which in TabOrder)
+            Text.Font = GameFont.Small;
+            string[] labels = new string[GroupOrder.Length];
+            for (int i = 0; i < GroupOrder.Length; i++)
             {
-                Rect rect = new Rect(x, 0f, buttonWidth, ButtonHeight);
-                if (Widgets.ButtonText(rect, TabLabel(which, state), drawBackground: tab != which))
+                labels[i] = GroupLabel(GroupOrder[i], state);
+            }
+
+            float[] widths = MeasureTabWidths(inRect.width, labels, Gap);
+            TabGroup selectedGroup = GroupFor(tab);
+            float x = inRect.x;
+            for (int i = 0; i < GroupOrder.Length; i++)
+            {
+                TabGroup which = GroupOrder[i];
+                Rect rect = new Rect(x, 0f, widths[i], ButtonHeight);
+                if (Widgets.ButtonText(rect, labels[i], drawBackground: selectedGroup != which))
+                {
+                    SelectGroup(which, state);
+                }
+
+                x += widths[i] + Gap;
+            }
+
+            float consumedHeight = ButtonHeight + RowSpacing;
+            if (GroupFor(tab) == TabGroup.Selling)
+            {
+                DrawSellingTabs(
+                    new Rect(inRect.x, consumedHeight, inRect.width, ButtonHeight), state);
+                consumedHeight += ButtonHeight + RowSpacing;
+            }
+
+            return consumedHeight;
+        }
+
+        private void DrawSellingTabs(Rect rect, IntercolonyWorldComponent state)
+        {
+            const float Gap = 4f;
+
+            string[] labels = new string[SellingTabOrder.Length];
+            for (int i = 0; i < SellingTabOrder.Length; i++)
+            {
+                labels[i] = TabLabel(SellingTabOrder[i], state);
+            }
+
+            float[] widths = MeasureTabWidths(rect.width, labels, Gap);
+            float x = rect.x;
+            for (int i = 0; i < SellingTabOrder.Length; i++)
+            {
+                Tab which = SellingTabOrder[i];
+                Rect buttonRect = new Rect(x, rect.y, widths[i], rect.height);
+                if (Widgets.ButtonText(buttonRect, labels[i], drawBackground: tab != which))
                 {
                     SelectTab(which, state);
                 }
 
-                x += buttonWidth + Gap;
+                x += widths[i] + Gap;
             }
 
-            return ButtonHeight + 8f;
+            Widgets.DrawLineHorizontal(rect.x, rect.yMax, rect.width);
+        }
+
+        private static float[] MeasureTabWidths(float rowWidth, string[] labels, float gap)
+        {
+            const float HorizontalPadding = 24f;
+
+            float usableWidth = Mathf.Max(0f, rowWidth - gap * (labels.Length - 1));
+            float totalWidth = 0f;
+            float[] widths = new float[labels.Length];
+            for (int i = 0; i < labels.Length; i++)
+            {
+                widths[i] = Text.CalcSize(labels[i]).x + HorizontalPadding;
+                totalWidth += widths[i];
+            }
+
+            if (totalWidth > usableWidth && totalWidth > 0f)
+            {
+                float scale = usableWidth / totalWidth;
+                for (int i = 0; i < widths.Length; i++)
+                {
+                    widths[i] *= scale;
+                }
+            }
+
+            return widths;
+        }
+
+        private void SelectGroup(TabGroup which, IntercolonyWorldComponent state)
+        {
+            switch (which)
+            {
+                case TabGroup.Selling:
+                    SelectTab(sellingTab, state);
+                    break;
+                case TabGroup.Procurement:
+                    SelectTab(Tab.Procurement, state);
+                    break;
+                case TabGroup.Labor:
+                    SelectTab(Tab.Labor, state);
+                    break;
+                case TabGroup.Relations:
+                    SelectTab(Tab.Relations, state);
+                    break;
+                default:
+                    SelectTab(Tab.Business, state);
+                    break;
+            }
         }
 
         private void SelectTab(Tab which, IntercolonyWorldComponent state)
         {
             tab = which;
+
+            if (GroupFor(which) == TabGroup.Selling)
+            {
+                sellingTab = which;
+            }
 
             if (which == Tab.FindBuyer)
             {
@@ -473,14 +617,22 @@ namespace Intercolony
             y += 2f;
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, live.Count * RowHeight);
+            float viewWidth = inRect.width - 16f;
+            float contentHeight = 0f;
+            foreach (MarketOpportunity opportunity in live)
+            {
+                contentHeight += MarketRowHeight(opportunity, viewWidth);
+            }
+
+            Rect viewRect = new Rect(0f, 0f, viewWidth, contentHeight);
 
             BeginPageScrollView(outRect, ref scrollPosition, viewRect);
             float rowY = 0f;
             for (int i = 0; i < live.Count; i++)
             {
-                DrawRow(new Rect(0f, rowY, viewRect.width, RowHeight), live[i], i);
-                rowY += RowHeight;
+                float rowHeight = MarketRowHeight(live[i], viewRect.width);
+                DrawRow(new Rect(0f, rowY, viewRect.width, rowHeight), live[i], i);
+                rowY += rowHeight;
             }
 
             EndPageScrollView();
@@ -767,39 +919,69 @@ namespace Intercolony
                 // underneath it. RimWorld clips labels to their rect, so this is what turns
                 // an overlapping mess into honest truncation.
                 return new Rect(cellX, rect.y + 4f, rect.width * ColumnWidths[i] - 4f,
-                    rect.height - 4f);
+                    rect.height - 8f);
             }
 
-            Widgets.Label(Cell(0), opportunity.settlementName);
-            Widgets.Label(Cell(1), opportunity.ItemLabel());
-            Widgets.Label(Cell(2), opportunity.quantity.ToString());
-            Widgets.Label(Cell(3), opportunity.unitPrice.ToString("F2"));
-            Widgets.Label(Cell(4), opportunity.TotalPrice.ToString());
-            Widgets.Label(Cell(5), opportunity.distanceTiles < 0f
-                ? "?"
-                : $"{opportunity.distanceTiles:F0} t");
+            Widgets.Label(Cell(0), MarketCellLabel(opportunity, 0));
+            Widgets.Label(Cell(1), MarketCellLabel(opportunity, 1));
+            Widgets.Label(Cell(2), MarketCellLabel(opportunity, 2));
+            Widgets.Label(Cell(3), MarketCellLabel(opportunity, 3));
+            Widgets.Label(Cell(4), MarketCellLabel(opportunity, 4));
+            Widgets.Label(Cell(5), MarketCellLabel(opportunity, 5));
 
             float days = opportunity.DaysRemaining;
             GUI.color = days < 1.5f ? Color.yellow : Color.white;
-            Widgets.Label(Cell(6), $"{days:F1}d");
+            Widgets.Label(Cell(6), MarketCellLabel(opportunity, 6));
             GUI.color = Color.white;
 
             GUI.color = opportunity.fulfillment == FulfillmentMode.BuyerPickup
                 ? new Color(0.6f, 0.85f, 1f)
                 : Color.white;
-            Widgets.Label(Cell(7), opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                ? "collected"
-                : $"{opportunity.deadlineDays}d haul");
+            Widgets.Label(Cell(7), MarketCellLabel(opportunity, 7));
             GUI.color = Color.white;
 
             // Accept has its own column. Previously it was drawn over the last one, so the
             // deadline text ran underneath the button.
             Rect acceptCell = Cell((int)Column.Accept);
-            Rect acceptRect = new Rect(acceptCell.x, rect.y + 3f,
-                Mathf.Min(acceptCell.width, 76f), RowHeight - 7f);
+            const float AcceptHeight = 23f;
+            Rect acceptRect = new Rect(acceptCell.x, rect.y + (rect.height - AcceptHeight) / 2f,
+                Mathf.Min(acceptCell.width, 76f), AcceptHeight);
             if (Widgets.ButtonText(acceptRect, "Accept"))
             {
                 AcceptOpportunity(opportunity);
+            }
+        }
+
+        private static float MarketRowHeight(MarketOpportunity opportunity, float tableWidth)
+        {
+            float height = MarketMinRowHeight;
+            for (int i = 0; i < (int)Column.Accept; i++)
+            {
+                float cellWidth = tableWidth * ColumnWidths[i] - 4f;
+                height = Mathf.Max(height,
+                    Text.CalcHeight(MarketCellLabel(opportunity, i), cellWidth) + 8f);
+            }
+
+            return height;
+        }
+
+        private static string MarketCellLabel(MarketOpportunity opportunity, int column)
+        {
+            switch ((Column)column)
+            {
+                case Column.Buyer: return opportunity.settlementName;
+                case Column.Item: return opportunity.ItemLabel();
+                case Column.Quantity: return opportunity.quantity.ToString();
+                case Column.UnitPrice: return opportunity.unitPrice.ToString("F2");
+                case Column.TotalPrice: return opportunity.TotalPrice.ToString();
+                case Column.Distance:
+                    return opportunity.distanceTiles < 0f ? "?" : $"{opportunity.distanceTiles:F0} t";
+                case Column.Expires: return $"{opportunity.DaysRemaining:F1}d";
+                case Column.Deadline:
+                    return opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                        ? "collected"
+                        : $"{opportunity.deadlineDays}d haul";
+                default: return "";
             }
         }
 
@@ -1602,7 +1784,11 @@ namespace Intercolony
             }
             else
             {
-                status = $"{contract.status}: {contract.outcomeNote}";
+                status = contract.status.ToString();
+                if (!string.IsNullOrEmpty(contract.outcomeNote))
+                {
+                    status += $": {contract.outcomeNote}";
+                }
                 colour = contract.status == ContractStatus.Completed
                     ? new Color(0.6f, 0.9f, 0.6f)
                     : new Color(0.9f, 0.6f, 0.6f);
@@ -1652,7 +1838,7 @@ namespace Intercolony
                 Rect declineRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
                 if (Widgets.ButtonText(declineRect, "Decline"))
                 {
-                    contract.TryDecline();
+                    contract.TryDecline("Declined by the player.");
                 }
             }
             else if (contract.IsActive || contract.status == ContractStatus.Suspended)
@@ -1697,7 +1883,7 @@ namespace Intercolony
                 "Accept agreement",
                 () => ContractService.AcceptOffer(state, contract),
                 "Decline",
-                () => contract.TryDecline(),
+                () => contract.TryDecline("Declined by the player."),
                 "Standing supply agreement"));
         }
 
@@ -1823,6 +2009,11 @@ namespace Intercolony
 
         private static float RequestBlockHeight(PurchaseRequest request)
         {
+            if (!request.IsOpen)
+            {
+                return RequestSummaryHeight + 10f;
+            }
+
             int rows = Mathf.Max(1, request.quotes.Count);
             return RequestHeaderHeight + rows * QuoteRowHeight + 10f;
         }
@@ -1864,6 +2055,11 @@ namespace Intercolony
                 {
                     request.TryCancel();
                 }
+            }
+
+            if (!request.IsOpen)
+            {
+                return;
             }
 
             Rect quoteArea = new Rect(

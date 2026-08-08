@@ -296,7 +296,8 @@ namespace Intercolony
                 $"Order {order.id}: goods declared ready; {order.settlementName} arriving in {travelDays}d.");
 
             // §25.2's worked example is exactly this letter.
-            Find.LetterStack.ReceiveLetter(
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
                 "Order ready",
                 $"{order.settlementName} will arrive in approximately {travelDays} days to collect " +
                 $"order #{order.id}: {order.RemainingQuantity}x {order.line.ShortLabel()}.\n\n" +
@@ -357,7 +358,8 @@ namespace Intercolony
                     ReputationService.NoteOrderCompleted(
                         IntercolonyWorldComponent.Current, order, !order.IsOverdue(now));
                     IntercolonyLog.Message($"Order {order.id} completed by buyer pickup. {order.outcomeNote}");
-                    Find.LetterStack.ReceiveLetter(
+                    IntercolonyLetters.Send(
+                        IntercolonyLetterImportance.Important,
                         "Order collected",
                         $"{order.settlementName} collected {taken}x {order.line.ShortLabel()} " +
                         $"and paid {payment} silver.",
@@ -369,7 +371,8 @@ namespace Intercolony
                     // still stands. Better than voiding the whole order over a shortfall.
                     order.status = SalesOrderStatus.Accepted;
                     order.buyerArrivalTick = -1;
-                    Find.LetterStack.ReceiveLetter(
+                    IntercolonyLetters.Send(
+                        IntercolonyLetterImportance.Always,
                         "Partial collection",
                         $"{order.settlementName} collected only {taken} of {owed} units and paid " +
                         $"{payment} silver. Declare the remainder ready when you have it.",
