@@ -228,6 +228,13 @@ namespace Intercolony
                 $"{before:0.#} -> {rep.Score:0.#}");
             r.Check(rep.employeeDeaths > 0, "deaths are counted");
 
+            before = rep.Score;
+            EmployerReputationService.NoteEmployeeCaptured(state, sample);
+            float captureLoss = before - rep.Score;
+            r.Check(Mathf.Approximately(captureLoss, 6f),
+                "capture costs 6 standing — less than a deliberate combat-clause breach",
+                $"-{captureLoss:0.#}");
+
             // Settling a debt reduces the outstanding figure but does not undo the walk-out.
             int walkOutsBefore = rep.walkOuts;
             int unpaidBefore = rep.unpaidCompensation;

@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 23;
+        public const int CurrentSaveVersion = 24;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1455,6 +1455,20 @@ namespace Intercolony
                 // mix of stored delivery and pickup quotations without rewriting its responses.
                 IntercolonyLog.Message(
                     "  schema 22 -> 23: procurement fulfilment preference added; existing requests allow either.");
+            }
+
+            if (saveVersion < 24)
+            {
+                // Existing active employments have not emitted the new incapacitation warning. A
+                // downed worker therefore gets one on the next hourly beat; an able worker simply
+                // carries the false default until there is something to report.
+                foreach (EmploymentContract contract in employments)
+                {
+                    contract.downedNotified = false;
+                }
+
+                IntercolonyLog.Message(
+                    "  schema 23 -> 24: employee incapacitation warnings added; existing employments start unwarned.");
             }
 
             saveVersion = CurrentSaveVersion;

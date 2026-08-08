@@ -43,6 +43,7 @@ namespace Intercolony
                 EmploymentContract contract = contracts[i];
 
                 if (contract.status != EmploymentStatus.Active ||
+                    contract.termLapsedNotified ||
                     !contract.wageStructure.IsPeriodic() ||
                     contract.nextPaymentTick < 0 ||
                     now < contract.nextPaymentTick)
@@ -295,7 +296,21 @@ namespace Intercolony
                 ? contract.nextPaymentTick - interval
                 : Mathf.Max(contract.arrivalTick, contract.endTick - interval);
 
-            int workedTicks = Mathf.Max(0, GenTicks.TicksGame - periodStart);
+            int workedUntil = GenTicks.TicksGame;
+            if (contract.termLapsedNotified)
+            {
+                // Employment can remain technically Active after expiry only because a downed or
+                // off-map pawn cannot use the vanilla departure path yet. That delay is not extra
+                // service: settle through the agreed term or notice end, exactly as if they could
+                // have left on time.
+                int agreedEnd = contract.ServingNotice ? contract.noticeEndTick : contract.endTick;
+                if (agreedEnd >= 0)
+                {
+                    workedUntil = Mathf.Min(workedUntil, agreedEnd);
+                }
+            }
+
+            int workedTicks = Mathf.Max(0, workedUntil - periodStart);
             int workedDays = workedTicks / GenDate.TicksPerDay;
 
             return Mathf.Clamp(workedDays, 0, contract.wageStructure.IntervalDays()) * contract.dailyWage;

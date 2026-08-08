@@ -209,6 +209,11 @@ namespace Intercolony
                 "a civilian death at 40 silver/day reproduces §43's worked example",
                 $"{cDeath} silver");
 
+            r.Check(CompensationService.CaptureCompensation(civilian) == cDeath &&
+                    CompensationService.CaptureCompensation(armed) == aDeath &&
+                    CompensationService.CaptureCompensation(security) == sDeath,
+                "capture uses the death amount for every combat clause, without reusing its label");
+
             // Injury must always be cheaper than death, or the player is better off finishing them.
             foreach (CombatClause clause in CombatClauseUtility.All)
             {

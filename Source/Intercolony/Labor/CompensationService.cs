@@ -99,6 +99,14 @@ namespace Intercolony
             return Mathf.Max(0, Mathf.RoundToInt(owed * BreachMultiplier(contract)));
         }
 
+        /// <summary>Silver owed when the colony loses a worker to capture.</summary>
+        public static int CaptureCompensation(EmploymentContract contract)
+        {
+            // Capture and death share an amount because both mean the colony lost the employer's
+            // person. They deliberately do not share player-facing labels: a captive is not dead.
+            return DeathCompensation(contract);
+        }
+
         /// <summary>
         /// Silver owed for permanent injuries taken during the employment. Capped at the death
         /// figure: however many parts a worker loses, being maimed cannot cost more than being
@@ -162,6 +170,21 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Settles a capture without borrowing death wording for the letter, ledger or outcome.
+        /// </summary>
+        public static void ClaimOnCapture(IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            int owed = CaptureCompensation(contract);
+            if (owed <= 0)
+            {
+                return;
+            }
+
+            Settle(state, contract, owed, "captured", ExplainCapture(contract, owed),
+                $"Employee captured — {owed} silver compensation");
+        }
+
+        /// <summary>
         /// Settles permanent injuries when employment ends for any reason other than death — the
         /// death payout already covers everything that happened to them.
         /// </summary>
@@ -200,7 +223,7 @@ namespace Intercolony
         /// applies here too — a colony that cannot pay does not get to have the obligation vanish.
         /// </summary>
         private static void Settle(IntercolonyWorldComponent state, EmploymentContract contract,
-            int owed, string kindWord, string explanation)
+            int owed, string kindWord, string explanation, string letterLabel = null)
         {
             Map map = contract.destinationMap ?? contract.pawn?.MapHeld ?? Find.AnyPlayerHomeMap;
 
@@ -234,7 +257,7 @@ namespace Intercolony
 
             IntercolonyLetters.Send(
                 IntercolonyLetterImportance.Always,
-                shortfall > 0 ? "Compensation unpaid" : "Compensation paid",
+                letterLabel ?? (shortfall > 0 ? "Compensation unpaid" : "Compensation paid"),
                 explanation + "\n\n" + money,
                 shortfall > 0 ? LetterDefOf.NegativeEvent : LetterDefOf.NeutralEvent);
 
@@ -257,6 +280,24 @@ namespace Intercolony
                 : "";
 
             return $"{contract.workerName} died while employed by your colony.\n\n" + clause + breach;
+        }
+
+        private static string ExplainCapture(EmploymentContract contract, int owed)
+        {
+            float serviceDays = SeveranceDays(contract);
+            string service = serviceDays > 0f
+                ? $" Length of service adds {serviceDays:0.#} days."
+                : "";
+            string breach = contract.clauseBreaches > 0
+                ? $" The figure is {BreachMultiplier(contract):0.#}x what it would otherwise have " +
+                  "been because they were drafted into combat against their clause."
+                : "";
+
+            return $"{contract.workerName} was captured and taken from your colony while employed.\n\n" +
+                   $"{contract.settlementName} holds the colony responsible for losing their person. " +
+                   $"Their {contract.combatClause.Label()} clause sets the base at " +
+                   $"{contract.combatClause.DeathCompensationDays()} days' wage.{service}{breach} " +
+                   $"The capture compensation is {owed} silver.";
         }
 
         private static string ExplainInjury(EmploymentContract contract, int injuries, int owed)

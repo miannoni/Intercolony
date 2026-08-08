@@ -35,6 +35,12 @@ namespace Intercolony
         private const float DebtSettledLate = 2f;
 
         /// <summary>
+        /// Failing to protect a worker reflects badly, but less than deliberately putting a
+        /// civilian into combat against their agreement (<see cref="CombatMisuse"/>).
+        /// </summary>
+        private const float EmployeeCaptured = -6f;
+
+        /// <summary>
         /// Using a worker outside their combat clause (§42). Heavier than a missed payroll: a late
         /// wage is a cash-flow problem, and sending a bookkeeper into a firefight is a choice.
         /// Scaled by how many times it has happened, so the first one is a warning and the third is
@@ -167,6 +173,17 @@ namespace Intercolony
             AffectGoodwill(contract.employerFaction,
                 Mathf.RoundToInt(GoodwillDeath * DeathSeverity(contract)),
                 $"{contract.workerName} died working for {Faction.OfPlayer.Name}");
+        }
+
+        public static void NoteEmployeeCaptured(
+            IntercolonyWorldComponent state, EmploymentContract contract)
+        {
+            if (contract == null)
+            {
+                return;
+            }
+
+            For(state)?.Adjust(EmployeeCaptured);
         }
 
         /// <summary>

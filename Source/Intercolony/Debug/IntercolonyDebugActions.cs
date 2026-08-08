@@ -861,6 +861,8 @@ namespace Intercolony
                                   (stillEmployee ? "   <-- FAIL" : ""));
                     sb.AppendLine($"    kindDef      : {found.kindDef?.defName}");
                     sb.AppendLine($"    drafter      : {(found.drafter != null ? "present" : "MISSING")}");
+                    AppendPawnRelations(sb, found, contract, "    ");
+
 
                     bool ok = playerFaction && !lodger && !stillEmployee && colonist;
                     if (ok)
@@ -883,9 +885,143 @@ namespace Intercolony
                     sb.AppendLine($"  {sound} of {converted} converted correctly.");
                 }
 
+                AppendActiveRelationReport(sb, state);
+                AppendDepartedRelationReport(sb, state);
+
                 IntercolonyLog.Message(sb.ToString());
             });
         }
+
+        private static void AppendPawnRelations(
+            StringBuilder sb, Pawn pawn, EmploymentContract contract, string indent)
+        {
+            List<DirectPawnRelation> relations = pawn.relations?.DirectRelations;
+            if (relations == null || relations.Count == 0)
+            {
+                sb.AppendLine($"{indent}relations    : none");
+                return;
+            }
+
+            sb.AppendLine($"{indent}relations    : {relations.Count}");
+            foreach (DirectPawnRelation relation in relations)
+            {
+                Pawn other = relation.otherPawn;
+                bool formedDuringEmployment = contract.arrivedTick != EmploymentContract.NotArrived &&
+                                              relation.startTicks >= contract.arrivedTick;
+                sb.AppendLine($"{indent}  {relation.def?.label ?? "unknown"} with " +
+                              $"{other?.LabelShortCap ?? "missing pawn"} " +
+                              $"(started tick {relation.startTicks}, " +
+                              $"{(formedDuringEmployment ? "formed during employment" : "predates employment")}; " +
+                              $"faction {other?.Faction?.Name ?? "none"}, " +
+                              $"destroyed {other?.Destroyed.ToString() ?? "missing"})");
+            }
+        }
+
+        private static void AppendActiveRelationReport(
+            StringBuilder sb, IntercolonyWorldComponent state)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Relations on active employees (§33 q20)");
+
+            int active = 0;
+            foreach (EmploymentContract contract in state.Employments)
+            {
+                if (contract.status != EmploymentStatus.Active || contract.pawn == null)
+                {
+                    continue;
+                }
+
+                active++;
+                sb.AppendLine($"  {contract.workerName}:");
+                AppendPawnRelations(sb, contract.pawn, contract, "    ");
+            }
+
+            if (active == 0)
+            {
+                sb.AppendLine("  None active. Hire and arrive an employee, then run this check again.");
+            }
+        }
+
+        /// <summary>
+        /// Reports the other half of a departed worker's relations. Direct relations are supposed
+        /// to survive separation; the anomaly is a former employee still carrying employment or
+        /// lodger state, not a colonist remembering them.
+        /// </summary>
+        private static void AppendDepartedRelationReport(
+            StringBuilder sb, IntercolonyWorldComponent state)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Relations surviving employee departure (§33 q20)");
+
+            int found = 0;
+            HashSet<Pawn> residents = new HashSet<Pawn>(
+                PawnsFinder.AllMapsCaravansAndTravellingTransporters_Alive_OfPlayerFaction);
+
+            foreach (EmploymentContract contract in state.Employments)
+            {
+                if (!IsDepartureStatus(contract.status))
+                {
+                    continue;
+                }
+
+                foreach (Pawn resident in residents)
+                {
+                    List<DirectPawnRelation> relations = resident.relations?.DirectRelations;
+                    if (relations == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (DirectPawnRelation relation in relations)
+                    {
+                        Pawn formerWorker = relation.otherPawn;
+                        if (formerWorker?.LabelShortCap != contract.workerName)
+                        {
+                            continue;
+                        }
+
+                        found++;
+                        bool formedDuringEmployment =
+                            contract.arrivedTick != EmploymentContract.NotArrived &&
+                            relation.startTicks >= contract.arrivedTick;
+                        bool lodger = formerWorker.IsQuestLodger();
+                        bool employee = EmploymentService.IsEmployee(formerWorker);
+                        bool playerFaction = formerWorker.Faction == Faction.OfPlayer;
+                        bool wrongKind = contract.originalKind != null &&
+                                         formerWorker.kindDef != contract.originalKind;
+                        bool anomalous = formerWorker.Destroyed || lodger || employee ||
+                                         playerFaction || wrongKind;
+
+                        sb.AppendLine($"  {resident.LabelShortCap}: {relation.def?.label ?? "unknown"} with " +
+                                      $"former employee {contract.workerName} " +
+                                      $"({(formedDuringEmployment ? "formed during employment" : "predates employment")})");
+                        sb.AppendLine($"    survived: yes — relation persistence is vanilla behavior; " +
+                                      $"counterpart faction {formerWorker.Faction?.Name ?? "none"}, " +
+                                      $"destroyed {formerWorker.Destroyed}, lodger {lodger}, employee {employee}, " +
+                                      $"kind {formerWorker.kindDef?.defName ?? "none"}" +
+                                      (anomalous ? "   <-- REVIEW ANOMALY" : ""));
+                    }
+                }
+            }
+
+            if (found == 0)
+            {
+                sb.AppendLine("  None found on living player pawns. Add a relation in dev mode while " +
+                              "an employee is active, let them depart, then run this check again.");
+            }
+
+            sb.AppendLine("  Matching after departure uses the frozen worker name; duplicate names need manual review.");
+        }
+
+        private static bool IsDepartureStatus(EmploymentStatus status)
+        {
+            return status == EmploymentStatus.Completed ||
+                   status == EmploymentStatus.Dismissed ||
+                   status == EmploymentStatus.Quit ||
+                   status == EmploymentStatus.Severed ||
+                   status == EmploymentStatus.Captured;
+        }
+
 
         [DebugAction(Category, "Run ledger self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 66)]
         private static void RunLedgerSelfTest()

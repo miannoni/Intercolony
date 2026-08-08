@@ -363,6 +363,37 @@ namespace Intercolony
                     continue;
                 }
 
+                // Kidnapping does not make the pawn a prisoner or immediately change faction. The
+                // raider's tracker is authoritative while the pawn is held; the faction fallback
+                // catches the later vanilla recruitment tick that removes them from that tracker.
+                if (IsCapturedEmployee(contract))
+                {
+                    End(contract, EmploymentStatus.Captured,
+                        $"{contract.workerName} was captured and taken from the colony");
+                    continue;
+                }
+
+                if (contract.pawn.Downed)
+                {
+                    if (!contract.downedNotified)
+                    {
+                        contract.downedNotified = true;
+                        IntercolonyLetters.Send(
+                            IntercolonyLetterImportance.Always,
+                            "Employee downed — treatment needed",
+                            $"{contract.workerName} is down and needs rescue and treatment. Wages continue " +
+                            "while they are incapacitated.\n\n" +
+                            $"If they die in your service, {contract.settlementName} will expect " +
+                            $"{CompensationService.DeathCompensation(contract)} silver in compensation.",
+                            LetterDefOf.ThreatSmall, contract.pawn);
+                    }
+                }
+                else
+                {
+                    // A later downing is a new event with a new risk to the worker and the colony.
+                    contract.downedNotified = false;
+                }
+
                 // Renewal is offered before expiry, not at it (§115): a worker who would stay says
                 // so while there is still time to answer.
                 RenewalService.Advance(contract);
@@ -378,6 +409,28 @@ namespace Intercolony
 
                 if (ends >= 0 && now >= ends)
                 {
+                    // QuestPart_Leave restores faction while downed but only gives an exit lord to
+                    // pawns who can walk. Keep the employment record alive until vanilla can perform
+                    // a real departure. Wages ran normally throughout the agreed term; the lapsed
+                    // flag keeps payroll from inventing a new, unagreed extension after it.
+                    if (contract.pawn.Downed)
+                    {
+                        if (!contract.termLapsedNotified)
+                        {
+                            contract.termLapsedNotified = true;
+                            IntercolonyLetters.Send(
+                                IntercolonyLetterImportance.Always,
+                                "Employee term ended — recovery needed",
+                                $"{contract.workerName}'s {(byNotice ? "notice" : "term")} has ended, but they " +
+                                "are incapacitated and cannot leave.\n\n" +
+                                "Rescue and treat them. Their employment will close through the normal departure " +
+                                "as soon as they can walk. The agreed term is over, so no further wages accrue.",
+                                LetterDefOf.ThreatSmall, contract.pawn);
+                        }
+
+                        continue;
+                    }
+
                     // A worker inside a caravan cannot walk home — they are not on any map.
                     // Ending the contract anyway would send them through
                     // LeaveQuestPartUtility.MakePawnLeave, which pulls them out of the caravan
@@ -407,6 +460,26 @@ namespace Intercolony
                             : $"{contract.workerName} served the full {contract.termDays} days");
                 }
             }
+        }
+
+        private static bool IsCapturedEmployee(EmploymentContract contract)
+        {
+            Pawn worker = contract?.pawn;
+            if (worker == null)
+            {
+                return false;
+            }
+
+            if (PawnUtility.IsKidnappedPawn(worker))
+            {
+                return true;
+            }
+
+            // KidnappedPawnsTracker eventually recruits a captive, changing faction and removing
+            // the tracker entry. A legitimate off-map employee remains in the player faction (and
+            // a caravan is explicit), so this is the state left by that vanilla transition.
+            return !worker.Spawned && worker.GetCaravan() == null && worker.Faction != null &&
+                   worker.Faction != Faction.OfPlayer && worker.Faction != contract.employerFaction;
         }
 
         /// <summary>
@@ -815,10 +888,17 @@ namespace Intercolony
             PayrollService.SettleOnEnd(contract, status, IntercolonyWorldComponent.Current?.LaborDebts,
                 IntercolonyWorldComponent.Current);
 
-            // §43's injury half, for every ending except a death — a death payout already covers
-            // everything that happened to them. Runs here for the same reason payroll does: it
-            // needs the pawn and the map, and both are cleared below.
-            if (status != EmploymentStatus.Failed)
+            // Capture uses the same amount as death because both mean the colony lost the
+            // employer's person, but it has its own labels throughout: nobody is reported dead.
+            if (status == EmploymentStatus.Captured)
+            {
+                EmployerReputationService.NoteEmployeeCaptured(
+                    IntercolonyWorldComponent.Current, contract);
+                CompensationService.ClaimOnCapture(IntercolonyWorldComponent.Current, contract);
+            }
+            // §43's injury half, for every ordinary ending. Death and capture payouts already
+            // cover the loss. Runs here because it needs the pawn and map cleared below.
+            else if (status != EmploymentStatus.Failed)
             {
                 CompensationService.ClaimOnEnd(IntercolonyWorldComponent.Current, contract);
             }
@@ -847,6 +927,8 @@ namespace Intercolony
                 if (endingQuest)
                 {
                     // Ends the quest, which cleans up its parts, which sends the worker home.
+                    // For a captive, the pawn is already off-map: the leave part restores their
+                    // employer faction without creating an exit lord, and the kidnap tracker stays.
                     quest.End(status == EmploymentStatus.Completed
                         ? QuestEndOutcome.Success
                         : QuestEndOutcome.Fail, sendLetter: false, playSound: false);
@@ -888,6 +970,22 @@ namespace Intercolony
                 }
             }
 
+            // This is the same sequence vanilla's bed assignment component uses: release through
+            // Pawn_Ownership, then invalidate the room assignment display. It sits outside quest
+            // teardown so even the fallback path cannot leave a bed permanently reserved.
+            try
+            {
+                Building_Bed ownedBed = worker?.ownership?.OwnedBed;
+                worker?.ownership?.UnclaimBed();
+                ownedBed?.NotifyRoomAssignedPawnsChanged();
+            }
+            catch (System.Exception ex)
+            {
+                // Reference clearing must still win over a broken bed or another mod's component.
+                IntercolonyLog.Warning(
+                    $"Employment #{contract.id} for {worker} could not release its bed: {ex}");
+            }
+
             if (worker != null && !worker.Destroyed && contract.originalKind != null &&
                 worker.kindDef != contract.originalKind)
             {
@@ -897,7 +995,8 @@ namespace Intercolony
             // A worker dismissed before arrival was never spawned and is only alive because
             // TryHire pinned them in the world pawn pool. Unpin and discard, or every cancelled
             // hire leaves a pawn the GC has been told never to collect.
-            if (worker != null && !worker.Spawned && Find.WorldPawns.Contains(worker))
+            if (status != EmploymentStatus.Captured && worker != null && !worker.Spawned &&
+                Find.WorldPawns.Contains(worker))
             {
                 Find.WorldPawns.RemoveAndDiscardPawnViaGC(worker);
             }
@@ -924,6 +1023,13 @@ namespace Intercolony
             // departure letter cannot: which faction went to war, and what happened to the money.
             // A second letter here would just repeat it worse.
             if (status == EmploymentStatus.Severed)
+            {
+                return;
+            }
+
+            // Capture sends its own consequence-first compensation letter. A generic departure
+            // letter would falsely claim that the kidnapped pawn is returning home.
+            if (status == EmploymentStatus.Captured)
             {
                 return;
             }

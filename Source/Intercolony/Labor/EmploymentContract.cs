@@ -44,7 +44,13 @@ namespace Intercolony
         /// not mean the pawn left — they are a colonist standing on the map. The record is kept so
         /// the colony remembers who someone used to be.
         /// </summary>
-        Converted
+        Converted,
+
+        /// <summary>
+        /// Taken off-map by a hostile faction. The employment is over, but the pawn remains in
+        /// vanilla's kidnapped-pawn tracker rather than being sent home or discarded.
+        /// </summary>
+        Captured
     }
 
     /// <summary>
@@ -243,6 +249,12 @@ namespace Intercolony
         /// </summary>
         public bool termLapsedNotified;
 
+        /// <summary>
+        /// True while the player has already been warned about the current incapacitation. Reset
+        /// on recovery so a later downing is a new actionable event rather than silent repetition.
+        /// </summary>
+        public bool downedNotified;
+
         // --- Safe passage (§88, §113) ------------------------------------------------------
 
         /// <summary>
@@ -372,7 +384,9 @@ namespace Intercolony
 
                     if (termLapsedNotified)
                     {
-                        return "term ended — away from the colony, will leave on return";
+                        return pawn?.Downed == true
+                            ? "term ended — incapacitated, will leave after recovery"
+                            : "term ended — away from the colony, will leave on return";
                     }
 
                     // Under notice the countdown *is* the status. It was missing entirely, so a
@@ -453,6 +467,7 @@ namespace Intercolony
             Scribe_Values.Look(ref status, "status", EmploymentStatus.Travelling);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
             Scribe_Values.Look(ref termLapsedNotified, "termLapsedNotified", false);
+            Scribe_Values.Look(ref downedNotified, "downedNotified", false);
             Scribe_Values.Look(ref safePassage, "safePassage", false);
             Scribe_Values.Look(ref safePassageEndTick, "safePassageEndTick", -1);
 
