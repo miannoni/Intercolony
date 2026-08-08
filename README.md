@@ -55,7 +55,7 @@ it is not a guarantee for every special item or mod interaction. Non-minifiable 
 permanent exclusion because caravans cannot carry them.
 
 The tested environment, reasoning, Harmony patch surface and bug-report details are recorded in
-[docs/COMPATIBILITY.md](./docs/COMPATIBILITY.md).
+[docs/COMPATIBILITY.md](https://github.com/miannoni/Intercolony/blob/main/docs/COMPATIBILITY.md).
 
 ## Project status
 
@@ -77,5 +77,5 @@ The project targets .NET Framework 4.7.2. Build it from the repository root with
 dotnet build Source/Intercolony/Intercolony.csproj
 ```
 
-The full design and its constraints are in [DESIGN.md](./DESIGN.md). The code is licensed under the
+The full design and its constraints are in [DESIGN.md](https://github.com/miannoni/Intercolony/blob/main/DESIGN.md). The code is licensed under the
 [MIT License](./LICENSE).
