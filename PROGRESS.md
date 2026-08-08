@@ -1773,3 +1773,82 @@ Worth recording about method:
   against warm ones. Reporting the quicktest figure as representative would have sent the next pass
   optimizing market generation, which is not a problem. The only genuine finding was the one item
   the first run skipped.
+
+## Phase 25 — Polish and compatibility, passes B and C  (2026-08-08)
+
+**Phase 25 is complete.** Pass A is recorded above. This entry covers the rest of §118 and closes
+the phase.
+
+Implemented:
+- **Mod settings**, three knobs chosen by Matteo — letter volume, market pacing, economy difficulty.
+  Subsystem on/off switches were offered and rejected: disabling labor mid-game with employees under
+  contract means abandoning live obligations or writing teardown for each system.
+- **Economy difficulty made into an actual difficulty axis.** As first built it applied one
+  multiplier to both what buyers pay and what suppliers charge, so 150% inflated both sides and
+  largely cancelled. Matteo asked what 150% meant and the honest answer was "not what it says". Now
+  two named factors moving in opposite directions — selling `2-d`, buying `d`.
+- **Letter volume rebalanced** after the first classification left the default tier suppressing
+  exactly one message type. The rule is stated in the code: Always is money owed, a broken promise,
+  or a decision required before a deadline; Chatty is routine successes. Chatty went from one path
+  to eight.
+- **UI that survives 1.75× scale**, which is what Matteo actually plays at. Six defects, all one
+  bug: fixed row heights sized for one line, clipping text that wraps to three.
+- **Eight top-level tabs grouped into five**: Business, Selling (Market, Find buyer, Orders,
+  Contracts), Procurement, Labor, Relations. Presentation only; no page moved.
+- **Tooltip pass** across all twelve `TipRegion` sites — three changed, nine left because they were
+  already answering a question the screen raised.
+- **`docs/COMPATIBILITY.md` and a rewritten `README.md`**, both stating their own limits.
+- **`docs/BACKLOG.md`**, which the project did not have, plus `docs/ROAD_TO_1_0.md` auditing §120.
+
+Not implemented:
+- **Localization: dropped, not deferred.** §118 amended to say so. The mod is English-only.
+- A DLC matrix beyond Biotech. Royalty, Ideology and Anomaly are not owned and never will be.
+
+Known limitations:
+- Everything is verified on one machine, one load order, one UI scale. `docs/COMPATIBILITY.md` says
+  so rather than implying coverage.
+- Classification of DLC and modded defs is proven; **trading such an item end to end is not**.
+
+Manual test:
+- Settings, the five-tab layout, all six layout fixes, the tooltips, the difficulty text and the
+  letter rebalance were each confirmed in play at 1.75×.
+- **Per-source classification, measured:** 406 tradable defs — Core 337, **Biotech 67**, RT Fuse 2,
+  and zero from the four behaviour/terrain mods. Biotech spans five of six categories with no
+  Biotech-specific code. RT Fuse's two minifiable buildings were picked up automatically, which is
+  the stronger result: an arbitrary third-party mod's content became tradeable with nobody
+  designing for it.
+- Save migration exercised twice more: schema 17 walking five steps to 22, and 22 → 23.
+
+Bugs found and fixed during these passes:
+- **Buyer pickup was unreachable from Find Buyer.** The order was built without ever assigning
+  `fulfillment`, so it silently took the default. Half a shipped mechanic had no route to it.
+- **Buyer interest did not vary by good.** Demand was held per *category*, so wood and steel
+  returned the same number for a settlement — and that one value drove the interest gate, the
+  appetite and the price. The same settlements were out for every good.
+- **Installed buildings were sellable, and could be destroyed.** A shelf is a storage building on
+  its own storage cells, so it reported `IsInAnyStorage()` while installed. The validator used the
+  same rule, so fulfilling a shelf order could `Destroy(Vanish)` shelves off the player's map.
+  Found because Matteo noticed they looked wrong in a list.
+- **Two more sentinel leaks**, taking the count to five: an employee tooltip printing `termDays` raw
+  as "0 days", and the dismissal confirmation still formatting `DaysRemaining` — *the same bug as
+  the third occurrence, in a different method, after that one was fixed.*
+- **A settings slider that stuck at its centre.** `Widgets.HorizontalSlider` builds its drag ID from
+  the rect's screen-space `y`; the description above it changed height as the value crossed 1.0, so
+  the control's identity changed mid-drag and Unity dropped it. **This is the inverse of the other
+  layout bugs**: measuring accurately every frame is what caused it. Both are one rule — the layout
+  must be correct *and* stable.
+- **An exception during quest teardown could strand a pawn untracked.** `EmploymentService.End`
+  logged a warning and then cleared the only references to the worker, so a failed departure left a
+  spawned employee in the player faction with no record — a free colonist the mod no longer knew
+  about. Now falls back to restoring their faction, logs at error level, and still clears references.
+
+Worth recording about method:
+- **Roughly half this phase's work was not on §118's list.** It came from Matteo playing. Two of
+  those finds were real defects rather than polish, and one could have quietly demolished furniture.
+  A phase plan written before the code existed cannot anticipate what play reveals; the plan was
+  right to be a plan and wrong to be treated as the whole scope.
+- **The 1.0 audit found documentation drift, and the drift was mine.** Schema 23's migration and
+  buyer-pickup completion were both observed in the log and reported in conversation, and neither
+  was written into `docs/PENDING_PLAYTESTS.md` — the exact failure that file exists to prevent,
+  committed while using it to hold other work to account. Verifying something and *saying* it is not
+  the same as recording it.

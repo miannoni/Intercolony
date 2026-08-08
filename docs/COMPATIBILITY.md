@@ -40,10 +40,33 @@ specific def when generic treatment is wrong.
 - **Observed in the Phase 25 load order:** the five mods listed above remained loaded without an
   Intercolony exception. Hospitality was among them, but its pawn-management interaction was not
   deliberately exercised as a compatibility test.
-- **Not yet measured in a current run:** per-source eligible-def totals. The developer action
-  **Dump product classification** reports the total for every active content pack, the six-category
-  breakdown, and example `defName`s. No numbers are copied here because this document was written
-  without launching the game.
+- **Measured in the verified load order:** **406** tradable fungible defs. The per-source dump was:
+
+  | Source | Kind | Package ID | Total | Commodities | Intermediate | Manufactured | Furniture | Capital equip | Art/unique |
+  |---|---|---|---:|---:|---:|---:|---:|---:|---:|
+  | Core | Core | `ludeon.rimworld` | 337 | 103 | 68 | 85 | 61 | 17 | 3 |
+  | Biotech | official DLC | `ludeon.rimworld.biotech` | 67 | 5 | 23 | 22 | 16 | 1 | 0 |
+  | RT Fuse | mod | `ratys.rtfuse` | 2 | 0 | 0 | 0 | 2 | 0 | 0 |
+  | Common Sense | mod | `avilmask.commonsense` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+  | Harmony | mod | `brrainz.harmony` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+  | Hospitality | mod | `orion.hospitality` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+  | Intercolony | mod | `miannoni.intercolony` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+  | Tilled Soil | mod | `gt.sam.tilledsoil` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+  | [FSF] Filth Vanishes With Rain And Time | mod | `frozensnowfox.filthvanisheswithrainandtime` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+Biotech contributes 67 of the 406 defs across five of the six categories. Examples include
+`DetoxifierLung`, `DetoxifierKidney`, `Mechlink`, `ControlSublink`, and `RemoteRepairer`. There is no
+Biotech-specific code in Intercolony, so this is evidence that the def-driven classifier classifies
+DLC content correctly.
+
+RT Fuse contributes `Building_RTCircuitBreaker` and `Building_RTMakeshiftFuse`. Both were classified
+automatically as furniture because they are minifiable buildings. No special handling was added for
+RT Fuse. Common Sense, Hospitality, Tilled Soil, and FSF Filth Vanishes With Rain And Time correctly
+contribute zero: they change behavior or terrain rather than adding eligible trade goods. Zero here
+is a correct classification result, not a failure.
+
+These counts demonstrate classification. They do not demonstrate an end-to-end trade of a Biotech
+mechlink or an RT Fuse circuit breaker.
 
 ### Reasoning, not a test result
 

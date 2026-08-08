@@ -88,12 +88,17 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 25 in progress — pass A of three complete (2026-08-06). §118 is eleven tasks plus a
-decide-or-delete, cut into three passes rather than built in one. Pass A (robustness) is done and
-committed: the decide-or-delete resolved, schema 22, draw guards, performance profiled at real
-scale. Next: pass B — settings, tooltip polish, UI scaling. Then pass C — DLC matrix, modded-content
-tests, compatibility notes, documentation. **Localization was dropped, not deferred: the mod is
-English-only** and §118 is amended to say so.
+**Phase:** 25 complete (2026-08-08). Save schema 23. Next: Phase 26 — public beta (§119).
+
+**`docs/ROAD_TO_1_0.md` audits §120's 36 criteria: 23 met and proven, 10 met but unproven, 3 not
+met.** Read it before planning anything — it is the honest picture of how far 1.0 actually is.
+The three not met are one cluster: **what happens to an employee when something goes wrong with the
+pawn** — downed employees unhandled, capture not modelled, beds left claimed on departure. That is
+the only genuine code gap; everything else outstanding needs play-testing, and §119's focus
+(balance, exploits, compatibility, UX, unexpected pawn interactions) needs *other people playing it*,
+which no amount of coding substitutes for.
+
+**Localization was dropped, not deferred: the mod is English-only** and §118 is amended to say so.
 
 **Sentinels have bitten five times now. Compare them exactly, and never format them.**
 `arrivedTick < 0`, `ledgerStartTick < 0` and printing `DaysRemaining` for an open-ended contract were

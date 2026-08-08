@@ -122,13 +122,28 @@ tries to assign them work.
   `2 offered below the condition floor (25% offered; 60% required)`. Buyer-pickup path confirmed via
   the disabled **Mark ready** tooltip. **Not seen:** the seller-delivery/caravan refusal path, which
   shares the same validator but has its own gizmo.
-- ~~**Phase 25 — save migration across five schema versions**~~ — 2026-08-05. A **schema 17** save
+- ~~**Buyer pickup, end to end**~~ — 2026-08-07/08. Player.log recorded
+  `[Intercolony] Order 441 completed by buyer pickup. Collected by the buyer. 458 units for 1354 silver.`
+  and `[Intercolony] Order 630 completed by buyer pickup. Collected by the buyer. 1 units for 61 silver.`
+  Order 630 was the packed-shelf test, which also proves minified furniture is found by the indexed
+  validator and consumed correctly. **Still not seen:** the seller-delivery/caravan condition-refusal
+  path, which shares the validator but has its own gizmo.
+- ~~**Per-source trade classification**~~ — 2026-08-08. The classification result was 406 tradable
+  defs: Core 337, Biotech 67 and RT Fuse 2, with zero from Common Sense, Hospitality, Tilled Soil and
+  FSF Filth. This proves DLC and modded defs are classified correctly with no special handling; it
+  does not prove that an item from those sources has been traded end to end.
+- ~~**Phase 25 — save migration across five schema versions**~~ — 2026-08-06. A **schema 17** save
   loaded and walked 17 → 22 in one pass: job postings, open-ended employment, transition, ledger and
   condition floors. No errors, nothing dropped. Better evidence than the single-step 21 → 22 that was
   asked for. It also surfaced that the migration chain runs ascending 2→13 then *descending* 22→14 —
   harmless today because every step from 14 on is a bare log line, but a false contract against the
   "falls through to the next" comment. Reordered rather than left for the first migration that
   actually moves data.
+- ~~**Save migration 22 → 23**~~ — 2026-08-08. Player.log recorded
+  `[Intercolony] Migrating state from schema 22 to 23.` followed by
+  `[Intercolony]   schema 22 -> 23: procurement fulfilment preference added; existing requests allow either.`
+  Migration has now been exercised twice in play: the schema 17 save walked five steps to 22 on
+  2026-08-06, and this save took the single step from 22 to 23.
 - ~~**§88 safe passage, happy path**~~ — 2026-07-29. Hired, arrived, forced a war; worker walked out
   factionless and reached the border. No exceptions or warnings in the session.
 - ~~**§43 death compensation during safe passage**~~ — 2026-07-30. A civilian on 19/day was killed

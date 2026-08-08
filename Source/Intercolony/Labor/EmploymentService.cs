@@ -841,9 +841,10 @@ namespace Intercolony
                 EmployerReputationService.NoteEarlyDismissal(standingOwner, contract);
             }
 
+            bool endingQuest = quest != null && !quest.Historical;
             try
             {
-                if (quest != null && !quest.Historical)
+                if (endingQuest)
                 {
                     // Ends the quest, which cleans up its parts, which sends the worker home.
                     quest.End(status == EmploymentStatus.Completed
@@ -860,7 +861,31 @@ namespace Intercolony
             }
             catch (System.Exception ex)
             {
-                IntercolonyLog.Warning($"Employment #{contract.id} threw while ending: {ex}");
+                IntercolonyLog.Error(
+                    endingQuest
+                        ? $"Employment #{contract.id} for {worker} threw while ending its quest: {ex}"
+                        : $"Employment #{contract.id} for {worker} threw while restoring its faction " +
+                          $"without a quest: {ex}");
+
+                // The failed path may have left the worker's allegiance unchanged. The full vanilla
+                // departure cannot safely be recreated here, but leaving a player-faction pawn
+                // behind after the record closes would turn them into a free colonist.
+                try
+                {
+                    if (worker != null && !worker.Destroyed && worker.Faction == Faction.OfPlayer)
+                    {
+                        worker.SetFaction(contract.employerFaction);
+                    }
+                }
+                catch (System.Exception fallbackEx)
+                {
+                    // Reference clearing below must still run even if the last-resort restore also
+                    // fails; retaining unresolved Scribe references would corrupt every later load.
+                    IntercolonyLog.Error(
+                        $"Employment #{contract.id} for {worker} could not restore the worker's " +
+                        $"faction after employment teardown failed. Original exception: {ex}\n" +
+                        $"Faction fallback exception: {fallbackEx}");
+                }
             }
 
             if (worker != null && !worker.Destroyed && contract.originalKind != null &&
