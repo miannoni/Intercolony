@@ -95,11 +95,18 @@ scale. Next: pass B — settings, tooltip polish, UI scaling. Then pass C — DL
 tests, compatibility notes, documentation. **Localization was dropped, not deferred: the mod is
 English-only** and §118 is amended to say so.
 
-**Sentinels have bitten three times now. Compare them exactly, and never format them.**
+**Sentinels have bitten five times now. Compare them exactly, and never format them.**
 `arrivedTick < 0`, `ledgerStartTick < 0` and printing `DaysRemaining` for an open-ended contract were
 all the same mistake: a value chosen to mean "none" being read as a quantity. A tick is only
 non-negative because the game has been running a while, and `float.MaxValue` renders as
 34028230000000000000000000000000000000. Two of the three were silent.
+
+Phase 25's tooltip pass found two more, which is why the count keeps rising: the employee tooltip
+printed `termDays` raw, so an open-ended contract read "0 days"; and the dismissal confirmation could
+still format `DaysRemaining` for an open-ended worker serving notice — the *same* bug as the third,
+resurfacing in a different method after the first fix. `EmploymentContract` has `TermLabel` and
+`RemainingLabel` precisely so the raw fields are never formatted. **Use them. Grep for `termDays` and
+`DaysRemaining` before adding any new display of a contract's duration.**
 
 **Play-testing is done by a Dispatch computer-use session, not by Matteo at the keyboard.** The
 handoff runs through `DISPATCH_NOTES.md` — append-only, timestamped, game output verbatim. Claude

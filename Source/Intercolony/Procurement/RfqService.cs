@@ -405,7 +405,7 @@ namespace Intercolony
             factors.Add(new PriceFactor("Negotiation", Rand.Range(0.94f, 1.1f)));
 
             factors.Add(ProcurementLogisticsFactor(delivers));
-            factors.Add(IntercolonyPricing.EconomyDifficultyFactor());
+            factors.Add(IntercolonyPricing.BuyingEconomyDifficultyFactor());
 
             float price = baseValue;
             foreach (PriceFactor factor in factors)

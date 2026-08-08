@@ -125,7 +125,7 @@ namespace Intercolony
             EmployerReputationService.NoteArrearsCleared(IntercolonyWorldComponent.Current);
 
             IntercolonyLetters.Send(
-                IntercolonyLetterImportance.Important,
+                IntercolonyLetterImportance.Chatty,
                 "Wages settled",
                 $"{contract.workerName} has been paid {paid} silver, clearing what was owed.\n\n" +
                 (refusingOverWages
@@ -411,7 +411,7 @@ namespace Intercolony
             EmployerReputationService.NoteDebtSettled(IntercolonyWorldComponent.Current, debt);
 
             IntercolonyLetters.Send(
-                IntercolonyLetterImportance.Important,
+                IntercolonyLetterImportance.Chatty,
                 "Debt settled",
                 $"{settled} silver has been sent to {debt.settlementName} to cover " +
                 $"{debt.KindLabel()} for {debt.workerName}.\n\n" +

@@ -1011,8 +1011,9 @@ namespace Intercolony
 
             if (opportunity.HasConditionConstraint)
             {
-                sb.AppendLine($"Minimum condition: " +
-                              $"{Mathf.RoundToInt(opportunity.minHitPointsPercent * 100f)}%.");
+                sb.AppendLine($"Items below " +
+                              $"{Mathf.RoundToInt(opportunity.minHitPointsPercent * 100f)}% condition " +
+                              "will be refused at delivery.");
             }
 
             // §105: the mode is half the decision, so it belongs in the listing detail.

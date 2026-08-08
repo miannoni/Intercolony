@@ -870,7 +870,7 @@ namespace Intercolony
                 $"{contract.workerName} of {contract.factionName}\n" +
                 $"Home settlement: {contract.settlementName}\n" +
                 $"Skills at hire: {contract.workerSkills}\n\n" +
-                $"Term: {contract.termDays} days at {contract.dailyWage} silver/day\n" +
+                $"Term: {contract.TermLabel} at {contract.dailyWage} silver/day\n" +
                 $"Paid in advance: {contract.paidSilver} silver\n\n" +
 
                 // §42 and §43 in the tooltip, together, because they are one decision: what you may
@@ -956,7 +956,7 @@ namespace Intercolony
             string body = travelling
                 ? $"Cancel {contract.workerName}'s contract before they arrive?\n\n" +
                   $"They are {Mathf.Max(0f, contract.DaysUntilArrival):0.#} days away and will turn back."
-                : $"Send {contract.workerName} home {Mathf.Max(0f, contract.DaysRemaining):0.#} days early?\n\n" +
+                : $"Send {contract.workerName} home now ({contract.RemainingLabel})?\n\n" +
                   "They will stop working immediately and leave the map.";
 
             Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(

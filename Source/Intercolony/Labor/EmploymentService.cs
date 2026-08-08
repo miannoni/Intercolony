@@ -389,7 +389,7 @@ namespace Intercolony
                         {
                             contract.termLapsedNotified = true;
                             IntercolonyLetters.Send(
-                                IntercolonyLetterImportance.Important,
+                                IntercolonyLetterImportance.Chatty,
                                 "Employment ended",
                                 $"{contract.workerName}'s {(byNotice ? "notice" : "term")} has ended, but they " +
                                 "are away from the colony and cannot leave from where they are.\n\n" +
@@ -767,7 +767,7 @@ namespace Intercolony
                 PayrollService.BeginPayroll(contract);
 
                 IntercolonyLetters.Send(
-                    IntercolonyLetterImportance.Important,
+                    IntercolonyLetterImportance.Chatty,
                     "Employee arrived",
                     $"{contract.workerName} of {contract.factionName} has arrived from {contract.settlementName} " +
                     $"to work for {contract.termDays} days.\n\n" +
@@ -933,9 +933,11 @@ namespace Intercolony
                           $"{contract.paidSilver} silver paid in advance.";
 
             IntercolonyLetterImportance importance =
-                status == EmploymentStatus.Completed || status == EmploymentStatus.Dismissed
-                    ? IntercolonyLetterImportance.Important
-                    : IntercolonyLetterImportance.Always;
+                status == EmploymentStatus.Completed
+                    ? IntercolonyLetterImportance.Chatty
+                    : status == EmploymentStatus.Dismissed
+                        ? IntercolonyLetterImportance.Important
+                        : IntercolonyLetterImportance.Always;
 
             // Deliberately says nothing about refunds. Nothing else in RimWorld or Intercolony
             // refunds anything, so raising the subject is what would make a player expect one.

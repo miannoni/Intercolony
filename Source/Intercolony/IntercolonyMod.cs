@@ -103,14 +103,10 @@ namespace Intercolony
 
             SectionGap(ref y);
             SectionTitle("Economy difficulty", width, ref y, draw);
-            Paragraph(
-                "This changes prices when a new trade is quoted. Buyers pay this share of normal " +
-                "prices, and suppliers charge it. Existing orders, quotations, and supply " +
-                "agreements keep the amounts already agreed.", width, ref y, draw);
-
             float difficulty = Settings.economyDifficulty;
+            Paragraph(EconomyDifficultyDescription(difficulty), width, ref y, draw);
             Slider(
-                $"Prices on new trades: {Mathf.RoundToInt(difficulty * 100f)}%", ref difficulty,
+                $"Difficulty on new trades: {Mathf.RoundToInt(difficulty * 100f)}%", ref difficulty,
                 IntercolonySettings.MinEconomyDifficulty,
                 IntercolonySettings.MaxEconomyDifficulty, 0.05f, width, ref y, draw);
             if (draw)
@@ -119,6 +115,28 @@ namespace Intercolony
             }
 
             return y;
+        }
+
+        private static string EconomyDifficultyDescription(float difficulty)
+        {
+            const string existingTerms =
+                " Existing orders, quotations, and supply agreements keep the amounts already agreed.";
+            int difference = Mathf.RoundToInt(
+                Mathf.Abs(difficulty - IntercolonySettings.DefaultEconomyDifficulty) * 100f);
+            // Branch on what the player sees so rounding cannot produce a misleading 0% change.
+            if (difference == 0)
+            {
+                return "Prices are unchanged. Higher is harder." + existingTerms;
+            }
+
+            if (difficulty > IntercolonySettings.DefaultEconomyDifficulty)
+            {
+                return $"Buyers pay {difference}% less and suppliers charge {difference}% more " +
+                       "than they would otherwise. Higher is harder." + existingTerms;
+            }
+
+            return $"Buyers pay {difference}% more and suppliers charge {difference}% less " +
+                   "than they would otherwise. Higher is harder." + existingTerms;
         }
 
         private static void SectionTitle(string text, float width, ref float y, bool draw)

@@ -414,7 +414,7 @@ namespace Intercolony
             }
 
             IntercolonyLetters.Send(
-                IntercolonyLetterImportance.Always,
+                IntercolonyLetterImportance.Chatty,
                 "Supply agreement resumed",
                 $"Relations with {contract.settlementName} have recovered and your supply agreement " +
                 "is live again.\n\n" +

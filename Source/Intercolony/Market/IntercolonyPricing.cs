@@ -116,7 +116,7 @@ namespace Intercolony
                 }
             }
 
-            factors.Add(EconomyDifficultyFactor());
+            factors.Add(SellingEconomyDifficultyFactor());
 
             float total = baseValue;
             foreach (PriceFactor factor in factors)
@@ -197,12 +197,25 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// The player's global price setting. Added while a price is formed, never when a stored
-        /// order is read back, so an agreed amount cannot move underneath an obligation.
+        /// The player's global difficulty setting on sales. Added while a price is formed, never
+        /// when a stored order is read back, so an agreed amount cannot move underneath an
+        /// obligation.
         /// </summary>
-        public static PriceFactor EconomyDifficultyFactor()
+        public static PriceFactor SellingEconomyDifficultyFactor()
         {
-            return new PriceFactor("Economy difficulty", IntercolonyMod.Settings.economyDifficulty);
+            // Higher difficulty must squeeze both sides of the player's economy instead of
+            // inflating every price and cancelling itself out against procurement.
+            return new PriceFactor(
+                "Economy difficulty (selling)",
+                2f - IntercolonyMod.Settings.economyDifficulty);
+        }
+
+        /// <summary>The player's global difficulty setting on supplier quotations.</summary>
+        public static PriceFactor BuyingEconomyDifficultyFactor()
+        {
+            return new PriceFactor(
+                "Economy difficulty (buying)",
+                IntercolonyMod.Settings.economyDifficulty);
         }
 
         /// <summary>

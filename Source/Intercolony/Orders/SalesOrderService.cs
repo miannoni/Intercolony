@@ -359,7 +359,7 @@ namespace Intercolony
                         IntercolonyWorldComponent.Current, order, !order.IsOverdue(now));
                     IntercolonyLog.Message($"Order {order.id} completed by buyer pickup. {order.outcomeNote}");
                     IntercolonyLetters.Send(
-                        IntercolonyLetterImportance.Important,
+                        IntercolonyLetterImportance.Chatty,
                         "Order collected",
                         $"{order.settlementName} collected {taken}x {order.line.ShortLabel()} " +
                         $"and paid {payment} silver.",

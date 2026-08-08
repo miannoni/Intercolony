@@ -15,6 +15,30 @@ gets an answer instead of silence.
 
 ---
 
+## The test environment, and what may therefore be claimed
+
+**Everything is verified on one machine, in one load order.** That is the whole truth of this
+project's testing, and the documentation must say so rather than implying broader coverage.
+
+- **DLC:** Biotech only. Royalty, Ideology and Anomaly are **not owned and will not be bought**, so
+  they cannot be tested here — ever, not just "not yet".
+- **Mods:** Hospitality, Common Sense, RT Fuse, Tilled Soil, FSF Filth Vanishes With Rain And Time.
+  Intercolony has run alongside these throughout Phase 25 without incident.
+- **UI scale:** 1.75x. This is the scale the layout has actually been judged at.
+
+**How to write compatibility notes and documentation under this constraint** (§118, Pass C):
+
+State what was tested, on what, and say plainly that everything else is untested rather than
+unsupported. "Tested with Biotech; other DLC untested" is honest and useful. "Compatible with all
+DLC" would be a claim nobody here can stand behind, and the first bug report from an Ideology player
+would prove it false. The same applies to mods: name the five, and say the rest is unknown.
+
+Reasoning from the defs is legitimate for DLC that cannot be tested — e.g. checking whether a def a
+DLC adds would flow through the trade classifier — but it must be labelled as reasoning, not as a
+test result.
+
+---
+
 ## Outstanding
 
 ### Self-tests written but never run

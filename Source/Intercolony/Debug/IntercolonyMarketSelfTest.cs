@@ -239,11 +239,27 @@ namespace Intercolony
 
                 Check("unit price is positive", price > 0f, price.ToString("F3"));
                 Check("breakdown has factors", factors.Count >= 3, $"count {factors.Count}");
-                PriceFactor economy = factors.Find(f => f.label == "Economy difficulty");
-                Check("breakdown names the economy difficulty setting",
-                    economy.label == "Economy difficulty" &&
+                PriceFactor economy = factors.Find(
+                    f => f.label == "Economy difficulty (selling)");
+                Check("selling breakdown names its economy difficulty factor",
+                    economy.label == "Economy difficulty (selling)" &&
                     Mathf.Approximately(
-                        economy.multiplier, IntercolonyMod.Settings.economyDifficulty));
+                        economy.multiplier, 2f - IntercolonyMod.Settings.economyDifficulty));
+
+                float previousEconomyDifficulty = IntercolonyMod.Settings.economyDifficulty;
+                try
+                {
+                    IntercolonyMod.Settings.economyDifficulty = 1.25f;
+                    PriceFactor selling = IntercolonyPricing.SellingEconomyDifficultyFactor();
+                    PriceFactor buying = IntercolonyPricing.BuyingEconomyDifficultyFactor();
+                    Check("higher economy difficulty moves buying and selling against the player",
+                        selling.multiplier < 1f && buying.multiplier > 1f,
+                        $"selling {selling.multiplier:F2}, buying {buying.multiplier:F2}");
+                }
+                finally
+                {
+                    IntercolonyMod.Settings.economyDifficulty = previousEconomyDifficulty;
+                }
 
                 float reconstructed = sample.BaseMarketValue;
                 foreach (PriceFactor factor in factors)

@@ -215,7 +215,7 @@ namespace Intercolony
                         {
                             missingLogisticsFactors++;
                         }
-                        if (!quote.priceExplanation.Contains("Economy difficulty"))
+                        if (!quote.priceExplanation.Contains("Economy difficulty (buying)"))
                         {
                             missingEconomyFactors++;
                         }
@@ -233,7 +233,7 @@ namespace Intercolony
                         {
                             missingLogisticsFactors++;
                         }
-                        if (!quote.priceExplanation.Contains("Economy difficulty"))
+                        if (!quote.priceExplanation.Contains("Economy difficulty (buying)"))
                         {
                             missingEconomyFactors++;
                         }
@@ -252,7 +252,7 @@ namespace Intercolony
                 $"{wrongForcedModes} quote(s) contradicted the request");
             Check("quote explanations include fulfillment cost", missingLogisticsFactors == 0,
                 $"{missingLogisticsFactors} quote(s) omitted it");
-            Check("quote explanations name the economy difficulty setting", missingEconomyFactors == 0,
+            Check("quote explanations name the buying economy difficulty factor", missingEconomyFactors == 0,
                 $"{missingEconomyFactors} quote(s) omitted it");
             Check("supplier delivery costs more than collection",
                 RfqService.ProcurementLogisticsFactor(true).multiplier >
