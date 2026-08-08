@@ -98,6 +98,22 @@ tries to assign them work.
 
 ## Proven in play
 
+- ~~**The distributed build works as distributed**~~ — 2026-08-08, Steam Workshop item `3780094556`.
+  Not a gameplay test: the thing it settles is that what a stranger downloads is what was built.
+  Subscribed to the hidden item and verified what Steam *serves*, not what was uploaded — all 9
+  release files byte-identical by SHA-256 to `dist/Intercolony-0.9.0`, the only extra being the
+  `About/PublishedFileId.txt` RimWorld writes itself, and no `Source`, `reference`, `docs`,
+  `Screenshots` or dev scripts. The local copy was removed first so it could not mask the download,
+  and the log confirms the source:
+  `Adding miannoni.intercolony(...\workshop\content\294100\3780094556)` with `Adding mods from mods
+  folder:` empty. All five screens opened, then save and reload gave
+  `[Intercolony] State loaded (schema 24, nextId 1).` — `State loaded`, not `State initialized
+  fresh`, which is what distinguishes a real round trip from a silent re-initialization. No
+  exceptions and no GUI-stack imbalance. **Also seen:**
+  `[Intercolony] Dropped 15 candidate(s) left over from a previous game.` — the
+  `LaborCandidateService` static-pool guard working in a build anyone can download.
+  **Not proven by this:** anything about balance or long-run behaviour, and Market was never seen
+  *populated* here because a just-created world has run no refresh cycle.
 - ~~**Employee edge cases (§33 q12, q13, q20)**~~ — 2026-08-08, one session, zero exceptions.
   **Downed:** **Employee downed — treatment needed** fired twice for separate events. Eric was
   rescued and treated; employment stayed Active and wages continued. When a term expired while its

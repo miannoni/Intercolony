@@ -1852,3 +1852,76 @@ Worth recording about method:
   was written into `docs/PENDING_PLAYTESTS.md` — the exact failure that file exists to prevent,
   committed while using it to hold other work to account. Verifying something and *saying* it is not
   the same as recording it.
+
+## Phase 26 — public beta  (2026-08-08)
+
+0.9.0 is public on both GitHub and the Steam Workshop. No gameplay code changed in this phase; it
+was entirely release engineering, verification and distribution.
+
+Implemented:
+- **GitHub pre-release `v0.9.0`**, annotated tag on `b8744e4`, with `Intercolony-0.9.0.zip`
+  (1,135,903 bytes) attached. Release body is `docs/RELEASE_NOTES_0.9.0.md`, kept in the repo so the
+  published text can be diffed against what was written.
+- **Steam Workshop item `3780094556`**, created hidden, smoke-tested, then made public.
+- **`docs/RELEASE_PROCEDURE.md`** — the upload and update procedure, every claim verified against
+  `reference/decompiled/` rather than recollection. Three facts shape it: RimWorld uploads the mod's
+  `RootDir` wholesale with no filtering and no junction handling; `About/PublishedFileId.txt` is the
+  only thing binding a folder to a Workshop item; and `SetItemVisibility` is never called, so a new
+  item takes Steam's default.
+- **`docs/WORKSHOP_DESCRIPTION.bbcode`** — the Workshop copy, in BBCode. `SetItemDescription` is
+  inside `if (creating)`, so it is pasted once on the website and survives every later re-upload.
+- **README doc links repointed at GitHub.** They were relative, and `docs/` and `DESIGN.md` are not
+  in the distributable, so both were broken for anyone reading the README out of an unzipped
+  release. `./LICENSE` stayed relative because LICENSE ships.
+- **`About/Preview.png` replaced** with the Business screen over the colony.
+- **Repository made public**, after an audit of the tree and all 66 commits: no secrets, and no
+  `reference/`, decompiled source, vanilla defs or other authors' content ever committed.
+
+Not implemented:
+- **The Relations empty-state clipping was left unfixed**, deliberately. Recorded in
+  `docs/BACKLOG.md`. It is cosmetic and systemic across all five screens, and a launch day is the
+  wrong time to touch layout code.
+- **No 0.9.1.** Nothing found during the smoke test warranted one.
+
+Known limitations:
+- **The preview image nearly shipped broken.** At 1,902,315 bytes it was 1.81x Steam's 1 MB preview
+  cap. RimWorld enforces no limit and only checks `File.Exists`, so nothing local would have caught
+  it — it would have failed silently at Steam's end. Resized to 933,975 bytes.
+- **`package.ps1` does not carry `PublishedFileId.txt` forward**, and `dist/` is rebuilt on every
+  run. Correct for a downloadable zip, which must not carry the Workshop identity — but it means the
+  next release must restore the ID by hand or it creates a *second* Workshop item. The saved copy
+  lives in the gitignored `.workshop/`, and the check is that the menu reads **Update on Steam
+  Workshop** rather than **Upload**.
+- **Market has never been seen populated on a fresh world.** The smoke test confirmed the screen
+  renders; a just-created world has run no refresh cycle, so there was nothing to render.
+
+Manual test:
+- **Steam-served build, end to end, 2026-08-08.** Subscribed to the hidden item and verified what
+  Steam actually serves rather than what was uploaded: all 9 release files byte-identical by SHA-256
+  to `dist/Intercolony-0.9.0`, the only extra being `About/PublishedFileId.txt` that RimWorld itself
+  writes. No `Source`, `reference`, `docs`, `Screenshots` or dev scripts. `Intercolony.dll` loads as
+  a valid assembly.
+- **Loaded from the Workshop, not locally** — `Adding miannoni.intercolony(...\workshop\content\
+  294100\3780094556)`, with the `Adding mods from mods folder:` section empty, the local staging copy
+  having been removed first precisely so it could not mask the download.
+- **All five screens opened**: Business, Selling/Market, Procurement, Labor, Relations. Zero
+  exceptions, and specifically no GUI-stack imbalance, which is the failure mode the Phase 25
+  applicant-list bug produced.
+- **Save and reload** through the Workshop build: `[Intercolony] State loaded (schema 24, nextId 1).`
+  — `State loaded`, not `State initialized fresh`, which is what proves the save round-tripped
+  instead of silently re-initializing. No unresolved cross-references.
+- **The cross-game leak guard was seen working in the shipped build**:
+  `[Intercolony] Dropped 15 candidate(s) left over from a previous game.` That is
+  `LaborCandidateService.Abandon()`, the fix for the static-pool leak that went undetected for four
+  phases, firing correctly in a build a stranger could download.
+
+Worth recording about method:
+- **Three verification failures in this phase were defects in the checks, not the artifacts.** A
+  UTF-8 file read as ANSI made a byte-identical release body look like a mismatch; a scratchpad path
+  containing the word "claude" tripped a forbidden-content scan; and `@() -notmatch` on an empty
+  array read as false. Every one produced a FAIL on something that was correct. A verification script
+  is code, and it fails the same way code does — the reflex to trust a red result over the artifact
+  is exactly as wrong as the reverse.
+- **The most valuable checks were the ones against reality rather than intent.** Re-downloading the
+  published asset and hashing it, and reading what Steam served rather than what was uploaded, each
+  cost a minute and are the only reason the distribution can be claimed rather than assumed.

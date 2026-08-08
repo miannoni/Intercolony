@@ -88,8 +88,8 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 25 complete (2026-08-08). Save schema 24. Next: Phase 26 — public beta (§119),
-shipping as a **0.9.0 pre-release**.
+**Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. Save schema 24. Next: react to
+beta feedback in point releases; there is no Phase 27 plan yet.
 
 **`docs/ROAD_TO_1_0.md` audits §120's 36 criteria: 25 met and proven, 11 met but unproven, 0 not
 met.** Read it before planning anything — it is the honest picture of how far 1.0 actually is.
@@ -115,20 +115,39 @@ bugs found in beta get fixed in a point release; that is what a pre-release flag
 people playing it*, which no amount of coding substitutes for. The remaining work is play-testing
 and distribution, not development.
 
-### 0.9.0 release state
+### 0.9.0 is released — where everything lives
 
-Decided: version **0.9.0**, marked **pre-release**, **GitHub first and Steam Workshop about a week
-later**. Release notes must state their own limits, the same rule `docs/COMPATIBILITY.md` follows.
+**Shipped 2026-08-08, both channels the same day** (the earlier "GitHub first, Steam a week later"
+plan was dropped):
 
-Built and verified, do not redo: `package.ps1` produces `dist/Intercolony-0.9.0.zip` — 9 files,
-0.20 MiB, asserted free of `Source/`, `reference/`, `docs/`, `.git`, `dev.ps1` and any junction.
-**It exists because the repo root is also the mod folder**, and `reference/vanilla-defs` is a
-junction to RimWorld's entire `Data` directory while `reference/mods` holds other authors' work.
-Never point a Workshop upload at the repo folder. `docs/BETA_QUESTIONS.md` holds the feedback set.
+- **GitHub:** pre-release `v0.9.0` on `b8744e4`, asset `Intercolony-0.9.0.zip` (1,135,903 bytes).
+  Repository is **public**.
+- **Steam Workshop:** item **`3780094556`**, public. Harmony is set as a Required Item.
+- **Workshop ID is saved at `.workshop/PublishedFileId.txt`** (gitignored). **The next Workshop
+  update depends on it** — see below.
 
-**Nothing has been tagged, released or uploaded.** Remaining before publishing: replace
-`About/Preview.png` (4.5 KB, a placeholder) and draft the release notes. Both need Matteo's sign-off
-before anything goes public.
+**Read `docs/RELEASE_PROCEDURE.md` before any future release.** Every claim in it was verified
+against `reference/decompiled/`. The three that matter:
+
+1. **RimWorld uploads the mod's `RootDir` wholesale** — no filtering, no exclude list, no junction
+   handling — and only accepts a mod whose `Source` is the Mods folder. Uploading through the
+   `Mods\Intercolony` junction would publish this entire repo, including `reference/vanilla-defs`
+   (a junction to RimWorld's whole `Data` directory) and `reference/mods` (other authors' work).
+   **Never point a Workshop upload at the repo folder.** `package.ps1` exists for this reason.
+2. **`About/PublishedFileId.txt` binds a folder to one Workshop item.** `package.ps1` deliberately
+   does not copy it and `dist/` is rebuilt on every run, so an update must restore it from
+   `.workshop/` by hand. **The check is that the menu reads "Update on Steam Workshop", not
+   "Upload"** — if it says Upload, stop, or you create a second item.
+3. **The description is create-only** (`SetItemDescription` is inside `if (creating)`), so the
+   Workshop copy in `docs/WORKSHOP_DESCRIPTION.bbcode` survives re-uploads. The **title** is re-sent
+   every time from `About.xml`'s `<name>`.
+
+Also verified the hard way: **Steam caps the preview image at 1 MB and RimWorld enforces nothing**,
+only checking `File.Exists`. A 1.81 MB preview would have failed silently at Steam's end.
+`About/Preview.png` is currently 933,975 bytes — keep it under the cap.
+
+`docs/RELEASE_NOTES_0.9.0.md` holds the published release body; `docs/BETA_QUESTIONS.md` holds the
+feedback set. Beta findings go to `docs/BACKLOG.md` and get fixed in point releases, not on the day.
 
 **Localization was dropped, not deferred: the mod is English-only** and §118 is amended to say so.
 

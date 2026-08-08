@@ -82,6 +82,50 @@ to that should shape which of the four get mirrored.
 
 ---
 
+## Empty-state paragraphs use hard-coded heights and can clip
+
+**Raised:** 2026-08-08, by Matteo, during the 0.9.0 Steam smoke test.
+**Size:** small — one focused pass across five call sites.
+**Status:** open. Non-blocking beta UX issue; deliberately not fixed on launch day.
+
+The explanatory paragraph on the **Relations** screen is vertically clipped at 1.75x UI scale: its
+second wrapped line is cut off.
+
+The cause is a hard-coded `Rect` height rather than a measured one. Relations reserves `60f` at
+`Source/Intercolony/UI/MainTabWindow_Intercolony.cs:1916` for content that occupies about four line
+heights — a title line, a blank line, and a ~189-character paragraph that wraps to two lines under
+`GameFont.Small`.
+
+**This is systemic, not local to Relations.** Every empty-state paragraph does the same thing:
+
+| Screen | Height | Location |
+|---|---|---|
+| Relations | `60f` | `MainTabWindow_Intercolony.cs:1916` |
+| Selling/Market | `60f` | `MainTabWindow_Intercolony.cs:602` |
+| Procurement | `70f` | `MainTabWindow_Intercolony.cs:1561` |
+| Labor | `76f` | `MainTabWindow_Intercolony_Labor.cs:181` |
+| Business | `44f` | `MainTabWindow_Intercolony_Business.cs:220` |
+
+Relations is simply the one that broke first: the longest text in nearly the smallest box. The
+others are not correct, only luckier, and any wording change or UI scale could tip them the same way.
+
+**Severity: cosmetic.** The empty-state branch returns immediately after drawing
+(`MainTabWindow_Intercolony.cs:1922`) without advancing `y`, so nothing below is positioned relative
+to that height. There is no overlap and no mispositioning. It is also only reachable with no trading
+history at all, so a player with any record never sees it.
+
+**The fix**, when it is picked up: bind each label string to a local, measure with
+`Text.CalcHeight(text, width)` under the font already in effect, and use that for the rect. RimWorld
+exposes this at `reference/decompiled/Verse/Text.cs:209`, and the codebase already uses it for Market
+table rows at `MainTabWindow_Intercolony.cs:962` — so this is applying an existing local pattern to
+paragraphs, not introducing a new one.
+
+**Why it was deferred.** It was found between a verified Workshop upload and its smoke test. Layout
+code is exactly what should not be touched in that window, and the defect is invisible to any player
+who has traded once. It belongs in a point release with any other beta UX findings.
+
+---
+
 ## Rejected or superseded
 
 *(nothing yet)*
