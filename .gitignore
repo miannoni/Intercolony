@@ -444,3 +444,10 @@ Assemblies/
 
 # Clean release packages produced by package.ps1.
 dist/
+
+# Steam Workshop identity. PublishedFileId.txt binds a folder to one Workshop item, so it
+# must never be committed and never ship in a downloadable zip — a copy carrying it would
+# point at this item. RimWorld writes it into whatever folder was uploaded; .workshop/ is
+# where we keep the saved copy. See docs/RELEASE_PROCEDURE.md.
+About/PublishedFileId.txt
+.workshop/
