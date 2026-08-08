@@ -1,0 +1,90 @@
+[h1]Intercolony[/h1]
+
+The settlements on your world map want things. Intercolony turns that into an economy you can actually work in — with orders that carry deadlines, agreements that bind you after you accept them, and workers you have to pay.
+
+[quote]See what settlements want → accept work you can fulfill → make or gather the goods → deliver them or wait for collection → get paid → build a record with that settlement.[/quote]
+
+[b]This is a public beta (0.9.0).[/b] Please read the last two sections before installing.
+
+[hr][/hr]
+[h1]What it adds[/h1]
+
+A new [b]intercolony[/b] tab on the bottom bar, with five screens:
+
+[list]
+[*][b]Business[/b] — where you stand. Silver in storage, the daily wage bill across your workforce, what moved over the last quadrum or year, and the margin on your standing agreements. A summary, not accounting software.
+[*][b]Selling[/b] — the [i]Market[/i] of what settlements currently want; [i]Find buyer[/i] to locate someone who wants stock you already have; [i]Orders[/i] for what you have committed to; [i]Contracts[/i] for recurring supply agreements.
+[*][b]Procurement[/b] — request goods you cannot make, collect quotations from settlements that can supply them, and buy from whoever answers best. Pickup or delivery.
+[*][b]Labor[/b] — [i]Hire[/i] a worker directly, put up a public [i]Post[/i] and wait for applicants, and manage your [i]Employees[/i].
+[*][b]Relations[/b] — the commercial record you have built with each settlement.
+[/list]
+
+[h1]Orders that mean something[/h1]
+
+Demand covers commodities, intermediate goods, manufactured products, furniture, art, weapons, apparel and minifiable equipment. An order can specify quantity, deadline, delivery terms, and quality or condition floors where those make sense — deliver damaged goods against a condition floor and they will be refused, and told why.
+
+Deliveries and defaults build a commercial reputation. Settlements that come to trust you start proposing recurring supply agreements: a fixed quantity on a cadence, for a set number of cycles.
+
+[h1]Employees, not free colonists[/h1]
+
+Hired workers join your faction for the term and then leave. In between they are an obligation:
+
+[list]
+[*]Fixed or open-ended terms, with renewal.
+[*]Payroll, and arrears when you cannot pay.
+[*]Conduct rules — combat clauses mean something, and drafting a civilian has consequences.
+[*]Dismissal with notice, pay in lieu, or without notice at a cost to your standing.
+[*]Injury, capture and death all carry obligations to their home faction.
+[*]A separate employer reputation, which decides who is willing to work for you at all.
+[/list]
+
+You can also pay to keep one permanently — or refuse to, and find out what that does to the relationship.
+
+[hr][/hr]
+[h1]Requirements[/h1]
+
+[list]
+[*]RimWorld [b]1.6[/b]
+[*][url=https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077][b]Harmony[/b][/url], loaded [b]before[/b] Intercolony
+[/list]
+
+[h1]This is a beta — what that means[/h1]
+
+Core systems have been extensively tested internally, on one machine and one load order. This beta is the first external test of balance, compatibility, UX and long-running behavior.
+
+[b]Keep normal backups of any save you use it with.[/b]
+
+[h1]The tested environment[/h1]
+
+Stated plainly rather than implying broader coverage:
+
+[list]
+[*][b]RimWorld 1.6.4871 rev590.[/b]
+[*][b]DLC: Biotech only.[/b] Royalty, Ideology and Anomaly are untested — not declared unsupported.
+[*][b]UI scale: 1.75x.[/b] This is the scale the layout has been judged at. Other scales are untested.
+[*][b]Alongside:[/b] Hospitality, Common Sense, RT Fuse, Tilled Soil, and FSF Filth Vanishes With Rain And Time, with no problem attributed to their interaction. That is ordinary play, not a systematic compatibility test.
+[/list]
+
+[h1]Known limits[/h1]
+
+[list]
+[*][b]Non-minifiable buildings can never be traded.[/b] A caravan cannot crate and carry one. Permanent exclusion, not an unfinished feature.
+[*][b]English only.[/b] A project decision rather than a missing translation task: much of the writing is composed at runtime.
+[*][b]Employees are quest lodgers in your faction.[/b] Mods that assume "player faction" means "permanent colonist" — colonist bars, work-tab replacements, roster mods — are the main compatibility risk, and none has been tried.
+[/list]
+
+[h1]Found a problem?[/h1]
+
+Please report it on the [url=https://github.com/miannoni/Intercolony/issues]GitHub issue tracker[/url] rather than in the comments, where it will get lost. Include reproduction steps, your full mod list and load order, UI scale for anything visual, and [b]Player.log[/b] from the failing session. Intercolony's own log lines all begin with [b][Intercolony][/b].
+
+The three most useful things you can tell me:
+
+[olist]
+[*][b]A real economy decision[/b] — one sale or purchase you accepted and one you rejected, and what made the difference.
+[*][b]A repeatable trick[/b] — the strongest strategy you found for making money or dodging a cost.
+[*][b]Your setup, plus one thing you actually saw[/b] — a DLC or modded item traded, or an employee viewed through a colonist-bar or work-tab mod.
+[/olist]
+
+[hr][/hr]
+Source, full design notes and compatibility detail: [url=https://github.com/miannoni/Intercolony]github.com/miannoni/Intercolony[/url]
+Licensed MIT.

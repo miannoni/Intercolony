@@ -451,3 +451,7 @@ dist/
 # where we keep the saved copy. See docs/RELEASE_PROCEDURE.md.
 About/PublishedFileId.txt
 .workshop/
+
+# Workshop gallery screenshots. Upload-time assets, not source and not shipped: they are
+# kept locally rather than in history, where 25 MB of PNGs would be permanent.
+Screenshots/
