@@ -88,8 +88,11 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. Save schema 24. Next: react to
-beta feedback in point releases; there is no Phase 27 plan yet.
+**Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. A post-0.9.0
+playtest-correction batch partially landed on 2026-08-09: A1–A5, B1–B3, B5/B5b, C0–C2 and the D1
+research spike; B4 is decided and ready but not started, and D2/D3 are deliberately deferred for
+the settled animal-specification design and its required saved-state change. Save schema remains
+24. Next: continue beta corrections in point releases; there is no Phase 27 plan yet.
 
 **`docs/ROAD_TO_1_0.md` audits §120's 36 criteria: 25 met and proven, 11 met but unproven, 0 not
 met.** Read it before planning anything — it is the honest picture of how far 1.0 actually is.

@@ -47,7 +47,186 @@ These are dev actions, not play-tests, but they are outstanding verification and
 list. All of them: **F12** → **orange bug icon** (top-right toolbar) → type the search term → click
 the action. Output goes to the debug log; no need to copy anything out, the dev script reads it.
 
-*(none outstanding — all written self-tests have been run.)*
+None of the assertions added in the 2026-08-09 correction batch has been clicked. A clean build and
+game launch prove that the assembly loads; they do not prove these branches.
+
+#### Find Buyer, availability and pickup timing — `Run order self-test`
+
+**Full path.** From RimWorld's main menu, open **Options** → **General** and enable
+**Development mode**. Load a colony with a home map. Press **F12**, click the **orange bug icon** in
+the top-right toolbar, type `Run order self-test`, and click the exact action
+**Intercolony → Run order self-test**.
+
+**Pass.** The debug log begins `Sales order self-test`, contains no `FAIL` line or red exception,
+and ends with `0 failed`. This covers the 1.5-second refresh boundary; selection clamping and buyer-
+offer invalidation; physical stock minus the deliberately narrow commitment set; direct-sale
+revalidation; Mark Ready self-exclusion and competing pickups; the shared pickup ETA and unknown-
+route fallback; and the rule that an en-route buyer survives the old readiness deadline.
+
+**Failure.** Any `FAIL` line, a non-zero failed count, or a red exception is a failure. A prerequisite
+skip which prevents the new availability/pickup assertions from running is not evidence for those
+assertions and must not be marked as a pass.
+
+#### Contract liveness and completed-history offers — `Run contract self-test`
+
+**Full path.** From RimWorld's main menu, open **Options** → **General** and enable
+**Development mode**. Load a colony. Press **F12**, click the **orange bug icon** in the top-right
+toolbar, type `Run contract self-test`, and click the exact action
+**Intercolony → Run contract self-test**.
+
+**Pass.** The debug log begins `Recurring contract self-test`, contains no `FAIL` line or red
+exception, and ends with `0 failed`. The new checks distinguish live offers, active and suspended
+agreements, pending and lapsed renewals; require two completed sales of the exact good to the exact
+settlement; reject failed, cancelled, cross-settlement, missing-def and blacklisted history; and keep
+seeded selection stable. The test temporarily isolates and then restores the colony's contracts,
+orders and reputation.
+
+**Failure.** Any `FAIL` line, a non-zero failed count, a red exception, or an early return because no
+accessible settlement/economic profile exists is a failure to verify this batch. Do not count
+"nothing visibly changed" as a pass.
+
+#### Procurement cancellation and concluded-order selection — `Run RFQ self-test`
+
+**Full path.** From RimWorld's main menu, open **Options** → **General** and enable
+**Development mode**. Load a colony. Press **F12**, click the **orange bug icon** in the top-right
+toolbar, type `Run RFQ self-test`, and click the exact action
+**Intercolony → Run RFQ self-test**.
+
+**Pass.** The debug log begins `RFQ self-test`, contains no `FAIL` line or red exception, and ends
+with `0 failed`. The new checks cover cancellation from Confirmed and Ready for pickup without a
+refund, refusal to recancel a terminal order, the reputation hook, cancelled orders remaining inert
+during hourly advance, all four concluded statuses being selected for display, and open purchases
+sorting ahead of concluded ones. A `SKIPPED` line for a def absent from this installation is allowed
+only for that named older item case; it does not excuse a skipped cancellation/display check.
+
+**Failure.** Any `FAIL` line, a non-zero failed count, or a red exception is a failure. If the
+cancellation settlement prerequisite cannot be resolved, the test itself emits a failed check. An
+initial `(no tradable defs or no settlements; skipped)` with no final count is also not a pass. Do
+not rerun until a quiet result and mark the first attempt passed.
+
+### Find Buyer shows uncommitted availability, not raw stock
+
+**Setup.** Put a known quantity of one stackable good in a stockpile and choose a lot small enough
+that at least one interested settlement can buy most of it. Open **Intercolony** → **Selling** →
+**Find buyer** and write down the left-hand count.
+
+**Steps.** Select that good, click **Sell** for an interested settlement, choose a definite quantity
+in the confirmation, and create the order. Return to **Find buyer**. The left-hand count should have
+fallen by exactly the committed quantity, even though the stack is still physically in storage.
+Try to create another direct sale for more than the remaining count, including from a confirmation
+left open long enough to become stale.
+
+**Pass.** If 100 were present and 30 committed, the list shows 70. A second order may use at most
+70; a stale attempt above 70 is refused with the live available and already-committed numbers, and
+no extra order appears.
+
+**Failure.** The list still shows 100, falls by the wrong amount, permits commitments totalling more
+than physical stock, silently clamps a stale confirmation to a smaller sale, or creates any order
+after saying the amount is unavailable.
+
+### Find Buyer refreshes while open, at speed 3 and while paused
+
+**Setup.** Arrange a bill or ordinary consumption job that will add or remove a visible Find Buyer
+good while the page is open. Open **Intercolony** → **Selling** → **Find buyer** and do not press
+**Refresh**.
+
+**Steps.** At normal speed, let the stock change and time how long the left-hand count takes to
+follow it. Repeat at game speed 3. For the paused case, pause immediately after a stack changes but
+before the cached count has caught up, and leave the page open for two real-time seconds.
+
+**Pass.** Each count corrects itself within roughly 1.5 seconds of wall-clock time (allow a little
+observation delay), without the Refresh button. Speed 3 does not make the page scan three times as
+often, and pausing does not freeze the update. If the selected quantity is now too high, it clamps;
+if the selected good disappeared, the selection and buyer offers clear.
+
+**Failure.** The old number remains until Refresh is pressed, refresh stops while paused, refresh
+rate visibly scales with game speed, the right-hand offers remain priced for an impossible old
+quantity, or the page repeatedly hitches during the scan.
+
+### Buyer-pickup readiness deadline is fair
+
+This is the most valuable visual check in the batch. The old code could fail an order after the
+player had met the stated deadline, solely because the buyer travelled too slowly.
+
+**Setup.** In **Intercolony** → **Selling** → **Market**, accept an opportunity whose timing
+column reads `~Nd pickup`; its tooltip must say to mark the goods ready within the order deadline
+and then expect approximately N more travel days. Have the exact goods in storage. Wait until fewer
+days remain on the readiness deadline than the displayed pickup journey will take.
+
+**Steps.** Before the deadline expires, open **Selling** → **Orders** and click **Mark ready**.
+Confirm the row changes to the buyer-en-route countdown. Save in this state, quit to the main menu,
+reload, and let the original readiness deadline pass while the buyer is still travelling.
+
+**Pass.** The order remains Awaiting collection after the original deadline, retains its arrival
+countdown across reload, and eventually completes when the buyer arrives. An otherwise identical
+pickup left unready past its deadline should still fail, and Mark ready should be unavailable after
+that deadline.
+
+**Failure.** The ready order becomes Failed when the old deadline passes, the arrival countdown
+resets or becomes a sentinel-looking number after reload, late Mark ready rescues an expired order,
+or the UI tells the player to deliver a buyer-pickup order.
+
+### Procurement cancellation forfeits payment and keeps the record
+
+**Setup.** Open **Intercolony** → **Procurement** → **Request goods...**, submit a request, wait
+for quotations, and accept one. Record the colony's silver before acceptance and after payment, and
+record the order number and paid amount under **On order**.
+
+**Steps.** Click **Cancel** on that open purchase. Read the confirmation, choose
+**Cancel purchase**, read the resulting message, recount silver, then scroll to
+**Concluded purchases**. Save, quit to the main menu, reload, and inspect Procurement again.
+
+**Pass.** No silver is returned. The message names `Purchase #N` and the exact forfeited amount.
+The order remains visible as `Cancelled by player — N silver forfeited`, with its outcome in the
+tooltip, both immediately and after reload.
+
+**Failure.** Silver is refunded or deducted twice, the message omits or misstates the forfeiture,
+the order disappears, moves back to On order, loses its outcome on reload, or is shown as Supplier
+default/war loss instead of player cancellation.
+
+### Supply agreements name the exact history that caused them
+
+**Setup.** Complete at least two sales of the same stackable good to the same settlement, and raise
+commercial reputation with that settlement to at least 62 through completed trade. Keep a note of
+the settlement, good and completed count. A single completion, failed/cancelled sales, and sales to
+a different settlement must not qualify this pair.
+
+**Steps.** From RimWorld's main menu, open **Options** → **General** and enable
+**Development mode**. Load the prepared colony. Press **F12**, click the **orange bug icon** in the
+top-right toolbar, type `Advance refresh`, and click the exact action
+**Intercolony → Advance refresh**. Repeat refreshes until normal contract chance produces a
+**Supply agreement offered** letter; do not use `Offer contract (force)`, because that diagnostic
+action creates an offer without sending the player-facing causal letter. Open
+**Intercolony** → **Selling** → **Contracts** and compare the offer with the letter and history.
+
+**Pass.** The offered good is one the named settlement has actually bought at least twice, and the
+letter says `<settlement> has bought <good> from you twice/N times and now wants a standing supply
+agreement`. The Contracts row names the same settlement and exact good.
+
+**Failure.** The offer is for an unsupplied good or category cousin, history leaks from another
+settlement, one/failed/cancelled sale qualifies, the letter omits the causal history, the letter and
+Contracts row disagree, or a settlement with no qualifying history receives an offer.
+
+### Correction-batch state survives load and does not cross games
+
+**Setup.** In one test colony, leave a direct Find Buyer order open so its stock is committed, mark
+a buyer-pickup order ready so its buyer is en route, cancel a prepaid purchase so it is concluded,
+and leave a history-based supply agreement offered or active. Record order IDs, quantities,
+availability, paid/forfeited silver, statuses and countdowns.
+
+**Steps.** Save, quit to the main menu, reload that save and inspect Find buyer, Orders,
+Procurement and Contracts. Then quit to the main menu again and start a genuinely different colony
+rather than loading another save from the first world. Open the same four pages there.
+
+**Pass.** Reload preserves every recorded ID, quantity, commitment, terminal outcome, contract good
+and buyer-arrival state without duplicating payment or letters. The different colony contains none
+of the first world's orders, purchase history, contracts, buyer offers or selected Find Buyer state,
+and produces no red Intercolony error.
+
+**Failure.** Anything disappears or reopens on reload, a timer/silver amount changes for reasons
+other than elapsed game time, an already-paid/refused action repeats, or any settlement/order/
+selection from the first colony appears in the second. A red cross-reference, duplicate-ID or null-
+relation error also fails the test even if the screens look correct.
 
 ### §115's first acceptance criterion — long-run stability
 

@@ -1925,3 +1925,72 @@ Worth recording about method:
 - **The most valuable checks were the ones against reality rather than intent.** Re-downloading the
   published asset and hashing it, and reading what Steam served rather than what was uploaded, each
   cost a minute and are the only reason the distribution can be claimed rather than assumed.
+
+## Post-0.9.0 playtest corrections  (2026-08-09)
+
+Implemented:
+- **Find Buyer availability (A1–A5).** The stock list now subtracts the narrow set of commitments
+  that already claim today's goods: open direct Find Buyer sales and buyer-pickup orders whose
+  buyers are travelling. Direct creation and Mark Ready both re-check live availability, with the
+  latter excluding its own direct order so it cannot block itself. The visible count rebuilds every
+  1.5 seconds of real time and reconciles a stale selection and its buyer offers.
+- **Buyer-pickup timing (B1–B3).** One travel estimator now feeds dispatch, Market, confirmations
+  and tooltips. The order deadline means "mark ready by this time": a pickup marked ready on time no
+  longer fails merely because the buyer's journey crosses that deadline, while a pickup still in
+  Accepted after the deadline does fail. Unknown routes consistently use the documented three-day
+  fallback.
+- **Procurement cancellation and retained conclusions (B5, plus the adjacent B5b correction).** The
+  existing RFQ withdrawal and purchase-order cancellation transitions are now reachable from the
+  Procurement tab. Cancellation says before and after confirmation that prepaid silver is
+  forfeited. Completed, cancelled, supplier-default and war-loss orders remain visible under
+  Concluded purchases, with the refund distinction and retained outcome note intact.
+- **Supply-agreement coherence (C0–C2).** Suspended agreements and unexpired renewal offers now
+  suppress a second relationship with the same settlement. New offers are derived from retained
+  completed sales: at least two completions of the exact good to that exact settlement, with no
+  random fallback. The offer letter names that history, and selection remains deterministic and
+  weighted by the number of completed deliveries.
+- **Animal-trade research (D1 only).** The spike established that caravan animals are member pawns,
+  not inventory items, and that a safe implementation needs a dedicated pawn handoff plus an
+  explicit goods/animal discriminator in persisted order state. Its addendum verified the settled
+  specification model's species, sex, life-stage and pregnancy dimensions, including buy-side
+  pregnancy for verified live-bearing animals. No production animal-trade code shipped.
+- No saved fields were added. `IntercolonyWorldComponent.CurrentSaveVersion` remains 24, so existing
+  0.9.0 history drives the new contract rule without migration.
+
+Not implemented:
+- **B4 — stone blocks.** Diagnosed, not built. Core gives `StoneBlocksBase` tradeability `Buyable`,
+  which permits buying and forbids player selling to every trader; the Intercolony classifier was
+  already correct. A definition patch is preserved beside the plan but deliberately unapplied.
+  The owner chose a default-off mod setting instead, because a `PatchOperation` runs during def
+  loading and cannot be toggled. That setting is ready to build and has not been started.
+- **D2 and D3 — animal procurement and physical caravan animal sales.** The owner has settled the
+  scope: trade by specification rather than individual identity; species, sex, life stage and
+  pregnancy selectable and priced separately; goods rules retained wherever technically possible,
+  including partial delivery; bonded-animal confirmation names the affected colonist; and buy-side
+  pregnancy is allowed for verified live-bearing animals. Implementing that promise needs new
+  persisted fields and a migration from schema 24. Neither slice has started.
+
+Known limitations:
+- Availability is a logical commitment, not a physical reservation. Colonists may still eat or use
+  promised goods, bills may consume them, and hauling or deterioration may create a fulfilment
+  shortfall after the order is accepted.
+- A direct seller-delivery order remains committed after its goods are loaded into a caravan, so
+  Find Buyer temporarily understates free colony stock. Correcting that conservative undercount
+  requires assigning caravan cargo to a specific order, which is a separate system and was not
+  justified by this correction.
+- Find Buyer's 1.5-second refresh is deliberately real-time rather than tick-based, so it continues
+  while paused and does not scan three times as often at speed 3. The visible update and hitch
+  behaviour have not been observed by a human.
+- A settlement with fewer than two completed sales of one exact eligible good now offers no supply
+  agreement. There is deliberately no unrelated random fallback.
+- The animal spike found no vanilla API that quotes an exact pawn-aware value from a specification
+  without generating a pawn, and no universal predicate proving an arbitrary modded race safely
+  supports animal pregnancy. Those remain implementation constraints for D2/D3, not shipped
+  capabilities.
+
+Manual test:
+- A clean build completed, followed by a `dev.ps1` cycle in which RimWorld launched, Intercolony
+  loaded, Harmony applied, and schema-24 state loaded with no red Intercolony errors.
+- The new assertions in `Run order self-test`, `Run contract self-test` and `Run RFQ self-test` were
+  written but **never executed**. They are RimWorld debug actions that still require a human to
+  enable development mode and click them; no assertion result is claimed here.
