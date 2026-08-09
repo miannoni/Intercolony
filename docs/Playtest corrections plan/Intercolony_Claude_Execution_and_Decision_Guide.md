@@ -1152,3 +1152,66 @@ mirrors the classifier's `0.4` market-value floor as a local constant rather tha
 classifier, which is a second source of truth and should be resolved on the way in.
 
 ---
+
+### 2026-08-09 — Slice B4 — RESOLVED by Matteo: option (d), an opt-in setting
+
+Matteo's answer supersedes the three options above. Neither shipping the override nor refusing it:
+**make it a mod setting, defaulted off, with the global consequence stated on the control.**
+
+This is better than anything offered. (a) imposed a vanilla change on every player; (c) refused a
+capability that is perfectly reasonable to want. A toggle lets the player decide with the facts in
+front of them, which is the same principle the rest of this mod already follows — say what actually
+happens and let the player choose.
+
+**The preserved XML patch is now the wrong vehicle and must not be applied.** `PatchOperation`s run
+once during def loading, before settings are meaningful, and cannot re-run — so nothing driven by a
+patch can be toggled. `tradeability` is a plain field on `ThingDef`, so the setting instead assigns it
+at startup and on every settings change. That is also strictly better than the patch: it is
+reversible. `b4-stone-blocks.patch` is kept only for its "Explain item tradability" debug action,
+which is still wanted.
+
+**The filter, stated precisely.** Offer a toggle for defs that Intercolony would otherwise trade but
+which the player cannot sell — that is, `tradeability == Buyable`. In vanilla this is exactly two
+things, stone blocks and cooked meals; `Buyable` appears three times in the entire game and nowhere
+else. Modded content is picked up automatically, so nothing is hardcoded. Group the toggles by
+`ThingCategory` so the player sees "Stone blocks", not five separate stone types.
+
+**Deliberately excluded: `tradeability == None`.** That means untradeable in either direction — quest
+items, unfinished things. `Buyable` at least means the game already accepts the item in trade, just
+one-directionally. Offering to unlock `None` would be a footgun.
+
+**Two implementation rules that are easy to get wrong:**
+
+1. Cache each def's original `tradeability` before changing it, and restore *that* on toggle-off.
+   Assuming the original was `Buyable` would silently clobber another mod's patch.
+2. Toggling off while an order is open must not strand an obligation (§62). `tradeability` is
+   consulted in exactly one place in this codebase — `IntercolonyProductClassifier.cs:154` — which
+   gates listing and creation, not delivery. Existing orders should therefore complete normally while
+   new ones are refused. That is the wanted behaviour and it appears to be free, but it must be
+   proven by a test rather than assumed.
+
+**Warning copy agreed**, stating the consequence rather than asking twice, and naming the vanilla
+rule being overridden so the choice is informed:
+
+> **Stone blocks** — normally the player cannot sell these.
+> Enabling this changes the item itself, so stone blocks become sellable to **every trader in the
+> game**, not only through Intercolony. Other mods are affected too.
+> RimWorld disallows this by default; the same flag is used for cooked meals, and only for those two.
+
+**Balance note for the record, since the first assessment overstated it.** One chunk yields 20 blocks
+for 1600 work at 0.9 silver each, so a dedicated stonecutter earns on the order of a mediocre
+crafter — not a game-breaking rate. The reasons to keep it opt-in are that the input is genuinely
+unlimited, and that the recipe sets `workSkillLearnFactor` to 0, meaning vanilla designed stonecutting
+as filler labour rather than an income. Enabling this converts idle time into money, which is a real
+change in how a colony plays, but a defensible one to want.
+
+**On hardcoding.** Matteo explicitly offered an exception to the no-hardcoded-defNames rule if it
+proved necessary. It is not, and the exception is declined rather than banked: filtering on
+`tradeability == Buyable` produces exactly stone blocks and cooked meals in vanilla, needs no def
+names at all, and extends to modded stone and modded meals without further work. A hardcoded list
+would be more code and strictly worse. Recorded here so nobody later reads the general rule as having
+been bent for this slice.
+
+**Status:** ready to implement as its own slice. Not started — session ended.
+
+---
