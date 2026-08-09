@@ -987,10 +987,26 @@ namespace Intercolony
                 case Column.Expires: return $"{opportunity.DaysRemaining:F1}d";
                 case Column.Deadline:
                     return opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                        ? "collected"
+                        ? BuyerPickupTimingLabel(opportunity.distanceTiles)
                         : $"{opportunity.deadlineDays}d haul";
                 default: return "";
             }
+        }
+
+        internal static string BuyerPickupTimingLabel(float distanceTiles)
+        {
+            int days = SalesOrderService.EstimateBuyerPickupTravelDays(distanceTiles);
+            return $"~{days}d pickup";
+        }
+
+        internal static string BuyerPickupTimingExplanation(
+            string settlementName, int deadlineDays, float distanceTiles)
+        {
+            int pickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(distanceTiles);
+            string buyer = settlementName.NullOrEmpty() ? "The buyer" : settlementName;
+            return $"Mark the goods ready within {deadlineDays} days of accepting. " +
+                   $"Once marked ready, {buyer} is expected to take approximately " +
+                   $"{pickupDays} days to arrive and collect them.";
         }
 
         /// <summary>
@@ -1004,7 +1020,10 @@ namespace Intercolony
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine($"{opportunity.quantity}x {opportunity.ItemLabel()} for {opportunity.settlementName}");
-            sb.AppendLine($"Deliver within {opportunity.deadlineDays} days of accepting.");
+            sb.AppendLine(opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                ? BuyerPickupTimingExplanation(
+                    opportunity.settlementName, opportunity.deadlineDays, opportunity.distanceTiles)
+                : $"Deliver within {opportunity.deadlineDays} days of accepting.");
 
             if (opportunity.minQuality.HasValue)
             {
@@ -1114,8 +1133,7 @@ namespace Intercolony
                 qty =>
                 {
                     string logistics = opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                        ? $"{opportunity.settlementName} will collect from your storage once you " +
-                          "declare the goods ready. No caravan needed."
+                        ? "No caravan is needed; the buyer handles collection and pays less for it."
                         : "You deliver by caravan. Missing the deadline fails the order.";
 
                     string partial = qty < opportunity.quantity
@@ -1127,8 +1145,15 @@ namespace Intercolony
                     float rate = IntercolonyPricing.RepriceForQuantity(
                         opportunity, ProfileFor(state, opportunity.settlementId), qty, out _);
 
-                    return $"Supply {qty}x {opportunity.ItemLabel()} to {opportunity.settlementName} " +
-                           $"within {opportunity.deadlineDays} days.\n\n" +
+                    string commitment = opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                        ? $"Accept {qty}x {opportunity.ItemLabel()} for {opportunity.settlementName}.\n\n" +
+                          BuyerPickupTimingExplanation(
+                              opportunity.settlementName, opportunity.deadlineDays,
+                              opportunity.distanceTiles)
+                        : $"Supply {qty}x {opportunity.ItemLabel()} to {opportunity.settlementName} " +
+                          $"within {opportunity.deadlineDays} days.";
+
+                    return commitment + "\n\n" +
                            $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
                            $"Distance: {(opportunity.distanceTiles < 0f ? "unknown" : $"{opportunity.distanceTiles:F0} tiles")}\n\n" +
                            logistics + partial;
@@ -1558,10 +1583,15 @@ namespace Intercolony
                 {
                     float rate = SellRateFor(offer, qty, fulfillment);
                     string logistics = fulfillment == FulfillmentMode.BuyerPickup
-                        ? "The buyer collects: no caravan needed, but they pay less for handling it."
+                        ? "No caravan is needed; the buyer handles collection and pays less for it."
                         : "You deliver: a caravan trip, paid at a premium for taking it on.";
-                    return $"Commit to supplying {qty}x {offer.def.LabelCap} to " +
-                           $"{offer.settlement?.Label} within {DeadlineDays} days.\n\n" +
+                    string commitment = fulfillment == FulfillmentMode.BuyerPickup
+                        ? $"Commit to sell {qty}x {offer.def.LabelCap} to {offer.settlement?.Label}.\n\n" +
+                          BuyerPickupTimingExplanation(
+                              offer.settlement?.Label, DeadlineDays, offer.distanceTiles)
+                        : $"Commit to supplying {qty}x {offer.def.LabelCap} to " +
+                          $"{offer.settlement?.Label} within {DeadlineDays} days.";
+                    return commitment + "\n\n" +
                            $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
                            $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
                            logistics + "\n\n" +
@@ -2554,22 +2584,14 @@ namespace Intercolony
             Widgets.Label(new Rect(main.x, main.y, main.width, 22f), title);
 
             // §17: show progress and time remaining, and warn rather than fail silently.
-            string detail;
+            string detail = OrderDetailText(order);
             Color colour = Color.white;
             if (order.BuyerEnRoute)
             {
-                detail = $"{order.settlementName} arriving in {order.DaysUntilBuyerArrives:F1}d " +
-                         $"to collect {order.RemainingQuantity} — keep them in storage";
                 colour = new Color(0.6f, 0.85f, 1f);
             }
             else if (order.IsOpen)
             {
-                string mode = order.fulfillment == FulfillmentMode.BuyerPickup
-                    ? "buyer collects"
-                    : "you deliver";
-                detail = $"{order.deliveredQuantity}/{order.Quantity} delivered   " +
-                         $"{order.DaysRemaining:F1}d left   " +
-                         $"{order.TotalPayment} silver   ({mode})";
                 if (order.DaysRemaining < 1f)
                 {
                     colour = Color.yellow;
@@ -2577,7 +2599,6 @@ namespace Intercolony
             }
             else
             {
-                detail = $"{order.status}: {order.outcomeNote}";
                 colour = order.status == SalesOrderStatus.Completed
                     ? new Color(0.6f, 0.9f, 0.6f)
                     : new Color(0.9f, 0.6f, 0.6f);
@@ -2607,9 +2628,12 @@ namespace Intercolony
 
                 if (ShouldBuildTooltip(readyRect))
                 {
+                    float distance = BuyerPickupDistanceTiles(order.settlementId);
+                    int pickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(distance);
                     TooltipHandler.TipRegion(readyRect, enough
                         ? $"Tell {order.settlementName} the goods are ready. Their caravan will " +
-                          "come and collect them from your storage."
+                          $"take approximately {pickupDays} days to arrive and collect them " +
+                          "from your storage."
                         : validation.Summary());
                 }
             }
@@ -2623,6 +2647,40 @@ namespace Intercolony
                     () => SalesOrderService.Cancel(order),
                     destructive: true));
             }
+        }
+
+        internal static string OrderDetailText(SalesOrder order)
+        {
+            if (order.BuyerEnRoute)
+            {
+                // AwaitingCollection retires the readiness deadline, but a countdown is only
+                // meaningful after dispatch assigned a real arrival tick.
+                return order.buyerArrivalTick >= 0
+                    ? $"{order.settlementName} arriving in {order.DaysUntilBuyerArrives:F1}d " +
+                      $"to collect {order.RemainingQuantity} — keep them in storage"
+                    : $"{order.settlementName} collection dispatched — keep " +
+                      $"{order.RemainingQuantity} in storage";
+            }
+
+            if (order.IsOpen)
+            {
+                string mode = order.fulfillment == FulfillmentMode.BuyerPickup
+                    ? "buyer collects"
+                    : "you deliver";
+                return $"{order.deliveredQuantity}/{order.Quantity} delivered   " +
+                       $"{order.DaysRemaining:F1}d left   " +
+                       $"{order.TotalPayment} silver   ({mode})";
+            }
+
+            return $"{order.status}: {order.outcomeNote}";
+        }
+
+        private static float BuyerPickupDistanceTiles(int settlementId)
+        {
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
+            return settlement == null
+                ? -1f
+                : MarketOpportunityGenerator.DistanceToPlayer(settlement);
         }
     }
 }

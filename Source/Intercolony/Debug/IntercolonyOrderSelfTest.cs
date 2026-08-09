@@ -79,6 +79,32 @@ namespace Intercolony
             Check("days remaining is about one", Mathf.Abs(future.DaysRemaining - 1f) < 0.05f,
                 future.DaysRemaining.ToString("F3"));
 
+            // --- Buyer-pickup estimate and sentinel display (B1/B3) ---
+            int nearPickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(7f);
+            int distantPickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(140f);
+            Check("a near buyer has a short pickup estimate",
+                nearPickupDays <= 2, $"{nearPickupDays} days");
+            Check("a distant buyer has a longer pickup estimate",
+                distantPickupDays > nearPickupDays,
+                $"near {nearPickupDays} days vs distant {distantPickupDays} days");
+
+            int unknownPickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(-1f);
+            string unknownPickupCell = MainTabWindow_Intercolony.BuyerPickupTimingLabel(-1f);
+            Check("the Market formats the shared unknown-distance fallback",
+                unknownPickupCell == $"~{unknownPickupDays}d pickup",
+                $"\"{unknownPickupCell}\" vs {unknownPickupDays} days");
+
+            SalesOrder unsetArrival = NewOrder(sample, 10, 1f);
+            unsetArrival.fulfillment = FulfillmentMode.BuyerPickup;
+            unsetArrival.status = SalesOrderStatus.AwaitingCollection;
+            unsetArrival.buyerArrivalTick = -1;
+            string unsetArrivalDetail = MainTabWindow_Intercolony.OrderDetailText(unsetArrival);
+            Check("an unset buyer-arrival sentinel is never formatted as a duration",
+                !unsetArrivalDetail.Contains("arriving in") &&
+                !unsetArrivalDetail.Contains("-1") &&
+                !unsetArrivalDetail.Contains("d left"),
+                unsetArrivalDetail);
+
             // --- Payment arithmetic across partial deliveries ---
             SalesOrder partial = NewOrder(sample, 100, 1.37f);
             int firstHalf = partial.PaymentFor(50);
@@ -177,22 +203,39 @@ namespace Intercolony
             silver.Destroy(DestroyMode.Vanish);
             steel.Destroy(DestroyMode.Vanish);
 
-            // --- Overdue sweep marks open orders failed and leaves closed ones alone ---
+            // --- Overdue sweep follows each fulfilment mode's actual obligation (B2) ---
             System.Collections.Generic.List<SalesOrder> sweep = new System.Collections.Generic.List<SalesOrder>();
-            SalesOrder lapsed = NewOrder(sample, 10, 1f);
-            lapsed.deadlineTick = GenTicks.TicksGame - 1;
+            SalesOrder lapsedDelivery = NewOrder(sample, 10, 1f);
+            lapsedDelivery.fulfillment = FulfillmentMode.SellerDelivery;
+            lapsedDelivery.deadlineTick = GenTicks.TicksGame - 1;
+            SalesOrder neverReadyPickup = NewOrder(sample, 10, 1f);
+            neverReadyPickup.fulfillment = FulfillmentMode.BuyerPickup;
+            neverReadyPickup.deadlineTick = GenTicks.TicksGame - 1;
+            SalesOrder pickupEnRoute = NewOrder(sample, 10, 1f);
+            pickupEnRoute.fulfillment = FulfillmentMode.BuyerPickup;
+            pickupEnRoute.status = SalesOrderStatus.AwaitingCollection;
+            pickupEnRoute.buyerArrivalTick = GenTicks.TicksGame + GenDate.TicksPerDay;
+            pickupEnRoute.deadlineTick = GenTicks.TicksGame - 1;
             SalesOrder healthy = NewOrder(sample, 10, 1f);
             healthy.deadlineTick = GenTicks.TicksGame + GenDate.TicksPerDay * 5;
             SalesOrder alreadyDone = NewOrder(sample, 10, 1f);
             SalesOrderService.Cancel(alreadyDone);
             alreadyDone.deadlineTick = GenTicks.TicksGame - 1;
-            sweep.Add(lapsed);
+            sweep.Add(lapsedDelivery);
+            sweep.Add(neverReadyPickup);
+            sweep.Add(pickupEnRoute);
             sweep.Add(healthy);
             sweep.Add(alreadyDone);
 
             int failedCount = SalesOrderService.FailOverdue(sweep);
-            Check("overdue sweep fails exactly the lapsed order", failedCount == 1, failedCount.ToString());
-            Check("lapsed order is now failed", lapsed.status == SalesOrderStatus.Failed);
+            Check("overdue sweep fails exactly the two unmet obligations",
+                failedCount == 2, failedCount.ToString());
+            Check("seller delivery still fails after its deadline",
+                lapsedDelivery.status == SalesOrderStatus.Failed);
+            Check("buyer pickup never marked ready still fails after its deadline",
+                neverReadyPickup.status == SalesOrderStatus.Failed);
+            Check("buyer travel is spared after the readiness deadline",
+                pickupEnRoute.status == SalesOrderStatus.AwaitingCollection);
             Check("healthy order untouched", healthy.IsOpen);
             Check("already-closed order untouched", alreadyDone.status == SalesOrderStatus.Cancelled);
 
@@ -642,6 +685,59 @@ namespace Intercolony
                     $"ready={blockedReady}, status={blockedPickup.status}, arrival={blockedPickup.buyerArrivalTick}");
                 Remove(competingDirect);
                 Remove(blockedPickup);
+
+                // --- B1/B2: real Mark Ready transition, shared fallback, and deadline boundary ---
+                SalesOrder timelyPickup = Plant(92030, 1);
+                timelyPickup.opportunityId = 42030;
+                timelyPickup.fulfillment = FulfillmentMode.BuyerPickup;
+                timelyPickup.settlementId = int.MinValue; // Explicit unknown-distance dispatch.
+                timelyPickup.deadlineTick = GenTicks.TicksGame + GenDate.TicksPerDay;
+                int dispatchTick = GenTicks.TicksGame;
+                int fallbackDays = SalesOrderService.EstimateBuyerPickupTravelDays(-1f);
+                bool timelyReady = SalesOrderService.MarkReadyForPickup(timelyPickup, map);
+                int dispatchedDays = timelyPickup.buyerArrivalTick < 0
+                    ? -1
+                    : (timelyPickup.buyerArrivalTick - dispatchTick) / GenDate.TicksPerDay;
+                string marketTiming = MainTabWindow_Intercolony.BuyerPickupTimingLabel(-1f);
+                int letterDays = dispatchedDays >= 0 ? dispatchedDays : fallbackDays;
+                string dispatchLetter = SalesOrderService.BuyerPickupDispatchLetterText(
+                    timelyPickup, letterDays);
+
+                check("unknown distance uses the same fallback in Market and dispatch",
+                    timelyReady && dispatchedDays == fallbackDays &&
+                    marketTiming == $"~{dispatchedDays}d pickup",
+                    $"ready={timelyReady}, Market=\"{marketTiming}\", dispatch={dispatchedDays}d");
+                check("Market pickup estimate and dispatch letter agree",
+                    marketTiming == $"~{dispatchedDays}d pickup" &&
+                    dispatchLetter.Contains($"approximately {dispatchedDays} days"),
+                    $"Market=\"{marketTiming}\", letter=\"{dispatchLetter}\"");
+
+                // The transition happened while the deadline was future. Simulating the later
+                // clock crossing must not make the buyer's journey fail the order.
+                timelyPickup.deadlineTick = GenTicks.TicksGame - 1;
+                int timelyFailed = SalesOrderService.FailOverdue(
+                    new List<SalesOrder> { timelyPickup });
+                check("pickup marked ready before the deadline survives buyer travel past it",
+                    timelyReady && timelyFailed == 0 &&
+                    timelyPickup.status == SalesOrderStatus.AwaitingCollection,
+                    $"ready={timelyReady}, failed={timelyFailed}, status={timelyPickup.status}");
+                Remove(timelyPickup);
+
+                SalesOrder latePickup = Plant(92031, 1);
+                latePickup.opportunityId = 42031;
+                latePickup.fulfillment = FulfillmentMode.BuyerPickup;
+                latePickup.settlementId = int.MinValue;
+                latePickup.deadlineTick = GenTicks.TicksGame - 1;
+                bool lateReady = SalesOrderService.MarkReadyForPickup(latePickup, map);
+                int lateFailed = SalesOrderService.FailOverdue(
+                    new List<SalesOrder> { latePickup });
+                check("pickup first marked ready after the deadline cannot escape expiry",
+                    !lateReady && lateFailed == 1 &&
+                    latePickup.status == SalesOrderStatus.Failed &&
+                    latePickup.buyerArrivalTick < 0,
+                    $"ready={lateReady}, failed={lateFailed}, status={latePickup.status}, " +
+                    $"arrival={latePickup.buyerArrivalTick}");
+                Remove(latePickup);
 
                 SalesOrder soleMarketPickup = Plant(92004, 8);
                 soleMarketPickup.opportunityId = 42004;

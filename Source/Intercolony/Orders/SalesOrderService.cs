@@ -104,15 +104,23 @@ namespace Intercolony
             // The offer is consumed: it must not remain available for a second acceptance.
             state.RemoveOpportunity(opportunity);
 
+            int pickupTravelDays = EstimateBuyerPickupTravelDays(opportunity.distanceTiles);
+            string deadlineAction = opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                ? $"{opportunity.deadlineDays}d to mark ready, then ~{pickupTravelDays}d pickup"
+                : $"{opportunity.deadlineDays}d to deliver";
             IntercolonyLog.Message(
                 $"Accepted order {order.id}: {order.Quantity} of {opportunity.quantity}x " +
                 $"{order.ThingDef.label} for " +
                 $"{order.settlementName}, {order.TotalPayment} silver, " +
-                $"{opportunity.deadlineDays}d to deliver.");
+                $"{deadlineAction}.");
 
+            string nextStep = opportunity.fulfillment == FulfillmentMode.BuyerPickup
+                ? $"Mark the goods ready within {opportunity.deadlineDays} days. " +
+                  $"Pickup is expected about {pickupTravelDays} days after that."
+                : $"Deliver within {opportunity.deadlineDays} days.";
             Messages.Message(
                 $"Order accepted: {order.Quantity}x {order.ThingDef.label} for {order.settlementName}. " +
-                $"Deliver within {opportunity.deadlineDays} days.",
+                nextStep,
                 MessageTypeDefOf.PositiveEvent,
                 historical: false);
 
@@ -179,8 +187,10 @@ namespace Intercolony
                 $"Created order {order.id} from Find Buyer: {quantity}x {offer.def.label} " +
                 $"for {order.settlementName}, {order.TotalPayment} silver, {deadlineDays}d, " +
                 $"{fulfillment}.");
+            int pickupTravelDays = EstimateBuyerPickupTravelDays(offer.distanceTiles);
             string nextStep = fulfillment == FulfillmentMode.BuyerPickup
-                ? $"Mark the goods ready within {deadlineDays} days."
+                ? $"Mark the goods ready within {deadlineDays} days. " +
+                  $"Pickup is expected about {pickupTravelDays} days after that."
                 : $"Deliver within {deadlineDays} days.";
             Messages.Message(
                 $"Order created: {quantity}x {offer.def.label} for {order.settlementName}. " +
@@ -283,6 +293,14 @@ namespace Intercolony
                 return false;
             }
 
+            if (order.IsOverdue(GenTicks.TicksGame))
+            {
+                Messages.Message(
+                    $"Order #{order.id}: the deadline to mark the goods ready has passed.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return false;
+            }
+
             OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
             if (!validation.Success)
             {
@@ -307,14 +325,14 @@ namespace Intercolony
                 return false;
             }
 
-            float distance = 20f;
+            float distance = -1f;
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(order.settlementId);
             if (settlement != null)
             {
                 distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
             }
 
-            int travelDays = Mathf.Clamp(Mathf.RoundToInt(distance < 0f ? 3f : distance / 14f), 1, 20);
+            int travelDays = EstimateBuyerPickupTravelDays(distance);
             order.status = SalesOrderStatus.AwaitingCollection;
             order.buyerArrivalTick = GenTicks.TicksGame + travelDays * GenDate.TicksPerDay;
 
@@ -325,12 +343,27 @@ namespace Intercolony
             IntercolonyLetters.Send(
                 IntercolonyLetterImportance.Always,
                 "Order ready",
-                $"{order.settlementName} will arrive in approximately {travelDays} days to collect " +
-                $"order #{order.id}: {order.RemainingQuantity}x {order.line.ShortLabel()}.\n\n" +
-                "Keep the goods in storage until they arrive.",
+                BuyerPickupDispatchLetterText(order, travelDays),
                 LetterDefOf.PositiveEvent);
 
             return true;
+        }
+
+        /// <summary>
+        /// Shared buyer-pickup travel estimate. A negative distance means the route is unknown;
+        /// the same three-day fallback is used by dispatch and every pre-acceptance display.
+        /// </summary>
+        public static int EstimateBuyerPickupTravelDays(float distanceTiles)
+        {
+            float estimatedDays = distanceTiles < 0f ? 3f : distanceTiles / 14f;
+            return Mathf.Clamp(Mathf.RoundToInt(estimatedDays), 1, 20);
+        }
+
+        internal static string BuyerPickupDispatchLetterText(SalesOrder order, int travelDays)
+        {
+            return $"{order.settlementName} will arrive in approximately {travelDays} days to collect " +
+                   $"order #{order.id}: {order.RemainingQuantity}x {order.line.ShortLabel()}.\n\n" +
+                   "Keep the goods in storage until they arrive.";
         }
 
         /// <summary>
@@ -470,11 +503,20 @@ namespace Intercolony
             int failed = 0;
             foreach (SalesOrder order in orders)
             {
-                if (order.IsOpen && order.IsOverdue(now))
+                if (!order.IsOpen || !order.IsOverdue(now))
                 {
-                    Fail(order, $"Deadline passed with {order.RemainingQuantity} units undelivered.");
-                    failed++;
+                    continue;
                 }
+
+                // For buyer pickup, the deadline governs readiness, not the buyer's journey.
+                // AwaitingCollection is the durable evidence that the player met that clock.
+                if (order.fulfillment == FulfillmentMode.BuyerPickup && order.BuyerEnRoute)
+                {
+                    continue;
+                }
+
+                Fail(order, $"Deadline passed with {order.RemainingQuantity} units undelivered.");
+                failed++;
             }
 
             return failed;
