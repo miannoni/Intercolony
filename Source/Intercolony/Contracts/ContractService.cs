@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -19,6 +20,9 @@ namespace Intercolony
     {
         /// <summary>Minimum reputation before a settlement will propose a standing agreement.</summary>
         public const float MinimumReputation = 62f;
+
+        /// <summary>Completed sales of one exact good needed before a settlement trusts a repeat supply.</summary>
+        public const int MinimumCompletedOrdersForAgreement = 2;
 
         /// <summary>How long a proposal stays on the table.</summary>
         private const int OfferLifespanDays = 8;
@@ -41,6 +45,9 @@ namespace Intercolony
             {
                 return 0;
             }
+
+            Dictionary<int, Dictionary<ThingDef, int>> completedOrders =
+                BuildCompletedOrderCounts(state);
 
             int created = 0;
             foreach (Settlement settlement in settlements)
@@ -68,16 +75,25 @@ namespace Intercolony
                     continue;
                 }
 
-                RecurringContract contract = TryBuildOffer(state, settlement, profile);
+                completedOrders.TryGetValue(
+                    settlement.ID, out Dictionary<ThingDef, int> settlementHistory);
+                RecurringContract contract = TryBuildOffer(
+                    state, settlement, profile, settlementHistory);
                 if (contract != null)
                 {
                     state.AddContract(contract);
                     created++;
 
+                    int completedCount = settlementHistory[contract.thingDef];
+                    string frequency = completedCount == 2
+                        ? "twice"
+                        : $"{completedCount} times";
+
                     IntercolonyLetters.Send(
                         IntercolonyLetterImportance.Always,
                         "Supply agreement offered",
-                        $"{settlement.Label} proposes a standing agreement:\n\n" +
+                        $"{settlement.Label} has bought {contract.thingDef.label} from you " +
+                        $"{frequency} and now wants a standing supply agreement.\n\n" +
                         $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
                         $"{contract.CadenceDays:F0} days, for {contract.totalCycles} deliveries.\n" +
                         $"{contract.CycleValue} silver per delivery, {contract.TotalValue} in total.\n\n" +
@@ -91,7 +107,8 @@ namespace Intercolony
         }
 
         private static RecurringContract TryBuildOffer(
-            IntercolonyWorldComponent state, Settlement settlement, SettlementEconomicProfile profile)
+            IntercolonyWorldComponent state, Settlement settlement, SettlementEconomicProfile profile,
+            Dictionary<ThingDef, int> completedOrders)
         {
             int seed = Gen.HashCombineInt(state.EconomySeed, settlement.ID, state.RefreshCount, 0x0C0A);
 
@@ -108,7 +125,7 @@ namespace Intercolony
                 Rand.PopState();
             }
 
-            return BuildOffer(state, settlement, profile, seed);
+            return BuildOffer(state, settlement, profile, seed, completedOrders);
         }
 
         /// <summary>
@@ -123,18 +140,43 @@ namespace Intercolony
             IntercolonyWorldComponent state, Settlement settlement, SettlementEconomicProfile profile,
             int seed)
         {
+            Dictionary<int, Dictionary<ThingDef, int>> completedOrders =
+                BuildCompletedOrderCounts(state);
+            completedOrders.TryGetValue(
+                settlement.ID, out Dictionary<ThingDef, int> settlementHistory);
+            return BuildOffer(state, settlement, profile, seed, settlementHistory);
+        }
+
+        private static RecurringContract BuildOffer(
+            IntercolonyWorldComponent state, Settlement settlement, SettlementEconomicProfile profile,
+            int seed, Dictionary<ThingDef, int> completedOrders)
+        {
             Rand.PushState(seed);
             try
             {
                 // Contracts are for things a colony can produce repeatedly, so stick to
                 // stackable goods; a standing order for one masterwork chair a quadrum is not
                 // the strategic commitment §29 is describing.
-                List<ThingDef> candidates = new List<ThingDef>();
-                foreach (ThingDef def in IntercolonyProductClassifier.TradableDefs)
+                List<KeyValuePair<ThingDef, int>> candidates =
+                    new List<KeyValuePair<ThingDef, int>>();
+                if (completedOrders != null)
                 {
-                    if (def.stackLimit > 1 && def.category == ThingCategory.Item)
+                    foreach (KeyValuePair<ThingDef, int> entry in completedOrders)
                     {
-                        candidates.Add(def);
+                        ThingDef def = entry.Key;
+                        if (entry.Value < MinimumCompletedOrdersForAgreement ||
+                            def == null ||
+                            DefDatabase<ThingDef>.GetNamedSilentFail(def.defName) != def ||
+                            IntercolonyTradeBlacklist.IsBlacklisted(def) ||
+                            !IntercolonyProductClassifier.IsFungibleTradeItem(def) ||
+                            !IntercolonyProductClassifier.Classify(def).HasValue ||
+                            def.stackLimit <= 1 ||
+                            def.category != ThingCategory.Item)
+                        {
+                            continue;
+                        }
+
+                        candidates.Add(entry);
                     }
                 }
 
@@ -143,7 +185,28 @@ namespace Intercolony
                     return null;
                 }
 
-                ThingDef chosen = candidates[Rand.Range(0, candidates.Count)];
+                candidates.Sort((left, right) =>
+                    string.CompareOrdinal(left.Key.defName, right.Key.defName));
+
+                int totalWeight = 0;
+                foreach (KeyValuePair<ThingDef, int> candidate in candidates)
+                {
+                    totalWeight += candidate.Value;
+                }
+
+                int choice = Rand.Range(0, totalWeight);
+                ThingDef chosen = candidates[candidates.Count - 1].Key;
+                foreach (KeyValuePair<ThingDef, int> candidate in candidates)
+                {
+                    if (choice < candidate.Value)
+                    {
+                        chosen = candidate.Key;
+                        break;
+                    }
+
+                    choice -= candidate.Value;
+                }
+
                 IntercolonyProductCategory category =
                     IntercolonyProductClassifier.Classify(chosen) ?? IntercolonyProductCategory.Commodities;
 
@@ -174,6 +237,38 @@ namespace Intercolony
             {
                 Rand.PopState();
             }
+        }
+
+        /// <summary>
+        /// Derives the retained proof of supply in one pass. This is deliberately not persisted:
+        /// completed orders remain the sole source of truth, including completed contract cycles.
+        /// </summary>
+        private static Dictionary<int, Dictionary<ThingDef, int>> BuildCompletedOrderCounts(
+            IntercolonyWorldComponent state)
+        {
+            Dictionary<int, Dictionary<ThingDef, int>> result =
+                new Dictionary<int, Dictionary<ThingDef, int>>();
+
+            foreach (SalesOrder order in state.Orders)
+            {
+                ThingDef def = order?.line?.thingDef;
+                if (order == null || order.status != SalesOrderStatus.Completed || def == null)
+                {
+                    continue;
+                }
+
+                if (!result.TryGetValue(
+                        order.settlementId, out Dictionary<ThingDef, int> settlementHistory))
+                {
+                    settlementHistory = new Dictionary<ThingDef, int>();
+                    result.Add(order.settlementId, settlementHistory);
+                }
+
+                settlementHistory.TryGetValue(def, out int count);
+                settlementHistory[def] = count + 1;
+            }
+
+            return result;
         }
 
         /// <summary>

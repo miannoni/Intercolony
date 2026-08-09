@@ -68,6 +68,15 @@ namespace Intercolony
                 return sb.ToString();
             }
 
+            List<RecurringContract> savedContracts = new List<RecurringContract>(state.Contracts);
+            List<SalesOrder> savedStateOrders = new List<SalesOrder>(state.Orders);
+            bool hadSubjectReputation = state.Reputations.TryGetValue(
+                subject.ID, out CommercialReputation savedSubjectReputation);
+            state.Contracts.Clear();
+            state.Orders.Clear();
+            state.Reputations.Remove(subject.ID);
+            try
+            {
             // --- State machine (§73) ---
             RecurringContract probe = MakeContract(state, subject, 3);
             created.Add(probe);
@@ -219,55 +228,250 @@ namespace Intercolony
                 }
             }
 
-            // --- Contract terms beat spot (§29: otherwise there is no reason to commit) ---
-            // Built through the real offer path, not a synthetic one. An earlier version of
-            // this test priced its own contract at base value x premium, ignoring demand,
-            // wealth, saturation, distance and logistics — so it asserted a property only the
-            // real code guarantees, against an object the real code never produces, and failed
-            // for reasons that had nothing to do with the shipped behaviour.
+            // --- Standing agreements come from exact, repeated supply history ---
+            // Isolate this block from the player's retained orders, then restore their exact
+            // list. Every assertion calls the public production BuildOffer path, which derives
+            // history from state.Orders just as a direct debug caller does.
             SettlementEconomicProfile profile = state.GetProfile(subject);
-            if (profile != null)
+            Check("contract test settlement has an economic profile", profile != null);
+            List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
+            ThingDef temporarilyBlacklistedDef = null;
+            state.Orders.Clear();
+            try
             {
-                RecurringContract real = ContractService.BuildOffer(state, subject, profile, 12345);
-                if (real == null)
-                {
-                    sb.AppendLine("  (no contract candidates; price check skipped)");
-                }
-                else
-                {
-                    created.Add(real);
+                ThingDef meat = IntercolonyProductClassifier.TradableDefs.Find(
+                    def => def.IsMeat && def.stackLimit > 1 && def.category == ThingCategory.Item);
+                ThingDef rice = DefDatabase<ThingDef>.GetNamedSilentFail("RawRice");
+                ThingDef cloth = ThingDefOf.Cloth;
 
-                    IntercolonyProductCategory category =
-                        IntercolonyProductClassifier.Classify(real.thingDef)
-                        ?? IntercolonyProductCategory.Commodities;
-                    float spot = IntercolonyPricing.UnitPrice(
-                        real.thingDef, null, real.quantityPerCycle, profile, category,
-                        MarketOpportunityGenerator.DistanceToPlayer(subject), null, out _);
+                bool fixturesValid = meat != null && rice != null && cloth != null &&
+                                     IntercolonyProductClassifier.IsFungibleTradeItem(rice) &&
+                                     rice.stackLimit > 1 && rice.category == ThingCategory.Item;
+                Check("supply-history fixtures are valid recurring goods", fixturesValid);
 
-                    Check("a contract pays more per unit than spot", real.unitPrice > spot,
-                        $"contract {real.unitPrice:F2} vs spot {spot:F2} for {real.thingDef.label}");
-                    Check("contract lots are worth committing to", real.CycleValue >= 500,
-                        $"{real.CycleValue} silver per delivery");
-                    sb.AppendLine($"  (real offer: {real.quantityPerCycle}x {real.thingDef.label} " +
-                                  $"@ {real.unitPrice:F2} vs spot {spot:F2}, " +
-                                  $"{real.CycleValue} silver per cycle)");
+                if (fixturesValid && profile != null)
+                {
+                    List<SalesOrder> historyOrders = new List<SalesOrder>();
+
+                    SalesOrder PlantHistoryOrder(
+                        int settlementId, ThingDef def, SalesOrderStatus status,
+                        int contractId = 0)
+                    {
+                        SalesOrder order = new SalesOrder
+                        {
+                            id = int.MinValue + historyOrders.Count,
+                            settlementId = settlementId,
+                            settlementName = subject.Label ?? "unnamed",
+                            contractId = contractId,
+                            line = new OrderLine(def, 100),
+                            deliveredQuantity = status == SalesOrderStatus.Completed ? 100 : 0,
+                            status = status
+                        };
+
+                        state.AddOrder(order);
+                        historyOrders.Add(order);
+                        return order;
+                    }
+
+                    void ClearHistory()
+                    {
+                        state.Orders.Clear();
+                        historyOrders.Clear();
+                    }
+
+                    // Four completed meat sales from recurring cycles make only that exact good
+                    // eligible; contractId does not make a genuine delivery count for less.
+                    for (int i = 0; i < 4; i++)
+                    {
+                        PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed,
+                            contractId: 7001);
+                    }
+
+                    RecurringContract fourMeat =
+                        ContractService.BuildOffer(state, subject, profile, 100);
+                    Check("four completed meat orders make meat eligible",
+                        fourMeat != null && fourMeat.thingDef == meat);
+
+                    bool onlySuppliedMeatOffered = true;
+                    for (int seed = 0; seed < 40; seed++)
+                    {
+                        RecurringContract offer =
+                            ContractService.BuildOffer(state, subject, profile, seed);
+                        if (offer == null || offer.thingDef != meat || offer.thingDef == cloth)
+                        {
+                            onlySuppliedMeatOffered = false;
+                            break;
+                        }
+                    }
+
+                    Check("an unsupplied clothing good is never offered",
+                        onlySuppliedMeatOffered);
+
+                    // A different settlement's history cannot make anything eligible here.
+                    ClearHistory();
+                    int otherSettlementId = subject.ID == int.MaxValue
+                        ? int.MinValue
+                        : subject.ID + 1;
+                    PlantHistoryOrder(otherSettlementId, meat, SalesOrderStatus.Completed);
+                    PlantHistoryOrder(otherSettlementId, meat, SalesOrderStatus.Completed);
+                    Check("one settlement's history does not leak into another",
+                        ContractService.BuildOffer(state, subject, profile, 101) == null);
+
+                    ClearHistory();
+                    PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Failed);
+                    Check("a failed order does not increase completed history",
+                        ContractService.BuildOffer(state, subject, profile, 102) == null);
+
+                    ClearHistory();
+                    PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Cancelled);
+                    Check("a cancelled order does not increase completed history",
+                        ContractService.BuildOffer(state, subject, profile, 103) == null);
+
+                    ClearHistory();
+                    PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    Check("one completed order is below the history threshold",
+                        ContractService.BuildOffer(state, subject, profile, 104) == null);
+                    PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    RecurringContract exactlyTwo =
+                        ContractService.BuildOffer(state, subject, profile, 104);
+                    Check("two completed orders meet the history threshold",
+                        exactlyTwo != null && exactlyTwo.thingDef == meat);
+
+                    ClearHistory();
+                    for (int i = 0; i < 4; i++)
+                    {
+                        PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    }
+
+                    for (int i = 0; i < 2; i++)
+                    {
+                        PlantHistoryOrder(subject.ID, rice, SalesOrderStatus.Completed);
+                    }
+
+                    int meatOffers = 0;
+                    int riceOffers = 0;
+                    for (int seed = 200; seed < 320; seed++)
+                    {
+                        RecurringContract offer =
+                            ContractService.BuildOffer(state, subject, profile, seed);
+                        if (offer?.thingDef == meat) meatOffers++;
+                        if (offer?.thingDef == rice) riceOffers++;
+                    }
+
+                    Check("repeat history weights candidate choice",
+                        meatOffers > riceOffers && meatOffers + riceOffers == 120,
+                        $"meat {meatOffers}, rice {riceOffers}");
+
+                    List<string> firstSequence = new List<string>();
+                    for (int seed = 400; seed < 440; seed++)
+                    {
+                        firstSequence.Add(
+                            ContractService.BuildOffer(state, subject, profile, seed)?.thingDef?.defName);
+                    }
+
+                    historyOrders.Reverse();
+                    state.Orders.Clear();
+                    foreach (SalesOrder order in historyOrders)
+                    {
+                        state.AddOrder(order);
+                    }
+
+                    bool stableSequence = true;
+                    for (int seed = 400; seed < 440; seed++)
+                    {
+                        string actual = ContractService.BuildOffer(
+                            state, subject, profile, seed)?.thingDef?.defName;
+                        if (actual != firstSequence[seed - 400])
+                        {
+                            stableSequence = false;
+                            break;
+                        }
+                    }
+
+                    Check("candidate order is stable before seeded selection", stableSequence);
+
+                    ClearHistory();
+                    PlantHistoryOrder(subject.ID, null, SalesOrderStatus.Completed);
+                    PlantHistoryOrder(subject.ID, null, SalesOrderStatus.Completed);
+                    PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    temporarilyBlacklistedDef = meat;
+                    IntercolonyTradeBlacklist.AddRuntimeExclusion(
+                        meat, "contract history self-test");
+                    Check("missing and now-blacklisted defs are filtered out",
+                        ContractService.BuildOffer(state, subject, profile, 105) == null);
+                    IntercolonyTradeBlacklist.RemoveRuntimeExclusion(meat);
+                    temporarilyBlacklistedDef = null;
+
+                    ClearHistory();
+                    Check("no qualifying history produces no offer",
+                        ContractService.BuildOffer(state, subject, profile, 106) == null);
+
+                    // --- Contract terms beat spot (§29: otherwise there is no reason to commit) ---
+                    // Plant the real prerequisite rather than letting a null offer weaken this
+                    // coverage into a skip.
+                    for (int i = 0;
+                         i < ContractService.MinimumCompletedOrdersForAgreement;
+                         i++)
+                    {
+                        PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    }
+
+                    RecurringContract real =
+                        ContractService.BuildOffer(state, subject, profile, 12345);
+                    Check("the price fixture builds a real history-gated offer",
+                        real != null && real.thingDef == meat);
+                    if (real != null)
+                    {
+                        IntercolonyProductCategory category =
+                            IntercolonyProductClassifier.Classify(real.thingDef)
+                            ?? IntercolonyProductCategory.Commodities;
+                        float spot = IntercolonyPricing.UnitPrice(
+                            real.thingDef, null, real.quantityPerCycle, profile, category,
+                            MarketOpportunityGenerator.DistanceToPlayer(subject), null, out _);
+
+                        Check("a contract pays more per unit than spot", real.unitPrice > spot,
+                            $"contract {real.unitPrice:F2} vs spot {spot:F2} for {real.thingDef.label}");
+                        Check("contract lots are worth committing to", real.CycleValue >= 500,
+                            $"{real.CycleValue} silver per delivery");
+                        sb.AppendLine($"  (real offer: {real.quantityPerCycle}x {real.thingDef.label} " +
+                                      $"@ {real.unitPrice:F2} vs spot {spot:F2}, " +
+                                      $"{real.CycleValue} silver per cycle)");
+                    }
                 }
+            }
+            finally
+            {
+                if (temporarilyBlacklistedDef != null)
+                {
+                    IntercolonyTradeBlacklist.RemoveRuntimeExclusion(temporarilyBlacklistedDef);
+                }
+
+                state.Orders.Clear();
+                state.Orders.AddRange(savedOrders);
             }
 
             // --- Reputation gate (§28 "access to recurring contracts") ---
             Check("contracts require a real trading record",
                 ContractService.MinimumReputation > CommercialReputation.StartingScore,
                 $"threshold {ContractService.MinimumReputation} vs neutral {CommercialReputation.StartingScore}");
-
-            // Clean up: remove probe contracts and their orders.
-            foreach (RecurringContract contract in created)
-            {
-                state.Contracts.Remove(contract);
             }
-
-            foreach (SalesOrder order in createdOrders)
+            finally
             {
-                state.Orders.Remove(order);
+                // AdvanceContracts is global, while completion and breach adjust reputation.
+                // Restore the exact pre-test objects so none of those production effects escape.
+                state.Reputations.Remove(subject.ID);
+                if (hadSubjectReputation)
+                {
+                    state.Reputations.Add(subject.ID, savedSubjectReputation);
+                }
+
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedContracts);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedStateOrders);
             }
 
             sb.AppendLine($"  {passed} passed, {failed} failed.");

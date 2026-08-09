@@ -431,7 +431,9 @@ namespace Intercolony
                     }
                     else
                     {
-                        IntercolonyLog.Warning("Could not build an offer.");
+                        Report($"{settlement.Label} has no qualifying supply history. " +
+                               $"Complete at least {ContractService.MinimumCompletedOrdersForAgreement} " +
+                               "orders for the same currently tradable stackable item first.");
                     }
 
                     return;
