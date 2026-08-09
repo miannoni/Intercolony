@@ -1623,14 +1623,28 @@ namespace Intercolony
 
             foreach (PurchaseOrder order in open)
             {
-                Rect row = new Rect(0f, y, inRect.width - 16f, 26f);
+                const float rowHeight = 50f;
+                const float horizontalPadding = 6f;
+                const float columnGap = 8f;
+                const float actionWidth = 92f;
+
+                Rect row = new Rect(0f, y, inRect.width - 16f, rowHeight);
                 Widgets.DrawLightHighlight(row);
                 Widgets.DrawHighlightIfMouseover(row);
 
-                Widgets.Label(new Rect(row.x + 6f, row.y + 2f, row.width * 0.42f, 22f),
+                float contentWidth = row.width - horizontalPadding * 2f;
+                float itemWidth = contentWidth * 0.58f;
+                Rect itemRect = new Rect(
+                    row.x + horizontalPadding, row.y + 2f, itemWidth, 22f);
+                Rect settlementRect = new Rect(
+                    itemRect.xMax + columnGap,
+                    row.y + 2f,
+                    row.xMax - horizontalPadding - itemRect.xMax - columnGap,
+                    22f);
+
+                Widgets.Label(itemRect,
                     $"#{order.id}  {order.quantity}x {order.ItemLabel()}");
-                Widgets.Label(new Rect(row.x + row.width * 0.44f, row.y + 2f, row.width * 0.22f, 22f),
-                    order.settlementName);
+                Widgets.Label(settlementRect, order.settlementName);
 
                 string statusText;
                 Color colour = Color.white;
@@ -1646,10 +1660,22 @@ namespace Intercolony
                         : $"ready in {order.DaysUntilReady:F1}d";
                 }
 
+                Rect cancelRect = new Rect(
+                    row.xMax - horizontalPadding - actionWidth, row.y + 25f, actionWidth, 24f);
+                Rect statusRect = new Rect(
+                    row.x + horizontalPadding,
+                    row.y + 27f,
+                    cancelRect.x - columnGap - row.x - horizontalPadding,
+                    22f);
+
                 GUI.color = colour;
-                Widgets.Label(new Rect(row.x + row.width * 0.66f, row.y + 2f, row.width * 0.26f, 22f),
-                    statusText);
+                Widgets.Label(statusRect, statusText);
                 GUI.color = Color.white;
+
+                if (Widgets.ButtonText(cancelRect, "Cancel"))
+                {
+                    ConfirmPurchaseCancellation(order);
+                }
 
                 if (ShouldBuildTooltip(row))
                 {
@@ -1661,10 +1687,35 @@ namespace Intercolony
                             : "Send a caravan to collect. Use the caravan's Collect button at the settlement."));
                 }
 
-                y += 26f;
+                y += rowHeight;
             }
 
             return y + 8f;
+        }
+
+        private void ConfirmPurchaseCancellation(PurchaseOrder order)
+        {
+            if (order == null || !order.IsOpen)
+            {
+                return;
+            }
+
+            Action cancelPurchase = () => PurchaseOrderService.Cancel(order);
+            Find.WindowStack.Add(new Dialog_MessageBox(
+                $"Cancel purchase #{order.id}?\n\n" +
+                $"Order: #{order.id} — {order.quantity}x {order.ItemLabel()} from " +
+                $"{order.settlementName}.\n\n" +
+                $"You already paid {order.paidSilver} silver. All {order.paidSilver} silver " +
+                "will be forfeited; none will be refunded. The goods will not arrive. " +
+                $"The cancellation will be recorded in your trading record with {order.settlementName}.",
+                "Cancel purchase",
+                cancelPurchase,
+                "Keep order",
+                () => { },
+                "Cancel purchase order",
+                buttonADestructive: true,
+                acceptAction: cancelPurchase,
+                cancelAction: () => { }));
         }
 
         private Vector2 contractsScroll;
@@ -2054,7 +2105,20 @@ namespace Intercolony
                 Rect cancelRect = new Rect(rect.xMax - 96f, rect.y + 10f, 86f, 26f);
                 if (Widgets.ButtonText(cancelRect, "Withdraw"))
                 {
-                    request.TryCancel();
+                    Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                        $"Withdraw purchase request #{request.id}?\n\n" +
+                        "Its quotations will be discarded. Withdrawing costs no silver.",
+                        () =>
+                        {
+                            if (request.TryCancel())
+                            {
+                                Messages.Message(
+                                    $"Purchase request #{request.id} withdrawn.",
+                                    MessageTypeDefOf.NeutralEvent, historical: true);
+                            }
+                        },
+                        destructive: false,
+                        title: "Withdraw purchase request?"));
                 }
             }
 

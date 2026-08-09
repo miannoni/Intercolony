@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -325,6 +326,11 @@ namespace Intercolony
                 state.Requests.Remove(request);
             }
 
+            // --- Purchase-order cancellation (B5) ---
+            Settlement cancellationSettlement = IntercolonyMarketAccess.FindSettlement(
+                state.AllProfiles()[0].settlementId);
+            CheckPurchaseCancellation(Check, state, cancellationSettlement);
+
             // --- §104: purchased goods arrive and preserve expected properties ---
             // Built through the same path a real purchase uses, then inspected. §104's four
             // named cases: commodity, weapon/apparel, chair, workbench.
@@ -339,6 +345,158 @@ namespace Intercolony
 
             sb.AppendLine($"  {passed} passed, {failed} failed.");
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Exercises the real cancellation transition, including its reputation hook, and then
+        /// proves the hourly order advance treats both kinds of cancelled order as inert.
+        /// The settlement's live reputation record is restored by identity so no score or counter
+        /// changes can leak into the player's save.
+        /// </summary>
+        private static void CheckPurchaseCancellation(
+            System.Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            Settlement settlement)
+        {
+            if (settlement == null)
+            {
+                check("purchase cancellation has a settlement for its reputation record", false,
+                    "the first economic profile no longer resolves to a settlement");
+                return;
+            }
+
+            int settlementId = settlement.ID;
+            bool hadReputation = state.Reputations.TryGetValue(
+                settlementId, out CommercialReputation originalReputation);
+            CommercialReputation testReputation = new CommercialReputation(
+                settlementId, settlement.Label ?? "Self-test", settlement.Faction?.Name ?? "");
+            state.Reputations[settlementId] = testReputation;
+
+            try
+            {
+                int now = GenTicks.TicksGame;
+                PurchaseOrder delivered = MakeCancellationOrder(
+                    -501, settlement, supplierDelivers: true, PurchaseOrderStatus.Confirmed, 4850);
+                bool deliveredCancelled = PurchaseOrderService.Cancel(delivered);
+
+                check("a confirmed delivery purchase can be cancelled",
+                    deliveredCancelled && delivered.status == PurchaseOrderStatus.Cancelled,
+                    $"returned {deliveredCancelled}, status {delivered.status}");
+                check("cancelling a confirmed purchase does not refund its payment",
+                    delivered.paidSilver == 4850, $"recorded payment {delivered.paidSilver}");
+                check("cancelling a confirmed purchase records an outcome",
+                    !delivered.outcomeNote.NullOrEmpty(), $"\"{delivered.outcomeNote}\"");
+                check("purchase cancellation is recorded in commercial reputation",
+                    testReputation.purchaseCancellations == 1 &&
+                    Mathf.Approximately(
+                        testReputation.Score, CommercialReputation.StartingScore - 4f),
+                    $"{testReputation.purchaseCancellations} cancellation(s), " +
+                    $"score {testReputation.Score:F1}");
+
+                PurchaseOrder pickup = MakeCancellationOrder(
+                    -502, settlement, supplierDelivers: false,
+                    PurchaseOrderStatus.ReadyForPickup, 720);
+                bool pickupCancelled = PurchaseOrderService.Cancel(pickup);
+
+                check("a ready-for-pickup purchase can be cancelled",
+                    pickupCancelled && pickup.status == PurchaseOrderStatus.Cancelled,
+                    $"returned {pickupCancelled}, status {pickup.status}");
+                check("cancelling a ready-for-pickup purchase does not refund its payment",
+                    pickup.paidSilver == 720, $"recorded payment {pickup.paidSilver}");
+                check("cancelling a ready-for-pickup purchase records an outcome",
+                    !pickup.outcomeNote.NullOrEmpty(), $"\"{pickup.outcomeNote}\"");
+
+                PurchaseOrder completed = MakeCancellationOrder(
+                    -503, settlement, supplierDelivers: true,
+                    PurchaseOrderStatus.Completed, 310);
+                completed.outcomeNote = "Delivered before the cancellation probe.";
+                string completedNote = completed.outcomeNote;
+                int cancellationsBeforeGuard = testReputation.purchaseCancellations;
+                float scoreBeforeGuard = testReputation.Score;
+                bool completedCancelled = PurchaseOrderService.Cancel(completed);
+                check("a completed purchase refuses cancellation and changes nothing",
+                    !completedCancelled && completed.status == PurchaseOrderStatus.Completed &&
+                    completed.paidSilver == 310 && completed.outcomeNote == completedNote &&
+                    testReputation.purchaseCancellations == cancellationsBeforeGuard &&
+                    Mathf.Approximately(testReputation.Score, scoreBeforeGuard),
+                    $"returned {completedCancelled}, status {completed.status}, " +
+                    $"paid {completed.paidSilver}, note \"{completed.outcomeNote}\", " +
+                    $"reputation {testReputation.purchaseCancellations}/{testReputation.Score:F1}");
+
+                PurchaseOrder alreadyCancelled = MakeCancellationOrder(
+                    -504, settlement, supplierDelivers: false,
+                    PurchaseOrderStatus.Cancelled, 915);
+                alreadyCancelled.outcomeNote = "Already cancelled before the probe.";
+                string cancelledNote = alreadyCancelled.outcomeNote;
+                bool cancelledAgain = PurchaseOrderService.Cancel(alreadyCancelled);
+                check("an already-cancelled purchase refuses cancellation and changes nothing",
+                    !cancelledAgain && alreadyCancelled.status == PurchaseOrderStatus.Cancelled &&
+                    alreadyCancelled.paidSilver == 915 &&
+                    alreadyCancelled.outcomeNote == cancelledNote &&
+                    testReputation.purchaseCancellations == cancellationsBeforeGuard &&
+                    Mathf.Approximately(testReputation.Score, scoreBeforeGuard),
+                    $"returned {cancelledAgain}, status {alreadyCancelled.status}, " +
+                    $"paid {alreadyCancelled.paidSilver}, note \"{alreadyCancelled.outcomeNote}\", " +
+                    $"reputation {testReputation.purchaseCancellations}/{testReputation.Score:F1}");
+
+                delivered.readyTick = now - 1;
+                pickup.pickupExpiryTick = now - 1;
+                string deliveredNote = delivered.outcomeNote;
+                string pickupNote = pickup.outcomeNote;
+                int reputationBeforeAdvance = testReputation.purchaseCancellations;
+
+                PurchaseOrderService.AdvanceOrders(new List<PurchaseOrder> { delivered, pickup });
+
+                check("advance leaves a cancelled delivery order inert",
+                    delivered.status == PurchaseOrderStatus.Cancelled &&
+                    delivered.paidSilver == 4850 && delivered.outcomeNote == deliveredNote,
+                    $"status {delivered.status}, paid {delivered.paidSilver}, " +
+                    $"note \"{delivered.outcomeNote}\"");
+                check("advance leaves an expired cancelled pickup order inert",
+                    pickup.status == PurchaseOrderStatus.Cancelled &&
+                    pickup.paidSilver == 720 && pickup.outcomeNote == pickupNote,
+                    $"status {pickup.status}, paid {pickup.paidSilver}, " +
+                    $"note \"{pickup.outcomeNote}\"");
+                check("advance does not record another cancellation side effect",
+                    testReputation.purchaseCancellations == reputationBeforeAdvance,
+                    $"{reputationBeforeAdvance} -> {testReputation.purchaseCancellations}");
+            }
+            finally
+            {
+                if (hadReputation)
+                {
+                    state.Reputations[settlementId] = originalReputation;
+                }
+                else
+                {
+                    state.Reputations.Remove(settlementId);
+                }
+            }
+        }
+
+        private static PurchaseOrder MakeCancellationOrder(
+            int id,
+            Settlement settlement,
+            bool supplierDelivers,
+            PurchaseOrderStatus status,
+            int paidSilver)
+        {
+            return new PurchaseOrder
+            {
+                id = id,
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "Self-test",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = ThingDefOf.Steel,
+                quantity = 100,
+                unitPrice = paidSilver / 100f,
+                paidSilver = paidSilver,
+                supplierDelivers = supplierDelivers,
+                orderedTick = GenTicks.TicksGame,
+                readyTick = GenTicks.TicksGame + GenDate.TicksPerDay,
+                pickupExpiryTick = GenTicks.TicksGame + 2 * GenDate.TicksPerDay,
+                status = status
+            };
         }
 
         /// <summary>

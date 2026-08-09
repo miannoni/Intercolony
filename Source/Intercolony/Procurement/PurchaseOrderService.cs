@@ -303,6 +303,9 @@ namespace Intercolony
             order.outcomeNote = $"Cancelled by the player. {order.paidSilver} silver forfeited.";
             ReputationService.NotePurchaseCancelled(IntercolonyWorldComponent.Current, order);
             IntercolonyLog.Message($"Purchase {order.id} cancelled; {order.paidSilver} silver forfeited.");
+            Messages.Message(
+                $"Purchase number {order.id} cancelled; {order.paidSilver} silver was forfeited.",
+                MessageTypeDefOf.NegativeEvent, historical: true);
             return true;
         }
 
