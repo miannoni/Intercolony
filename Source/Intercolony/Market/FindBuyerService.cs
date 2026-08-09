@@ -276,5 +276,89 @@ namespace Intercolony
             result.Sort((a, b) => b.Value.CompareTo(a.Value));
             return result;
         }
+
+        /// <summary>
+        /// Physical colony stock still free to promise through Find Buyer. This is a read model
+        /// over storage and existing orders, not a physical reservation: pawns remain free to
+        /// consume, haul, move or lose the goods.
+        /// </summary>
+        public static List<KeyValuePair<ThingDef, int>> AvailableColonyStock(
+            IntercolonyWorldComponent state, Map map)
+        {
+            List<KeyValuePair<ThingDef, int>> result = new List<KeyValuePair<ThingDef, int>>();
+            foreach (KeyValuePair<ThingDef, int> entry in ColonyStock(map))
+            {
+                int available = Mathf.Max(0, entry.Value - CommittedQuantity(state, entry.Key));
+                if (available > 0)
+                {
+                    result.Add(new KeyValuePair<ThingDef, int>(entry.Key, available));
+                }
+            }
+
+            result.Sort((a, b) => b.Value.CompareTo(a.Value));
+            return result;
+        }
+
+        /// <summary>
+        /// Physical units of one good still free to promise through Find Buyer. An excluded
+        /// order is omitted from the commitment side so a binding path can later validate an
+        /// existing order against the stock available to that order itself.
+        /// </summary>
+        public static int AvailableQuantity(
+            IntercolonyWorldComponent state, Map map, ThingDef def, int excludedOrderId = 0)
+        {
+            if (def == null)
+            {
+                return 0;
+            }
+
+            int physical = 0;
+            foreach (KeyValuePair<ThingDef, int> entry in ColonyStock(map))
+            {
+                if (entry.Key == def)
+                {
+                    physical = entry.Value;
+                    break;
+                }
+            }
+
+            return Mathf.Max(0, physical - CommittedQuantity(state, def, excludedOrderId));
+        }
+
+        /// <summary>
+        /// Units already promised from today's stock: direct Find Buyer sales, plus any open
+        /// order whose buyer is already travelling because the player marked its goods ready.
+        /// </summary>
+        public static int CommittedQuantity(
+            IntercolonyWorldComponent state, ThingDef def, int excludedOrderId = 0)
+        {
+            if (state == null || def == null)
+            {
+                return 0;
+            }
+
+            int committed = 0;
+            foreach (SalesOrder order in state.Orders)
+            {
+                if (order == null || !order.IsOpen || order.ThingDef != def ||
+                    (excludedOrderId != 0 && order.id == excludedOrderId))
+                {
+                    continue;
+                }
+
+                if (!order.IsDirectFindBuyerSale &&
+                    order.status != SalesOrderStatus.AwaitingCollection)
+                {
+                    continue;
+                }
+
+                // A direct seller-delivery order remains committed after its goods are loaded:
+                // physical storage has fallen while RemainingQuantity has not. This conservative
+                // understatement is deliberate until cargo can be allocated to a specific order.
+                committed += order.RemainingQuantity;
+            }
+
+            return committed;
+        }
     }
 }

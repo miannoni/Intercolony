@@ -115,6 +115,13 @@ namespace Intercolony
         public bool IsOpen => status == SalesOrderStatus.Accepted ||
                               status == SalesOrderStatus.AwaitingCollection;
 
+        /// <summary>
+        /// Whether this order was created by Find Buyer rather than from a Market listing or
+        /// a recurring contract. Provenance is derived from the two existing source IDs so old
+        /// saves and new orders agree without introducing another persisted source of truth.
+        /// </summary>
+        public bool IsDirectFindBuyerSale => opportunityId == 0 && contractId == 0;
+
         /// <summary>Buyer pickup where the player has not yet declared the goods ready.</summary>
         public bool CanMarkReady => status == SalesOrderStatus.Accepted &&
                                     fulfillment == FulfillmentMode.BuyerPickup;

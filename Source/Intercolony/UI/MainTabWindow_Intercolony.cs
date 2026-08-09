@@ -110,10 +110,10 @@ namespace Intercolony
         /// <summary>
         /// Colony stock is cached and only rebuilt on demand.
         ///
-        /// <see cref="FindBuyerService.ColonyStock"/> walks every Thing on the map. GUI code
-        /// runs at least twice per frame (layout and repaint), so calling it unconditionally
-        /// scanned a developed colony's entire thing list ~120 times a second and tanked the
-        /// frame rate. Nothing here needs to be live to the tick.
+        /// <see cref="FindBuyerService.AvailableColonyStock"/> walks every Thing on the map.
+        /// GUI code runs at least twice per frame (layout and repaint), so calling it
+        /// unconditionally scanned a developed colony's entire thing list ~120 times a second
+        /// and tanked the frame rate. Nothing here needs to be live to the tick.
         /// </summary>
         private List<KeyValuePair<ThingDef, int>> stockCache;
 
@@ -1205,28 +1205,27 @@ namespace Intercolony
             // Scanning the map is opt-in, never per-frame.
             if (stockCache == null)
             {
-                stockCache = FindBuyerService.ColonyStock(map);
+                RefreshFindBuyerStock(state, map);
             }
 
             // Sits to the right of the heading, not under it.
             Rect refreshRect = new Rect(inRect.width - 124f, y - 36f, 110f, 26f);
             if (Widgets.ButtonText(refreshRect, "Refresh"))
             {
-                stockCache = FindBuyerService.ColonyStock(map);
-                findBuyerCache = null;
+                RefreshFindBuyerStock(state, map);
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
             }
 
             TooltipHandler.TipRegion(refreshRect,
-                "Re-scan storage. Stock is not tracked live — scanning every frame would cost " +
-                "real performance on a large colony.");
+                "Re-scan storage and existing commitments. Availability is not tracked live — " +
+                "scanning every frame would cost real performance on a large colony.");
 
             if (stockCache.Count == 0)
             {
                 GUI.color = Color.gray;
                 Widgets.Label(new Rect(0f, y, inRect.width, 60f),
-                    "Nothing tradeable in storage.\n" +
-                    "Stock counts only what is in a stockpile — loose items lying around are not a surplus.");
+                    "Nothing tradeable is currently available to sell.\n" +
+                    "Counts include only stockpiled goods that are not already committed.");
                 GUI.color = Color.white;
                 return;
             }
@@ -1239,9 +1238,34 @@ namespace Intercolony
             DrawBuyerOffers(offersRect, state);
         }
 
+        private void RefreshFindBuyerStock(IntercolonyWorldComponent state, Map map)
+        {
+            stockCache = FindBuyerService.AvailableColonyStock(state, map);
+            findBuyerCache = null;
+
+            if (selectedStockDef == null)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<ThingDef, int> entry in stockCache)
+            {
+                if (entry.Key == selectedStockDef)
+                {
+                    selectedStockCount = entry.Value;
+                    sellQuantity = entry.Value;
+                    return;
+                }
+            }
+
+            selectedStockDef = null;
+            selectedStockCount = 0;
+            sellQuantity = 0;
+        }
+
         private void DrawStockList(Rect rect, List<KeyValuePair<ThingDef, int>> stock)
         {
-            Widgets.Label(new Rect(rect.x, rect.y, rect.width, 24f), "In storage");
+            Widgets.Label(new Rect(rect.x, rect.y, rect.width, 24f), "Available to sell");
             Rect outRect = new Rect(rect.x, rect.y + 26f, rect.width, rect.height - 26f);
             Rect viewRect = new Rect(0f, 0f, rect.width - 16f, stock.Count * 28f);
 
@@ -1513,8 +1537,10 @@ namespace Intercolony
                            $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
                            $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
                            logistics + "\n\n" +
-                           "This is a binding order. Your stock is not reserved — anything the colony " +
-                           "consumes in the meantime still has to be replaced before the deadline." +
+                           "This is a binding order. The quantity counts against what Find Buyer " +
+                           "considers available, so it will not be offered to another buyer. The goods " +
+                           "are not physically locked: your colony can still consume or move them, " +
+                           "and you are responsible for having them ready for fulfilment." +
                            (qty < offer.quantity ? "\n\nA smaller lot earns a better rate per unit." : "");
                 },
                 (qty, fulfillment) =>
@@ -1525,6 +1551,10 @@ namespace Intercolony
                             state, priced, qty, DeadlineDays, fulfillment) != null)
                     {
                         tab = Tab.Orders;
+                        // The known commitment changed; discard the read model without adding
+                        // any periodic or physical-stock tracking. It is rebuilt next time the
+                        // player opens Find Buyer through the existing on-demand path.
+                        stockCache = null;
                         findBuyerCache = null;
                     }
                 }));

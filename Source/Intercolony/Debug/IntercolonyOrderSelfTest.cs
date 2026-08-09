@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Text;
 using RimWorld;
 using UnityEngine;
@@ -15,7 +17,7 @@ namespace Intercolony
     /// </summary>
     public static class IntercolonyOrderSelfTest
     {
-        public static string Run(IntercolonyWorldComponent state)
+        public static string Run(IntercolonyWorldComponent state, Map map)
         {
             StringBuilder sb = new StringBuilder();
             int passed = 0;
@@ -120,6 +122,9 @@ namespace Intercolony
             partial.deliveredQuantity = 250;
             Check("remaining never goes negative", partial.RemainingQuantity == 0,
                 partial.RemainingQuantity.ToString());
+
+            // --- Find Buyer availability: physical stock minus today's commitments ---
+            RunAvailabilityChecks(state, map, sb, Check);
 
             // --- Validation contract (§18, §74) ---
             OrderValidationResult nullOrder = OrderValidator.ValidateCaravan(null, null);
@@ -327,6 +332,215 @@ namespace Intercolony
                 status = SalesOrderStatus.Accepted,
                 settlementName = "TestTown"
             };
+        }
+
+        private static void RunAvailabilityChecks(
+            IntercolonyWorldComponent state,
+            Map map,
+            StringBuilder sb,
+            Action<string, bool, string> check)
+        {
+            sb.AppendLine("  Find Buyer availability:");
+            if (state == null || map == null)
+            {
+                check("availability test has a current map", false, "run while viewing a colony map");
+                return;
+            }
+
+            Dictionary<ThingDef, int> existingStock = new Dictionary<ThingDef, int>();
+            foreach (KeyValuePair<ThingDef, int> entry in FindBuyerService.ColonyStock(map))
+            {
+                existingStock[entry.Key] = entry.Value;
+            }
+
+            ThingDef probeDef = null;
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate.category != ThingCategory.Item || candidate.stackLimit < 10 ||
+                    candidate.MadeFromStuff || existingStock.ContainsKey(candidate))
+                {
+                    continue;
+                }
+
+                bool usedByOrder = false;
+                foreach (SalesOrder existing in state.Orders)
+                {
+                    if (existing?.ThingDef == candidate)
+                    {
+                        usedByOrder = true;
+                        break;
+                    }
+                }
+
+                if (!usedByOrder)
+                {
+                    probeDef = candidate;
+                    break;
+                }
+            }
+
+            if (probeDef == null)
+            {
+                check("availability test found an isolated tradeable def", false,
+                    "every stackable candidate is already stocked or ordered");
+                return;
+            }
+
+            Zone_Stockpile testZone = null;
+            Thing testStock = null;
+            List<SalesOrder> plantedOrders = new List<SalesOrder>();
+            try
+            {
+                IntVec3 storageCell = IntVec3.Invalid;
+                IntVec3 root = DropCellFinder.TradeDropSpot(map);
+                foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+                {
+                    if (candidate.InBounds(map) && candidate.Standable(map) &&
+                        candidate.GetFirstItem(map) == null && map.zoneManager.ZoneAt(candidate) == null)
+                    {
+                        storageCell = candidate;
+                        break;
+                    }
+                }
+
+                if (!storageCell.IsValid)
+                {
+                    check("availability test found a temporary storage cell", false,
+                        "no empty unzoned cell near the trade drop spot");
+                    return;
+                }
+
+                testZone = new Zone_Stockpile(StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+                map.zoneManager.RegisterZone(testZone);
+                testZone.AddCell(storageCell);
+
+                Thing stack = ThingMaker.MakeThing(probeDef);
+                stack.stackCount = 10;
+                testStock = GenSpawn.Spawn(stack, storageCell, map);
+
+                int BaseAvailable() => FindBuyerService.AvailableQuantity(state, map, probeDef);
+                int ListedAvailable() => ListedQuantity(
+                    FindBuyerService.AvailableColonyStock(state, map), probeDef);
+
+                SalesOrder Plant(int id, int quantity)
+                {
+                    SalesOrder planted = NewOrder(probeDef, quantity, 1f);
+                    planted.id = id;
+                    plantedOrders.Add(planted);
+                    state.Orders.Add(planted);
+                    return planted;
+                }
+
+                void Remove(SalesOrder planted)
+                {
+                    state.Orders.Remove(planted);
+                    plantedOrders.Remove(planted);
+                }
+
+                check("10 physical with no orders gives 10 available",
+                    BaseAvailable() == 10 && ListedAvailable() == 10,
+                    $"single {BaseAvailable()}, listed {ListedAvailable()}");
+
+                SalesOrder direct = Plant(91001, 8);
+                check("direct Find Buyer commitment leaves 2 available",
+                    direct.IsDirectFindBuyerSale && BaseAvailable() == 2 && ListedAvailable() == 2,
+                    $"direct={direct.IsDirectFindBuyerSale}, available={BaseAvailable()}");
+                Remove(direct);
+
+                SalesOrder completed = Plant(91002, 8);
+                completed.status = SalesOrderStatus.Completed;
+                SalesOrder failed = Plant(91003, 8);
+                failed.status = SalesOrderStatus.Failed;
+                SalesOrder cancelled = Plant(91004, 8);
+                cancelled.status = SalesOrderStatus.Cancelled;
+                check("terminal direct orders consume no availability", BaseAvailable() == 10,
+                    BaseAvailable().ToString());
+                Remove(completed);
+                Remove(failed);
+                Remove(cancelled);
+
+                SalesOrder partialCommitment = Plant(91005, 8);
+                partialCommitment.deliveredQuantity = 3;
+                check("partial delivery commits only the remaining quantity",
+                    partialCommitment.RemainingQuantity == 5 && BaseAvailable() == 5,
+                    $"remaining {partialCommitment.RemainingQuantity}, available {BaseAvailable()}");
+                Remove(partialCommitment);
+
+                SalesOrder marketDelivery = Plant(91006, 8);
+                marketDelivery.opportunityId = 41006;
+                marketDelivery.fulfillment = FulfillmentMode.SellerDelivery;
+                check("accepted Market seller-delivery order leaves stock available",
+                    !marketDelivery.IsDirectFindBuyerSale && BaseAvailable() == 10,
+                    BaseAvailable().ToString());
+                Remove(marketDelivery);
+
+                SalesOrder contractCycle = Plant(91007, 8);
+                contractCycle.contractId = 51007;
+                check("accepted recurring-contract cycle leaves stock available",
+                    !contractCycle.IsDirectFindBuyerSale && BaseAvailable() == 10,
+                    BaseAvailable().ToString());
+                Remove(contractCycle);
+
+                SalesOrder marketPickup = Plant(91008, 8);
+                marketPickup.opportunityId = 41008;
+                marketPickup.fulfillment = FulfillmentMode.BuyerPickup;
+                check("Market buyer-pickup before Mark Ready leaves stock available",
+                    marketPickup.status == SalesOrderStatus.Accepted && BaseAvailable() == 10,
+                    BaseAvailable().ToString());
+
+                marketPickup.status = SalesOrderStatus.AwaitingCollection;
+                check("AwaitingCollection order commits stock", BaseAvailable() == 2,
+                    BaseAvailable().ToString());
+                Remove(marketPickup);
+
+                SalesOrder shortfall = Plant(91009, 12);
+                bool clampedWithoutException = false;
+                try
+                {
+                    clampedWithoutException = BaseAvailable() == 0 && ListedAvailable() == 0;
+                }
+                catch (Exception exception)
+                {
+                    sb.AppendLine($"    availability clamp threw {exception.GetType().Name}: {exception.Message}");
+                }
+
+                check("commitment above physical stock clamps to zero", clampedWithoutException, null);
+                Remove(shortfall);
+
+                SalesOrder excluded = Plant(91010, 8);
+                check("excluded order does not consume its own availability",
+                    FindBuyerService.AvailableQuantity(state, map, probeDef, excluded.id) == 10,
+                    FindBuyerService.AvailableQuantity(state, map, probeDef, excluded.id).ToString());
+                Remove(excluded);
+            }
+            finally
+            {
+                foreach (SalesOrder planted in plantedOrders)
+                {
+                    state.Orders.Remove(planted);
+                }
+
+                if (testStock != null && !testStock.Destroyed)
+                {
+                    testStock.Destroy(DestroyMode.Vanish);
+                }
+
+                testZone?.Delete(playSound: false);
+            }
+        }
+
+        private static int ListedQuantity(
+            List<KeyValuePair<ThingDef, int>> stock, ThingDef def)
+        {
+            foreach (KeyValuePair<ThingDef, int> entry in stock)
+            {
+                if (entry.Key == def)
+                {
+                    return entry.Value;
+                }
+            }
+
+            return 0;
         }
     }
 }

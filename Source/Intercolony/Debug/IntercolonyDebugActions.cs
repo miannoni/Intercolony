@@ -214,6 +214,50 @@ namespace Intercolony
                     }
                 }
 
+                Map map = Find.CurrentMap;
+                if (map == null)
+                {
+                    sb.AppendLine("Stock availability: no current map.");
+                }
+                else
+                {
+                    Dictionary<ThingDef, int> physical = new Dictionary<ThingDef, int>();
+                    List<ThingDef> defs = new List<ThingDef>();
+                    foreach (KeyValuePair<ThingDef, int> entry in FindBuyerService.ColonyStock(map))
+                    {
+                        physical[entry.Key] = entry.Value;
+                        defs.Add(entry.Key);
+                    }
+
+                    foreach (SalesOrder order in state.Orders)
+                    {
+                        ThingDef def = order?.ThingDef;
+                        if (def != null && !defs.Contains(def) &&
+                            FindBuyerService.CommittedQuantity(state, def) > 0)
+                        {
+                            defs.Add(def);
+                        }
+                    }
+
+                    defs.Sort((a, b) => string.Compare(a.label, b.label, StringComparison.OrdinalIgnoreCase));
+                    sb.AppendLine();
+                    sb.AppendLine("Find Buyer stock availability:");
+                    if (defs.Count == 0)
+                    {
+                        sb.AppendLine("  (no physical or committed tradeable stock)");
+                    }
+
+                    foreach (ThingDef def in defs)
+                    {
+                        physical.TryGetValue(def, out int held);
+                        int committed = FindBuyerService.CommittedQuantity(state, def);
+                        int available = FindBuyerService.AvailableQuantity(state, map, def);
+                        int shortfall = Mathf.Max(0, committed - held);
+                        sb.AppendLine($"  {def.LabelCap}: physical {held}, committed {committed}, " +
+                                      $"available {available}, shortfall {shortfall}");
+                    }
+                }
+
                 IntercolonyLog.Message(sb.ToString());
             });
         }
@@ -534,10 +578,11 @@ namespace Intercolony
             IntercolonyLog.Message(IntercolonyUniqueGoodsSpike.VerifySaveLoadProbes(Find.CurrentMap));
         }
 
-        [DebugAction(Category, "Run order self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 58)]
+        [DebugAction(Category, "Run order self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 58)]
         private static void RunOrderSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(IntercolonyOrderSelfTest.Run(state)));
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyOrderSelfTest.Run(state, Find.CurrentMap)));
         }
 
         [DebugAction(Category, "Dump product classification", allowedGameStates = AllowedGameStates.Playing, displayPriority = 45)]
