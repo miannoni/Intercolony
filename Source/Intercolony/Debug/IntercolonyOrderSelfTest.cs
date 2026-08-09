@@ -39,6 +39,16 @@ namespace Intercolony
 
             sb.AppendLine("Sales order self-test");
 
+            // --- Find Buyer UI cache decisions (A5) ---
+            float refreshInterval = MainTabWindow_Intercolony.FindBuyerRefreshIntervalSeconds;
+            Check("Find Buyer refresh is not due immediately",
+                !MainTabWindow_Intercolony.FindBuyerRefreshDue(10f, 10f));
+            Check("Find Buyer refresh stays throttled before the interval",
+                !MainTabWindow_Intercolony.FindBuyerRefreshDue(
+                    10f, 10f + refreshInterval - 0.001f));
+            Check("Find Buyer refresh is due at the interval boundary",
+                MainTabWindow_Intercolony.FindBuyerRefreshDue(10f, 10f + refreshInterval));
+
             ThingDef sample = ThingDefOf.Silver;
 
             // --- State machine (§73): every terminal state is terminal ---
@@ -447,6 +457,46 @@ namespace Intercolony
                 check("10 physical with no orders gives 10 available",
                     BaseAvailable() == 10 && ListedAvailable() == 10,
                     $"single {BaseAvailable()}, listed {ListedAvailable()}");
+
+                ThingDef selectedDef = probeDef;
+                int selectedCount = 10;
+                int selectedQuantity = 8;
+                List<BuyerOffer> cachedOffers = new List<BuyerOffer> { new BuyerOffer() };
+                List<KeyValuePair<ThingDef, int>> reducedStock =
+                    new List<KeyValuePair<ThingDef, int>>
+                    {
+                        new KeyValuePair<ThingDef, int>(probeDef, 3)
+                    };
+                MainTabWindow_Intercolony.ReconcileFindBuyerSelection(
+                    reducedStock, ref selectedDef, ref selectedCount,
+                    ref selectedQuantity, ref cachedOffers);
+                check("Find Buyer refresh reconciles a reduced selected count",
+                    selectedDef == probeDef && selectedCount == 3 && selectedQuantity == 3,
+                    $"count {selectedCount}, quantity {selectedQuantity}");
+                check("Find Buyer refresh invalidates offers when selected count falls",
+                    cachedOffers == null, null);
+
+                selectedQuantity = 2;
+                cachedOffers = new List<BuyerOffer> { new BuyerOffer() };
+                MainTabWindow_Intercolony.ReconcileFindBuyerSelection(
+                    new List<KeyValuePair<ThingDef, int>>
+                    {
+                        new KeyValuePair<ThingDef, int>(probeDef, 6)
+                    },
+                    ref selectedDef, ref selectedCount, ref selectedQuantity, ref cachedOffers);
+                check("Find Buyer refresh preserves a selected quantity within the new count",
+                    selectedCount == 6 && selectedQuantity == 2 && cachedOffers == null,
+                    $"count {selectedCount}, quantity {selectedQuantity}");
+
+                cachedOffers = new List<BuyerOffer> { new BuyerOffer() };
+                MainTabWindow_Intercolony.ReconcileFindBuyerSelection(
+                    new List<KeyValuePair<ThingDef, int>>(), ref selectedDef,
+                    ref selectedCount, ref selectedQuantity, ref cachedOffers);
+                check("Find Buyer refresh clears a vanished selection",
+                    selectedDef == null && selectedCount == 0 && selectedQuantity == 0 &&
+                    cachedOffers == null,
+                    $"def {selectedDef?.defName ?? "null"}, count {selectedCount}, " +
+                    $"quantity {selectedQuantity}, offers {(cachedOffers == null ? "null" : "set")}");
 
                 SalesOrder direct = Plant(91001, 8);
                 check("direct Find Buyer commitment leaves 2 available",

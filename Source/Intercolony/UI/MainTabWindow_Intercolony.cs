@@ -108,7 +108,15 @@ namespace Intercolony
         private List<BuyerOffer> findBuyerCache;
 
         /// <summary>
-        /// Colony stock is cached and only rebuilt on demand.
+        /// Availability is UI freshness, not simulation state: real time keeps the scan rate
+        /// stable at every game speed and still refreshes while paused.
+        /// </summary>
+        internal const float FindBuyerRefreshIntervalSeconds = 1.5f;
+
+        private float stockCacheRefreshedAtRealtime;
+
+        /// <summary>
+        /// Colony stock is cached and rebuilt on entry, manually, or at a bounded real-time rate.
         ///
         /// <see cref="FindBuyerService.AvailableColonyStock"/> walks every Thing on the map.
         /// GUI code runs at least twice per frame (layout and repaint), so calling it
@@ -1202,8 +1210,10 @@ namespace Intercolony
                 return;
             }
 
-            // Scanning the map is opt-in, never per-frame.
-            if (stockCache == null)
+            // The null check gives entry/manual invalidation an instant rebuild. The real-time
+            // gate bounds ongoing scans even though layout and repaint both execute this method.
+            if (stockCache == null || FindBuyerRefreshDue(
+                    stockCacheRefreshedAtRealtime, Time.realtimeSinceStartup))
             {
                 RefreshFindBuyerStock(state, map);
             }
@@ -1217,8 +1227,8 @@ namespace Intercolony
             }
 
             TooltipHandler.TipRegion(refreshRect,
-                "Re-scan storage and existing commitments. Availability is not tracked live — " +
-                "scanning every frame would cost real performance on a large colony.");
+                "Refresh storage and existing commitments now. Availability also updates " +
+                "automatically every 1.5 seconds while this page is visible.");
 
             if (stockCache.Count == 0)
             {
@@ -1241,26 +1251,48 @@ namespace Intercolony
         private void RefreshFindBuyerStock(IntercolonyWorldComponent state, Map map)
         {
             stockCache = FindBuyerService.AvailableColonyStock(state, map);
-            findBuyerCache = null;
+            ReconcileFindBuyerSelection(stockCache, ref selectedStockDef,
+                ref selectedStockCount, ref sellQuantity, ref findBuyerCache);
 
-            if (selectedStockDef == null)
+            // Record completion rather than start time so even an unusually slow scan cannot
+            // make layout/repaint immediately run a second one.
+            stockCacheRefreshedAtRealtime = Time.realtimeSinceStartup;
+        }
+
+        internal static bool FindBuyerRefreshDue(float lastRefreshTime, float now)
+        {
+            return now - lastRefreshTime >= FindBuyerRefreshIntervalSeconds;
+        }
+
+        internal static void ReconcileFindBuyerSelection(
+            List<KeyValuePair<ThingDef, int>> stock,
+            ref ThingDef selectedDef,
+            ref int selectedCount,
+            ref int quantity,
+            ref List<BuyerOffer> offers)
+        {
+            // Prices depend on availability, so every stock refresh invalidates the matching
+            // offer snapshot as one operation with the selection reconciliation.
+            offers = null;
+
+            if (selectedDef == null)
             {
                 return;
             }
 
-            foreach (KeyValuePair<ThingDef, int> entry in stockCache)
+            foreach (KeyValuePair<ThingDef, int> entry in stock)
             {
-                if (entry.Key == selectedStockDef)
+                if (entry.Key == selectedDef)
                 {
-                    selectedStockCount = entry.Value;
-                    sellQuantity = entry.Value;
+                    selectedCount = entry.Value;
+                    quantity = Mathf.Clamp(quantity, 1, entry.Value);
                     return;
                 }
             }
 
-            selectedStockDef = null;
-            selectedStockCount = 0;
-            sellQuantity = 0;
+            selectedDef = null;
+            selectedCount = 0;
+            quantity = 0;
         }
 
         private void DrawStockList(Rect rect, List<KeyValuePair<ThingDef, int>> stock)
@@ -1315,16 +1347,12 @@ namespace Intercolony
 
             float y = rect.y;
 
-            // The search runs against the full stock; choosing how much to actually sell
-            // happens in the confirmation dialog, where every other commitment is made.
-            sellQuantity = Mathf.Max(1, selectedStockCount);
-
             Widgets.Label(new Rect(rect.x, y, rect.width, 24f),
                 $"Buyers for {selectedStockCount}x {selectedStockDef.LabelCap}");
             y += 28f;
 
             // Searching walks every accessible settlement and prices each one. Cached, and
-            // invalidated only when the selection or quantity changes (§84).
+            // invalidated when the selection, quantity, or availability snapshot changes (§84).
             if (findBuyerCache == null)
             {
                 findBuyerCache = FindBuyerService.FindBuyers(
@@ -1552,9 +1580,8 @@ namespace Intercolony
                             DeadlineDays, fulfillment) != null)
                     {
                         tab = Tab.Orders;
-                        // The known commitment changed; discard the read model without adding
-                        // any periodic or physical-stock tracking. It is rebuilt next time the
-                        // player opens Find Buyer through the existing on-demand path.
+                        // The Find Buyer action changed commitments, so invalidate immediately.
+                        // The null cache bypasses the throttle when the player returns.
                         stockCache = null;
                         findBuyerCache = null;
                     }
