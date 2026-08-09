@@ -1091,3 +1091,64 @@ that would be a purchase-order history screen, which §14 of the plan puts expli
 and it would become a `docs/BACKLOG.md` entry instead.
 
 ---
+
+### 2026-08-09 — Slice B4 — BLOCKED (root cause found; fix withheld)
+
+**"Can't sell stone blocks" is not an Intercolony defect. It is vanilla behaviour.**
+
+`Core/Defs/ThingDefs_Misc/Various_Stone.xml`, the abstract `StoneBlocksBase`, declares:
+
+```xml
+<tradeability>Buyable</tradeability>
+```
+
+`Buyable` permits the player to buy but not to sell — `TradeabilityUtility.PlayerCanSell()` requires
+`All` or `Sellable`. RimWorld forbids selling stone blocks to anyone, through any trader. The tester's
+report is accurate and reproducible, and nothing in this mod caused it.
+
+This vindicates §7.1 of the revision plan, which insisted on diagnosis before touching the classifier.
+The classifier was never at fault: it already classifies `StoneBlocks` as `IntermediateGoods`, and the
+blacklist never excluded them. Had we "fixed" the classifier we would have changed correct code and
+left the real gate untouched.
+
+**Why the obvious fix is withheld.** A definition-first patch was written and is preserved beside this
+document as `b4-stone-blocks.patch` and `b4-StoneBlocksTradeability.xml`. It matches the category
+rather than concrete defNames, so it covers modded stone too, and it is exactly the shape §7.3 asks
+for. It also **changes vanilla globally**: blocks become sellable to every trader in the game, not
+only through Intercolony.
+
+That is very likely why vanilla set the flag. Blocks are cut from chunks, chunks are effectively
+unlimited and free, and `MarketValue` is 0.9 each. Making them player-sellable creates an
+unbounded silver source, hands it to every other mod in the load order, and does so on the authority
+of a mod the player installed to trade with other colonies.
+
+Per §6 this is a raise-a-hand: it changes the economic meaning of the game outside this mod's own
+systems, and two plausible options produce meaningfully different player strategies.
+
+**Options put to Matteo:**
+
+- **(a)** Ship the patch. Honest to the tester's expectation; accepts the exploit and the global
+  vanilla override.
+- **(b)** Bypass `PlayerCanSell()` on the Intercolony path only. Leaves vanilla intact but makes
+  Intercolony itself the exploit vector, which is worse — the mod would be the only way to mint
+  silver from rubble.
+- **(c)** Respect vanilla. Blocks are not player-sellable by design. Fix the *legibility* instead, so
+  Find Buyer explains the absence rather than silently omitting the item.
+
+**Recommendation: (c).** It is the only option that does not create free money, and it fixes the
+defect the tester actually experienced, which was not "blocks are missing" but "I could not tell
+why". §7.4 already requires that "cannot be traded" and "nobody wants this right now" be
+distinguishable; this is that requirement with a concrete case behind it.
+
+**Why nothing was committed.** The regression tests written for this slice assert
+`blocks.tradeability.PlayerCanSell()`, so they only pass with the patch applied. Committing the
+diagnostic half alone would have left knowingly-failing assertions in the tree. The whole slice is
+therefore held rather than split, `main` is left building clean, and no work is lost.
+
+**Also produced and worth keeping regardless of the decision:** an "Explain item tradability" debug
+action that names the *first* gate to reject a def. Under option (c) it becomes the primary tool for
+answering this class of report. It is inside the preserved patch. Note for whoever applies it: it
+mirrors the classifier's `0.4` market-value floor as a local constant rather than reading it from the
+classifier, which is a second source of truth and should be resolved on the way in.
+
+---

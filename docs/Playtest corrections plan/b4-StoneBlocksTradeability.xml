@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Patch>
+
+  <!--
+    Core's StoneBlocksBase is Buyable: traders may sell blocks to the player, but
+    TradeabilityUtility.PlayerCanSell() rejects them. Intercolony's definition-driven
+    classifier deliberately supports StoneBlocks, so make that category two-way tradeable.
+
+    Match the category rather than concrete defNames. This updates the vanilla abstract base
+    before XML inheritance is resolved and also covers a modded def that declares the same
+    category and its own tradeability node.
+  -->
+  <Operation Class="PatchOperationReplace">
+    <xpath>/Defs/ThingDef[thingCategories/li="StoneBlocks"]/tradeability</xpath>
+    <value>
+      <tradeability>All</tradeability>
+    </value>
+  </Operation>
+
+</Patch>
