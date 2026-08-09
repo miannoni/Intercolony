@@ -1548,7 +1548,8 @@ namespace Intercolony
                     BuyerOffer priced = offer;
                     priced.unitPrice = SellRateFor(offer, qty, fulfillment);
                     if (SalesOrderService.CreateFromOffer(
-                            state, priced, qty, DeadlineDays, fulfillment) != null)
+                            state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
+                            DeadlineDays, fulfillment) != null)
                     {
                         tab = Tab.Orders;
                         // The known commitment changed; discard the read model without adding

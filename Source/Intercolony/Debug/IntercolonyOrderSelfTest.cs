@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -389,6 +390,12 @@ namespace Intercolony
             Zone_Stockpile testZone = null;
             Thing testStock = null;
             List<SalesOrder> plantedOrders = new List<SalesOrder>();
+            List<Letter> existingLetters = Find.LetterStack == null
+                ? new List<Letter>()
+                : new List<Letter>(Find.LetterStack.LettersListForReading);
+            List<IArchivable> existingArchivables = Find.Archive == null
+                ? new List<IArchivable>()
+                : new List<IArchivable>(Find.Archive.ArchivablesListForReading);
             try
             {
                 IntVec3 storageCell = IntVec3.Invalid;
@@ -512,6 +519,151 @@ namespace Intercolony
                     FindBuyerService.AvailableQuantity(state, map, probeDef, excluded.id) == 10,
                     FindBuyerService.AvailableQuantity(state, map, probeDef, excluded.id).ToString());
                 Remove(excluded);
+
+                // --- A3: direct Find Buyer creation revalidates at the binding boundary ---
+                Settlement buyer = FirstAccessibleSettlement();
+                check("commitment-boundary test found an accessible buyer", buyer != null,
+                    "no eligible accessible settlement in this world");
+                if (buyer != null)
+                {
+                    SalesOrder existingCommitment = Plant(92001, 8);
+                    BuyerOffer staleOffer = new BuyerOffer
+                    {
+                        settlement = buyer,
+                        def = probeDef,
+                        maxQuantity = 3,
+                        quantity = 3,
+                        unitPrice = 1f
+                    };
+
+                    List<SalesOrder> ordersBeforeRefusal = new List<SalesOrder>(state.Orders);
+                    SalesOrderStatus statusBeforeRefusal = existingCommitment.status;
+                    OrderLine lineBeforeRefusal = existingCommitment.line;
+                    int deliveredBeforeRefusal = existingCommitment.deliveredQuantity;
+                    int paidBeforeRefusal = existingCommitment.paidSilver;
+                    string outcomeBeforeRefusal = existingCommitment.outcomeNote;
+
+                    SalesOrder refused = SalesOrderService.CreateFromOffer(
+                        state, map, staleOffer, 3, 12, FulfillmentMode.SellerDelivery);
+                    check("10 physical and 8 committed refuses a direct sale for 3",
+                        refused == null && state.Orders.Count == ordersBeforeRefusal.Count,
+                        $"created={refused != null}, orders {state.Orders.Count} vs {ordersBeforeRefusal.Count}");
+
+                    bool sameOrderList = state.Orders.Count == ordersBeforeRefusal.Count;
+                    for (int i = 0; sameOrderList && i < ordersBeforeRefusal.Count; i++)
+                    {
+                        sameOrderList = ReferenceEquals(state.Orders[i], ordersBeforeRefusal[i]);
+                    }
+
+                    check("refused direct creation leaves order state completely unchanged",
+                        sameOrderList && existingCommitment.status == statusBeforeRefusal &&
+                        ReferenceEquals(existingCommitment.line, lineBeforeRefusal) &&
+                        existingCommitment.deliveredQuantity == deliveredBeforeRefusal &&
+                        existingCommitment.paidSilver == paidBeforeRefusal &&
+                        existingCommitment.outcomeNote == outcomeBeforeRefusal,
+                        $"same list={sameOrderList}, status={existingCommitment.status}");
+
+                    SalesOrder exactFit = SalesOrderService.CreateFromOffer(
+                        state, map, staleOffer, 2, 12, FulfillmentMode.SellerDelivery);
+                    if (exactFit != null)
+                    {
+                        plantedOrders.Add(exactFit);
+                    }
+
+                    check("10 physical and 8 committed accepts a direct sale for 2",
+                        exactFit != null && exactFit.Quantity == 2 && BaseAvailable() == 0,
+                        $"created={exactFit != null}, available={BaseAvailable()}");
+                    Remove(existingCommitment);
+                    if (exactFit != null)
+                    {
+                        Remove(exactFit);
+                    }
+                }
+
+                // --- A4: Mark Ready revalidates def-level commitments after matching stock ---
+                SalesOrder competingDirect = Plant(92002, 8);
+                SalesOrder blockedPickup = Plant(92003, 8);
+                blockedPickup.opportunityId = 42003;
+                blockedPickup.fulfillment = FulfillmentMode.BuyerPickup;
+                bool blockedReady = SalesOrderService.MarkReadyForPickup(blockedPickup, map);
+                check("10 physical and 8 committed elsewhere refuses Mark Ready for 8",
+                    !blockedReady && blockedPickup.status == SalesOrderStatus.Accepted &&
+                    blockedPickup.buyerArrivalTick < 0,
+                    $"ready={blockedReady}, status={blockedPickup.status}, arrival={blockedPickup.buyerArrivalTick}");
+                Remove(competingDirect);
+                Remove(blockedPickup);
+
+                SalesOrder soleMarketPickup = Plant(92004, 8);
+                soleMarketPickup.opportunityId = 42004;
+                soleMarketPickup.fulfillment = FulfillmentMode.BuyerPickup;
+                bool soleReady = SalesOrderService.MarkReadyForPickup(soleMarketPickup, map);
+                check("a sole Market pickup marks ready and consumes 8 availability",
+                    soleReady && soleMarketPickup.status == SalesOrderStatus.AwaitingCollection &&
+                    BaseAvailable() == 2,
+                    $"ready={soleReady}, status={soleMarketPickup.status}, available={BaseAvailable()}");
+                Remove(soleMarketPickup);
+
+                BuyerOffer pickupOffer = buyer == null
+                    ? null
+                    : new BuyerOffer
+                    {
+                        settlement = buyer,
+                        def = probeDef,
+                        maxQuantity = 8,
+                        quantity = 8,
+                        unitPrice = 1f
+                    };
+                SalesOrder directPickup = SalesOrderService.CreateFromOffer(
+                    state, map, pickupOffer, 8, 12, FulfillmentMode.BuyerPickup);
+                if (directPickup != null)
+                {
+                    plantedOrders.Add(directPickup);
+                }
+
+                int availabilityIncludingSelf = BaseAvailable();
+                bool directReady = directPickup != null &&
+                                   SalesOrderService.MarkReadyForPickup(directPickup, map);
+                check("direct Find Buyer pickup does not block its own Mark Ready",
+                    directPickup != null && directPickup.IsDirectFindBuyerSale &&
+                    availabilityIncludingSelf == 2 &&
+                    directReady && directPickup.status == SalesOrderStatus.AwaitingCollection &&
+                    BaseAvailable() == 2,
+                    $"before exclusion={availabilityIncludingSelf}, ready={directReady}, " +
+                    $"status={directPickup?.status.ToString() ?? "not created"}, after={BaseAvailable()}");
+                if (directPickup != null)
+                {
+                    Remove(directPickup);
+                }
+
+                SalesOrder firstMarketPickup = Plant(92006, 8);
+                firstMarketPickup.opportunityId = 42006;
+                firstMarketPickup.fulfillment = FulfillmentMode.BuyerPickup;
+                firstMarketPickup.settlementId = int.MinValue;
+                SalesOrder secondMarketPickup = Plant(92007, 8);
+                secondMarketPickup.opportunityId = 42007;
+                secondMarketPickup.fulfillment = FulfillmentMode.BuyerPickup;
+                secondMarketPickup.settlementId = int.MinValue;
+
+                bool firstReady = SalesOrderService.MarkReadyForPickup(firstMarketPickup, map);
+                bool secondReady = SalesOrderService.MarkReadyForPickup(secondMarketPickup, map);
+                check("only one of two competing Market pickups can mark ready",
+                    firstReady && !secondReady &&
+                    firstMarketPickup.status == SalesOrderStatus.AwaitingCollection &&
+                    secondMarketPickup.status == SalesOrderStatus.Accepted && BaseAvailable() == 2,
+                    $"first={firstReady}/{firstMarketPickup.status}, " +
+                    $"second={secondReady}/{secondMarketPickup.status}, available={BaseAvailable()}");
+
+                bool cancelledFirst = SalesOrderService.Cancel(firstMarketPickup);
+                bool secondReadyAfterCancel = SalesOrderService.MarkReadyForPickup(secondMarketPickup, map);
+                check("cancelling the first pickup frees stock for the second Mark Ready",
+                    cancelledFirst && secondReadyAfterCancel &&
+                    firstMarketPickup.status == SalesOrderStatus.Cancelled &&
+                    secondMarketPickup.status == SalesOrderStatus.AwaitingCollection &&
+                    BaseAvailable() == 2,
+                    $"cancelled={cancelledFirst}, second ready={secondReadyAfterCancel}, " +
+                    $"available={BaseAvailable()}");
+                Remove(firstMarketPickup);
+                Remove(secondMarketPickup);
             }
             finally
             {
@@ -526,7 +678,47 @@ namespace Intercolony
                 }
 
                 testZone?.Delete(playSound: false);
+
+                if (Find.LetterStack != null)
+                {
+                    List<Letter> currentLetters =
+                        new List<Letter>(Find.LetterStack.LettersListForReading);
+                    foreach (Letter letter in currentLetters)
+                    {
+                        if (!existingLetters.Contains(letter))
+                        {
+                            Find.LetterStack.RemoveLetter(letter);
+                        }
+                    }
+                }
+
+                if (Find.Archive != null)
+                {
+                    List<IArchivable> currentArchivables =
+                        new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+                    foreach (IArchivable archivable in currentArchivables)
+                    {
+                        if (!existingArchivables.Contains(archivable) && archivable is Letter)
+                        {
+                            Find.Archive.Remove(archivable);
+                        }
+                    }
+                }
             }
+        }
+
+        private static Settlement FirstAccessibleSettlement()
+        {
+            foreach (Settlement settlement in Find.WorldObjects.Settlements)
+            {
+                if (SettlementProfileGenerator.IsEligible(settlement) &&
+                    IntercolonyMarketAccess.IsAccessible(settlement))
+                {
+                    return settlement;
+                }
+            }
+
+            return null;
         }
 
         private static int ListedQuantity(

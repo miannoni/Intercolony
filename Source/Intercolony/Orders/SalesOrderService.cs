@@ -128,10 +128,10 @@ namespace Intercolony
         /// could reference a settlement that has since turned hostile or been destroyed.
         /// </summary>
         public static SalesOrder CreateFromOffer(
-            IntercolonyWorldComponent state, BuyerOffer offer, int quantity, int deadlineDays,
-            FulfillmentMode fulfillment)
+            IntercolonyWorldComponent state, Map map, BuyerOffer offer, int quantity,
+            int deadlineDays, FulfillmentMode fulfillment)
         {
-            if (state == null || offer?.settlement == null || quantity <= 0)
+            if (state == null || offer?.settlement == null || offer.def == null || quantity <= 0)
             {
                 return null;
             }
@@ -140,6 +140,17 @@ namespace Intercolony
             {
                 IntercolonyLog.Warning($"Cannot sell to {offer.settlement.Label}: {reason}.");
                 Messages.Message($"{offer.settlement.Label} will not trade: {reason}.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return null;
+            }
+
+            int available = FindBuyerService.AvailableQuantity(state, map, offer.def);
+            if (available < quantity)
+            {
+                int committed = FindBuyerService.CommittedQuantity(state, offer.def);
+                Messages.Message(
+                    $"Only {available:N0} {offer.def.label} are still available for a new sale; " +
+                    $"{committed:N0} are already committed.",
                     MessageTypeDefOf.RejectInput, historical: false);
                 return null;
             }
@@ -277,6 +288,21 @@ namespace Intercolony
             {
                 Messages.Message(
                     $"Order #{order.id}: {validation.Summary()}",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return false;
+            }
+
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            int available = FindBuyerService.AvailableQuantity(
+                state, map, order.ThingDef, order.id);
+            if (available < order.RemainingQuantity)
+            {
+                int committedElsewhere = FindBuyerService.CommittedQuantity(
+                    state, order.ThingDef, order.id);
+                Messages.Message(
+                    $"Order #{order.id}: only {available:N0} {order.ThingDef.label} are free; " +
+                    $"{committedElsewhere:N0} matching units are already committed elsewhere. " +
+                    $"This order still needs {order.RemainingQuantity:N0}.",
                     MessageTypeDefOf.RejectInput, historical: false);
                 return false;
             }
