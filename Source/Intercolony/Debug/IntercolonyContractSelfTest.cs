@@ -45,6 +45,22 @@ namespace Intercolony
             List<RecurringContract> created = new List<RecurringContract>();
             List<SalesOrder> createdOrders = new List<SalesOrder>();
 
+            RecurringContract PlantLivenessContract(
+                ContractStatus status, bool renewalOffered = false, int renewalExpiryTick = 0)
+            {
+                RecurringContract contract = new RecurringContract
+                {
+                    settlementId = UnusedContractSettlementId(state),
+                    status = status,
+                    renewalOffered = renewalOffered,
+                    renewalExpiryTick = renewalExpiryTick
+                };
+
+                state.AddContract(contract);
+                created.Add(contract);
+                return contract;
+            }
+
             Settlement subject = FirstAccessibleSettlement();
             if (subject == null || IntercolonyProductClassifier.TradableDefs.Count == 0)
             {
@@ -72,6 +88,35 @@ namespace Intercolony
             Check("declining an offer records why",
                 declined.TryDecline("Declined by the self-test.") &&
                 declined.outcomeNote == "Declined by the self-test.");
+
+            // --- Relationship liveness: one standing agreement per settlement ---
+            RecurringContract liveOffer = PlantLivenessContract(ContractStatus.Offered);
+            Check("an offered contract is a live relationship",
+                state.HasContractWith(liveOffer.settlementId));
+
+            RecurringContract liveActive = PlantLivenessContract(ContractStatus.Active);
+            Check("an active contract is a live relationship",
+                state.HasContractWith(liveActive.settlementId));
+
+            RecurringContract liveSuspended = PlantLivenessContract(ContractStatus.Suspended);
+            Check("a suspended contract is still a live relationship",
+                state.HasContractWith(liveSuspended.settlementId));
+
+            RecurringContract liveRenewal = PlantLivenessContract(
+                ContractStatus.Completed, renewalOffered: true,
+                renewalExpiryTick: GenTicks.TicksGame + GenDate.TicksPerDay);
+            Check("a pending renewal is still a live relationship",
+                state.HasContractWith(liveRenewal.settlementId));
+
+            RecurringContract ended = PlantLivenessContract(ContractStatus.Completed);
+            Check("a completed contract without a renewal is no longer live",
+                !state.HasContractWith(ended.settlementId));
+
+            RecurringContract lapsedRenewal = PlantLivenessContract(
+                ContractStatus.Completed, renewalOffered: true,
+                renewalExpiryTick: GenTicks.TicksGame);
+            Check("a lapsed renewal no longer blocks a new relationship",
+                !state.HasContractWith(lapsedRenewal.settlementId));
 
             // --- Cycle machinery: does a multi-cycle contract actually cycle? ---
             RecurringContract runner = MakeContract(state, subject, 3);
@@ -324,6 +369,30 @@ namespace Intercolony
             }
 
             return null;
+        }
+
+        private static int UnusedContractSettlementId(IntercolonyWorldComponent state)
+        {
+            int candidate = int.MinValue;
+            while (true)
+            {
+                bool used = false;
+                foreach (RecurringContract contract in state.Contracts)
+                {
+                    if (contract.settlementId == candidate)
+                    {
+                        used = true;
+                        break;
+                    }
+                }
+
+                if (!used)
+                {
+                    return candidate;
+                }
+
+                candidate++;
+            }
         }
     }
 }

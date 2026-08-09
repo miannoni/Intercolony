@@ -171,13 +171,24 @@ namespace Intercolony
             }
         }
 
-        /// <summary>Whether a settlement already has a live proposal or agreement.</summary>
+        /// <summary>
+        /// Whether a settlement already has a live commercial relationship.
+        ///
+        /// Suspension pauses an agreement; it does not end one. A completed agreement with a
+        /// renewal still on the table is likewise spoken for until that offer expires. Counting
+        /// both keeps offer generation from starting an unrelated relationship alongside them.
+        /// </summary>
         public bool HasContractWith(int settlementId)
         {
             foreach (RecurringContract contract in contracts)
             {
+                bool hasPendingRenewal = contract.status == ContractStatus.Completed &&
+                                         contract.renewalOffered &&
+                                         contract.renewalExpiryTick > GenTicks.TicksGame;
+
                 if (contract.settlementId == settlementId &&
-                    (contract.IsOffer || contract.IsActive))
+                    (contract.IsOffer || contract.IsActive ||
+                     contract.status == ContractStatus.Suspended || hasPendingRenewal))
                 {
                     return true;
                 }
