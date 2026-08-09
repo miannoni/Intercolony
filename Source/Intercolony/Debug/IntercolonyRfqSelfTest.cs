@@ -330,6 +330,7 @@ namespace Intercolony
             Settlement cancellationSettlement = IntercolonyMarketAccess.FindSettlement(
                 state.AllProfiles()[0].settlementId);
             CheckPurchaseCancellation(Check, state, cancellationSettlement);
+            CheckPurchaseOrderDisplaySelection(Check);
 
             // --- §104: purchased goods arrive and preserve expected properties ---
             // Built through the same path a real purchase uses, then inspected. §104's four
@@ -345,6 +346,64 @@ namespace Intercolony
 
             sb.AppendLine($"  {passed} passed, {failed} failed.");
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Proves the Procurement tab selects retained conclusions as well as live purchases and
+        /// orders the live commitments ahead of history. The probes are never added to world state.
+        /// </summary>
+        private static void CheckPurchaseOrderDisplaySelection(
+            System.Action<string, bool, string> check)
+        {
+            PurchaseOrder confirmed = new PurchaseOrder
+                { id = 601, status = PurchaseOrderStatus.Confirmed };
+            PurchaseOrder ready = new PurchaseOrder
+                { id = 602, status = PurchaseOrderStatus.ReadyForPickup };
+            PurchaseOrder completed = new PurchaseOrder
+                { id = 701, status = PurchaseOrderStatus.Completed };
+            PurchaseOrder cancelled = new PurchaseOrder
+                { id = 702, status = PurchaseOrderStatus.Cancelled };
+            PurchaseOrder supplierDefault = new PurchaseOrder
+                { id = 703, status = PurchaseOrderStatus.SupplierDefault };
+            PurchaseOrder lostToWar = new PurchaseOrder
+                { id = 704, status = PurchaseOrderStatus.LostToWar };
+
+            List<PurchaseOrder> selected =
+                MainTabWindow_Intercolony.SelectPurchaseOrdersForDisplay(
+                    new List<PurchaseOrder>
+                    {
+                        lostToWar, completed, ready, supplierDefault, confirmed, cancelled
+                    });
+
+            check("purchase display selects a confirmed order", selected.Contains(confirmed),
+                $"selected {selected.Count} order(s)");
+            check("purchase display selects a ready-for-pickup order", selected.Contains(ready),
+                $"selected {selected.Count} order(s)");
+            check("purchase display selects a completed order", selected.Contains(completed),
+                $"selected {selected.Count} order(s)");
+            check("purchase display selects a cancelled order", selected.Contains(cancelled),
+                $"selected {selected.Count} order(s)");
+            check("purchase display selects a supplier-default order",
+                selected.Contains(supplierDefault), $"selected {selected.Count} order(s)");
+            check("purchase display selects an order lost to war", selected.Contains(lostToWar),
+                $"selected {selected.Count} order(s)");
+
+            bool openBeforeConcluded = selected.Count == 6;
+            bool reachedConcluded = false;
+            foreach (PurchaseOrder order in selected)
+            {
+                if (!order.IsOpen)
+                {
+                    reachedConcluded = true;
+                }
+                else if (reachedConcluded)
+                {
+                    openBeforeConcluded = false;
+                }
+            }
+
+            check("purchase display puts open orders before concluded orders",
+                openBeforeConcluded, string.Join(", ", selected.ConvertAll(o => o.status.ToString())));
         }
 
         /// <summary>

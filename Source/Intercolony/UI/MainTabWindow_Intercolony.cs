@@ -1531,6 +1531,9 @@ namespace Intercolony
         }
 
         private Vector2 procurementScroll;
+        private const float PurchaseOrderRowHeight = 50f;
+        private const float PurchaseOrderSectionHeaderHeight = 26f;
+        private const float PurchaseOrderSectionGap = 8f;
 
         /// <summary>
         /// Procurement (DESIGN.md §19, §55, §103). Requests with their quotes underneath, so
@@ -1552,21 +1555,9 @@ namespace Intercolony
 
             y += 40f;
 
-            y = DrawPurchaseOrders(inRect, y, state);
+            List<PurchaseOrder> purchaseOrders = SelectPurchaseOrdersForDisplay(state.PurchaseOrders);
 
             List<PurchaseRequest> requests = new List<PurchaseRequest>(state.Requests);
-            if (requests.Count == 0)
-            {
-                GUI.color = Color.gray;
-                Widgets.Label(new Rect(0f, y, inRect.width, 70f),
-                    "No requests yet.\n\n" +
-                    "Intercolony is not a shop. You state what you need, and known settlements " +
-                    "answer if they can — sometimes with less than you asked for, sometimes not at all.");
-                GUI.color = Color.white;
-                return;
-            }
-
-            // Open requests first, newest first within each group.
             requests.Sort((a, b) =>
             {
                 if (a.IsOpen != b.IsOpen)
@@ -1577,17 +1568,33 @@ namespace Intercolony
                 return b.id.CompareTo(a.id);
             });
 
-            float contentHeight = 0f;
+            float contentHeight = PurchaseOrdersHeight(purchaseOrders);
             foreach (PurchaseRequest request in requests)
             {
                 contentHeight += RequestBlockHeight(request);
             }
 
+            if (requests.Count == 0)
+            {
+                contentHeight += 70f;
+            }
+
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contentHeight);
+            Rect viewRect = new Rect(
+                0f, 0f, inRect.width - 16f, Mathf.Max(contentHeight, outRect.height));
 
             BeginPageScrollView(outRect, ref procurementScroll, viewRect);
-            float rowY = 0f;
+            float rowY = DrawPurchaseOrders(viewRect.width, 0f, purchaseOrders);
+            if (requests.Count == 0)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(0f, rowY, viewRect.width, 70f),
+                    "No requests yet.\n\n" +
+                    "Intercolony is not a shop. You state what you need, and known settlements " +
+                    "answer if they can — sometimes with less than you asked for, sometimes not at all.");
+                GUI.color = Color.white;
+            }
+
             foreach (PurchaseRequest request in requests)
             {
                 float height = RequestBlockHeight(request);
@@ -1599,67 +1606,94 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Live purchases, above the requests. These are money already spent, so they are the
-        /// first thing the player should see on this tab.
+        /// Purchases above the requests. Open commitments come first, followed by retained
+        /// conclusions, because these are money already spent and should be the first thing the
+        /// player sees on this tab.
         /// </summary>
-        private float DrawPurchaseOrders(Rect inRect, float y, IntercolonyWorldComponent state)
+        private float DrawPurchaseOrders(float width, float y, List<PurchaseOrder> orders)
         {
-            List<PurchaseOrder> open = new List<PurchaseOrder>();
-            foreach (PurchaseOrder order in state.PurchaseOrders)
+            int openCount = 0;
+            while (openCount < orders.Count && orders[openCount].IsOpen)
             {
-                if (order.IsOpen)
-                {
-                    open.Add(order);
-                }
+                openCount++;
             }
 
-            if (open.Count == 0)
+            if (openCount > 0)
             {
-                return y;
+                Widgets.Label(new Rect(0f, y, width, 24f), $"On order ({openCount})");
+                y += PurchaseOrderSectionHeaderHeight;
+                for (int i = 0; i < openCount; i++)
+                {
+                    DrawPurchaseOrderRow(
+                        new Rect(0f, y, width, PurchaseOrderRowHeight), orders[i]);
+                    y += PurchaseOrderRowHeight;
+                }
+
+                y += PurchaseOrderSectionGap;
             }
 
-            Widgets.Label(new Rect(0f, y, inRect.width, 24f), $"On order ({open.Count})");
-            y += 26f;
-
-            foreach (PurchaseOrder order in open)
+            int concludedCount = orders.Count - openCount;
+            if (concludedCount > 0)
             {
-                const float rowHeight = 50f;
-                const float horizontalPadding = 6f;
-                const float columnGap = 8f;
-                const float actionWidth = 92f;
-
-                Rect row = new Rect(0f, y, inRect.width - 16f, rowHeight);
-                Widgets.DrawLightHighlight(row);
-                Widgets.DrawHighlightIfMouseover(row);
-
-                float contentWidth = row.width - horizontalPadding * 2f;
-                float itemWidth = contentWidth * 0.58f;
-                Rect itemRect = new Rect(
-                    row.x + horizontalPadding, row.y + 2f, itemWidth, 22f);
-                Rect settlementRect = new Rect(
-                    itemRect.xMax + columnGap,
-                    row.y + 2f,
-                    row.xMax - horizontalPadding - itemRect.xMax - columnGap,
-                    22f);
-
-                Widgets.Label(itemRect,
-                    $"#{order.id}  {order.quantity}x {order.ItemLabel()}");
-                Widgets.Label(settlementRect, order.settlementName);
-
-                string statusText;
-                Color colour = Color.white;
-                if (order.status == PurchaseOrderStatus.ReadyForPickup)
+                Widgets.Label(new Rect(0f, y, width, 24f),
+                    $"Concluded purchases ({concludedCount})");
+                y += PurchaseOrderSectionHeaderHeight;
+                for (int i = openCount; i < orders.Count; i++)
                 {
-                    statusText = $"collect within {order.DaysUntilPickupExpires:F1}d";
-                    colour = new Color(0.6f, 0.9f, 0.6f);
-                }
-                else
-                {
-                    statusText = order.supplierDelivers
-                        ? $"arriving in {order.DaysUntilReady:F1}d"
-                        : $"ready in {order.DaysUntilReady:F1}d";
+                    DrawPurchaseOrderRow(
+                        new Rect(0f, y, width, PurchaseOrderRowHeight), orders[i]);
+                    y += PurchaseOrderRowHeight;
                 }
 
+                y += PurchaseOrderSectionGap;
+            }
+
+            return y;
+        }
+
+        private void DrawPurchaseOrderRow(Rect row, PurchaseOrder order)
+        {
+            const float horizontalPadding = 6f;
+            const float columnGap = 8f;
+            const float actionWidth = 92f;
+
+            Widgets.DrawLightHighlight(row);
+            Widgets.DrawHighlightIfMouseover(row);
+
+            float contentWidth = row.width - horizontalPadding * 2f;
+            float itemWidth = contentWidth * 0.58f;
+            Rect itemRect = new Rect(
+                row.x + horizontalPadding, row.y + 2f, itemWidth, 22f);
+            Rect settlementRect = new Rect(
+                itemRect.xMax + columnGap,
+                row.y + 2f,
+                row.xMax - horizontalPadding - itemRect.xMax - columnGap,
+                22f);
+
+            GUI.color = order.IsOpen ? Color.white : new Color(0.7f, 0.7f, 0.7f);
+            Widgets.Label(itemRect,
+                $"#{order.id}  {order.quantity}x {order.ItemLabel()}");
+            Widgets.Label(settlementRect, order.settlementName);
+
+            string statusText;
+            if (!order.IsOpen)
+            {
+                statusText = ConcludedPurchaseStatusText(order);
+            }
+            else if (order.status == PurchaseOrderStatus.ReadyForPickup)
+            {
+                statusText = $"collect within {order.DaysUntilPickupExpires:F1}d";
+                GUI.color = new Color(0.6f, 0.9f, 0.6f);
+            }
+            else
+            {
+                statusText = order.supplierDelivers
+                    ? $"arriving in {order.DaysUntilReady:F1}d"
+                    : $"ready in {order.DaysUntilReady:F1}d";
+            }
+
+            if (order.IsOpen)
+            {
                 Rect cancelRect = new Rect(
                     row.xMax - horizontalPadding - actionWidth, row.y + 25f, actionWidth, 24f);
                 Rect statusRect = new Rect(
@@ -1668,29 +1702,103 @@ namespace Intercolony
                     cancelRect.x - columnGap - row.x - horizontalPadding,
                     22f);
 
-                GUI.color = colour;
                 Widgets.Label(statusRect, statusText);
                 GUI.color = Color.white;
-
                 if (Widgets.ButtonText(cancelRect, "Cancel"))
                 {
                     ConfirmPurchaseCancellation(order);
                 }
-
-                if (ShouldBuildTooltip(row))
-                {
-                    TooltipHandler.TipRegion(row,
-                        $"{order.quantity}x {order.ItemLabel()} from {order.settlementName}\n" +
-                        $"Paid {order.paidSilver} silver.\n" +
-                        (order.supplierDelivers
-                            ? "They deliver to your colony."
-                            : "Send a caravan to collect. Use the caravan's Collect button at the settlement."));
-                }
-
-                y += rowHeight;
+            }
+            else
+            {
+                Rect statusRect = new Rect(
+                    row.x + horizontalPadding,
+                    row.y + 27f,
+                    row.width - horizontalPadding * 2f,
+                    22f);
+                Widgets.Label(statusRect, statusText);
+                GUI.color = Color.white;
             }
 
-            return y + 8f;
+            if (ShouldBuildTooltip(row))
+            {
+                string detail = order.IsOpen
+                    ? (order.supplierDelivers
+                        ? "They deliver to your colony."
+                        : "Send a caravan to collect. Use the caravan's Collect button at the settlement.")
+                    : ConcludedPurchaseStatusText(order) +
+                      (order.outcomeNote.NullOrEmpty()
+                          ? ""
+                          : "\n\nOutcome: " + order.outcomeNote);
+                TooltipHandler.TipRegion(row,
+                    $"{order.quantity}x {order.ItemLabel()} from {order.settlementName}\n" +
+                    $"Paid {order.paidSilver} silver.\n\n{detail}");
+            }
+        }
+
+        private static string ConcludedPurchaseStatusText(PurchaseOrder order)
+        {
+            switch (order.status)
+            {
+                case PurchaseOrderStatus.Completed:
+                    return "Completed — goods received";
+                case PurchaseOrderStatus.Cancelled:
+                    return $"Cancelled by player — {order.paidSilver} silver forfeited";
+                case PurchaseOrderStatus.SupplierDefault:
+                    return $"Supplier default — {order.paidSilver} silver refunded";
+                case PurchaseOrderStatus.LostToWar:
+                    return $"Lost to war — {order.paidSilver} silver not recovered";
+                default:
+                    return order.status.ToString();
+            }
+        }
+
+        private static float PurchaseOrdersHeight(List<PurchaseOrder> orders)
+        {
+            if (orders.Count == 0)
+            {
+                return 0f;
+            }
+
+            bool hasOpen = false;
+            bool hasConcluded = false;
+            foreach (PurchaseOrder order in orders)
+            {
+                hasOpen |= order.IsOpen;
+                hasConcluded |= !order.IsOpen;
+            }
+
+            int sectionCount = (hasOpen ? 1 : 0) + (hasConcluded ? 1 : 0);
+            return orders.Count * PurchaseOrderRowHeight +
+                   sectionCount * (PurchaseOrderSectionHeaderHeight + PurchaseOrderSectionGap);
+        }
+
+        /// <summary>
+        /// Selects every retained purchase for the Procurement tab, with active commitments ahead
+        /// of concluded history and the newest order first within each group.
+        /// </summary>
+        internal static List<PurchaseOrder> SelectPurchaseOrdersForDisplay(
+            IEnumerable<PurchaseOrder> orders)
+        {
+            List<PurchaseOrder> selected = new List<PurchaseOrder>();
+            foreach (PurchaseOrder order in orders)
+            {
+                if (order != null)
+                {
+                    selected.Add(order);
+                }
+            }
+
+            selected.Sort((a, b) =>
+            {
+                if (a.IsOpen != b.IsOpen)
+                {
+                    return a.IsOpen ? -1 : 1;
+                }
+
+                return b.id.CompareTo(a.id);
+            });
+            return selected;
         }
 
         private void ConfirmPurchaseCancellation(PurchaseOrder order)
@@ -1702,11 +1810,10 @@ namespace Intercolony
 
             Action cancelPurchase = () => PurchaseOrderService.Cancel(order);
             Find.WindowStack.Add(new Dialog_MessageBox(
-                $"Cancel purchase #{order.id}?\n\n" +
-                $"Order: #{order.id} — {order.quantity}x {order.ItemLabel()} from " +
+                $"Purchase #{order.id}: {order.quantity}x {order.ItemLabel()} from " +
                 $"{order.settlementName}.\n\n" +
-                $"You already paid {order.paidSilver} silver. All {order.paidSilver} silver " +
-                "will be forfeited; none will be refunded. The goods will not arrive. " +
+                $"You already paid {order.paidSilver} silver. All of it will be forfeited; " +
+                "none will be refunded. The goods will not arrive. " +
                 $"The cancellation will be recorded in your trading record with {order.settlementName}.",
                 "Cancel purchase",
                 cancelPurchase,
