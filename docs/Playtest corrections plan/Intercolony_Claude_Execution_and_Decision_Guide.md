@@ -1030,4 +1030,64 @@ Do not delete an old uncertainty because it was later resolved. Add a resolution
 
 ---
 
-*(no entries yet)*
+### 2026-08-08 — Session start — INTAKE
+
+Matteo reported two findings from his own play of 0.9.0, alongside handing over this revision plan.
+Both were triaged against §8 before any code was touched.
+
+**Finding 1 — "Can't cancel a procurement contract."**
+
+Classification: **in scope**, already the subject of slice **B5**. Not a new item.
+
+Traced before delegating. The report is accurate but narrower than its wording suggests:
+
+- RFQ withdrawal *already exists* — a "Withdraw" button on any open request, at
+  `Source/Intercolony/UI/MainTabWindow_Intercolony.cs:2052-2059`, calling `PurchaseRequest.TryCancel()`.
+- What has no action of any kind is the **purchase order**. `DrawPurchaseOrders()`
+  (`MainTabWindow_Intercolony.cs:1605-1668`) draws each open order as three labels — item,
+  settlement, ETA — and nothing else. There is no button.
+- `PurchaseOrderService.Cancel()` has existed since Phase 11 at
+  `Source/Intercolony/Procurement/PurchaseOrderService.cs:294`, complete with forfeit rule,
+  `outcomeNote` and reputation bookkeeping. **It was simply never wired to anything.**
+
+So the defect is one missing button and its confirmation, not a missing capability. This matches
+§8.1 of the revision plan, which predicted exactly this.
+
+**Finding 2 — "Concluded procurement contracts are not showing properly; not sure if they appear
+as cancelled or just disappear."**
+
+Classification: **RED-adjacent, in scope, but not in the plan as its own slice.** Recorded here
+because it would otherwise fall between the plan's slices.
+
+The answer to Matteo's uncertainty is **they just disappear**. `DrawPurchaseOrders()` builds its
+list with a single filter at `MainTabWindow_Intercolony.cs:1610`:
+
+```csharp
+if (order.IsOpen)
+```
+
+and `PurchaseOrder.IsOpen` is `Confirmed || ReadyForPickup` (`PurchaseOrder.cs:88`). Every terminal
+state — `Completed`, `Cancelled`, `SupplierDefault`, `LostToWar` — is therefore invisible on the
+Procurement tab. The order object survives in world state and keeps its `outcomeNote`; nothing is
+lost. It is purely a display omission.
+
+Why this matters more than it looks: **the asymmetry is the bug.** Purchase *requests* do not
+behave this way. `DrawProcurement()` lists every request regardless of status, sorting open ones
+first and rendering terminal ones greyed with their status
+(`MainTabWindow_Intercolony.cs:1570-1578` and `2042-2046`). A player therefore learns from the
+requests half of the screen that concluded things stay listed, and then finds that orders do not.
+
+It also directly undercuts slice B5: §8.3 Step 4 of the plan tells us to compensate for the
+disappearance with a message naming the forfeited silver, precisely because the cancelled order
+vanishes. That compensation exists because of this defect. Fixing the display is the better answer
+to the same problem, so the two are being done together as **B5** and **B5b**, in that order and as
+separate commits.
+
+Not raised as a hand: no persisted state changes, no economic semantics change, and it is revertible
+in one commit. Per §25 this is development, not architecture.
+
+**Revisit if:** the concluded-orders list turns out to need retention/pruning policy of its own —
+that would be a purchase-order history screen, which §14 of the plan puts explicitly out of scope,
+and it would become a `docs/BACKLOG.md` entry instead.
+
+---
