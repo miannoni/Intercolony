@@ -141,6 +141,28 @@ namespace Intercolony
             }
 
             SectionGap(ref y);
+            SectionTitle("Worker wages", width, ref y, draw);
+            Paragraph(
+                "What hired workers ask for. This applies to wages being quoted now: anyone " +
+                "already employed keeps the wage they were hired at, and a renewal is quoted " +
+                "fresh like any other offer.",
+                width, ref y, draw);
+
+            float labor = Settings.laborCostMultiplier;
+            Slider(
+                LaborCostLabel(labor),
+                TallestTextHeight(
+                    width, IntercolonySettings.MinLaborCostMultiplier,
+                    IntercolonySettings.MaxLaborCostMultiplier, 0.25f, LaborCostLabel),
+                ref labor,
+                IntercolonySettings.MinLaborCostMultiplier,
+                IntercolonySettings.MaxLaborCostMultiplier, 0.25f, width, ref y, draw);
+            if (draw)
+            {
+                Settings.laborCostMultiplier = labor;
+            }
+
+            SectionGap(ref y);
             SectionTitle("Buy-only items", width, ref y, draw);
             IReadOnlyList<BuyOnlyTradeCategoryGroup> buyOnlyGroups = BuyOnlyTradeUnlock.Groups;
             if (buyOnlyGroups.Count == 0)
@@ -211,6 +233,18 @@ namespace Intercolony
         private static string ActiveOpportunitiesLabel(float activeOpportunities)
         {
             return $"Open opportunities kept active: {Mathf.RoundToInt(activeOpportunities)}";
+        }
+
+        /// <summary>
+        /// Names a concrete worker so the multiplier cannot be misread. A percentage alone
+        /// leaves "200% of what?" unanswered, and the answer used to be wrong by half.
+        /// </summary>
+        private static string LaborCostLabel(float multiplier)
+        {
+            const int ReferenceWage = 10;
+            return $"Worker wages: {Mathf.RoundToInt(multiplier * 100f)}% — " +
+                   $"a worker who would have asked {ReferenceWage}/day asks " +
+                   $"{Mathf.Max(1, Mathf.RoundToInt(ReferenceWage * multiplier))}/day";
         }
 
         private static string EconomyDifficultyLabel(float difficulty)

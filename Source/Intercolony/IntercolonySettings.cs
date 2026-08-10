@@ -17,6 +17,14 @@ namespace Intercolony
         public const int DefaultActiveOpportunities = 60;
         public const float DefaultEconomyDifficulty = 1f;
 
+        /// <summary>
+        /// Workers were priced too cheaply to be a real decision, so the shipped default is
+        /// double. 1.0 reproduces the rate Intercolony used before 2026-08-10.
+        /// </summary>
+        public const float DefaultLaborCostMultiplier = 2f;
+        public const float MinLaborCostMultiplier = 0.5f;
+        public const float MaxLaborCostMultiplier = 3f;
+
         public const float MinRefreshDays = 0.25f;
         public const float MaxRefreshDays = 7f;
         public const int MinActiveOpportunities = 10;
@@ -36,6 +44,7 @@ namespace Intercolony
         /// example everyone knows.
         /// </summary>
         public bool allowBuyingUnsoldAnimals;
+        public float laborCostMultiplier = DefaultLaborCostMultiplier;
 
         public override void ExposeData()
         {
@@ -51,6 +60,8 @@ namespace Intercolony
                 "enabledBuyOnlyTradeCategoryKeys", LookMode.Value);
             Scribe_Values.Look(
                 ref allowBuyingUnsoldAnimals, "allowBuyingUnsoldAnimals", false);
+            Scribe_Values.Look(
+                ref laborCostMultiplier, "laborCostMultiplier", DefaultLaborCostMultiplier);
 
             if (enabledBuyOnlyTradeCategoryKeys == null)
             {
@@ -69,6 +80,8 @@ namespace Intercolony
                 activeOpportunities, MinActiveOpportunities, MaxActiveOpportunities);
             economyDifficulty = Mathf.Clamp(
                 economyDifficulty, MinEconomyDifficulty, MaxEconomyDifficulty);
+            laborCostMultiplier = Mathf.Clamp(
+                laborCostMultiplier, MinLaborCostMultiplier, MaxLaborCostMultiplier);
         }
     }
 }

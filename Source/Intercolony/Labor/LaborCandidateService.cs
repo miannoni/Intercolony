@@ -752,6 +752,12 @@ namespace Intercolony
             // bad employer is expensive on every axis at once, which is the intent.
             wage *= clause.WageFactor();
 
+            // The player's own thumb on the scale, applied last so it scales the finished
+            // figure rather than compounding oddly with the factors above. Read live, so it
+            // only ever affects wages being quoted now: an employment already agreed keeps the
+            // wage it was signed at, exactly as economy difficulty leaves agreed prices alone.
+            wage *= IntercolonyMod.Settings.laborCostMultiplier;
+
             return Mathf.Max(1, Mathf.RoundToInt(wage));
         }
 
