@@ -591,6 +591,130 @@ namespace Intercolony
             IntercolonyLog.Message(IntercolonyProductClassifier.DebugHistogram());
         }
 
+        /// <summary>Click a map item to explain classifier gates in rejection order.</summary>
+        [DebugAction(Category, "Explain item tradability", actionType = DebugActionType.ToolMap,
+            allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 45)]
+        private static void ExplainItemTradability()
+        {
+            Thing thing = UI.MouseCell().GetFirstItem(Find.CurrentMap);
+            if (thing == null)
+            {
+                IntercolonyLog.Message("No item at the selected cell.");
+                return;
+            }
+
+            ThingDef def = thing.GetInnerIfMinified()?.def ?? thing.def;
+            IntercolonyLog.Message(ExplainTradability(def));
+        }
+
+        internal static string ExplainTradability(ThingDef def)
+        {
+            if (def == null)
+            {
+                return "<null ThingDef>\n- first rejection: missing def";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine(def.defName);
+
+            bool blacklisted = IntercolonyTradeBlacklist.IsBlacklisted(def);
+            sb.AppendLine(blacklisted ? "- blacklist: FAIL" : "- blacklist: pass");
+            if (blacklisted)
+            {
+                sb.Append("- first rejection: blacklist");
+                return sb.ToString();
+            }
+
+            float minimumMarketValue = IntercolonyProductClassifier.MinimumMarketValue;
+            bool valuableEnough = def.BaseMarketValue >= minimumMarketValue;
+            sb.AppendLine($"- market value: {(valuableEnough ? "pass" : "FAIL")} " +
+                          $"({def.BaseMarketValue:F2}, minimum {minimumMarketValue:F2})");
+            if (!valuableEnough)
+            {
+                sb.Append("- first rejection: market value");
+                return sb.ToString();
+            }
+
+            bool isCurrency = def == ThingDefOf.Silver;
+            sb.AppendLine(isCurrency ? "- settlement currency: FAIL" : "- settlement currency: pass");
+            if (isCurrency)
+            {
+                sb.Append("- first rejection: settlement currency");
+                return sb.ToString();
+            }
+
+            bool physicalGood = !def.IsCorpse && def.category != ThingCategory.Pawn;
+            sb.AppendLine(physicalGood ? "- physical good: pass" : "- physical good: FAIL");
+            if (!physicalGood)
+            {
+                sb.Append("- first rejection: corpse or living thing");
+                return sb.ToString();
+            }
+
+            bool playerCanSell = def.tradeability.PlayerCanSell();
+            sb.AppendLine($"- player can sell: {(playerCanSell ? "pass" : "FAIL")} " +
+                          $"({def.tradeability})");
+            if (!playerCanSell)
+            {
+                sb.Append("- first rejection: player can sell");
+                return sb.ToString();
+            }
+
+            IntercolonyProductCategory? category = IntercolonyProductClassifier.Classify(def);
+            sb.Append("- category: ");
+            if (def.thingCategories == null || def.thingCategories.Count == 0)
+            {
+                sb.Append("(none declared)");
+            }
+            else
+            {
+                for (int i = 0; i < def.thingCategories.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        sb.Append(", ");
+                    }
+
+                    ThingCategoryDef own = def.thingCategories[i];
+                    if (own == null)
+                    {
+                        sb.Append("<null>");
+                        continue;
+                    }
+
+                    for (ThingCategoryDef current = own; current != null; current = current.parent)
+                    {
+                        if (current != own)
+                        {
+                            sb.Append(" > ");
+                        }
+
+                        sb.Append(current.defName);
+                    }
+                }
+            }
+
+            sb.AppendLine(category.HasValue ? $" -> {category.Value}" : " -> FAIL");
+            if (!category.HasValue)
+            {
+                sb.Append("- first rejection: category");
+                return sb.ToString();
+            }
+
+            bool fungible = IntercolonyProductClassifier.IsFungibleTradeItem(def);
+            sb.AppendLine(fungible ? "- fungible item: pass" : "- fungible item: FAIL");
+            if (!fungible)
+            {
+                sb.Append("- first rejection: fungible item");
+                return sb.ToString();
+            }
+
+            bool listed = IntercolonyProductClassifier.TradableDefs.Contains(def);
+            sb.AppendLine(listed ? "- tradable defs: pass" : "- tradable defs: FAIL");
+            sb.Append(listed ? "- result: tradable" : "- first rejection: tradable defs");
+            return sb.ToString();
+        }
+
         [DebugAction(Category, "Dump trade blacklist", allowedGameStates = AllowedGameStates.Playing, displayPriority = 44)]
         private static void DumpTradeBlacklist()
         {
