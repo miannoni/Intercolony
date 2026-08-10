@@ -29,7 +29,7 @@ namespace Intercolony
         /// Minimum unit value worth generating demand for. Below this, quantities become
         /// absurd (a settlement asking for 40,000 units of something worth 0.1 silver).
         /// </summary>
-        private const float MinMarketValue = 0.4f;
+        internal const float MinimumMarketValue = 0.4f;
 
         /// <summary>
         /// The category this def belongs to, or null if Intercolony should not trade it.
@@ -132,7 +132,17 @@ namespace Intercolony
         /// </summary>
         private static bool PassesIntrinsicRules(ThingDef def)
         {
-            if (def == null || def.BaseMarketValue < MinMarketValue)
+            return PassesIntrinsicRulesIgnoringTradeability(def) &&
+                   def.tradeability.PlayerCanSell();
+        }
+
+        /// <summary>
+        /// The intrinsic rules other than trade direction. Buy-only discovery uses this same
+        /// gate so it cannot drift away from the real classifier.
+        /// </summary>
+        internal static bool PassesIntrinsicRulesIgnoringTradeability(ThingDef def)
+        {
+            if (def == null || def.BaseMarketValue < MinimumMarketValue)
             {
                 return false;
             }
@@ -147,11 +157,6 @@ namespace Intercolony
             // than in the §64 blacklist — a blacklist entry can be removed by another mod's
             // XML, and removing this one would re-open the exploit.
             if (def == ThingDefOf.Silver)
-            {
-                return false;
-            }
-
-            if (!def.tradeability.PlayerCanSell())
             {
                 return false;
             }
@@ -173,8 +178,19 @@ namespace Intercolony
         public static bool WouldTradeIgnoringBlacklist(ThingDef def)
         {
             return PassesIntrinsicRules(def) &&
-                   (def.category == ThingCategory.Item ||
-                    (def.category == ThingCategory.Building && def.Minifiable));
+                   HasSupportedPhysicalForm(def);
+        }
+
+        /// <summary>
+        /// Whether tradeability is the only thing preventing this def from entering the market.
+        /// Blacklisted defs remain excluded: changing them globally would not make Intercolony
+        /// trade them and would violate the player's explicit exclusion.
+        /// </summary>
+        internal static bool WouldTradeIgnoringTradeability(ThingDef def)
+        {
+            return !IntercolonyTradeBlacklist.IsBlacklisted(def) &&
+                   PassesIntrinsicRulesIgnoringTradeability(def) &&
+                   HasSupportedPhysicalForm(def);
         }
 
         /// <summary>Drops cached classifications, e.g. after a blacklist change.</summary>
@@ -210,12 +226,14 @@ namespace Intercolony
                 return false;
             }
 
-            if (def.category == ThingCategory.Item)
-            {
-                return true;
-            }
+            return HasSupportedPhysicalForm(def);
+        }
 
-            return def.category == ThingCategory.Building && def.Minifiable;
+        private static bool HasSupportedPhysicalForm(ThingDef def)
+        {
+            return def != null &&
+                   (def.category == ThingCategory.Item ||
+                    (def.category == ThingCategory.Building && def.Minifiable));
         }
 
         /// <summary>

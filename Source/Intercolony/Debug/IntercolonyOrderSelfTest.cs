@@ -160,6 +160,9 @@ namespace Intercolony
             Check("remaining never goes negative", partial.RemainingQuantity == 0,
                 partial.RemainingQuantity.ToString());
 
+            // --- B4: opt-in buy-only items remain deliverable after the option is disabled ---
+            RunBuyOnlyTradeUnlockChecks(state, map, sb, Check);
+
             // --- Find Buyer availability: physical stock minus today's commitments ---
             RunAvailabilityChecks(state, map, sb, Check);
 
@@ -386,6 +389,293 @@ namespace Intercolony
                 status = SalesOrderStatus.Accepted,
                 settlementName = "TestTown"
             };
+        }
+
+        private static void RunBuyOnlyTradeUnlockChecks(
+            IntercolonyWorldComponent state,
+            Map map,
+            StringBuilder sb,
+            Action<string, bool, string> check)
+        {
+            sb.AppendLine("  Buy-only trade unlock:");
+
+            BuyOnlyTradeCategoryGroup group = null;
+            ThingDef def = null;
+            foreach (BuyOnlyTradeCategoryGroup candidateGroup in BuyOnlyTradeUnlock.Groups)
+            {
+                foreach (ThingDef candidate in candidateGroup.Defs)
+                {
+                    if (candidate.category == ThingCategory.Item && candidate.stackLimit > 0)
+                    {
+                        group = candidateGroup;
+                        def = candidate;
+                        break;
+                    }
+                }
+
+                if (def != null)
+                {
+                    break;
+                }
+            }
+
+            check("buy-only discovery found a testable item", def != null,
+                "no eligible buy-only item def was discovered");
+            if (def == null)
+            {
+                return;
+            }
+
+            HashSet<string> enabledKeys =
+                IntercolonyMod.Settings.enabledBuyOnlyTradeCategoryKeys;
+            HashSet<string> savedKeys = new HashSet<string>(enabledKeys);
+            Tradeability baseline = def.tradeability;
+            Map fulfillmentMap = Find.AnyPlayerHomeMap ?? map;
+            Zone_Stockpile testZone = null;
+            Thing testStock = null;
+            SalesOrder createdOrder = null;
+            Settlement testBuyer = null;
+            bool removedExistingReputation = false;
+            bool reputationIsolated = false;
+            CommercialReputation existingReputation = null;
+            List<LedgerEntry> existingLedger = state == null
+                ? null
+                : new List<LedgerEntry>(state.Ledger);
+            int existingLedgerStartTick = state?.LedgerStartTick ?? LedgerService.NoHistory;
+            List<Letter> existingLetters = Find.LetterStack == null
+                ? new List<Letter>()
+                : new List<Letter>(Find.LetterStack.LettersListForReading);
+            List<IArchivable> existingArchivables = Find.Archive == null
+                ? new List<IArchivable>()
+                : new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+            Dictionary<Thing, int> existingSilver = new Dictionary<Thing, int>();
+            if (fulfillmentMap != null)
+            {
+                foreach (Thing silver in
+                         fulfillmentMap.listerThings.ThingsOfDef(ThingDefOf.Silver))
+                {
+                    existingSilver[silver] = silver.stackCount;
+                }
+            }
+
+            try
+            {
+                enabledKeys.Remove(group.Key);
+                BuyOnlyTradeUnlock.ApplyEnabledCategories(enabledKeys);
+                baseline = def.tradeability;
+
+                check("disabled buy-only category is not a trade candidate",
+                    !IntercolonyProductClassifier.IsFungibleTradeItem(def) &&
+                    !IntercolonyProductClassifier.TradableDefs.Contains(def),
+                    $"{def.defName}: {def.tradeability}");
+
+                enabledKeys.Add(group.Key);
+                BuyOnlyTradeUnlock.ApplyEnabledCategories(enabledKeys);
+                check("enabled buy-only category is a trade candidate",
+                    IntercolonyProductClassifier.IsFungibleTradeItem(def) &&
+                    IntercolonyProductClassifier.TradableDefs.Contains(def),
+                    $"{def.defName}: {def.tradeability}");
+                check("enabled buy-only item permits both trade directions",
+                    def.tradeability == Tradeability.All &&
+                    def.tradeability.PlayerCanSell() && def.tradeability.TraderCanSell(),
+                    def.tradeability.ToString());
+
+                if (state == null || fulfillmentMap == null)
+                {
+                    check("buy-only obligation test has a current map and state", false,
+                        "run while viewing a colony map");
+                }
+                else
+                {
+                    testBuyer = FirstAccessibleSettlement();
+                    check("buy-only obligation test found an accessible buyer", testBuyer != null,
+                        "no eligible accessible settlement in this world");
+                    if (testBuyer != null)
+                    {
+                        IntVec3 storageCell = IntVec3.Invalid;
+                        IntVec3 root = DropCellFinder.TradeDropSpot(fulfillmentMap);
+                        foreach (IntVec3 candidate in
+                                 GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+                        {
+                            if (candidate.InBounds(fulfillmentMap) &&
+                                candidate.Standable(fulfillmentMap) &&
+                                candidate.GetFirstItem(fulfillmentMap) == null &&
+                                fulfillmentMap.zoneManager.ZoneAt(candidate) == null)
+                            {
+                                storageCell = candidate;
+                                break;
+                            }
+                        }
+
+                        check("buy-only obligation test found a temporary storage cell",
+                            storageCell.IsValid,
+                            "no empty unzoned cell near the trade drop spot");
+                        if (storageCell.IsValid)
+                        {
+                            testZone = new Zone_Stockpile(
+                                StorageSettingsPreset.DefaultStockpile,
+                                fulfillmentMap.zoneManager);
+                            fulfillmentMap.zoneManager.RegisterZone(testZone);
+                            testZone.AddCell(storageCell);
+
+                            testStock = ThingMaker.MakeThing(def);
+                            testStock.stackCount = 1;
+                            testStock = GenSpawn.Spawn(testStock, storageCell, fulfillmentMap);
+
+                            BuyerOffer offer = new BuyerOffer
+                            {
+                                settlement = testBuyer,
+                                def = def,
+                                maxQuantity = 1,
+                                quantity = 1,
+                                unitPrice = 1f
+                            };
+                            createdOrder = SalesOrderService.CreateFromOffer(
+                                state, fulfillmentMap, offer, 1, 12,
+                                FulfillmentMode.BuyerPickup);
+                            check("production path creates a buy-only order while enabled",
+                                createdOrder != null, null);
+
+                            enabledKeys.Remove(group.Key);
+                            BuyOnlyTradeUnlock.ApplyEnabledCategories(enabledKeys);
+
+                            OrderValidationResult afterDisable =
+                                OrderValidator.ValidateColony(createdOrder, fulfillmentMap);
+                            check("open order validates after its category is disabled",
+                                createdOrder != null && afterDisable.Success,
+                                afterDisable.Summary());
+
+                            bool markedReady = createdOrder != null &&
+                                SalesOrderService.MarkReadyForPickup(createdOrder, fulfillmentMap);
+                            if (markedReady)
+                            {
+                                removedExistingReputation = state.Reputations.TryGetValue(
+                                    testBuyer.ID, out existingReputation);
+                                state.Reputations.Remove(testBuyer.ID);
+                                reputationIsolated = true;
+                                createdOrder.buyerArrivalTick = GenTicks.TicksGame;
+                                SalesOrderService.ProcessBuyerCollections(
+                                    new List<SalesOrder> { createdOrder });
+                            }
+
+                            check("production fulfillment completes after the category is disabled",
+                                markedReady && createdOrder != null &&
+                                createdOrder.status == SalesOrderStatus.Completed &&
+                                createdOrder.deliveredQuantity == 1,
+                                $"ready={markedReady}, status={createdOrder?.status.ToString() ?? "none"}, " +
+                                $"delivered={createdOrder?.deliveredQuantity ?? 0}");
+                        }
+                    }
+                }
+
+                // Prime discovery while Buyable, then imitate a late mod changing the field before
+                // Intercolony's first modification. The service must cache this third enum value.
+                enabledKeys.Remove(group.Key);
+                BuyOnlyTradeUnlock.ApplyEnabledCategories(enabledKeys);
+                def.tradeability = Tradeability.Sellable;
+                IntercolonyProductClassifier.Invalidate();
+                enabledKeys.Add(group.Key);
+                BuyOnlyTradeUnlock.ApplyEnabledCategories(enabledKeys);
+                enabledKeys.Remove(group.Key);
+                BuyOnlyTradeUnlock.ApplyEnabledCategories(enabledKeys);
+                check("toggle-off restores the exact pre-modification third value",
+                    def.tradeability == Tradeability.Sellable,
+                    $"restored {def.tradeability}, expected {Tradeability.Sellable}");
+            }
+            finally
+            {
+                if (createdOrder != null && state != null)
+                {
+                    state.Orders.Remove(createdOrder);
+                }
+
+                if (state != null)
+                {
+                    state.Ledger.Clear();
+                    if (existingLedger != null)
+                    {
+                        state.Ledger.AddRange(existingLedger);
+                    }
+
+                    state.LedgerStartTick = existingLedgerStartTick;
+                    if (testBuyer != null && reputationIsolated)
+                    {
+                        state.Reputations.Remove(testBuyer.ID);
+                        if (removedExistingReputation)
+                        {
+                            state.Reputations.Add(testBuyer.ID, existingReputation);
+                        }
+                    }
+                }
+
+                if (testStock != null && !testStock.Destroyed)
+                {
+                    testStock.Destroy(DestroyMode.Vanish);
+                }
+
+                testZone?.Delete(playSound: false);
+
+                if (fulfillmentMap != null)
+                {
+                    List<Thing> currentSilver =
+                        new List<Thing>(
+                            fulfillmentMap.listerThings.ThingsOfDef(ThingDefOf.Silver));
+                    foreach (Thing silver in currentSilver)
+                    {
+                        if (existingSilver.TryGetValue(silver, out int originalCount))
+                        {
+                            if (!silver.Destroyed)
+                            {
+                                silver.stackCount = originalCount;
+                            }
+                        }
+                        else if (!silver.Destroyed)
+                        {
+                            silver.Destroy(DestroyMode.Vanish);
+                        }
+                    }
+                }
+
+                if (Find.LetterStack != null)
+                {
+                    List<Letter> currentLetters =
+                        new List<Letter>(Find.LetterStack.LettersListForReading);
+                    foreach (Letter letter in currentLetters)
+                    {
+                        if (!existingLetters.Contains(letter))
+                        {
+                            Find.LetterStack.RemoveLetter(letter);
+                        }
+                    }
+                }
+
+                if (Find.Archive != null)
+                {
+                    List<IArchivable> currentArchivables =
+                        new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+                    foreach (IArchivable archivable in currentArchivables)
+                    {
+                        if (!existingArchivables.Contains(archivable) && archivable is Letter)
+                        {
+                            Find.Archive.Remove(archivable);
+                        }
+                    }
+                }
+
+                // First return the service to an unmodified state, then restore the def value and
+                // the complete settings set exactly as the test found them.
+                enabledKeys.Remove(group.Key);
+                BuyOnlyTradeUnlock.ApplyEnabledCategories(enabledKeys);
+                def.tradeability = baseline;
+                IntercolonyProductClassifier.Invalidate();
+                enabledKeys.Clear();
+                foreach (string key in savedKeys)
+                {
+                    enabledKeys.Add(key);
+                }
+
+                BuyOnlyTradeUnlock.ApplyEnabledCategories(enabledKeys);
+            }
         }
 
         private static void RunAvailabilityChecks(

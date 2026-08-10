@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using Verse;
 
@@ -27,6 +28,7 @@ namespace Intercolony
         public float refreshDays = DefaultRefreshDays;
         public int activeOpportunities = DefaultActiveOpportunities;
         public float economyDifficulty = DefaultEconomyDifficulty;
+        public HashSet<string> enabledBuyOnlyTradeCategoryKeys = new HashSet<string>();
 
         public override void ExposeData()
         {
@@ -37,6 +39,14 @@ namespace Intercolony
                 ref activeOpportunities, "activeOpportunities", DefaultActiveOpportunities);
             Scribe_Values.Look(
                 ref economyDifficulty, "economyDifficulty", DefaultEconomyDifficulty);
+            Scribe_Collections.Look(
+                ref enabledBuyOnlyTradeCategoryKeys,
+                "enabledBuyOnlyTradeCategoryKeys", LookMode.Value);
+
+            if (enabledBuyOnlyTradeCategoryKeys == null)
+            {
+                enabledBuyOnlyTradeCategoryKeys = new HashSet<string>();
+            }
 
             if (letterVolume != IntercolonyLetterVolume.Everything &&
                 letterVolume != IntercolonyLetterVolume.ImportantOnly &&

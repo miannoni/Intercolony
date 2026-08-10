@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using Verse;
 
@@ -20,6 +21,13 @@ namespace Intercolony
         public override string SettingsCategory()
         {
             return "Intercolony";
+        }
+
+        public override void WriteSettings()
+        {
+            base.WriteSettings();
+            BuyOnlyTradeUnlock.ApplyEnabledCategories(
+                Settings.enabledBuyOnlyTradeCategoryKeys);
         }
 
         public override void DoSettingsWindowContents(Rect inRect)
@@ -131,6 +139,30 @@ namespace Intercolony
                 Settings.economyDifficulty = difficulty;
             }
 
+            SectionGap(ref y);
+            SectionTitle("Buy-only items", width, ref y, draw);
+            IReadOnlyList<BuyOnlyTradeCategoryGroup> buyOnlyGroups = BuyOnlyTradeUnlock.Groups;
+            if (buyOnlyGroups.Count == 0)
+            {
+                Paragraph(
+                    "No buy-only item categories are available with the current mod list.",
+                    width, ref y, draw);
+            }
+            else
+            {
+                Paragraph(
+                    "RimWorld disallows the player from selling these items by default. Enabling " +
+                    "a category changes the items themselves, so they become sellable to every " +
+                    "trader in the game, not only through Intercolony. Other mods are affected too. " +
+                    "In vanilla, this rule covers only stone blocks and cooked meals.",
+                    width, ref y, draw);
+
+                foreach (BuyOnlyTradeCategoryGroup group in buyOnlyGroups)
+                {
+                    BuyOnlyCategoryOption(group, width, ref y, draw);
+                }
+            }
+
             return y;
         }
 
@@ -223,6 +255,39 @@ namespace Intercolony
                     new Rect(0f, y, width, height), text, Settings.letterVolume == value))
             {
                 Settings.letterVolume = value;
+            }
+
+            y += height + 2f;
+        }
+
+        private static void BuyOnlyCategoryOption(
+            BuyOnlyTradeCategoryGroup group, float width, ref float y, bool draw)
+        {
+            string itemWord = group.Defs.Count == 1 ? "item" : "items";
+            string text = $"{group.Label} ({group.Defs.Count} {itemWord})";
+            float height = Mathf.Max(24f, Text.CalcHeight(text, Mathf.Max(1f, width - 28f)));
+            Rect row = new Rect(0f, y, width, height);
+            if (draw)
+            {
+                bool enabled = Settings.enabledBuyOnlyTradeCategoryKeys.Contains(group.Key);
+                bool wasEnabled = enabled;
+                Widgets.CheckboxLabeled(row, text, ref enabled);
+                if (enabled)
+                {
+                    Settings.enabledBuyOnlyTradeCategoryKeys.Add(group.Key);
+                }
+                else
+                {
+                    Settings.enabledBuyOnlyTradeCategoryKeys.Remove(group.Key);
+                }
+
+                if (enabled != wasEnabled)
+                {
+                    BuyOnlyTradeUnlock.ApplyEnabledCategories(
+                        Settings.enabledBuyOnlyTradeCategoryKeys);
+                }
+
+                TooltipHandler.TipRegion(row, group.ItemLabelsTooltip);
             }
 
             y += height + 2f;
