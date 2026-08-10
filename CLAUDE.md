@@ -88,11 +88,25 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. A post-0.9.0
-playtest-correction batch partially landed on 2026-08-09: A1–A5, B1–B3, B5/B5b, C0–C2 and the D1
-research spike; B4 is decided and ready but not started, and D2/D3 are deliberately deferred for
-the settled animal-specification design and its required saved-state change. Save schema remains
-24. Next: continue beta corrections in point releases; there is no Phase 27 plan yet.
+**Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. The post-0.9.0
+playtest-correction batch landed on 2026-08-09: A1–A5, B1–B3, B5/B5b, C0–C2, the D1 research spike
+and **B4** (buy-only items are now an opt-in, default-off setting; see the decision log). Only
+D2/D3 — animal trade — remain, and they are specified rather than blocked. Save schema remains 24.
+Next: continue beta corrections in point releases; there is no Phase 27 plan yet.
+
+**Nothing in that batch has been played.** Every slice added self-test assertions through real
+production paths and **not one has been executed** — they are debug actions needing a human click.
+A clean build and a `dev.ps1` cycle prove the assembly loads, Harmony applies and schema-24 state
+reads. They prove nothing else. `docs/PENDING_PLAYTESTS.md` has the exact click-paths.
+
+**Animal trade (D2/D3) is decided, and buyer pickup is in scope** — Matteo confirmed on 2026-08-09,
+so animals are sold both by seller delivery and by buyer collection, with the player designating
+animals at Mark Ready. Trade is by *specification* (species, sex, life stage, pregnancy — each
+independently selectable and separately priced), not by individual identity. Planned as five
+slices: representation + schema 24→25, pricing, procurement, sell-by-delivery, sell-by-pickup.
+Read `docs/ANIMAL_TRADE_SPIKE.md` **including both addenda** — the second one corrects two claims in
+the first that would each have produced a defect, most importantly that a post-generation gender
+check is a no-op because `PawnGenerator` forces `FixedGender` before consulting the race at all.
 
 **`docs/ROAD_TO_1_0.md` audits §120's 36 criteria: 25 met and proven, 11 met but unproven, 0 not
 met.** Read it before planning anything — it is the honest picture of how far 1.0 actually is.

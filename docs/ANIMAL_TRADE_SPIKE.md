@@ -198,6 +198,55 @@ Specification trade is materially more work than adding one discriminator plus o
 
 The mechanical split identified by D1 also remains. Current caravan validation enumerates `AllInventoryItems`, colony validation enumerates `ThingsOfDef`, and procurement fulfilment creates things with `ThingMaker.MakeThing`; none of those item paths can implement species/sex/stage/pregnancy matching or a live-pawn handoff (`Source/Intercolony/Orders/OrderValidation.cs:146-205`; `Source/Intercolony/Orders/OrderValidation.cs:350-445`; `Source/Intercolony/Procurement/PurchaseOrderService.cs:314-370`). The discriminator and specification are necessary persisted shape, but dedicated animal discovery, matching, pricing, generation, disposal-on-failure, and transfer branches are still required. Pregnancy adds a species-capability decision, while sex and pregnancy add pricing policy because vanilla supplies no differentiating price term.
 
+### Second addendum — two corrections to the above (2026-08-09)
+
+A follow-up research pass re-checked the specification model against source before implementation
+began. Two things above are wrong or insufficient, and both would have produced a defect.
+
+**1. `FixedGender` is not a compatibility gate, and the guard proposed above is a no-op.** The
+"Sex and life stage as promises" section says to "reject if the generated pawn's `gender` does not
+equal the promised value" as protection against modded single-sex or genderless animals. That check
+can never fire. `PawnGenerator` assigns `request.FixedGender` in the **first** branch of its gender
+chain, before `PawnKindDef.fixedGender`, before `hasGenders` and before `forceGender`
+(`reference/decompiled/Verse/PawnGenerator.cs:741-766` — verified directly). Asking a genderless
+race for a female yields a pawn whose `gender` is `Female`; the generator forces the request true,
+so post-generation equality is guaranteed and proves nothing. The gate must be applied to the
+**race definition before generating**, by checking `RaceProperties.hasGenders` and `forceGender` and
+the kind's `fixedGender`, not to the pawn afterwards.
+
+**2. A bare `LifeStageDef` does not identify a life stage of a particular race.** Vanilla shares the
+generic stage definitions across species: Alpaca and Muffalo both reference `AnimalBaby`,
+`AnimalJuvenile` and `AnimalAdult`, but their juvenile thresholds differ — 0.2 years against 0.25
+(`reference/vanilla-defs/Core/Defs/ThingDefs_Races/Races_Animal_SheepGroup.xml:241-252`;
+`Races_Animal_CowGroup.xml:446-457` — both verified directly). A raw index into `race.lifeStageAges`
+is no better: it stays in range but silently changes meaning if a mod reorders the list, and
+`CurLifeStage` dereferences an out-of-range result, so a shortened list becomes a null-reference
+failure rather than a clear message. The workable key is the **pair** — the already-persisted
+species `ThingDef` plus a nullable `LifeStageDef` — treated as valid only when that def occurs
+exactly once in that species' current `lifeStageAges`. Militor repeats one stage def at two
+positions, so duplicates are permitted by the data model even though no vanilla *animal* does it.
+
+**Also established, and it removes two open risks rather than adding any:**
+
+- **"Don't care" needs no sentinel.** `Scribe_Values.Look` handles nullable value types through
+  `ParseHelper`'s `Nullable<T>` unwrapping, and `OrderLine` already persists `QualityCategory?
+  minQuality` exactly this way (`Source/Intercolony/Orders/OrderLine.cs:27-31, 57-63`). Species,
+  sex, stage and pregnancy can each be a nullable meaning "any", which matters in a repo that has
+  been bitten by sentinels five times. Pregnancy gets three real states — null, false, true.
+- **Caravan birth is safe.** `PawnUtility.DoBirthSpawn` has an explicit caravan-mother branch that
+  adds the newborn to the same caravan and passes it to `WorldPawns`, and map-only effects are
+  guarded by `mother.Spawned` (`reference/decompiled/RimWorld/PawnUtility.cs:396-440`). A pregnancy
+  ticking on the world map does not throw. This closes the largest buy-side pregnancy worry.
+- **The pregnancy capability gate can be stated concretely:** `race.Animal` and
+  `gestationPeriodDays > 0` (it defaults to `-1`, and pregnancy progression divides by it) and
+  `!raceDef.HasComp<CompEggLayer>()`, testable on the def before any pawn exists.
+
+**One gap with no answer yet, flagged rather than solved.** Buyer pickup does not persist the map on
+which readiness was declared; at arrival it uses `Find.AnyPlayerHomeMap`
+(`Source/Intercolony/Orders/SalesOrderService.cs:372-390`). For anonymous goods that is survivable.
+For designated *animals* — specific pawns standing on a specific map — it is not obviously correct
+in a multi-colony game, and it needs a decision before buyer-pickup animal sales are built.
+
 ### Unverified / could not confirm for this addendum
 
 - I could not confirm a single vanilla predicate meaning “this arbitrary animal race safely supports the `Pregnant` hediff.” The verified mating branch distinguishes egg layers at runtime and the race configuration validator checks gestation configuration, so modded-race compatibility must be tested rather than inferred (`reference/decompiled/RimWorld/PawnUtility.cs:360-374`; `reference/decompiled/Verse/RaceProperties.cs:166`; `reference/decompiled/Verse/RaceProperties.cs:537-540`).

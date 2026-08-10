@@ -104,6 +104,51 @@ cancellation settlement prerequisite cannot be resolved, the test itself emits a
 initial `(no tradable defs or no settlements; skipped)` with no final count is also not a pass. Do
 not rerun until a quiet result and mark the first attempt passed.
 
+#### Buy-only unlock, including the obligation guard — `Run order self-test`
+
+Added 2026-08-09 with the buy-only setting. Same action as the availability checks above, so one
+click covers both, but read the `Buy-only trade unlock:` block specifically.
+
+**Pass.** Under `Buy-only trade unlock:` every line passes: discovery finds a testable item; a
+disabled category is not a trade candidate; an enabled one is, and permits both directions; and
+**an order created while enabled still validates, marks ready and completes by buyer pickup after
+the category is disabled**. That last one is the important assertion — it is the guard against
+toggling the setting off stranding an obligation. The final line asserts that toggle-off restores
+the exact pre-modification value rather than assuming it was `Buyable`.
+
+**Failure.** Any `FAIL` in that block. Also treat as a failure any red exception mentioning
+`Tradeability` or `BuyOnlyTradeUnlock`, and — importantly — **any lasting change to the game after
+the test**: the test spawns an item, completes a sale and moves silver, then undoes all of it. If
+silver, letters or orders differ afterwards, the restoration is wrong even if every check passed.
+
+### The buy-only setting itself has never been seen
+
+Added 2026-08-09. The code path is asserted by the self-test above; the **player-facing control has
+never been rendered**, and nothing here is proven.
+
+**Setup.** Main menu → **Options** → **Mod options** → **Intercolony**. Scroll to **Buy-only items**
+at the bottom.
+
+**Steps.** Read the warning paragraph. Hover a category row to see its tooltip. Tick **Stone
+blocks**, close the settings window, then open **Intercolony** → **Selling** → **Find buyer** and
+look for blocks. Untick it and check they disappear from the list. Then quit to the menu, restart
+the game, and reopen the settings.
+
+**Pass.** Exactly two categories appear in vanilla + Biotech: stone blocks and cooked meals, each
+with a plausible item count and a tooltip naming the items. Ticking makes blocks appear in Find
+Buyer; unticking removes them. The tick survives a full restart. The warning says plainly that the
+change affects every trader in the game, not only Intercolony.
+
+**Failure.** More than those two categories in this load order (something is wrong with the
+discovery filter); an empty or nonsense tooltip; a row whose label is a defName rather than a
+readable category; the setting not surviving restart; clipped or overlapping text; or the scroll
+view not reaching the bottom row — the section is measured in a separate pass from the one that
+draws it, so a measurement bug shows up exactly as unreachable content.
+
+**Also worth checking, since it cannot be asserted:** with the setting **on**, sell blocks to an
+ordinary vanilla trade caravan. That is the global consequence the warning promises, and confirming
+it is what makes the warning honest rather than theoretical.
+
 ### Find Buyer shows uncommitted availability, not raw stock
 
 **Setup.** Put a known quantity of one stackable good in a stockpile and choose a lot small enough

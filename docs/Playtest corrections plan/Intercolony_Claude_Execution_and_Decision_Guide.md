@@ -1215,3 +1215,32 @@ been bent for this slice.
 **Status:** ready to implement as its own slice. Not started — session ended.
 
 ---
+
+### 2026-08-09 — Slice B4 — IMPLEMENTED as specified above
+
+Built and committed as `0710a08` (the setting) and `610981c` (the debug action). Nothing in the
+resolution above was changed on contact; recorded here only because two details were decided during
+implementation and one claim needs correcting.
+
+**Decided during implementation, both minor and reversible:**
+
+1. **Blacklisted defs are excluded from discovery.** Not stated above, but forced: unlocking a
+   blacklisted def globally would still not make Intercolony trade it, so offering the toggle would
+   promise something the mod then refuses. It would also override the player's own exclusion.
+2. **Defs with no thing category** group under a stable internal key displayed as "Uncategorized
+   items", rather than being dropped or filed under an unrelated vanilla category. `FirstThingCategory`
+   can legitimately be null and vanilla has no rule against it.
+
+**A claim in the implementation report that is not supported and should not be repeated.** The report
+said the post-change log showed a schema-23 save being migrated to 24. It does not — the log reads
+`State loaded (schema 24, nextId 1924)` with no migration line, because the save was already at 24.
+The load itself is real and clean; only the migration claim is wrong. Recorded because this file's
+whole purpose is that a plausible-sounding verification claim gets checked against the artifact.
+
+**Not proven.** The self-test assertions exist but have never been clicked, and the settings control
+has never been rendered. Both are in `docs/PENDING_PLAYTESTS.md` with exact steps. The one thing
+worth stressing to whoever runs them: the obligation guard — an order created while the category is
+enabled must still complete after it is disabled — is the assertion that matters, because it is the
+one protecting a player's existing commitment.
+
+---

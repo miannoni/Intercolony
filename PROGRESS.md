@@ -1957,12 +1957,21 @@ Implemented:
 - No saved fields were added. `IntercolonyWorldComponent.CurrentSaveVersion` remains 24, so existing
   0.9.0 history drives the new contract rule without migration.
 
+- **B4 — stone blocks, resolved as an opt-in setting** (built later the same day; this entry was
+  written while it was still outstanding). Core gives `StoneBlocksBase` tradeability `Buyable`,
+  which permits buying and forbids player selling to *every* trader; the Intercolony classifier was
+  already correct and the report was never an Intercolony defect. Rather than override vanilla for
+  everyone or refuse the capability, a default-off setting now assigns `tradeability` from C# —
+  the preserved definition patch stays unapplied, because a `PatchOperation` runs during def loading
+  and cannot be toggled. Discovery filters on `tradeability == Buyable`, so it finds exactly stone
+  blocks and cooked meals in vanilla and picks up modded content without naming a single def. Each
+  def's original value is cached at first modification and that exact value restored on toggle-off,
+  so another mod's patch is not clobbered. Toggling off does not strand an obligation: tradeability
+  gates listing and creation but not delivery, which is now asserted through the production path
+  rather than assumed. Also shipped: an "Explain item tradability" debug action naming the first
+  gate to reject a def.
+
 Not implemented:
-- **B4 — stone blocks.** Diagnosed, not built. Core gives `StoneBlocksBase` tradeability `Buyable`,
-  which permits buying and forbids player selling to every trader; the Intercolony classifier was
-  already correct. A definition patch is preserved beside the plan but deliberately unapplied.
-  The owner chose a default-off mod setting instead, because a `PatchOperation` runs during def
-  loading and cannot be toggled. That setting is ready to build and has not been started.
 - **D2 and D3 — animal procurement and physical caravan animal sales.** The owner has settled the
   scope: trade by specification rather than individual identity; species, sex, life stage and
   pregnancy selectable and priced separately; goods rules retained wherever technically possible,
