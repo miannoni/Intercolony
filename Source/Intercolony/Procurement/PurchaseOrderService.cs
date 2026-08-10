@@ -122,9 +122,11 @@ namespace Intercolony
             state.AddPurchaseOrder(order);
 
             // The request is answered; remaining quotes are no longer on the table. Leaving it
-            // open would let the player buy the same goods repeatedly off one request.
+            // open would let the player buy the same goods repeatedly off one request. It is
+            // Ordered rather than Cancelled: the player acted on this request, and calling that
+            // a cancellation reads as though they had walked away from it.
             request.TryCancel();
-            request.status = PurchaseRequestStatus.Cancelled;
+            request.status = PurchaseRequestStatus.Ordered;
 
             IntercolonyLog.Message(
                 $"Purchase {order.id}: {order.quantity}x {order.ItemLabel()} from {order.settlementName} " +

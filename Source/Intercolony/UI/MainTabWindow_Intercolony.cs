@@ -1948,11 +1948,20 @@ namespace Intercolony
 
             List<PurchaseOrder> purchaseOrders =
                 SelectPurchaseOrdersForDisplay(state.PurchaseOrders);
+            List<PurchaseRequest> concludedRequests = SelectConcludedRequestsForDisplay(
+                state.Requests, out int concludedRequestTotal);
 
             float contentHeight = PurchaseOrdersHeight(purchaseOrders);
             if (purchaseOrders.Count == 0)
             {
                 contentHeight += 70f;
+            }
+
+            if (concludedRequests.Count > 0)
+            {
+                contentHeight += PurchaseOrderSectionHeaderHeight +
+                                 concludedRequests.Count * ConcludedRequestRowHeight +
+                                 PurchaseOrderSectionGap;
             }
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
@@ -1969,9 +1978,84 @@ namespace Intercolony
                     "Accept a supplier's quotation on Find seller and the purchase appears here " +
                     "until it arrives.");
                 GUI.color = Color.white;
+                rowY += 70f;
+            }
+
+            if (concludedRequests.Count > 0)
+            {
+                string header = concludedRequestTotal > concludedRequests.Count
+                    ? $"Concluded requests (showing {concludedRequests.Count} of {concludedRequestTotal})"
+                    : $"Concluded requests ({concludedRequests.Count})";
+                Widgets.Label(new Rect(0f, rowY, viewRect.width, 24f), header);
+                rowY += PurchaseOrderSectionHeaderHeight;
+
+                foreach (PurchaseRequest request in concludedRequests)
+                {
+                    DrawConcludedRequestRow(
+                        new Rect(0f, rowY, viewRect.width, ConcludedRequestRowHeight), request);
+                    rowY += ConcludedRequestRowHeight;
+                }
             }
 
             EndPageScrollView();
+        }
+
+        private const float ConcludedRequestRowHeight = 26f;
+
+        /// <summary>
+        /// How many concluded requests are worth showing. These accumulate one per purchase
+        /// forever, and an unbounded history is what turned Find seller into a wall of dead
+        /// rows. Nothing is deleted — the cap is on what is drawn.
+        /// </summary>
+        private const int ConcludedRequestsShown = 25;
+
+        internal static List<PurchaseRequest> SelectConcludedRequestsForDisplay(
+            IEnumerable<PurchaseRequest> requests, out int total)
+        {
+            List<PurchaseRequest> concluded = new List<PurchaseRequest>();
+            foreach (PurchaseRequest request in requests)
+            {
+                if (request != null && !request.IsOpen)
+                {
+                    concluded.Add(request);
+                }
+            }
+
+            total = concluded.Count;
+            concluded.Sort((a, b) => b.id.CompareTo(a.id));
+            if (concluded.Count > ConcludedRequestsShown)
+            {
+                concluded.RemoveRange(
+                    ConcludedRequestsShown, concluded.Count - ConcludedRequestsShown);
+            }
+
+            return concluded;
+        }
+
+        private static void DrawConcludedRequestRow(Rect row, PurchaseRequest request)
+        {
+            GUI.color = new Color(0.7f, 0.7f, 0.7f);
+            Widgets.Label(new Rect(row.x + 6f, row.y + 2f, row.width * 0.6f, 22f),
+                $"#{request.id}  {request.quantityRequested}x {request.ItemLabel()}");
+            Widgets.Label(new Rect(row.x + row.width * 0.62f, row.y + 2f, row.width * 0.36f, 22f),
+                ConcludedRequestLabel(request.status));
+            GUI.color = Color.white;
+        }
+
+        /// <summary>Says what became of a request in words the player recognises.</summary>
+        private static string ConcludedRequestLabel(PurchaseRequestStatus status)
+        {
+            switch (status)
+            {
+                case PurchaseRequestStatus.Ordered:
+                    return "Ordered from a supplier";
+                case PurchaseRequestStatus.Cancelled:
+                    return "Withdrawn";
+                case PurchaseRequestStatus.Expired:
+                    return "Lapsed without an order";
+                default:
+                    return status.ToString();
+            }
         }
 
         private Vector2 procurementOrdersScroll;
@@ -1992,16 +2076,20 @@ namespace Intercolony
 
             y += 40f;
 
-            List<PurchaseRequest> requests = new List<PurchaseRequest>(state.Requests);
-            requests.Sort((a, b) =>
+            // Only live requests. Find seller is where a purchase is decided, and a concluded
+            // request is not a decision waiting to be made — it is history, and it belongs
+            // beside the purchases it produced. Every accepted quotation used to leave one of
+            // these behind, so this page filled with dead rows the more the player used it.
+            List<PurchaseRequest> requests = new List<PurchaseRequest>();
+            foreach (PurchaseRequest request in state.Requests)
             {
-                if (a.IsOpen != b.IsOpen)
+                if (request != null && request.IsOpen)
                 {
-                    return a.IsOpen ? -1 : 1;
+                    requests.Add(request);
                 }
+            }
 
-                return b.id.CompareTo(a.id);
-            });
+            requests.Sort((a, b) => b.id.CompareTo(a.id));
 
             float contentHeight = 0f;
             foreach (PurchaseRequest request in requests)
@@ -2024,9 +2112,10 @@ namespace Intercolony
             {
                 GUI.color = Color.gray;
                 Widgets.Label(new Rect(0f, rowY, viewRect.width, 70f),
-                    "No requests yet.\n\n" +
+                    "No requests out.\n\n" +
                     "Intercolony is not a shop. You state what you need, and known settlements " +
-                    "answer if they can — sometimes with less than you asked for, sometimes not at all.");
+                    "answer if they can — sometimes with less than you asked for, sometimes not " +
+                    "at all. Requests you have already acted on are under Orders.");
                 GUI.color = Color.white;
             }
 

@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 29;
+        public const int CurrentSaveVersion = 30;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1597,6 +1597,41 @@ namespace Intercolony
                 // so the field's default is already the truth about them and no data moves.
                 IntercolonyLog.Message(
                     "  schema 28 -> 29: supply agreements now carry a fulfilment mode; existing ones keep seller delivery.");
+            }
+
+            if (saveVersion < 30)
+            {
+                // 29 -> 30 repairs a lie in existing saves. Accepting a quotation marked its
+                // request Cancelled, which the status means "withdrawn by the player" — so
+                // every successful purchase left behind a record claiming the player had
+                // abandoned it. A purchase order remembers the request it came from, so the
+                // ones that actually produced an order can be identified exactly rather than
+                // guessed at. Anything with no matching order really was withdrawn and is
+                // left alone.
+                HashSet<int> requestsThatProducedAnOrder = new HashSet<int>();
+                foreach (PurchaseOrder order in purchaseOrders)
+                {
+                    if (order != null && order.requestId != 0)
+                    {
+                        requestsThatProducedAnOrder.Add(order.requestId);
+                    }
+                }
+
+                int relabelled = 0;
+                foreach (PurchaseRequest request in requests)
+                {
+                    if (request != null &&
+                        request.status == PurchaseRequestStatus.Cancelled &&
+                        requestsThatProducedAnOrder.Contains(request.id))
+                    {
+                        request.status = PurchaseRequestStatus.Ordered;
+                        relabelled++;
+                    }
+                }
+
+                IntercolonyLog.Message(
+                    $"  schema 29 -> 30: purchase requests answered by an order are now Ordered " +
+                    $"rather than Cancelled; relabelled {relabelled}.");
             }
 
             saveVersion = CurrentSaveVersion;

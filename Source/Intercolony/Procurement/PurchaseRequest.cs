@@ -15,7 +15,14 @@ namespace Intercolony
         Expired,
 
         /// <summary>Withdrawn by the player.</summary>
-        Cancelled
+        Cancelled,
+
+        /// <summary>
+        /// Answered: the player took one of its quotations and a purchase order exists. This
+        /// was reported as <see cref="Cancelled"/> until 2026-08-10, which told the player they
+        /// had abandoned the very requests they had successfully acted on.
+        /// </summary>
+        Ordered
     }
 
     /// <summary>Logistics terms stated by the player when an RFQ is raised.</summary>
