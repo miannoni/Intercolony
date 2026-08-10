@@ -96,15 +96,17 @@ namespace Intercolony
 
             command.action = delegate
             {
-                OrderValidationResult result = SalesOrderService.Deliver(state, order, caravan);
-
-                // §18: report the shortfall rather than leaving the player guessing why the
-                // order did not close.
-                if (!result.Success && order.IsOpen)
+                SalesOrderService.ConfirmAndDeliver(state, order, caravan, result =>
                 {
-                    Messages.Message($"Order #{order.id}: {result.Summary()}",
-                        MessageTypeDefOf.CautionInput, historical: false);
-                }
+
+                    // §18: report the shortfall rather than leaving the player guessing why the
+                    // order did not close.
+                    if (!result.Success && order.IsOpen)
+                    {
+                        Messages.Message($"Order #{order.id}: {result.Summary()}",
+                            MessageTypeDefOf.CautionInput, historical: false);
+                    }
+                });
             };
 
             // Shown but disabled, with the reason, rather than hidden — a player who hauled

@@ -175,6 +175,14 @@ namespace Intercolony
             }
 
             int required = order.RemainingQuantity;
+
+            // Animals are caravan members, never cargo. Branch before touching the item
+            // inventory path so no live pawn can fall through to stack/item semantics.
+            if (order.IsAnimalOrder)
+            {
+                return ValidateCaravanAnimals(order, caravan, required);
+            }
+
             int found = 0;
 
             List<Thing> items = CaravanInventoryUtility.AllInventoryItems(caravan);
@@ -203,6 +211,81 @@ namespace Intercolony
             }
 
             return result;
+        }
+
+        private static OrderValidationResult ValidateCaravanAnimals(
+            SalesOrder order, Caravan caravan, int required)
+        {
+            OrderValidationResult result = new OrderValidationResult();
+            int matching = 0;
+            int rejected = 0;
+
+            List<Pawn> pawns = caravan.PawnsListForReading;
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (pawn?.def != order.ThingDef)
+                {
+                    continue;
+                }
+
+                // Both gates are deliberately re-run at handoff. Eligibility and the
+                // specification can each change while the caravan is travelling.
+                if (AnimalTradeUtility.IsEligibleForSale(pawn) &&
+                    AnimalTradeUtility.Matches(pawn, order.ThingDef, order.line.animalSpec))
+                {
+                    matching++;
+                }
+                else
+                {
+                    rejected++;
+                }
+            }
+
+            result.matchedQuantity = Mathf.Min(matching, required);
+            result.missingQuantity = Mathf.Max(0, required - matching);
+            if (rejected > 0)
+            {
+                result.failures.Add(
+                    $"{rejected} carried {order.ThingDef.label} no longer meet the animal " +
+                    "eligibility or specification requirements.");
+            }
+
+            if (result.missingQuantity > 0)
+            {
+                result.failures.Add(
+                    $"{result.missingQuantity} more {order.line.animalSpec.ShortLabel(order.ThingDef)} " +
+                    $"needed ({matching} carried and eligible, {required} required).");
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Snapshot of the exact caravan members currently able to satisfy an animal order.
+        /// Every caller gets fresh eligibility and specification checks; no pawn is reserved.
+        /// </summary>
+        internal static List<Pawn> MatchingCaravanAnimals(
+            SalesOrder order, Caravan caravan, int maximum)
+        {
+            List<Pawn> matching = new List<Pawn>();
+            if (order?.IsAnimalOrder != true || caravan == null || maximum <= 0)
+            {
+                return matching;
+            }
+
+            List<Pawn> pawns = caravan.PawnsListForReading;
+            for (int i = 0; i < pawns.Count && matching.Count < maximum; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (AnimalTradeUtility.IsEligibleForSale(pawn) &&
+                    AnimalTradeUtility.Matches(pawn, order.ThingDef, order.line.animalSpec))
+                {
+                    matching.Add(pawn);
+                }
+            }
+
+            return matching;
         }
 
         /// <summary>

@@ -53,6 +53,7 @@ namespace Intercolony
             List<Pawn> colonyAnimals = ColonyAnimals(map);
             CheckMatcher(Check, Skip, colonyAnimals);
             CheckEligibility(Check, Skip, state, map);
+            CheckAnimalSalePath(Check, Skip, state, map);
 
             sb.AppendLine($"  {passed} passed, {failed} failed, {skipped} skipped");
             return sb.ToString();
@@ -1175,6 +1176,329 @@ namespace Intercolony
                 check("eligibility rejects an active Intercolony employee",
                     EmploymentService.IsEmployee(employee) &&
                     !AnimalTradeUtility.IsEligibleForSale(employee), employee.LabelShort);
+            }
+        }
+
+        private static void CheckAnimalSalePath(
+            Action<string, bool, string> check, Action<string, string> skip,
+            IntercolonyWorldComponent state, Map map)
+        {
+            CheckDiscoveryExclusions(check, skip, state, map);
+            CheckAnonymousAnimalCommitment(check, skip, state, map);
+            CheckCaravanHandoffRevalidation(check, skip);
+            CheckBondSaleEffects(check, skip, map);
+            CheckGoodsCaravanValidationUnchanged(check, skip);
+
+            // This exact arithmetic regression predates the animal sell path. Keeping it in
+            // the sell test cluster makes the "goods unchanged" requirement explicit.
+            CheckExactGoodsPriceRegression(check);
+        }
+
+        private static void CheckGoodsCaravanValidationUnchanged(
+            Action<string, bool, string> check, Action<string, string> skip)
+        {
+            List<Caravan> caravans = Find.WorldObjects?.Caravans;
+            if (caravans != null)
+            {
+                foreach (Caravan caravan in caravans)
+                {
+                    if (!caravan.IsPlayerControlled)
+                    {
+                        continue;
+                    }
+
+                    foreach (Thing thing in CaravanInventoryUtility.AllInventoryItems(caravan))
+                    {
+                        Thing inner = thing.GetInnerIfMinified();
+                        if (inner?.def == null ||
+                            !IntercolonyProductClassifier.IsFungibleTradeItem(inner.def))
+                        {
+                            continue;
+                        }
+
+                        SalesOrder goods = new SalesOrder
+                        {
+                            line = new OrderLine(inner.def, 1),
+                            status = SalesOrderStatus.Accepted
+                        };
+                        int stackCountBefore = thing.stackCount;
+                        OrderValidationResult validation =
+                            OrderValidator.ValidateCaravan(goods, caravan);
+                        check("goods caravan selling validation is unchanged",
+                            !goods.IsAnimalOrder && validation.matchedQuantity == 1 &&
+                            thing.stackCount == stackCountBefore,
+                            inner.LabelShort);
+                        return;
+                    }
+                }
+            }
+
+            skip("goods caravan selling validation is unchanged",
+                "no player caravan currently carries a fungible trade item");
+        }
+
+        private static void CheckDiscoveryExclusions(
+            Action<string, bool, string> check, Action<string, string> skip,
+            IntercolonyWorldComponent state, Map map)
+        {
+            List<Pawn> discovered = FindBuyerService.EligibleColonyAnimalCandidates(map);
+            List<Pawn> realPawns = new List<Pawn>();
+            if (map?.mapPawns?.AllPawnsSpawned != null)
+            {
+                realPawns.AddRange(map.mapPawns.AllPawnsSpawned);
+            }
+
+            CheckRealExcludedPawn("humanlike", realPawns.Find(p => p?.RaceProps?.Humanlike == true),
+                discovered, check, skip);
+            CheckRealExcludedPawn("prisoner", realPawns.Find(p => p?.IsPrisoner == true),
+                discovered, check, skip);
+            CheckRealExcludedPawn("slave", realPawns.Find(p => p?.IsSlave == true),
+                discovered, check, skip);
+            CheckRealExcludedPawn("quest lodger", realPawns.Find(p => p?.IsQuestLodger() == true),
+                discovered, check, skip);
+
+            Pawn employee = null;
+            if (state != null)
+            {
+                employee = realPawns.Find(EmploymentService.IsEmployee);
+            }
+            CheckRealExcludedPawn("employee", employee, discovered, check, skip);
+        }
+
+        private static void CheckRealExcludedPawn(
+            string kind, Pawn pawn, List<Pawn> discovered,
+            Action<string, bool, string> check, Action<string, string> skip)
+        {
+            string assertion = $"animal discovery excludes a real {kind}";
+            if (pawn == null)
+            {
+                skip(assertion, $"no real {kind} is present on the current colony map");
+                return;
+            }
+
+            check(assertion, !discovered.Contains(pawn), pawn.LabelShort);
+        }
+
+        private static void CheckAnonymousAnimalCommitment(
+            Action<string, bool, string> check, Action<string, string> skip,
+            IntercolonyWorldComponent state, Map map)
+        {
+            if (state == null || map == null)
+            {
+                skip("committed animal is not offered twice", "no world state or colony map");
+                return;
+            }
+
+            List<AnimalStockGroup> groups = FindBuyerService.ColonyAnimals(map);
+            AnimalStockGroup group = groups.Find(g =>
+                FindBuyerService.AvailableAnimalQuantity(
+                    state, map, g.race, g.spec) > 0);
+            if (group == null)
+            {
+                skip("committed animal is not offered twice",
+                    "no eligible uncommitted colony-animal group");
+                return;
+            }
+
+            int before = FindBuyerService.AvailableAnimalQuantity(
+                state, map, group.race, group.spec);
+            SalesOrder planted = new SalesOrder
+            {
+                id = -917_401,
+                opportunityId = 0,
+                contractId = 0,
+                line = new OrderLine(group.race, 1)
+                {
+                    animalSpec = group.spec.Copy()
+                },
+                status = SalesOrderStatus.Accepted,
+                fulfillment = FulfillmentMode.SellerDelivery
+            };
+
+            state.Orders.Add(planted);
+            try
+            {
+                int after = FindBuyerService.AvailableAnimalQuantity(
+                    state, map, group.race, group.spec);
+                check("committed animal is not offered twice",
+                    after == Mathf.Max(0, before - 1),
+                    $"{group.spec.ShortLabel(group.race)}: {before} before, {after} after");
+            }
+            finally
+            {
+                state.Orders.Remove(planted);
+            }
+        }
+
+        private static void CheckCaravanHandoffRevalidation(
+            Action<string, bool, string> check, Action<string, string> skip)
+        {
+            Caravan caravan = null;
+            Pawn animal = null;
+            List<Caravan> caravans = Find.WorldObjects?.Caravans;
+            if (caravans != null)
+            {
+                foreach (Caravan candidateCaravan in caravans)
+                {
+                    if (!candidateCaravan.IsPlayerControlled)
+                    {
+                        continue;
+                    }
+
+                    animal = candidateCaravan.PawnsListForReading.Find(p =>
+                        AnimalTradeUtility.IsEligibleForSale(p) &&
+                        (p.gender == Gender.Female || p.gender == Gender.Male));
+                    if (animal != null)
+                    {
+                        caravan = candidateCaravan;
+                        break;
+                    }
+                }
+            }
+
+            if (animal == null)
+            {
+                skip("handoff revalidation rejects a changed animal",
+                    "no eligible gendered animal is travelling in a player caravan");
+                return;
+            }
+
+            Gender originalGender = animal.gender;
+            SalesOrder order = new SalesOrder
+            {
+                line = new OrderLine(animal.def, 1)
+                {
+                    animalSpec = new AnimalSpec { gender = originalGender }
+                },
+                status = SalesOrderStatus.Accepted
+            };
+
+            try
+            {
+                OrderValidationResult before = OrderValidator.ValidateCaravan(order, caravan);
+                animal.gender = originalGender == Gender.Female ? Gender.Male : Gender.Female;
+                OrderValidationResult changed = OrderValidator.ValidateCaravan(order, caravan);
+                check("handoff revalidation rejects a changed animal",
+                    before.matchedQuantity == 1 && changed.matchedQuantity == 0,
+                    animal.LabelShort);
+            }
+            finally
+            {
+                animal.gender = originalGender;
+            }
+        }
+
+        private static void CheckBondSaleEffects(
+            Action<string, bool, string> check, Action<string, string> skip, Map map)
+        {
+            Pawn animal = null;
+            Pawn colonist = null;
+            Pawn negotiator = null;
+            List<Pawn> candidates = FindBuyerService.EligibleColonyAnimalCandidates(map);
+            List<Caravan> caravans = Find.WorldObjects?.Caravans;
+            if (caravans != null)
+            {
+                foreach (Caravan caravan in caravans)
+                {
+                    if (!caravan.IsPlayerControlled)
+                    {
+                        continue;
+                    }
+
+                    if (negotiator == null)
+                    {
+                        negotiator = SalesOrderService.FindAnimalSaleNegotiator(caravan);
+                    }
+
+                    candidates.AddRange(caravan.PawnsListForReading.FindAll(
+                        AnimalTradeUtility.IsEligibleForSale));
+                }
+            }
+
+            foreach (Pawn candidate in candidates)
+            {
+                List<DirectPawnRelation> relations = candidate.relations?.DirectRelations;
+                if (relations == null)
+                {
+                    continue;
+                }
+
+                DirectPawnRelation bond = relations.Find(r =>
+                    r?.def == PawnRelationDefOf.Bond && r.otherPawn?.IsColonist == true &&
+                    r.otherPawn.needs?.mood?.thoughts?.memories != null &&
+                    r.otherPawn.GetMostImportantRelation(candidate) == PawnRelationDefOf.Bond);
+                if (bond != null)
+                {
+                    animal = candidate;
+                    colonist = bond.otherPawn;
+                    break;
+                }
+            }
+
+            if (negotiator == null && map?.mapPawns?.AllPawnsSpawned != null)
+            {
+                foreach (Pawn pawn in map.mapPawns.AllPawnsSpawned)
+                {
+                    if (pawn?.IsColonist == true && pawn.Faction == Faction.OfPlayer &&
+                        pawn.RaceProps?.Humanlike == true && !pawn.Downed && !pawn.InMentalState)
+                    {
+                        negotiator = pawn;
+                        break;
+                    }
+                }
+            }
+
+            if (animal == null || negotiator == null)
+            {
+                skip("bond is removed and sold thoughts are applied",
+                    animal == null
+                        ? "the colony has no eligible bonded pair with a mood-capable colonist"
+                        : "no valid player negotiator is present");
+                return;
+            }
+
+            MemoryThoughtHandler memories = colonist.needs.mood.thoughts.memories;
+            List<Thought_Memory> beforeMemories = new List<Thought_Memory>(memories.Memories);
+            bool bondRemoved = false;
+            bool allThoughtsApplied = false;
+            try
+            {
+                // This is the exact vanilla relation notification reached by
+                // Pawn.PreTraded(PlayerSells). It is isolated here so the self-test never
+                // removes, destroys, discards or faction-clears a real colony animal.
+                animal.relations.Notify_PawnSold(negotiator);
+                bondRemoved = !animal.relations.DirectRelationExists(
+                    PawnRelationDefOf.Bond, colonist);
+
+                allThoughtsApplied = true;
+                foreach (ThoughtDef thought in PawnRelationDefOf.Bond.soldThoughts)
+                {
+                    if (!memories.Memories.Exists(m =>
+                            !beforeMemories.Contains(m) && m.def == thought &&
+                            m.otherPawn == negotiator))
+                    {
+                        allThoughtsApplied = false;
+                        break;
+                    }
+                }
+
+                check("bond is removed and sold thoughts are applied",
+                    bondRemoved && allThoughtsApplied,
+                    $"{animal.LabelShort} bonded to {colonist.LabelShort}");
+            }
+            finally
+            {
+                List<Thought_Memory> added = memories.Memories.FindAll(
+                    memory => !beforeMemories.Contains(memory));
+                foreach (Thought_Memory memory in added)
+                {
+                    memories.RemoveMemory(memory);
+                }
+
+                if (!animal.relations.DirectRelationExists(PawnRelationDefOf.Bond, colonist))
+                {
+                    animal.relations.AddDirectRelation(PawnRelationDefOf.Bond, colonist);
+                }
             }
         }
 

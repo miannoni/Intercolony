@@ -80,16 +80,18 @@ namespace Intercolony
                 return;
             }
 
-            OrderValidationResult result = SalesOrderService.Deliver(state, order, caravan);
-
-            // A short delivery is not silently swallowed: §18 wants the shortfall reported.
-            if (!result.Success && order.IsOpen)
+            SalesOrderService.ConfirmAndDeliver(state, order, caravan, result =>
             {
-                Messages.Message(
-                    $"Order #{order.id}: {result.Summary()}",
-                    MessageTypeDefOf.CautionInput,
-                    historical: false);
-            }
+
+                // A short delivery is not silently swallowed: §18 wants the shortfall reported.
+                if (!result.Success && order.IsOpen)
+                {
+                    Messages.Message(
+                        $"Order #{order.id}: {result.Summary()}",
+                        MessageTypeDefOf.CautionInput,
+                        historical: false);
+                }
+            });
         }
 
         public override void ExposeData()

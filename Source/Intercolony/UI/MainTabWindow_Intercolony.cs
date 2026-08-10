@@ -101,6 +101,9 @@ namespace Intercolony
         private Vector2 buyerScroll;
         private ThingDef selectedStockDef;
         private int selectedStockCount;
+        private bool findBuyerAnimalMode;
+        private List<AnimalStockGroup> animalStockCache;
+        private AnimalStockGroup selectedAnimalStock;
 
         /// <summary>How much of the selected stock to offer. Drives saturation pricing (§13).</summary>
         private int sellQuantity;
@@ -567,6 +570,7 @@ namespace Intercolony
             {
                 // Re-scan once on entry so the list is current without being live.
                 stockCache = null;
+                animalStockCache = null;
                 findBuyerCache = null;
             }
             else if (which == Tab.Labor)
@@ -1094,9 +1098,14 @@ namespace Intercolony
                     IntercolonyProductClassifier.Classify(offer.def)
                     ?? IntercolonyProductCategory.Commodities;
 
-                rate = IntercolonyPricing.UnitPrice(
-                    offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
-                    category, offer.distanceTiles, null, out _);
+                rate = offer.IsAnimalOffer
+                    ? IntercolonyPricing.UnitPrice(
+                        offer.def, null, offer.animalSpec, Mathf.Max(1, quantity),
+                        offer.profile, IntercolonyProductCategory.Commodities,
+                        offer.distanceTiles, null, out _)
+                    : IntercolonyPricing.UnitPrice(
+                        offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
+                        category, offer.distanceTiles, null, out _);
             }
 
             return rate * IntercolonyPricing.LogisticsFactor(fulfillment).multiplier;
@@ -1225,6 +1234,21 @@ namespace Intercolony
             y += 38f;
             Text.Font = GameFont.Small;
 
+            Rect goodsModeRect = new Rect(0f, y, 110f, 28f);
+            Rect animalsModeRect = new Rect(116f, y, 110f, 28f);
+            if (Widgets.ButtonText(goodsModeRect, "Goods") && findBuyerAnimalMode)
+            {
+                findBuyerAnimalMode = false;
+                findBuyerCache = null;
+            }
+            if (Widgets.ButtonText(animalsModeRect, "Animals") && !findBuyerAnimalMode)
+            {
+                findBuyerAnimalMode = true;
+                findBuyerCache = null;
+            }
+            Widgets.DrawHighlightSelected(findBuyerAnimalMode ? animalsModeRect : goodsModeRect);
+            y += 34f;
+
             Map map = Find.CurrentMap;
             if (map == null)
             {
@@ -1237,14 +1261,17 @@ namespace Intercolony
 
             // The null check gives entry/manual invalidation an instant rebuild. The real-time
             // gate bounds ongoing scans even though layout and repaint both execute this method.
-            if (stockCache == null || FindBuyerRefreshDue(
+            bool missingVisibleCache = findBuyerAnimalMode
+                ? animalStockCache == null
+                : stockCache == null;
+            if (missingVisibleCache || FindBuyerRefreshDue(
                     stockCacheRefreshedAtRealtime, Time.realtimeSinceStartup))
             {
                 RefreshFindBuyerStock(state, map);
             }
 
             // Sits to the right of the heading, not under it.
-            Rect refreshRect = new Rect(inRect.width - 124f, y - 36f, 110f, 26f);
+            Rect refreshRect = new Rect(inRect.width - 124f, y - 32f, 110f, 26f);
             if (Widgets.ButtonText(refreshRect, "Refresh"))
             {
                 RefreshFindBuyerStock(state, map);
@@ -1255,12 +1282,18 @@ namespace Intercolony
                 "Refresh storage and existing commitments now. Availability also updates " +
                 "automatically every 1.5 seconds while this page is visible.");
 
-            if (stockCache.Count == 0)
+            bool empty = findBuyerAnimalMode
+                ? animalStockCache.Count == 0
+                : stockCache.Count == 0;
+            if (empty)
             {
                 GUI.color = Color.gray;
                 Widgets.Label(new Rect(0f, y, inRect.width, 60f),
-                    "Nothing tradeable is currently available to sell.\n" +
-                    "Counts include only stockpiled goods that are not already committed.");
+                    findBuyerAnimalMode
+                        ? "No eligible colony animals are currently available to sell.\n" +
+                          "Humanlikes, hosted pawns and animals already committed are excluded."
+                        : "Nothing tradeable is currently available to sell.\n" +
+                          "Counts include only stockpiled goods that are not already committed.");
                 GUI.color = Color.white;
                 return;
             }
@@ -1269,19 +1302,66 @@ namespace Intercolony
             Rect stockRect = new Rect(0f, y, listWidth, inRect.yMax - y);
             Rect offersRect = new Rect(listWidth + 12f, y, inRect.width - listWidth - 12f, inRect.yMax - y);
 
-            DrawStockList(stockRect, stockCache);
+            if (findBuyerAnimalMode)
+            {
+                DrawAnimalStockList(stockRect, animalStockCache);
+            }
+            else
+            {
+                DrawStockList(stockRect, stockCache);
+            }
             DrawBuyerOffers(offersRect, state);
         }
 
         private void RefreshFindBuyerStock(IntercolonyWorldComponent state, Map map)
         {
-            stockCache = FindBuyerService.AvailableColonyStock(state, map);
-            ReconcileFindBuyerSelection(stockCache, ref selectedStockDef,
-                ref selectedStockCount, ref sellQuantity, ref findBuyerCache);
+            if (findBuyerAnimalMode)
+            {
+                animalStockCache = FindBuyerService.AvailableColonyAnimals(state, map);
+                ReconcileAnimalSelection();
+            }
+            else
+            {
+                stockCache = FindBuyerService.AvailableColonyStock(state, map);
+                ReconcileFindBuyerSelection(stockCache, ref selectedStockDef,
+                    ref selectedStockCount, ref sellQuantity, ref findBuyerCache);
+            }
 
             // Record completion rather than start time so even an unusually slow scan cannot
             // make layout/repaint immediately run a second one.
             stockCacheRefreshedAtRealtime = Time.realtimeSinceStartup;
+        }
+
+        private void ReconcileAnimalSelection()
+        {
+            findBuyerCache = null;
+            if (selectedAnimalStock == null)
+            {
+                return;
+            }
+
+            foreach (AnimalStockGroup group in animalStockCache)
+            {
+                if (SameAnimalGroup(group, selectedAnimalStock))
+                {
+                    selectedAnimalStock = group;
+                    selectedStockCount = group.quantity;
+                    sellQuantity = Mathf.Clamp(sellQuantity, 1, group.quantity);
+                    return;
+                }
+            }
+
+            selectedAnimalStock = null;
+            selectedStockCount = 0;
+            sellQuantity = 0;
+        }
+
+        private static bool SameAnimalGroup(AnimalStockGroup a, AnimalStockGroup b)
+        {
+            return a?.race == b?.race && a?.spec != null && b?.spec != null &&
+                   a.spec.gender == b.spec.gender &&
+                   a.spec.lifeStage == b.spec.lifeStage &&
+                   a.spec.pregnant == b.spec.pregnant;
         }
 
         internal static bool FindBuyerRefreshDue(float lastRefreshTime, float now)
@@ -1359,9 +1439,53 @@ namespace Intercolony
             EndPageScrollView();
         }
 
+        private void DrawAnimalStockList(Rect rect, List<AnimalStockGroup> stock)
+        {
+            Widgets.Label(new Rect(rect.x, rect.y, rect.width, 24f), "Eligible animals");
+            Rect outRect = new Rect(rect.x, rect.y + 26f, rect.width, rect.height - 26f);
+            Rect viewRect = new Rect(0f, 0f, rect.width - 16f, stock.Count * 42f);
+
+            BeginPageScrollView(outRect, ref stockScroll, viewRect);
+            float rowY = 0f;
+            foreach (AnimalStockGroup group in stock)
+            {
+                Rect row = new Rect(0f, rowY, viewRect.width, 42f);
+                if (SameAnimalGroup(selectedAnimalStock, group))
+                {
+                    Widgets.DrawHighlightSelected(row);
+                }
+
+                Widgets.DrawHighlightIfMouseover(row);
+                Widgets.Label(new Rect(row.x + 4f, row.y + 2f, row.width - 70f, 22f),
+                    group.race.LabelCap);
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(row.x + 4f, row.y + 20f, row.width - 70f, 20f),
+                    group.spec.ShortLabel(group.race));
+                GUI.color = Color.white;
+                Widgets.Label(new Rect(row.xMax - 64f, row.y + 9f, 60f, 24f),
+                    group.quantity.ToString());
+
+                if (Widgets.ButtonInvisible(row))
+                {
+                    selectedAnimalStock = group;
+                    selectedStockCount = group.quantity;
+                    sellQuantity = group.quantity;
+                    findBuyerCache = null;
+                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+                }
+
+                rowY += 42f;
+            }
+
+            EndPageScrollView();
+        }
+
         private void DrawBuyerOffers(Rect rect, IntercolonyWorldComponent state)
         {
-            if (selectedStockDef == null)
+            bool noSelection = findBuyerAnimalMode
+                ? selectedAnimalStock == null
+                : selectedStockDef == null;
+            if (noSelection)
             {
                 GUI.color = Color.gray;
                 Widgets.Label(new Rect(rect.x, rect.y + 4f, rect.width, 40f),
@@ -1373,15 +1497,21 @@ namespace Intercolony
             float y = rect.y;
 
             Widgets.Label(new Rect(rect.x, y, rect.width, 24f),
-                $"Buyers for {selectedStockCount}x {selectedStockDef.LabelCap}");
+                findBuyerAnimalMode
+                    ? $"Buyers for {selectedStockCount}x " +
+                      selectedAnimalStock.spec.ShortLabel(selectedAnimalStock.race)
+                    : $"Buyers for {selectedStockCount}x {selectedStockDef.LabelCap}");
             y += 28f;
 
             // Searching walks every accessible settlement and prices each one. Cached, and
             // invalidated when the selection, quantity, or availability snapshot changes (§84).
             if (findBuyerCache == null)
             {
-                findBuyerCache = FindBuyerService.FindBuyers(
-                    state, selectedStockDef, null, sellQuantity);
+                findBuyerCache = findBuyerAnimalMode
+                    ? FindBuyerService.FindAnimalBuyers(
+                        state, selectedAnimalStock.race, selectedAnimalStock.spec, sellQuantity)
+                    : FindBuyerService.FindBuyers(
+                        state, selectedStockDef, null, sellQuantity);
                 SortBuyers(findBuyerCache);
             }
 
@@ -1558,10 +1688,14 @@ namespace Intercolony
             {
                 TooltipHandler.TipRegion(rect,
                     $"{offer.settlement?.Label} would take up to {offer.maxQuantity} " +
-                    $"{selectedStockDef?.label}.\n" +
+                    $"{(offer.IsAnimalOffer ? offer.animalSpec.ShortLabel(offer.def) : selectedStockDef?.label)}.\n" +
                     $"Selling {offer.quantity} at {offer.unitPrice:F2} each = {offer.TotalPrice} silver.\n\n" +
-                    IntercolonyPricing.Explain(
-                        offer.def, offer.stuff, offer.quantity, offer.unitPrice, offer.factors));
+                    (offer.IsAnimalOffer
+                        ? IntercolonyPricing.Explain(
+                            offer.def, null, offer.animalSpec, offer.quantity,
+                            offer.unitPrice, offer.factors)
+                        : IntercolonyPricing.Explain(
+                            offer.def, offer.stuff, offer.quantity, offer.unitPrice, offer.factors)));
             }
 
             Rect sellRect = new Rect(rect.xMax - 84f, rect.y + 4f, 78f, 26f);
@@ -1574,6 +1708,12 @@ namespace Intercolony
         private void ConfirmSell(IntercolonyWorldComponent state, BuyerOffer offer)
         {
             const int DeadlineDays = 12;
+
+            if (offer.IsAnimalOffer)
+            {
+                ConfirmAnimalSell(state, offer, DeadlineDays);
+                return;
+            }
 
             Find.WindowStack.Add(new Dialog_ConfirmQuantity(
                 "Sell to this buyer?",
@@ -1613,6 +1753,43 @@ namespace Intercolony
                         // The Find Buyer action changed commitments, so invalidate immediately.
                         // The null cache bypasses the throttle when the player returns.
                         stockCache = null;
+                        findBuyerCache = null;
+                    }
+                }));
+        }
+
+        private void ConfirmAnimalSell(
+            IntercolonyWorldComponent state, BuyerOffer offer, int deadlineDays)
+        {
+            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
+                "Sell animals to this buyer?",
+                "Create order",
+                offer.quantity,
+                qty =>
+                {
+                    float rate = SellRateFor(
+                        offer, qty, FulfillmentMode.SellerDelivery);
+                    return $"Commit to supplying {qty}x {offer.animalSpec.ShortLabel(offer.def)} " +
+                           $"to {offer.settlement?.Label} within {deadlineDays} days.\n\n" +
+                           $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
+                           $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
+                           "Live animals require seller delivery. Load matching animals into your " +
+                           "caravan; they will be revalidated at the settlement. This promise is " +
+                           "anonymous and does not lock individual animals.\n\n" +
+                           "If the animals handed over are bonded, the final delivery confirmation " +
+                           "will name every affected colonist.";
+                },
+                qty =>
+                {
+                    BuyerOffer priced = offer;
+                    priced.unitPrice = SellRateFor(
+                        offer, qty, FulfillmentMode.SellerDelivery);
+                    if (SalesOrderService.CreateFromOffer(
+                            state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
+                            deadlineDays, FulfillmentMode.SellerDelivery) != null)
+                    {
+                        tab = Tab.Orders;
+                        animalStockCache = null;
                         findBuyerCache = null;
                     }
                 }));

@@ -1,4 +1,6 @@
 ﻿using System.Collections.Generic;
+using System;
+using System.Text;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -153,7 +155,17 @@ namespace Intercolony
                 return null;
             }
 
-            int available = FindBuyerService.AvailableQuantity(state, map, offer.def);
+            if (offer.IsAnimalOffer && fulfillment != FulfillmentMode.SellerDelivery)
+            {
+                Messages.Message("Live animals must be delivered by your caravan.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return null;
+            }
+
+            int available = offer.IsAnimalOffer
+                ? FindBuyerService.AvailableAnimalQuantity(
+                    state, map, offer.def, offer.animalSpec)
+                : FindBuyerService.AvailableQuantity(state, map, offer.def);
             if (available < quantity)
             {
                 int committed = FindBuyerService.CommittedQuantity(state, offer.def);
@@ -173,7 +185,8 @@ namespace Intercolony
                 factionName = offer.settlement.Faction?.Name ?? "",
                 line = new OrderLine(offer.def, quantity)
                 {
-                    allowedStuff = offer.stuff
+                    allowedStuff = offer.stuff,
+                    animalSpec = offer.animalSpec?.Copy()
                 },
                 unitPrice = offer.unitPrice,
                 acceptedTick = GenTicks.TicksGame,
@@ -219,10 +232,16 @@ namespace Intercolony
                 return result;
             }
 
-            int handedOver = RemoveFromCaravan(order, caravan, result.matchedQuantity);
+            // Branch before the item remover. A live pawn must never reach SplitOff/Destroy,
+            // even though Pawn inherits Thing.
+            int handedOver = order.IsAnimalOrder
+                ? RemoveAnimalsFromCaravan(order, caravan, result.matchedQuantity)
+                : RemoveFromCaravan(order, caravan, result.matchedQuantity);
             if (handedOver <= 0)
             {
-                result.failures.Add("Could not take the goods from the caravan.");
+                result.failures.Add(order.IsAnimalOrder
+                    ? "Could not complete the live-animal handoff."
+                    : "Could not take the goods from the caravan.");
                 return result;
             }
 
@@ -263,6 +282,80 @@ namespace Intercolony
 
             // Re-validate so the caller sees the post-delivery position.
             return OrderValidator.ValidateCaravan(order, caravan);
+        }
+
+        /// <summary>
+        /// Uses the mod's normal destructive confirmation when the exact animals about to be
+        /// handed over have bonds. Bonds are live-pawn state, not specification state, so the
+        /// warning intentionally happens at delivery rather than order creation.
+        /// </summary>
+        public static void ConfirmAndDeliver(
+            IntercolonyWorldComponent state,
+            SalesOrder order,
+            Caravan caravan,
+            Action<OrderValidationResult> onDelivered)
+        {
+            string warning = BuildBondedAnimalWarning(order, caravan);
+            if (warning.NullOrEmpty())
+            {
+                onDelivered?.Invoke(Deliver(state, order, caravan));
+                return;
+            }
+
+            Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                warning,
+                () => onDelivered?.Invoke(Deliver(state, order, caravan)),
+                destructive: true));
+        }
+
+        internal static string BuildBondedAnimalWarning(SalesOrder order, Caravan caravan)
+        {
+            if (order?.IsAnimalOrder != true)
+            {
+                return null;
+            }
+
+            List<Pawn> animals = OrderValidator.MatchingCaravanAnimals(
+                order, caravan, order.RemainingQuantity);
+            StringBuilder lines = new StringBuilder();
+            int bondedAnimals = 0;
+            foreach (Pawn animal in animals)
+            {
+                List<string> colonists = new List<string>();
+                List<DirectPawnRelation> relations = animal.relations?.DirectRelations;
+                if (relations != null)
+                {
+                    foreach (DirectPawnRelation relation in relations)
+                    {
+                        Pawn colonist = relation?.otherPawn;
+                        if (relation?.def == PawnRelationDefOf.Bond &&
+                            colonist != null && colonist.IsColonist)
+                        {
+                            colonists.Add(colonist.LabelShortCap);
+                        }
+                    }
+                }
+
+                if (colonists.Count == 0)
+                {
+                    continue;
+                }
+
+                bondedAnimals++;
+                lines.Append("\n- ").Append(animal.LabelShortCap).Append(" — ")
+                    .Append(string.Join(", ", colonists.ToArray()));
+            }
+
+            if (bondedAnimals == 0)
+            {
+                return null;
+            }
+
+            return "Sell bonded animals?\n\n" +
+                   "The following bonds will be broken. Each affected colonist is named:" +
+                   lines +
+                   "\n\nThose colonists will take it badly, exactly as they would if the " +
+                   "animal had been sold to any other trader. Continue with the handoff?";
         }
 
         private static void Complete(IntercolonyWorldComponent state, SalesOrder order)
@@ -565,6 +658,65 @@ namespace Intercolony
             }
 
             return wanted - remaining;
+        }
+
+        /// <summary>
+        /// Dedicated live-pawn handoff. Detach the caravan member, invoke vanilla's sale
+        /// transaction side effects, move its inventory, then let WorldPawns retain it only
+        /// while a surviving relationship still needs it.
+        /// </summary>
+        private static int RemoveAnimalsFromCaravan(
+            SalesOrder order, Caravan caravan, int wanted)
+        {
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(order.settlementId);
+            Pawn negotiator = FindAnimalSaleNegotiator(caravan);
+            if (settlement == null || negotiator == null)
+            {
+                return 0;
+            }
+
+            List<Pawn> matching = OrderValidator.MatchingCaravanAnimals(order, caravan, wanted);
+            int handedOver = 0;
+            foreach (Pawn pawn in matching)
+            {
+                // Revalidate immediately before the irreversible handoff. Do not substitute a
+                // pawn which was absent from the just-validated snapshot.
+                if (!AnimalTradeUtility.IsEligibleForSale(pawn) ||
+                    !AnimalTradeUtility.Matches(pawn, order.ThingDef, order.line.animalSpec))
+                {
+                    continue;
+                }
+
+                caravan.RemovePawn(pawn);
+                pawn.PreTraded(TradeAction.PlayerSells, negotiator, settlement);
+                CaravanInventoryUtility.MoveAllInventoryToSomeoneElse(
+                    pawn, caravan.PawnsListForReading);
+                Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
+                handedOver++;
+            }
+
+            return handedOver;
+        }
+
+        internal static Pawn FindAnimalSaleNegotiator(Caravan caravan)
+        {
+            if (caravan == null)
+            {
+                return null;
+            }
+
+            List<Pawn> pawns = caravan.PawnsListForReading;
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (pawn?.Faction == Faction.OfPlayer && pawn.RaceProps?.Humanlike == true &&
+                    !pawn.Downed && !pawn.InMentalState)
+                {
+                    return pawn;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

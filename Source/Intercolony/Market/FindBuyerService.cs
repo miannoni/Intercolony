@@ -17,6 +17,14 @@ namespace Intercolony
 
         public ThingDef stuff;
 
+        /// <summary>
+        /// Non-null only for an existing-animal offer. The race remains <see cref="def"/>,
+        /// just as it does on an animal order line.
+        /// </summary>
+        public AnimalSpec animalSpec;
+
+        public bool IsAnimalOffer => animalSpec != null;
+
         /// <summary>Most units this settlement would take before saturating (§13).</summary>
         public int maxQuantity;
 
@@ -37,6 +45,18 @@ namespace Intercolony
 
         /// <summary>Price factor breakdown, for the §47 tooltip.</summary>
         public List<PriceFactor> factors = new List<PriceFactor>();
+    }
+
+    /// <summary>
+    /// Anonymous, presently sellable colony animals with the same promise-relevant state.
+    /// This is deliberately a read model: it carries no pawn identity, relationship, training,
+    /// or reservation. A later caravan handoff must revalidate the live pawns it receives.
+    /// </summary>
+    public class AnimalStockGroup
+    {
+        public ThingDef race;
+        public AnimalSpec spec;
+        public int quantity;
     }
 
     /// <summary>
@@ -115,6 +135,70 @@ namespace Intercolony
             return offers;
         }
 
+        /// <summary>
+        /// Who would buy this anonymous group of colony animals, best offer first. Animals are
+        /// intentionally in the commodities demand bucket: they are pawns rather than product
+        /// classifier inputs, and must not widen that classifier's pawn exclusion.
+        /// </summary>
+        public static List<BuyerOffer> FindAnimalBuyers(
+            IntercolonyWorldComponent state,
+            AnimalStockGroup group,
+            bool includeUninterested = true)
+        {
+            if (group == null)
+            {
+                return new List<BuyerOffer>();
+            }
+
+            return FindAnimalBuyers(
+                state, group.race, group.spec, group.quantity, includeUninterested);
+        }
+
+        /// <summary>Animal overload kept separate from goods so the product classifier stays pawn-free.</summary>
+        public static List<BuyerOffer> FindAnimalBuyers(
+            IntercolonyWorldComponent state,
+            ThingDef race,
+            AnimalSpec spec,
+            int quantity,
+            bool includeUninterested = true)
+        {
+            List<BuyerOffer> offers = new List<BuyerOffer>();
+            if (state == null || race == null || spec == null || quantity <= 0 ||
+                !spec.IsValidFor(race))
+            {
+                return offers;
+            }
+
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                return offers;
+            }
+
+            foreach (Settlement settlement in settlements)
+            {
+                if (!IntercolonyMarketAccess.IsAccessible(settlement, out _))
+                {
+                    continue;
+                }
+
+                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                if (profile == null)
+                {
+                    continue;
+                }
+
+                BuyerOffer offer = EvaluateAnimal(settlement, profile, race, spec, quantity);
+                if (offer.Interested || includeUninterested)
+                {
+                    offers.Add(offer);
+                }
+            }
+
+            offers.Sort(CompareOffers);
+            return offers;
+        }
+
         private static int CompareOffers(BuyerOffer a, BuyerOffer b)
         {
             // Interested first, then by what the player would actually receive.
@@ -175,6 +259,45 @@ namespace Intercolony
             return offer;
         }
 
+        private static BuyerOffer EvaluateAnimal(
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            ThingDef race,
+            AnimalSpec spec,
+            int wantedQuantity)
+        {
+            BuyerOffer offer = new BuyerOffer
+            {
+                settlement = settlement,
+                profile = profile,
+                def = race,
+                animalSpec = spec.Copy(),
+                distanceTiles = MarketOpportunityGenerator.DistanceToPlayer(settlement)
+            };
+
+            const IntercolonyProductCategory category = IntercolonyProductCategory.Commodities;
+            float demand = profile.DemandFor(race, category);
+            if (demand < InterestThreshold)
+            {
+                offer.noInterestReason = "no current interest";
+                return offer;
+            }
+
+            offer.maxQuantity = MaxAnimalAppetite(race, offer.animalSpec, profile, demand);
+            if (offer.maxQuantity <= 0)
+            {
+                offer.noInterestReason = "cannot afford a worthwhile lot";
+                return offer;
+            }
+
+            offer.quantity = Mathf.Min(wantedQuantity, offer.maxQuantity);
+            offer.unitPrice = IntercolonyPricing.UnitPrice(
+                race, null, offer.animalSpec, offer.quantity, profile, category,
+                offer.distanceTiles, null, out List<PriceFactor> factors);
+            offer.factors = factors;
+            return offer;
+        }
+
         /// <summary>
         /// How much of this good a settlement would absorb, expressed in units rather than
         /// silver so the player can compare it against a stockpile (§12's "Demand: up to
@@ -203,6 +326,22 @@ namespace Intercolony
 
             return Mathf.Clamp(units, 0, AppetiteCeiling(
                 profile, def, stuff, 2000 + tier * 750, 2750 + tier * 750));
+        }
+
+        /// <summary>
+        /// Animal demand is deliberately measured in a small number of heads, rather than the
+        /// large stack-based appetite used by cargo. The specification value still constrains
+        /// the lot through the same settlement wealth budget used by goods.
+        /// </summary>
+        private static int MaxAnimalAppetite(
+            ThingDef race, AnimalSpec spec, SettlementEconomicProfile profile, float demand)
+        {
+            float budget = WealthBudget(profile.wealthTier) * demand;
+            float animalValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(race, null, spec));
+            int affordableHeads = Mathf.RoundToInt(budget / animalValue);
+            int tier = (int)profile.wealthTier;
+            int headCeiling = 3 + tier * 2;
+            return Mathf.Clamp(affordableHeads, 0, headCeiling);
         }
 
         /// <summary>
@@ -297,6 +436,171 @@ namespace Intercolony
 
             result.Sort((a, b) => b.Value.CompareTo(a.Value));
             return result;
+        }
+
+        /// <summary>
+        /// Spawned player-owned animal candidates that pass the full sale predicate. Exposed
+        /// for the self-test and for read-only discovery; callers must not treat this list as
+        /// a reservation or retain the pawn references for later fulfilment.
+        /// </summary>
+        public static List<Pawn> EligibleColonyAnimalCandidates(Map map)
+        {
+            List<Pawn> result = new List<Pawn>();
+            if (map?.mapPawns?.AllPawnsSpawned == null)
+            {
+                return result;
+            }
+
+            foreach (Pawn pawn in map.mapPawns.AllPawnsSpawned)
+            {
+                if (AnimalTradeUtility.IsEligibleForSale(pawn))
+                {
+                    result.Add(pawn);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Presently sellable colony animals grouped by race and each current promise-relevant
+        /// trait. A missing or ambiguous life stage is not offered, because it cannot form a
+        /// valid, unambiguous <see cref="AnimalSpec"/> promise.
+        /// </summary>
+        public static List<AnimalStockGroup> ColonyAnimals(Map map)
+        {
+            List<AnimalStockGroup> result = new List<AnimalStockGroup>();
+            foreach (Pawn pawn in EligibleColonyAnimalCandidates(map))
+            {
+                ThingDef race = pawn.def;
+                LifeStageDef lifeStage = pawn.ageTracker?.CurLifeStage;
+                if (race == null || lifeStage == null || !HasUnambiguousLifeStage(race, lifeStage))
+                {
+                    continue;
+                }
+
+                bool pregnant = pawn.health?.hediffSet?.GetFirstHediffOfDef(HediffDefOf.Pregnant) != null;
+                AnimalStockGroup group = FindAnimalGroup(result, race, pawn.gender, lifeStage, pregnant);
+                if (group == null)
+                {
+                    AnimalSpec spec = new AnimalSpec
+                    {
+                        gender = pawn.gender,
+                        lifeStage = lifeStage,
+                        pregnant = pregnant
+                    };
+
+                    // This also excludes malformed content (for example an egg layer with a
+                    // pregnancy hediff) rather than showing a promise that cannot be fulfilled.
+                    if (!spec.IsValidFor(race))
+                    {
+                        continue;
+                    }
+
+                    group = new AnimalStockGroup { race = race, spec = spec };
+                    result.Add(group);
+                }
+
+                group.quantity++;
+            }
+
+            result.Sort((a, b) => b.quantity.CompareTo(a.quantity));
+            return result;
+        }
+
+        /// <summary>
+        /// Animal availability mirrors goods availability: existing open orders subtract an
+        /// anonymous head count per race. Applying that count to each group is conservative,
+        /// but never creates a pawn reservation or lets the same head be offered twice.
+        /// </summary>
+        public static List<AnimalStockGroup> AvailableColonyAnimals(
+            IntercolonyWorldComponent state, Map map)
+        {
+            List<AnimalStockGroup> result = new List<AnimalStockGroup>();
+            foreach (AnimalStockGroup group in ColonyAnimals(map))
+            {
+                int available = Mathf.Max(0, group.quantity - CommittedQuantity(state, group.race));
+                if (available > 0)
+                {
+                    result.Add(new AnimalStockGroup
+                    {
+                        race = group.race,
+                        spec = group.spec.Copy(),
+                        quantity = available
+                    });
+                }
+            }
+
+            result.Sort((a, b) => b.quantity.CompareTo(a.quantity));
+            return result;
+        }
+
+        /// <summary>
+        /// Heads matching one anonymous animal specification which are still free for a new
+        /// direct sale. This is the binding-boundary counterpart to the Animals UI read model.
+        /// </summary>
+        public static int AvailableAnimalQuantity(
+            IntercolonyWorldComponent state,
+            Map map,
+            ThingDef race,
+            AnimalSpec spec,
+            int excludedOrderId = 0)
+        {
+            if (race == null || spec == null || map == null)
+            {
+                return 0;
+            }
+
+            int physical = 0;
+            foreach (Pawn pawn in EligibleColonyAnimalCandidates(map))
+            {
+                if (AnimalTradeUtility.Matches(pawn, race, spec))
+                {
+                    physical++;
+                }
+            }
+
+            return Mathf.Max(
+                0, physical - CommittedQuantity(state, race, excludedOrderId));
+        }
+
+        private static AnimalStockGroup FindAnimalGroup(
+            List<AnimalStockGroup> groups,
+            ThingDef race,
+            Gender gender,
+            LifeStageDef lifeStage,
+            bool pregnant)
+        {
+            foreach (AnimalStockGroup group in groups)
+            {
+                if (group.race == race && group.spec.gender == gender &&
+                    group.spec.lifeStage == lifeStage && group.spec.pregnant == pregnant)
+                {
+                    return group;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool HasUnambiguousLifeStage(ThingDef race, LifeStageDef lifeStage)
+        {
+            int occurrences = 0;
+            List<LifeStageAge> stages = race.race?.lifeStageAges;
+            if (stages == null)
+            {
+                return false;
+            }
+
+            foreach (LifeStageAge stage in stages)
+            {
+                if (stage?.def == lifeStage)
+                {
+                    occurrences++;
+                }
+            }
+
+            return occurrences == 1;
         }
 
         /// <summary>

@@ -72,6 +72,11 @@ namespace Intercolony
         /// <summary>Short label for tables: "Dining chair (Excellent+)".</summary>
         public string ShortLabel()
         {
+            if (IsAnimalOrder)
+            {
+                return animalSpec.ShortLabel(thingDef);
+            }
+
             string label = thingDef?.LabelCap.ToString() ?? "<missing>";
             if (!HasAnyConstraint)
             {
@@ -108,6 +113,12 @@ namespace Intercolony
         /// <summary>Full description for tooltips and order detail.</summary>
         public string Describe()
         {
+            if (IsAnimalOrder)
+            {
+                return $"{quantity}x {animalSpec.ShortLabel(thingDef)}\n" +
+                       animalSpec.Describe(thingDef);
+            }
+
             StringBuilder sb = new StringBuilder();
             sb.AppendLine($"{quantity}x {thingDef?.LabelCap.ToString() ?? "<missing>"}");
             if (HasQualityConstraint)
