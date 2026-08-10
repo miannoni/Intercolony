@@ -91,9 +91,22 @@ Target framework is `net472`.
 **Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. The post-0.9.0
 playtest-correction batch landed on 2026-08-09: A1–A5, B1–B3, B5/B5b, C0–C2, the D1 research spike
 and **B4** (buy-only items are now an opt-in, default-off setting; see the decision log). Only
-D2/D3 — animal trade — remain, and they are specified rather than blocked. **Save schema is now 26**
-(24→25 animal specifications, 25→26 sales-order fulfilment colony). Next: continue beta corrections
-in point releases; there is no Phase 27 plan yet.
+D2/D3 — animal trade — remain, and they are specified rather than blocked. **Save schema is now 27**
+(24→25 animal specifications, 25→26 sales-order fulfilment colony, 26→27 animal health and gestation
+floors). Next: continue beta corrections in point releases; there is no Phase 27 plan yet.
+
+**Animal trade is being built as five slices; E1 and E2 are done.** E1 (`c0a0f91`) is the persisted
+`AnimalSpec` plus the pure eligibility predicate and matcher. E2 (`4f199fc`) is pricing: it extends
+`IntercolonyPricing` rather than forking it, and the guiding rule is that **a specification promises
+only what it states, so an unspecified term prices at the cheapest animal that would satisfy it** —
+the buyer pays for what is guaranteed, not what they might luckily receive. Vanilla prices sex and
+pregnancy at *zero*, so those multipliers are Intercolony's own, named constants in
+`IntercolonyPricing`. Remaining: E3 procurement, E4 sell by seller delivery, E5 sell by buyer pickup.
+
+**None of the three migrations has ever run in the real load order** — only in isolated throwaway
+installs. `dev.ps1` cannot prove a migration: it launches `-quicktest`, which creates a *new* world
+that initializes at the current schema, and its log reader can show a stale profile entirely. Only
+opening a real save proves it. This is the top item in `docs/PENDING_PLAYTESTS.md`.
 
 **A real 0.9.0 defect was found and fixed on 2026-08-09: buyer pickup collected from the wrong
 colony.** Mark Ready validated against `Find.CurrentMap` while collection used

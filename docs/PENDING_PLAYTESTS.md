@@ -121,6 +121,43 @@ the exact pre-modification value rather than assuming it was `Buyable`.
 the test**: the test spawns an item, completes a sale and moves silver, then undoes all of it. If
 silver, letters or orders differ afterwards, the restoration is wrong even if every check passed.
 
+### Three schema migrations have never run in a real game
+
+Added 2026-08-09. **This is the highest-value single check on this list**, because one action
+settles three things at once and because migration is the one failure mode that damages a save.
+
+Schema moved **24 → 27** in one day: 25 added animal specifications, 26 added each sales order's
+fulfilment colony, 27 added the animal health and gestation floors. Every step is additive with no
+data to move, and each was seen running — but only in **isolated throwaway RimWorld installations
+with a stripped mod list**, never in the real load order.
+
+**Steps.** Launch the game normally and load any existing save.
+
+**Pass.** Player.log contains, in order:
+
+```
+[Intercolony] Migrating state from schema 24 to 27.
+[Intercolony]   schema 24 -> 25: optional animal specifications added; existing records remain goods.
+[Intercolony]   schema 25 -> 26: sales orders now remember their fulfilment colony; existing orders fall back to the first player home.
+[Intercolony]   schema 26 -> 27: animal health and gestation floors added; existing specifications have no floors.
+```
+
+(The starting number depends on the save. A save already at 27 prints `State loaded (schema 27, …)`
+and no migration lines — that is also a pass, it just does not exercise the chain.)
+
+Then **save, quit to the menu, and reload**. The second load must say `State loaded (schema 27, …)`
+and **not** `State initialized fresh` — that distinction is what proves the round trip rather than a
+silent re-initialization.
+
+**Failure.** Any red error during load, any order or purchase reported as dropped, a lower schema
+number than expected, or `State initialized fresh` on the reload.
+
+**Why this cannot be settled any other way.** `dev.ps1` launches with `-quicktest`, which creates a
+*new* world — and a new world initializes at the current schema, so the migration chain never runs.
+Its log reader also targets the real user profile while a sandboxed game writes elsewhere, so the
+displayed log can be stale and show an old schema entirely. Neither the dev loop nor a self-test can
+prove this; only opening a real save can.
+
 #### Animal specification, matcher and eligibility — `Run animal self-test`
 
 Added 2026-08-09 with the `AnimalSpec` slice (schema 25). **F12** → **orange bug icon** → type
@@ -140,6 +177,21 @@ Intercolony employee. A muffalo or alpaca herd plus any colonist covers most of 
 **Failure.** Any `FAIL`, any red exception, or the humanlike assertion reporting `SKIPPED` when a
 colonist is plainly standing on the map — that last one means discovery is not finding humanlikes,
 which is worse than a failed assertion.
+
+**Pricing assertions were added to this same action on 2026-08-09 (schema 27).** They are exact
+rather than approximate: each expected price is computed by hand in the test and compared for
+equality, so a changed multiplier fails loudly instead of drifting. Two are worth knowing about:
+
+- `goods price is bit-for-bit unchanged from the pre-animal formula` — reconstructs the old Steel
+  formula independently and compares float *bits*, so operation order is protected as well as the
+  number. **If this ever fails, animal work has perturbed goods pricing**, which is the single worst
+  outcome this slice could produce.
+- `animal explanation names species, female and pregnancy factors` — deliberately passes a material
+  and a quality alongside an animal specification and requires that *neither* appears, proving
+  animals cannot leak into material or craftsmanship valuation.
+
+The pricing group skips only if no positive-value live-bearing race using Core's `AnimalAdult` stage
+is loaded, which in practice means it runs almost always.
 
 #### Which colony a buyer collects from — `Run order self-test`
 
