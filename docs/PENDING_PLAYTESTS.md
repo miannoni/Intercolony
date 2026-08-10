@@ -193,6 +193,18 @@ Market and Contracts are disabled placeholders with an "under development" toolt
 **Check at UI scale 1.75:** four tab captions must fit the row without clipping, and the
 group badge should count open requests plus open purchases.
 
+**Purchase requests no longer lie about their fate.** Found in Matteo's play: Find seller had
+filled with rows reading "Cancelled" for requests he had successfully bought from, because
+accepting a quotation marked the request `Cancelled` — a status meaning "withdrawn by the
+player".
+
+**Load the save that showed the problem** and check the log for
+`schema 29 -> 30: ... relabelled N`. **N should be greater than zero** on any save with
+purchase history; a zero there would mean the repair did not find the records it was meant to
+fix. Then: Find seller should show only live requests, and Orders should carry a "Concluded
+requests" section where former purchases read *Ordered from a supplier* rather than
+*Cancelled*. Genuinely withdrawn requests must still read *Withdrawn*.
+
 **Not yet done, and worth knowing:** nothing makes Social visible *before* accepting a
 contract — the player cannot tell a good negotiator is worth waiting for until the popup is
 open.

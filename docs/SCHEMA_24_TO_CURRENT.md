@@ -39,6 +39,16 @@ to move data.
 | 26 → 27 | Animal health and gestation floors on the specification | No floors ⇒ unrestricted, and only animal records have a specification at all |
 | 27 → 28 | The animals set aside for a buyer to collect | No list ⇒ nothing designated, and no pre-existing order is an animal order anyway |
 | 28 → 29 | A supply agreement's fulfilment mode | Defaults to seller delivery, which is what every existing agreement was created under, so the default *is* the truth about them |
+| 29 → 30 | **Repairs data** — relabels purchase requests that were wrongly marked Cancelled | The only step so far that changes existing values rather than adding a field. See below. |
+
+**29 → 30 is the exception to "every step is additive."** Accepting a quotation used to mark
+the request `Cancelled`, a status meaning "withdrawn by the player" — so every successful
+purchase left a record claiming the player had abandoned it. The step relabels those to
+`Ordered`. It identifies them exactly rather than guessing: a purchase order stores the
+`requestId` it came from, so only requests that genuinely produced an order are touched, and
+anything with no matching order really was withdrawn and is left alone. The log line reports
+how many were relabelled — **a count of 0 on a save with purchase history would be
+suspicious**, not reassuring.
 
 **28 was the last step for the animal feature**; 29 came from the contract rework.
 

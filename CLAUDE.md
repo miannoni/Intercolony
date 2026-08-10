@@ -97,7 +97,15 @@ agreement popup now lets the player negotiate with Social, resize the commitment
 way and choose delivery or pickup, and Procurement was given the same four sub-tabs as Selling with
 Market and Contracts as declared placeholders. **None of it has been re-tested.**
 
-D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 29**; the whole
+**A real defect from that play was fixed the same day.** Accepting a quotation marked the purchase
+request `Cancelled` — a status that means "withdrawn by the player" — so every successful purchase
+left behind a record claiming the player had abandoned it, and Find seller filled with them. There is
+now an `Ordered` status, Find seller shows only live requests, concluded ones sit under Orders, and
+**schema 30 repairs existing saves** by matching `PurchaseOrder.requestId` back to its request rather
+than guessing. It is the first migration step that changes existing values rather than adding a
+field.
+
+D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 30**; the whole
 chain from 24 is documented as one consolidated test in `docs/SCHEMA_24_TO_CURRENT.md`, which is the
 file to read rather than reconstructing the steps. Next: continue beta corrections in point releases;
 there is no Phase 27 plan yet.
