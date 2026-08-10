@@ -166,6 +166,50 @@ Its log reader also targets the real user profile while a sandboxed game writes 
 displayed log can be stale and show an old schema entirely. Neither the dev loop nor a self-test can
 prove this; only opening a real save can.
 
+### Animal trade, end to end — the whole feature is unplayed
+
+Added 2026-08-10. All five animal slices are built and **not one of them has been seen
+working**. Everything below is believed correct and unproven. This is the largest block of
+unproven work in the project, and it is deliberately listed as one entry because the pieces
+only mean anything together.
+
+**Buying.** Open **Intercolony** → **Procurement** → **New request**, switch the mode from
+goods to animals, pick a species, and set some combination of sex, life stage and pregnancy.
+Send it, accept a quotation, and wait for delivery.
+
+- **Pass:** the animals that arrive match the specification exactly, are tame, in your
+  faction, and alive. A pregnant one is actually pregnant when inspected.
+- **Watch for:** an animal of the wrong sex or age, an untamed or hostile animal, an animal
+  arriving dead or downed, or a pregnancy that is not there. Any of those means the
+  post-generation verification is not doing its job.
+- **The subtle one:** request an animal with **no life stage specified** and check the price
+  is low. Unspecified terms are priced at the cheapest animal that would satisfy them,
+  because the supplier chooses. If an unspecified request costs the same as an adult, the
+  pricing rule is wrong.
+
+**Selling by your own caravan.** **Selling** → **Find buyer**, pick an animal group, sell
+with **You deliver**, load matching animals into a caravan and take them.
+
+- **Pass:** the animals leave the caravan at the settlement and you are paid.
+- **Must check:** sell a **bonded** animal. The confirmation must name the specific colonist,
+  and afterwards that colonist must actually have the sold-bond mood. If the confirmation
+  names nobody, or names someone who then has no memory, the handoff is skipping vanilla's
+  sale path — the failure that is invisible unless you look for it.
+
+**Selling by buyer pickup.** Same, but choose **Buyer collects**, then **Mark ready**.
+
+- **Pass:** marking ready sets aside particular animals; when the buyer arrives *those*
+  animals go and you are paid.
+- **Must check:** after marking ready, **kill or slaughter one of the designated animals**
+  before the buyer arrives. The order must deliver the rest and treat the missing one as a
+  shortfall — it must **not** quietly substitute another matching animal from your colony.
+  Substitution would mean parting with an animal you never agreed to sell.
+- **Also worth one attempt:** two pickup orders for the same species at once. They must never
+  designate the same animal.
+
+**Not proven by any of this:** balance. Whether animal prices are sane against the rest of
+the economy needs play, not a test.
+
 #### Animal specification, matcher and eligibility — `Run animal self-test`
 
 Added 2026-08-09 with the `AnimalSpec` slice (schema 25). **F12** → **orange bug icon** → type

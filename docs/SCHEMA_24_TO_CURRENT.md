@@ -37,8 +37,16 @@ to move data.
 | 24 → 25 | Optional animal specifications on sales orders, purchase requests, quotations and purchase orders | No specification present ⇒ the record is ordinary goods, exactly as before |
 | 25 → 26 | Each sales order remembers the colony it is fulfilled from | No map recorded ⇒ falls back to the first player home map, which is the old behaviour |
 | 26 → 27 | Animal health and gestation floors on the specification | No floors ⇒ unrestricted, and only animal records have a specification at all |
+| 27 → 28 | The animals set aside for a buyer to collect | No list ⇒ nothing designated, and no pre-existing order is an animal order anyway |
 
-*(Append further steps here as they land, before this file is tested.)*
+**28 is expected to be the last step for the animal feature** — all five slices are built.
+
+One note on 27 → 28 specifically, since it is the only step holding *pawn references* rather
+than plain values: those are saved as references, not deep saves, because the map already
+owns the pawns. A reference that does not resolve on load becomes null, which the collection
+path reads as "that animal is no longer there" — the same outcome as the animal having died.
+So a save that loses one is degraded, not corrupted, and the order fails honestly rather than
+throwing.
 
 ---
 

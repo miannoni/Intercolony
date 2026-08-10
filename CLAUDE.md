@@ -91,17 +91,34 @@ Target framework is `net472`.
 **Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. The post-0.9.0
 playtest-correction batch landed on 2026-08-09: A1–A5, B1–B3, B5/B5b, C0–C2, the D1 research spike
 and **B4** (buy-only items are now an opt-in, default-off setting; see the decision log). Only
-D2/D3 — animal trade — remain, and they are specified rather than blocked. **Save schema is now 27**
-(24→25 animal specifications, 25→26 sales-order fulfilment colony, 26→27 animal health and gestation
-floors). Next: continue beta corrections in point releases; there is no Phase 27 plan yet.
+D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 28**; the whole
+chain from 24 is documented as one consolidated test in `docs/SCHEMA_24_TO_CURRENT.md`, which is the
+file to read rather than reconstructing the steps. Next: continue beta corrections in point releases;
+there is no Phase 27 plan yet.
 
-**Animal trade is being built as five slices; E1 and E2 are done.** E1 (`c0a0f91`) is the persisted
-`AnimalSpec` plus the pure eligibility predicate and matcher. E2 (`4f199fc`) is pricing: it extends
-`IntercolonyPricing` rather than forking it, and the guiding rule is that **a specification promises
-only what it states, so an unspecified term prices at the cheapest animal that would satisfy it** —
-the buyer pays for what is guaranteed, not what they might luckily receive. Vanilla prices sex and
-pregnancy at *zero*, so those multipliers are Intercolony's own, named constants in
-`IntercolonyPricing`. Remaining: E3 procurement, E4 sell by seller delivery, E5 sell by buyer pickup.
+**Animal trade is COMPLETE — all five slices are built, and none has ever been played.**
+E1 `c0a0f91` representation, E2 `4f199fc` pricing, E3a `b0d8f9a` generation and delivery,
+E3b `574d5d1` the request UI, E4 `75b87d2` sell by caravan, E5 `ab0dc0e` sell by buyer pickup.
+
+The rules that hold it together, and that a future change must not break:
+
+- **A specification promises only what it states**, so an unspecified term prices at the cheapest
+  animal that would satisfy it. The buyer pays for what is guaranteed, not what they might luckily
+  receive. Vanilla prices sex and pregnancy at *zero*, so those multipliers are Intercolony's own,
+  named constants in `IntercolonyPricing`.
+- **The sex gate is checked on the race def before generating, never on the result.**
+  `PawnGenerator` assigns `FixedGender` in the first branch of its chain, so it forces the request
+  true and a post-generation check proves nothing (`reference/decompiled/Verse/PawnGenerator.cs:741`).
+- **A live pawn must never reach the item paths** — `ThingMaker`, stacks, stuff, quality, item
+  inventory, or `SplitOff`/`Destroy`. Every animal branch is taken on `IsAnimalOrder` first.
+- **Handoffs go through `Pawn.PreTraded(PlayerSells, …)`**, then `PassToWorld(…, Discard)`. Skipping
+  `PreTraded` silently deletes a bond and produces no thought — invisible in testing, wrong in play.
+- **Pickup designates individual animals** and never substitutes. Committed head count stops a second
+  order being marked ready; it does not stop two orders naming the *same* animal, which is why
+  selection skips animals another open order has set aside.
+- Bonded animals are sellable; **bonding is a warning, never a spec attribute** — never matched on,
+  never priced. The confirmation applies the same three conditions vanilla's `Notify_PawnSold` does,
+  so it names only colonists who will actually lose the bond.
 
 **None of the three migrations has ever run in the real load order** — only in isolated throwaway
 installs. `dev.ps1` cannot prove a migration: it launches `-quicktest`, which creates a *new* world
