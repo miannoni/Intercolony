@@ -69,6 +69,9 @@ namespace Intercolony
         public string settlementName = "";
         public string factionName = "";
 
+        /// <summary>The player colony this order is fulfilled from.</summary>
+        public Map fulfillmentMap;
+
         /// <summary>
         /// What is being sold, including any quality, material or condition constraints
         /// (§15 lineItems). Phase 6 carries exactly one line; §15's multi-line model is a
@@ -156,6 +159,7 @@ namespace Intercolony
             Scribe_Values.Look(ref settlementId, "settlementId", -1);
             Scribe_Values.Look(ref settlementName, "settlementName", "");
             Scribe_Values.Look(ref factionName, "factionName", "");
+            Scribe_References.Look(ref fulfillmentMap, "fulfillmentMap");
             Scribe_Deep.Look(ref line, "line");
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
 

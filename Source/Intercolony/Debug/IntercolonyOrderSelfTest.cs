@@ -166,6 +166,9 @@ namespace Intercolony
             // --- Find Buyer availability: physical stock minus today's commitments ---
             RunAvailabilityChecks(state, map, sb, Check);
 
+            // --- Buyer-pickup orders stay bound to the colony that declared them ready ---
+            RunBuyerPickupMapChecks(state, map, sb, Check);
+
             // --- Validation contract (§18, §74) ---
             OrderValidationResult nullOrder = OrderValidator.ValidateCaravan(null, null);
             Check("null order fails validation", !nullOrder.Success);
@@ -1114,6 +1117,265 @@ namespace Intercolony
                 }
 
                 testZone?.Delete(playSound: false);
+
+                if (Find.LetterStack != null)
+                {
+                    List<Letter> currentLetters =
+                        new List<Letter>(Find.LetterStack.LettersListForReading);
+                    foreach (Letter letter in currentLetters)
+                    {
+                        if (!existingLetters.Contains(letter))
+                        {
+                            Find.LetterStack.RemoveLetter(letter);
+                        }
+                    }
+                }
+
+                if (Find.Archive != null)
+                {
+                    List<IArchivable> currentArchivables =
+                        new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+                    foreach (IArchivable archivable in currentArchivables)
+                    {
+                        if (!existingArchivables.Contains(archivable) && archivable is Letter)
+                        {
+                            Find.Archive.Remove(archivable);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void RunBuyerPickupMapChecks(
+            IntercolonyWorldComponent state,
+            Map map,
+            StringBuilder sb,
+            Action<string, bool, string> check)
+        {
+            sb.AppendLine("  Buyer-pickup colony binding:");
+            Map fallbackMap = Find.AnyPlayerHomeMap;
+            if (state == null || map == null || fallbackMap == null)
+            {
+                check("pickup-map test has a colony and fallback map", false,
+                    "run while viewing a colony map");
+                return;
+            }
+
+            ThingDef probeDef = null;
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate.category != ThingCategory.Item || candidate.stackLimit < 3 ||
+                    candidate.MadeFromStuff)
+                {
+                    continue;
+                }
+
+                bool alreadyStocked = false;
+                foreach (Map loadedMap in Find.Maps)
+                {
+                    if (ListedQuantity(FindBuyerService.ColonyStock(loadedMap), candidate) > 0)
+                    {
+                        alreadyStocked = true;
+                        break;
+                    }
+                }
+
+                if (alreadyStocked)
+                {
+                    continue;
+                }
+
+                bool alreadyOrdered = false;
+                foreach (SalesOrder existing in state.Orders)
+                {
+                    if (existing?.ThingDef == candidate)
+                    {
+                        alreadyOrdered = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyOrdered)
+                {
+                    probeDef = candidate;
+                    break;
+                }
+            }
+
+            if (probeDef == null)
+            {
+                check("pickup-map test found an isolated tradeable def", false,
+                    "every stackable candidate is already stocked or ordered");
+                return;
+            }
+
+            List<SalesOrder> testOrders = new List<SalesOrder>();
+            List<Zone_Stockpile> testZones = new List<Zone_Stockpile>();
+            List<Thing> testStocks = new List<Thing>();
+            List<LedgerEntry> existingLedger = new List<LedgerEntry>(state.Ledger);
+            int existingLedgerStartTick = state.LedgerStartTick;
+            List<Letter> existingLetters = Find.LetterStack == null
+                ? new List<Letter>()
+                : new List<Letter>(Find.LetterStack.LettersListForReading);
+            List<IArchivable> existingArchivables = Find.Archive == null
+                ? new List<IArchivable>()
+                : new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+
+            bool TrySpawnStoredStock(Map targetMap, int count, out Thing stock)
+            {
+                stock = null;
+                IntVec3 storageCell = IntVec3.Invalid;
+                IntVec3 root = DropCellFinder.TradeDropSpot(targetMap);
+                foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+                {
+                    if (candidate.InBounds(targetMap) && candidate.Standable(targetMap) &&
+                        candidate.GetFirstItem(targetMap) == null &&
+                        targetMap.zoneManager.ZoneAt(candidate) == null)
+                    {
+                        storageCell = candidate;
+                        break;
+                    }
+                }
+
+                if (!storageCell.IsValid)
+                {
+                    return false;
+                }
+
+                Zone_Stockpile zone = new Zone_Stockpile(
+                    StorageSettingsPreset.DefaultStockpile, targetMap.zoneManager);
+                targetMap.zoneManager.RegisterZone(zone);
+                zone.AddCell(storageCell);
+                testZones.Add(zone);
+
+                Thing stack = ThingMaker.MakeThing(probeDef);
+                stack.stackCount = count;
+                stock = GenSpawn.Spawn(stack, storageCell, targetMap);
+                testStocks.Add(stock);
+                return true;
+            }
+
+            SalesOrder PlantPickup(int id, Map initialMap = null)
+            {
+                SalesOrder order = NewOrder(probeDef, 1, 0f);
+                order.id = id;
+                order.opportunityId = -id;
+                order.settlementId = int.MinValue;
+                order.fulfillment = FulfillmentMode.BuyerPickup;
+                order.fulfillmentMap = initialMap;
+                testOrders.Add(order);
+                state.Orders.Add(order);
+                return order;
+            }
+
+            int StoredCount(Map targetMap) =>
+                ListedQuantity(FindBuyerService.ColonyStock(targetMap), probeDef);
+
+            try
+            {
+                if (!TrySpawnStoredStock(map, 3, out _))
+                {
+                    check("pickup-map test found temporary storage on the current colony", false,
+                        "no empty unzoned cell near the trade drop spot");
+                    return;
+                }
+
+                SalesOrder recordsReadyMap = PlantPickup(93001);
+                bool recordedReady = SalesOrderService.MarkReadyForPickup(recordsReadyMap, map);
+                check("Mark Ready records the colony that validated the goods",
+                    recordedReady && ReferenceEquals(recordsReadyMap.fulfillmentMap, map),
+                    $"ready={recordedReady}, recorded={recordsReadyMap.fulfillmentMap?.ToString() ?? "null"}");
+                state.Orders.Remove(recordsReadyMap);
+                testOrders.Remove(recordsReadyMap);
+
+                if (!ReferenceEquals(fallbackMap, map) &&
+                    !TrySpawnStoredStock(fallbackMap, 2, out _))
+                {
+                    check("pickup-map test found temporary storage on the fallback colony", false,
+                        "no empty unzoned cell near the trade drop spot");
+                    return;
+                }
+
+                Map distinctHomeMap = null;
+                foreach (Map candidate in Find.Maps)
+                {
+                    if (candidate.IsPlayerHome && !ReferenceEquals(candidate, fallbackMap))
+                    {
+                        distinctHomeMap = candidate;
+                        break;
+                    }
+                }
+
+                if (distinctHomeMap == null)
+                {
+                    sb.AppendLine(
+                        "    SKIPPED  recorded-map collection vs AnyPlayerHomeMap " +
+                        "(this test world has only one player home map; human multi-colony test required)");
+                }
+                else
+                {
+                    if (!ReferenceEquals(distinctHomeMap, map) &&
+                        !TrySpawnStoredStock(distinctHomeMap, 1, out _))
+                    {
+                        sb.AppendLine(
+                            "    SKIPPED  recorded-map collection vs AnyPlayerHomeMap " +
+                            "(the second home map has no temporary storage cell; human multi-colony test required)");
+                    }
+                    else
+                    {
+                        SalesOrder mappedCollection = PlantPickup(93002, fallbackMap);
+                        bool mappedReady = SalesOrderService.MarkReadyForPickup(
+                            mappedCollection, distinctHomeMap);
+                        int recordedBefore = StoredCount(distinctHomeMap);
+                        int fallbackBefore = StoredCount(fallbackMap);
+                        mappedCollection.buyerArrivalTick = GenTicks.TicksGame;
+                        SalesOrderService.ProcessBuyerCollections(
+                            new List<SalesOrder> { mappedCollection });
+
+                        check("collection uses the order's recorded colony, not AnyPlayerHomeMap",
+                            mappedReady && mappedCollection.status == SalesOrderStatus.Completed &&
+                            StoredCount(distinctHomeMap) == recordedBefore - 1 &&
+                            StoredCount(fallbackMap) == fallbackBefore,
+                            $"ready={mappedReady}, status={mappedCollection.status}, " +
+                            $"recorded stock {recordedBefore}->{StoredCount(distinctHomeMap)}, " +
+                            $"fallback stock {fallbackBefore}->{StoredCount(fallbackMap)}");
+                    }
+                }
+
+                SalesOrder oldSaveOrder = PlantPickup(93003);
+                oldSaveOrder.status = SalesOrderStatus.AwaitingCollection;
+                oldSaveOrder.buyerArrivalTick = GenTicks.TicksGame;
+                int fallbackStockBefore = StoredCount(fallbackMap);
+                SalesOrderService.ProcessBuyerCollections(new List<SalesOrder> { oldSaveOrder });
+                check("an old-save order with no recorded colony completes via the fallback",
+                    oldSaveOrder.status == SalesOrderStatus.Completed &&
+                    StoredCount(fallbackMap) == fallbackStockBefore - 1,
+                    $"status={oldSaveOrder.status}, fallback stock " +
+                    $"{fallbackStockBefore}->{StoredCount(fallbackMap)}");
+            }
+            finally
+            {
+                foreach (SalesOrder testOrder in testOrders)
+                {
+                    state.Orders.Remove(testOrder);
+                }
+
+                foreach (Thing testStock in testStocks)
+                {
+                    if (testStock != null && !testStock.Destroyed)
+                    {
+                        testStock.Destroy(DestroyMode.Vanish);
+                    }
+                }
+
+                foreach (Zone_Stockpile testZone in testZones)
+                {
+                    testZone?.Delete(playSound: false);
+                }
+
+                state.Ledger.Clear();
+                state.Ledger.AddRange(existingLedger);
+                state.LedgerStartTick = existingLedgerStartTick;
 
                 if (Find.LetterStack != null)
                 {

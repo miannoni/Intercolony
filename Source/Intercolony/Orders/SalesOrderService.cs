@@ -92,6 +92,7 @@ namespace Intercolony
                     opportunity, state.GetProfile(settlement), quantity, out _),
                 acceptedTick = GenTicks.TicksGame,
                 fulfillment = opportunity.fulfillment,
+                fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap,
 
                 // The deadline starts counting at acceptance, which is what the market tab
                 // advertised as "Nd after accepting" (§17).
@@ -177,6 +178,7 @@ namespace Intercolony
                 unitPrice = offer.unitPrice,
                 acceptedTick = GenTicks.TicksGame,
                 fulfillment = fulfillment,
+                fulfillmentMap = map,
                 deadlineTick = GenTicks.TicksGame + deadlineDays * GenDate.TicksPerDay,
                 status = SalesOrderStatus.Accepted
             };
@@ -333,6 +335,7 @@ namespace Intercolony
             }
 
             int travelDays = EstimateBuyerPickupTravelDays(distance);
+            order.fulfillmentMap = map;
             order.status = SalesOrderStatus.AwaitingCollection;
             order.buyerArrivalTick = GenTicks.TicksGame + travelDays * GenDate.TicksPerDay;
 
@@ -372,7 +375,6 @@ namespace Intercolony
         public static void ProcessBuyerCollections(List<SalesOrder> orders)
         {
             int now = GenTicks.TicksGame;
-            Map map = Find.AnyPlayerHomeMap;
 
             foreach (SalesOrder order in orders)
             {
@@ -380,6 +382,14 @@ namespace Intercolony
                 {
                     continue;
                 }
+
+                // A removed map stays reachable through arbitrary fields until reload even
+                // though Game.DeinitAndRemoveMap has removed it from Find.Maps. Treat that
+                // dangling runtime reference like the null Scribe resolves after loading.
+                Map map = order.fulfillmentMap != null &&
+                          Find.Maps?.Contains(order.fulfillmentMap) == true
+                    ? order.fulfillmentMap
+                    : Find.AnyPlayerHomeMap;
 
                 if (map == null)
                 {
