@@ -37,8 +37,12 @@ namespace Intercolony
         private int quantity = 40;
         private string deadlineBuffer = "15";
         private int deadlineDays = 15;
+        // Having it brought to you is the ordinary case; sending a caravan to fetch it is the
+        // exception you opt into. This is the dialog's starting selection only — the persisted
+        // field and its scribe default stay as they were, because changing a scribe default
+        // silently reinterprets every old save that omitted the value.
         private ProcurementFulfillmentPreference fulfillmentPreference =
-            ProcurementFulfillmentPreference.Either;
+            ProcurementFulfillmentPreference.SupplierDelivers;
 
         private List<ThingDef> cachedMatches;
         private string cachedSearch;

@@ -65,7 +65,10 @@ namespace Intercolony
             int maxQuantity,
             Func<int, FulfillmentMode, string> bodyBuilder,
             Action<int, FulfillmentMode> onConfirm,
-            FulfillmentMode initialFulfillment = FulfillmentMode.SellerDelivery,
+            // The buyer coming to you is the ordinary case; forming a caravan to take goods
+            // across the map is the exception you opt into. Starting selection only: no
+            // persisted default moves, since that would reinterpret existing saves.
+            FulfillmentMode initialFulfillment = FulfillmentMode.BuyerPickup,
             int minQuantity = 1,
             string quantityLabel = "Quantity:")
             : this(title, confirmLabel, maxQuantity, null, null, bodyBuilder, onConfirm,

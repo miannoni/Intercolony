@@ -2596,7 +2596,10 @@ namespace Intercolony
                 },
                 (qty, fulfillment) =>
                     ContractService.AcceptOffer(state, contract, qty, fulfillment, negotiator),
-                contract.fulfillment,
+                // A standing agreement runs for many cycles, so the caravan-free option is the
+                // one to start on. The contract's own field keeps its old default so existing
+                // agreements are unaffected; this is only what the popup opens showing.
+                FulfillmentMode.BuyerPickup,
                 ContractService.MinAcceptableQuantity(contract),
                 "Per delivery:"));
         }
