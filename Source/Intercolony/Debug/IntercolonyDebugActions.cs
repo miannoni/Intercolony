@@ -592,6 +592,80 @@ namespace Intercolony
                 IntercolonyAnimalSelfTest.Run(state, Find.CurrentMap)));
         }
 
+        [DebugAction(Category, "Generate and deliver purchased animal", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 56)]
+        private static void GenerateAndDeliverPurchasedAnimal()
+        {
+            Map map = Find.CurrentMap?.IsPlayerHome == true
+                ? Find.CurrentMap
+                : Find.AnyPlayerHomeMap;
+            if (map == null)
+            {
+                Messages.Message("No player colony is available for animal delivery.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return;
+            }
+
+            string lastFailure = "no supported loaded animal kind";
+            foreach (PawnKindDef kind in DefDatabase<PawnKindDef>.AllDefsListForReading)
+            {
+                ThingDef race = kind?.race;
+                List<LifeStageAge> stages = race?.race?.lifeStageAges;
+                if (race?.race == null || !race.race.Animal || race.race.Humanlike ||
+                    stages == null || stages.Count == 0)
+                {
+                    continue;
+                }
+
+                AnimalSpec spec = new AnimalSpec
+                {
+                    kind = kind,
+                    gender = Gender.Female,
+                    lifeStage = stages[stages.Count - 1]?.def,
+                    pregnant = true,
+                    minHealthFraction = 0f,
+                    minGestationProgress = 0.35f
+                };
+                if (!spec.TryValidateFor(race, requireKind: true, out lastFailure))
+                {
+                    continue;
+                }
+
+                if (!AnimalPurchaseUtility.TryGenerateAnimal(
+                        race, spec, out Pawn pawn, out lastFailure))
+                {
+                    continue;
+                }
+
+                if (!AnimalPurchaseUtility.TryDeliverToColony(
+                        pawn, map, out _, out lastFailure))
+                {
+                    IntercolonyLog.Warning(
+                        $"Purchased-animal debug delivery failed: {lastFailure}.");
+                    Messages.Message(
+                        $"Purchased-animal delivery failed: {lastFailure}.",
+                        MessageTypeDefOf.RejectInput, historical: false);
+                    return;
+                }
+
+                Hediff_Pregnant pregnancy =
+                    pawn.health?.hediffSet?.GetFirstHediffOfDef(HediffDefOf.Pregnant)
+                    as Hediff_Pregnant;
+                string result = $"Generated and delivered {pawn.LabelShort}: {race.defName}, " +
+                                $"{pawn.gender}, {pawn.ageTracker.CurLifeStage.defName}, " +
+                                $"gestation {pregnancy?.GestationProgress:P0}.";
+                IntercolonyLog.Message(result);
+                Messages.Message(result, new LookTargets(pawn),
+                    MessageTypeDefOf.PositiveEvent, historical: false);
+                return;
+            }
+
+            IntercolonyLog.Warning(
+                $"Purchased-animal debug delivery skipped: {lastFailure}.");
+            Messages.Message(
+                $"No supported animal could be generated: {lastFailure}.",
+                MessageTypeDefOf.RejectInput, historical: false);
+        }
+
         [DebugAction(Category, "List colony animal specification matches", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 46)]
         private static void ListColonyAnimalSpecificationMatches()
         {

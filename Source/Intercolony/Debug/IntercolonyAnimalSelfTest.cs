@@ -3,12 +3,16 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
 namespace Intercolony
 {
-    /// <summary>Pure animal-spec assertions. No pawn or world record is created or changed.</summary>
+    /// <summary>
+    /// Animal specification and procurement assertions. Every generated pawn is discarded in a
+    /// finally block, including successful generation probes.
+    /// </summary>
     public static class IntercolonyAnimalSelfTest
     {
         public static string Run(IntercolonyWorldComponent state, Map map)
@@ -43,6 +47,7 @@ namespace Intercolony
             CheckValidity(Check);
             CheckGoodsDiscriminators(Check);
             CheckPricing(Check, Skip);
+            CheckGenerationAndDelivery(Check, Skip);
 
             List<Pawn> colonyAnimals = ColonyAnimals(map);
             CheckMatcher(Check, Skip, colonyAnimals);
@@ -50,6 +55,321 @@ namespace Intercolony
 
             sb.AppendLine($"  {passed} passed, {failed} failed, {skipped} skipped");
             return sb.ToString();
+        }
+
+        private static void CheckGenerationAndDelivery(
+            Action<string, bool, string> check, Action<string, string> skip)
+        {
+            CheckPregnancyCapabilityRefusal(check);
+            CheckGenderDefinitionRefusal(check);
+            CheckPartialAnimalRefundAccounting(check);
+
+            if (!TryFindGenerationSpec(out ThingDef race, out AnimalSpec spec, out string unavailable))
+            {
+                skip("generated animal closes the specification matcher loop", unavailable);
+                skip("generated animal sex", unavailable);
+                skip("generated animal life stage", unavailable);
+                skip("generated animal pregnancy", unavailable);
+                skip("generated animal gestation floor", unavailable);
+                skip("failed animal delivery leaves no world pawn", unavailable);
+            }
+            else
+            {
+                Pawn generated = null;
+                try
+                {
+                    bool made = AnimalPurchaseUtility.TryGenerateAnimal(
+                        race, spec, out generated, out string failure);
+                    check("animal generation succeeds for a supported specification",
+                        made && generated != null, failure);
+                    if (made && generated != null)
+                    {
+                        Hediff_Pregnant pregnancy =
+                            generated.health?.hediffSet?.GetFirstHediffOfDef(HediffDefOf.Pregnant)
+                            as Hediff_Pregnant;
+                        check("generated animal closes the specification matcher loop",
+                            generated.kindDef == spec.kind &&
+                            AnimalTradeUtility.Matches(generated, race, spec), generated.LabelShort);
+                        check("generated animal sex matches the request",
+                            generated.gender == Gender.Female, generated.gender.ToString());
+                        check("generated animal life stage matches the race-relative request",
+                            generated.ageTracker?.CurLifeStage == spec.lifeStage,
+                            generated.ageTracker?.CurLifeStage?.defName);
+                        check("generated animal pregnancy matches the request",
+                            pregnancy != null, generated.LabelShort);
+                        check("generated animal meets the gestation floor",
+                            pregnancy != null && spec.minGestationProgress.HasValue &&
+                            pregnancy.GestationProgress >= spec.minGestationProgress.Value,
+                            pregnancy == null ? "no pregnancy" : pregnancy.GestationProgress.ToString("P1"));
+                    }
+                    else
+                    {
+                        const string blocked = "the supported generation probe failed";
+                        skip("generated animal closes the specification matcher loop", blocked);
+                        skip("generated animal sex", blocked);
+                        skip("generated animal life stage", blocked);
+                        skip("generated animal pregnancy", blocked);
+                        skip("generated animal gestation floor", blocked);
+                    }
+                }
+                finally
+                {
+                    AnimalPurchaseUtility.DiscardGeneratedPawn(generated);
+                }
+
+                CheckFailedDeliveryDoesNotLeak(check, race, spec);
+            }
+
+            CheckGoodsFulfilmentRegression(check, skip);
+        }
+
+        private static void CheckPregnancyCapabilityRefusal(
+            Action<string, bool, string> check)
+        {
+            LifeStageDef stage = new LifeStageDef { defName = "IntercolonyGenerationGateStage" };
+            ThingDef noGestation = SyntheticAnimal(
+                "IntercolonyGenerationGateRace", stage, 1, -1f, eggLayer: false);
+            PawnKindDef kind = new PawnKindDef
+            {
+                defName = "IntercolonyGenerationGateKind",
+                race = noGestation
+            };
+            AnimalSpec spec = new AnimalSpec
+            {
+                kind = kind,
+                gender = Gender.Female,
+                pregnant = true
+            };
+
+            Pawn refused = null;
+            try
+            {
+                bool generated = AnimalPurchaseUtility.TryGenerateAnimal(
+                    noGestation, spec, out refused, out string reason);
+                check("pregnancy-incapable race is refused before generation",
+                    !generated && refused == null && reason != null &&
+                    reason.Contains("gestation"), reason);
+            }
+            finally
+            {
+                AnimalPurchaseUtility.DiscardGeneratedPawn(refused);
+            }
+        }
+
+        private static void CheckGenderDefinitionRefusal(
+            Action<string, bool, string> check)
+        {
+            LifeStageDef stage = new LifeStageDef { defName = "IntercolonyGenderGateStage" };
+            ThingDef genderless = SyntheticAnimal(
+                "IntercolonyGenderGateRace", stage, 1, 5f, eggLayer: false);
+            genderless.race.hasGenders = false;
+            PawnKindDef kind = new PawnKindDef
+            {
+                defName = "IntercolonyGenderGateKind",
+                race = genderless
+            };
+            AnimalSpec spec = new AnimalSpec
+            {
+                kind = kind,
+                gender = Gender.Female,
+                pregnant = false
+            };
+
+            Pawn refused = null;
+            try
+            {
+                bool generated = AnimalPurchaseUtility.TryGenerateAnimal(
+                    genderless, spec, out refused, out string reason);
+                check("genderless race is refused before FixedGender can force the result",
+                    !generated && refused == null && reason != null &&
+                    reason.Contains("genderless"), reason);
+            }
+            finally
+            {
+                AnimalPurchaseUtility.DiscardGeneratedPawn(refused);
+            }
+        }
+
+        private static void CheckPartialAnimalRefundAccounting(
+            Action<string, bool, string> check)
+        {
+            PurchaseOrder animalRemainder = new PurchaseOrder
+            {
+                quantity = 2,
+                unitPrice = 100f,
+                paidSilver = 500,
+                animalSpec = new AnimalSpec()
+            };
+            PurchaseOrder goodsRemainder = new PurchaseOrder
+            {
+                quantity = 2,
+                unitPrice = 100f,
+                paidSilver = 500
+            };
+
+            check("partial animal refund covers only the head still owed",
+                PurchaseOrderService.RefundableSilver(animalRemainder) == 200,
+                PurchaseOrderService.RefundableSilver(animalRemainder).ToString());
+            check("goods refund accounting remains unchanged",
+                PurchaseOrderService.RefundableSilver(goodsRemainder) == 500,
+                PurchaseOrderService.RefundableSilver(goodsRemainder).ToString());
+        }
+
+        private static bool TryFindGenerationSpec(
+            out ThingDef race, out AnimalSpec spec, out string reason)
+        {
+            foreach (PawnKindDef kind in DefDatabase<PawnKindDef>.AllDefsListForReading)
+            {
+                ThingDef candidate = kind?.race;
+                RaceProperties properties = candidate?.race;
+                if (properties == null || !properties.Animal || properties.Humanlike ||
+                    !properties.hasGenders ||
+                    (properties.forceGender != Gender.None && properties.forceGender != Gender.Female) ||
+                    (kind.fixedGender.HasValue && kind.fixedGender.Value != Gender.Female) ||
+                    properties.lifeStageAges == null || properties.lifeStageAges.Count == 0)
+                {
+                    continue;
+                }
+
+                LifeStageDef stage = null;
+                for (int i = properties.lifeStageAges.Count - 1; i >= 0; i--)
+                {
+                    LifeStageDef candidateStage = properties.lifeStageAges[i]?.def;
+                    if (candidateStage != null && !candidateStage.alwaysDowned &&
+                        CountStage(properties.lifeStageAges, candidateStage) == 1)
+                    {
+                        stage = candidateStage;
+                        break;
+                    }
+                }
+
+                if (stage == null)
+                {
+                    continue;
+                }
+
+                AnimalSpec candidateSpec = new AnimalSpec
+                {
+                    kind = kind,
+                    gender = Gender.Female,
+                    lifeStage = stage,
+                    pregnant = true,
+                    minHealthFraction = 0f,
+                    minGestationProgress = 0.35f
+                };
+                if (!candidateSpec.TryValidateFor(candidate, requireKind: true, out _))
+                {
+                    continue;
+                }
+
+                race = candidate;
+                spec = candidateSpec;
+                reason = null;
+                return true;
+            }
+
+            race = null;
+            spec = null;
+            reason = "no loaded live-bearing female-capable animal kind with an unambiguous mobile life stage";
+            return false;
+        }
+
+        private static void CheckFailedDeliveryDoesNotLeak(
+            Action<string, bool, string> check, ThingDef race, AnimalSpec spec)
+        {
+            int before = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
+            Pawn pawn = null;
+            string detail = null;
+            bool failedAndDiscarded = false;
+            try
+            {
+                if (!AnimalPurchaseUtility.TryGenerateAnimal(race, spec, out pawn, out detail))
+                {
+                    check("failed animal delivery leaves no world pawn", false, detail);
+                    return;
+                }
+
+                // Deliberately exercise cleanup from the dangerous state: the generated animal
+                // is registered as a kept world pawn, then delivery is forced to fail with no map.
+                Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.KeepForever);
+                bool delivered = AnimalPurchaseUtility.TryDeliverToColony(
+                    pawn, null, out _, out detail);
+                failedAndDiscarded = !delivered && pawn.Discarded;
+            }
+            finally
+            {
+                AnimalPurchaseUtility.DiscardGeneratedPawn(pawn);
+            }
+
+            int after = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
+            check("failed animal delivery leaves no world pawn",
+                failedAndDiscarded && after == before,
+                $"world pawns {before} -> {after}; {detail}");
+        }
+
+        private static void CheckGoodsFulfilmentRegression(
+            Action<string, bool, string> check, Action<string, string> skip)
+        {
+            Map deliveryMap = Find.AnyPlayerHomeMap;
+            ThingDef def = ThingDefOf.WoodLog;
+            if (deliveryMap == null || def == null)
+            {
+                skip("ordinary goods purchase still fulfils through the goods path",
+                    deliveryMap == null ? "no player home map" : "WoodLog is unavailable");
+                return;
+            }
+
+            Dictionary<Thing, int> originalStacks = new Dictionary<Thing, int>();
+            int before = 0;
+            foreach (Thing thing in deliveryMap.listerThings.ThingsOfDef(def))
+            {
+                originalStacks[thing] = thing.stackCount;
+                before += thing.stackCount;
+            }
+
+            PurchaseOrder order = new PurchaseOrder
+            {
+                id = -93001,
+                settlementId = -1,
+                settlementName = "animal self-test supplier",
+                thingDef = def,
+                quantity = 3,
+                paidSilver = 0,
+                supplierDelivers = true,
+                readyTick = GenTicks.TicksGame,
+                status = PurchaseOrderStatus.Confirmed
+            };
+
+            int after = before;
+            try
+            {
+                PurchaseOrderService.AdvanceOrders(new List<PurchaseOrder> { order });
+                after = 0;
+                foreach (Thing thing in deliveryMap.listerThings.ThingsOfDef(def))
+                {
+                    after += thing.stackCount;
+                }
+
+                check("ordinary goods purchase still fulfils through the goods path",
+                    !order.IsAnimalOrder && order.status == PurchaseOrderStatus.Completed &&
+                    after - before == 3,
+                    $"status {order.status}, units {before} -> {after}");
+            }
+            finally
+            {
+                List<Thing> current = new List<Thing>(deliveryMap.listerThings.ThingsOfDef(def));
+                foreach (Thing thing in current)
+                {
+                    if (originalStacks.TryGetValue(thing, out int originalCount))
+                    {
+                        thing.stackCount = originalCount;
+                    }
+                    else if (!thing.Destroyed)
+                    {
+                        thing.Destroy(DestroyMode.Vanish);
+                    }
+                }
+            }
         }
 
         private static void CheckSerializationRoundTrip(
@@ -257,6 +577,13 @@ namespace Intercolony
             check("goods PurchaseRequest is not an animal order", !new PurchaseRequest().IsAnimalOrder, null);
             check("goods Quotation is not an animal order", !new Quotation().IsAnimalOrder, null);
             check("goods PurchaseOrder is not an animal order", !new PurchaseOrder().IsAnimalOrder, null);
+            check("animal purchase order cannot enter MakeGoods",
+                PurchaseOrderService.MakeGoods(new PurchaseOrder
+                {
+                    thingDef = ThingDefOf.WoodLog,
+                    quantity = 1,
+                    animalSpec = new AnimalSpec()
+                }).Count == 0, null);
         }
 
         private static void CheckPricing(

@@ -184,6 +184,14 @@ namespace Intercolony
                 return;
             }
 
+            // Live pawns diverge before the goods path touches ThingMaker, stacks, stuff,
+            // quality, item placement, or item destruction.
+            if (order.IsAnimalOrder)
+            {
+                DeliverAnimalsToColony(order, map);
+                return;
+            }
+
             int spawned = SpawnGoods(order, map, DropCellFinder.TradeDropSpot(map));
             if (spawned <= 0)
             {
@@ -206,6 +214,13 @@ namespace Intercolony
             if (order == null || !order.AwaitingCollection || caravan == null)
             {
                 return false;
+            }
+
+            // An animal is a caravan member. It must never enter MakeGoods or a carrier's
+            // item inventory.
+            if (order.IsAnimalOrder)
+            {
+                return CollectAnimalsWithCaravan(order, caravan);
             }
 
             List<Thing> goods = MakeGoods(order);
@@ -258,6 +273,126 @@ namespace Intercolony
             return true;
         }
 
+        private static void DeliverAnimalsToColony(PurchaseOrder order, Map map)
+        {
+            int requested = order.quantity;
+            int delivered = 0;
+            IntVec3 lastCell = IntVec3.Invalid;
+            string failure = null;
+
+            for (int i = 0; i < requested; i++)
+            {
+                if (!AnimalPurchaseUtility.TryGenerateAnimal(
+                        order.thingDef, order.animalSpec, out Pawn pawn, out failure))
+                {
+                    break;
+                }
+
+                if (!AnimalPurchaseUtility.TryDeliverToColony(
+                        pawn, map, out IntVec3 spawnCell, out failure))
+                {
+                    break;
+                }
+
+                lastCell = spawnCell;
+                delivered++;
+            }
+
+            if (delivered <= 0)
+            {
+                IntercolonyLog.Warning(
+                    $"Purchase {order.id}: animal colony delivery failed: {failure ?? "unknown failure"}.");
+                Refund(order, "The supplier could not deliver the purchased animals.");
+                return;
+            }
+
+            if (delivered >= requested)
+            {
+                Complete(order, $"Delivered {delivered} animals to the colony.");
+                Messages.Message(
+                    $"{order.settlementName} delivered {delivered}x {order.thingDef.label}.",
+                    new LookTargets(lastCell, map),
+                    MessageTypeDefOf.PositiveEvent, historical: true);
+                return;
+            }
+
+            // Identical to partial goods collection: only successful handoffs reduce the
+            // remaining obligation, and the open order retains its original prepaid balance.
+            order.quantity -= delivered;
+            IntercolonyLog.Warning(
+                $"Purchase {order.id}: partial animal delivery {delivered}; " +
+                $"{order.quantity} still owed. {failure ?? "handoff stopped"}.");
+            Messages.Message(
+                $"{order.settlementName} delivered {delivered}x {order.thingDef.label}; " +
+                $"{order.quantity} are still owed.",
+                new LookTargets(lastCell, map),
+                MessageTypeDefOf.CautionInput, historical: true);
+        }
+
+        private static bool CollectAnimalsWithCaravan(PurchaseOrder order, Caravan caravan)
+        {
+            int requested = order.quantity;
+            int delivered = 0;
+            string failure = null;
+            bool generationFailed = false;
+
+            for (int i = 0; i < requested; i++)
+            {
+                if (!AnimalPurchaseUtility.TryGenerateAnimal(
+                        order.thingDef, order.animalSpec, out Pawn pawn, out failure))
+                {
+                    generationFailed = true;
+                    break;
+                }
+
+                if (!AnimalPurchaseUtility.TryDeliverToCaravan(pawn, caravan, out failure))
+                {
+                    break;
+                }
+
+                delivered++;
+            }
+
+            if (delivered <= 0)
+            {
+                if (generationFailed)
+                {
+                    IntercolonyLog.Warning(
+                        $"Purchase {order.id}: animal generation failed: {failure ?? "unknown failure"}.");
+                    Refund(order, "The supplier had no matching animals to hand over.");
+                }
+                else
+                {
+                    IntercolonyLog.Warning(
+                        $"Purchase {order.id}: caravan animal handoff failed: " +
+                        $"{failure ?? "unknown failure"}.");
+                }
+
+                return false;
+            }
+
+            if (delivered >= requested)
+            {
+                Complete(order, $"Collected {delivered} animals by caravan.");
+                Messages.Message(
+                    $"Collected {delivered}x {order.thingDef.label} from {order.settlementName}.",
+                    MessageTypeDefOf.PositiveEvent, historical: true);
+            }
+            else
+            {
+                order.quantity -= delivered;
+                IntercolonyLog.Warning(
+                    $"Purchase {order.id}: partial animal pickup {delivered}; " +
+                    $"{order.quantity} still waiting. {failure ?? "handoff stopped"}.");
+                Messages.Message(
+                    $"Collected {delivered}x {order.thingDef.label}; " +
+                    $"{order.quantity} are still waiting.",
+                    MessageTypeDefOf.CautionInput, historical: false);
+            }
+
+            return true;
+        }
+
         private static void Complete(PurchaseOrder order, string note)
         {
             order.status = PurchaseOrderStatus.Completed;
@@ -277,19 +412,41 @@ namespace Intercolony
             order.status = PurchaseOrderStatus.SupplierDefault;
             order.outcomeNote = reason;
 
-            Map map = Find.AnyPlayerHomeMap;
-            if (map != null && order.paidSilver > 0)
+            // Purchases are prepaid. After a partial animal handoff, quantity is only the head
+            // still owed, so only that proportional balance remains refundable. Goods retain
+            // their established accounting unchanged.
+            int refundSilver = RefundableSilver(order);
+            if (order.IsAnimalOrder)
             {
-                GiveSilver(map, order.paidSilver);
+                // Status UI uses paidSilver as the displayed refunded amount after default.
+                order.paidSilver = refundSilver;
+            }
 
-                LedgerService.Record(LedgerKind.Refund, order.paidSilver, order.settlementName,
+            Map map = Find.AnyPlayerHomeMap;
+            if (map != null && refundSilver > 0)
+            {
+                GiveSilver(map, refundSilver);
+
+                LedgerService.Record(LedgerKind.Refund, refundSilver, order.settlementName,
                     $"{order.quantity}x {order.thingDef?.label ?? "goods"} refunded");
             }
 
-            IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {order.paidSilver} silver.");
+            IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {refundSilver} silver.");
             Messages.Message(
-                $"{order.settlementName} defaulted on your order. {order.paidSilver} silver refunded.",
+                $"{order.settlementName} defaulted on your order. {refundSilver} silver refunded.",
                 MessageTypeDefOf.NegativeEvent, historical: true);
+        }
+
+        internal static int RefundableSilver(PurchaseOrder order)
+        {
+            if (order == null || order.paidSilver <= 0)
+            {
+                return 0;
+            }
+
+            return order.IsAnimalOrder
+                ? Mathf.Min(order.paidSilver, Mathf.RoundToInt(order.unitPrice * order.quantity))
+                : order.paidSilver;
         }
 
         public static bool Cancel(PurchaseOrder order)
@@ -318,7 +475,7 @@ namespace Intercolony
         public static List<Thing> MakeGoods(PurchaseOrder order)
         {
             List<Thing> result = new List<Thing>();
-            if (order?.thingDef == null || order.quantity <= 0)
+            if (order == null || order.IsAnimalOrder || order.thingDef == null || order.quantity <= 0)
             {
                 return result;
             }
