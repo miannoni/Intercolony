@@ -121,10 +121,18 @@ the exact pre-modification value rather than assuming it was `Buyable`.
 the test**: the test spawns an item, completes a sale and moves silver, then undoes all of it. If
 silver, letters or orders differ afterwards, the restoration is wrong even if every check passed.
 
-### Three schema migrations have never run in a real game
+### Schema migration 24 → current — see `docs/SCHEMA_24_TO_CURRENT.md`
+
+**Moved to its own file on 2026-08-09**, because the chain kept growing during one development
+run and the owner chose — reasonably — to test the whole chain once at the end rather than
+interrupt the work for each step. Every step is additive with no data to move, so the risk is
+the same either way. That file is kept current as steps land; **read it rather than this
+summary** when the time comes to test.
+
+The short version is below and may lag behind the file.
 
 Added 2026-08-09. **This is the highest-value single check on this list**, because one action
-settles three things at once and because migration is the one failure mode that damages a save.
+settles several things at once and because migration is the one failure mode that damages a save.
 
 Schema moved **24 → 27** in one day: 25 added animal specifications, 26 added each sales order's
 fulfilment colony, 27 added the animal health and gestation floors. Every step is additive with no
