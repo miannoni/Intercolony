@@ -1378,8 +1378,11 @@ namespace Intercolony
                 OrderValidationResult before = OrderValidator.ValidateCaravan(order, caravan);
                 animal.gender = originalGender == Gender.Female ? Gender.Male : Gender.Female;
                 OrderValidationResult changed = OrderValidator.ValidateCaravan(order, caravan);
+                List<Pawn> handoffMatches =
+                    OrderValidator.MatchingCaravanAnimals(order, caravan, 1);
                 check("handoff revalidation rejects a changed animal",
-                    before.matchedQuantity == 1 && changed.matchedQuantity == 0,
+                    before.matchedQuantity == 1 && changed.matchedQuantity == 0 &&
+                    handoffMatches.Count == 0,
                     animal.LabelShort);
             }
             finally
@@ -1459,6 +1462,12 @@ namespace Intercolony
 
             MemoryThoughtHandler memories = colonist.needs.mood.thoughts.memories;
             List<Thought_Memory> beforeMemories = new List<Thought_Memory>(memories.Memories);
+            Dictionary<Pawn, List<Thought_Memory>> relatedMemories =
+                SnapshotRelatedMemories(animal);
+            Dictionary<Thought_Memory, int> relatedMemoryAges =
+                SnapshotMemoryAges(relatedMemories);
+            Dictionary<Pawn, int[]> bonds = SnapshotBonds(animal);
+            RemoveMemoriesOfDefs(memories, PawnRelationDefOf.Bond.soldThoughts);
             bool bondRemoved = false;
             bool allThoughtsApplied = false;
             try
@@ -1473,9 +1482,9 @@ namespace Intercolony
                 allThoughtsApplied = true;
                 foreach (ThoughtDef thought in PawnRelationDefOf.Bond.soldThoughts)
                 {
-                    if (!memories.Memories.Exists(m =>
-                            !beforeMemories.Contains(m) && m.def == thought &&
-                            m.otherPawn == negotiator))
+                    if (!memories.Memories.Exists(memory =>
+                            !beforeMemories.Contains(memory) && memory.def == thought &&
+                            memory.otherPawn == negotiator))
                     {
                         allThoughtsApplied = false;
                         break;
@@ -1488,16 +1497,115 @@ namespace Intercolony
             }
             finally
             {
-                List<Thought_Memory> added = memories.Memories.FindAll(
-                    memory => !beforeMemories.Contains(memory));
-                foreach (Thought_Memory memory in added)
+                foreach (KeyValuePair<Pawn, List<Thought_Memory>> snapshot in relatedMemories)
                 {
-                    memories.RemoveMemory(memory);
+                    MemoryThoughtHandler handler =
+                        snapshot.Key.needs?.mood?.thoughts?.memories;
+                    if (handler == null)
+                    {
+                        continue;
+                    }
+
+                    handler.Memories.Clear();
+                    handler.Memories.AddRange(snapshot.Value);
                 }
 
-                if (!animal.relations.DirectRelationExists(PawnRelationDefOf.Bond, colonist))
+                foreach (KeyValuePair<Thought_Memory, int> snapshot in relatedMemoryAges)
                 {
-                    animal.relations.AddDirectRelation(PawnRelationDefOf.Bond, colonist);
+                    snapshot.Key.age = snapshot.Value;
+                }
+
+                RestoreBonds(animal, bonds);
+            }
+        }
+
+        private static Dictionary<Pawn, List<Thought_Memory>> SnapshotRelatedMemories(Pawn animal)
+        {
+            Dictionary<Pawn, List<Thought_Memory>> result =
+                new Dictionary<Pawn, List<Thought_Memory>>();
+            foreach (Pawn related in animal.relations.PotentiallyRelatedPawns)
+            {
+                MemoryThoughtHandler handler = related.needs?.mood?.thoughts?.memories;
+                if (handler != null)
+                {
+                    result[related] = new List<Thought_Memory>(handler.Memories);
+                }
+            }
+
+            return result;
+        }
+
+        private static Dictionary<Thought_Memory, int> SnapshotMemoryAges(
+            Dictionary<Pawn, List<Thought_Memory>> memories)
+        {
+            Dictionary<Thought_Memory, int> result =
+                new Dictionary<Thought_Memory, int>();
+            foreach (List<Thought_Memory> pawnMemories in memories.Values)
+            {
+                foreach (Thought_Memory memory in pawnMemories)
+                {
+                    result[memory] = memory.age;
+                }
+            }
+
+            return result;
+        }
+
+        private static void RemoveMemoriesOfDefs(
+            MemoryThoughtHandler memories, List<ThoughtDef> defs)
+        {
+            for (int i = memories.Memories.Count - 1; i >= 0; i--)
+            {
+                if (defs.Contains(memories.Memories[i].def))
+                {
+                    memories.RemoveMemory(memories.Memories[i]);
+                }
+            }
+        }
+
+        private static Dictionary<Pawn, int[]> SnapshotBonds(Pawn animal)
+        {
+            Dictionary<Pawn, int[]> result = new Dictionary<Pawn, int[]>();
+            foreach (DirectPawnRelation relation in animal.relations.DirectRelations)
+            {
+                if (relation?.def != PawnRelationDefOf.Bond || relation.otherPawn == null)
+                {
+                    continue;
+                }
+
+                DirectPawnRelation reciprocal = relation.otherPawn.relations.GetDirectRelation(
+                    PawnRelationDefOf.Bond, animal);
+                result[relation.otherPawn] = new[]
+                {
+                    relation.startTicks,
+                    reciprocal?.startTicks ?? relation.startTicks
+                };
+            }
+
+            return result;
+        }
+
+        private static void RestoreBonds(Pawn animal, Dictionary<Pawn, int[]> bonds)
+        {
+            foreach (KeyValuePair<Pawn, int[]> snapshot in bonds)
+            {
+                Pawn other = snapshot.Key;
+                if (!animal.relations.DirectRelationExists(PawnRelationDefOf.Bond, other))
+                {
+                    animal.relations.AddDirectRelation(PawnRelationDefOf.Bond, other);
+                }
+
+                DirectPawnRelation restored = animal.relations.GetDirectRelation(
+                    PawnRelationDefOf.Bond, other);
+                DirectPawnRelation reciprocal = other.relations.GetDirectRelation(
+                    PawnRelationDefOf.Bond, animal);
+                if (restored != null)
+                {
+                    restored.startTicks = snapshot.Value[0];
+                }
+                if (reciprocal != null)
+                {
+                    reciprocal.startTicks = snapshot.Value[1];
                 }
             }
         }

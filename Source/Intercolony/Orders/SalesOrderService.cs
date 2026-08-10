@@ -329,7 +329,9 @@ namespace Intercolony
                     {
                         Pawn colonist = relation?.otherPawn;
                         if (relation?.def == PawnRelationDefOf.Bond &&
-                            colonist != null && colonist.IsColonist)
+                            colonist != null && colonist.IsColonist && !colonist.Dead &&
+                            colonist.needs?.mood != null &&
+                            colonist.GetMostImportantRelation(animal) == PawnRelationDefOf.Bond)
                         {
                             colonists.Add(colonist.LabelShortCap);
                         }
