@@ -1648,6 +1648,69 @@ namespace Intercolony
             });
         }
 
+        /// <summary>
+        /// Pulls every open purchase order's ready time to now and advances it, so a delivery
+        /// or a pickup readiness can be seen without playing out the supplier's lead time.
+        ///
+        /// This deliberately moves the clock and then runs the real advance, rather than
+        /// calling the delivery path directly: the point of the action is to test fulfilment
+        /// as it actually happens, including the status transition and refund branches.
+        /// </summary>
+        [DebugAction(Category, "Arrive purchase orders now", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 46)]
+        private static void ArrivePurchaseOrdersNow()
+        {
+            WithState(state =>
+            {
+                int pulled = 0;
+                int alreadyWaiting = 0;
+                foreach (PurchaseOrder order in state.PurchaseOrders)
+                {
+                    if (order == null)
+                    {
+                        continue;
+                    }
+
+                    if (order.status == PurchaseOrderStatus.Confirmed)
+                    {
+                        order.readyTick = GenTicks.TicksGame;
+                        pulled++;
+                    }
+                    else if (order.status == PurchaseOrderStatus.ReadyForPickup)
+                    {
+                        alreadyWaiting++;
+                    }
+                }
+
+                PurchaseOrderService.AdvanceOrders(state.PurchaseOrders);
+
+                if (pulled == 0 && alreadyWaiting == 0)
+                {
+                    Report("No open purchase orders. Accept a quotation on the Procurement tab first.");
+                    return;
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.Append($"Advanced {pulled} purchase order(s).");
+                if (alreadyWaiting > 0)
+                {
+                    // Their lead time has already elapsed; what they are waiting for is the
+                    // player, so pulling the clock forward would change nothing.
+                    sb.Append($" {alreadyWaiting} were already waiting to be collected — " +
+                              "send a caravan, they will not arrive on their own.");
+                }
+
+                foreach (PurchaseOrder order in state.PurchaseOrders)
+                {
+                    if (order != null && !order.IsOpen && order.outcomeNote.NullOrEmpty() == false)
+                    {
+                        sb.Append($"\n  #{order.id} {order.status}: {order.outcomeNote}");
+                    }
+                }
+
+                Report(sb.ToString());
+            });
+        }
+
         [DebugAction(Category, "Expire employment now", allowedGameStates = AllowedGameStates.Playing, displayPriority = 49)]
         private static void ExpireEmploymentNow()
         {
