@@ -68,6 +68,13 @@ namespace Intercolony
         /// <summary>Agreed rate, locked for the contract's life — that is what makes it plannable.</summary>
         public float unitPrice;
 
+        /// <summary>
+        /// How every cycle's order is fulfilled, chosen once when the agreement is accepted.
+        /// A standing agreement is a production commitment, so the logistics of it are settled
+        /// up front rather than re-decided every cycle.
+        /// </summary>
+        public FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery;
+
         public ContractStatus status = ContractStatus.Offered;
 
         /// <summary>Tick the next delivery window opens.</summary>
@@ -198,6 +205,8 @@ namespace Intercolony
             Scribe_Values.Look(ref cyclesCompleted, "cyclesCompleted", 0);
             Scribe_Values.Look(ref cyclesFailed, "cyclesFailed", 0);
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
+            Scribe_Values.Look(
+                ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(ref status, "status", ContractStatus.Offered);
             Scribe_Values.Look(ref nextCycleTick, "nextCycleTick", 0);
             Scribe_Values.Look(ref offerExpiryTick, "offerExpiryTick", 0);

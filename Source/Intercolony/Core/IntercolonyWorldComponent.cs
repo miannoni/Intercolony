@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 28;
+        public const int CurrentSaveVersion = 29;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1588,6 +1588,15 @@ namespace Intercolony
                 // data to move: no existing order is an animal order, so none has a list.
                 IntercolonyLog.Message(
                     "  schema 27 -> 28: designated pickup animals added; existing orders have none.");
+            }
+
+            if (saveVersion < 29)
+            {
+                // 28 -> 29 let a supply agreement choose how its cycles are fulfilled. Every
+                // existing agreement was created when seller delivery was the only behaviour,
+                // so the field's default is already the truth about them and no data moves.
+                IntercolonyLog.Message(
+                    "  schema 28 -> 29: supply agreements now carry a fulfilment mode; existing ones keep seller delivery.");
             }
 
             saveVersion = CurrentSaveVersion;

@@ -586,7 +586,7 @@ namespace Intercolony
                 // plannable rather than a recurring emergency.
                 deadlineTick = GenTicks.TicksGame + contract.cadenceTicks,
                 status = SalesOrderStatus.Accepted,
-                fulfillment = FulfillmentMode.SellerDelivery,
+                fulfillment = contract.fulfillment,
                 contractId = contract.id
             };
 
@@ -604,12 +604,84 @@ namespace Intercolony
                 LetterDefOf.NeutralEvent);
         }
 
+        /// <summary>Best premium a negotiator can talk the buyer up to, at Social 20.</summary>
+        public const float MaxNegotiationPremium = 0.15f;
+
+        /// <summary>The narrowest and widest the player may resize an offered agreement.</summary>
+        public const float QuantityAdjustment = 0.1f;
+
+        public static int MinAcceptableQuantity(RecurringContract contract)
+        {
+            return Mathf.Max(
+                1,
+                Mathf.RoundToInt((contract?.quantityPerCycle ?? 0) * (1f - QuantityAdjustment)));
+        }
+
+        public static int MaxAcceptableQuantity(RecurringContract contract)
+        {
+            return Mathf.Max(
+                MinAcceptableQuantity(contract),
+                Mathf.RoundToInt((contract?.quantityPerCycle ?? 0) * (1f + QuantityAdjustment)));
+        }
+
+        /// <summary>
+        /// What the colony's best talker can add to the offered rate. Mirrors the release-fee
+        /// negotiation in <see cref="TransitionService"/>: the same skill, read the same way,
+        /// so a good negotiator is worth having for the same reason in both places.
+        /// </summary>
+        public static float NegotiatedUnitPrice(RecurringContract contract, Pawn negotiator)
+        {
+            float offered = contract?.unitPrice ?? 0f;
+            SkillRecord social = negotiator?.skills?.GetSkill(SkillDefOf.Social);
+            if (social == null || social.TotallyDisabled)
+            {
+                return offered;
+            }
+
+            float premium = Mathf.Lerp(
+                0f, MaxNegotiationPremium, Mathf.Clamp01(social.Level / 20f));
+            return offered * (1f + premium);
+        }
+
         public static bool AcceptOffer(IntercolonyWorldComponent state, RecurringContract contract)
         {
-            if (contract == null || !contract.TryAccept())
+            return AcceptOffer(
+                state, contract, contract?.quantityPerCycle ?? 0,
+                contract?.fulfillment ?? FulfillmentMode.SellerDelivery, null);
+        }
+
+        /// <summary>
+        /// Accepts on terms the player adjusted: a slightly larger or smaller commitment, who
+        /// moves the goods, and whatever a negotiator argued the rate up to.
+        /// </summary>
+        public static bool AcceptOffer(
+            IntercolonyWorldComponent state,
+            RecurringContract contract,
+            int quantityPerCycle,
+            FulfillmentMode fulfillment,
+            Pawn negotiator)
+        {
+            if (contract == null)
             {
                 return false;
             }
+
+            // Settle the terms before the transition, so a refused acceptance cannot leave a
+            // still-offered agreement carrying terms the player only proposed.
+            int agreedQuantity = Mathf.Clamp(
+                quantityPerCycle,
+                MinAcceptableQuantity(contract),
+                MaxAcceptableQuantity(contract));
+            float agreedPrice = NegotiatedUnitPrice(contract, negotiator);
+
+            if (!contract.TryAccept())
+            {
+                return false;
+            }
+
+            contract.quantityPerCycle = agreedQuantity;
+            contract.fulfillment = fulfillment;
+            contract.unitPrice = agreedPrice;
 
             IntercolonyLog.Message(
                 $"Contract {contract.id} accepted: {contract.quantityPerCycle}x " +

@@ -2306,24 +2306,55 @@ namespace Intercolony
         {
             // §29's objective is that a commitment drives production planning, so the
             // confirmation states the ongoing obligation in those terms rather than just a price.
-            string body =
-                $"{contract.settlementName} wants {contract.quantityPerCycle}x " +
-                $"{contract.ItemLabel()} every {contract.CadenceDays:F0} days, " +
-                $"{contract.totalCycles} times.\n\n" +
-                $"Payment: {contract.CycleValue} silver per delivery, {contract.TotalValue} in total\n" +
-                $"Rate: {contract.unitPrice:F2} each — better than spot, because they are buying certainty\n\n" +
-                $"That is roughly {contract.quantityPerCycle / Mathf.Max(1f, contract.CadenceDays):F1} " +
-                "units per day of sustained output. Make sure you can hold that pace: missing " +
-                $"{RecurringContract.BreachThreshold} deliveries in a row ends the agreement and " +
-                "badly damages your standing with them.";
+            Map map = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            Pawn negotiator = TransitionService.BestNegotiator(map);
+            float negotiatedRate = ContractService.NegotiatedUnitPrice(contract, negotiator);
+            int offeredQuantity = contract.quantityPerCycle;
 
-            Find.WindowStack.Add(new Dialog_MessageBox(
-                body,
+            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
+                "Standing supply agreement",
                 "Accept agreement",
-                () => ContractService.AcceptOffer(state, contract),
-                "Decline",
-                () => contract.TryDecline("Declined by the player."),
-                "Standing supply agreement"));
+                ContractService.MaxAcceptableQuantity(contract),
+                (qty, fulfillment) =>
+                {
+                    int cycleValue = Mathf.RoundToInt(negotiatedRate * qty);
+                    string logistics = fulfillment == FulfillmentMode.BuyerPickup
+                        ? "They collect each delivery, so no caravan is needed — but the goods " +
+                          "must be ready and marked so every cycle."
+                        : "You deliver each cycle by caravan.";
+
+                    string negotiation = negotiator == null
+                        ? "No colonist was free to negotiate, so the rate is as offered."
+                        : $"Negotiated by {negotiator.LabelShortCap} " +
+                          $"(Social {negotiator.skills.GetSkill(SkillDefOf.Social).Level}): " +
+                          $"{contract.unitPrice:F2} → {negotiatedRate:F2} each.";
+
+                    string sizing = qty == offeredQuantity
+                        ? "This is the size they asked for."
+                        : qty > offeredQuantity
+                            ? $"You are offering {qty - offeredQuantity} more per cycle than they asked for."
+                            : $"You are committing to {offeredQuantity - qty} fewer per cycle than they asked for.";
+
+                    return $"{contract.settlementName} wants {offeredQuantity}x " +
+                           $"{contract.ItemLabel()} every {contract.CadenceDays:F0} days, " +
+                           $"{contract.totalCycles} times.\n\n" +
+                           $"{negotiation}\n\n" +
+                           $"Payment: {cycleValue} silver per delivery, " +
+                           $"{cycleValue * contract.totalCycles} in total\n" +
+                           $"Rate: {negotiatedRate:F2} each — better than spot, because they are " +
+                           "buying certainty\n\n" +
+                           $"{sizing} That is roughly " +
+                           $"{qty / Mathf.Max(1f, contract.CadenceDays):F1} units per day of " +
+                           "sustained output. Make sure you can hold that pace: missing " +
+                           $"{RecurringContract.BreachThreshold} deliveries in a row ends the " +
+                           "agreement and badly damages your standing with them.\n\n" +
+                           logistics;
+                },
+                (qty, fulfillment) =>
+                    ContractService.AcceptOffer(state, contract, qty, fulfillment, negotiator),
+                contract.fulfillment,
+                ContractService.MinAcceptableQuantity(contract),
+                "Per delivery:"));
         }
 
         private Vector2 relationsScroll;
