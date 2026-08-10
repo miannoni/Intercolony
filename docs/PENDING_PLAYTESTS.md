@@ -121,6 +121,62 @@ the exact pre-modification value rather than assuming it was `Buyable`.
 the test**: the test spawns an item, completes a sale and moves silver, then undoes all of it. If
 silver, letters or orders differ afterwards, the restoration is wrong even if every check passed.
 
+#### Animal specification, matcher and eligibility — `Run animal self-test`
+
+Added 2026-08-09 with the `AnimalSpec` slice (schema 25). **F12** → **orange bug icon** → type
+`Run animal self-test` → click **Intercolony → Run animal self-test**.
+
+**Pass.** No `FAIL` line, no red exception, and a zero failed count. The one assertion that matters
+most is that eligibility **rejects a humanlike outright** — several vanilla trade interfaces traffic
+in `Pawn` rather than "animal", and admitting a colonist here would be the worst defect this feature
+could have.
+
+**Read the `SKIPPED` lines, do not ignore them.** This test refuses to fabricate pawns, so most of it
+skips in a colony that lacks the right animals. A run that is *all* skips proves nothing. To get real
+coverage the colony needs, at minimum: a spawned animal, a sexed animal, a live-bearing (non
+egg-laying) race, two same-species animals differing in sex, a humanlike pawn, and ideally an active
+Intercolony employee. A muffalo or alpaca herd plus any colonist covers most of it.
+
+**Failure.** Any `FAIL`, any red exception, or the humanlike assertion reporting `SKIPPED` when a
+colonist is plainly standing on the map — that last one means discovery is not finding humanlikes,
+which is worse than a failed assertion.
+
+#### Which colony a buyer collects from — `Run order self-test`
+
+Added 2026-08-09 with the fulfilment-colony fix (schema 26). Same action as the availability checks.
+
+**Pass.** Mark Ready records the map it was called on, and an order with no recorded map still
+completes through the fallback.
+
+**This is deliberately not fully testable in a one-colony world**, and the test says so rather than
+faking it: the assertion that collection uses the order's *recorded* map instead of
+`Find.AnyPlayerHomeMap` emits an explicit `SKIPPED` line when only one home map exists, because with
+one colony the two values are identical and the assertion would pass vacuously. **Seeing that
+`SKIPPED` is the correct result in a single-colony save.** The real proof is the play-test below.
+
+### The buyer-pickup colony fix needs two colonies
+
+Added 2026-08-09. This is the only way to actually prove the bug is gone, and a self-test cannot do
+it. **It is also a reproduction of a real 0.9.0 defect**, so it is worth doing even casually.
+
+**Setup.** A save with **two** player colonies. Note which was founded first — that is the one the
+old code always used. Put the goods for the order in the stockpile of the **second** colony, and make
+sure the first colony has **none** of that item.
+
+**Steps.** Switch to the second colony. Open **Intercolony** → **Selling**, take a buyer-pickup order
+for an item stocked there, and click **Mark ready**. Let the buyer travel and arrive.
+
+**Pass.** The order completes and the goods leave the **second** colony's stockpile. Player.log
+records the completion normally.
+
+**Failure — and this is exactly what 0.9.0 does:** the order fails with "The buyer arrived and the
+goods were not there" even though the goods are plainly sitting in the second colony, or the goods
+vanish from the *first* colony instead. Either result means the fix did not take.
+
+**Also worth trying once:** abandon the colony an order was marked ready on, then let the buyer
+arrive. It should fall back rather than throw. Both a same-session abandonment and one across a
+save/reload are covered by different guards, so ideally test both.
+
 ### The buy-only setting itself has never been seen
 
 Added 2026-08-09. The code path is asserted by the self-test above; the **player-facing control has

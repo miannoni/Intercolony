@@ -91,8 +91,18 @@ Target framework is `net472`.
 **Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. The post-0.9.0
 playtest-correction batch landed on 2026-08-09: A1–A5, B1–B3, B5/B5b, C0–C2, the D1 research spike
 and **B4** (buy-only items are now an opt-in, default-off setting; see the decision log). Only
-D2/D3 — animal trade — remain, and they are specified rather than blocked. Save schema remains 24.
-Next: continue beta corrections in point releases; there is no Phase 27 plan yet.
+D2/D3 — animal trade — remain, and they are specified rather than blocked. **Save schema is now 26**
+(24→25 animal specifications, 25→26 sales-order fulfilment colony). Next: continue beta corrections
+in point releases; there is no Phase 27 plan yet.
+
+**A real 0.9.0 defect was found and fixed on 2026-08-09: buyer pickup collected from the wrong
+colony.** Mark Ready validated against `Find.CurrentMap` while collection used
+`Find.AnyPlayerHomeMap` — the *first* player home map, not the relevant one — and `SalesOrder`
+persisted no map at all. With two or more colonies the order either failed with "the goods were not
+there" while they sat where the player left them, or took stock from the wrong base. `SalesOrder`
+now persists its fulfilment colony, following the `EmploymentContract.destinationMap` idiom.
+**`PurchaseOrderService` has the identical latent flaw at its delivery and refund sites and was
+deliberately left alone** — it is its own fix, and it is in `docs/BACKLOG.md`.
 
 **Nothing in that batch has been played.** Every slice added self-test assertions through real
 production paths and **not one has been executed** — they are debug actions needing a human click.

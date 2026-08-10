@@ -126,6 +126,31 @@ who has traded once. It belongs in a point release with any other beta UX findin
 
 ---
 
+## Procurement delivers and refunds to the wrong colony
+
+**Added 2026-08-09.** The same defect that was just fixed for sales orders, still live in
+procurement. `PurchaseOrderService` delivers purchased goods at
+`Find.AnyPlayerHomeMap` (`PurchaseOrderService.cs:180`) and refunds a cancelled or defaulted order to
+the same place (`:280`). `Find.AnyPlayerHomeMap` returns the **first** map with `IsPlayerHome`, not
+the colony that placed the order — and `PurchaseOrder` persists no map.
+
+**Severity: real, not cosmetic, in a multi-colony game.** Goods you paid for arrive at the wrong
+base, and a refund lands somewhere you may not be. Single-colony games are unaffected, which is why
+it has gone unnoticed. Unlike the sales-order case there is no "goods were not there" failure to
+alert the player — delivery to the wrong colony succeeds silently, which is arguably worse.
+
+**The fix is already written, next door.** `SalesOrder.fulfillmentMap` (commit `25a5308`) follows
+`EmploymentContract.destinationMap`: persist the map with `Scribe_References`, record it where the
+order is bound to a colony, resolve per record at use, fall back when null, and check membership in
+`Find.Maps` to catch a map abandoned mid-session. Apply the same shape to `PurchaseOrder`. It needs
+its own schema bump.
+
+**Why it was deferred.** It was found while fixing the sales-order half. Folding it in would have
+made one revertable commit into two unrelated changes to different subsystems. It is a small,
+well-understood, self-contained fix — good candidate for the next point release.
+
+---
+
 ## Rejected or superseded
 
 *(nothing yet)*
