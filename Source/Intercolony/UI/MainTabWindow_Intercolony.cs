@@ -62,7 +62,15 @@ namespace Intercolony
             Market,
             Orders,
             FindBuyer,
-            Procurement,
+
+            // Procurement mirrors selling one for one, so the two directions of the same
+            // business read the same way. Two of the four are placeholders on purpose: an
+            // empty seat that says "not yet" is more honest than a missing one.
+            SupplierMarket,
+            FindSeller,
+            PurchaseOrders,
+            SupplyContracts,
+
             Labor,
             Contracts,
             Relations
@@ -83,6 +91,9 @@ namespace Intercolony
 
         private Tab tab = Tab.Business;
         private Tab sellingTab = Tab.Market;
+
+        // Find seller rather than the supplier market, because the market does not exist yet.
+        private Tab procurementTab = Tab.FindSeller;
 
         // A page is latched off after a failure because DoWindowContents runs every frame; retrying
         // immediately would recreate both the exception and any half-finished GUI state forever.
@@ -252,9 +263,21 @@ namespace Intercolony
                 return;
             }
 
-            if (tab == Tab.Procurement)
+            if (tab == Tab.FindSeller)
             {
-                DrawProcurement(inRect, state);
+                DrawFindSeller(inRect, state);
+                return;
+            }
+
+            if (tab == Tab.PurchaseOrders)
+            {
+                DrawProcurementOrders(inRect, state);
+                return;
+            }
+
+            if (IsPlaceholderTab(tab))
+            {
+                DrawPlaceholderPage(inRect, tab, state);
                 return;
             }
 
@@ -361,6 +384,24 @@ namespace Intercolony
             Tab.Contracts,
         };
 
+        /// <summary>Deliberately the same shape and order as selling's.</summary>
+        private static readonly Tab[] ProcurementTabOrder =
+        {
+            Tab.SupplierMarket,
+            Tab.FindSeller,
+            Tab.PurchaseOrders,
+            Tab.SupplyContracts,
+        };
+
+        /// <summary>
+        /// Pages that exist as a seat at the table and nothing more. They are drawn disabled
+        /// with a tooltip saying so, because a tab that silently does nothing reads as broken.
+        /// </summary>
+        private static bool IsPlaceholderTab(Tab which)
+        {
+            return which == Tab.SupplierMarket || which == Tab.SupplyContracts;
+        }
+
         /// <summary>Tab caption, including a count badge where one is useful.</summary>
         private static string TabLabel(Tab which, IntercolonyWorldComponent state)
         {
@@ -375,9 +416,6 @@ namespace Intercolony
                     return orders > 0 ? $"Orders ({orders})" : "Orders";
                 case Tab.FindBuyer:
                     return "Find buyer";
-                case Tab.Procurement:
-                    int requests = state.OpenRequestCount;
-                    return requests > 0 ? $"Procurement ({requests})" : "Procurement";
                 case Tab.Labor:
                     // An unpaid-wages badge on the tab itself, because §39's escalation is only
                     // playable if the player notices it without going looking.
@@ -400,9 +438,33 @@ namespace Intercolony
                 case Tab.Contracts:
                     int contracts = state.ActiveContractCount;
                     return contracts > 0 ? $"Contracts ({contracts})" : "Contracts";
+                case Tab.SupplierMarket:
+                    return "Market";
+                case Tab.FindSeller:
+                    return "Find seller";
+                case Tab.PurchaseOrders:
+                    int purchases = OpenPurchaseCount(state);
+                    return purchases > 0 ? $"Orders ({purchases})" : "Orders";
+                case Tab.SupplyContracts:
+                    return "Contracts";
                 default:
                     return which.ToString();
             }
+        }
+
+        private static int OpenPurchaseCount(IntercolonyWorldComponent state)
+        {
+            int open = 0;
+            List<PurchaseOrder> orders = state?.PurchaseOrders;
+            for (int i = 0; orders != null && i < orders.Count; i++)
+            {
+                if (orders[i] != null && orders[i].IsOpen)
+                {
+                    open++;
+                }
+            }
+
+            return open;
         }
 
         private static TabGroup GroupFor(Tab which)
@@ -414,7 +476,10 @@ namespace Intercolony
                 case Tab.Orders:
                 case Tab.Contracts:
                     return TabGroup.Selling;
-                case Tab.Procurement:
+                case Tab.SupplierMarket:
+                case Tab.FindSeller:
+                case Tab.PurchaseOrders:
+                case Tab.SupplyContracts:
                     return TabGroup.Procurement;
                 case Tab.Labor:
                     return TabGroup.Labor;
@@ -434,7 +499,9 @@ namespace Intercolony
                     int selling = state.OpenOrderCount + state.ActiveContractCount;
                     return selling > 0 ? $"Selling ({selling})" : "Selling";
                 case TabGroup.Procurement:
-                    return TabLabel(Tab.Procurement, state);
+                    // Mirrors selling's badge: open requests plus purchases already placed.
+                    int procurement = state.OpenRequestCount + OpenPurchaseCount(state);
+                    return procurement > 0 ? $"Procurement ({procurement})" : "Procurement";
                 case TabGroup.Labor:
                     return TabLabel(Tab.Labor, state);
                 case TabGroup.Relations:
@@ -475,33 +542,50 @@ namespace Intercolony
             float consumedHeight = ButtonHeight + RowSpacing;
             if (GroupFor(tab) == TabGroup.Selling)
             {
-                DrawSellingTabs(
-                    new Rect(inRect.x, consumedHeight, inRect.width, ButtonHeight), state);
+                DrawSubTabs(
+                    new Rect(inRect.x, consumedHeight, inRect.width, ButtonHeight),
+                    SellingTabOrder, state);
+                consumedHeight += ButtonHeight + RowSpacing;
+            }
+            else if (GroupFor(tab) == TabGroup.Procurement)
+            {
+                DrawSubTabs(
+                    new Rect(inRect.x, consumedHeight, inRect.width, ButtonHeight),
+                    ProcurementTabOrder, state);
                 consumedHeight += ButtonHeight + RowSpacing;
             }
 
             return consumedHeight;
         }
 
-        private void DrawSellingTabs(Rect rect, IntercolonyWorldComponent state)
+        private void DrawSubTabs(Rect rect, Tab[] order, IntercolonyWorldComponent state)
         {
             const float Gap = 4f;
 
-            string[] labels = new string[SellingTabOrder.Length];
-            for (int i = 0; i < SellingTabOrder.Length; i++)
+            string[] labels = new string[order.Length];
+            for (int i = 0; i < order.Length; i++)
             {
-                labels[i] = TabLabel(SellingTabOrder[i], state);
+                labels[i] = TabLabel(order[i], state);
             }
 
             float[] widths = MeasureTabWidths(rect.width, labels, Gap);
             float x = rect.x;
-            for (int i = 0; i < SellingTabOrder.Length; i++)
+            for (int i = 0; i < order.Length; i++)
             {
-                Tab which = SellingTabOrder[i];
+                Tab which = order[i];
                 Rect buttonRect = new Rect(x, rect.y, widths[i], rect.height);
-                if (Widgets.ButtonText(buttonRect, labels[i], drawBackground: tab != which))
+                bool placeholder = IsPlaceholderTab(which);
+
+                if (Widgets.ButtonText(
+                        buttonRect, labels[i], drawBackground: tab != which,
+                        active: !placeholder) && !placeholder)
                 {
                     SelectTab(which, state);
+                }
+
+                if (placeholder && ShouldBuildTooltip(buttonRect))
+                {
+                    TooltipHandler.TipRegion(buttonRect, "Under development.");
                 }
 
                 x += widths[i] + Gap;
@@ -543,7 +627,7 @@ namespace Intercolony
                     SelectTab(sellingTab, state);
                     break;
                 case TabGroup.Procurement:
-                    SelectTab(Tab.Procurement, state);
+                    SelectTab(procurementTab, state);
                     break;
                 case TabGroup.Labor:
                     SelectTab(Tab.Labor, state);
@@ -564,6 +648,11 @@ namespace Intercolony
             if (GroupFor(which) == TabGroup.Selling)
             {
                 sellingTab = which;
+            }
+
+            if (GroupFor(which) == TabGroup.Procurement && !IsPlaceholderTab(which))
+            {
+                procurementTab = which;
             }
 
             if (which == Tab.FindBuyer)
@@ -1819,12 +1908,80 @@ namespace Intercolony
         /// Procurement (DESIGN.md §19, §55, §103). Requests with their quotes underneath, so
         /// comparing suppliers is a matter of reading down a list rather than clicking through.
         /// </summary>
-        private void DrawProcurement(Rect inRect, IntercolonyWorldComponent state)
+        /// <summary>
+        /// A page that exists so the shape of procurement matches the shape of selling, and
+        /// says outright that it is not built yet. Better than omitting the tab, which would
+        /// leave the two halves of the same business looking arbitrarily different.
+        /// </summary>
+        private void DrawPlaceholderPage(
+            Rect inRect, Tab which, IntercolonyWorldComponent state)
         {
             float y = inRect.y;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, inRect.width - 200f, 34f), "Procurement");
+            Widgets.Label(new Rect(0f, y, inRect.width, 34f), TabLabel(which, state));
+            Text.Font = GameFont.Small;
+            y += 40f;
+
+            string body = which == Tab.SupplierMarket
+                ? "Under development.\n\nToday you ask settlements for what you need and they " +
+                  "answer. A supplier market would work the other way around: standing offers " +
+                  "you can browse and take, the way the selling Market already works."
+                : "Under development.\n\nA procurement contract would be a standing agreement " +
+                  "to buy — the mirror of the supply agreements you already offer, with a " +
+                  "settlement committing to deliver on a cadence rather than one order at a time.";
+
+            GUI.color = Color.gray;
+            Widgets.Label(new Rect(0f, y, Mathf.Min(inRect.width, 560f), inRect.height - y), body);
+            GUI.color = Color.white;
+        }
+
+        /// <summary>Purchases already placed. The procurement mirror of the Orders page.</summary>
+        private void DrawProcurementOrders(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, inRect.width, 34f), "Purchase orders");
+            Text.Font = GameFont.Small;
+            y += 40f;
+
+            List<PurchaseOrder> purchaseOrders =
+                SelectPurchaseOrdersForDisplay(state.PurchaseOrders);
+
+            float contentHeight = PurchaseOrdersHeight(purchaseOrders);
+            if (purchaseOrders.Count == 0)
+            {
+                contentHeight += 70f;
+            }
+
+            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            Rect viewRect = new Rect(
+                0f, 0f, inRect.width - 16f, Mathf.Max(contentHeight, outRect.height));
+
+            BeginPageScrollView(outRect, ref procurementOrdersScroll, viewRect);
+            float rowY = DrawPurchaseOrders(viewRect.width, 0f, purchaseOrders);
+            if (purchaseOrders.Count == 0)
+            {
+                GUI.color = Color.gray;
+                Widgets.Label(new Rect(0f, rowY, viewRect.width, 70f),
+                    "Nothing on order.\n\n" +
+                    "Accept a supplier's quotation on Find seller and the purchase appears here " +
+                    "until it arrives.");
+                GUI.color = Color.white;
+            }
+
+            EndPageScrollView();
+        }
+
+        private Vector2 procurementOrdersScroll;
+
+        private void DrawFindSeller(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, inRect.width - 200f, 34f), "Find seller");
             Text.Font = GameFont.Small;
 
             Rect newRect = new Rect(inRect.width - 190f, y + 2f, 180f, 30f);
@@ -1834,8 +1991,6 @@ namespace Intercolony
             }
 
             y += 40f;
-
-            List<PurchaseOrder> purchaseOrders = SelectPurchaseOrdersForDisplay(state.PurchaseOrders);
 
             List<PurchaseRequest> requests = new List<PurchaseRequest>(state.Requests);
             requests.Sort((a, b) =>
@@ -1848,7 +2003,7 @@ namespace Intercolony
                 return b.id.CompareTo(a.id);
             });
 
-            float contentHeight = PurchaseOrdersHeight(purchaseOrders);
+            float contentHeight = 0f;
             foreach (PurchaseRequest request in requests)
             {
                 contentHeight += RequestBlockHeight(request);
@@ -1864,7 +2019,7 @@ namespace Intercolony
                 0f, 0f, inRect.width - 16f, Mathf.Max(contentHeight, outRect.height));
 
             BeginPageScrollView(outRect, ref procurementScroll, viewRect);
-            float rowY = DrawPurchaseOrders(viewRect.width, 0f, purchaseOrders);
+            float rowY = 0f;
             if (requests.Count == 0)
             {
                 GUI.color = Color.gray;
