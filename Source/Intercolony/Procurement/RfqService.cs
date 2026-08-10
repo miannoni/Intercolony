@@ -35,6 +35,19 @@ namespace Intercolony
             ProcurementFulfillmentPreference fulfillmentPreference =
                 ProcurementFulfillmentPreference.Either)
         {
+            return CreateRequest(state, def, stuff, quantity, desiredDays, fulfillmentPreference, null);
+        }
+
+        /// <summary>Creates a request carrying an animal promise when supplied.</summary>
+        public static PurchaseRequest CreateRequest(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            int quantity,
+            int desiredDays,
+            ProcurementFulfillmentPreference fulfillmentPreference,
+            AnimalSpec animalSpec)
+        {
             if (state == null || def == null || quantity <= 0)
             {
                 return null;
@@ -50,7 +63,8 @@ namespace Intercolony
                 createdTick = GenTicks.TicksGame,
                 expiryTick = GenTicks.TicksGame + RequestLifespanDays * GenDate.TicksPerDay,
                 status = PurchaseRequestStatus.Open,
-                fulfillmentPreference = fulfillmentPreference
+                fulfillmentPreference = fulfillmentPreference,
+                animalSpec = animalSpec?.Copy()
             };
 
             GenerateResponses(state, request);
@@ -90,7 +104,9 @@ namespace Intercolony
                 return;
             }
 
-            IntercolonyProductCategory? category = IntercolonyProductClassifier.Classify(request.thingDef);
+            IntercolonyProductCategory? category = request.IsAnimalOrder
+                ? IntercolonyProductCategory.Commodities
+                : IntercolonyProductClassifier.Classify(request.thingDef);
             if (!category.HasValue)
             {
                 request.noResponseReason = "nobody trades this";
@@ -204,8 +220,12 @@ namespace Intercolony
             // afterwards meant a supplier could offer a gold bed and charge the price of a
             // stuffless one — 120 silver for several hundred silver of gold, which is a money
             // exploit by way of the deconstruct button.
-            ThingDef offeredStuff = request.stuffDef ?? PickSupplierStuff(request.thingDef);
-            QualityCategory? offeredQuality = PickOfferedQuality(request.thingDef, profile);
+            ThingDef offeredStuff = request.IsAnimalOrder
+                ? null
+                : request.stuffDef ?? PickSupplierStuff(request.thingDef);
+            QualityCategory? offeredQuality = request.IsAnimalOrder
+                ? (QualityCategory?)null
+                : PickOfferedQuality(request.thingDef, profile);
 
             int offered = OfferedQuantity(request, offeredStuff, profile, supply);
             if (offered <= 0)
@@ -225,6 +245,7 @@ namespace Intercolony
             {
                 offeredQuality = offeredQuality,
                 offeredStuff = offeredStuff,
+                animalSpec = request.animalSpec?.Copy(),
                 settlementId = settlement.ID,
                 settlementName = settlement.Label ?? "unnamed",
                 factionName = settlement.Faction?.Name ?? "",
@@ -313,7 +334,9 @@ namespace Intercolony
             PurchaseRequest request, ThingDef stuff, SettlementEconomicProfile profile, float supply)
         {
             float capacity = SupplyCapacity(profile.wealthTier) * supply;
-            float unitValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(request.thingDef, stuff));
+            float unitValue = Mathf.Max(0.4f, request.IsAnimalOrder
+                ? IntercolonyPricing.BaseValue(request.thingDef, null, request.animalSpec)
+                : IntercolonyPricing.BaseValue(request.thingDef, stuff));
             int affordable = Mathf.RoundToInt(capacity / unitValue);
 
             // Crated goods and single-stack items are produced, not stockpiled in bulk.
@@ -375,11 +398,13 @@ namespace Intercolony
             out string explanation)
         {
             List<PriceFactor> factors = new List<PriceFactor>();
-            float baseValue = IntercolonyPricing.BaseValue(request.thingDef, stuff);
+            float baseValue = request.IsAnimalOrder
+                ? IntercolonyPricing.BaseValue(request.thingDef, null, request.animalSpec)
+                : IntercolonyPricing.BaseValue(request.thingDef, stuff);
 
             // Better craftsmanship costs more, the same way a quality floor does on the sell
             // side. Without this a supplier could offer Excellent work at Normal prices.
-            if (quality.HasValue)
+            if (!request.IsAnimalOrder && quality.HasValue)
             {
                 factors.Add(new PriceFactor(
                     $"{quality.Value.GetLabel()} workmanship", QualityCostFactor(quality.Value)));
@@ -414,8 +439,11 @@ namespace Intercolony
             }
 
             price = Mathf.Max(0.01f, price);
-            explanation = IntercolonyPricing.Explain(
-                request.thingDef, stuff, request.quantityRequested, price, factors);
+            explanation = request.IsAnimalOrder
+                ? IntercolonyPricing.Explain(request.thingDef, null, request.animalSpec,
+                    request.quantityRequested, price, factors)
+                : IntercolonyPricing.Explain(
+                    request.thingDef, stuff, request.quantityRequested, price, factors);
             return price;
         }
 

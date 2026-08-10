@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
@@ -7,19 +8,31 @@ using Verse.Sound;
 namespace Intercolony
 {
     /// <summary>
-    /// Item selection for a purchase request (DESIGN.md §19, §103 "item selection; quantity").
-    ///
-    /// A searchable list rather than a float menu: there are 400+ tradable defs, and a nested
-    /// menu of that size is unusable. §19 is explicit that the purchase side is "deliberately
-    /// not a store catalog" — the player states a need, so this asks for exactly that.
+    /// Goods and animal selection for a purchase request (DESIGN.md §19, §103).
+    /// Animals use their own cached discovery path; they never enter the goods classifier.
     /// </summary>
     public class Dialog_CreateRequest : Window
     {
+        private const float ChoiceGap = 8f;
+        private const float RowHeight = 26f;
+        private const float BottomControlsHeight = 184f;
+
+        private static List<ThingDef> offerableAnimalRaces;
+        private static Dictionary<ThingDef, List<PawnKindDef>> offerableKindsByRace;
+        private static readonly SettlementEconomicProfile AnimalPreviewProfile = CreatePreviewProfile();
+
         private readonly IntercolonyWorldComponent state;
 
+        private bool animalMode;
         private string searchText = "";
-        private Vector2 scroll;
+        private Vector2 listScroll;
+        private Vector2 animalControlsScroll;
         private ThingDef selected;
+        private AnimalSpec animalSpec = new AnimalSpec();
+        private List<PawnKindDef> selectedKinds = new List<PawnKindDef>();
+        private List<LifeStageDef> selectedLifeStages = new List<LifeStageDef>();
+        private bool selectedPregnancyCapable;
+
         private string quantityBuffer = "40";
         private int quantity = 40;
         private string deadlineBuffer = "15";
@@ -38,56 +51,235 @@ namespace Intercolony
             absorbInputAroundWindow = true;
         }
 
-        public override Vector2 InitialSize => new Vector2(560f, 620f);
+        // The height stays at the existing scale-tested value. The extra width makes room for
+        // a separately scrolling animal specification pane without pushing the fixed actions down.
+        public override Vector2 InitialSize => new Vector2(820f, 620f);
+
+        /// <summary>
+        /// Animal races the player may ask a supplier to sell. Built once because this dialog
+        /// draws on every GUI event; the companion kind index is built in the same pass.
+        /// </summary>
+        internal static List<ThingDef> OfferableAnimalRaces()
+        {
+            if (offerableAnimalRaces != null)
+            {
+                return offerableAnimalRaces;
+            }
+
+            offerableAnimalRaces = new List<ThingDef>();
+            offerableKindsByRace = new Dictionary<ThingDef, List<PawnKindDef>>();
+
+            foreach (PawnKindDef kind in DefDatabase<PawnKindDef>.AllDefsListForReading)
+            {
+                if (kind?.race == null)
+                {
+                    continue;
+                }
+
+                if (!offerableKindsByRace.TryGetValue(kind.race, out List<PawnKindDef> kinds))
+                {
+                    kinds = new List<PawnKindDef>();
+                    offerableKindsByRace.Add(kind.race, kinds);
+                }
+
+                kinds.Add(kind);
+            }
+
+            foreach (ThingDef race in DefDatabase<ThingDef>.AllDefsListForReading)
+            {
+                if (race?.category != ThingCategory.Pawn || race.race == null ||
+                    !race.race.Animal || race.race.Humanlike || race.BaseMarketValue <= 0f ||
+                    IntercolonyTradeBlacklist.IsBlacklisted(race) ||
+                    !race.tradeability.TraderCanSell() ||
+                    !offerableKindsByRace.TryGetValue(race, out List<PawnKindDef> kinds) ||
+                    kinds.Count == 0)
+                {
+                    continue;
+                }
+
+                kinds.Sort(CompareDefLabels);
+                offerableAnimalRaces.Add(race);
+            }
+
+            offerableAnimalRaces.Sort(CompareDefLabels);
+            return offerableAnimalRaces;
+        }
+
+        internal static List<PawnKindDef> OfferableKinds(ThingDef race)
+        {
+            OfferableAnimalRaces();
+            return race != null &&
+                   offerableKindsByRace.TryGetValue(race, out List<PawnKindDef> kinds)
+                ? kinds
+                : new List<PawnKindDef>();
+        }
+
+        /// <summary>
+        /// Life stages are race-local. Repeated references to the same def in one race are
+        /// omitted because AnimalSpec cannot unambiguously promise one of them.
+        /// </summary>
+        internal static List<LifeStageDef> UnambiguousLifeStages(ThingDef race)
+        {
+            List<LifeStageDef> result = new List<LifeStageDef>();
+            List<LifeStageAge> ages = race?.race?.lifeStageAges;
+            if (ages == null)
+            {
+                return result;
+            }
+
+            foreach (LifeStageAge age in ages)
+            {
+                LifeStageDef stage = age?.def;
+                if (stage == null || result.Contains(stage))
+                {
+                    continue;
+                }
+
+                int occurrences = 0;
+                foreach (LifeStageAge candidate in ages)
+                {
+                    if (candidate?.def == stage)
+                    {
+                        occurrences++;
+                    }
+                }
+
+                if (occurrences == 1)
+                {
+                    result.Add(stage);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Uses AnimalSpec's capability validation and adds the UI dependency that pregnancy
+        /// can only be requested after the player has explicitly chosen female.
+        /// </summary>
+        internal static bool PregnancyOfferable(ThingDef race, Gender? gender)
+        {
+            return gender == Gender.Female &&
+                   new AnimalSpec { pregnant = true }.TryValidateFor(
+                       race, requireKind: false, out _);
+        }
+
+        /// <summary>Clears terms made incoherent by a race, sex, or pregnancy change.</summary>
+        internal static void NormalizeAnimalSpec(ThingDef race, AnimalSpec spec)
+        {
+            if (spec == null)
+            {
+                return;
+            }
+
+            List<PawnKindDef> kinds = OfferableKinds(race);
+            if (kinds.Count > 0 && !kinds.Contains(spec.kind))
+            {
+                // Generation promises always need an exact kind. Multi-kind races still expose
+                // the chooser, but start from a valid deterministic default.
+                spec.kind = kinds[0];
+            }
+            else if (kinds.Count == 0)
+            {
+                spec.kind = null;
+            }
+
+            if (!UnambiguousLifeStages(race).Contains(spec.lifeStage))
+            {
+                spec.lifeStage = null;
+            }
+
+            if (!PregnancyOfferable(race, spec.gender))
+            {
+                spec.pregnant = null;
+                spec.minGestationProgress = null;
+            }
+            else if (spec.pregnant != true)
+            {
+                spec.minGestationProgress = null;
+            }
+        }
 
         public override void DoWindowContents(Rect inRect)
         {
             float y = 0f;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, inRect.width, 34f), "Request goods");
-            y += 38f;
+            Widgets.Label(new Rect(0f, y, inRect.width, 30f),
+                animalMode ? "Request animals" : "Request goods");
+            y += 34f;
             Text.Font = GameFont.Small;
 
+            string introduction = animalMode
+                ? "Choose a species and state only the traits a supplier must guarantee."
+                : "State what you need. Suppliers may answer with full or partial quotes — or not at all.";
+            float introductionHeight = Text.CalcHeight(introduction, inRect.width);
             GUI.color = new Color(1f, 1f, 1f, 0.7f);
-            Widgets.Label(new Rect(0f, y, inRect.width, 40f),
-                "State what you need. Suppliers may answer with full or partial quotes — or not at all.");
+            Widgets.Label(new Rect(0f, y, inRect.width, introductionHeight), introduction);
             GUI.color = Color.white;
-            y += 42f;
+            y += introductionHeight + 6f;
 
-            Rect searchRect = new Rect(0f, y, inRect.width, 28f);
-            string newSearch = Widgets.TextField(searchRect, searchText);
+            const float modeWidth = 128f;
+            DrawModeChoice(new Rect(0f, y, modeWidth, 28f), "Goods", animal: false);
+            DrawModeChoice(new Rect(modeWidth + ChoiceGap, y, modeWidth, 28f),
+                "Animals", animal: true);
+            y += 34f;
+
+            string newSearch = Widgets.TextField(new Rect(0f, y, inRect.width, 28f), searchText);
             if (newSearch != searchText)
             {
                 searchText = newSearch;
                 cachedMatches = null;
             }
-
             y += 34f;
 
-            const float BottomControlsHeight = 168f;
-            const float ItemRowHeight = 26f;
             float controlsTop = inRect.height - BottomControlsHeight;
+            Rect candidatesRect;
+            if (animalMode)
+            {
+                float candidateWidth = Mathf.Floor(inRect.width * 0.42f);
+                candidatesRect = new Rect(0f, y, candidateWidth, controlsTop - y - 8f);
+                Rect specificationRect = new Rect(
+                    candidateWidth + 10f, y, inRect.width - candidateWidth - 10f,
+                    controlsTop - y - 8f);
+                DrawCandidates(candidatesRect);
+                DrawAnimalSpecification(specificationRect);
+            }
+            else
+            {
+                candidatesRect = new Rect(0f, y, inRect.width, controlsTop - y - 8f);
+                DrawCandidates(candidatesRect);
+            }
 
+            DrawBottomControls(new Rect(
+                0f, controlsTop, inRect.width, BottomControlsHeight));
+        }
+
+        private void DrawCandidates(Rect rect)
+        {
             List<ThingDef> matches = Matches();
-            float availableListHeight = controlsTop - y - 8f;
-            float listHeight = Mathf.Floor(availableListHeight / ItemRowHeight) * ItemRowHeight;
-            Rect listRect = new Rect(0f, y, inRect.width, listHeight);
             Rect viewRect = new Rect(
-                0f, 0f, listRect.width - 16f, matches.Count * ItemRowHeight);
+                0f, 0f, rect.width - 16f,
+                Mathf.Max(rect.height, matches.Count * RowHeight));
 
-            Widgets.BeginScrollView(listRect, ref scroll, viewRect);
+            Widgets.BeginScrollView(rect, ref listScroll, viewRect);
             float rowY = 0f;
             foreach (ThingDef def in matches)
             {
-                Rect row = new Rect(0f, rowY, viewRect.width, ItemRowHeight);
+                Rect row = new Rect(0f, rowY, viewRect.width, RowHeight);
                 if (selected == def)
                 {
                     Widgets.DrawHighlightSelected(row);
                 }
 
                 Widgets.DrawHighlightIfMouseover(row);
-                Widgets.Label(new Rect(row.x + 4f, row.y + 2f, row.width - 90f, 24f), def.LabelCap);
+                Rect labelRect = new Rect(row.x + 4f, row.y + 2f, row.width - 90f, 24f);
+                string label = def.LabelCap.ToString();
+                Widgets.LabelEllipses(labelRect, label);
+                if (Text.CalcSize(label).x > labelRect.width)
+                {
+                    TooltipHandler.TipRegion(labelRect, label);
+                }
 
                 GUI.color = new Color(1f, 1f, 1f, 0.5f);
                 Widgets.Label(new Rect(row.xMax - 84f, row.y + 2f, 80f, 24f),
@@ -96,65 +288,350 @@ namespace Intercolony
 
                 if (Widgets.ButtonInvisible(row))
                 {
-                    selected = def;
+                    if (animalMode)
+                    {
+                        SelectAnimal(def);
+                    }
+                    else
+                    {
+                        selected = def;
+                    }
                 }
 
-                rowY += ItemRowHeight;
+                rowY += RowHeight;
+            }
+            Widgets.EndScrollView();
+        }
+
+        private void DrawAnimalSpecification(Rect rect)
+        {
+            if (selected == null)
+            {
+                string prompt = "Select a species to set its animal specification.";
+                float promptHeight = Text.CalcHeight(prompt, rect.width);
+                GUI.color = new Color(1f, 1f, 1f, 0.6f);
+                Widgets.Label(new Rect(rect.x, rect.y, rect.width, promptHeight), prompt);
+                GUI.color = Color.white;
+                return;
+            }
+
+            float contentWidth = rect.width - 16f;
+            float contentHeight = AnimalSpecificationHeight(contentWidth);
+            Rect viewRect = new Rect(0f, 0f, contentWidth, Mathf.Max(rect.height, contentHeight));
+            Widgets.BeginScrollView(rect, ref animalControlsScroll, viewRect);
+
+            float y = 0f;
+            string speciesLabel = $"Specification for {selected.LabelCap}";
+            Text.Font = GameFont.Medium;
+            float speciesHeight = Text.CalcHeight(speciesLabel, contentWidth);
+            Widgets.Label(new Rect(0f, y, contentWidth, speciesHeight), speciesLabel);
+            y += speciesHeight + 8f;
+            Text.Font = GameFont.Small;
+
+            if (selectedKinds.Count > 1)
+            {
+                y = DrawSelector(
+                    y, contentWidth, "Kind", animalSpec.kind?.LabelCap.ToString() ?? "Choose a kind",
+                    () => ChooseKind(selectedKinds));
+            }
+
+            Widgets.Label(new Rect(0f, y, contentWidth, 22f), "Sex:");
+            y += 22f;
+            DrawGenderChoices(new Rect(0f, y, contentWidth, 28f));
+            y += 36f;
+
+            if (selectedLifeStages.Count > 0)
+            {
+                y = DrawSelector(
+                    y, contentWidth, "Life stage",
+                    animalSpec.lifeStage?.LabelCap.ToString() ?? "Any life stage",
+                    () => ChooseLifeStage(selectedLifeStages));
+            }
+            else
+            {
+                string noStages = "Life stage: Any (this race has no unambiguous stage choice)";
+                float noStagesHeight = Text.CalcHeight(noStages, contentWidth);
+                Widgets.Label(new Rect(0f, y, contentWidth, noStagesHeight), noStages);
+                y += noStagesHeight + 8f;
+            }
+
+            if (selectedPregnancyCapable && animalSpec.gender == Gender.Female)
+            {
+                Widgets.Label(new Rect(0f, y, contentWidth, 22f), "Pregnancy:");
+                y += 22f;
+                DrawPregnancyChoices(new Rect(0f, y, contentWidth, 28f));
+                y += 36f;
+            }
+
+            bool healthEnabled = animalSpec.minHealthFraction.HasValue;
+            bool previousHealthEnabled = healthEnabled;
+            string healthLabel = healthEnabled
+                ? $"Minimum health: {Mathf.RoundToInt(animalSpec.minHealthFraction.Value * 100f)}%"
+                : "Minimum health: Any";
+            Widgets.CheckboxLabeled(
+                new Rect(0f, y, contentWidth, 28f), healthLabel, ref healthEnabled);
+            if (healthEnabled != previousHealthEnabled)
+            {
+                animalSpec.minHealthFraction = healthEnabled ? 0.75f : (float?)null;
+            }
+            y += 28f;
+            if (animalSpec.minHealthFraction.HasValue)
+            {
+                animalSpec.minHealthFraction = Widgets.HorizontalSlider(
+                    new Rect(0f, y, contentWidth, 20f),
+                    animalSpec.minHealthFraction.Value, 0f, 1f, roundTo: 0.01f);
+                y += 28f;
+            }
+
+            if (animalSpec.pregnant == true)
+            {
+                bool gestationEnabled = animalSpec.minGestationProgress.HasValue;
+                bool previousGestationEnabled = gestationEnabled;
+                string gestationLabel = gestationEnabled
+                    ? $"Minimum gestation: {Mathf.RoundToInt(animalSpec.minGestationProgress.Value * 100f)}%"
+                    : "Minimum gestation: Any";
+                Widgets.CheckboxLabeled(
+                    new Rect(0f, y, contentWidth, 28f), gestationLabel, ref gestationEnabled);
+                if (gestationEnabled != previousGestationEnabled)
+                {
+                    animalSpec.minGestationProgress = gestationEnabled ? 0.25f : (float?)null;
+                }
+                y += 28f;
+                if (animalSpec.minGestationProgress.HasValue)
+                {
+                    animalSpec.minGestationProgress = Widgets.HorizontalSlider(
+                        new Rect(0f, y, contentWidth, 20f),
+                        animalSpec.minGestationProgress.Value, 0f, 1f, roundTo: 0.01f);
+                }
             }
 
             Widgets.EndScrollView();
+        }
 
-            float bottom = controlsTop;
-
-            Widgets.Label(new Rect(0f, bottom, inRect.width, 22f), "Fulfillment:");
-            bottom += 24f;
-
-            const float ChoiceGap = 8f;
-            float choiceWidth = (inRect.width - ChoiceGap * 2f) / 3f;
-            DrawFulfillmentChoice(new Rect(0f, bottom, choiceWidth, 28f),
-                "Supplier delivers", ProcurementFulfillmentPreference.SupplierDelivers);
-            DrawFulfillmentChoice(new Rect(choiceWidth + ChoiceGap, bottom, choiceWidth, 28f),
-                "We collect", ProcurementFulfillmentPreference.PlayerPickup);
-            DrawFulfillmentChoice(new Rect((choiceWidth + ChoiceGap) * 2f, bottom, choiceWidth, 28f),
-                "Either", ProcurementFulfillmentPreference.Either);
-            bottom += 36f;
-
-            Widgets.Label(new Rect(0f, bottom, 120f, 28f), "Quantity:");
-            Widgets.TextFieldNumeric(new Rect(124f, bottom, 100f, 28f), ref quantity, ref quantityBuffer, 1, 5000);
-
-            Widgets.Label(new Rect(240f, bottom, 140f, 28f), "Wanted within:");
-            Widgets.TextFieldNumeric(new Rect(384f, bottom, 70f, 28f), ref deadlineDays, ref deadlineBuffer, 1, 60);
-            Widgets.Label(new Rect(458f, bottom, 60f, 28f), "days");
-
-            bottom += 36f;
-            if (selected != null)
+        private float AnimalSpecificationHeight(float width)
+        {
+            Text.Font = GameFont.Medium;
+            float height = Text.CalcHeight($"Specification for {selected.LabelCap}", width) + 8f;
+            Text.Font = GameFont.Small;
+            if (selectedKinds.Count > 1) height += 58f;
+            height += 58f; // Sex label, choices, and gap.
+            height += selectedLifeStages.Count > 0
+                ? 58f
+                : Text.CalcHeight(
+                    "Life stage: Any (this race has no unambiguous stage choice)", width) + 8f;
+            if (selectedPregnancyCapable && animalSpec.gender == Gender.Female) height += 58f;
+            height += animalSpec.minHealthFraction.HasValue ? 56f : 28f;
+            if (animalSpec.pregnant == true)
             {
-                GUI.color = new Color(1f, 1f, 1f, 0.7f);
-                Widgets.Label(new Rect(0f, bottom, inRect.width, 24f),
-                    $"Requesting {quantity}x {selected.LabelCap} — roughly " +
-                    $"{Mathf.RoundToInt(selected.BaseMarketValue * quantity * 1.3f)} silver if anyone answers.");
-                GUI.color = Color.white;
+                height += animalSpec.minGestationProgress.HasValue ? 56f : 28f;
             }
+            return height;
+        }
 
-            bottom += 30f;
-            Rect sendRect = new Rect(0f, bottom, 180f, 34f);
+        private float DrawSelector(float y, float width, string heading, string selection, Action open)
+        {
+            Widgets.Label(new Rect(0f, y, width, 22f), heading + ":");
+            y += 22f;
+            Rect buttonRect = new Rect(0f, y, width, 28f);
+            if (Widgets.ButtonText(buttonRect, selection))
+            {
+                open();
+            }
+            if (Text.CalcSize(selection).x > buttonRect.width - 12f)
+            {
+                TooltipHandler.TipRegion(buttonRect, selection);
+            }
+            return y + 36f;
+        }
+
+        private void DrawGenderChoices(Rect rect)
+        {
+            float width = (rect.width - ChoiceGap * 2f) / 3f;
+            DrawGenderChoice(new Rect(rect.x, rect.y, width, rect.height), "Either", null);
+            DrawGenderChoice(new Rect(rect.x + width + ChoiceGap, rect.y, width, rect.height),
+                "Male", Gender.Male);
+            DrawGenderChoice(new Rect(rect.x + (width + ChoiceGap) * 2f, rect.y, width, rect.height),
+                "Female", Gender.Female);
+        }
+
+        private void DrawGenderChoice(Rect rect, string label, Gender? gender)
+        {
+            bool selectedChoice = animalSpec.gender == gender;
+            if (Widgets.ButtonText(rect, label) && !selectedChoice)
+            {
+                animalSpec.gender = gender;
+                NormalizeAnimalSpec(selected, animalSpec);
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+            if (selectedChoice)
+            {
+                Widgets.DrawHighlightSelected(rect);
+            }
+        }
+
+        private void DrawPregnancyChoices(Rect rect)
+        {
+            float width = (rect.width - ChoiceGap * 2f) / 3f;
+            DrawPregnancyChoice(new Rect(rect.x, rect.y, width, rect.height), "Either", null);
+            DrawPregnancyChoice(new Rect(rect.x + width + ChoiceGap, rect.y, width, rect.height),
+                "Required", true);
+            DrawPregnancyChoice(
+                new Rect(rect.x + (width + ChoiceGap) * 2f, rect.y, width, rect.height),
+                "Not pregnant", false);
+        }
+
+        private void DrawPregnancyChoice(Rect rect, string label, bool? pregnant)
+        {
+            bool selectedChoice = animalSpec.pregnant == pregnant;
+            if (Widgets.ButtonText(rect, label) && !selectedChoice)
+            {
+                animalSpec.pregnant = pregnant;
+                NormalizeAnimalSpec(selected, animalSpec);
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+            if (selectedChoice)
+            {
+                Widgets.DrawHighlightSelected(rect);
+            }
+        }
+
+        private void DrawBottomControls(Rect rect)
+        {
+            float y = rect.y;
+            Widgets.Label(new Rect(0f, y, rect.width, 22f), "Fulfillment:");
+            y += 24f;
+
+            float choiceWidth = (rect.width - ChoiceGap * 2f) / 3f;
+            DrawFulfillmentChoice(new Rect(0f, y, choiceWidth, 28f),
+                "Supplier delivers", ProcurementFulfillmentPreference.SupplierDelivers);
+            DrawFulfillmentChoice(new Rect(choiceWidth + ChoiceGap, y, choiceWidth, 28f),
+                "We collect", ProcurementFulfillmentPreference.PlayerPickup);
+            DrawFulfillmentChoice(new Rect((choiceWidth + ChoiceGap) * 2f, y, choiceWidth, 28f),
+                "Either", ProcurementFulfillmentPreference.Either);
+            y += 36f;
+
+            Widgets.Label(new Rect(0f, y, 90f, 28f), "Quantity:");
+            Widgets.TextFieldNumeric(
+                new Rect(94f, y, 90f, 28f), ref quantity, ref quantityBuffer, 1, 5000);
+            Widgets.Label(new Rect(220f, y, 140f, 28f), "Wanted within:");
+            Widgets.TextFieldNumeric(
+                new Rect(364f, y, 70f, 28f), ref deadlineDays, ref deadlineBuffer, 1, 60);
+            Widgets.Label(new Rect(438f, y, 60f, 28f), "days");
+            y += 34f;
+
+            y = DrawPricePreview(y, rect.width);
+
+            Rect sendRect = new Rect(0f, y, 180f, 34f);
             if (selected == null)
             {
                 GUI.color = new Color(1f, 1f, 1f, 0.4f);
-                Widgets.Label(sendRect, "Select an item first.");
+                Widgets.Label(sendRect, animalMode ? "Select a species first." : "Select an item first.");
                 GUI.color = Color.white;
             }
             else if (Widgets.ButtonText(sendRect, "Send request"))
             {
-                RfqService.CreateRequest(
-                    state, selected, null, quantity, deadlineDays, fulfillmentPreference);
-                Close();
+                Send();
             }
 
-            Rect cancelRect = new Rect(inRect.width - 120f, bottom, 110f, 34f);
+            Rect cancelRect = new Rect(rect.width - 120f, y, 110f, 34f);
             if (Widgets.ButtonText(cancelRect, "Cancel"))
             {
                 Close();
+            }
+        }
+
+        private float DrawPricePreview(float y, float width)
+        {
+            if (selected == null)
+            {
+                return y + 48f;
+            }
+
+            GUI.color = new Color(1f, 1f, 1f, 0.7f);
+            if (!animalMode)
+            {
+                string goodsSummary =
+                    $"Requesting {quantity}x {selected.LabelCap} — roughly " +
+                    $"{Mathf.RoundToInt(selected.BaseMarketValue * quantity * 1.3f)} silver if anyone answers.";
+                float goodsHeight = Text.CalcHeight(goodsSummary, width);
+                Widgets.Label(new Rect(0f, y, width, goodsHeight), goodsSummary);
+                GUI.color = Color.white;
+                return y + Mathf.Max(48f, goodsHeight + 4f);
+            }
+
+            float unitPrice = IntercolonyPricing.UnitPrice(
+                selected, null, animalSpec, Mathf.Max(1, quantity), AnimalPreviewProfile,
+                IntercolonyProductCategory.Commodities, -1f, null,
+                out List<PriceFactor> factors);
+            string priceSummary =
+                $"Market estimate: {unitPrice:F2} each, " +
+                $"{Mathf.RoundToInt(unitPrice * quantity)} silver total.";
+            float priceHeight = Text.CalcHeight(priceSummary, width);
+            Rect priceRect = new Rect(0f, y, width, priceHeight);
+            Widgets.Label(priceRect, priceSummary);
+            TooltipHandler.TipRegion(priceRect, IntercolonyPricing.Explain(
+                selected, null, animalSpec, quantity, unitPrice, factors));
+            y += priceHeight + 1f;
+
+            string cheapestHint =
+                "Unspecified traits are priced as the cheapest animal that could satisfy the request.";
+            float hintHeight = Text.CalcHeight(cheapestHint, width);
+            Widgets.Label(new Rect(0f, y, width, hintHeight), cheapestHint);
+            TooltipHandler.TipRegion(
+                new Rect(0f, y, width, hintHeight),
+                "The supplier chooses any animal matching the terms you state. " +
+                "Traits left as Either or Any are therefore not guaranteed and do not add their higher cost.");
+            GUI.color = Color.white;
+            return y + Mathf.Max(48f - priceHeight - 1f, hintHeight + 4f);
+        }
+
+        private void Send()
+        {
+            if (animalMode &&
+                !animalSpec.TryValidateFor(selected, requireKind: true, out string reason))
+            {
+                Messages.Message(
+                    $"Cannot request this animal: {reason}.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return;
+            }
+
+            RfqService.CreateRequest(
+                state, selected, null, quantity, deadlineDays, fulfillmentPreference,
+                animalMode ? animalSpec : null);
+            Close();
+        }
+
+        private void SelectAnimal(ThingDef race)
+        {
+            selected = race;
+            animalSpec = new AnimalSpec();
+            selectedKinds = new List<PawnKindDef>(OfferableKinds(race));
+            selectedLifeStages = UnambiguousLifeStages(race);
+            selectedPregnancyCapable = PregnancyOfferable(race, Gender.Female);
+            NormalizeAnimalSpec(race, animalSpec);
+            animalControlsScroll = Vector2.zero;
+        }
+
+        private void DrawModeChoice(Rect rect, string label, bool animal)
+        {
+            bool selectedChoice = animalMode == animal;
+            if (Widgets.ButtonText(rect, label) && !selectedChoice)
+            {
+                animalMode = animal;
+                selected = null;
+                animalSpec = new AnimalSpec();
+                selectedKinds.Clear();
+                selectedLifeStages.Clear();
+                selectedPregnancyCapable = false;
+                cachedMatches = null;
+                listScroll = Vector2.zero;
+                animalControlsScroll = Vector2.zero;
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+            if (selectedChoice)
+            {
+                Widgets.DrawHighlightSelected(rect);
             }
         }
 
@@ -167,16 +644,40 @@ namespace Intercolony
                 fulfillmentPreference = preference;
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
             }
-
             if (selectedChoice)
             {
                 Widgets.DrawHighlightSelected(rect);
             }
         }
 
+        private void ChooseKind(List<PawnKindDef> kinds)
+        {
+            List<FloatMenuOption> options = new List<FloatMenuOption>();
+            foreach (PawnKindDef kind in kinds)
+            {
+                PawnKindDef chosen = kind;
+                options.Add(new FloatMenuOption(chosen.LabelCap, () => animalSpec.kind = chosen));
+            }
+            Find.WindowStack.Add(new FloatMenu(options));
+        }
+
+        private void ChooseLifeStage(List<LifeStageDef> stages)
+        {
+            List<FloatMenuOption> options = new List<FloatMenuOption>
+            {
+                new FloatMenuOption("Any life stage", () => animalSpec.lifeStage = null)
+            };
+            foreach (LifeStageDef stage in stages)
+            {
+                LifeStageDef chosen = stage;
+                options.Add(new FloatMenuOption(chosen.LabelCap, () => animalSpec.lifeStage = chosen));
+            }
+            Find.WindowStack.Add(new FloatMenu(options));
+        }
+
         /// <summary>
-        /// Filtered candidates, cached per search string. Recomputing over 400+ defs on every
-        /// GUI event would stutter for the same reason the Find Buyer stock scan did (§84).
+        /// Search results are cached per search term. Animal discovery itself is also cached and
+        /// never re-scans either def database during drawing.
         /// </summary>
         private List<ThingDef> Matches()
         {
@@ -187,22 +688,45 @@ namespace Intercolony
 
             cachedMatches = new List<ThingDef>();
             cachedSearch = searchText;
-
             string needle = searchText?.Trim().ToLowerInvariant() ?? "";
-            foreach (ThingDef def in IntercolonyProductClassifier.TradableDefs)
+            List<ThingDef> source = animalMode
+                ? OfferableAnimalRaces()
+                : IntercolonyProductClassifier.TradableDefs;
+            foreach (ThingDef def in source)
             {
-                if (needle.Length > 0 && def.label != null &&
-                    !def.label.ToLowerInvariant().Contains(needle))
+                if (needle.Length > 0 &&
+                    !(def.label ?? "").ToLowerInvariant().Contains(needle))
                 {
                     continue;
                 }
-
                 cachedMatches.Add(def);
             }
 
-            cachedMatches.Sort((a, b) => string.Compare(
-                a.label ?? "", b.label ?? "", System.StringComparison.CurrentCultureIgnoreCase));
+            // The source lists are already sorted. Keep this local sort so a future invalidation
+            // cannot make the search result jump into definition order.
+            cachedMatches.Sort(CompareDefLabels);
             return cachedMatches;
+        }
+
+        private static int CompareDefLabels(Def a, Def b)
+        {
+            return string.Compare(
+                a?.label ?? "", b?.label ?? "", StringComparison.CurrentCultureIgnoreCase);
+        }
+
+        private static SettlementEconomicProfile CreatePreviewProfile()
+        {
+            SettlementEconomicProfile profile = new SettlementEconomicProfile
+            {
+                seed = 0,
+                wealthTier = IntercolonyWealthTier.Modest,
+                qualityPreference = 0.5f
+            };
+            foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
+            {
+                profile.demandWeights[(int)category] = 1f;
+            }
+            return profile;
         }
     }
 }

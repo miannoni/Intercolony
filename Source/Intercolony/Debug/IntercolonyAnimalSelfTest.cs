@@ -46,6 +46,7 @@ namespace Intercolony
             CheckSerializationRoundTrip(Check, Skip);
             CheckValidity(Check);
             CheckGoodsDiscriminators(Check);
+            CheckRequestDialogContracts(Check, Skip, state);
             CheckPricing(Check, Skip);
             CheckGenerationAndDelivery(Check, Skip);
 
@@ -55,6 +56,208 @@ namespace Intercolony
 
             sb.AppendLine($"  {passed} passed, {failed} failed, {skipped} skipped");
             return sb.ToString();
+        }
+
+        private static void CheckRequestDialogContracts(
+            Action<string, bool, string> check, Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            List<ThingDef> races = Dialog_CreateRequest.OfferableAnimalRaces();
+            ThingDef humanlikeLeak = races.Find(r => r?.race?.Humanlike == true);
+            check("request dialog offerable races exclude humanlikes", humanlikeLeak == null,
+                humanlikeLeak?.defName);
+
+            CheckUiExpressibleSpecifications(check, skip, races);
+            ThingDef multiKindRace = races.Find(
+                r => Dialog_CreateRequest.OfferableKinds(r).Count > 1);
+            if (multiKindRace == null)
+            {
+                skip("multi-kind request starts with a valid exact kind",
+                    "no offerable race has multiple pawn kinds");
+            }
+            else
+            {
+                AnimalSpec defaulted = new AnimalSpec();
+                Dialog_CreateRequest.NormalizeAnimalSpec(multiKindRace, defaulted);
+                bool validDefault = defaulted.TryValidateFor(
+                    multiKindRace, requireKind: true, out string reason);
+                check("multi-kind request starts with a valid exact kind",
+                    defaulted.kind != null && validDefault,
+                    reason);
+            }
+
+            LifeStageDef stageDef = new LifeStageDef { defName = "IntercolonyDialogStage" };
+            ThingDef eggLayer = SyntheticAnimal("IntercolonyDialogEgg", stageDef, 1, 5f, eggLayer: true);
+            ThingDef noGestation = SyntheticAnimal("IntercolonyDialogNoGestation", stageDef, 1, 0f, eggLayer: false);
+            check("request dialog pregnancy is unavailable for egg-layers", !Dialog_CreateRequest.PregnancyOfferable(eggLayer, Gender.Female), null);
+            check("request dialog pregnancy is unavailable without gestation", !Dialog_CreateRequest.PregnancyOfferable(noGestation, Gender.Female), null);
+
+            ThingDef liveBearer = SyntheticAnimal(
+                "IntercolonyDialogLiveBearer", stageDef, 1, 5f, eggLayer: false);
+            AnimalSpec dependent = new AnimalSpec
+            {
+                gender = Gender.Male,
+                pregnant = true,
+                minGestationProgress = 0.5f
+            };
+            Dialog_CreateRequest.NormalizeAnimalSpec(liveBearer, dependent);
+            check("request dialog clears pregnancy after sex changes to male",
+                !dependent.pregnant.HasValue && !dependent.minGestationProgress.HasValue, null);
+
+            dependent.gender = Gender.Female;
+            dependent.pregnant = false;
+            dependent.minGestationProgress = 0.5f;
+            Dialog_CreateRequest.NormalizeAnimalSpec(liveBearer, dependent);
+            check("request dialog clears gestation floor when pregnancy is not required",
+                !dependent.minGestationProgress.HasValue, null);
+
+            if (state == null)
+            {
+                skip("request factory animal round-trip", "no world component");
+                skip("request factory goods remains unchanged", "no world component");
+                return;
+            }
+
+            CheckGoodsRequestFactoryRegression(check, state);
+
+            if (races.Count == 0)
+            {
+                skip("request factory animal round-trip", "no offerable animal race");
+                return;
+            }
+
+            ThingDef raceForRequest = races[0];
+            List<PawnKindDef> kinds = Dialog_CreateRequest.OfferableKinds(raceForRequest);
+            if (kinds.Count == 0)
+            {
+                skip("request factory animal round-trip", "race has no pawn kind");
+                return;
+            }
+
+            List<LifeStageDef> stages = Dialog_CreateRequest.UnambiguousLifeStages(raceForRequest);
+            AnimalSpec animal = new AnimalSpec
+            {
+                kind = kinds[0],
+                gender = Gender.Female,
+                lifeStage = stages.Count > 0 ? stages[0] : null,
+                minHealthFraction = 0.73f
+            };
+            if (Dialog_CreateRequest.PregnancyOfferable(raceForRequest, animal.gender))
+            {
+                animal.pregnant = true;
+                animal.minGestationProgress = 0.42f;
+            }
+            Dialog_CreateRequest.NormalizeAnimalSpec(raceForRequest, animal);
+            PurchaseRequest animalRequest = null;
+            try
+            {
+                animalRequest = RfqService.CreateRequest(state, raceForRequest, null, 1, 1,
+                    ProcurementFulfillmentPreference.Either, animal);
+                AnimalSpec saved = animalRequest?.animalSpec;
+                check("request factory round-trips the complete animal specification",
+                    animalRequest?.thingDef == raceForRequest && saved != null &&
+                    saved.kind == animal.kind && saved.gender == animal.gender &&
+                    saved.lifeStage == animal.lifeStage && saved.pregnant == animal.pregnant &&
+                    saved.minHealthFraction == animal.minHealthFraction &&
+                    saved.minGestationProgress == animal.minGestationProgress,
+                    saved?.Describe(raceForRequest));
+            }
+            finally
+            {
+                if (animalRequest != null) state.Requests.Remove(animalRequest);
+            }
+        }
+
+        private static void CheckUiExpressibleSpecifications(
+            Action<string, bool, string> check, Action<string, string> skip,
+            List<ThingDef> races)
+        {
+            if (races.Count == 0)
+            {
+                skip("every request-dialog animal specification validates",
+                    "no offerable animal race");
+                return;
+            }
+
+            int checkedSpecifications = 0;
+            string firstFailure = null;
+            Gender?[] genders = { null, Gender.Male, Gender.Female };
+            float?[] healthFloors = { null, 0f, 0.5f, 1f };
+            float?[] gestationFloors = { null, 0f, 0.5f, 1f };
+
+            foreach (ThingDef race in races)
+            {
+                List<LifeStageDef> stages = new List<LifeStageDef> { null };
+                stages.AddRange(Dialog_CreateRequest.UnambiguousLifeStages(race));
+                foreach (PawnKindDef kind in Dialog_CreateRequest.OfferableKinds(race))
+                {
+                    foreach (LifeStageDef stage in stages)
+                    {
+                        foreach (Gender? gender in genders)
+                        {
+                            bool?[] pregnancies = Dialog_CreateRequest.PregnancyOfferable(race, gender)
+                                ? new bool?[] { null, false, true }
+                                : new bool?[] { null };
+                            foreach (bool? pregnant in pregnancies)
+                            {
+                                float?[] possibleGestationFloors = pregnant == true
+                                    ? gestationFloors
+                                    : new float?[] { null };
+                                foreach (float? health in healthFloors)
+                                {
+                                    foreach (float? gestation in possibleGestationFloors)
+                                    {
+                                        AnimalSpec spec = new AnimalSpec
+                                        {
+                                            kind = kind,
+                                            gender = gender,
+                                            lifeStage = stage,
+                                            pregnant = pregnant,
+                                            minHealthFraction = health,
+                                            minGestationProgress = gestation
+                                        };
+                                        checkedSpecifications++;
+                                        if (!spec.TryValidateFor(
+                                                race, requireKind: true, out string reason) &&
+                                            firstFailure == null)
+                                        {
+                                            firstFailure = $"{race.defName}/{kind.defName}: {reason}";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            check("every request-dialog animal specification validates",
+                checkedSpecifications > 0 && firstFailure == null,
+                firstFailure ?? $"{checkedSpecifications} combinations checked");
+        }
+
+        private static void CheckGoodsRequestFactoryRegression(
+            Action<string, bool, string> check, IntercolonyWorldComponent state)
+        {
+            PurchaseRequest request = null;
+            try
+            {
+                request = RfqService.CreateRequest(state, ThingDefOf.WoodLog, null, 3, 7);
+                check("request factory goods remains unchanged",
+                    request != null && request.thingDef == ThingDefOf.WoodLog &&
+                    request.stuffDef == null && request.quantityRequested == 3 &&
+                    request.desiredDays == 7 && request.IsOpen &&
+                    request.fulfillmentPreference == ProcurementFulfillmentPreference.Either &&
+                    request.animalSpec == null && !request.IsAnimalOrder,
+                    request?.ToString());
+            }
+            finally
+            {
+                if (request != null)
+                {
+                    state.Requests.Remove(request);
+                }
+            }
         }
 
         private static void CheckGenerationAndDelivery(
