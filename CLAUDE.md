@@ -119,6 +119,15 @@ The rules that hold it together, and that a future change must not break:
 - Bonded animals are sellable; **bonding is a warning, never a spec attribute** — never matched on,
   never priced. The confirmation applies the same three conditions vanilla's `Notify_PawnSold` does,
   so it names only colonists who will actually lose the bond.
+- **Animals no trader sells are gated behind a default-off setting.** Vanilla withholds a thrumbo
+  through *trade tags*, not tradeability: `AnimalExotic` appears in traders' buy lists and no
+  trader's sell list. The rule asks whether any loaded stock generator would sell the animal, so no
+  def name is hardcoded — the same call as the stone-blocks decision.
+
+**Two debug actions were added to make this testable:** `Arrive purchase orders now` (skips the
+supplier lead time through the real advance path) and `Explain unsold animals`. **There is still no
+"arrive buyers now"**, so every sell-side pickup test costs real travel time — worth building first
+if the sell side is being tested.
 
 **None of the three migrations has ever run in the real load order** — only in isolated throwaway
 installs. `dev.ps1` cannot prove a migration: it launches `-quicktest`, which creates a *new* world

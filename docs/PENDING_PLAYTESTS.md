@@ -166,6 +166,38 @@ Its log reader also targets the real user profile while a sandboxed game writes 
 displayed log can be stale and show an old schema entirely. Neither the dev loop nor a self-test can
 prove this; only opening a real save can.
 
+### Two debug actions exist to make the tests below bearable
+
+Added 2026-08-10. **F12** → **orange bug icon** → type the name.
+
+- **`Arrive purchase orders now`** — pulls every confirmed purchase order's ready time to now
+  and runs the ordinary advance, so procurement can be tested without playing out the
+  supplier's lead time. It moves the clock and uses the real fulfilment path rather than
+  calling delivery directly, so the status transitions, the animal branch and the refund
+  branches are all genuinely exercised. Orders already waiting to be collected are reported
+  separately and left alone — they are waiting for a caravan, not for time.
+- **`Explain unsold animals`** — lists the animals some trader buys but none sells, and says
+  whether the setting below is on. With Core + Biotech this should be exactly one entry:
+  Thrumbo, 4000 silver.
+
+**There is no equivalent for the sell side yet.** Buyer-pickup tests still need the buyer to
+travel in real game time, which makes the designated-animal test below slow. Worth adding an
+"arrive buyers now" sibling before attempting it.
+
+### Buying animals no trader sells — off by default
+
+Added 2026-08-10. Intercolony was offering thrumbos, which vanilla never does: a thrumbo is
+tagged `AnimalExotic`, a tag that appears in traders' buy lists and no trader's sell list.
+Now gated behind **Options → Mod options → Intercolony → Animals no trader sells**.
+
+**Pass.** With the setting off, no thrumbo appears in the animal list in **Procurement → New
+request**. Tick the setting, reopen the dialog, and it appears — the cached list is dropped on
+toggle, so it must not need a restart. Ordering one costs full market price.
+
+**Failure.** A thrumbo visible while the setting is off; the list not changing until restart;
+or *more* than one animal listed by `Explain unsold animals` in a Core + Biotech load order,
+which would mean the rule is catching animals it should not.
+
 ### Animal trade, end to end — the whole feature is unplayed
 
 Added 2026-08-10. All five animal slices are built and **not one of them has been seen
