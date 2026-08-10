@@ -28,6 +28,7 @@ namespace Intercolony
             base.WriteSettings();
             BuyOnlyTradeUnlock.ApplyEnabledCategories(
                 Settings.enabledBuyOnlyTradeCategoryKeys);
+            Dialog_CreateRequest.InvalidateAnimalDiscovery();
         }
 
         public override void DoSettingsWindowContents(Rect inRect)
@@ -163,8 +164,42 @@ namespace Intercolony
                 }
             }
 
+            SectionGap(ref y);
+            SectionTitle("Animals no trader sells", width, ref y, draw);
+            Paragraph(
+                "A few animals can be sold to traders but never bought from them — the thrumbo " +
+                "is the one most players know. RimWorld withholds them on purpose, so " +
+                "Intercolony does not offer them either.\n\n" +
+                "Enabling this lets you order those animals from other colonies. It changes " +
+                "nothing outside Intercolony: ordinary traders still will not sell you one. " +
+                "You pay the full market price, so this is a matter of whether such an animal " +
+                "should be purchasable at all, not of getting one cheaply.",
+                width, ref y, draw);
+
+            bool allowUnsold = Settings.allowBuyingUnsoldAnimals;
+            float unsoldHeight = Mathf.Max(
+                24f, Text.CalcHeight(AllowUnsoldAnimalsLabel, Mathf.Max(1f, width - 28f)));
+            if (draw)
+            {
+                bool wasAllowed = allowUnsold;
+                Widgets.CheckboxLabeled(
+                    new Rect(0f, y, width, unsoldHeight), AllowUnsoldAnimalsLabel, ref allowUnsold);
+                Settings.allowBuyingUnsoldAnimals = allowUnsold;
+                if (allowUnsold != wasAllowed)
+                {
+                    // The offerable list is cached, so it must be rebuilt or the change would
+                    // not appear until something else happened to invalidate it.
+                    Dialog_CreateRequest.InvalidateAnimalDiscovery();
+                }
+            }
+
+            y += unsoldHeight + 2f;
+
             return y;
         }
+
+        private const string AllowUnsoldAnimalsLabel =
+            "Allow ordering animals that no trader sells";
 
         private static string RefreshDaysLabel(float refreshDays)
         {

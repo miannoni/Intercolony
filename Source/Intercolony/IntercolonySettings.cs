@@ -30,6 +30,13 @@ namespace Intercolony
         public float economyDifficulty = DefaultEconomyDifficulty;
         public HashSet<string> enabledBuyOnlyTradeCategoryKeys = new HashSet<string>();
 
+        /// <summary>
+        /// Whether Intercolony may sell the player animals that no trader in the game sells.
+        /// Off by default, because vanilla withholds them deliberately — the thrumbo is the
+        /// example everyone knows.
+        /// </summary>
+        public bool allowBuyingUnsoldAnimals;
+
         public override void ExposeData()
         {
             Scribe_Values.Look(
@@ -42,6 +49,8 @@ namespace Intercolony
             Scribe_Collections.Look(
                 ref enabledBuyOnlyTradeCategoryKeys,
                 "enabledBuyOnlyTradeCategoryKeys", LookMode.Value);
+            Scribe_Values.Look(
+                ref allowBuyingUnsoldAnimals, "allowBuyingUnsoldAnimals", false);
 
             if (enabledBuyOnlyTradeCategoryKeys == null)
             {

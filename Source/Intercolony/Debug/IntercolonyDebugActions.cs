@@ -1649,6 +1649,48 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Lists the animals vanilla will buy from the player but never sell to them, which is
+        /// what the "animals no trader sells" setting governs. Reports the setting's state too,
+        /// so an unexpected offerable list can be explained without reading the code.
+        /// </summary>
+        [DebugAction(Category, "Explain unsold animals", allowedGameStates = AllowedGameStates.Playing, displayPriority = 43)]
+        private static void ExplainUnsoldAnimals()
+        {
+            List<string> unsold = new List<string>();
+            foreach (ThingDef race in DefDatabase<ThingDef>.AllDefsListForReading)
+            {
+                if (race?.category != ThingCategory.Pawn || race.race == null ||
+                    !race.race.Animal || race.race.Humanlike || race.BaseMarketValue <= 0f ||
+                    !race.tradeability.TraderCanSell())
+                {
+                    continue;
+                }
+
+                if (!Dialog_CreateRequest.AnyTraderSells(race))
+                {
+                    unsold.Add($"{race.LabelCap} ({race.defName}, {race.BaseMarketValue:F0} silver)");
+                }
+            }
+
+            unsold.Sort(StringComparer.OrdinalIgnoreCase);
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine(IntercolonyMod.Settings.allowBuyingUnsoldAnimals
+                ? "Setting is ON: these animals CAN be ordered through Intercolony."
+                : "Setting is OFF: these animals are hidden from the request dialog.");
+            sb.AppendLine(
+                $"{unsold.Count} animal(s) that some trader buys but none sells:");
+            foreach (string line in unsold)
+            {
+                sb.Append("\n  ").Append(line);
+            }
+
+            sb.Append($"\n\nOfferable animal races right now: " +
+                      $"{Dialog_CreateRequest.OfferableAnimalRaces().Count}.");
+            Report(sb.ToString());
+        }
+
+        /// <summary>
         /// Pulls every open purchase order's ready time to now and advances it, so a delivery
         /// or a pickup readiness can be seen without playing out the supplier's lead time.
         ///

@@ -97,12 +97,51 @@ namespace Intercolony
                     continue;
                 }
 
+                if (!IntercolonyMod.Settings.allowBuyingUnsoldAnimals &&
+                    !AnyTraderSells(race))
+                {
+                    continue;
+                }
+
                 kinds.Sort(CompareDefLabels);
                 offerableAnimalRaces.Add(race);
             }
 
             offerableAnimalRaces.Sort(CompareDefLabels);
             return offerableAnimalRaces;
+        }
+
+        /// <summary>
+        /// Whether any trader in the game would sell this animal to the player.
+        ///
+        /// Vanilla expresses "you may not buy this" through trade tags rather than through
+        /// tradeability: a thrumbo is tagged <c>AnimalExotic</c>, which appears only in
+        /// traders' buy lists, so every trader will take one off your hands and none will
+        /// hand you one. Asking the stock generators directly means no def name is named
+        /// here and modded animals are judged by their own definitions.
+        /// </summary>
+        internal static bool AnyTraderSells(ThingDef race)
+        {
+            foreach (TraderKindDef trader in DefDatabase<TraderKindDef>.AllDefsListForReading)
+            {
+                List<StockGenerator> generators = trader?.stockGenerators;
+                for (int i = 0; generators != null && i < generators.Count; i++)
+                {
+                    if (generators[i]?.TradeabilityFor(race).TraderCanSell() == true)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Drops the cached race list so a settings change takes effect at once.</summary>
+        internal static void InvalidateAnimalDiscovery()
+        {
+            offerableAnimalRaces = null;
+            offerableKindsByRace = null;
         }
 
         internal static List<PawnKindDef> OfferableKinds(ThingDef race)
