@@ -166,6 +166,37 @@ Its log reader also targets the real user profile while a sandboxed game writes 
 displayed log can be stale and show an old schema entirely. Neither the dev loop nor a self-test can
 prove this; only opening a real save can.
 
+### The 2026-08-10 playtest-feedback batch
+
+Four changes from Matteo's own play. None has been re-tested.
+
+**Worker wages are now double by default.** Options → Mod options → Intercolony → **Worker
+wages**. The slider names a concrete worker so the multiplier cannot be misread, and 100%
+reproduces the old rate. **Check specifically:** hire someone, then change the slider. The
+existing employee's wage must not move — only new quotes should. A renewal is a fresh quote
+and *is* expected to reprice.
+
+**The supply agreement popup now negotiates, resizes and routes.** Selling → Contracts →
+accept an offer.
+- The quantity can move a tenth either way. Confirm the payment line follows it.
+- A colonist negotiates the rate up, to a maximum of +15% at Social 20. The popup names them
+  and shows the rate before and after. **Check with no free colonist too** — it should say so
+  plainly rather than showing a silent zero change.
+- **The fulfilment choice is the one with real consequences:** pick *Buyer collects* and
+  confirm that every cycle's order actually arrives as a pickup, needing Mark ready, rather
+  than a delivery. That is a new persisted field, so also check it survives a save and reload.
+- Cancelling the popup now leaves the offer open instead of declining it. Declining is the
+  separate button on the row.
+
+**Procurement has sub-tabs** mirroring Selling: Market, Find seller, Orders, Contracts.
+Market and Contracts are disabled placeholders with an "under development" tooltip.
+**Check at UI scale 1.75:** four tab captions must fit the row without clipping, and the
+group badge should count open requests plus open purchases.
+
+**Not yet done, and worth knowing:** nothing makes Social visible *before* accepting a
+contract — the player cannot tell a good negotiator is worth waiting for until the popup is
+open.
+
 ### Two debug actions exist to make the tests below bearable
 
 Added 2026-08-10. **F12** → **orange bug icon** → type the name.

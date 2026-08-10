@@ -38,8 +38,9 @@ to move data.
 | 25 → 26 | Each sales order remembers the colony it is fulfilled from | No map recorded ⇒ falls back to the first player home map, which is the old behaviour |
 | 26 → 27 | Animal health and gestation floors on the specification | No floors ⇒ unrestricted, and only animal records have a specification at all |
 | 27 → 28 | The animals set aside for a buyer to collect | No list ⇒ nothing designated, and no pre-existing order is an animal order anyway |
+| 28 → 29 | A supply agreement's fulfilment mode | Defaults to seller delivery, which is what every existing agreement was created under, so the default *is* the truth about them |
 
-**28 is expected to be the last step for the animal feature** — all five slices are built.
+**28 was the last step for the animal feature**; 29 came from the contract rework.
 
 One note on 27 → 28 specifically, since it is the only step holding *pawn references* rather
 than plain values: those are saved as references, not deep saves, because the map already

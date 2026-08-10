@@ -91,7 +91,13 @@ Target framework is `net472`.
 **Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. The post-0.9.0
 playtest-correction batch landed on 2026-08-09: A1–A5, B1–B3, B5/B5b, C0–C2, the D1 research spike
 and **B4** (buy-only items are now an opt-in, default-off setting; see the decision log). Only
-D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 28**; the whole
+**A playtest-feedback batch landed 2026-08-10** from Matteo's own play: worker wages doubled with a
+settings slider (existing employments keep their agreed wage; only new quotes move), the supply
+agreement popup now lets the player negotiate with Social, resize the commitment by a tenth either
+way and choose delivery or pickup, and Procurement was given the same four sub-tabs as Selling with
+Market and Contracts as declared placeholders. **None of it has been re-tested.**
+
+D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 29**; the whole
 chain from 24 is documented as one consolidated test in `docs/SCHEMA_24_TO_CURRENT.md`, which is the
 file to read rather than reconstructing the steps. Next: continue beta corrections in point releases;
 there is no Phase 27 plan yet.
