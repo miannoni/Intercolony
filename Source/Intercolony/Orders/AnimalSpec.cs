@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
+using UnityEngine;
 using Verse;
 
 namespace Intercolony
@@ -26,10 +27,21 @@ namespace Intercolony
         /// <summary>Null means either; true and false are both real constraints.</summary>
         public bool? pregnant;
 
+        /// <summary>Minimum summary health fraction, or null when health is unrestricted.</summary>
+        public float? minHealthFraction;
+
+        /// <summary>
+        /// Minimum pregnancy progress, or null when any gestation progress is acceptable.
+        /// Only coherent when pregnancy is explicitly required.
+        /// </summary>
+        public float? minGestationProgress;
+
         // A removed optional def resolves to null just like "don't care". Remember whether a
         // non-null XML node failed resolution so load validation cannot silently weaken a promise.
         private bool kindFailedToResolve;
         private bool lifeStageFailedToResolve;
+        private bool minHealthFractionFailedToLoad;
+        private bool minGestationProgressFailedToLoad;
 
         public AnimalSpec()
         {
@@ -41,16 +53,25 @@ namespace Intercolony
                                       Scribe.loader.curXmlParent["kind"] != null;
             bool lifeStageNodeWasPresent = Scribe.mode == LoadSaveMode.LoadingVars &&
                                            Scribe.loader.curXmlParent["lifeStage"] != null;
+            bool minHealthNodeWasPresent = Scribe.mode == LoadSaveMode.LoadingVars &&
+                                           Scribe.loader.curXmlParent["minHealthFraction"] != null;
+            bool minGestationNodeWasPresent = Scribe.mode == LoadSaveMode.LoadingVars &&
+                                              Scribe.loader.curXmlParent["minGestationProgress"] != null;
 
             Scribe_Defs.Look(ref kind, "kind");
             Scribe_Values.Look(ref gender, "gender");
             Scribe_Defs.Look(ref lifeStage, "lifeStage");
             Scribe_Values.Look(ref pregnant, "pregnant");
+            Scribe_Values.Look(ref minHealthFraction, "minHealthFraction");
+            Scribe_Values.Look(ref minGestationProgress, "minGestationProgress");
 
             if (Scribe.mode == LoadSaveMode.LoadingVars)
             {
                 kindFailedToResolve = kindNodeWasPresent && kind == null;
                 lifeStageFailedToResolve = lifeStageNodeWasPresent && lifeStage == null;
+                minHealthFractionFailedToLoad = minHealthNodeWasPresent && !minHealthFraction.HasValue;
+                minGestationProgressFailedToLoad =
+                    minGestationNodeWasPresent && !minGestationProgress.HasValue;
             }
         }
 
@@ -62,7 +83,9 @@ namespace Intercolony
                 kind = kind,
                 gender = gender,
                 lifeStage = lifeStage,
-                pregnant = pregnant
+                pregnant = pregnant,
+                minHealthFraction = minHealthFraction,
+                minGestationProgress = minGestationProgress
             };
         }
 
@@ -125,6 +148,36 @@ namespace Intercolony
             if (lifeStageFailedToResolve)
             {
                 reason = "saved life stage definition is missing";
+                return false;
+            }
+
+            if (minHealthFractionFailedToLoad)
+            {
+                reason = "saved minimum health fraction could not be read";
+                return false;
+            }
+
+            if (minGestationProgressFailedToLoad)
+            {
+                reason = "saved minimum gestation progress could not be read";
+                return false;
+            }
+
+            if (minHealthFraction.HasValue && !IsFraction(minHealthFraction.Value))
+            {
+                reason = $"minimum health fraction {minHealthFraction.Value} is outside 0..1";
+                return false;
+            }
+
+            if (minGestationProgress.HasValue && !IsFraction(minGestationProgress.Value))
+            {
+                reason = $"minimum gestation progress {minGestationProgress.Value} is outside 0..1";
+                return false;
+            }
+
+            if (minGestationProgress.HasValue && pregnant != true)
+            {
+                reason = "minimum gestation progress requires pregnancy to be explicitly required";
                 return false;
             }
 
@@ -195,6 +248,14 @@ namespace Intercolony
             if (gender.HasValue) sb.AppendLine($"  Sex: {gender.Value.GetLabel(animal: true)}");
             if (lifeStage != null) sb.AppendLine($"  Life stage: {lifeStage.LabelCap}");
             if (pregnant.HasValue) sb.AppendLine($"  Pregnancy: {(pregnant.Value ? "required" : "not pregnant")}");
+            if (minHealthFraction.HasValue)
+            {
+                sb.AppendLine($"  Minimum health: {Mathf.RoundToInt(minHealthFraction.Value * 100f)}%");
+            }
+            if (minGestationProgress.HasValue)
+            {
+                sb.AppendLine($"  Minimum gestation: {Mathf.RoundToInt(minGestationProgress.Value * 100f)}%");
+            }
             return sb.ToString();
         }
 
@@ -205,7 +266,20 @@ namespace Intercolony
             if (gender.HasValue) parts.Add(gender.Value.GetLabel(animal: true));
             if (lifeStage != null) parts.Add(lifeStage.LabelCap.ToString());
             if (pregnant.HasValue) parts.Add(pregnant.Value ? "pregnant" : "not pregnant");
+            if (minHealthFraction.HasValue)
+            {
+                parts.Add($"health {Mathf.RoundToInt(minHealthFraction.Value * 100f)}%+");
+            }
+            if (minGestationProgress.HasValue)
+            {
+                parts.Add($"gestation {Mathf.RoundToInt(minGestationProgress.Value * 100f)}%+");
+            }
             return parts;
+        }
+
+        private static bool IsFraction(float value)
+        {
+            return !float.IsNaN(value) && value >= 0f && value <= 1f;
         }
     }
 }

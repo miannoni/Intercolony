@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 26;
+        public const int CurrentSaveVersion = 27;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1572,6 +1572,14 @@ namespace Intercolony
                 // move: an absent map keeps the old first-player-home fallback behaviour.
                 IntercolonyLog.Message(
                     "  schema 25 -> 26: sales orders now remember their fulfilment colony; existing orders fall back to the first player home.");
+            }
+
+            if (saveVersion < 27)
+            {
+                // 26 -> 27 added nullable health and gestation floors inside animal
+                // specifications. There is no data to move: absent fields mean no floor.
+                IntercolonyLog.Message(
+                    "  schema 26 -> 27: animal health and gestation floors added; existing specifications have no floors.");
             }
 
             saveVersion = CurrentSaveVersion;

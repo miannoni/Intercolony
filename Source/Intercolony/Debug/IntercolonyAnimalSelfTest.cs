@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using RimWorld;
+using UnityEngine;
 using Verse;
 
 namespace Intercolony
@@ -41,6 +42,7 @@ namespace Intercolony
             CheckSerializationRoundTrip(Check, Skip);
             CheckValidity(Check);
             CheckGoodsDiscriminators(Check);
+            CheckPricing(Check, Skip);
 
             List<Pawn> colonyAnimals = ColonyAnimals(map);
             CheckMatcher(Check, Skip, colonyAnimals);
@@ -88,9 +90,9 @@ namespace Intercolony
             LifeStageDef stage = race.race.lifeStageAges[0].def;
             AnimalSpecRoundTripProbe saved = new AnimalSpecRoundTripProbe
             {
-                pregnantTrue = NewFullSpec(kind, stage, true),
-                pregnantFalse = NewFullSpec(kind, stage, false),
-                pregnantNull = NewFullSpec(kind, stage, null),
+                pregnantTrue = NewFullSpec(kind, stage, true, 0.8f, 0.35f),
+                pregnantFalse = NewFullSpec(kind, stage, false, 0.6f, null),
+                pregnantNull = NewFullSpec(kind, stage, null, null, null),
                 allNull = new AnimalSpec()
             };
 
@@ -122,33 +124,57 @@ namespace Intercolony
             }
 
             check("AnimalSpec round-trips kind, gender, life stage and pregnant=true",
-                failure == null && SameFullSpec(loaded?.pregnantTrue, kind, stage, true), failure);
+                failure == null && SameFullSpec(
+                    loaded?.pregnantTrue, kind, stage, true, 0.8f, 0.35f), failure);
             check("AnimalSpec round-trips pregnant=false as a real state",
-                failure == null && SameFullSpec(loaded?.pregnantFalse, kind, stage, false), failure);
+                failure == null && SameFullSpec(
+                    loaded?.pregnantFalse, kind, stage, false, 0.6f, null), failure);
             check("AnimalSpec round-trips pregnant=null as don't care",
-                failure == null && SameFullSpec(loaded?.pregnantNull, kind, stage, null), failure);
+                failure == null && SameFullSpec(
+                    loaded?.pregnantNull, kind, stage, null, null, null), failure);
             check("fully-null AnimalSpec stays fully null",
                 failure == null && loaded?.allNull != null && loaded.allNull.kind == null &&
                 !loaded.allNull.gender.HasValue && loaded.allNull.lifeStage == null &&
-                !loaded.allNull.pregnant.HasValue, failure);
+                !loaded.allNull.pregnant.HasValue && !loaded.allNull.minHealthFraction.HasValue &&
+                !loaded.allNull.minGestationProgress.HasValue, failure);
+            check("null animal floors are omitted from labels and descriptions",
+                failure == null && loaded?.allNull != null &&
+                !loaded.allNull.ShortLabel(race).Contains("health") &&
+                !loaded.allNull.ShortLabel(race).Contains("gestation") &&
+                !loaded.allNull.Describe(race).Contains("Minimum health") &&
+                !loaded.allNull.Describe(race).Contains("Minimum gestation"), failure);
         }
 
-        private static AnimalSpec NewFullSpec(PawnKindDef kind, LifeStageDef stage, bool? pregnant)
+        private static AnimalSpec NewFullSpec(
+            PawnKindDef kind,
+            LifeStageDef stage,
+            bool? pregnant,
+            float? minHealthFraction,
+            float? minGestationProgress)
         {
             return new AnimalSpec
             {
                 kind = kind,
                 gender = Gender.Female,
                 lifeStage = stage,
-                pregnant = pregnant
+                pregnant = pregnant,
+                minHealthFraction = minHealthFraction,
+                minGestationProgress = minGestationProgress
             };
         }
 
         private static bool SameFullSpec(
-            AnimalSpec spec, PawnKindDef kind, LifeStageDef stage, bool? pregnant)
+            AnimalSpec spec,
+            PawnKindDef kind,
+            LifeStageDef stage,
+            bool? pregnant,
+            float? minHealthFraction,
+            float? minGestationProgress)
         {
             return spec != null && spec.kind == kind && spec.gender == Gender.Female &&
-                   spec.lifeStage == stage && spec.pregnant == pregnant;
+                   spec.lifeStage == stage && spec.pregnant == pregnant &&
+                   spec.minHealthFraction == minHealthFraction &&
+                   spec.minGestationProgress == minGestationProgress;
         }
 
         private static void CheckValidity(Action<string, bool, string> check)
@@ -182,6 +208,16 @@ namespace Intercolony
                 "IntercolonyTestNoGestation", present, 1, -1f, eggLayer: false);
             check("validity rejects pregnancy without configured gestation",
                 !new AnimalSpec { pregnant = true }.IsValidFor(noGestation), null);
+
+            check("validity rejects a health floor below zero",
+                !new AnimalSpec { minHealthFraction = -0.01f }.IsValidFor(race), null);
+            check("validity rejects a health floor above one",
+                !new AnimalSpec { minHealthFraction = 1.01f }.IsValidFor(race), null);
+            check("validity rejects a gestation floor outside zero to one",
+                !new AnimalSpec { pregnant = true, minGestationProgress = 1.01f }.IsValidFor(race), null);
+            check("validity rejects a gestation floor unless pregnancy is required",
+                !new AnimalSpec { minGestationProgress = 0.25f }.IsValidFor(race) &&
+                !new AnimalSpec { pregnant = false, minGestationProgress = 0.25f }.IsValidFor(race), null);
 
             PurchaseRequest generationRequest = new PurchaseRequest
             {
@@ -221,6 +257,147 @@ namespace Intercolony
             check("goods PurchaseRequest is not an animal order", !new PurchaseRequest().IsAnimalOrder, null);
             check("goods Quotation is not an animal order", !new Quotation().IsAnimalOrder, null);
             check("goods PurchaseOrder is not an animal order", !new PurchaseOrder().IsAnimalOrder, null);
+        }
+
+        private static void CheckPricing(
+            Action<string, bool, string> check, Action<string, string> skip)
+        {
+            ThingDef race = null;
+            LifeStageDef adultStage = DefDatabase<LifeStageDef>.GetNamedSilentFail("AnimalAdult");
+            float minimumStageFactor = 0f;
+            foreach (ThingDef candidate in DefDatabase<ThingDef>.AllDefsListForReading)
+            {
+                List<LifeStageAge> stages = candidate?.race?.lifeStageAges;
+                if (candidate?.race == null || !candidate.race.Animal || candidate.race.Humanlike ||
+                    candidate.BaseMarketValue <= 0f || candidate.race.gestationPeriodDays <= 0f ||
+                    candidate.HasComp<CompEggLayer>() || stages == null || stages.Count == 0 ||
+                    adultStage == null || CountStage(stages, adultStage) != 1)
+                {
+                    continue;
+                }
+
+                float minimum = float.MaxValue;
+                foreach (LifeStageAge entry in stages)
+                {
+                    if (entry?.def != null)
+                    {
+                        minimum = Mathf.Min(minimum, entry.def.marketValueFactor);
+                    }
+                }
+
+                if (minimum == float.MaxValue)
+                {
+                    continue;
+                }
+
+                race = candidate;
+                minimumStageFactor = minimum;
+                break;
+            }
+
+            if (race == null)
+            {
+                skip("animal pricing arithmetic", "no loaded positive-value live-bearing animal with the Core AnimalAdult stage");
+            }
+            else
+            {
+                float expectedUnspecified = race.BaseMarketValue * minimumStageFactor;
+                float actualUnspecified = IntercolonyPricing.BaseValue(
+                    race, null, new AnimalSpec());
+                check("unspecified-stage animal price uses the race's minimum stage factor",
+                    actualUnspecified == expectedUnspecified,
+                    $"{race.defName}: expected {expectedUnspecified:R}, actual {actualUnspecified:R}");
+
+                AnimalSpec adultFemale = new AnimalSpec
+                {
+                    lifeStage = adultStage,
+                    gender = Gender.Female
+                };
+                float expectedAdultFemale =
+                    race.BaseMarketValue * adultStage.marketValueFactor * 1.20f;
+                float actualAdultFemale = IntercolonyPricing.BaseValue(race, null, adultFemale);
+                check("adult female animal price exactly applies the 1.20 breeding premium",
+                    actualAdultFemale == expectedAdultFemale,
+                    $"{race.defName}: expected {expectedAdultFemale:R}, actual {actualAdultFemale:R}");
+
+                AnimalSpec adultFemalePregnant = adultFemale.Copy();
+                adultFemalePregnant.pregnant = true;
+                float expectedAdultFemalePregnant =
+                    race.BaseMarketValue * adultStage.marketValueFactor * 1.20f * 1.40f;
+                float actualAdultFemalePregnant = IntercolonyPricing.BaseValue(
+                    race, null, adultFemalePregnant);
+                check("adult female pregnant animal price exactly applies 1.20 then 1.40",
+                    actualAdultFemalePregnant == expectedAdultFemalePregnant,
+                    $"{race.defName}: expected {expectedAdultFemalePregnant:R}, actual {actualAdultFemalePregnant:R}");
+
+                SettlementEconomicProfile animalProfile = FixedPricingProfile();
+                float animalUnitPrice = IntercolonyPricing.UnitPrice(
+                    race,
+                    ThingDefOf.Steel,
+                    adultFemalePregnant,
+                    1,
+                    animalProfile,
+                    IntercolonyProductCategory.Commodities,
+                    -1f,
+                    QualityCategory.Legendary,
+                    out List<PriceFactor> animalFactors);
+                string explanation = IntercolonyPricing.Explain(
+                    race, ThingDefOf.Steel, adultFemalePregnant, 1, animalUnitPrice, animalFactors);
+                check("animal explanation names species, female and pregnancy factors",
+                    explanation.Contains("Species base") &&
+                    explanation.Contains("Sex (female)") &&
+                    explanation.Contains("Pregnancy required") &&
+                    !explanation.Contains("Legendary") && !explanation.Contains("Steel"),
+                    explanation);
+            }
+
+            CheckExactGoodsPriceRegression(check);
+        }
+
+        private static void CheckExactGoodsPriceRegression(Action<string, bool, string> check)
+        {
+            const int quantity = 100;
+            SettlementEconomicProfile profile = FixedPricingProfile();
+            IntercolonyProductCategory category = IntercolonyProductCategory.Commodities;
+            float previousDifficulty = IntercolonyMod.Settings.economyDifficulty;
+            try
+            {
+                IntercolonyMod.Settings.economyDifficulty = 1f;
+
+                // This is the pre-animal goods formula, repeated deliberately rather than
+                // reconstructed from the returned factors. Bit equality protects its operation
+                // order as well as its numerical result.
+                float expected = ThingDefOf.Steel.BaseMarketValue;
+                expected *= Mathf.Clamp(profile.DemandFor(ThingDefOf.Steel, category), 0.4f, 2f);
+                expected *= 0.95f;
+                expected *= Mathf.Lerp(1.22f, 0.96f, Mathf.Clamp01(quantity / 2000f));
+                expected *= 1f;
+                expected = Mathf.Max(0.01f, expected);
+
+                float actual = IntercolonyPricing.UnitPrice(
+                    ThingDefOf.Steel, null, quantity, profile, category, -1f, null, out _);
+                int expectedBits = BitConverter.ToInt32(BitConverter.GetBytes(expected), 0);
+                int actualBits = BitConverter.ToInt32(BitConverter.GetBytes(actual), 0);
+                check("goods price is bit-for-bit unchanged from the pre-animal formula",
+                    actualBits == expectedBits,
+                    $"expected {expected:R} (0x{expectedBits:X8}), actual {actual:R} (0x{actualBits:X8})");
+            }
+            finally
+            {
+                IntercolonyMod.Settings.economyDifficulty = previousDifficulty;
+            }
+        }
+
+        private static SettlementEconomicProfile FixedPricingProfile()
+        {
+            SettlementEconomicProfile profile = new SettlementEconomicProfile
+            {
+                seed = 12345,
+                wealthTier = IntercolonyWealthTier.Modest,
+                qualityPreference = 1f
+            };
+            profile.demandWeights[(int)IntercolonyProductCategory.Commodities] = 1.1f;
+            return profile;
         }
 
         private static void CheckMatcher(
@@ -302,6 +479,23 @@ namespace Intercolony
                     staged.LabelShort);
             }
 
+            Pawn injured = animals.Find(p =>
+                p.health?.summaryHealth != null &&
+                p.health.summaryHealth.SummaryHealthPercent < 1f);
+            if (injured == null)
+            {
+                skip("minimum-health matcher", "no current colony animal has summary health below 100%");
+            }
+            else
+            {
+                float currentHealth = injured.health.summaryHealth.SummaryHealthPercent;
+                float requiredHealth = Mathf.Min(1f, currentHealth + 0.01f);
+                check("minimum-health constraint rejects an animal below the floor",
+                    !AnimalTradeUtility.Matches(
+                        injured, injured.def, new AnimalSpec { minHealthFraction = requiredHealth }),
+                    $"{injured.LabelShort}: {currentHealth:P1} below {requiredHealth:P1}");
+            }
+
             Pawn pregnancyCapable = animals.Find(p =>
                 new AnimalSpec { pregnant = true }.IsValidFor(p.def));
             if (pregnancyCapable == null)
@@ -319,6 +513,41 @@ namespace Intercolony
                     !AnimalTradeUtility.Matches(
                         pregnancyCapable, pregnancyCapable.def, new AnimalSpec { pregnant = !current }),
                     pregnancyCapable.LabelShort);
+            }
+
+            Pawn pregnantBelowFloor = null;
+            Hediff_Pregnant pregnancy = null;
+            foreach (Pawn candidate in animals)
+            {
+                Hediff_Pregnant candidatePregnancy =
+                    candidate.health?.hediffSet?.GetFirstHediffOfDef(HediffDefOf.Pregnant)
+                    as Hediff_Pregnant;
+                if (candidatePregnancy != null && candidatePregnancy.GestationProgress < 1f &&
+                    new AnimalSpec { pregnant = true }.IsValidFor(candidate.def))
+                {
+                    pregnantBelowFloor = candidate;
+                    pregnancy = candidatePregnancy;
+                    break;
+                }
+            }
+
+            if (pregnantBelowFloor == null)
+            {
+                skip("minimum-gestation matcher", "no current colony animal is pregnant below 100% gestation");
+            }
+            else
+            {
+                float requiredProgress = Mathf.Min(1f, pregnancy.GestationProgress + 0.01f);
+                check("minimum-gestation constraint rejects an animal below the floor",
+                    !AnimalTradeUtility.Matches(
+                        pregnantBelowFloor,
+                        pregnantBelowFloor.def,
+                        new AnimalSpec
+                        {
+                            pregnant = true,
+                            minGestationProgress = requiredProgress
+                        }),
+                    $"{pregnantBelowFloor.LabelShort}: {pregnancy.GestationProgress:P1} below {requiredProgress:P1}");
             }
 
             Pawn pairA = null;

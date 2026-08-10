@@ -40,6 +40,14 @@ namespace Intercolony
         /// <summary>Multiplier once demand is thoroughly saturated.</summary>
         private const float SaturationWorst = 0.96f;
 
+        // A specification promises only its stated constraints. When a term is unspecified,
+        // the seller may fulfil it with the cheapest eligible animal, so the buyer pays only
+        // for the value guaranteed by the promise. These are owner-tunable balance values.
+        private const float UnspecifiedOrMaleSexFactor = 1f;
+        private const float FemaleBreedingValueFactor = 1.20f;
+        private const float PregnancyNotRequiredFactor = 1f;
+        private const float PregnancyRequiredFactor = 1.40f;
+
         /// <summary>
         /// Unit price for a lot, plus the factors that produced it.
         ///
@@ -75,9 +83,49 @@ namespace Intercolony
             QualityCategory? minQuality,
             out List<PriceFactor> factors)
         {
+            return UnitPrice(
+                def, stuff, null, quantity, profile, category, distanceTiles, minQuality, out factors);
+        }
+
+        /// <summary>
+        /// Animal-aware overload. A non-null specification replaces only the base-unit
+        /// derivation; all settlement, saturation, distance and difficulty factors remain shared.
+        /// Animals never enter material or quality valuation.
+        /// </summary>
+        public static float UnitPrice(
+            ThingDef def,
+            ThingDef stuff,
+            AnimalSpec animalSpec,
+            int quantity,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float distanceTiles,
+            QualityCategory? minQuality,
+            out List<PriceFactor> factors)
+        {
             factors = new List<PriceFactor>();
 
-            float baseValue = BaseValue(def, stuff);
+            bool isAnimalPrice = animalSpec != null;
+            if (isAnimalPrice &&
+                !animalSpec.TryValidateFor(def, requireKind: false, out string validationReason))
+            {
+                IntercolonyLog.Error(
+                    $"Animal unit price for race {def?.defName ?? "<null>"} is zero because validation failed: {validationReason}.");
+                return 0f;
+            }
+
+            float baseValue;
+            if (isAnimalPrice)
+            {
+                // Deliberately start from the species definition, not a pawn. The animal
+                // factors below turn that into the specification value without any generation.
+                baseValue = def.BaseMarketValue;
+                AddAnimalSpecificationFactors(def, animalSpec, factors);
+            }
+            else
+            {
+                baseValue = BaseValue(def, stuff);
+            }
 
             // The category supplies the settlement's broad economic character; the good-specific
             // perturbation keeps that character from making every item in the category rank alike.
@@ -99,7 +147,7 @@ namespace Intercolony
             // Only goods that can actually carry a quality rating. Applying a buyer's
             // craftsmanship preference to chemfuel or raw meat is meaningless and shows up in
             // the §47 breakdown as an unexplainable line the player cannot act on.
-            if (CanHaveQuality(def))
+            if (!isAnimalPrice && CanHaveQuality(def))
             {
                 float quality = QualityPremium(profile);
                 if (!Mathf.Approximately(quality, 1f))
@@ -280,6 +328,87 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Definition-only animal value: species base times the guaranteed specification
+        /// multipliers. A null specification is exactly the existing goods path.
+        /// </summary>
+        public static float BaseValue(ThingDef def, ThingDef stuff, AnimalSpec animalSpec)
+        {
+            if (animalSpec == null)
+            {
+                return BaseValue(def, stuff);
+            }
+
+            if (!animalSpec.TryValidateFor(def, requireKind: false, out string validationReason))
+            {
+                IntercolonyLog.Error(
+                    $"Animal base value for race {def?.defName ?? "<null>"} is zero because validation failed: {validationReason}.");
+                return 0f;
+            }
+
+            float value = def.BaseMarketValue;
+            List<PriceFactor> animalFactors = new List<PriceFactor>();
+            AddAnimalSpecificationFactors(def, animalSpec, animalFactors);
+            foreach (PriceFactor factor in animalFactors)
+            {
+                value *= factor.multiplier;
+            }
+
+            return value;
+        }
+
+        private static void AddAnimalSpecificationFactors(
+            ThingDef race, AnimalSpec spec, List<PriceFactor> factors)
+        {
+            float lifeStageFactor = spec.lifeStage != null
+                ? spec.lifeStage.marketValueFactor
+                : MinimumLifeStageFactor(race);
+            string lifeStageLabel = spec.lifeStage != null
+                ? $"Life stage ({spec.lifeStage.label})"
+                : "Life stage (minimum guaranteed)";
+            factors.Add(new PriceFactor(lifeStageLabel, lifeStageFactor));
+
+            if (spec.gender.HasValue)
+            {
+                float sexFactor = spec.gender.Value == Gender.Female
+                    ? FemaleBreedingValueFactor
+                    : UnspecifiedOrMaleSexFactor;
+                factors.Add(new PriceFactor(
+                    $"Sex ({spec.gender.Value.GetLabel(animal: true)})", sexFactor));
+            }
+
+            if (spec.pregnant.HasValue)
+            {
+                factors.Add(new PriceFactor(
+                    spec.pregnant.Value ? "Pregnancy required" : "Not pregnant",
+                    spec.pregnant.Value ? PregnancyRequiredFactor : PregnancyNotRequiredFactor));
+            }
+
+            // minHealthFraction is intentionally an anti-exploit eligibility gate, not price
+            // discovery in V1. Gestation progress likewise narrows fulfilment without changing
+            // the single pregnancy premium promised by the specification.
+        }
+
+        private static float MinimumLifeStageFactor(ThingDef race)
+        {
+            float minimum = float.MaxValue;
+            List<LifeStageAge> stages = race.race.lifeStageAges;
+            if (stages != null)
+            {
+                foreach (LifeStageAge stage in stages)
+                {
+                    if (stage?.def != null && stage.def.marketValueFactor < minimum)
+                    {
+                        minimum = stage.def.marketValueFactor;
+                    }
+                }
+            }
+
+            // A malformed content definition with no stages has no factor to read. Preserve
+            // the LifeStageDef code default rather than inventing a discount.
+            return minimum == float.MaxValue ? 1f : minimum;
+        }
+
+        /// <summary>
         /// Settlements that care about craftsmanship pay a premium on goods where
         /// craftsmanship is a real property. Only applied when <see cref="CanHaveQuality"/>.
         /// </summary>
@@ -329,11 +458,27 @@ namespace Intercolony
         public static string Explain(
             ThingDef def, ThingDef stuff, int quantity, float unitPrice, List<PriceFactor> factors)
         {
+            return Explain(def, stuff, null, quantity, unitPrice, factors);
+        }
+
+        /// <summary>Breakdown that identifies the animal species base before spec multipliers.</summary>
+        public static string Explain(
+            ThingDef def,
+            ThingDef stuff,
+            AnimalSpec animalSpec,
+            int quantity,
+            float unitPrice,
+            List<PriceFactor> factors)
+        {
             StringBuilder sb = new StringBuilder();
-            string baseLabel = stuff != null && def.MadeFromStuff
-                ? $"Base value ({stuff.label})"
-                : "Base value";
-            sb.AppendLine($"{baseLabel,-25} {BaseValue(def, stuff),10:F2}");
+            bool isAnimalPrice = animalSpec != null;
+            string baseLabel = isAnimalPrice
+                ? $"Species base ({def.label})"
+                : stuff != null && def.MadeFromStuff
+                    ? $"Base value ({stuff.label})"
+                    : "Base value";
+            float displayedBase = isAnimalPrice ? def.BaseMarketValue : BaseValue(def, stuff);
+            sb.AppendLine($"{baseLabel,-25} {displayedBase,10:F2}");
             foreach (PriceFactor factor in factors)
             {
                 float percent = (factor.multiplier - 1f) * 100f;

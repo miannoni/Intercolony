@@ -133,13 +133,29 @@ namespace Intercolony
                 return false;
             }
 
+            if (spec.minHealthFraction.HasValue &&
+                (pawn.health?.summaryHealth == null ||
+                 pawn.health.summaryHealth.SummaryHealthPercent < spec.minHealthFraction.Value))
+            {
+                return false;
+            }
+
+            Hediff pregnancyHediff = null;
             if (spec.pregnant.HasValue)
             {
-                bool isPregnant = pawn.health?.hediffSet?.HasHediff(HediffDefOf.Pregnant) == true;
+                pregnancyHediff = pawn.health?.hediffSet?.GetFirstHediffOfDef(HediffDefOf.Pregnant);
+                bool isPregnant = pregnancyHediff != null;
                 if (isPregnant != spec.pregnant.Value)
                 {
                     return false;
                 }
+            }
+
+            if (spec.minGestationProgress.HasValue &&
+                (!(pregnancyHediff is Hediff_Pregnant pregnancy) ||
+                 pregnancy.GestationProgress < spec.minGestationProgress.Value))
+            {
+                return false;
             }
 
             return true;
