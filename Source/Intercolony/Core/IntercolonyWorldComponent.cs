@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 24;
+        public const int CurrentSaveVersion = 25;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -733,7 +733,27 @@ namespace Intercolony
                 else
                 {
                     int nullOrders = orders.RemoveAll(o => o == null);
-                    int brokenOrders = orders.RemoveAll(o => !o.IsValidAfterLoad);
+                    int brokenOrders = 0;
+                    for (int i = orders.Count - 1; i >= 0; i--)
+                    {
+                        SalesOrder order = orders[i];
+                        if (order.TryValidateAfterLoad(out string reason))
+                        {
+                            continue;
+                        }
+
+                        orders.RemoveAt(i);
+                        if (order.IsAnimalOrder)
+                        {
+                            IntercolonyLog.Error(
+                                $"Dropped unresolvable animal sales order #{order.id} while loading: {reason}.");
+                        }
+                        else
+                        {
+                            brokenOrders++;
+                        }
+                    }
+
                     if (nullOrders > 0 || brokenOrders > 0)
                     {
                         // §62 is explicit that migration must not silently drop active
@@ -752,7 +772,42 @@ namespace Intercolony
                 else
                 {
                     int nullRequests = requests.RemoveAll(r => r == null);
-                    int brokenRequests = requests.RemoveAll(r => !r.IsValidAfterLoad);
+                    int brokenRequests = 0;
+                    for (int i = requests.Count - 1; i >= 0; i--)
+                    {
+                        PurchaseRequest request = requests[i];
+                        if (!request.TryValidateAfterLoad(out string reason))
+                        {
+                            requests.RemoveAt(i);
+                            if (request.IsAnimalOrder)
+                            {
+                                IntercolonyLog.Warning(
+                                    $"Dropped unresolvable animal purchase request #{request.id} while loading: {reason}.");
+                            }
+                            else
+                            {
+                                brokenRequests++;
+                            }
+
+                            continue;
+                        }
+
+                        for (int q = request.quotes.Count - 1; q >= 0; q--)
+                        {
+                            Quotation quote = request.quotes[q];
+                            if (quote.TryValidateForRequest(
+                                    request.thingDef, request.IsAnimalOrder, out string quoteReason))
+                            {
+                                continue;
+                            }
+
+                            request.quotes.RemoveAt(q);
+                            IntercolonyLog.Warning(
+                                $"Dropped unresolvable animal quotation #{quote.id} from request " +
+                                $"#{request.id} while loading: {quoteReason}.");
+                        }
+                    }
+
                     if (nullRequests > 0 || brokenRequests > 0)
                     {
                         IntercolonyLog.Warning(
@@ -768,7 +823,28 @@ namespace Intercolony
                 else
                 {
                     int nullPurchases = purchaseOrders.RemoveAll(o => o == null);
-                    int brokenPurchases = purchaseOrders.RemoveAll(o => !o.IsValidAfterLoad);
+                    int brokenPurchases = 0;
+                    for (int i = purchaseOrders.Count - 1; i >= 0; i--)
+                    {
+                        PurchaseOrder purchase = purchaseOrders[i];
+                        if (purchase.TryValidateAfterLoad(out string reason))
+                        {
+                            continue;
+                        }
+
+                        purchaseOrders.RemoveAt(i);
+                        if (purchase.IsAnimalOrder)
+                        {
+                            IntercolonyLog.Error(
+                                $"Dropped unresolvable animal purchase order #{purchase.id} while loading: " +
+                                $"{reason}. Any silver paid for it is gone.");
+                        }
+                        else
+                        {
+                            brokenPurchases++;
+                        }
+                    }
+
                     if (nullPurchases > 0 || brokenPurchases > 0)
                     {
                         // A purchase is silver already spent, so losing one is worse than
@@ -1480,6 +1556,14 @@ namespace Intercolony
 
                 IntercolonyLog.Message(
                     "  schema 23 -> 24: employee incapacitation warnings added; existing employments start unwarned.");
+            }
+
+            if (saveVersion < 25)
+            {
+                // 24 -> 25 added optional animal specifications to the existing order records.
+                // There is no data to move: an absent specification already means ordinary goods.
+                IntercolonyLog.Message(
+                    "  schema 24 -> 25: optional animal specifications added; existing records remain goods.");
             }
 
             saveVersion = CurrentSaveVersion;

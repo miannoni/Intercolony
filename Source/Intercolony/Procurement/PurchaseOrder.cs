@@ -58,6 +58,9 @@ namespace Intercolony
         public QualityCategory? quality;
         public int quantity;
 
+        /// <summary>Accepted animal promise, or null for goods.</summary>
+        public AnimalSpec animalSpec;
+
         public float unitPrice;
         public int paidSilver;
 
@@ -89,6 +92,8 @@ namespace Intercolony
                               status == PurchaseOrderStatus.ReadyForPickup;
 
         public bool AwaitingCollection => status == PurchaseOrderStatus.ReadyForPickup;
+
+        public bool IsAnimalOrder => animalSpec != null;
 
         public float DaysUntilReady => (readyTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
@@ -125,6 +130,7 @@ namespace Intercolony
             Scribe_Defs.Look(ref stuffDef, "stuffDef");
             Scribe_Values.Look(ref quality, "quality");
             Scribe_Values.Look(ref quantity, "quantity", 0);
+            Scribe_Deep.Look(ref animalSpec, "animalSpec");
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
             Scribe_Values.Look(ref paidSilver, "paidSilver", 0);
             Scribe_Values.Look(ref supplierDelivers, "supplierDelivers", false);
@@ -142,7 +148,30 @@ namespace Intercolony
             }
         }
 
-        public bool IsValidAfterLoad => thingDef != null && quantity > 0;
+        public bool IsValidAfterLoad => TryValidateAfterLoad(out _);
+
+        public bool TryValidateAfterLoad(out string reason)
+        {
+            if (thingDef == null)
+            {
+                reason = IsAnimalOrder ? "missing race definition" : "missing item definition";
+                return false;
+            }
+
+            if (quantity <= 0)
+            {
+                reason = "non-positive quantity";
+                return false;
+            }
+
+            if (IsAnimalOrder && !animalSpec.TryValidateFor(thingDef, requireKind: true, out reason))
+            {
+                return false;
+            }
+
+            reason = null;
+            return true;
+        }
 
         public override string ToString()
         {

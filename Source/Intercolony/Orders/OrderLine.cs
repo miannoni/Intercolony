@@ -36,6 +36,9 @@ namespace Intercolony
         /// </summary>
         public float minHitPointsPercent;
 
+        /// <summary>Animal constraints, or null when this is an ordinary goods line.</summary>
+        public AnimalSpec animalSpec;
+
         public OrderLine()
         {
         }
@@ -54,6 +57,8 @@ namespace Intercolony
 
         public bool HasAnyConstraint => HasQualityConstraint || HasStuffConstraint || HasConditionConstraint;
 
+        public bool IsAnimalOrder => animalSpec != null;
+
         public void ExposeData()
         {
             Scribe_Defs.Look(ref thingDef, "thingDef");
@@ -61,6 +66,7 @@ namespace Intercolony
             Scribe_Values.Look(ref minQuality, "minQuality");
             Scribe_Defs.Look(ref allowedStuff, "allowedStuff");
             Scribe_Values.Look(ref minHitPointsPercent, "minHitPointsPercent", 0f);
+            Scribe_Deep.Look(ref animalSpec, "animalSpec");
         }
 
         /// <summary>Short label for tables: "Dining chair (Excellent+)".</summary>

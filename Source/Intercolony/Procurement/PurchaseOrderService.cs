@@ -109,6 +109,7 @@ namespace Intercolony
                 stuffDef = quote.offeredStuff ?? request.stuffDef,
                 quality = quote.offeredQuality,
                 quantity = quantity,
+                animalSpec = quote.animalSpec?.Copy(),
                 unitPrice = quote.unitPrice,
                 paidSilver = price,
                 supplierDelivers = quote.supplierDelivers,

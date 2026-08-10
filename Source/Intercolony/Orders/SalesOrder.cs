@@ -108,6 +108,8 @@ namespace Intercolony
 
         public int Quantity => line?.quantity ?? 0;
 
+        public bool IsAnimalOrder => line?.IsAnimalOrder == true;
+
         public int TotalPayment => Mathf.RoundToInt(unitPrice * Quantity);
 
         public int RemainingQuantity => Mathf.Max(0, Quantity - deliveredQuantity);
@@ -197,7 +199,31 @@ namespace Intercolony
         }
 
         /// <summary>A missing def means the mod supplying the item was removed (§64, §86).</summary>
-        public bool IsValidAfterLoad => line?.thingDef != null && line.quantity > 0;
+        public bool IsValidAfterLoad => TryValidateAfterLoad(out _);
+
+        public bool TryValidateAfterLoad(out string reason)
+        {
+            if (line?.thingDef == null)
+            {
+                reason = IsAnimalOrder ? "missing race definition" : "missing item definition";
+                return false;
+            }
+
+            if (line.quantity <= 0)
+            {
+                reason = "non-positive quantity";
+                return false;
+            }
+
+            if (IsAnimalOrder && !line.animalSpec.TryValidateFor(
+                    line.thingDef, requireKind: false, out reason))
+            {
+                return false;
+            }
+
+            reason = null;
+            return true;
+        }
 
         public override string ToString()
         {

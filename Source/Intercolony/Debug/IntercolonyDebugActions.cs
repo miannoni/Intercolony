@@ -585,6 +585,54 @@ namespace Intercolony
                 IntercolonyOrderSelfTest.Run(state, Find.CurrentMap)));
         }
 
+        [DebugAction(Category, "Run animal spec self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 57)]
+        private static void RunAnimalSpecSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyAnimalSelfTest.Run(state, Find.CurrentMap)));
+        }
+
+        [DebugAction(Category, "List colony animal specification matches", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 46)]
+        private static void ListColonyAnimalSpecificationMatches()
+        {
+            List<Pawn> animals = new List<Pawn>();
+            foreach (Pawn pawn in Find.CurrentMap.mapPawns.AllPawnsSpawned)
+            {
+                if (pawn?.IsColonyAnimal == true)
+                {
+                    animals.Add(pawn);
+                }
+            }
+
+            if (animals.Count == 0)
+            {
+                IntercolonyLog.Message("No spawned colony animals to inspect.");
+                return;
+            }
+
+            Pawn example = animals[0];
+            AnimalSpec spec = new AnimalSpec
+            {
+                gender = example.gender,
+                lifeStage = example.ageTracker?.CurLifeStage,
+                pregnant = example.health?.hediffSet?.HasHediff(HediffDefOf.Pregnant) == true
+            };
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine($"Colony animals against example sell-side spec: {spec.ShortLabel(example.def)}");
+            foreach (Pawn pawn in animals)
+            {
+                bool eligible = AnimalTradeUtility.TryValidateSaleEligibility(
+                    pawn, out string reason);
+                bool matches = AnimalTradeUtility.Matches(pawn, example.def, spec);
+                sb.AppendLine($"  {pawn.LabelShortCap} ({pawn.def.defName}): " +
+                              $"eligible {(eligible ? "yes" : "NO — " + reason)}; " +
+                              $"matches {(matches ? "yes" : "no")}");
+            }
+
+            IntercolonyLog.Message(sb.ToString());
+        }
+
         [DebugAction(Category, "Dump product classification", allowedGameStates = AllowedGameStates.Playing, displayPriority = 45)]
         private static void DumpProductClassification()
         {

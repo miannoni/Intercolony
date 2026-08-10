@@ -72,6 +72,9 @@ namespace Intercolony
         /// <summary>Price factor breakdown, for the §47 tooltip.</summary>
         public string priceExplanation = "";
 
+        /// <summary>Animal promise offered by this supplier, or null for goods.</summary>
+        public AnimalSpec animalSpec;
+
         public Quotation()
         {
         }
@@ -79,6 +82,8 @@ namespace Intercolony
         public int TotalPrice => Mathf.RoundToInt(unitPrice * quantityOffered);
 
         public string FulfillmentLabel => supplierDelivers ? "delivered" : "pickup";
+
+        public bool IsAnimalOrder => animalSpec != null;
 
         public void ExposeData()
         {
@@ -94,6 +99,7 @@ namespace Intercolony
             Scribe_Defs.Look(ref offeredStuff, "offeredStuff");
             Scribe_Values.Look(ref distanceTiles, "distanceTiles", -1f);
             Scribe_Values.Look(ref priceExplanation, "priceExplanation", "");
+            Scribe_Deep.Look(ref animalSpec, "animalSpec");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -101,6 +107,30 @@ namespace Intercolony
                 if (factionName == null) factionName = "";
                 if (priceExplanation == null) priceExplanation = "";
             }
+        }
+
+        public bool TryValidateForRequest(
+            ThingDef requestRace, bool requestIsAnimal, out string reason)
+        {
+            if (!requestIsAnimal)
+            {
+                if (IsAnimalOrder)
+                {
+                    reason = "animal quotation is attached to a goods request";
+                    return false;
+                }
+
+                reason = null;
+                return true;
+            }
+
+            if (!IsAnimalOrder)
+            {
+                reason = "missing animal specification and pawn kind";
+                return false;
+            }
+
+            return animalSpec.TryValidateFor(requestRace, requireKind: true, out reason);
         }
 
         public override string ToString()
@@ -145,11 +175,16 @@ namespace Intercolony
         /// <summary>Set when nobody answered, so the UI can explain rather than show an empty list.</summary>
         public string noResponseReason = "";
 
+        /// <summary>Requested animal constraints, or null for goods.</summary>
+        public AnimalSpec animalSpec;
+
         public PurchaseRequest()
         {
         }
 
         public bool IsOpen => status == PurchaseRequestStatus.Open;
+
+        public bool IsAnimalOrder => animalSpec != null;
 
         public int TicksRemaining => expiryTick - GenTicks.TicksGame;
 
@@ -225,6 +260,7 @@ namespace Intercolony
             Scribe_Values.Look(ref fulfillmentPreference, "fulfillmentPreference",
                 ProcurementFulfillmentPreference.Either);
             Scribe_Values.Look(ref noResponseReason, "noResponseReason", "");
+            Scribe_Deep.Look(ref animalSpec, "animalSpec");
             Scribe_Collections.Look(ref quotes, "quotes", LookMode.Deep);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
@@ -247,7 +283,30 @@ namespace Intercolony
         }
 
         /// <summary>A missing def means the mod supplying the item was removed (§64, §86).</summary>
-        public bool IsValidAfterLoad => thingDef != null && quantityRequested > 0;
+        public bool IsValidAfterLoad => TryValidateAfterLoad(out _);
+
+        public bool TryValidateAfterLoad(out string reason)
+        {
+            if (thingDef == null)
+            {
+                reason = IsAnimalOrder ? "missing race definition" : "missing item definition";
+                return false;
+            }
+
+            if (quantityRequested <= 0)
+            {
+                reason = "non-positive quantity";
+                return false;
+            }
+
+            if (IsAnimalOrder && !animalSpec.TryValidateFor(thingDef, requireKind: true, out reason))
+            {
+                return false;
+            }
+
+            reason = null;
+            return true;
+        }
 
         public override string ToString()
         {
