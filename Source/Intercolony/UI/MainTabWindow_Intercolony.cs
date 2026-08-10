@@ -1765,28 +1765,43 @@ namespace Intercolony
                 "Sell animals to this buyer?",
                 "Create order",
                 offer.quantity,
-                qty =>
+                (qty, fulfillment) =>
                 {
-                    float rate = SellRateFor(
-                        offer, qty, FulfillmentMode.SellerDelivery);
-                    return $"Commit to supplying {qty}x {offer.animalSpec.ShortLabel(offer.def)} " +
-                           $"to {offer.settlement?.Label} within {deadlineDays} days.\n\n" +
+                    float rate = SellRateFor(offer, qty, fulfillment);
+                    string commitment = fulfillment == FulfillmentMode.BuyerPickup
+                        ? $"Commit to sell {qty}x {offer.animalSpec.ShortLabel(offer.def)} to " +
+                          $"{offer.settlement?.Label}.\n\n" +
+                          BuyerPickupTimingExplanation(
+                              offer.settlement?.Label, deadlineDays, offer.distanceTiles)
+                        : $"Commit to supplying {qty}x {offer.animalSpec.ShortLabel(offer.def)} " +
+                          $"to {offer.settlement?.Label} within {deadlineDays} days.";
+
+                    // The two modes differ in a way that matters for animals and not for
+                    // goods: pickup names the individual animals up front, delivery does not.
+                    string logistics = fulfillment == FulfillmentMode.BuyerPickup
+                        ? "No caravan is needed. When you mark the order ready you set aside " +
+                          "the particular animals the buyer will collect, and the buyer takes " +
+                          "those animals rather than any matching ones."
+                        : "You deliver: load matching animals into your caravan. The promise " +
+                          "is by specification, so any animal meeting it will do.";
+
+                    return commitment + "\n\n" +
                            $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
                            $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
-                           "Live animals require seller delivery. Load matching animals into your " +
-                           "caravan; they will be revalidated at the settlement. This promise is " +
-                           "anonymous and does not lock individual animals.\n\n" +
-                           "If the animals handed over are bonded, the final delivery confirmation " +
-                           "will name every affected colonist.";
+                           logistics + "\n\n" +
+                           "Animals are checked again at the handover, so one that dies, is " +
+                           "downed, goes feral or no longer matches will not be counted. " +
+                           "Nothing is physically locked in the meantime.\n\n" +
+                           "If any animal handed over is bonded, you will be asked to confirm " +
+                           "and every affected colonist will be named.";
                 },
-                qty =>
+                (qty, fulfillment) =>
                 {
                     BuyerOffer priced = offer;
-                    priced.unitPrice = SellRateFor(
-                        offer, qty, FulfillmentMode.SellerDelivery);
+                    priced.unitPrice = SellRateFor(offer, qty, fulfillment);
                     if (SalesOrderService.CreateFromOffer(
                             state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
-                            deadlineDays, FulfillmentMode.SellerDelivery) != null)
+                            deadlineDays, fulfillment) != null)
                     {
                         tab = Tab.Orders;
                         animalStockCache = null;
@@ -2800,7 +2815,23 @@ namespace Intercolony
                 Rect readyRect = new Rect(rect.xMax - 210f, rect.y + 14f, 110f, 28f);
                 if (Widgets.ButtonText(readyRect, "Mark ready", active: enough))
                 {
-                    SalesOrderService.MarkReadyForPickup(order, map);
+                    // Marking an animal order ready commits these particular animals, so the
+                    // bond warning belongs here rather than only at a caravan handover.
+                    SalesOrder readyOrder = order;
+                    Map readyMap = map;
+                    string bondWarning =
+                        SalesOrderService.BuildBondedAnimalWarning(readyOrder, readyMap);
+                    if (bondWarning.NullOrEmpty())
+                    {
+                        SalesOrderService.MarkReadyForPickup(readyOrder, readyMap);
+                    }
+                    else
+                    {
+                        Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                            bondWarning,
+                            () => SalesOrderService.MarkReadyForPickup(readyOrder, readyMap),
+                            destructive: true));
+                    }
                 }
 
                 if (ShouldBuildTooltip(readyRect))

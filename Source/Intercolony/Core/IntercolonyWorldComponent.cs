@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 27;
+        public const int CurrentSaveVersion = 28;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1580,6 +1580,14 @@ namespace Intercolony
                 // specifications. There is no data to move: absent fields mean no floor.
                 IntercolonyLog.Message(
                     "  schema 26 -> 27: animal health and gestation floors added; existing specifications have no floors.");
+            }
+
+            if (saveVersion < 28)
+            {
+                // 27 -> 28 added the animals set aside for a buyer to collect. There is no
+                // data to move: no existing order is an animal order, so none has a list.
+                IntercolonyLog.Message(
+                    "  schema 27 -> 28: designated pickup animals added; existing orders have none.");
             }
 
             saveVersion = CurrentSaveVersion;

@@ -155,13 +155,6 @@ namespace Intercolony
                 return null;
             }
 
-            if (offer.IsAnimalOffer && fulfillment != FulfillmentMode.SellerDelivery)
-            {
-                Messages.Message("Live animals must be delivered by your caravan.",
-                    MessageTypeDefOf.RejectInput, historical: false);
-                return null;
-            }
-
             int available = offer.IsAnimalOffer
                 ? FindBuyerService.AvailableAnimalQuantity(
                     state, map, offer.def, offer.animalSpec)
@@ -315,8 +308,29 @@ namespace Intercolony
                 return null;
             }
 
-            List<Pawn> animals = OrderValidator.MatchingCaravanAnimals(
-                order, caravan, order.RemainingQuantity);
+            return BuildBondedAnimalWarning(
+                OrderValidator.MatchingCaravanAnimals(
+                    order, caravan, order.RemainingQuantity));
+        }
+
+        /// <summary>
+        /// The same warning for a colony handover, where the animals are chosen from the map
+        /// rather than a caravan. Marking ready is when the player commits these particular
+        /// animals, so the bond warning belongs there too and not only at delivery.
+        /// </summary>
+        internal static string BuildBondedAnimalWarning(SalesOrder order, Map map)
+        {
+            if (order?.IsAnimalOrder != true)
+            {
+                return null;
+            }
+
+            return BuildBondedAnimalWarning(
+                OrderValidator.MatchingColonyAnimals(order, map, order.RemainingQuantity));
+        }
+
+        private static string BuildBondedAnimalWarning(List<Pawn> animals)
+        {
             StringBuilder lines = new StringBuilder();
             int bondedAnimals = 0;
             foreach (Pawn animal in animals)
@@ -408,8 +422,11 @@ namespace Intercolony
             }
 
             IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
-            int available = FindBuyerService.AvailableQuantity(
-                state, map, order.ThingDef, order.id);
+            int available = order.IsAnimalOrder
+                ? FindBuyerService.AvailableAnimalQuantity(
+                    state, map, order.ThingDef, order.line.animalSpec, order.id)
+                : FindBuyerService.AvailableQuantity(
+                    state, map, order.ThingDef, order.id);
             if (available < order.RemainingQuantity)
             {
                 int committedElsewhere = FindBuyerService.CommittedQuantity(
@@ -430,6 +447,27 @@ namespace Intercolony
             }
 
             int travelDays = EstimateBuyerPickupTravelDays(distance);
+
+            // Goods are fungible, so a head count is the whole promise. Animals are not: the
+            // buyer comes for these animals. Record them now, while the player is looking at
+            // the colony that has them, rather than picking substitutes on arrival.
+            if (order.IsAnimalOrder)
+            {
+                List<Pawn> designated = OrderValidator.MatchingColonyAnimals(
+                    order, map, order.RemainingQuantity);
+                if (designated.Count < order.RemainingQuantity)
+                {
+                    Messages.Message(
+                        $"Order #{order.id}: only {designated.Count:N0} eligible " +
+                        $"{order.line.animalSpec.ShortLabel(order.ThingDef)} are here; " +
+                        $"{order.RemainingQuantity:N0} are needed.",
+                        MessageTypeDefOf.RejectInput, historical: false);
+                    return false;
+                }
+
+                order.designatedAnimals = designated;
+            }
+
             order.fulfillmentMap = map;
             order.status = SalesOrderStatus.AwaitingCollection;
             order.buyerArrivalTick = GenTicks.TicksGame + travelDays * GenDate.TicksPerDay;
@@ -492,13 +530,20 @@ namespace Intercolony
                 }
 
                 int owed = order.RemainingQuantity;
-                int taken = OrderValidator.TakeFromColony(order, map, owed);
+
+                // A live pawn must never reach TakeFromColony, which splits and destroys
+                // stacks. Collect the designated animals through the dedicated handoff.
+                int taken = order.IsAnimalOrder
+                    ? CollectDesignatedAnimals(order, map, owed)
+                    : OrderValidator.TakeFromColony(order, map, owed);
 
                 if (taken <= 0)
                 {
                     // The goods were promised and are gone. That is a failed order, not a
                     // silent no-op — the buyer travelled for nothing.
-                    Fail(order, "The buyer arrived and the goods were not there.");
+                    Fail(order, order.IsAnimalOrder
+                        ? "The buyer arrived and the animals were not there."
+                        : "The buyer arrived and the goods were not there.");
                     continue;
                 }
 
@@ -660,6 +705,73 @@ namespace Intercolony
             }
 
             return wanted - remaining;
+        }
+
+        /// <summary>
+        /// Hands the animals set aside at Mark Ready to a buyer who has arrived to collect
+        /// them. Only the designated animals are considered: the player promised these, and
+        /// silently substituting another animal of the same specification would hand over a
+        /// pawn they never agreed to part with.
+        /// </summary>
+        private static int CollectDesignatedAnimals(SalesOrder order, Map map, int wanted)
+        {
+            if (order.designatedAnimals == null || wanted <= 0)
+            {
+                return 0;
+            }
+
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(order.settlementId);
+            Pawn negotiator = FindColonyNegotiator(map);
+            if (settlement == null || negotiator == null)
+            {
+                return 0;
+            }
+
+            int handedOver = 0;
+            foreach (Pawn pawn in order.designatedAnimals)
+            {
+                if (handedOver >= wanted)
+                {
+                    break;
+                }
+
+                // A designated animal may have died, been tamed away, gone feral, aged out of
+                // its life stage, given birth or miscarried while the buyer travelled. The
+                // promise is checked against reality at the moment it is kept.
+                if (pawn == null || !pawn.Spawned || pawn.Map != map ||
+                    !AnimalTradeUtility.IsEligibleForSale(pawn) ||
+                    !AnimalTradeUtility.Matches(pawn, order.ThingDef, order.line.animalSpec))
+                {
+                    continue;
+                }
+
+                // Whatever the animal was carrying belongs to the colony, not the buyer.
+                pawn.inventory?.DropAllNearPawn(pawn.Position);
+
+                pawn.DeSpawn(DestroyMode.Vanish);
+                pawn.PreTraded(TradeAction.PlayerSells, negotiator, settlement);
+                Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
+                handedOver++;
+            }
+
+            order.designatedAnimals.RemoveAll(p => p == null || !p.Spawned || p.Map != map);
+            return handedOver;
+        }
+
+        /// <summary>A colonist to stand as the seller, mirroring the caravan negotiator.</summary>
+        internal static Pawn FindColonyNegotiator(Map map)
+        {
+            List<Pawn> pawns = map?.mapPawns?.FreeColonistsSpawned;
+            for (int i = 0; pawns != null && i < pawns.Count; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (pawn != null && !pawn.Downed && !pawn.InMentalState)
+                {
+                    return pawn;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -71,6 +72,18 @@ namespace Intercolony
 
         /// <summary>The player colony this order is fulfilled from.</summary>
         public Map fulfillmentMap;
+
+        /// <summary>
+        /// The specific animals the player set aside when marking an animal order ready for
+        /// buyer collection, or null for every other kind of order.
+        ///
+        /// Animals are individuals, so unlike goods a head count is not enough: the buyer
+        /// collects these animals, not any matching ones. References rather than deep saves,
+        /// because the map already owns these pawns (see docs/LABOR_TECHNICAL_NOTES.md on
+        /// ownership). A reference that fails to resolve becomes null and is treated as an
+        /// animal that is no longer there, which is exactly what it means.
+        /// </summary>
+        public List<Pawn> designatedAnimals;
 
         /// <summary>
         /// What is being sold, including any quality, material or condition constraints
@@ -160,6 +173,8 @@ namespace Intercolony
             Scribe_Values.Look(ref settlementName, "settlementName", "");
             Scribe_Values.Look(ref factionName, "factionName", "");
             Scribe_References.Look(ref fulfillmentMap, "fulfillmentMap");
+            Scribe_Collections.Look(
+                ref designatedAnimals, "designatedAnimals", LookMode.Reference);
             Scribe_Deep.Look(ref line, "line");
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
 

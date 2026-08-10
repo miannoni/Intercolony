@@ -289,6 +289,119 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Colony animals currently able to satisfy an animal order. The map equivalent of
+        /// <see cref="MatchingColonyAnimals"/>'s caravan counterpart: eligibility and the
+        /// specification are re-checked on every call and no pawn is reserved by looking.
+        /// </summary>
+        internal static List<Pawn> MatchingColonyAnimals(
+            SalesOrder order, Map map, int maximum)
+        {
+            List<Pawn> matching = new List<Pawn>();
+            if (order?.IsAnimalOrder != true || map == null || maximum <= 0)
+            {
+                return matching;
+            }
+
+            IReadOnlyList<Pawn> pawns = map.mapPawns?.AllPawnsSpawned;
+            if (pawns == null)
+            {
+                return matching;
+            }
+
+            for (int i = 0; i < pawns.Count && matching.Count < maximum; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (IsDesignatedElsewhere(pawn, order))
+                {
+                    continue;
+                }
+
+                if (AnimalTradeUtility.IsEligibleForSale(pawn) &&
+                    AnimalTradeUtility.Matches(pawn, order.ThingDef, order.line.animalSpec))
+                {
+                    matching.Add(pawn);
+                }
+            }
+
+            return matching;
+        }
+
+        /// <summary>
+        /// Whether another open order has already set this animal aside for its own buyer.
+        ///
+        /// Committed head count alone is not enough here. It correctly stops a second order
+        /// being marked ready when there are too few animals, but it says nothing about
+        /// *which* animals, so without this two orders could name the same one and the second
+        /// buyer would arrive to find its animal already sold.
+        /// </summary>
+        private static bool IsDesignatedElsewhere(Pawn pawn, SalesOrder order)
+        {
+            List<SalesOrder> orders = IntercolonyWorldComponent.Current?.Orders;
+            for (int i = 0; orders != null && i < orders.Count; i++)
+            {
+                SalesOrder other = orders[i];
+                if (other == null || other.id == order.id || !other.IsOpen ||
+                    other.designatedAnimals == null)
+                {
+                    continue;
+                }
+
+                if (other.designatedAnimals.Contains(pawn))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static OrderValidationResult ValidateColonyAnimals(
+            SalesOrder order, Map map, int required)
+        {
+            OrderValidationResult result = new OrderValidationResult();
+            int matching = 0;
+            int rejected = 0;
+
+            IReadOnlyList<Pawn> pawns = map.mapPawns?.AllPawnsSpawned;
+            for (int i = 0; pawns != null && i < pawns.Count; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (pawn?.def != order.ThingDef || IsDesignatedElsewhere(pawn, order))
+                {
+                    continue;
+                }
+
+                if (AnimalTradeUtility.IsEligibleForSale(pawn) &&
+                    AnimalTradeUtility.Matches(pawn, order.ThingDef, order.line.animalSpec))
+                {
+                    matching++;
+                }
+                else
+                {
+                    rejected++;
+                }
+            }
+
+            result.matchedQuantity = Mathf.Min(matching, required);
+            result.missingQuantity = Mathf.Max(0, required - matching);
+            if (rejected > 0)
+            {
+                result.failures.Add(
+                    $"{rejected} {order.ThingDef.label} in the colony no longer meet the animal " +
+                    "eligibility or specification requirements.");
+            }
+
+            if (result.missingQuantity > 0)
+            {
+                result.failures.Add(
+                    $"{result.missingQuantity} more {order.line.animalSpec.ShortLabel(order.ThingDef)} " +
+                    $"needed ({matching} present and eligible, {required} required).");
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Checks colony storage for a buyer-pickup order with the same rejection detail as a
         /// caravan delivery. Declaring goods ready is still a delivery decision to the player.
         /// </summary>
@@ -324,6 +437,14 @@ namespace Intercolony
             }
 
             int required = order.RemainingQuantity;
+
+            // Animals are spawned pawns, never stored things. Branch before the item scan,
+            // which would find nothing and report the colony as empty of them.
+            if (order.IsAnimalOrder)
+            {
+                return ValidateColonyAnimals(order, map, required);
+            }
+
             int found = 0;
             foreach (Thing thing in ColonyCandidates(map, order.line.thingDef))
             {
