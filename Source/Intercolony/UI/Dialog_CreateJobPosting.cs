@@ -340,7 +340,12 @@ namespace Intercolony
         /// </summary>
         private void RefreshRate()
         {
-            int key = Gen.HashCombineInt(skill?.shortHash ?? 0, minLevel, termDays, (int)clause);
+            // The structure belongs in the key now that it changes the band: without it,
+            // switching to daily would keep showing the per-quadrum rate until something else
+            // happened to invalidate the cache.
+            int key = Gen.HashCombineInt(
+                Gen.HashCombineInt(skill?.shortHash ?? 0, minLevel, termDays, (int)clause),
+                (int)structure);
             if (key == rateKey)
             {
                 return;
@@ -348,7 +353,8 @@ namespace Intercolony
 
             rateKey = key;
             rateValid = JobPostingService.GoingRate(
-                state, skill, minLevel, termDays, clause, out rateLow, out rateHigh, out qualified);
+                state, skill, minLevel, termDays, clause, structure,
+                out rateLow, out rateHigh, out qualified);
         }
 
         private void SetWage(int value)

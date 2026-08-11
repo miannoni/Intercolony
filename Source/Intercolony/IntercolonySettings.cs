@@ -18,12 +18,12 @@ namespace Intercolony
         public const float DefaultEconomyDifficulty = 1f;
 
         /// <summary>
-        /// Workers were priced too cheaply to be a real decision, so the shipped default is
-        /// double. 1.0 reproduces the rate Intercolony used before 2026-08-10.
+        /// 100% now means three times the rate Intercolony shipped with. Doubling was not
+        /// enough: hiring was still cheap enough that it was never really a decision.
         /// </summary>
-        public const float DefaultLaborCostMultiplier = 2f;
+        public const float DefaultLaborCostMultiplier = 1f;
         public const float MinLaborCostMultiplier = 0.5f;
-        public const float MaxLaborCostMultiplier = 3f;
+        public const float MaxLaborCostMultiplier = 2f;
 
         public const float MinRefreshDays = 0.25f;
         public const float MaxRefreshDays = 7f;
@@ -53,15 +53,19 @@ namespace Intercolony
             Scribe_Values.Look(ref refreshDays, "refreshDays", DefaultRefreshDays);
             Scribe_Values.Look(
                 ref activeOpportunities, "activeOpportunities", DefaultActiveOpportunities);
+            // Both keys are deliberately renamed. Their scales were recentred on 2026-08-10, so
+            // an old saved number now means something different — reading it back would silently
+            // compound the new baseline with a value chosen against the old one. A new key makes
+            // the setting fall back to its default once, which is the intended reset.
             Scribe_Values.Look(
-                ref economyDifficulty, "economyDifficulty", DefaultEconomyDifficulty);
+                ref economyDifficulty, "economyDifficultyV2", DefaultEconomyDifficulty);
             Scribe_Collections.Look(
                 ref enabledBuyOnlyTradeCategoryKeys,
                 "enabledBuyOnlyTradeCategoryKeys", LookMode.Value);
             Scribe_Values.Look(
                 ref allowBuyingUnsoldAnimals, "allowBuyingUnsoldAnimals", false);
             Scribe_Values.Look(
-                ref laborCostMultiplier, "laborCostMultiplier", DefaultLaborCostMultiplier);
+                ref laborCostMultiplier, "laborCostMultiplierV2", DefaultLaborCostMultiplier);
 
             if (enabledBuyOnlyTradeCategoryKeys == null)
             {

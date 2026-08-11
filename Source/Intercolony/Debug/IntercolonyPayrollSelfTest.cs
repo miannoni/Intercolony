@@ -108,14 +108,20 @@ namespace Intercolony
                         prepaidCheaper++;
                     }
 
-                    if (daily == gross && quadrum == gross)
+                    // Prepaid cheapest, per-quadrum in the middle, daily dearest. Paying as you
+                    // go buys the freedom to stop, and that is what the player pays for.
+                    if (prepaid < quadrum && quadrum < daily)
                     {
                         periodicMatchesGross++;
                     }
 
                     if (WageStructureUtility.UpFrontCost(WageStructure.Prepaid, wage, term) == prepaid &&
-                        WageStructureUtility.UpFrontCost(WageStructure.Daily, wage, term) == 0 &&
-                        WageStructureUtility.UpFrontCost(WageStructure.Quadrum, wage, term) == 0)
+                        WageStructureUtility.UpFrontCost(WageStructure.Daily, wage, term) ==
+                            WageStructureUtility.SigningFee(WageStructure.Daily, wage) &&
+                        WageStructureUtility.UpFrontCost(WageStructure.Quadrum, wage, term) ==
+                            WageStructureUtility.SigningFee(WageStructure.Quadrum, wage) &&
+                        WageStructureUtility.SigningFee(WageStructure.Daily, wage) >
+                            WageStructureUtility.SigningFee(WageStructure.Quadrum, wage))
                     {
                         upFrontOnlyPrepaid++;
                     }
@@ -126,10 +132,10 @@ namespace Intercolony
                 "prepaying is always cheaper in total (§37 'discounted total cost')",
                 $"{prepaidCheaper}/{samples} wage/term combinations");
             r.Check(periodicMatchesGross == samples,
-                "periodic structures cost the full rate",
+                "prepaid is cheapest, per-quadrum next, paying by the day dearest",
                 $"{periodicMatchesGross}/{samples}");
             r.Check(upFrontOnlyPrepaid == samples,
-                "only prepaid takes silver at the moment of hiring",
+                "pay-as-you-go takes a signing fee at hire, larger for daily than per-quadrum",
                 $"{upFrontOnlyPrepaid}/{samples}");
             r.Check(WageStructure.Quadrum.IntervalDays() == GenDate.DaysPerQuadrum,
                 "a quadrum pay period is a real quadrum",

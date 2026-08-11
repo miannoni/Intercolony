@@ -110,13 +110,20 @@ namespace Intercolony
             // permanent employment the *most* expensive per day, which is backwards.
             int pricingTerm = openEnded ? LaborCandidateService.MaxTermDays : termDays;
 
-            int dailyWage = LaborCandidateService.DailyWage(
+            int baseWage = LaborCandidateService.DailyWage(
                 candidate.pawn, profile, candidate.distanceTiles, pricingTerm,
                 EmployerReputationService.ScoreFor(state), clause);
 
-            // Only prepaid is charged now. A periodic hire that demanded the full term up front
-            // would defeat the point of offering the choice.
-            int upFront = WageStructureUtility.UpFrontCost(structure, dailyWage, termDays);
+            // Prepaid hands over the whole term; pay-as-you-go hands over a signing fee. A
+            // periodic hire that demanded the full term up front would defeat the point of
+            // offering the choice. Priced off the base rate, which is the convention every
+            // WageStructureUtility method takes.
+            int upFront = WageStructureUtility.UpFrontCost(structure, baseWage, termDays);
+
+            // The contract records the rate actually agreed, premium included, because payroll
+            // reads dailyWage straight off it. A premium applied only at the quote would be
+            // shown at hiring and then never charged.
+            int dailyWage = WageStructureUtility.EffectiveDailyWage(structure, baseWage);
 
             int available = PurchaseOrderService.CountColonySilver(paymentMap);
             if (available < upFront)

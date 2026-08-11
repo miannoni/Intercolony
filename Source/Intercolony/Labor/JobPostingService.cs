@@ -642,6 +642,22 @@ namespace Intercolony
             IntercolonyWorldComponent state, SkillDef skill, int minLevel, int termDays,
             CombatClause clause, out int low, out int high, out int qualified)
         {
+            return GoingRate(
+                state, skill, minLevel, termDays, clause, WageStructure.Quadrum,
+                out low, out high, out qualified);
+        }
+
+        /// <summary>
+        /// The same band for a specific wage structure. Paying by the day carries a premium, so
+        /// a daily posting genuinely costs more than a per-quadrum one for the same worker — and
+        /// a band that ignored that would advise the player to underpay and then wonder why
+        /// nobody applied.
+        /// </summary>
+        public static bool GoingRate(
+            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int termDays,
+            CombatClause clause, WageStructure structure,
+            out int low, out int high, out int qualified)
+        {
             low = 0;
             high = 0;
             qualified = 0;
@@ -671,9 +687,11 @@ namespace Intercolony
 
                 qualified++;
 
-                int ask = LaborCandidateService.DailyWageFor(
-                    worker.pricedSkillValue, ProfileFor(state, worker.settlementId),
-                    worker.distanceTiles, termDays, standing, clause);
+                int ask = WageStructureUtility.EffectiveDailyWage(
+                    structure,
+                    LaborCandidateService.DailyWageFor(
+                        worker.pricedSkillValue, ProfileFor(state, worker.settlementId),
+                        worker.distanceTiles, termDays, standing, clause));
 
                 if (ask < min)
                 {

@@ -145,7 +145,11 @@ namespace Intercolony
             Paragraph(
                 "What hired workers ask for. This applies to wages being quoted now: anyone " +
                 "already employed keeps the wage they were hired at, and a renewal is quoted " +
-                "fresh like any other offer.",
+                "fresh like any other offer.\n\n" +
+                "How you pay changes the price on top of this. Paying the whole term up front " +
+                "is cheapest, per quadrum sits in the middle, and paying by the day is dearest " +
+                "— you are buying the freedom to stop at any point. Pay-as-you-go also takes a " +
+                "fee at signing, covering the worker's journey however long they end up staying.",
                 width, ref y, draw);
 
             float labor = Settings.laborCostMultiplier;
@@ -241,10 +245,13 @@ namespace Intercolony
         /// </summary>
         private static string LaborCostLabel(float multiplier)
         {
+            // Priced against the same reference worker the rest of the mod uses, so the number
+            // means something concrete rather than a percentage of an unstated baseline.
             const int ReferenceWage = 10;
+            int asks = Mathf.Max(1, Mathf.RoundToInt(
+                ReferenceWage * LaborCandidateService.LaborBaselineMultiplier * multiplier));
             return $"Worker wages: {Mathf.RoundToInt(multiplier * 100f)}% — " +
-                   $"a worker who would have asked {ReferenceWage}/day asks " +
-                   $"{Mathf.Max(1, Mathf.RoundToInt(ReferenceWage * multiplier))}/day";
+                   $"a worker the mod originally priced at {ReferenceWage}/day asks {asks}/day";
         }
 
         private static string EconomyDifficultyLabel(float difficulty)

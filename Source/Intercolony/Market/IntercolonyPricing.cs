@@ -249,21 +249,38 @@ namespace Intercolony
         /// when a stored order is read back, so an agreed amount cannot move underneath an
         /// obligation.
         /// </summary>
+        /// <summary>
+        /// What a difficulty of 100% actually means. The slider used to sit at 1.0 and the
+        /// resulting spread was wide enough to arbitrage — buy from one settlement, sell to
+        /// another, profit on the difference. At this baseline the arbitrage still exists but
+        /// is worth a silver or two on a major order, which is noise rather than an income.
+        /// </summary>
+        public const float EconomyDifficultyBaseline = 1.35f;
+
+        /// <summary>
+        /// Floor on what a buyer will pay. Without it the selling factor goes negative once the
+        /// effective difficulty passes 2.0, which the baseline above brings within reach of the
+        /// slider's own maximum — and a negative multiplier would pay the player to lose goods.
+        /// </summary>
+        private const float MinimumSellingFactor = 0.25f;
+
+        public static float EffectiveEconomyDifficulty =>
+            IntercolonyMod.Settings.economyDifficulty * EconomyDifficultyBaseline;
+
         public static PriceFactor SellingEconomyDifficultyFactor()
         {
             // Higher difficulty must squeeze both sides of the player's economy instead of
             // inflating every price and cancelling itself out against procurement.
             return new PriceFactor(
                 "Economy difficulty (selling)",
-                2f - IntercolonyMod.Settings.economyDifficulty);
+                Mathf.Max(MinimumSellingFactor, 2f - EffectiveEconomyDifficulty));
         }
 
         /// <summary>The player's global difficulty setting on supplier quotations.</summary>
         public static PriceFactor BuyingEconomyDifficultyFactor()
         {
             return new PriceFactor(
-                "Economy difficulty (buying)",
-                IntercolonyMod.Settings.economyDifficulty);
+                "Economy difficulty (buying)", EffectiveEconomyDifficulty);
         }
 
         /// <summary>

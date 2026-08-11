@@ -17,6 +17,13 @@ namespace Intercolony
         /// <summary>Base silver per day before skills, distance and term length.</summary>
         private const float BaseDailyWage = 8f;
 
+        /// <summary>
+        /// What a labor cost of 100% means, relative to the rate this mod shipped with. The
+        /// original figures made hiring cheap enough that it was never weighed against doing
+        /// the work yourself, and doubling them did not fix it.
+        /// </summary>
+        public const float LaborBaselineMultiplier = 3f;
+
         /// <summary>Silver per day per level, summed over the worker's best <see cref="SkillsPriced"/> skills.</summary>
         private const float SilverPerSkillLevel = 1f;
 
@@ -756,7 +763,7 @@ namespace Intercolony
             // figure rather than compounding oddly with the factors above. Read live, so it
             // only ever affects wages being quoted now: an employment already agreed keeps the
             // wage it was signed at, exactly as economy difficulty leaves agreed prices alone.
-            wage *= IntercolonyMod.Settings.laborCostMultiplier;
+            wage *= LaborBaselineMultiplier * IntercolonyMod.Settings.laborCostMultiplier;
 
             return Mathf.Max(1, Mathf.RoundToInt(wage));
         }
