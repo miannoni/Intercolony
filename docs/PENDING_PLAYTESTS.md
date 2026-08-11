@@ -224,6 +224,28 @@ and expect **fewer or no quotes**, with the usual "nobody answered" reason — s
 cannot work to that standard decline rather than quoting below it. If a high floor still
 returns the same number of quotes at the same price, the floor is not doing anything.
 
+**Economy and labor were recentred on 2026-08-10** from Matteo's own play. Economy difficulty
+100% now means what 135% meant; labor 100% now means three times the original rate.
+
+**Both settings sliders reset to 100% on first launch after this build, deliberately** — the
+scibe keys were renamed because the old saved numbers were chosen against a different scale
+and reading them back would have compounded. **If a slider still shows an old value, the
+rename did not take.**
+
+**How you pay now changes what you pay:** prepaid cheapest, per-quadrum in the middle, daily
+dearest, and pay-as-you-go takes a fee at signing. Check the hiring dialog's three structure
+lines quote three visibly different totals, then **hire on daily and confirm payroll actually
+pays the premium rate** — it is folded into the contract at hire, and a premium quoted but not
+charged is the whole feature failing silently.
+
+**Also check a daily job posting**: its going-rate band should be higher than the same posting
+per quadrum. If it is not, postings can hire at per-quadrum rates and dodge the premium.
+
+**One unresolved observation.** Two root-level OnGUI `NullReferenceException`s appeared once
+during this work and did not recur across two further cycles on the same build; the baseline
+before the change showed none. No Intercolony frame appeared in either trace. **If these
+resurface, note what was on screen** — that is the missing piece.
+
 **Not yet done, and worth knowing:** nothing makes Social visible *before* accepting a
 contract — the player cannot tell a good negotiator is worth waiting for until the popup is
 open.
