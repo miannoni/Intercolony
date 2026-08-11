@@ -1838,7 +1838,10 @@ namespace Intercolony
                             state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
                             DeadlineDays, fulfillment) != null)
                     {
-                        tab = Tab.Orders;
+                        // Deliberately stays on Find Buyer. Selling is usually several sales in
+                        // a row — split a surplus across buyers, work down a list — and being
+                        // thrown to Orders after each one interrupts exactly that.
+                        //
                         // The Find Buyer action changed commitments, so invalidate immediately.
                         // The null cache bypasses the throttle when the player returns.
                         stockCache = null;
@@ -1892,7 +1895,7 @@ namespace Intercolony
                             state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
                             deadlineDays, fulfillment) != null)
                     {
-                        tab = Tab.Orders;
+                        // Stays put for the same reason as the goods sale above.
                         animalStockCache = null;
                         findBuyerCache = null;
                     }

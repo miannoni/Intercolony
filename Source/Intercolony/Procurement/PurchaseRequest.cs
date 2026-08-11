@@ -164,6 +164,13 @@ namespace Intercolony
         /// <summary>Required material, or null for any.</summary>
         public ThingDef stuffDef;
 
+        /// <summary>
+        /// Lowest workmanship the player will accept, or null to take whatever is offered.
+        /// A settlement that cannot work to that standard does not quote at all, so the floor
+        /// narrows the field rather than silently costing more.
+        /// </summary>
+        public QualityCategory? minQuality;
+
         public int quantityRequested;
 
         /// <summary>How soon the player wants it. Suppliers who cannot meet it still quote (§19).</summary>
@@ -259,6 +266,7 @@ namespace Intercolony
             Scribe_Values.Look(ref id, "id", 0);
             Scribe_Defs.Look(ref thingDef, "thingDef");
             Scribe_Defs.Look(ref stuffDef, "stuffDef");
+            Scribe_Values.Look(ref minQuality, "minQuality");
             Scribe_Values.Look(ref quantityRequested, "quantityRequested", 0);
             Scribe_Values.Look(ref desiredDays, "desiredDays", 0);
             Scribe_Values.Look(ref createdTick, "createdTick", 0);

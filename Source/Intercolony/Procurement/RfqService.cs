@@ -48,6 +48,21 @@ namespace Intercolony
             ProcurementFulfillmentPreference fulfillmentPreference,
             AnimalSpec animalSpec)
         {
+            return CreateRequest(
+                state, def, stuff, quantity, desiredDays, fulfillmentPreference, animalSpec, null);
+        }
+
+        /// <summary>Creates a request that also states a minimum workmanship.</summary>
+        public static PurchaseRequest CreateRequest(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            int quantity,
+            int desiredDays,
+            ProcurementFulfillmentPreference fulfillmentPreference,
+            AnimalSpec animalSpec,
+            QualityCategory? minQuality)
+        {
             if (state == null || def == null || quantity <= 0)
             {
                 return null;
@@ -64,7 +79,13 @@ namespace Intercolony
                 expiryTick = GenTicks.TicksGame + RequestLifespanDays * GenDate.TicksPerDay,
                 status = PurchaseRequestStatus.Open,
                 fulfillmentPreference = fulfillmentPreference,
-                animalSpec = animalSpec?.Copy()
+                animalSpec = animalSpec?.Copy(),
+
+                // Only meaningful for things that carry workmanship at all; storing it on
+                // anything else would show a constraint the player cannot have asked for.
+                minQuality = animalSpec == null && IntercolonyPricing.CanHaveQuality(def)
+                    ? minQuality
+                    : null
             };
 
             GenerateResponses(state, request);
@@ -225,7 +246,16 @@ namespace Intercolony
                 : request.stuffDef ?? PickSupplierStuff(request.thingDef);
             QualityCategory? offeredQuality = request.IsAnimalOrder
                 ? (QualityCategory?)null
-                : PickOfferedQuality(request.thingDef, profile);
+                : PickOfferedQuality(request.thingDef, profile, request.minQuality);
+
+            // A settlement that cannot work to the standard asked for does not quote. Offering
+            // below the floor would be answering a different question, and quietly raising
+            // every supplier to it would make the floor free.
+            if (request.minQuality.HasValue && !request.IsAnimalOrder &&
+                (!offeredQuality.HasValue || offeredQuality.Value < request.minQuality.Value))
+            {
+                return null;
+            }
 
             int offered = OfferedQuantity(request, offeredStuff, profile, supply);
             if (offered <= 0)
@@ -262,7 +292,8 @@ namespace Intercolony
         /// Quality the supplier will provide, centred on how much that settlement cares about
         /// craftsmanship. Must be called inside a pushed Rand state.
         /// </summary>
-        private static QualityCategory? PickOfferedQuality(ThingDef def, SettlementEconomicProfile profile)
+        private static QualityCategory? PickOfferedQuality(
+            ThingDef def, SettlementEconomicProfile profile, QualityCategory? minQuality)
         {
             if (!IntercolonyPricing.CanHaveQuality(def))
             {
@@ -270,10 +301,36 @@ namespace Intercolony
             }
 
             float roll = Rand.Value * 0.6f + profile.qualityPreference * 0.4f;
-            if (roll > 0.82f) return QualityCategory.Excellent;
-            if (roll > 0.62f) return QualityCategory.Good;
-            if (roll > 0.3f) return QualityCategory.Normal;
-            return QualityCategory.Poor;
+            QualityCategory natural =
+                roll > 0.82f ? QualityCategory.Excellent :
+                roll > 0.62f ? QualityCategory.Good :
+                roll > 0.3f ? QualityCategory.Normal :
+                QualityCategory.Poor;
+
+            if (!minQuality.HasValue)
+            {
+                return natural;
+            }
+
+            // A settlement can stretch to better work than it habitually produces, but only so
+            // far. Beyond that ceiling it declines rather than promising what it cannot make,
+            // which is what makes a high floor a real trade-off instead of a free upgrade.
+            if (minQuality.Value > BestQualityAvailableFrom(profile))
+            {
+                return natural < minQuality.Value ? (QualityCategory?)null : natural;
+            }
+
+            return natural < minQuality.Value ? minQuality.Value : natural;
+        }
+
+        /// <summary>The finest work a settlement will take on, from its quality preference.</summary>
+        private static QualityCategory BestQualityAvailableFrom(SettlementEconomicProfile profile)
+        {
+            float preference = profile?.qualityPreference ?? 1f;
+            if (preference >= 1.15f) return QualityCategory.Masterwork;
+            if (preference >= 0.9f) return QualityCategory.Excellent;
+            if (preference >= 0.6f) return QualityCategory.Good;
+            return QualityCategory.Normal;
         }
 
         /// <summary>Material the supplier happens to work in. Must be called inside a pushed Rand state.</summary>

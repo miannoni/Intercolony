@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 30;
+        public const int CurrentSaveVersion = 31;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1632,6 +1632,14 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     $"  schema 29 -> 30: purchase requests answered by an order are now Ordered " +
                     $"rather than Cancelled; relabelled {relabelled}.");
+            }
+
+            if (saveVersion < 31)
+            {
+                // 30 -> 31 let a purchase request state a minimum workmanship. Absent means no
+                // floor, which is exactly how every existing request already behaved.
+                IntercolonyLog.Message(
+                    "  schema 30 -> 31: purchase requests may state a minimum quality; existing ones have none.");
             }
 
             saveVersion = CurrentSaveVersion;

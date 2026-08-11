@@ -44,6 +44,12 @@ namespace Intercolony
         private ProcurementFulfillmentPreference fulfillmentPreference =
             ProcurementFulfillmentPreference.SupplierDelivers;
 
+        /// <summary>Material asked for, or null to let each supplier work in what it has.</summary>
+        private ThingDef requestedStuff;
+
+        /// <summary>Minimum workmanship asked for, or null to accept whatever is offered.</summary>
+        private QualityCategory? requestedQuality;
+
         private List<ThingDef> cachedMatches;
         private string cachedSearch;
 
@@ -338,6 +344,12 @@ namespace Intercolony
                     else
                     {
                         selected = def;
+
+                        // A material or workmanship floor belongs to the item it was chosen
+                        // for. Carrying one across to a different item would quietly attach a
+                        // constraint the player never asked for on this thing.
+                        requestedStuff = null;
+                        requestedQuality = null;
                     }
                 }
 
@@ -541,6 +553,33 @@ namespace Intercolony
         private void DrawBottomControls(Rect rect)
         {
             float y = rect.y;
+
+            // Only for things that actually carry these properties. Offering a material choice
+            // on steel, or a workmanship floor on rice, would invite the player to specify
+            // something the item cannot have.
+            if (!animalMode && selected != null)
+            {
+                bool stuffable = selected.MadeFromStuff;
+                bool qualityable = IntercolonyPricing.CanHaveQuality(selected);
+                if (stuffable || qualityable)
+                {
+                    float half = (rect.width - ChoiceGap) / 2f;
+                    if (stuffable)
+                    {
+                        DrawStuffChoice(new Rect(0f, y, qualityable ? half : rect.width, 28f));
+                    }
+
+                    if (qualityable)
+                    {
+                        DrawQualityChoice(
+                            new Rect(stuffable ? half + ChoiceGap : 0f, y,
+                                stuffable ? half : rect.width, 28f));
+                    }
+
+                    y += 34f;
+                }
+            }
+
             Widgets.Label(new Rect(0f, y, rect.width, 22f), "Fulfillment:");
             y += 24f;
 
@@ -640,8 +679,9 @@ namespace Intercolony
             }
 
             RfqService.CreateRequest(
-                state, selected, null, quantity, deadlineDays, fulfillmentPreference,
-                animalMode ? animalSpec : null);
+                state, selected, animalMode ? null : requestedStuff, quantity, deadlineDays,
+                fulfillmentPreference, animalMode ? animalSpec : null,
+                animalMode ? null : requestedQuality);
             Close();
         }
 
@@ -663,6 +703,8 @@ namespace Intercolony
             {
                 animalMode = animal;
                 selected = null;
+                requestedStuff = null;
+                requestedQuality = null;
                 animalSpec = new AnimalSpec();
                 selectedKinds.Clear();
                 selectedLifeStages.Clear();
@@ -676,6 +718,69 @@ namespace Intercolony
             {
                 Widgets.DrawHighlightSelected(rect);
             }
+        }
+
+        private void DrawStuffChoice(Rect rect)
+        {
+            string label = requestedStuff != null
+                ? $"Material: {requestedStuff.LabelCap}"
+                : "Material: any";
+            if (!Widgets.ButtonText(rect, label))
+            {
+                return;
+            }
+
+            List<FloatMenuOption> options = new List<FloatMenuOption>
+            {
+                new FloatMenuOption("Any material", () => requestedStuff = null)
+            };
+
+            List<ThingDef> stuffs = new List<ThingDef>(GenStuff.AllowedStuffsFor(selected));
+            stuffs.Sort(CompareDefLabels);
+            foreach (ThingDef stuff in stuffs)
+            {
+                if (stuff.BaseMarketValue <= 0f)
+                {
+                    continue;
+                }
+
+                ThingDef chosen = stuff;
+                options.Add(new FloatMenuOption(
+                    chosen.LabelCap, () => requestedStuff = chosen));
+            }
+
+            Find.WindowStack.Add(new FloatMenu(options));
+        }
+
+        private void DrawQualityChoice(Rect rect)
+        {
+            string label = requestedQuality.HasValue
+                ? $"Quality: {requestedQuality.Value.GetLabel()}+"
+                : "Quality: any";
+            if (!Widgets.ButtonText(rect, label))
+            {
+                return;
+            }
+
+            List<FloatMenuOption> options = new List<FloatMenuOption>
+            {
+                new FloatMenuOption("Any quality", () => requestedQuality = null)
+            };
+
+            // Awful is not offered: it is a floor nobody would ask for, and Legendary is left
+            // out because no settlement will promise it.
+            foreach (QualityCategory quality in new[]
+            {
+                QualityCategory.Poor, QualityCategory.Normal, QualityCategory.Good,
+                QualityCategory.Excellent, QualityCategory.Masterwork
+            })
+            {
+                QualityCategory chosen = quality;
+                options.Add(new FloatMenuOption(
+                    $"{chosen.GetLabel()} or better", () => requestedQuality = chosen));
+            }
+
+            Find.WindowStack.Add(new FloatMenu(options));
         }
 
         private void DrawFulfillmentChoice(
