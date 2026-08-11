@@ -282,7 +282,8 @@ namespace Intercolony
             }
             y += 34f;
 
-            float controlsTop = inRect.height - BottomControlsHeight;
+            float bottomHeight = CurrentBottomControlsHeight(inRect.width);
+            float controlsTop = inRect.height - bottomHeight;
             Rect candidatesRect;
             if (animalMode)
             {
@@ -301,8 +302,54 @@ namespace Intercolony
             }
 
             DrawBottomControls(new Rect(
-                0f, controlsTop, inRect.width, BottomControlsHeight));
+                0f, controlsTop, inRect.width, bottomHeight));
         }
+
+        /// <summary>
+        /// Measures the bottom block instead of assuming it. It was a fixed reserve, so adding
+        /// the material and quality row pushed Send and Cancel off the bottom of a fixed-size
+        /// window — and only for items that carry those properties, so it looked fine until a
+        /// parka was picked. The summary line wraps too, which was a second cliff waiting at a
+        /// larger UI scale. The candidate list absorbs the difference; it has room to spare.
+        /// </summary>
+        private float CurrentBottomControlsHeight(float width)
+        {
+            float height = ShowsItemConstraintRow() ? ItemConstraintRowHeight : 0f;
+            height += 24f;  // "Fulfillment:" label
+            height += 36f;  // fulfilment choices
+            height += 34f;  // quantity and deadline
+            height += PricePreviewHeight(width);
+            height += SendRowHeight;
+            return Mathf.Max(BottomControlsHeight, height);
+        }
+
+        private const float SendRowHeight = 38f;
+
+        private float PricePreviewHeight(float width)
+        {
+            if (selected == null || animalMode)
+            {
+                // The animal branch has its own multi-line layout and was already sized by the
+                // original reserve, which the Max below preserves.
+                return 48f;
+            }
+
+            return Mathf.Max(48f, Text.CalcHeight(GoodsPreviewSummary(), width) + 4f);
+        }
+
+        private string GoodsPreviewSummary()
+        {
+            return $"Requesting {quantity}x {selected.LabelCap} — roughly " +
+                   $"{Mathf.RoundToInt(selected.BaseMarketValue * quantity * 1.3f)} silver if anyone answers.";
+        }
+
+        private bool ShowsItemConstraintRow()
+        {
+            return !animalMode && selected != null &&
+                   (selected.MadeFromStuff || IntercolonyPricing.CanHaveQuality(selected));
+        }
+
+        private const float ItemConstraintRowHeight = 34f;
 
         private void DrawCandidates(Rect rect)
         {
@@ -556,28 +603,26 @@ namespace Intercolony
 
             // Only for things that actually carry these properties. Offering a material choice
             // on steel, or a workmanship floor on rice, would invite the player to specify
-            // something the item cannot have.
-            if (!animalMode && selected != null)
+            // something the item cannot have. Shares its predicate with the height reserve, so
+            // the space set aside and the space used cannot drift apart.
+            if (ShowsItemConstraintRow())
             {
                 bool stuffable = selected.MadeFromStuff;
                 bool qualityable = IntercolonyPricing.CanHaveQuality(selected);
-                if (stuffable || qualityable)
+                float half = (rect.width - ChoiceGap) / 2f;
+                if (stuffable)
                 {
-                    float half = (rect.width - ChoiceGap) / 2f;
-                    if (stuffable)
-                    {
-                        DrawStuffChoice(new Rect(0f, y, qualityable ? half : rect.width, 28f));
-                    }
-
-                    if (qualityable)
-                    {
-                        DrawQualityChoice(
-                            new Rect(stuffable ? half + ChoiceGap : 0f, y,
-                                stuffable ? half : rect.width, 28f));
-                    }
-
-                    y += 34f;
+                    DrawStuffChoice(new Rect(0f, y, qualityable ? half : rect.width, 28f));
                 }
+
+                if (qualityable)
+                {
+                    DrawQualityChoice(
+                        new Rect(stuffable ? half + ChoiceGap : 0f, y,
+                            stuffable ? half : rect.width, 28f));
+                }
+
+                y += ItemConstraintRowHeight;
             }
 
             Widgets.Label(new Rect(0f, y, rect.width, 22f), "Fulfillment:");
@@ -632,9 +677,7 @@ namespace Intercolony
             GUI.color = new Color(1f, 1f, 1f, 0.7f);
             if (!animalMode)
             {
-                string goodsSummary =
-                    $"Requesting {quantity}x {selected.LabelCap} — roughly " +
-                    $"{Mathf.RoundToInt(selected.BaseMarketValue * quantity * 1.3f)} silver if anyone answers.";
+                string goodsSummary = GoodsPreviewSummary();
                 float goodsHeight = Text.CalcHeight(goodsSummary, width);
                 Widgets.Label(new Rect(0f, y, width, goodsHeight), goodsSummary);
                 GUI.color = Color.white;
