@@ -105,7 +105,7 @@ now an `Ordered` status, Find seller shows only live requests, concluded ones si
 than guessing. It is the first migration step that changes existing values rather than adding a
 field.
 
-D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 30**; the whole
+D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 31**; the whole
 chain from 24 is documented as one consolidated test in `docs/SCHEMA_24_TO_CURRENT.md`, which is the
 file to read rather than reconstructing the steps. Next: continue beta corrections in point releases;
 there is no Phase 27 plan yet.

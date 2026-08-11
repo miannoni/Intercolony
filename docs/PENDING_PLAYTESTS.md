@@ -205,6 +205,25 @@ fix. Then: Find seller should show only live requests, and Orders should carry a
 requests" section where former purchases read *Ordered from a supplier* rather than
 *Cancelled*. Genuinely withdrawn requests must still read *Withdrawn*.
 
+**Trade logistics now default to staying home.** A purchase request opens on *Supplier
+delivers*; a Find Buyer sale and a supply agreement open on *Buyer collects*. **Check that
+existing orders and agreements are unaffected** — only the dialogs' opening selection changed,
+deliberately, because these fields omit a value equal to their scribe default and moving that
+default would have silently reinterpreted old saves.
+
+**Find Buyer stays put after a sale**, so several sales in a row are possible without
+navigating back. Accepting from Market still navigates, since that listing is consumed.
+
+**Purchase requests can state a material and a minimum quality.** Both controls appear only
+for items that carry those properties — check a stuffable item (a bed), a quality item, one
+that is both, and one that is neither (rice) shows neither control. Switching the selected
+item must clear both.
+
+**The quality floor's interesting case:** ask for *Masterwork or better* on something ordinary
+and expect **fewer or no quotes**, with the usual "nobody answered" reason — settlements that
+cannot work to that standard decline rather than quoting below it. If a high floor still
+returns the same number of quotes at the same price, the floor is not doing anything.
+
 **Not yet done, and worth knowing:** nothing makes Social visible *before* accepting a
 contract — the player cannot tell a good negotiator is worth waiting for until the popup is
 open.
