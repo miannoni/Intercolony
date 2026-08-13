@@ -180,7 +180,12 @@ namespace Intercolony
 
         private static void DeliverToColony(PurchaseOrder order)
         {
-            Map map = Find.AnyPlayerHomeMap;
+            // Removed maps can remain referenced until reload after leaving Find.Maps.
+            // Treat that dangling reference like the null Scribe resolves after loading.
+            Map map = order.destinationMap != null &&
+                      Find.Maps?.Contains(order.destinationMap) == true
+                ? order.destinationMap
+                : Find.AnyPlayerHomeMap;
             if (map == null)
             {
                 // Nowhere to put them. Hold rather than destroy; the player may resettle.
