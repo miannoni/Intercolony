@@ -425,8 +425,12 @@ namespace Intercolony
             int available = order.IsAnimalOrder
                 ? FindBuyerService.AvailableAnimalQuantity(
                     state, map, order.ThingDef, order.line.animalSpec, order.id)
-                : FindBuyerService.AvailableQuantity(
-                    state, map, order.ThingDef, order.id);
+                // Current trade eligibility decides whether a new sale may be offered. It must
+                // not strand an existing obligation when a buy-only category is disabled again.
+                // The validator has already counted the physical stock promised by this order;
+                // only subtract stock committed to other open orders here.
+                : Mathf.Max(0, validation.matchedQuantity -
+                    FindBuyerService.CommittedQuantity(state, order.ThingDef, order.id));
             if (available < order.RemainingQuantity)
             {
                 int committedElsewhere = FindBuyerService.CommittedQuantity(

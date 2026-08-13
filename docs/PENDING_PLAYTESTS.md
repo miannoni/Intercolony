@@ -41,14 +41,17 @@ test result.
 
 ## Outstanding
 
-### Self-tests written but never run
+### Correction-batch self-tests
 
-These are dev actions, not play-tests, but they are outstanding verification and belong on the same
-list. All of them: **F12** → **orange bug icon** (top-right toolbar) → type the search term → click
+These are dev actions, not play-tests, but their procedures remain here so later changes can rerun
+them. All of them: **F12** → **orange bug icon** (top-right toolbar) → type the search term → click
 the action. Output goes to the debug log; no need to copy anything out, the dev script reads it.
 
-None of the assertions added in the 2026-08-09 correction batch has been clicked. A clean build and
-game launch prove that the assembly loads; they do not prove these branches.
+**Run 2026-08-13 during 0.9.1 preparation:** order **93 passed, 0 failed**, contract **38 passed,
+0 failed**, RFQ **69 passed, 0 failed**. The first order run found a real buy-only obligation
+regression; after the focused fix, the stated result is the rerun. The order suite explicitly
+skipped recorded-map collection versus `Find.AnyPlayerHomeMap` because the world had one home map,
+and skipped live-offer acceptance because no offer existed. Those limits remain manual work below.
 
 #### Find Buyer, availability and pickup timing — `Run order self-test`
 
@@ -125,35 +128,31 @@ silver, letters or orders differ afterwards, the restoration is wrong even if ev
 
 **Moved to its own file on 2026-08-09**, because the chain kept growing during one development
 run and the owner chose — reasonably — to test the whole chain once at the end rather than
-interrupt the work for each step. Every step is additive with no data to move, so the risk is
-the same either way. That file is kept current as steps land; **read it rather than this
-summary** when the time comes to test.
-
-The short version is below and may lag behind the file.
+interrupt the work for each step. That file is kept current as steps land; **read it rather than
+this summary** when the time comes to test.
 
 Added 2026-08-09. **This is the highest-value single check on this list**, because one action
 settles several things at once and because migration is the one failure mode that damages a save.
 
-Schema moved **24 → 27** in one day: 25 added animal specifications, 26 added each sales order's
-fulfilment colony, 27 added the animal health and gestation floors. Every step is additive with no
-data to move, and each was seen running — but only in **isolated throwaway RimWorld installations
-with a stripped mod list**, never in the real load order.
+Production schema is now **31**. Schemas 25–29 and 31 add fields with safe defaults; schema 30 is
+different and repairs existing request statuses by matching them to their purchase orders. The
+complete 24 → 31 chain and exact expected evidence are in `docs/SCHEMA_24_TO_CURRENT.md`. It has
+only been seen running in **isolated throwaway RimWorld installations with a stripped mod list**,
+never in the real load order.
 
 **Steps.** Launch the game normally and load any existing save.
 
-**Pass.** Player.log contains, in order:
+**Pass.** Player.log contains, in order, the migration header and every applicable step through 31.
+For a schema-24 save the header is:
 
 ```
-[Intercolony] Migrating state from schema 24 to 27.
-[Intercolony]   schema 24 -> 25: optional animal specifications added; existing records remain goods.
-[Intercolony]   schema 25 -> 26: sales orders now remember their fulfilment colony; existing orders fall back to the first player home.
-[Intercolony]   schema 26 -> 27: animal health and gestation floors added; existing specifications have no floors.
+[Intercolony] Migrating state from schema 24 to 31.
 ```
 
-(The starting number depends on the save. A save already at 27 prints `State loaded (schema 27, …)`
-and no migration lines — that is also a pass, it just does not exercise the chain.)
+(The starting number depends on the save. A save already at 31 prints `State loaded (schema 31, …)`
+and no migration lines — that is also a pass, but it does not exercise the chain.)
 
-Then **save, quit to the menu, and reload**. The second load must say `State loaded (schema 27, …)`
+Then **save, quit to the menu, and reload**. The second load must say `State loaded (schema 31, …)`
 and **not** `State initialized fresh` — that distinction is what proves the round trip rather than a
 silent re-initialization.
 
@@ -326,10 +325,10 @@ with **You deliver**, load matching animals into a caravan and take them.
 **Not proven by any of this:** balance. Whether animal prices are sane against the rest of
 the economy needs play, not a test.
 
-#### Animal specification, matcher and eligibility — `Run animal self-test`
+#### Animal specification, matcher and eligibility — `Run animal spec self-test`
 
 Added 2026-08-09 with the `AnimalSpec` slice (schema 25). **F12** → **orange bug icon** → type
-`Run animal self-test` → click **Intercolony → Run animal self-test**.
+`Run animal spec self-test` → click **Intercolony → Run animal spec self-test**.
 
 **Pass.** No `FAIL` line, no red exception, and a zero failed count. The one assertion that matters
 most is that eligibility **rejects a humanlike outright** — several vanilla trade interfaces traffic

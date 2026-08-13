@@ -2003,3 +2003,31 @@ Manual test:
 - The new assertions in `Run order self-test`, `Run contract self-test` and `Run RFQ self-test` were
   written but **never executed**. They are RimWorld debug actions that still require a human to
   enable development mode and click them; no assertion result is claimed here.
+
+## 0.9.1 release preparation — focused self-tests  (2026-08-13)
+
+Implemented:
+- **The buy-only obligation guard now holds through the production path.** The first order self-test
+  run found that turning a buy-only category off after accepting a pickup order made Mark Ready
+  report zero available stock. The physical goods still matched the binding order; only the
+  new-sale classifier rejected them. Existing goods orders now count physically matching stock and
+  subtract other commitments instead of reapplying current listing eligibility.
+- The regression assertion is split between Mark Ready and collection so a future failure identifies
+  which boundary broke.
+- Release-state evidence is tracked in `docs/RELEASE_0.9.1_PREP.md`.
+
+Known limitations:
+- The order suite's recorded-map-versus-first-home assertion skipped in a one-home-map test world.
+  The two-colony buyer-pickup reproduction remains required.
+- Live-offer acceptance checks skipped because the test world had no live offer. The focused
+  correction-batch availability, timing and buy-only assertions still ran.
+- The schema-24-to-31 migration and focused manual UI/save-load pass remain unrun.
+- Multi-colony procurement still delivers or refunds through `Find.AnyPlayerHomeMap`; its blocker
+  verdict remains under review.
+
+Manual test:
+- `Run order self-test`: **93 passed, 0 failed** after the fix.
+- `Run contract self-test`: **38 passed, 0 failed**; three cycles completed and a real
+  history-derived offer was generated.
+- `Run RFQ self-test`: **69 passed, 0 failed**; empty/full/partial quotations, price and quantity
+  variation, two modded defs and all four goods-construction examples ran.

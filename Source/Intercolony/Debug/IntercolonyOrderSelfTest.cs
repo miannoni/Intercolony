@@ -550,6 +550,9 @@ namespace Intercolony
 
                             bool markedReady = createdOrder != null &&
                                 SalesOrderService.MarkReadyForPickup(createdOrder, fulfillmentMap);
+                            check("production path marks the existing order ready after the category is disabled",
+                                markedReady && createdOrder.status == SalesOrderStatus.AwaitingCollection,
+                                $"ready={markedReady}, status={createdOrder?.status.ToString() ?? "none"}");
                             if (markedReady)
                             {
                                 removedExistingReputation = state.Reputations.TryGetValue(
@@ -561,11 +564,11 @@ namespace Intercolony
                                     new List<SalesOrder> { createdOrder });
                             }
 
-                            check("production fulfillment completes after the category is disabled",
-                                markedReady && createdOrder != null &&
+                            check("production collection completes after the category is disabled",
+                                createdOrder != null &&
                                 createdOrder.status == SalesOrderStatus.Completed &&
                                 createdOrder.deliveredQuantity == 1,
-                                $"ready={markedReady}, status={createdOrder?.status.ToString() ?? "none"}, " +
+                                $"status={createdOrder?.status.ToString() ?? "none"}, " +
                                 $"delivered={createdOrder?.deliveredQuantity ?? 0}");
                         }
                     }

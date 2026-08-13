@@ -2,8 +2,9 @@
 
 **Why this file exists.** Schema moved several times in a single development run
 (2026-08-09 onward). Testing each step as it landed was not practical and was deliberately
-deferred: every step is *additive with no data to move*, so the risk of any one of them is
-low, and the risk is anyway identical whether they are tested one at a time or all at once.
+deferred: most steps are additive with safe defaults, so the risk is substantially the same
+whether they are tested one at a time or all at once. Schema 29 → 30 is the stated exception:
+it deliberately repairs existing request statuses.
 This file is the single test that settles the whole chain.
 
 **Status: NOT YET RUN.** Nothing below has been observed in the real load order. Each step
@@ -29,8 +30,8 @@ does.**
 
 ## The steps
 
-Each is additive. An absent field means the old behaviour, which is why none of them needs
-to move data.
+Except for the explicitly described 29 → 30 repair, each step is additive. An absent field means
+the old behaviour, so those additive steps do not need to move data.
 
 | From → To | What was added | Behaviour for existing records |
 |---|---|---|
@@ -40,7 +41,6 @@ to move data.
 | 27 → 28 | The animals set aside for a buyer to collect | No list ⇒ nothing designated, and no pre-existing order is an animal order anyway |
 | 28 → 29 | A supply agreement's fulfilment mode | Defaults to seller delivery, which is what every existing agreement was created under, so the default *is* the truth about them |
 | 29 → 30 | **Repairs data** — relabels purchase requests that were wrongly marked Cancelled | The only step so far that changes existing values rather than adding a field. See below. |
-
 | 30 → 31 | A purchase request's minimum workmanship | No floor ⇒ take whatever is offered, which is how every existing request already behaved |
 
 **29 → 30 is the exception to "every step is additive."** Accepting a quotation used to mark
@@ -77,7 +77,7 @@ throwing.
 
 **Pass, first load.** The log contains a `Migrating state from schema N to <current>` line
 followed by one indented line per step, in ascending order. For a save at 24 that is all
-three steps above. A save already at the current schema prints `State loaded (schema N, …)`
+seven steps above. A save already at the current schema prints `State loaded (schema N, …)`
 and no migration lines — also a pass, it simply exercises nothing.
 
 **Pass, second load.** `State loaded (schema <current>, …)` and **not**

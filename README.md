@@ -59,9 +59,10 @@ The tested environment, reasoning, Harmony patch surface and bug-report details 
 
 ## Project status
 
-This is a hobby mod in pre-release testing. It has never been in anyone else's hands. Its systems
-have been built and exercised in the author's own games, but it has not had outside compatibility,
-balance or usability testing. Keep normal backups of saves used to try it.
+This is a hobby mod in public beta. Version 0.9.0 is available for external testing; its systems
+were built and exercised primarily in the author's own games, so broader compatibility, balance and
+usability remain beta questions rather than established guarantees. Keep normal backups of saves
+used to try it.
 
 ## Reporting problems
 

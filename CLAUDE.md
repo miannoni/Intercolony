@@ -95,7 +95,10 @@ and **B4** (buy-only items are now an opt-in, default-off setting; see the decis
 settings slider (existing employments keep their agreed wage; only new quotes move), the supply
 agreement popup now lets the player negotiate with Social, resize the commitment by a tenth either
 way and choose delivery or pickup, and Procurement was given the same four sub-tabs as Selling with
-Market and Contracts as declared placeholders. **None of it has been re-tested.**
+Market and Contracts as declared placeholders. The focused order, contract and RFQ debug suites
+were run during 0.9.1 preparation on 2026-08-13 and passed 93/0, 38/0 and 69/0 respectively. The
+player-facing UI, real-save migration and other manual checks remain outstanding; see
+`docs/RELEASE_0.9.1_PREP.md` for the exact release state.
 
 **A real defect from that play was fixed the same day.** Accepting a quotation marked the purchase
 request `Cancelled` — a status that means "withdrawn by the player" — so every successful purchase
@@ -157,10 +160,13 @@ now persists its fulfilment colony, following the `EmploymentContract.destinatio
 **`PurchaseOrderService` has the identical latent flaw at its delivery and refund sites and was
 deliberately left alone** — it is its own fix, and it is in `docs/BACKLOG.md`.
 
-**Nothing in that batch has been played.** Every slice added self-test assertions through real
-production paths and **not one has been executed** — they are debug actions needing a human click.
-A clean build and a `dev.ps1` cycle prove the assembly loads, Harmony applies and schema-24 state
-reads. They prove nothing else. `docs/PENDING_PLAYTESTS.md` has the exact click-paths.
+**The correction batch is self-tested but not yet proven in play.** On 2026-08-13 the order,
+contract and RFQ suites passed 93/0, 38/0 and 69/0. The first order run exposed a real regression:
+disabling a buy-only category stranded an already accepted pickup order at Mark Ready. The fix now
+uses physically matching stock minus other commitments for existing obligations, and the rerun
+passed. The one-home-map run explicitly skipped the assertion that distinguishes the recorded map
+from `Find.AnyPlayerHomeMap`, so the two-colony reproduction is still required.
+`docs/PENDING_PLAYTESTS.md` has the remaining manual paths.
 
 **Animal trade (D2/D3) is decided, and buyer pickup is in scope** — Matteo confirmed on 2026-08-09,
 so animals are sold both by seller delivery and by buyer collection, with the player designating
