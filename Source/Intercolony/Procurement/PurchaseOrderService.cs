@@ -105,6 +105,7 @@ namespace Intercolony
                 settlementId = quote.settlementId,
                 settlementName = quote.settlementName,
                 factionName = quote.factionName,
+                destinationMap = paymentMap,
                 thingDef = request.thingDef,
                 stuffDef = quote.offeredStuff ?? request.stuffDef,
                 quality = quote.offeredQuality,

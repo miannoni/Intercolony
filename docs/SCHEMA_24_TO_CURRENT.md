@@ -42,6 +42,7 @@ the old behaviour, so those additive steps do not need to move data.
 | 28 → 29 | A supply agreement's fulfilment mode | Defaults to seller delivery, which is what every existing agreement was created under, so the default *is* the truth about them |
 | 29 → 30 | **Repairs data** — relabels purchase requests that were wrongly marked Cancelled | The only step so far that changes existing values rather than adding a field. See below. |
 | 30 → 31 | A purchase request's minimum workmanship | No floor ⇒ take whatever is offered, which is how every existing request already behaved |
+| 31 → 32 | Each purchase order remembers its destination colony | No map recorded ⇒ remains null; no map is guessed or backfilled |
 
 **29 → 30 is the exception to "every step is additive."** Accepting a quotation used to mark
 the request `Cancelled`, a status meaning "withdrawn by the player" — so every successful

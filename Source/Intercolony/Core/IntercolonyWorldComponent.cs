@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 31;
+        public const int CurrentSaveVersion = 32;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1640,6 +1640,14 @@ namespace Intercolony
                 // floor, which is exactly how every existing request already behaved.
                 IntercolonyLog.Message(
                     "  schema 30 -> 31: purchase requests may state a minimum quality; existing ones have none.");
+            }
+
+            if (saveVersion < 32)
+            {
+                // 31 -> 32 added each purchase order's destination colony. There is no data to
+                // move: an absent map remains null and preserves the old saved state.
+                IntercolonyLog.Message(
+                    "  schema 31 -> 32: purchase orders now remember their destination colony; existing orders have no recorded map.");
             }
 
             saveVersion = CurrentSaveVersion;

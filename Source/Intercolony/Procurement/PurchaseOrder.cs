@@ -53,6 +53,9 @@ namespace Intercolony
         public string settlementName = "";
         public string factionName = "";
 
+        /// <summary>The player colony this order is destined for. Also the map that paid.</summary>
+        public Map destinationMap;
+
         public ThingDef thingDef;
         public ThingDef stuffDef;
         public QualityCategory? quality;
@@ -126,6 +129,7 @@ namespace Intercolony
             Scribe_Values.Look(ref settlementId, "settlementId", -1);
             Scribe_Values.Look(ref settlementName, "settlementName", "");
             Scribe_Values.Look(ref factionName, "factionName", "");
+            Scribe_References.Look(ref destinationMap, "destinationMap");
             Scribe_Defs.Look(ref thingDef, "thingDef");
             Scribe_Defs.Look(ref stuffDef, "stuffDef");
             Scribe_Values.Look(ref quality, "quality");
