@@ -2402,6 +2402,30 @@ namespace Intercolony
             y += 38f;
             Text.Font = GameFont.Small;
 
+            bool receiveProposals = state.ReceiveContractProposals;
+            Widgets.CheckboxLabeled(
+                new Rect(0f, y, Mathf.Min(280f, inRect.width), 28f),
+                "Receive contract proposals", ref receiveProposals);
+            state.ReceiveContractProposals = receiveProposals;
+            y += 28f;
+
+            if (receiveProposals)
+            {
+                float categoryWidth = (inRect.width - 16f) / 3f;
+                for (int i = 0; i < IntercolonyProductCategoryUtility.All.Length; i++)
+                {
+                    IntercolonyProductCategory category = IntercolonyProductCategoryUtility.All[i];
+                    bool enabled = state.ReceiveContractProposalsFor(category);
+                    float x = (i % 3) * (categoryWidth + 8f);
+                    float categoryY = y + (i / 3) * 28f;
+                    Widgets.CheckboxLabeled(
+                        new Rect(x, categoryY, categoryWidth, 28f), category.Label(), ref enabled);
+                    state.SetReceiveContractProposalsFor(category, enabled);
+                }
+
+                y += 56f;
+            }
+
             List<RecurringContract> contracts = new List<RecurringContract>(state.Contracts);
             if (contracts.Count == 0)
             {

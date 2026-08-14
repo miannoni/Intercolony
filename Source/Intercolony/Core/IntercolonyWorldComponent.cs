@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 34;
+        public const int CurrentSaveVersion = 35;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -84,6 +84,19 @@ namespace Intercolony
         /// cross the planet should not have to re-set it after every reload.
         /// </summary>
         private float maxMarketDistance = NoDistanceLimit;
+
+        /// <summary>
+        /// Whether settlements may make unsolicited standing-agreement proposals. This is a
+        /// per-save preference: colonies opt in deliberately.
+        /// </summary>
+        private bool receiveContractProposals;
+
+        /// <summary>
+        /// Product categories the player has excluded from unsolicited standing-agreement
+        /// proposals. Absence means enabled so newly added categories opt in automatically.
+        /// </summary>
+        private HashSet<IntercolonyProductCategory> disabledContractProposalCategories =
+            new HashSet<IntercolonyProductCategory>();
 
         /// <summary>Sentinel meaning "show everything regardless of distance".</summary>
         public const float NoDistanceLimit = 9999f;
@@ -509,6 +522,29 @@ namespace Intercolony
             set => maxMarketDistance = value;
         }
 
+        public bool ReceiveContractProposals
+        {
+            get => receiveContractProposals;
+            set => receiveContractProposals = value;
+        }
+
+        public bool ReceiveContractProposalsFor(IntercolonyProductCategory category)
+        {
+            return !disabledContractProposalCategories.Contains(category);
+        }
+
+        public void SetReceiveContractProposalsFor(IntercolonyProductCategory category, bool enabled)
+        {
+            if (enabled)
+            {
+                disabledContractProposalCategories.Remove(category);
+            }
+            else
+            {
+                disabledContractProposalCategories.Add(category);
+            }
+        }
+
         public IntercolonyWorldComponent(World world) : base(world)
         {
         }
@@ -736,6 +772,10 @@ namespace Intercolony
             Scribe_Values.Look(ref lastRefreshTick, "lastRefreshTick", -1);
             Scribe_Values.Look(ref refreshCount, "refreshCount", 0);
             Scribe_Values.Look(ref maxMarketDistance, "maxMarketDistance", NoDistanceLimit);
+            Scribe_Values.Look(ref receiveContractProposals, "receiveContractProposals", false);
+            Scribe_Collections.Look(
+                ref disabledContractProposalCategories,
+                "disabledContractProposalCategories", LookMode.Value);
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
             Scribe_Collections.Look(ref commercialHistory, "commercialHistory", LookMode.Deep);
@@ -752,6 +792,12 @@ namespace Intercolony
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
+                if (disabledContractProposalCategories == null)
+                {
+                    disabledContractProposalCategories =
+                        new HashSet<IntercolonyProductCategory>();
+                }
+
                 // A missing or IsNull list node loads as null, not as an empty list
                 // (Scribe_Collections.Look, LoadingVars branch). Every consumer below
                 // assumes non-null, so restore the invariant here rather than at each use.
@@ -1744,6 +1790,17 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     $"  schema 33 -> 34: durable commercial history rebuilt from completed " +
                     $"sales orders ({commercialHistory.Count} settlement/item record(s)).");
+            }
+
+            if (saveVersion < 35)
+            {
+                // Existing proposals remain untouched, but pause future unsolicited generation
+                // until the player deliberately opts back in. The empty exclusion set retains
+                // the previously unrestricted category scope underneath the master switch.
+                receiveContractProposals = false;
+                disabledContractProposalCategories.Clear();
+                IntercolonyLog.Message(
+                    "  schema 34 -> 35: contract proposals are now off by default for this save; re-enable them in the Contracts page control strip.");
             }
 
             saveVersion = CurrentSaveVersion;

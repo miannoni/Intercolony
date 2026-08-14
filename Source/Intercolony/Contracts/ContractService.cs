@@ -40,6 +40,11 @@ namespace Intercolony
         /// <summary>Proposes agreements to settlements that trust the colony enough (§28).</summary>
         public static int OfferContracts(IntercolonyWorldComponent state)
         {
+            if (!state.ReceiveContractProposals)
+            {
+                return 0;
+            }
+
             List<Settlement> settlements = Find.WorldObjects?.Settlements;
             if (settlements == null)
             {
@@ -169,9 +174,16 @@ namespace Intercolony
                             DefDatabase<ThingDef>.GetNamedSilentFail(def.defName) != def ||
                             IntercolonyTradeBlacklist.IsBlacklisted(def) ||
                             !IntercolonyProductClassifier.IsFungibleTradeItem(def) ||
-                            !IntercolonyProductClassifier.Classify(def).HasValue ||
                             def.stackLimit <= 1 ||
                             def.category != ThingCategory.Item)
+                        {
+                            continue;
+                        }
+
+                        IntercolonyProductCategory? candidateCategory =
+                            IntercolonyProductClassifier.Classify(def);
+                        if (!candidateCategory.HasValue ||
+                            !state.ReceiveContractProposalsFor(candidateCategory.Value))
                         {
                             continue;
                         }
