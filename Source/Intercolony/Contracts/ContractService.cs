@@ -18,7 +18,8 @@ namespace Intercolony
         MissingEconomicProfile,
         InvalidItem,
         InsufficientTradeHistory,
-        QuantityOutOfRange
+        QuantityOutOfRange,
+        UnitPriceOutOfRange
     }
 
     /// <summary>The settlement's answer to a player-proposed recurring contract.</summary>
@@ -59,6 +60,8 @@ namespace Intercolony
         {
             this.unitPrice = unitPrice;
             this.referenceUnitPrice = referenceUnitPrice;
+            minimumUnitPrice = 0f;
+            maximumUnitPrice = referenceUnitPrice * 2f;
             this.cadenceTicks = cadenceTicks;
         }
 
@@ -66,7 +69,20 @@ namespace Intercolony
 
         public readonly float referenceUnitPrice;
 
+        /// <summary>Inclusive bounds for a player-proposed agreed unit price.</summary>
+        public readonly float minimumUnitPrice;
+
+        public readonly float maximumUnitPrice;
+
         public readonly int cadenceTicks;
+
+        public bool IsUnitPriceInRange(float agreedUnitPrice)
+        {
+            return !float.IsNaN(agreedUnitPrice) &&
+                   !float.IsInfinity(agreedUnitPrice) &&
+                   agreedUnitPrice >= minimumUnitPrice &&
+                   agreedUnitPrice <= maximumUnitPrice;
+        }
     }
 
     /// <summary>
@@ -270,8 +286,10 @@ namespace Intercolony
                     IntercolonyProductClassifier.Classify(chosen).Value;
 
                 int quantity = ContractQuantity(chosen, profile);
+                ContractTerms terms = CalculateContractTerms(
+                    settlement, profile, chosen, category, quantity);
                 return BuildContract(
-                    state, settlement, profile, chosen, category, quantity, 0f);
+                    state, settlement, profile, chosen, category, quantity, terms.unitPrice);
             }
             finally
             {
@@ -289,7 +307,7 @@ namespace Intercolony
             Settlement settlement,
             ThingDef thingDef,
             int quantityPerCycle,
-            float discountFraction = 0f)
+            float? agreedUnitPrice = null)
         {
             if (state == null)
             {
@@ -338,6 +356,18 @@ namespace Intercolony
                     $"{MaximumQuantityPerCycle}.");
             }
 
+            ContractTerms terms = CalculateContractTerms(
+                settlement, profile, thingDef, category, quantityPerCycle);
+            float chosenUnitPrice = agreedUnitPrice ?? terms.referenceUnitPrice;
+            if (!terms.IsUnitPriceInRange(chosenUnitPrice))
+            {
+                return ContractProposalResult.Refused(
+                    ContractProposalFailure.UnitPriceOutOfRange,
+                    $"Agreed unit price must be between {terms.minimumUnitPrice:F2} and " +
+                    $"{terms.maximumUnitPrice:F2} (twice the current spot price of " +
+                    $"{terms.referenceUnitPrice:F2}).");
+            }
+
             int seed = Gen.HashCombineInt(
                 state.EconomySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
             RecurringContract contract;
@@ -346,7 +376,7 @@ namespace Intercolony
             {
                 contract = BuildContract(
                     state, settlement, profile, thingDef, category, quantityPerCycle,
-                    discountFraction);
+                    chosenUnitPrice);
             }
             finally
             {
@@ -533,7 +563,7 @@ namespace Intercolony
             ThingDef thingDef,
             IntercolonyProductCategory category,
             int quantityPerCycle,
-            float discountFraction)
+            float agreedUnitPrice)
         {
             ContractTerms terms = CalculateContractTerms(
                 settlement, profile, thingDef, category, quantityPerCycle);
@@ -548,9 +578,9 @@ namespace Intercolony
                 quantityPerCycle = quantityPerCycle,
                 cadenceTicks = terms.cadenceTicks,
                 totalCycles = Rand.RangeInclusive(3, 6),
-                unitPrice = terms.unitPrice,
+                unitPrice = agreedUnitPrice,
                 referenceUnitPrice = terms.referenceUnitPrice,
-                DiscountFraction = discountFraction,
+                DiscountFraction = 0f,
                 status = ContractStatus.Offered,
                 offerExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay
             };
