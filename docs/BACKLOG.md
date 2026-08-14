@@ -213,6 +213,25 @@ since the fix and the fix has not been verified in play.
 
 ---
 
+## Concluded purchase requests have no retention cap
+
+**Raised:** 2026-08-14, during the player-feedback batch.
+**Size:** small.
+**Status:** open; deliberately not decided in that batch.
+
+Closed sales orders and closed purchase orders are each capped at the hundred most recent and pruned
+automatically (`8fc1ece`). Concluded **purchase requests** are not. They got a manual **Clear
+completed history** action in `32b3864`, but nothing trims them on their own, so a long game keeps
+every request it ever raised — the Orders page was observed showing "25 of 61", where the 25 is only
+a display limit.
+
+The removal rule already exists as a shared predicate in `OrderHistoryService` alongside the other
+two, so adding a cap is small work. It was left out because the other two collections had their
+retention chosen deliberately and stated, and this one should be decided the same way rather than
+inheriting a number by accident.
+
+---
+
 ## Rejected or superseded
 
 *(nothing yet)*

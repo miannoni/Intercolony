@@ -427,6 +427,68 @@ can settle both the sales side and the procurement side.
 **Not covered:** the no-home-map refund hold and the zero-placement refund hold have no coverage and
 are not practically reachable by hand. Do not treat this two-colony test as evidence for either.
 
+### A proposed agreement is answered after a wait
+
+Added 2026-08-14 with `4dc2ae1` and `feb19e5`. Proposing a supply agreement used to accept it on the
+spot, which made the terms meaningless. It is now sent, sits pending, and the settlement answers when
+its decision falls due. Nothing below has been played.
+
+How appealing the proposal looks is scored from the price against the going market rate — the
+dominant term — plus the quantity against what that settlement actually wants, and existing
+commercial reputation. The wait is **shortest at both extremes and longest in the middle**: a superb
+offer earns a quick yes, an absurd one a quick no, and a middling one takes the longest because it is
+the only one genuinely in doubt. Acceptance runs from roughly a tenth at worst appeal to nine tenths
+at best, so a generous offer can still be refused.
+
+**Steps.** Open **Intercolony** → **Selling** → **Contracts** and use **Propose supply agreement**.
+Against the *same* settlement and item, make three proposals in turn at different prices: well below
+the going rate, at about the going rate, and near twice it. Note how long each takes to be answered
+and what the answer was.
+
+**Pass.** Both extremes are answered noticeably faster than the middling one. While pending, the row
+says it is awaiting the settlement's answer and offers no accept or decline buttons. A letter arrives
+for acceptance and for refusal alike.
+
+### A proposal's answer does not change on reload
+
+Added 2026-08-14. The answer is seeded from the world economy seed and the contract id on purpose, so
+reloading cannot be used to fish for a better outcome.
+
+**Steps.** Leave a proposal pending and save. Let the decision fall due and note the answer. Reload
+the save and let the same day pass again.
+
+**Pass.** The same answer both times. A different answer means the seeding regressed and the mechanic
+can be save-scummed.
+
+### Price moves faction goodwill both ways, and never starts a war
+
+Added 2026-08-14 with `84c80f0` and `b41af87`. Price is a single lever: below the going rate is
+generosity and earns faction goodwill when a delivery completes; above it is greed and costs
+goodwill. A penalty is clamped against RimWorld's own hostile threshold and can never tip a faction
+into war. None of this has been seen in play.
+
+**Steps.** Complete a delivery on an agreement priced **below** the going rate and check the buyer
+faction's goodwill in the Factions tab before and after. Repeat with one priced **above** it. For the
+clamp, price an expensive agreement near twice the rate with a faction whose goodwill is already low,
+and let it deliver.
+
+**Pass.** Goodwill rises in the first case and falls in the second. It never reaches the hostile
+threshold as a result of a price penalty, and no hostility letter arrives from one. Commercial
+reputation continues to move on its own terms — being liked and being trusted are separate.
+
+### Save schema 38 and 39 have never been migrated from a real save
+
+Added 2026-08-14. A real save has migrated as far as **37** successfully, which is recorded above. The
+two steps added since — the market rate a deal was struck against, and the pending-decision fields —
+have only ever existed in worlds created at the current schema. `-quicktest` cannot prove them; it
+builds a new world already at the latest version.
+
+**Steps.** Open a save made before this batch, watch the log for the migration lines, then save, quit
+to the menu and reload.
+
+**Pass.** The log names each step through 39 in order, the second load reports the current schema, and
+no exception appears.
+
 ### The buy-only setting itself has never been seen
 
 Added 2026-08-09. The code path is asserted by the self-test above; the **player-facing control has
