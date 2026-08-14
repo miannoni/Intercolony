@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 38;
+        public const int CurrentSaveVersion = 39;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -247,7 +247,7 @@ namespace Intercolony
                                          contract.renewalExpiryTick > GenTicks.TicksGame;
 
                 if (contract.settlementId == settlementId &&
-                    (contract.IsOffer || contract.IsActive ||
+                    (contract.IsOffer || contract.IsPendingPlayerProposal || contract.IsActive ||
                      contract.status == ContractStatus.Suspended || hasPendingRenewal))
                 {
                     return true;
@@ -264,7 +264,7 @@ namespace Intercolony
                 int count = 0;
                 foreach (RecurringContract contract in contracts)
                 {
-                    if (contract.IsOffer || contract.IsActive)
+                    if (contract.IsOffer || contract.IsPendingPlayerProposal || contract.IsActive)
                     {
                         count++;
                     }
@@ -1825,6 +1825,14 @@ namespace Intercolony
                 // no trustworthy value to reconstruct after market drift, so old deals keep none.
                 IntercolonyLog.Message(
                     "  schema 37 -> 38: sales orders and recurring contracts now record their reference unit price; existing deals have no recorded reference rate.");
+            }
+
+            if (saveVersion < 39)
+            {
+                // 38 -> 39 added the due tick and appeal recorded for player proposals. Their
+                // absent sentinels keep every existing contract out of that pending lifecycle.
+                IntercolonyLog.Message(
+                    "  schema 38 -> 39: recurring contracts now record pending player-proposal decisions; existing contracts have none.");
             }
 
             saveVersion = CurrentSaveVersion;

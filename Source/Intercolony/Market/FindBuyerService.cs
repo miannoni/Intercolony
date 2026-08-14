@@ -248,7 +248,7 @@ namespace Intercolony
                 return offer;
             }
 
-            int maxAppetite = MaxAppetite(def, stuff, profile, demand);
+            int maxAppetite = MaximumAppetite(def, stuff, profile, category);
             if (maxAppetite <= 0)
             {
                 offer.noInterestReason = "cannot afford a worthwhile lot";
@@ -390,6 +390,21 @@ namespace Intercolony
         /// 2,000"). Bounded by wealth and appetite, then clamped by how the good travels —
         /// the same crated-goods reasoning as generation (docs/unique-goods-spike.md).
         /// </summary>
+        internal static int MaximumAppetite(
+            ThingDef def,
+            ThingDef stuff,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category)
+        {
+            if (def == null || profile == null)
+            {
+                return 0;
+            }
+
+            float demand = profile.DemandFor(def, category);
+            return MaxAppetite(def, stuff, profile, demand);
+        }
+
         private static int MaxAppetite(
             ThingDef def, ThingDef stuff, SettlementEconomicProfile profile, float demand)
         {

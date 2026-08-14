@@ -22,7 +22,7 @@ namespace Intercolony
         UnitPriceOutOfRange
     }
 
-    /// <summary>The settlement's answer to a player-proposed recurring contract.</summary>
+    /// <summary>The result of attempting to send a player-proposed recurring contract.</summary>
     public sealed class ContractProposalResult
     {
         private ContractProposalResult(
@@ -41,7 +41,7 @@ namespace Intercolony
 
         public string Reason { get; }
 
-        internal static ContractProposalResult Accepted(RecurringContract contract)
+        internal static ContractProposalResult Sent(RecurringContract contract)
         {
             return new ContractProposalResult(contract, ContractProposalFailure.None, null);
         }
@@ -121,6 +121,16 @@ namespace Intercolony
         /// </summary>
         public const int MinimumQuantityPerCycle = 10;
         public const int MaximumQuantityPerCycle = 4000;
+
+        private const float ProposalPriceAppealWeight = 0.60f;
+        private const float ProposalQuantityAppealWeight = 0.25f;
+        private const float ProposalReputationAppealWeight = 0.15f;
+
+        /// <summary>Obviously good or bad proposals receive an answer after one day.</summary>
+        private const int MinimumDecisionDelayDays = 1;
+
+        /// <summary>Borderline proposals take at most four days to deliberate.</summary>
+        private const int MaximumDecisionDelayDays = 4;
 
         /// <summary>Proposes agreements to settlements that trust the colony enough (§28).</summary>
         public static int OfferContracts(IntercolonyWorldComponent state)
@@ -298,9 +308,8 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Proposes the supplied fixed terms to a settlement. Passing every existing commercial
-        /// gate is the settlement's acceptance; this release has no negotiation or counteroffer
-        /// state in which a player-originated proposal could remain pending.
+        /// Sends the supplied fixed terms to a settlement. Passing every existing commercial gate
+        /// means the proposal can be made; the settlement's answer remains pending.
         /// </summary>
         public static ContractProposalResult ProposeContract(
             IntercolonyWorldComponent state,
@@ -383,21 +392,60 @@ namespace Intercolony
                 Rand.PopState();
             }
 
-            // Construction starts at Offered so the established transition sets the first due
-            // date. Eligibility above is the settlement's yes, so no pending offer is stored.
-            if (!contract.TryAccept())
-            {
-                return ContractProposalResult.Refused(
-                    ContractProposalFailure.InvalidState,
-                    "The accepted contract could not enter its active lifecycle.");
-            }
+            float appeal = CalculateProposalAppeal(
+                state, settlement, profile, thingDef, category, quantityPerCycle,
+                chosenUnitPrice, terms.referenceUnitPrice);
+            contract.proposalAppeal = appeal;
+            contract.decisionDueTick = GenTicks.TicksGame + DecisionDelayTicks(appeal);
 
             state.AddContract(contract);
             IntercolonyLog.Message(
-                $"Player-proposed contract {contract.id} accepted: {contract.quantityPerCycle}x " +
+                $"Player proposal {contract.id} sent and awaiting a response: " +
+                $"{contract.quantityPerCycle}x " +
                 $"{contract.thingDef.label} every {contract.CadenceDays:F0}d x{contract.totalCycles} " +
                 $"for {contract.settlementName}.");
-            return ContractProposalResult.Accepted(contract);
+            return ContractProposalResult.Sent(contract);
+        }
+
+        private static float CalculateProposalAppeal(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            ThingDef thingDef,
+            IntercolonyProductCategory category,
+            int quantityPerCycle,
+            float unitPrice,
+            float referenceUnitPrice)
+        {
+            float priceAppeal = referenceUnitPrice > 0f
+                ? Mathf.Clamp01(1f - unitPrice / (2f * referenceUnitPrice))
+                : unitPrice <= 0f ? 1f : 0f;
+
+            int appetite = FindBuyerService.MaximumAppetite(
+                thingDef, null, profile, category);
+            float quantityAppeal = quantityPerCycle > 0
+                ? Mathf.Clamp01(appetite / (float)quantityPerCycle)
+                : 0f;
+
+            float reputationAppeal = Mathf.InverseLerp(
+                MinimumReputation,
+                CommercialReputation.MaxScore,
+                ReputationService.ScoreFor(state, settlement));
+
+            return Mathf.Clamp01(
+                priceAppeal * ProposalPriceAppealWeight +
+                quantityAppeal * ProposalQuantityAppealWeight +
+                reputationAppeal * ProposalReputationAppealWeight);
+        }
+
+        private static int DecisionDelayTicks(float appeal)
+        {
+            float distanceFromMiddle = Mathf.Abs(Mathf.Clamp01(appeal) * 2f - 1f);
+            float days = Mathf.Lerp(
+                MaximumDecisionDelayDays,
+                MinimumDecisionDelayDays,
+                distanceFromMiddle);
+            return Mathf.RoundToInt(days * GenDate.TicksPerDay);
         }
 
         /// <summary>

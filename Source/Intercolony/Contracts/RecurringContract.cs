@@ -7,7 +7,7 @@ namespace Intercolony
     /// <summary>
     /// Contract lifecycle (DESIGN.md §29, §30, §73).
     ///
-    /// <c>Offered</c> is a proposal the player has not answered; everything else is a live
+    /// <c>Offered</c> is an unanswered proposal from either side; everything else is a live
     /// agreement or its ending. Breach is distinct from cancellation because §30 lists breach
     /// conditions separately, and the two should not cost the same.
     /// </summary>
@@ -98,6 +98,18 @@ namespace Intercolony
         /// <summary>Tick this proposal stops being available.</summary>
         public int offerExpiryTick;
 
+        /// <summary>Sentinel meaning this is not a pending player proposal awaiting a decision.</summary>
+        public const int NoDecisionDueTick = -1;
+
+        /// <summary>Sentinel meaning this contract was not scored as a pending player proposal.</summary>
+        public const float NoProposalAppeal = -1f;
+
+        /// <summary>Absolute tick when the settlement should answer the player's proposal.</summary>
+        public int decisionDueTick = NoDecisionDueTick;
+
+        /// <summary>Appeal recorded when the player sent the proposal, in the inclusive range 0..1.</summary>
+        public float proposalAppeal = NoProposalAppeal;
+
         /// <summary>
         /// When a war suspended the agreement, or 0. Read on resume to move the cycle clock forward
         /// by the length of the outage, so no delivery is lost to the suspension (§88, §113).
@@ -135,7 +147,17 @@ namespace Intercolony
         {
         }
 
-        public bool IsOffer => status == ContractStatus.Offered;
+        /// <summary>A settlement-initiated offer awaiting the player's answer.</summary>
+        public bool IsOffer =>
+            status == ContractStatus.Offered &&
+            decisionDueTick == NoDecisionDueTick &&
+            proposalAppeal == NoProposalAppeal;
+
+        /// <summary>A player-initiated proposal awaiting the settlement's answer.</summary>
+        public bool IsPendingPlayerProposal =>
+            status == ContractStatus.Offered &&
+            decisionDueTick != NoDecisionDueTick &&
+            proposalAppeal != NoProposalAppeal;
 
         public bool IsActive => status == ContractStatus.Active;
 
@@ -195,7 +217,7 @@ namespace Intercolony
             return parts.Count == 0 ? label : $"{label} ({string.Join(", ", parts.ToArray())})";
         }
 
-        /// <summary>Player accepts the proposal. The only path from Offered to Active.</summary>
+        /// <summary>Moves an unanswered proposal from Offered to Active.</summary>
         public bool TryAccept()
         {
             if (status != ContractStatus.Offered)
@@ -256,6 +278,10 @@ namespace Intercolony
             Scribe_Values.Look(ref status, "status", ContractStatus.Offered);
             Scribe_Values.Look(ref nextCycleTick, "nextCycleTick", 0);
             Scribe_Values.Look(ref offerExpiryTick, "offerExpiryTick", 0);
+            Scribe_Values.Look(
+                ref decisionDueTick, "decisionDueTick", NoDecisionDueTick);
+            Scribe_Values.Look(
+                ref proposalAppeal, "proposalAppeal", NoProposalAppeal);
             Scribe_Values.Look(ref suspendedTick, "suspendedTick", 0);
             Scribe_Values.Look(ref renewalOffered, "renewalOffered", false);
             Scribe_Values.Look(ref renewalExpiryTick, "renewalExpiryTick", 0);
