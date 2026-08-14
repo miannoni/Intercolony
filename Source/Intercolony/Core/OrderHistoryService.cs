@@ -78,6 +78,38 @@ namespace Intercolony
             return state?.PurchaseOrders?.RemoveAll(MayRemovePurchaseOrder) ?? 0;
         }
 
+        public static int CountClearablePurchaseRequestHistory(IntercolonyWorldComponent state)
+        {
+            if (state?.Requests == null)
+            {
+                return 0;
+            }
+
+            HashSet<int> purchaseOrderRequestIds = PurchaseOrderRequestIds(state.PurchaseOrders);
+            int count = 0;
+            foreach (PurchaseRequest request in state.Requests)
+            {
+                if (MayRemovePurchaseRequest(request, purchaseOrderRequestIds))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        public static int ClearPurchaseRequestHistory(IntercolonyWorldComponent state)
+        {
+            if (state?.Requests == null)
+            {
+                return 0;
+            }
+
+            HashSet<int> purchaseOrderRequestIds = PurchaseOrderRequestIds(state.PurchaseOrders);
+            return state.Requests.RemoveAll(request =>
+                MayRemovePurchaseRequest(request, purchaseOrderRequestIds));
+        }
+
         private static int PruneSalesOrders(IntercolonyWorldComponent state)
         {
             List<SalesOrder> orders = state.Orders;
@@ -160,6 +192,14 @@ namespace Intercolony
             return order != null && !order.IsOpen;
         }
 
+        private static bool MayRemovePurchaseRequest(
+            PurchaseRequest request, HashSet<int> purchaseOrderRequestIds)
+        {
+            return request != null &&
+                   !request.IsOpen &&
+                   !purchaseOrderRequestIds.Contains(request.id);
+        }
+
         /// <summary>Newest completion first; no recorded completion is always oldest.</summary>
         private static int CompareSalesRecency(SalesOrder left, SalesOrder right)
         {
@@ -198,6 +238,25 @@ namespace Intercolony
             }
 
             return orderIds;
+        }
+
+        private static HashSet<int> PurchaseOrderRequestIds(List<PurchaseOrder> orders)
+        {
+            HashSet<int> requestIds = new HashSet<int>();
+            if (orders == null)
+            {
+                return requestIds;
+            }
+
+            foreach (PurchaseOrder order in orders)
+            {
+                if (order != null && order.requestId != 0)
+                {
+                    requestIds.Add(order.requestId);
+                }
+            }
+
+            return requestIds;
         }
 
         private static bool IsConcluded(RecurringContract contract)

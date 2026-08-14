@@ -2012,6 +2012,9 @@ namespace Intercolony
                 SelectPurchaseOrdersForDisplay(state.PurchaseOrders);
             List<PurchaseRequest> concludedRequests = SelectConcludedRequestsForDisplay(
                 state.Requests, out int concludedRequestTotal);
+            int clearableRequestCount = concludedRequestTotal > 0
+                ? OrderHistoryService.CountClearablePurchaseRequestHistory(state)
+                : 0;
 
             float contentHeight = PurchaseOrdersHeight(purchaseOrders);
             if (purchaseOrders.Count == 0)
@@ -2048,7 +2051,18 @@ namespace Intercolony
                 string header = concludedRequestTotal > concludedRequests.Count
                     ? $"Concluded requests (showing {concludedRequests.Count} of {concludedRequestTotal})"
                     : $"Concluded requests ({concludedRequests.Count})";
-                Widgets.Label(new Rect(0f, rowY, viewRect.width, 24f), header);
+                const float buttonWidth = 190f;
+                float headerWidth = clearableRequestCount > 0
+                    ? viewRect.width - buttonWidth - 8f
+                    : viewRect.width;
+                Widgets.Label(new Rect(0f, rowY, headerWidth, 24f), header);
+                if (clearableRequestCount > 0)
+                {
+                    Rect clearRect = new Rect(
+                        viewRect.width - buttonWidth, rowY - 1f, buttonWidth, 26f);
+                    DrawClearPurchaseRequestHistoryButton(
+                        clearRect, clearableRequestCount, state);
+                }
                 rowY += PurchaseOrderSectionHeaderHeight;
 
                 foreach (PurchaseRequest request in concludedRequests)
@@ -2060,6 +2074,23 @@ namespace Intercolony
             }
 
             EndPageScrollView();
+        }
+
+        private static void DrawClearPurchaseRequestHistoryButton(
+            Rect rect, int clearableCount, IntercolonyWorldComponent state)
+        {
+            if (!Widgets.ButtonText(rect, "Clear completed history"))
+            {
+                return;
+            }
+
+            string requestWord = clearableCount == 1 ? "request" : "requests";
+            Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                $"Remove {clearableCount} concluded {requestWord} from this list?\n\n" +
+                "Open requests and requests tied to purchase orders still in this list will " +
+                "be kept.",
+                () => OrderHistoryService.ClearPurchaseRequestHistory(state),
+                destructive: true));
         }
 
         private const float ConcludedRequestRowHeight = 26f;
