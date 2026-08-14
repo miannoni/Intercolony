@@ -2632,7 +2632,7 @@ namespace Intercolony
                 "Propose supply agreement",
                 "Propose agreement",
                 ContractService.MaximumQuantityPerCycle,
-                qty =>
+                (qty, fulfillment, discountFraction) =>
                 {
                     ContractTerms terms = ContractService.PreviewContractTerms(
                         state, settlement, thingDef, qty);
@@ -2643,17 +2643,21 @@ namespace Intercolony
 
                     float daysBetweenDeliveries =
                         terms.cadenceTicks / (float)GenDate.TicksPerDay;
-                    int paymentPerDelivery = Mathf.RoundToInt(terms.unitPrice * qty);
+                    SalesOrder preview = BuildContractPaymentPreview(
+                        thingDef, qty, terms, discountFraction);
+                    int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
                     return $"Propose supplying {qty}x {thingDef.LabelCap} to {settlement.Label} " +
                            $"every {daysBetweenDeliveries:F0} days.\n\n" +
-                           $"Payment: {paymentPerDelivery} silver per delivery " +
-                           $"({terms.unitPrice:F2} each)\n\n" +
+                           $"Payment: {preview.DiscountedTotalPayment} silver per delivery " +
+                           $"({terms.unitPrice:F2} each before discount)\n" +
+                           $"Waived: {waived} silver per delivery\n\n" +
                            "A standing agreement begins immediately, or the proposal is refused immediately with a reason.";
                 },
-                qty =>
+                (qty, fulfillment, discountFraction) =>
                 {
                     ContractProposalResult proposal =
-                        ContractService.ProposeContract(state, settlement, thingDef, qty);
+                        ContractService.ProposeContract(
+                            state, settlement, thingDef, qty, discountFraction);
                     if (!proposal.Success)
                     {
                         Messages.Message(
@@ -2666,8 +2670,36 @@ namespace Intercolony
                         contractProposalSettlementCache = null;
                     }
                 },
-                ContractService.MinimumQuantityPerCycle,
-                "Per delivery:"));
+                (qty, fulfillment, discountFraction) =>
+                {
+                    ContractTerms terms = ContractService.PreviewContractTerms(
+                        state, settlement, thingDef, qty);
+                    if (terms == null)
+                    {
+                        return null;
+                    }
+
+                    SalesOrder preview = BuildContractPaymentPreview(
+                        thingDef, qty, terms, discountFraction);
+                    int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
+                    return $"Paid: {preview.DiscountedTotalPayment:N0} silver\n" +
+                           $"Waived: {waived:N0} silver";
+                },
+                initialFulfillment: FulfillmentMode.SellerDelivery,
+                minQuantity: ContractService.MinimumQuantityPerCycle,
+                quantityLabel: "Per delivery:",
+                allowFulfillmentChoice: false));
+        }
+
+        private static SalesOrder BuildContractPaymentPreview(
+            ThingDef thingDef, int quantity, ContractTerms terms, float discountFraction)
+        {
+            return new SalesOrder
+            {
+                line = new OrderLine(thingDef, quantity),
+                unitPrice = terms.unitPrice,
+                DiscountFraction = discountFraction
+            };
         }
 
         private static int ContractRank(RecurringContract contract)

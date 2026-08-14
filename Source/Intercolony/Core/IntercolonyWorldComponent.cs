@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 36;
+        public const int CurrentSaveVersion = 37;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1809,6 +1809,14 @@ namespace Intercolony
                 // default preserves every existing order's full agreed payment.
                 IntercolonyLog.Message(
                     "  schema 35 -> 36: sales orders now carry a discount fraction; existing orders remain undiscounted.");
+            }
+
+            if (saveVersion < 37)
+            {
+                // 36 -> 37 added a discount fraction to recurring contracts. The absent field's
+                // zero default preserves every existing contract's full agreed payment.
+                IntercolonyLog.Message(
+                    "  schema 36 -> 37: recurring contracts now carry a discount fraction; existing contracts remain undiscounted.");
             }
 
             saveVersion = CurrentSaveVersion;

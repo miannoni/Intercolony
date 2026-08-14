@@ -94,10 +94,11 @@ namespace Intercolony
             Func<int, FulfillmentMode, float, string> discountPreviewBuilder = null,
             FulfillmentMode initialFulfillment = FulfillmentMode.BuyerPickup,
             int minQuantity = 1,
-            string quantityLabel = "Quantity:")
+            string quantityLabel = "Quantity:",
+            bool allowFulfillmentChoice = true)
             : this(title, confirmLabel, maxQuantity, null, null, null, null,
                 bodyBuilder, onConfirm, discountPreviewBuilder, initialFulfillment,
-                minQuantity, quantityLabel)
+                minQuantity, quantityLabel, allowFulfillmentChoice)
         {
         }
 
@@ -114,7 +115,8 @@ namespace Intercolony
             Func<int, FulfillmentMode, float, string> discountPreviewBuilder,
             FulfillmentMode initialFulfillment,
             int minQuantity,
-            string quantityLabel)
+            string quantityLabel,
+            bool allowFulfillmentChoice = true)
         {
             this.title = title;
             this.confirmLabel = confirmLabel;
@@ -128,7 +130,8 @@ namespace Intercolony
             this.discountOnConfirm = discountOnConfirm;
             this.discountPreviewBuilder = discountPreviewBuilder;
             chooseDiscount = discountBodyBuilder != null;
-            chooseFulfillment = fulfillmentBodyBuilder != null || chooseDiscount;
+            chooseFulfillment = allowFulfillmentChoice &&
+                                (fulfillmentBodyBuilder != null || chooseDiscount);
             fulfillment = initialFulfillment;
             this.quantityLabel = quantityLabel;
 

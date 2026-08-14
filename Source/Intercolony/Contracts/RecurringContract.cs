@@ -68,6 +68,15 @@ namespace Intercolony
         /// <summary>Agreed rate, locked for the contract's life — that is what makes it plannable.</summary>
         public float unitPrice;
 
+        /// <summary>Fraction of each cycle's agreed value waived when silver is paid, from 0 to 1.</summary>
+        private float discountFraction;
+
+        public float DiscountFraction
+        {
+            get => discountFraction;
+            set => discountFraction = float.IsNaN(value) ? 0f : Mathf.Clamp01(value);
+        }
+
         /// <summary>
         /// How every cycle's order is fulfilled, chosen once when the agreement is accepted.
         /// A standing agreement is a production commitment, so the logistics of it are settled
@@ -205,6 +214,8 @@ namespace Intercolony
             Scribe_Values.Look(ref cyclesCompleted, "cyclesCompleted", 0);
             Scribe_Values.Look(ref cyclesFailed, "cyclesFailed", 0);
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
+            Scribe_Values.Look(ref discountFraction, "discountFraction", 0f);
+            DiscountFraction = discountFraction;
             Scribe_Values.Look(
                 ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(ref status, "status", ContractStatus.Offered);

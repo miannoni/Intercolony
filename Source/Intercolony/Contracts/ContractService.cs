@@ -265,7 +265,8 @@ namespace Intercolony
                     IntercolonyProductClassifier.Classify(chosen).Value;
 
                 int quantity = ContractQuantity(chosen, profile);
-                return BuildContract(state, settlement, profile, chosen, category, quantity);
+                return BuildContract(
+                    state, settlement, profile, chosen, category, quantity, 0f);
             }
             finally
             {
@@ -282,7 +283,8 @@ namespace Intercolony
             IntercolonyWorldComponent state,
             Settlement settlement,
             ThingDef thingDef,
-            int quantityPerCycle)
+            int quantityPerCycle,
+            float discountFraction = 0f)
         {
             if (state == null)
             {
@@ -338,7 +340,8 @@ namespace Intercolony
             try
             {
                 contract = BuildContract(
-                    state, settlement, profile, thingDef, category, quantityPerCycle);
+                    state, settlement, profile, thingDef, category, quantityPerCycle,
+                    discountFraction);
             }
             finally
             {
@@ -524,7 +527,8 @@ namespace Intercolony
             SettlementEconomicProfile profile,
             ThingDef thingDef,
             IntercolonyProductCategory category,
-            int quantityPerCycle)
+            int quantityPerCycle,
+            float discountFraction)
         {
             ContractTerms terms = CalculateContractTerms(
                 settlement, profile, thingDef, category, quantityPerCycle);
@@ -540,6 +544,7 @@ namespace Intercolony
                 cadenceTicks = terms.cadenceTicks,
                 totalCycles = Rand.RangeInclusive(3, 6),
                 unitPrice = terms.unitPrice,
+                DiscountFraction = discountFraction,
                 status = ContractStatus.Offered,
                 offerExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay
             };
@@ -905,6 +910,7 @@ namespace Intercolony
                     allowedStuff = contract.stuffDef
                 },
                 unitPrice = contract.unitPrice,
+                DiscountFraction = contract.DiscountFraction,
                 acceptedTick = GenTicks.TicksGame,
 
                 // The whole cycle is the delivery window — that is what makes the commitment
