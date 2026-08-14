@@ -7,6 +7,51 @@ using Verse;
 
 namespace Intercolony
 {
+    /// <summary>Why a player-proposed recurring contract was refused.</summary>
+    public enum ContractProposalFailure
+    {
+        None,
+        InvalidState,
+        InaccessibleSettlement,
+        ReputationTooLow,
+        ExistingContract,
+        MissingEconomicProfile,
+        InvalidItem,
+        InsufficientTradeHistory,
+        QuantityOutOfRange
+    }
+
+    /// <summary>The settlement's answer to a player-proposed recurring contract.</summary>
+    public sealed class ContractProposalResult
+    {
+        private ContractProposalResult(
+            RecurringContract contract, ContractProposalFailure failure, string reason)
+        {
+            Contract = contract;
+            Failure = failure;
+            Reason = reason;
+        }
+
+        public bool Success => Contract != null && Failure == ContractProposalFailure.None;
+
+        public RecurringContract Contract { get; }
+
+        public ContractProposalFailure Failure { get; }
+
+        public string Reason { get; }
+
+        internal static ContractProposalResult Accepted(RecurringContract contract)
+        {
+            return new ContractProposalResult(contract, ContractProposalFailure.None, null);
+        }
+
+        internal static ContractProposalResult Refused(
+            ContractProposalFailure failure, string reason)
+        {
+            return new ContractProposalResult(null, failure, reason);
+        }
+    }
+
     /// <summary>
     /// Offers, runs and ends recurring contracts (DESIGN.md §29, §30, §107).
     ///
@@ -37,6 +82,13 @@ namespace Intercolony
         /// </summary>
         private const float ContractPricePremium = 1.15f;
 
+        /// <summary>
+        /// Existing offer sizing clamps every recurring delivery to this range.
+        /// Player-proposed terms use the same bounds rather than introducing another capacity rule.
+        /// </summary>
+        public const int MinimumQuantityPerCycle = 10;
+        public const int MaximumQuantityPerCycle = 4000;
+
         /// <summary>Proposes agreements to settlements that trust the colony enough (§28).</summary>
         public static int OfferContracts(IntercolonyWorldComponent state)
         {
@@ -57,25 +109,8 @@ namespace Intercolony
             int created = 0;
             foreach (Settlement settlement in settlements)
             {
-                if (!IntercolonyMarketAccess.IsAccessible(settlement))
-                {
-                    continue;
-                }
-
-                if (ReputationService.ScoreFor(state, settlement) < MinimumReputation)
-                {
-                    continue;
-                }
-
-                // One live proposal or agreement per settlement: a standing supply deal is a
-                // relationship, not a stack of them.
-                if (state.HasContractWith(settlement.ID))
-                {
-                    continue;
-                }
-
-                SettlementEconomicProfile profile = state.GetProfile(settlement);
-                if (profile == null)
+                if (!TryGetEligibleCounterparty(
+                        state, settlement, out SettlementEconomicProfile profile, out _, out _))
                 {
                     continue;
                 }
@@ -170,20 +205,13 @@ namespace Intercolony
                     {
                         ThingDef def = entry.Key;
                         if (entry.Value < MinimumCompletedOrdersForAgreement ||
-                            def == null ||
-                            DefDatabase<ThingDef>.GetNamedSilentFail(def.defName) != def ||
-                            IntercolonyTradeBlacklist.IsBlacklisted(def) ||
-                            !IntercolonyProductClassifier.IsFungibleTradeItem(def) ||
-                            def.stackLimit <= 1 ||
-                            def.category != ThingCategory.Item)
+                            !TryGetEligibleItemCategory(
+                                def, out IntercolonyProductCategory candidateCategory))
                         {
                             continue;
                         }
 
-                        IntercolonyProductCategory? candidateCategory =
-                            IntercolonyProductClassifier.Classify(def);
-                        if (!candidateCategory.HasValue ||
-                            !state.ReceiveContractProposalsFor(candidateCategory.Value))
+                        if (!state.ReceiveContractProposalsFor(candidateCategory))
                         {
                             continue;
                         }
@@ -220,35 +248,231 @@ namespace Intercolony
                 }
 
                 IntercolonyProductCategory category =
-                    IntercolonyProductClassifier.Classify(chosen) ?? IntercolonyProductCategory.Commodities;
+                    IntercolonyProductClassifier.Classify(chosen).Value;
 
-                float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
                 int quantity = ContractQuantity(chosen, profile);
-
-                float spot = IntercolonyPricing.UnitPrice(
-                    chosen, null, quantity, profile, category, distance, null, out _);
-
-                RecurringContract contract = new RecurringContract
-                {
-                    id = state.NextId(),
-                    settlementId = settlement.ID,
-                    settlementName = settlement.Label ?? "unnamed",
-                    factionName = settlement.Faction?.Name ?? "",
-                    thingDef = chosen,
-                    quantityPerCycle = quantity,
-                    cadenceTicks = GenDate.TicksPerQuadrum,
-                    totalCycles = Rand.RangeInclusive(3, 6),
-                    unitPrice = spot * ContractPricePremium,
-                    status = ContractStatus.Offered,
-                    offerExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay
-                };
-
-                return contract;
+                return BuildContract(state, settlement, profile, chosen, category, quantity);
             }
             finally
             {
                 Rand.PopState();
             }
+        }
+
+        /// <summary>
+        /// Proposes the supplied fixed terms to a settlement. Passing every existing commercial
+        /// gate is the settlement's acceptance; this release has no negotiation or counteroffer
+        /// state in which a player-originated proposal could remain pending.
+        /// </summary>
+        public static ContractProposalResult ProposeContract(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle)
+        {
+            if (state == null)
+            {
+                return ContractProposalResult.Refused(
+                    ContractProposalFailure.InvalidState, "No Intercolony world state is available.");
+            }
+
+            if (!TryGetEligibleCounterparty(
+                    state,
+                    settlement,
+                    out SettlementEconomicProfile profile,
+                    out ContractProposalFailure counterpartyFailure,
+                    out string counterpartyReason))
+            {
+                return ContractProposalResult.Refused(
+                    counterpartyFailure, counterpartyReason);
+            }
+
+            if (!TryGetEligibleItemCategory(
+                    thingDef, out IntercolonyProductCategory category, out string itemReason))
+            {
+                return ContractProposalResult.Refused(
+                    ContractProposalFailure.InvalidItem, itemReason);
+            }
+
+            Dictionary<int, Dictionary<ThingDef, int>> completedOrders =
+                BuildCompletedOrderCounts(state);
+            completedOrders.TryGetValue(
+                settlement.ID, out Dictionary<ThingDef, int> settlementHistory);
+            int completedSales = 0;
+            settlementHistory?.TryGetValue(thingDef, out completedSales);
+            if (completedSales < MinimumCompletedOrdersForAgreement)
+            {
+                return ContractProposalResult.Refused(
+                    ContractProposalFailure.InsufficientTradeHistory,
+                    $"Only {completedSales} completed sale(s) of {thingDef.label} to that settlement; " +
+                    $"{MinimumCompletedOrdersForAgreement} are required.");
+            }
+
+            if (quantityPerCycle < MinimumQuantityPerCycle ||
+                quantityPerCycle > MaximumQuantityPerCycle)
+            {
+                return ContractProposalResult.Refused(
+                    ContractProposalFailure.QuantityOutOfRange,
+                    $"Quantity per cycle must be between {MinimumQuantityPerCycle} and " +
+                    $"{MaximumQuantityPerCycle}.");
+            }
+
+            int seed = Gen.HashCombineInt(
+                state.EconomySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
+            RecurringContract contract;
+            Rand.PushState(seed);
+            try
+            {
+                contract = BuildContract(
+                    state, settlement, profile, thingDef, category, quantityPerCycle);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            // Construction starts at Offered so the established transition sets the first due
+            // date. Eligibility above is the settlement's yes, so no pending offer is stored.
+            if (!contract.TryAccept())
+            {
+                return ContractProposalResult.Refused(
+                    ContractProposalFailure.InvalidState,
+                    "The accepted contract could not enter its active lifecycle.");
+            }
+
+            state.AddContract(contract);
+            IntercolonyLog.Message(
+                $"Player-proposed contract {contract.id} accepted: {contract.quantityPerCycle}x " +
+                $"{contract.thingDef.label} every {contract.CadenceDays:F0}d x{contract.totalCycles} " +
+                $"for {contract.settlementName}.");
+            return ContractProposalResult.Accepted(contract);
+        }
+
+        private static bool TryGetEligibleCounterparty(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            out SettlementEconomicProfile profile,
+            out ContractProposalFailure failure,
+            out string reason)
+        {
+            profile = null;
+            if (!IntercolonyMarketAccess.IsAccessible(settlement, out string accessReason))
+            {
+                failure = ContractProposalFailure.InaccessibleSettlement;
+                reason = "The settlement is inaccessible: " + accessReason + ".";
+                return false;
+            }
+
+            float reputation = ReputationService.ScoreFor(state, settlement);
+            if (reputation < MinimumReputation)
+            {
+                failure = ContractProposalFailure.ReputationTooLow;
+                reason =
+                    $"Commercial reputation is {reputation:F0}; {MinimumReputation:F0} is required.";
+                return false;
+            }
+
+            // One live proposal or agreement per settlement: a standing supply deal is a
+            // relationship, not a stack of them.
+            if (state.HasContractWith(settlement.ID))
+            {
+                failure = ContractProposalFailure.ExistingContract;
+                reason = "That settlement already has a live contract or pending renewal.";
+                return false;
+            }
+
+            profile = state.GetProfile(settlement);
+            if (profile == null)
+            {
+                failure = ContractProposalFailure.MissingEconomicProfile;
+                reason = "The settlement has no economic profile.";
+                return false;
+            }
+
+            failure = ContractProposalFailure.None;
+            reason = null;
+            return true;
+        }
+
+        private static bool TryGetEligibleItemCategory(
+            ThingDef def, out IntercolonyProductCategory category)
+        {
+            return TryGetEligibleItemCategory(def, out category, out _);
+        }
+
+        private static bool TryGetEligibleItemCategory(
+            ThingDef def, out IntercolonyProductCategory category, out string reason)
+        {
+            category = default(IntercolonyProductCategory);
+            if (def == null || DefDatabase<ThingDef>.GetNamedSilentFail(def.defName) != def)
+            {
+                reason = "The selected item is not registered in the active ThingDef database.";
+                return false;
+            }
+
+            string exclusion = IntercolonyTradeBlacklist.ExclusionReason(def);
+            if (exclusion != null)
+            {
+                reason = $"{def.label} is excluded from Intercolony trade: {exclusion}.";
+                return false;
+            }
+
+            if (!IntercolonyProductClassifier.IsFungibleTradeItem(def))
+            {
+                reason = $"{def.label} is not a fungible Intercolony trade item.";
+                return false;
+            }
+
+            if (def.stackLimit <= 1)
+            {
+                reason = $"{def.label} is not stackable.";
+                return false;
+            }
+
+            if (def.category != ThingCategory.Item)
+            {
+                reason = $"{def.label} is not a physical item.";
+                return false;
+            }
+
+            IntercolonyProductCategory? classified = IntercolonyProductClassifier.Classify(def);
+            if (!classified.HasValue)
+            {
+                reason = $"{def.label} has no Intercolony product category.";
+                return false;
+            }
+
+            category = classified.Value;
+            reason = null;
+            return true;
+        }
+
+        private static RecurringContract BuildContract(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            ThingDef thingDef,
+            IntercolonyProductCategory category,
+            int quantityPerCycle)
+        {
+            float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+            float spot = IntercolonyPricing.UnitPrice(
+                thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
+
+            return new RecurringContract
+            {
+                id = state.NextId(),
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "unnamed",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = thingDef,
+                quantityPerCycle = quantityPerCycle,
+                cadenceTicks = GenDate.TicksPerQuadrum,
+                totalCycles = Rand.RangeInclusive(3, 6),
+                unitPrice = spot * ContractPricePremium,
+                status = ContractStatus.Offered,
+                offerExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay
+            };
         }
 
         /// <summary>
@@ -293,7 +517,7 @@ namespace Intercolony
                                  (profile.wealthTier >= IntercolonyWealthTier.Comfortable ? 1.4f : 0.8f);
             float unitValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(def, null));
             int quantity = Mathf.RoundToInt(targetSilver / unitValue);
-            quantity = Mathf.Clamp(quantity, 10, 4000);
+            quantity = Mathf.Clamp(quantity, MinimumQuantityPerCycle, MaximumQuantityPerCycle);
 
             // Round to a number a contract would actually name.
             if (quantity > 100)
@@ -301,7 +525,7 @@ namespace Intercolony
                 quantity = Mathf.RoundToInt(quantity / 50f) * 50;
             }
 
-            return Mathf.Max(10, quantity);
+            return Mathf.Max(MinimumQuantityPerCycle, quantity);
         }
 
         /// <summary>
