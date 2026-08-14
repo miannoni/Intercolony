@@ -259,7 +259,16 @@ namespace Intercolony
 
             if (order.RemainingQuantity <= 0)
             {
-                Complete(state, order);
+                Complete(
+                    state,
+                    order,
+                    GenTicks.TicksGame,
+                    $"Delivered {order.deliveredQuantity} units for {order.paidSilver} silver.");
+                IntercolonyLog.Message($"Order {order.id} completed. {order.outcomeNote}");
+                Messages.Message(
+                    $"Order complete: {order.settlementName} paid {order.paidSilver} silver.",
+                    MessageTypeDefOf.PositiveEvent,
+                    historical: true);
             }
             else
             {
@@ -374,21 +383,25 @@ namespace Intercolony
                    "animal had been sold to any other trader. Continue with the handoff?";
         }
 
-        private static void Complete(IntercolonyWorldComponent state, SalesOrder order)
+        private static void Complete(
+            IntercolonyWorldComponent state, SalesOrder order, int completedTick, string outcomeNote)
         {
+            if (order == null || order.status == SalesOrderStatus.Completed)
+            {
+                return;
+            }
+
             order.status = SalesOrderStatus.Completed;
-            order.completedTick = GenTicks.TicksGame;
-            order.outcomeNote = $"Delivered {order.deliveredQuantity} units for {order.paidSilver} silver.";
+            order.completedTick = completedTick;
+            order.outcomeNote = outcomeNote;
+
+            // The transition guard above is the exactly-once boundary. Both seller delivery
+            // and buyer collection arrive here, and neither can record the same order twice.
+            state?.RecordCompletedSale(order);
 
             // §27: on-time delivery is worth more than a late one, so the distinction is made
             // here where the deadline is still known.
-            ReputationService.NoteOrderCompleted(state, order, !order.IsOverdue(GenTicks.TicksGame));
-
-            IntercolonyLog.Message($"Order {order.id} completed. {order.outcomeNote}");
-            Messages.Message(
-                $"Order complete: {order.settlementName} paid {order.paidSilver} silver.",
-                MessageTypeDefOf.PositiveEvent,
-                historical: true);
+            ReputationService.NoteOrderCompleted(state, order, !order.IsOverdue(completedTick));
         }
 
         /// <summary>
@@ -565,12 +578,12 @@ namespace Intercolony
 
                 if (order.RemainingQuantity <= 0)
                 {
-                    order.status = SalesOrderStatus.Completed;
-                    order.completedTick = now;
-                    order.outcomeNote =
-                        $"Collected by the buyer. {order.deliveredQuantity} units for {order.paidSilver} silver.";
-                    ReputationService.NoteOrderCompleted(
-                        IntercolonyWorldComponent.Current, order, !order.IsOverdue(now));
+                    Complete(
+                        IntercolonyWorldComponent.Current,
+                        order,
+                        now,
+                        $"Collected by the buyer. {order.deliveredQuantity} units for " +
+                        $"{order.paidSilver} silver.");
                     IntercolonyLog.Message($"Order {order.id} completed by buyer pickup. {order.outcomeNote}");
                     IntercolonyLetters.Send(
                         IntercolonyLetterImportance.Chatty,

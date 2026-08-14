@@ -240,8 +240,7 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Derives the retained proof of supply in one pass. This is deliberately not persisted:
-        /// completed orders remain the sole source of truth, including completed contract cycles.
+        /// Projects the durable proof of supply into the lookup shape used during one refresh.
         /// </summary>
         private static Dictionary<int, Dictionary<ThingDef, int>> BuildCompletedOrderCounts(
             IntercolonyWorldComponent state)
@@ -249,23 +248,23 @@ namespace Intercolony
             Dictionary<int, Dictionary<ThingDef, int>> result =
                 new Dictionary<int, Dictionary<ThingDef, int>>();
 
-            foreach (SalesOrder order in state.Orders)
+            foreach (CommercialHistoryEntry entry in state.CommercialHistory)
             {
-                ThingDef def = order?.line?.thingDef;
-                if (order == null || order.status != SalesOrderStatus.Completed || def == null)
+                ThingDef def = entry?.thingDef;
+                if (entry == null || entry.completedSaleCount <= 0 || def == null)
                 {
                     continue;
                 }
 
                 if (!result.TryGetValue(
-                        order.settlementId, out Dictionary<ThingDef, int> settlementHistory))
+                        entry.settlementId, out Dictionary<ThingDef, int> settlementHistory))
                 {
                     settlementHistory = new Dictionary<ThingDef, int>();
-                    result.Add(order.settlementId, settlementHistory);
+                    result.Add(entry.settlementId, settlementHistory);
                 }
 
                 settlementHistory.TryGetValue(def, out int count);
-                settlementHistory[def] = count + 1;
+                settlementHistory[def] = count + entry.completedSaleCount;
             }
 
             return result;

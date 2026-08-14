@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
@@ -70,10 +72,13 @@ namespace Intercolony
 
             List<RecurringContract> savedContracts = new List<RecurringContract>(state.Contracts);
             List<SalesOrder> savedStateOrders = new List<SalesOrder>(state.Orders);
+            List<CommercialHistoryEntry> savedCommercialHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
             bool hadSubjectReputation = state.Reputations.TryGetValue(
                 subject.ID, out CommercialReputation savedSubjectReputation);
             state.Contracts.Clear();
             state.Orders.Clear();
+            state.CommercialHistory.Clear();
             state.Reputations.Remove(subject.ID);
             try
             {
@@ -229,9 +234,9 @@ namespace Intercolony
             }
 
             // --- Standing agreements come from exact, repeated supply history ---
-            // Isolate this block from the player's retained orders, then restore their exact
-            // list. Every assertion calls the public production BuildOffer path, which derives
-            // history from state.Orders just as a direct debug caller does.
+            // Isolate this block from detailed orders. Every assertion calls the public
+            // production BuildOffer path, and its completed sale fixtures exist only in the
+            // durable aggregate. If eligibility regresses to scanning state.Orders these fail.
             SettlementEconomicProfile profile = state.GetProfile(subject);
             Check("contract test settlement has an economic profile", profile != null);
             List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
@@ -268,14 +273,14 @@ namespace Intercolony
                             status = status
                         };
 
-                        state.AddOrder(order);
+                        state.RecordCompletedSale(order);
                         historyOrders.Add(order);
                         return order;
                     }
 
                     void ClearHistory()
                     {
-                        state.Orders.Clear();
+                        state.CommercialHistory.Clear();
                         historyOrders.Clear();
                     }
 
@@ -336,7 +341,7 @@ namespace Intercolony
                     PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
                     RecurringContract exactlyTwo =
                         ContractService.BuildOffer(state, subject, profile, 104);
-                    Check("two completed orders meet the history threshold",
+                    Check("two completed aggregate sales meet the history threshold",
                         exactlyTwo != null && exactlyTwo.thingDef == meat);
 
                     ClearHistory();
@@ -372,11 +377,7 @@ namespace Intercolony
                     }
 
                     historyOrders.Reverse();
-                    state.Orders.Clear();
-                    foreach (SalesOrder order in historyOrders)
-                    {
-                        state.AddOrder(order);
-                    }
+                    state.CommercialHistory.Reverse();
 
                     bool stableSequence = true;
                     for (int seed = 400; seed < 440; seed++)
@@ -408,6 +409,58 @@ namespace Intercolony
                     ClearHistory();
                     Check("no qualifying history produces no offer",
                         ContractService.BuildOffer(state, subject, profile, 106) == null);
+
+                    // Exercise the same deep-list Scribe path used by the world component,
+                    // including the ThingDef reference rather than copying fields in memory.
+                    List<CommercialHistoryEntry> savedHistory =
+                        new List<CommercialHistoryEntry>
+                        {
+                            new CommercialHistoryEntry
+                            {
+                                settlementId = subject.ID,
+                                thingDef = meat,
+                                completedSaleCount = 2,
+                                totalQuantitySupplied = 275
+                            }
+                        };
+                    List<CommercialHistoryEntry> loadedHistory = null;
+                    string historyRoundTripFailure = null;
+                    string historyPath = Path.Combine(
+                        Path.GetTempPath(), $"Intercolony-CommercialHistory-{Guid.NewGuid():N}.xml");
+                    try
+                    {
+                        Scribe.saver.InitSaving(historyPath, "intercolonyCommercialHistoryTest");
+                        Scribe_Collections.Look(
+                            ref savedHistory, "commercialHistory", LookMode.Deep);
+                        Scribe.saver.FinalizeSaving();
+
+                        Scribe.loader.InitLoading(historyPath);
+                        Scribe_Collections.Look(
+                            ref loadedHistory, "commercialHistory", LookMode.Deep);
+                        Scribe.loader.FinalizeLoading();
+                    }
+                    catch (Exception exception)
+                    {
+                        historyRoundTripFailure =
+                            $"{exception.GetType().Name}: {exception.Message}";
+                    }
+                    finally
+                    {
+                        Scribe.ForceStop();
+                        if (File.Exists(historyPath))
+                        {
+                            File.Delete(historyPath);
+                        }
+                    }
+
+                    Check("commercial history survives a Scribe save/load round trip",
+                        historyRoundTripFailure == null &&
+                        loadedHistory?.Count == 1 &&
+                        loadedHistory[0].settlementId == subject.ID &&
+                        loadedHistory[0].thingDef == meat &&
+                        loadedHistory[0].completedSaleCount == 2 &&
+                        loadedHistory[0].totalQuantitySupplied == 275,
+                        historyRoundTripFailure);
 
                     // --- Contract terms beat spot (§29: otherwise there is no reason to commit) ---
                     // Plant the real prerequisite rather than letting a null offer weaken this
@@ -472,6 +525,8 @@ namespace Intercolony
                 state.Contracts.AddRange(savedContracts);
                 state.Orders.Clear();
                 state.Orders.AddRange(savedStateOrders);
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedCommercialHistory);
             }
 
             sb.AppendLine($"  {passed} passed, {failed} failed.");

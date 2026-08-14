@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 33;
+        public const int CurrentSaveVersion = 34;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -97,6 +97,53 @@ namespace Intercolony
         private List<SalesOrder> orders = new List<SalesOrder>();
 
         public List<SalesOrder> Orders => orders;
+
+        /// <summary>
+        /// Durable completed-sales totals keyed by settlement and exact item definition.
+        /// This is deliberately compact: detailed order rows are not the long-term source of
+        /// contract eligibility.
+        /// </summary>
+        private List<CommercialHistoryEntry> commercialHistory =
+            new List<CommercialHistoryEntry>();
+
+        public List<CommercialHistoryEntry> CommercialHistory => commercialHistory;
+
+        public CommercialHistoryEntry FindCommercialHistory(int settlementId, ThingDef thingDef)
+        {
+            foreach (CommercialHistoryEntry entry in commercialHistory)
+            {
+                if (entry.settlementId == settlementId && entry.thingDef == thingDef)
+                {
+                    return entry;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>Records one completed order in the durable supply history.</summary>
+        public void RecordCompletedSale(SalesOrder order)
+        {
+            ThingDef thingDef = order?.ThingDef;
+            if (order == null || order.status != SalesOrderStatus.Completed || thingDef == null)
+            {
+                return;
+            }
+
+            CommercialHistoryEntry entry = FindCommercialHistory(order.settlementId, thingDef);
+            if (entry == null)
+            {
+                entry = new CommercialHistoryEntry
+                {
+                    settlementId = order.settlementId,
+                    thingDef = thingDef
+                };
+                commercialHistory.Add(entry);
+            }
+
+            entry.completedSaleCount++;
+            entry.totalQuantitySupplied += Mathf.Max(0, order.deliveredQuantity);
+        }
 
         /// <summary>
         /// Purchase requests and their quotations (DESIGN.md §61 lists both as persistent).
@@ -691,6 +738,7 @@ namespace Intercolony
             Scribe_Values.Look(ref maxMarketDistance, "maxMarketDistance", NoDistanceLimit);
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
+            Scribe_Collections.Look(ref commercialHistory, "commercialHistory", LookMode.Deep);
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
@@ -762,6 +810,24 @@ namespace Intercolony
                         IntercolonyLog.Error(
                             $"Dropped {nullOrders} null and {brokenOrders} unresolvable order(s) while loading. " +
                             "This usually means a mod supplying an ordered item was removed.");
+                    }
+                }
+
+                if (commercialHistory == null)
+                {
+                    commercialHistory = new List<CommercialHistoryEntry>();
+                }
+                else
+                {
+                    int nullEntries = commercialHistory.RemoveAll(entry => entry == null);
+                    int unresolvableEntries = commercialHistory.RemoveAll(
+                        entry => entry.thingDef == null);
+                    if (nullEntries > 0 || unresolvableEntries > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullEntries} null and {unresolvableEntries} unresolvable " +
+                            "commercial-history entries while loading. Unresolvable usually means " +
+                            "a mod supplying the item was removed.");
                     }
                 }
 
@@ -1657,6 +1723,26 @@ namespace Intercolony
                 // explicit never-completed sentinel and those orders do not consume current demand.
                 IntercolonyLog.Message(
                     "  schema 32 -> 33: sales orders now record completion time; existing completed orders have no recorded tick.");
+            }
+
+            if (saveVersion < 34)
+            {
+                // 33 -> 34 makes completed-sale supply history durable. Rebuild rather than
+                // append so the step is idempotent even if invoked again before the upgraded
+                // state is saved. Current-schema completions increment the same store only after
+                // their status transition, and a schema-34 save never enters this migration.
+                commercialHistory.Clear();
+                foreach (SalesOrder order in orders)
+                {
+                    if (order?.status == SalesOrderStatus.Completed && order.ThingDef != null)
+                    {
+                        RecordCompletedSale(order);
+                    }
+                }
+
+                IntercolonyLog.Message(
+                    $"  schema 33 -> 34: durable commercial history rebuilt from completed " +
+                    $"sales orders ({commercialHistory.Count} settlement/item record(s)).");
             }
 
             saveVersion = CurrentSaveVersion;
