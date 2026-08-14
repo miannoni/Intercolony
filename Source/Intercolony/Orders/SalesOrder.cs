@@ -98,6 +98,12 @@ namespace Intercolony
         public int acceptedTick;
         public int deadlineTick;
 
+        /// <summary>Sentinel meaning this order has no recorded completion time.</summary>
+        public const int NeverCompletedTick = -1;
+
+        /// <summary>Tick this order completed, or <see cref="NeverCompletedTick"/> if it never did.</summary>
+        public int completedTick = NeverCompletedTick;
+
         public SalesOrderStatus status = SalesOrderStatus.Accepted;
 
         /// <summary>How the goods move (§25). Fixed at acceptance; the price already reflects it.</summary>
@@ -188,6 +194,7 @@ namespace Intercolony
             Scribe_Values.Look(ref legacyQuantity, "quantity", 0);
             Scribe_Values.Look(ref acceptedTick, "acceptedTick", 0);
             Scribe_Values.Look(ref deadlineTick, "deadlineTick", 0);
+            Scribe_Values.Look(ref completedTick, "completedTick", NeverCompletedTick);
             Scribe_Values.Look(ref status, "status", SalesOrderStatus.Accepted);
             Scribe_Values.Look(ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(ref buyerArrivalTick, "buyerArrivalTick", -1);

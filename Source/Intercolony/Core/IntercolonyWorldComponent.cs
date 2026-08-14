@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 32;
+        public const int CurrentSaveVersion = 33;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1648,6 +1648,15 @@ namespace Intercolony
                 // move: an absent map remains null and preserves the old saved state.
                 IntercolonyLog.Message(
                     "  schema 31 -> 32: purchase orders now remember their destination colony; existing orders have no recorded map.");
+            }
+
+            if (saveVersion < 33)
+            {
+                // 32 -> 33 added a sales order completion tick. There is no honest timestamp
+                // to reconstruct for old completed orders, so the additive field keeps its
+                // explicit never-completed sentinel and those orders do not consume current demand.
+                IntercolonyLog.Message(
+                    "  schema 32 -> 33: sales orders now record completion time; existing completed orders have no recorded tick.");
             }
 
             saveVersion = CurrentSaveVersion;

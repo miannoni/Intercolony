@@ -126,7 +126,8 @@ namespace Intercolony
                     continue;
                 }
 
-                BuyerOffer offer = Evaluate(settlement, profile, def, stuff, category.Value, quantity);
+                BuyerOffer offer = Evaluate(
+                    state, settlement, profile, def, stuff, category.Value, quantity);
                 if (offer.Interested || includeUninterested)
                 {
                     offers.Add(offer);
@@ -190,7 +191,8 @@ namespace Intercolony
                     continue;
                 }
 
-                BuyerOffer offer = EvaluateAnimal(settlement, profile, race, spec, quantity);
+                BuyerOffer offer = EvaluateAnimal(
+                    state, settlement, profile, race, spec, quantity);
                 if (offer.Interested || includeUninterested)
                 {
                     offers.Add(offer);
@@ -222,6 +224,7 @@ namespace Intercolony
         }
 
         private static BuyerOffer Evaluate(
+            IntercolonyWorldComponent state,
             Settlement settlement,
             SettlementEconomicProfile profile,
             ThingDef def,
@@ -245,10 +248,18 @@ namespace Intercolony
                 return offer;
             }
 
-            offer.maxQuantity = MaxAppetite(def, stuff, profile, demand);
-            if (offer.maxQuantity <= 0)
+            int maxAppetite = MaxAppetite(def, stuff, profile, demand);
+            if (maxAppetite <= 0)
             {
                 offer.noInterestReason = "cannot afford a worthwhile lot";
+                return offer;
+            }
+
+            offer.maxQuantity = Mathf.Max(
+                0, maxAppetite - ConsumedAppetite(state, settlement.ID, def));
+            if (offer.maxQuantity <= 0)
+            {
+                offer.noInterestReason = "already buying enough";
                 return offer;
             }
 
@@ -262,6 +273,7 @@ namespace Intercolony
         }
 
         private static BuyerOffer EvaluateAnimal(
+            IntercolonyWorldComponent state,
             Settlement settlement,
             SettlementEconomicProfile profile,
             ThingDef race,
@@ -285,10 +297,18 @@ namespace Intercolony
                 return offer;
             }
 
-            offer.maxQuantity = MaxAnimalAppetite(race, offer.animalSpec, profile, demand);
-            if (offer.maxQuantity <= 0)
+            int maxAppetite = MaxAnimalAppetite(race, offer.animalSpec, profile, demand);
+            if (maxAppetite <= 0)
             {
                 offer.noInterestReason = "cannot afford a worthwhile lot";
+                return offer;
+            }
+
+            offer.maxQuantity = Mathf.Max(
+                0, maxAppetite - ConsumedAppetite(state, settlement.ID, race));
+            if (offer.maxQuantity <= 0)
+            {
+                offer.noInterestReason = "already buying enough";
                 return offer;
             }
 
@@ -408,6 +428,40 @@ namespace Intercolony
             int tier = (int)profile.wealthTier;
             int headCeiling = 3 + tier * 2;
             return Mathf.Clamp(affordableHeads, 0, headCeiling);
+        }
+
+        /// <summary>
+        /// Quantity this settlement has already committed to buy in the current refresh
+        /// window. Open orders remain commitments across refreshes; completed orders count
+        /// only until the next refresh advances the window.
+        /// </summary>
+        private static int ConsumedAppetite(
+            IntercolonyWorldComponent state, int settlementId, ThingDef def)
+        {
+            if (state == null || def == null)
+            {
+                return 0;
+            }
+
+            int consumed = 0;
+            foreach (SalesOrder order in state.Orders)
+            {
+                if (order == null || order.settlementId != settlementId || order.ThingDef != def)
+                {
+                    continue;
+                }
+
+                bool completedThisRefresh =
+                    order.status == SalesOrderStatus.Completed &&
+                    order.completedTick != SalesOrder.NeverCompletedTick &&
+                    order.completedTick >= state.LastRefreshTick;
+                if (order.IsOpen || completedThisRefresh)
+                {
+                    consumed += order.Quantity;
+                }
+            }
+
+            return consumed;
         }
 
         /// <summary>

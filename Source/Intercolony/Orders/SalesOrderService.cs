@@ -377,6 +377,7 @@ namespace Intercolony
         private static void Complete(IntercolonyWorldComponent state, SalesOrder order)
         {
             order.status = SalesOrderStatus.Completed;
+            order.completedTick = GenTicks.TicksGame;
             order.outcomeNote = $"Delivered {order.deliveredQuantity} units for {order.paidSilver} silver.";
 
             // §27: on-time delivery is worth more than a late one, so the distinction is made
@@ -565,6 +566,7 @@ namespace Intercolony
                 if (order.RemainingQuantity <= 0)
                 {
                     order.status = SalesOrderStatus.Completed;
+                    order.completedTick = now;
                     order.outcomeNote =
                         $"Collected by the buyer. {order.deliveredQuantity} units for {order.paidSilver} silver.";
                     ReputationService.NoteOrderCompleted(
