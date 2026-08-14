@@ -1144,6 +1144,7 @@ namespace Intercolony
             PruneProfileCache();
 
             LedgerService.Prune(this);
+            OrderHistoryService.Prune(this);
 
             int expired = ExpireStaleOpportunities();
             int withdrawn = DropInaccessibleOpportunities();
