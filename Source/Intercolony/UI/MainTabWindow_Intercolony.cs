@@ -2682,7 +2682,7 @@ namespace Intercolony
                            $"Payment: {preview.DiscountedTotalPayment} silver per delivery " +
                            $"({terms.unitPrice:F2} each before discount)\n" +
                            $"Waived: {waived} silver per delivery\n\n" +
-                           "A standing agreement begins immediately, or the proposal is refused immediately with a reason.";
+                           "The proposal is sent to the settlement, and they will answer.";
                 },
                 (qty, fulfillment, discountFraction) =>
                 {
@@ -2735,7 +2735,7 @@ namespace Intercolony
 
         private static int ContractRank(RecurringContract contract)
         {
-            if (contract.IsOffer) return 0;
+            if (contract.IsOffer || contract.IsPendingPlayerProposal) return 0;
 
             // A renewal waiting on an answer sorts to the top with new offers: it expires, so it is
             // the thing the player needs to see (§115).
@@ -2782,7 +2782,12 @@ namespace Intercolony
 
             string status;
             Color colour = Color.white;
-            if (contract.IsOffer)
+            if (contract.IsPendingPlayerProposal)
+            {
+                status = "awaiting the settlement's answer";
+                colour = new Color(0.6f, 0.9f, 1f);
+            }
+            else if (contract.IsOffer)
             {
                 status = $"offer expires in {contract.DaysUntilOfferExpires:F1}d";
                 colour = new Color(0.6f, 0.9f, 1f);

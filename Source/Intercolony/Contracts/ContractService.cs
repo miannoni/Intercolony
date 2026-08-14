@@ -126,6 +126,16 @@ namespace Intercolony
         private const float ProposalQuantityAppealWeight = 0.25f;
         private const float ProposalReputationAppealWeight = 0.15f;
 
+        /// <summary>
+        /// Even the weakest proposal has a small chance, and even the strongest can be refused.
+        /// Appeal is mapped linearly between these bounds when the settlement answers.
+        /// </summary>
+        private const float MinimumProposalAcceptanceChance = 0.10f;
+        private const float MaximumProposalAcceptanceChance = 0.90f;
+
+        /// <summary>Keeps proposal decisions in their own deterministic economy-seed stream.</summary>
+        private const int ProposalDecisionSeedSalt = 0x0C0D;
+
         /// <summary>Obviously good or bad proposals receive an answer after one day.</summary>
         private const int MinimumDecisionDelayDays = 1;
 
@@ -718,6 +728,12 @@ namespace Intercolony
 
             foreach (RecurringContract contract in state.Contracts)
             {
+                if (contract.IsPendingPlayerProposal && now >= contract.decisionDueTick)
+                {
+                    ResolvePlayerProposal(state, contract);
+                    continue;
+                }
+
                 if (contract.IsOffer && now >= contract.offerExpiryTick)
                 {
                     contract.TryDecline("Offer lapsed unanswered.");
@@ -778,6 +794,80 @@ namespace Intercolony
                     RaiseCycleOrder(state, contract);
                 }
             }
+        }
+
+        /// <summary>Lets a settlement answer a player proposal once its deliberation ends.</summary>
+        private static void ResolvePlayerProposal(
+            IntercolonyWorldComponent state, RecurringContract contract)
+        {
+            float acceptanceChance = Mathf.Lerp(
+                MinimumProposalAcceptanceChance,
+                MaximumProposalAcceptanceChance,
+                Mathf.Clamp01(contract.proposalAppeal));
+
+            bool accepted;
+            Rand.PushState(Gen.HashCombineInt(
+                state.EconomySeed, contract.id, ProposalDecisionSeedSalt, 0));
+            try
+            {
+                accepted = Rand.Value < acceptanceChance;
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            if (accepted)
+            {
+                if (!contract.TryAccept())
+                {
+                    return;
+                }
+
+                ClearPlayerProposalMarkers(contract);
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
+                    "Supply agreement accepted",
+                    $"{contract.settlementName} has accepted your proposed standing supply " +
+                    "agreement.\n\n" +
+                    $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
+                    $"{contract.CadenceDays:F0} days, for {contract.totalCycles} deliveries.\n" +
+                    $"{contract.DiscountedCyclePayment} silver per delivery, " +
+                    $"{contract.DiscountedTotalPayment} in total.\n\n" +
+                    $"The agreement begins now. First delivery is due in " +
+                    $"{contract.CadenceDays:F0} days.",
+                    LetterDefOf.PositiveEvent);
+                IntercolonyLog.Message(
+                    $"Settlement accepted player proposal {contract.id} " +
+                    $"(chance {acceptanceChance:P0}).");
+                return;
+            }
+
+            const string refusalReason =
+                "The settlement declined the proposed terms. Improve the terms or build more " +
+                "trading trust before trying again.";
+            if (!contract.TryDecline(refusalReason))
+            {
+                return;
+            }
+
+            ClearPlayerProposalMarkers(contract);
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
+                "Supply agreement declined",
+                $"{contract.settlementName} has declined your proposed standing supply " +
+                "agreement.\n\nThey were not willing to commit on the terms offered. Improve " +
+                "the terms or build more trading trust before proposing another agreement.",
+                LetterDefOf.NeutralEvent);
+            IntercolonyLog.Message(
+                $"Settlement declined player proposal {contract.id} " +
+                $"(chance {acceptanceChance:P0}).");
+        }
+
+        private static void ClearPlayerProposalMarkers(RecurringContract contract)
+        {
+            contract.decisionDueTick = RecurringContract.NoDecisionDueTick;
+            contract.proposalAppeal = RecurringContract.NoProposalAppeal;
         }
 
         /// <summary>
