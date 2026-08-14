@@ -2765,9 +2765,19 @@ namespace Intercolony
                 $"{contract.ItemLabel()} every {contract.CadenceDays:F0}d");
 
             GUI.color = new Color(1f, 1f, 1f, 0.7f);
+            string paymentSummary =
+                $"{contract.totalCycles} deliveries   " +
+                $"{contract.DiscountedCyclePayment} silver each   " +
+                $"{contract.DiscountedTotalPayment} total";
+            if (contract.DiscountFraction > 0f)
+            {
+                paymentSummary +=
+                    $"   {contract.unitPrice:F2} agreed rate; " +
+                    $"{contract.DiscountFraction.ToStringPercent("F0")} waived";
+            }
+
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 26f, rect.width - 220f, 22f),
-                $"{contract.totalCycles} deliveries   {contract.CycleValue} silver each   " +
-                $"{contract.TotalValue} total");
+                paymentSummary);
             GUI.color = Color.white;
 
             string status;
@@ -2820,11 +2830,21 @@ namespace Intercolony
 
             if (ShouldBuildTooltip(rect))
             {
+                string paymentTerms = contract.DiscountFraction > 0f
+                    ? $"Payment: {contract.DiscountedCyclePayment} silver per delivery, " +
+                      $"{contract.DiscountedTotalPayment} total.\n" +
+                      $"Agreed rate: {contract.unitPrice:F2} silver each; " +
+                      $"{contract.DiscountFraction.ToStringPercent("F0")} waived."
+                    : $"Payment: {contract.DiscountedCyclePayment} silver per delivery, " +
+                      $"{contract.DiscountedTotalPayment} total, at " +
+                      $"{contract.unitPrice:F2} silver each.";
+
                 TooltipHandler.TipRegion(rect,
                     $"{contract.settlementName} ({contract.factionName})\n\n" +
                     $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
                     $"{contract.CadenceDays:F0} days, {contract.totalCycles} times.\n" +
-                    $"{contract.unitPrice:F2} silver each — above spot, because they are buying certainty.\n\n" +
+                    paymentTerms + "\n" +
+                    "The agreed rate is above spot because they are buying certainty.\n\n" +
                     "Each cycle raises a delivery order with the full cadence as its deadline. " +
                     $"Missing {RecurringContract.BreachThreshold} deliveries in a row ends the " +
                     "agreement and badly damages your standing.");

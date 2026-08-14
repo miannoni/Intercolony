@@ -75,7 +75,7 @@ namespace Intercolony
                 return estimate;
             }
 
-            estimate.revenue = contract.CycleValue;
+            estimate.revenue = contract.DiscountedCyclePayment;
 
             // Base value plus what a supplier marks up, using procurement's own constant so the
             // dashboard cannot recommend buying at a price procurement would not offer.

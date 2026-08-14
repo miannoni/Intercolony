@@ -150,7 +150,9 @@ namespace Intercolony
                         $"{frequency} and now wants a standing supply agreement.\n\n" +
                         $"{contract.quantityPerCycle}x {contract.ItemLabel()} every " +
                         $"{contract.CadenceDays:F0} days, for {contract.totalCycles} deliveries.\n" +
-                        $"{contract.CycleValue} silver per delivery, {contract.TotalValue} in total.\n\n" +
+                        $"{contract.DiscountedCyclePayment} silver per delivery, " +
+                        $"{contract.DiscountedTotalPayment} in total.\n" +
+                        DiscountDisplayLine(contract) +
                         "Review it in the Intercolony Contracts tab. A standing agreement is worth " +
                         "more per unit than spot sales, but missing deliveries breaks it.",
                         LetterDefOf.PositiveEvent);
@@ -714,7 +716,9 @@ namespace Intercolony
             contract.status = ContractStatus.Completed;
             contract.activeOrderId = 0;
             contract.outcomeNote =
-                $"All {contract.totalCycles} deliveries met. {contract.TotalValue} silver total.";
+                $"All {contract.totalCycles} deliveries met. " +
+                $"{contract.DiscountedTotalPayment} silver paid in total." +
+                DiscountDisplaySentence(contract);
 
             // §27 lists repeated business as a positive; seeing an agreement through
             // is the strongest version of that.
@@ -777,7 +781,11 @@ namespace Intercolony
                 $"{contract.cyclesCompleted} of {contract.totalCycles}, without missing one.\n\n" +
                 $"They would sign again on the same terms: {contract.quantityPerCycle}x " +
                 $"{contract.ItemLabel()} every {contract.CadenceDays:F0} days, " +
-                $"{contract.totalCycles} more times at {contract.unitPrice:F2} each.\n\n" +
+                $"{contract.totalCycles} more times.\n" +
+                $"Payment: {contract.DiscountedCyclePayment} silver per delivery." +
+                (contract.DiscountFraction > 0f
+                    ? DiscountDisplaySentence(contract)
+                    : $" Agreed rate: {contract.unitPrice:F2} each.") + "\n\n" +
                 $"Answer in the Contracts tab within {OfferLifespanDays} days.",
                 LetterDefOf.PositiveEvent);
 
@@ -931,8 +939,26 @@ namespace Intercolony
                 $"Delivery {contract.cyclesCompleted + contract.cyclesFailed + 1} of " +
                 $"{contract.totalCycles} for {contract.settlementName}:\n\n" +
                 $"{contract.quantityPerCycle}x {contract.ItemLabel()} within " +
-                $"{contract.CadenceDays:F0} days, for {contract.CycleValue} silver.",
+                $"{contract.CadenceDays:F0} days, for " +
+                $"{contract.DiscountedCyclePayment} silver." +
+                DiscountDisplaySentence(contract),
                 LetterDefOf.NeutralEvent);
+        }
+
+        private static string DiscountDisplayLine(RecurringContract contract)
+        {
+            return contract.DiscountFraction > 0f
+                ? $"Agreed rate: {contract.unitPrice:F2} each; " +
+                  $"{contract.DiscountFraction.ToStringPercent("F0")} waived.\n\n"
+                : "\n";
+        }
+
+        private static string DiscountDisplaySentence(RecurringContract contract)
+        {
+            return contract.DiscountFraction > 0f
+                ? $" Agreed rate: {contract.unitPrice:F2} each; " +
+                  $"{contract.DiscountFraction.ToStringPercent("F0")} waived."
+                : "";
         }
 
         /// <summary>Best premium a negotiator can talk the buyer up to, at Social 20.</summary>

@@ -248,7 +248,7 @@ namespace Intercolony
                 (contract.status == ContractStatus.Suspended ? "   (suspended by war)" : ""));
             y += LineHeight;
 
-            y = EstimateLine(rect, y, "Revenue, agreed", estimate.revenue);
+            y = EstimateLine(rect, y, "Revenue, payable", estimate.revenue);
             y = EstimateLine(rect, y, "If you bought the goods instead", estimate.inputsIfBought);
             y = EstimateLine(rect, y, "Wage bill over the cycle", estimate.payroll);
             y = EstimateLine(rect, y, "Delivery premium earned, and hauled for", estimate.transport);

@@ -135,9 +135,23 @@ namespace Intercolony
 
         public int CyclesRemaining => Mathf.Max(0, totalCycles - cyclesCompleted - cyclesFailed);
 
-        public int TotalValue => Mathf.RoundToInt(unitPrice * quantityPerCycle * totalCycles);
+        /// <summary>Agreed value of one delivery before any waived fraction.</summary>
+        public int CyclePayment => Mathf.RoundToInt(unitPrice * quantityPerCycle);
 
-        public int CycleValue => Mathf.RoundToInt(unitPrice * quantityPerCycle);
+        /// <summary>The silver actually due for one delivery after applying the discount.</summary>
+        public int DiscountedCyclePayment =>
+            Mathf.RoundToInt(unitPrice * quantityPerCycle * (1f - discountFraction));
+
+        /// <summary>Agreed value of every scheduled delivery before any waived fraction.</summary>
+        public int TotalPayment => CyclePayment * totalCycles;
+
+        /// <summary>The silver actually due across every scheduled delivery after discount.</summary>
+        public int DiscountedTotalPayment => DiscountedCyclePayment * totalCycles;
+
+        // Compatibility names retained for existing callers that reason about agreed value.
+        public int TotalValue => TotalPayment;
+
+        public int CycleValue => CyclePayment;
 
         public float DaysUntilNextCycle => (nextCycleTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
