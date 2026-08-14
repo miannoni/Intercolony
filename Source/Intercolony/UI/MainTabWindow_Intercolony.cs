@@ -177,6 +177,11 @@ namespace Intercolony
             failedPages.Clear();
             loggedPageFailures.Clear();
             openPageScrollViews = 0;
+
+            // Main-tab windows survive being closed. Eligibility can change while this one is
+            // hidden as orders complete and reputation moves, so do not carry an old proposal
+            // result into the next visit.
+            contractProposalSettlementCache = null;
         }
 
         public override void DoWindowContents(Rect inRect)
