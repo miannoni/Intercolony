@@ -126,7 +126,7 @@ who has traded once. It belongs in a point release with any other beta UX findin
 
 ---
 
-## Procurement delivers and refunds to the wrong colony
+## ~~Procurement delivers and refunds to the wrong colony~~
 
 **Added 2026-08-09.** The same defect that was just fixed for sales orders, still live in
 procurement. `PurchaseOrderService` delivers purchased goods at
@@ -148,6 +148,12 @@ its own schema bump.
 **Why it was deferred.** It was found while fixing the sales-order half. Folding it in would have
 made one revertable commit into two unrelated changes to different subsystems. It is a small,
 well-understood, self-contained fix — good candidate for the next point release.
+
+**Resolved 2026-08-13** (`209bafd`, `9e2c2c2`, `5681c2e`). Delivery and refunds now use the ordering
+colony persisted on `PurchaseOrder` (save schema 32). The same work found and fixed a more serious
+defect: with no home map available, a refund could be falsely reported and finalized without paying
+anything, permanently losing the player's silver; it now holds and retries. Fixed in code but **not
+verified in play**; a two-colony reproduction has never been run.
 
 ---
 
