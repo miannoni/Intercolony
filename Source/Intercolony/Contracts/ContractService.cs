@@ -61,7 +61,8 @@ namespace Intercolony
             float referenceUnitPrice,
             int cadenceTicks,
             int paymentPerDelivery,
-            int deliveryCount)
+            int deliveryCount,
+            int totalPayment)
         {
             this.unitPrice = unitPrice;
             this.referenceUnitPrice = referenceUnitPrice;
@@ -70,6 +71,7 @@ namespace Intercolony
             this.cadenceTicks = cadenceTicks;
             this.paymentPerDelivery = paymentPerDelivery;
             this.deliveryCount = deliveryCount;
+            this.totalPayment = totalPayment;
         }
 
         public readonly float unitPrice;
@@ -88,6 +90,9 @@ namespace Intercolony
 
         /// <summary>Number of deliveries in the agreement.</summary>
         public readonly int deliveryCount;
+
+        /// <summary>Agreed value across every scheduled delivery.</summary>
+        public readonly int totalPayment;
 
         public bool IsUnitPriceInRange(float agreedUnitPrice)
         {
@@ -699,12 +704,16 @@ namespace Intercolony
                 Rand.PopState();
             }
 
+            int paymentPerDelivery = Mathf.RoundToInt(unitPrice * quantityPerCycle);
+            int totalPayment = paymentPerDelivery * deliveryCount;
+
             return new ContractTerms(
                 unitPrice,
                 spot,
                 GenDate.TicksPerQuadrum,
-                Mathf.RoundToInt(unitPrice * quantityPerCycle),
-                deliveryCount);
+                paymentPerDelivery,
+                deliveryCount,
+                totalPayment);
         }
 
         /// <summary>

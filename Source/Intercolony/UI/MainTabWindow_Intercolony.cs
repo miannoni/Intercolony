@@ -2494,7 +2494,7 @@ namespace Intercolony
                     proposeRect, "Propose supply agreement",
                     active: contractProposalSettlementCache.Count > 0))
             {
-                ChooseContractProposalSettlement(state, contractProposalSettlementCache);
+                Find.WindowStack.Add(new Dialog_ProposeAgreement(state));
             }
 
             if (contractProposalSettlementCache.Count == 0)
@@ -2605,132 +2605,9 @@ namespace Intercolony
             return result;
         }
 
-        private void ChooseContractProposalSettlement(
-            IntercolonyWorldComponent state, List<Settlement> settlements)
+        internal void InvalidateContractProposalSettlementCache()
         {
-            List<FloatMenuOption> options = new List<FloatMenuOption>();
-            foreach (Settlement settlement in settlements)
-            {
-                Settlement chosenSettlement = settlement;
-                options.Add(new FloatMenuOption(
-                    chosenSettlement.Label,
-                    () => ChooseContractProposalItem(state, chosenSettlement)));
-            }
-
-            Find.WindowStack.Add(new FloatMenu(options));
-        }
-
-        private void ChooseContractProposalItem(
-            IntercolonyWorldComponent state, Settlement settlement)
-        {
-            List<ThingDef> items = EligibleContractProposalItems(state, settlement);
-            if (items.Count == 0)
-            {
-                Messages.Message(
-                    "That settlement no longer has an eligible item for a supply agreement.",
-                    MessageTypeDefOf.RejectInput,
-                    historical: false);
-                return;
-            }
-
-            List<FloatMenuOption> options = new List<FloatMenuOption>();
-            foreach (ThingDef thingDef in items)
-            {
-                ThingDef chosenThingDef = thingDef;
-                options.Add(new FloatMenuOption(
-                    chosenThingDef.LabelCap.ToString(),
-                    () => ConfirmContractProposal(state, settlement, chosenThingDef)));
-            }
-
-            Find.WindowStack.Add(new FloatMenu(options));
-        }
-
-        private void ConfirmContractProposal(
-            IntercolonyWorldComponent state, Settlement settlement, ThingDef thingDef)
-        {
-            ContractTerms initialTerms = ContractService.PreviewContractTerms(
-                state, settlement, thingDef, ContractService.MinimumQuantityPerCycle);
-            if (initialTerms == null)
-            {
-                Messages.Message(
-                    "That supply agreement is no longer eligible.",
-                    MessageTypeDefOf.RejectInput,
-                    historical: false);
-                return;
-            }
-
-            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
-                "Propose supply agreement",
-                "Propose agreement",
-                ContractService.MaximumQuantityPerCycle,
-                (qty, fulfillment, discountFraction) =>
-                {
-                    ContractTerms terms = ContractService.PreviewContractTerms(
-                        state, settlement, thingDef, qty);
-                    if (terms == null)
-                    {
-                        return "This supply agreement is no longer eligible.";
-                    }
-
-                    float daysBetweenDeliveries =
-                        terms.cadenceTicks / (float)GenDate.TicksPerDay;
-                    SalesOrder preview = BuildContractPaymentPreview(
-                        thingDef, qty, terms, discountFraction);
-                    int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
-                    return $"Propose supplying {qty}x {thingDef.LabelCap} to {settlement.Label} " +
-                           $"every {daysBetweenDeliveries:F0} days.\n\n" +
-                           $"Payment: {preview.DiscountedTotalPayment} silver per delivery " +
-                           $"({terms.unitPrice:F2} each before discount)\n" +
-                           $"Waived: {waived} silver per delivery\n\n" +
-                           "The proposal is sent to the settlement, and they will answer.";
-                },
-                (qty, fulfillment, discountFraction) =>
-                {
-                    ContractProposalResult proposal =
-                        ContractService.ProposeContract(
-                            state, settlement, thingDef, qty, discountFraction);
-                    if (!proposal.Success)
-                    {
-                        Messages.Message(
-                            proposal.Reason,
-                            MessageTypeDefOf.RejectInput,
-                            historical: false);
-                    }
-                    else
-                    {
-                        contractProposalSettlementCache = null;
-                    }
-                },
-                (qty, fulfillment, discountFraction) =>
-                {
-                    ContractTerms terms = ContractService.PreviewContractTerms(
-                        state, settlement, thingDef, qty);
-                    if (terms == null)
-                    {
-                        return null;
-                    }
-
-                    SalesOrder preview = BuildContractPaymentPreview(
-                        thingDef, qty, terms, discountFraction);
-                    int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
-                    return $"Paid: {preview.DiscountedTotalPayment:N0} silver\n" +
-                           $"Waived: {waived:N0} silver";
-                },
-                initialFulfillment: FulfillmentMode.SellerDelivery,
-                minQuantity: ContractService.MinimumQuantityPerCycle,
-                quantityLabel: "Per delivery:",
-                allowFulfillmentChoice: false));
-        }
-
-        private static SalesOrder BuildContractPaymentPreview(
-            ThingDef thingDef, int quantity, ContractTerms terms, float discountFraction)
-        {
-            return new SalesOrder
-            {
-                line = new OrderLine(thingDef, quantity),
-                unitPrice = terms.unitPrice,
-                DiscountFraction = discountFraction
-            };
+            contractProposalSettlementCache = null;
         }
 
         private static int ContractRank(RecurringContract contract)
