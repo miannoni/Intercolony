@@ -43,6 +43,7 @@ the old behaviour, so those additive steps do not need to move data.
 | 29 → 30 | **Repairs data** — relabels purchase requests that were wrongly marked Cancelled | The only step so far that changes existing values rather than adding a field. See below. |
 | 30 → 31 | A purchase request's minimum workmanship | No floor ⇒ take whatever is offered, which is how every existing request already behaved |
 | 31 → 32 | Each purchase order remembers its destination colony | No map recorded ⇒ remains null; no map is guessed or backfilled |
+| 32 → 33 | Each sales order records its completion time | No completion tick ⇒ remains the never-completed sentinel; old completed orders do not consume current demand |
 
 **29 → 30 is the exception to "every step is additive."** Accepting a quotation used to mark
 the request `Cancelled`, a status meaning "withdrawn by the player" — so every successful
@@ -78,7 +79,7 @@ throwing.
 
 **Pass, first load.** The log contains a `Migrating state from schema N to <current>` line
 followed by one indented line per step, in ascending order. For a save at 24 that is all
-seven steps above. A save already at the current schema prints `State loaded (schema N, …)`
+nine steps above. A save already at the current schema prints `State loaded (schema N, …)`
 and no migration lines — also a pass, it simply exercises nothing.
 
 **Pass, second load.** `State loaded (schema <current>, …)` and **not**

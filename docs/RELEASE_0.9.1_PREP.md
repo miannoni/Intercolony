@@ -5,7 +5,7 @@
 - v0.9.0 commit: `b8744e49eedc49aac1d61e13b680427015ef4ba3`
 - Starting HEAD: `fe32d70c68fddb0f2542c6cad7a6d6503c3545d5`
 - Current branch: `main` (started 30 commits ahead of `origin/main`)
-- Save schema: 32 (`IntercolonyWorldComponent.CurrentSaveVersion`)
+- Save schema: 33 (`IntercolonyWorldComponent.CurrentSaveVersion`)
 
 ## Release scope
 
@@ -15,6 +15,13 @@ agreements; procurement and agreement UX improvements; opt-in buy-only goods; pu
 material/quality constraints; and economy/labor tuning. Animal trading is implemented in the tree
 but remains wholly unplayed and is not approved for player-facing 0.9.1 claims without verification.
 
+Four follow-up commits are also in scope: `d350f2e` fixes the false "0 units free" block;
+`0b1dfe9` makes Find Buyer listing and commit use the same fulfilment-aware rate and labels its
+priced quantity; `fd6fbe7` deliberately lets local demand, quoted prices and contract offers drift
+between cycles; and `86aa768` consumes a settlement's current-cycle appetite and adds the schema
+32 -> 33 sales-order completion tick. None has been verified in play, and the self-tests have not
+been rerun since these commits.
+
 ## Checklist
 
 - [x] Bootstrap repository documents, git baseline, release delta and production save schema.
@@ -22,13 +29,16 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 - [x] Audit every material 0.9.1 behavior against current production code.
 - [x] Reconcile current self-test names/procedures with `docs/PENDING_PLAYTESTS.md`.
 - [x] Run order, contract and RFQ self-tests and record their actual output.
-- [ ] Load and round-trip a 0.9.0-era schema-24 save.
-- [ ] Open Business, Selling, Procurement, Labor and Relations without red Intercolony errors.
-- [ ] Manually verify procurement cancellation, silver consequence, history and reload.
-- [ ] Manually verify buyer-pickup timing and en-route reload.
-- [ ] Manually verify buyer pickup from a second player map; test a non-home map if practical.
-- [ ] Manually sanity-check Find Buyer commitments, double-commit protection and live refresh.
-- [ ] Make and record the release-blocker verdict.
+- [x] Load and round-trip a 0.9.0-era schema-23 save through schema 32.
+- [x] Open Business, Selling, Procurement, Labor and Relations without red Intercolony errors.
+- [x] Manually verify two-colony procurement delivery/refund routing.
+- [x] Manually verify procurement cancellation.
+- [x] Manually verify buyer-pickup timing.
+- [x] Manually verify buyer pickup from a second player map.
+- [ ] Test buyer pickup from a non-home/camp map if practical.
+- [x] Manually sanity-check Find Buyer commitment behaviour.
+- [x] Grade and disposition the three Find Buyer defects; all three were fixed for 0.9.1.
+- [ ] Exercise and round-trip the schema 32 -> 33 migration.
 - [ ] Prepare truthful 0.9.1 metadata and player-facing release notes.
 - [ ] Build and verify `dist/Intercolony-0.9.1` and its ZIP.
 - [ ] Re-read `docs/RELEASE_PROCEDURE.md` and prepare the safe Steam update handoff.
@@ -46,7 +56,8 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 | `Run order self-test` | PASS | 2026-08-13 after the buy-only obligation fix: `93 passed, 0 failed`; no error/exception after the test header. The recorded-map-vs-first-home assertion was explicitly skipped because the test world has one home map, so the required two-map manual test remains open. Live-offer acceptance checks also skipped because no live offer existed; the correction-batch availability, timing and buy-only blocks ran. |
 | `Run contract self-test` | PASS | 2026-08-13: `38 passed, 0 failed`; 3 cycles ran to Completed and a real history-based offer was generated (`1050x bear meat @ 1.76 vs spot 1.53`). No failure, exception or prerequisite skip after the test header. |
 | `Run RFQ self-test` | PASS | 2026-08-13: `69 passed, 0 failed`; 24 requests produced empty/full/partial outcomes with price and quantity variation, 2 modded defs were exercised, and commodity/weapon/chair/workbench construction ran. No failure, exception or skip after the test header. |
-| Schema 24 -> 32 real-save migration and reload | NOT RUN | A current-schema load exists in the log, but that does not exercise migration. |
+| Schema 23 -> 32 real-save migration and reload | PASS | 2026-08-13 Player.log evidence: `[Intercolony] State loaded (schema 23, nextId 1001).`<br>`[Intercolony] Migrating state from schema 23 to 32.`<br>`[Intercolony]   schema 23 -> 24: employee incapacitation warnings added; existing employments start unwarned.`<br>`[Intercolony] State loaded (schema 31, nextId 5203).`<br>`[Intercolony] Migrating state from schema 31 to 32.`<br>`[Intercolony] State loaded (schema 32, nextId 5215).`<br>`[Intercolony] State loaded (schema 32, nextId 5395).` This proves a real schema-23 save migrated through the full chain to 32, a separate 31 -> 32 migration ran, and subsequent loads returned at schema 32. A full Player.log scan for `Exception`, `NullReference`, Intercolony errors and Intercolony warnings returned no matches apart from the quoted migration-step line, where `warnings` is part of the migration description rather than an actual warning. |
+| Schema 32 -> 33 real-save migration and reload | NOT RUN | The earlier migration evidence covers the chain through schema 32 only. The additive 32 -> 33 completion-tick step has not yet been exercised. |
 | Post-procurement-fix `dev.ps1 build` | PASS | 2026-08-13 at `4bc9adc`: 0 errors; 2 NU1900 warnings because NuGet vulnerability metadata was unreachable. |
 | Post-procurement-fix `-quicktest` clean load | PASS | 2026-08-13 at `4bc9adc`: `[Intercolony] loaded.`, `Harmony patches applied.`, `Trade blacklist rebuilt: 1 rule def(s), 10 def(s) excluded.`, and `State initialized fresh (schema 32).`; no red errors. This fresh current-schema world did not exercise the 31 -> 32 migration. |
 | Post-procurement-fix `Run order self-test` | PASS (sell-side no-regression only) | 2026-08-13 at `4bc9adc`: `93 passed, 0 failed`; the same recorded-map-vs-`Find.AnyPlayerHomeMap` and live-offer checks skipped. The suite is entirely sell-side (`SalesOrderService`, Find Buyer, buyer pickup and section 99 goods matching) and does not cover the changed procurement code: no self-test calls `PurchaseOrderService.Refund` or `GiveSilver`; only the pure `RefundableSilver` helper is asserted in `IntercolonyAnimalSelfTest.cs:415-419`. |
@@ -55,13 +66,14 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 
 | Check | Result | Evidence |
 |---|---|---|
-| Existing 0.9.0-era save load/migrate/save/reload | NOT RUN | Requires a normal game launch and real schema-24 save. |
-| Business, Selling, Procurement, Labor, Relations | NOT RUN | No observation from this release-prep session. |
-| Procurement cancellation and retained conclusion | NOT RUN | Code inspection is not counted as manual evidence. |
-| Buyer-pickup deadline and en-route reload | NOT RUN | Code inspection is not counted as manual evidence. |
-| Two-map buyer pickup | NOT RUN | Production code persists `SalesOrder.fulfillmentMap`; play proof still required. |
+| Existing 0.9.0-era save load/migrate/save/reload | PASS | Captured Player.log evidence quoted above shows the real schema-23 save migrating through schema 32 and later loading at schema 32; a separate schema 31 -> 32 migration also ran. |
+| Business, Selling, Procurement, Labor, Relations | PASS (log evidence) | The full Player.log scan found no `Exception`, `NullReference`, Intercolony error or Intercolony warning entries. This satisfies the no-red-Intercolony-errors check as far as the captured log can show. |
+| Two-colony procurement delivery and refund routing | PASS (Matteo's report) | Matteo directly observed both behaviours working during the 2026-08-13 play session; no supporting log output was captured. |
+| Procurement cancellation | PASS (Matteo's report) | Matteo directly observed procurement cancellation working during the 2026-08-13 play session; no supporting log output was captured. |
+| Buyer-pickup timing | PASS (Matteo's report) | Matteo directly observed buyer-pickup timing working during the 2026-08-13 play session; no supporting log output was captured. |
+| Two-map buyer pickup | PASS (Matteo's report) | Matteo directly observed buyer pickup from a second player map during the 2026-08-13 play session; no supporting log output was captured. |
 | Non-home/camp-map buyer pickup | NOT RUN | Practicality not yet established. |
-| Find Buyer commitments and live refresh | NOT RUN | Code inspection is not counted as manual evidence. |
+| Find Buyer commitment behaviour | PASS (Matteo's report) | Matteo directly observed the targeted Find Buyer commitment behaviour working during the 2026-08-13 play session; no supporting log output was captured. The same session exposed separate demand-consumption, unit-price and false already-committed symptoms recorded in `docs/BACKLOG.md`; their later fixes have not been verified in play. |
 
 ## Known non-blocking limitations
 
@@ -74,13 +86,16 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 
 ## Blockers
 
-- **Resolved in code; not verified in play:** purchase-order delivery and refund now resolve the
+- **Resolved in code; colony routing verified in play on Matteo's report:** purchase-order delivery
+  and refund now resolve the
   colony recorded when the order was accepted, falling back to `Find.AnyPlayerHomeMap` only when
   that map was not recorded or is no longer loaded. The same work uncovered and fixed the more
   serious falsely-reported-refund defect: when no home map existed, an order was finalized as
   Supplier default before any silver was placed, then reported as refunded despite paying nothing
   and could never retry. Zero-placement refunds now hold and retry; partial placement finalizes with
-  the amount actually placed in the ledger, log and player message. Neither fault is verified in play.
+  the amount actually placed in the ledger, log and player message. Matteo directly observed
+  two-colony delivery and refund routing working on 2026-08-13; that observation was not captured
+  in Player.log. The map-less and zero-placement paths remain without practical play reproduction.
 
 ## Decisions made during release prep
 
@@ -94,6 +109,11 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 - Animal trading already exists in production code; no additional animal feature work is authorized.
 - The procurement defect was graded, and the decision was to fix both the colony misrouting and the
   falsely-reported-refund fault now and accept the schema 32 bump in this point release.
+- The three Find Buyer defects found during verification were graded and fixed for 0.9.1 in
+  `d350f2e`, `0b1dfe9` and `86aa768`; their fixes still require verification.
+- Per-good demand now varies by market cycle (`fd6fbe7`), smoothed across three cycles. This is a
+  deliberate economy change, not a bug fix: quoted prices and contract offers move between
+  refreshes, while an accepted `SalesOrder` keeps its locked unit price.
 - Do not build new self-test infrastructure for the changed procurement paths. Two of the three
   cases require a two-colony or map-less world, and the zero-placement case requires an injectable
   placement seam; evidence is to come from play, not from more code.
@@ -102,14 +122,12 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 
 ## Current stopping point
 
-- Just completed: the procurement colony-routing and falsely-reported-refund faults are fixed in
-  code at `4bc9adc`, with the additive schema 32 destination-map field. The post-fix build passed,
-  and a fresh schema-32 `-quicktest` world loaded cleanly with no red errors.
-- The post-fix order self-test reran at 93/0, but it is entirely sell-side and is only a
-  no-regression signal; it does not touch `PurchaseOrderService`. The fresh quicktest world likewise
-  did not exercise the 31 -> 32 migration. None of the changed procurement behavior is verified in
-  play.
-- Next recommended short iteration: use one two-colony session to verify both buyer pickup and
-  purchase delivery/refund routing from the second colony, then exercise the real-save migration
-  and round trip. The map-less and zero-placement refund holds remain without practical manual
-  reproduction.
+- The three Find Buyer defects found during the play session are diagnosed and fixed in `d350f2e`,
+  `0b1dfe9` and `86aa768`; `fd6fbe7` also adds the deliberate per-cycle demand change. None of the
+  four commits has been played, and the self-tests have not been rerun since them.
+- Earlier Player.log evidence proves migration only through schema 32. The new schema 32 -> 33 step
+  has not yet been exercised or round-tripped.
+- Before packaging, verify the four follow-up commits, exercise the 32 -> 33 migration, and prepare
+  truthful 0.9.1 metadata and player-facing release notes. After that, build and verify the
+  versioned distribution and ZIP, and continue the remaining release-procedure handoff steps
+  without publishing.

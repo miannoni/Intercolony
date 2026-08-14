@@ -152,8 +152,64 @@ well-understood, self-contained fix — good candidate for the next point releas
 **Resolved 2026-08-13** (`209bafd`, `9e2c2c2`, `5681c2e`). Delivery and refunds now use the ordering
 colony persisted on `PurchaseOrder` (save schema 32). The same work found and fixed a more serious
 defect: with no home map available, a refund could be falsely reported and finalized without paying
-anything, permanently losing the player's silver; it now holds and retries. Fixed in code but **not
-verified in play**; a two-colony reproduction has never been run.
+anything, permanently losing the player's silver; it now holds and retries. Matteo directly observed
+two-colony delivery and refund routing working on 2026-08-13; no supporting log output was captured.
+The map-less and zero-placement paths remain without practical play reproduction.
+
+---
+
+## ~~Find Buyer demand is never consumed~~
+
+**Raised:** 2026-08-13, by Matteo, during 0.9.1 release-prep verification.
+
+A settlement advertises that it will take a quantity, such as 12 units. After the player sells all
+12, the advertised amount does not decrease. The player can immediately create another independent
+12-unit trade with the same settlement, repeatedly and without limit. In play, this makes the
+advertised demand meaningless and permits unlimited selling to one settlement.
+
+**Resolved 2026-08-14** (`86aa768`). Advertised appetite is now reduced from order creation by the
+player's open orders to that settlement, plus orders completed at or after the current cycle's
+`lastRefreshTick`; a refresh moves the window, so completed sales stop counting without reset code.
+Counting at creation prevents several full-size orders being stacked before **Mark Ready**, which
+does not gate appetite. `SalesOrder` gained a completion tick through the additive schema 32 -> 33
+migration. The fix has not been verified in play, and the self-tests have not been rerun since it.
+
+---
+
+## ~~Find Buyer advertised unit price does not match the price paid~~
+
+**Raised:** 2026-08-13, by Matteo, during 0.9.1 release-prep verification.
+
+A buyer advertised demand for 4,000 rice at 2 silver per unit, but did not pay that unit price when
+the player sold a smaller quantity, such as 200. The player's expectation is that selling below the
+advertised quantity should still pay at least the advertised unit price.
+
+**Resolved 2026-08-14** (`0b1dfe9`). The listing omitted the fulfilment multiplier while commit
+applied buyer pickup x0.85 by default or seller delivery x1.12, and the listing priced the lot the
+player could sell while displaying the buyer's full appetite beside it. Listing and commit now
+share `FindBuyerService.SellRateFor`, and the priced quantity is shown next to the rate. This defect
+predates 0.9.0: the logistics factor came from `a07a41f`/`cda25cf`, not the recent correction batch.
+The fix has not been verified in play, and the self-tests have not been rerun since it.
+
+---
+
+## ~~Find Buyer falsely reports inventory is already committed elsewhere~~
+
+**Raised:** 2026-08-13, by Matteo, during 0.9.1 release-prep verification.
+
+With 10,000 rice in storage and one existing 3,500-unit order, the player could not create a second
+3,000-unit order. The UI reported words to the effect of "0 units free" and that units were already
+committed elsewhere.
+
+**Resolved 2026-08-14** (`d350f2e`). Matteo's report was correct, but his guess that inventory
+refreshed only periodically and **Mark Ready** should re-scan was not. `OrderValidation` capped
+`matchedQuantity` at the current order's 3,000-unit requirement, then `1b8ec67` subtracted the other
+order's whole 3,500-unit commitment from that capped base, which clamped to zero. Re-scanning at
+**Mark Ready** would therefore not have fixed it. Validation now keeps the scan's uncapped total and
+subtracts other commitments from that. `1b8ec67`'s original
+buy-only-obligation protection is preserved; it was introduced after the 0.9.0 tag and was never in
+a release. A regression assertion was added to the order self-test, but the suite has not been rerun
+since the fix and the fix has not been verified in play.
 
 ---
 
