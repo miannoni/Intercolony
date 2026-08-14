@@ -95,6 +95,12 @@ namespace Intercolony
         /// <summary>Agreed unit price, locked at acceptance so later market drift cannot change the deal.</summary>
         public float unitPrice;
 
+        /// <summary>Sentinel meaning this order has no recorded reference unit price.</summary>
+        public const float NoReferenceUnitPrice = -1f;
+
+        /// <summary>The going rate this deal was agreed against, before any discount.</summary>
+        public float referenceUnitPrice = NoReferenceUnitPrice;
+
         /// <summary>Fraction of the agreed value waived when silver is paid, from 0 to 1.</summary>
         private float discountFraction;
 
@@ -159,6 +165,19 @@ namespace Intercolony
         /// </summary>
         public bool IsDirectFindBuyerSale => opportunityId == 0 && contractId == 0;
 
+        /// <summary>Gets the going rate recorded when the deal was struck, if one was saved.</summary>
+        public bool TryGetReferenceUnitPrice(out float price)
+        {
+            if (referenceUnitPrice == NoReferenceUnitPrice)
+            {
+                price = 0f;
+                return false;
+            }
+
+            price = referenceUnitPrice;
+            return true;
+        }
+
         /// <summary>Buyer pickup where the player has not yet declared the goods ready.</summary>
         public bool CanMarkReady => status == SalesOrderStatus.Accepted &&
                                     fulfillment == FulfillmentMode.BuyerPickup;
@@ -196,6 +215,8 @@ namespace Intercolony
                 ref designatedAnimals, "designatedAnimals", LookMode.Reference);
             Scribe_Deep.Look(ref line, "line");
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
+            Scribe_Values.Look(
+                ref referenceUnitPrice, "referenceUnitPrice", NoReferenceUnitPrice);
             Scribe_Values.Look(ref discountFraction, "discountFraction", 0f);
             DiscountFraction = discountFraction;
 

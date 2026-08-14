@@ -182,6 +182,7 @@ namespace Intercolony
                     animalSpec = offer.animalSpec?.Copy()
                 },
                 unitPrice = offer.unitPrice,
+                referenceUnitPrice = offer.unitPrice,
                 acceptedTick = GenTicks.TicksGame,
                 fulfillment = fulfillment,
                 fulfillmentMap = map,

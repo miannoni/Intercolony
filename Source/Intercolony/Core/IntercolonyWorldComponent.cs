@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 37;
+        public const int CurrentSaveVersion = 38;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1817,6 +1817,14 @@ namespace Intercolony
                 // zero default preserves every existing contract's full agreed payment.
                 IntercolonyLog.Message(
                     "  schema 36 -> 37: recurring contracts now carry a discount fraction; existing contracts remain undiscounted.");
+            }
+
+            if (saveVersion < 38)
+            {
+                // 37 -> 38 added the market rate against which each deal was agreed. There is
+                // no trustworthy value to reconstruct after market drift, so old deals keep none.
+                IntercolonyLog.Message(
+                    "  schema 37 -> 38: sales orders and recurring contracts now record their reference unit price; existing deals have no recorded reference rate.");
             }
 
             saveVersion = CurrentSaveVersion;

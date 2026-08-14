@@ -55,13 +55,16 @@ namespace Intercolony
     /// <summary>The fixed, non-random terms carried by a recurring contract proposal.</summary>
     public sealed class ContractTerms
     {
-        internal ContractTerms(float unitPrice, int cadenceTicks)
+        internal ContractTerms(float unitPrice, float referenceUnitPrice, int cadenceTicks)
         {
             this.unitPrice = unitPrice;
+            this.referenceUnitPrice = referenceUnitPrice;
             this.cadenceTicks = cadenceTicks;
         }
 
         public readonly float unitPrice;
+
+        public readonly float referenceUnitPrice;
 
         public readonly int cadenceTicks;
     }
@@ -546,6 +549,7 @@ namespace Intercolony
                 cadenceTicks = terms.cadenceTicks,
                 totalCycles = Rand.RangeInclusive(3, 6),
                 unitPrice = terms.unitPrice,
+                referenceUnitPrice = terms.referenceUnitPrice,
                 DiscountFraction = discountFraction,
                 status = ContractStatus.Offered,
                 offerExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay
@@ -569,6 +573,7 @@ namespace Intercolony
 
             return new ContractTerms(
                 spot * ContractPricePremium,
+                spot,
                 GenDate.TicksPerQuadrum);
         }
 
@@ -918,6 +923,7 @@ namespace Intercolony
                     allowedStuff = contract.stuffDef
                 },
                 unitPrice = contract.unitPrice,
+                referenceUnitPrice = contract.referenceUnitPrice,
                 DiscountFraction = contract.DiscountFraction,
                 acceptedTick = GenTicks.TicksGame,
 
