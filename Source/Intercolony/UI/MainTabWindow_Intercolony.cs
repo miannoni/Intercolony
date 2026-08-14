@@ -662,6 +662,10 @@ namespace Intercolony
                 animalStockCache = null;
                 findBuyerCache = null;
             }
+            else if (which == Tab.Contracts)
+            {
+                contractProposalSettlementCache = null;
+            }
             else if (which == Tab.Labor)
             {
                 // Cheap: the pool is cached per market refresh and only built when stale.
@@ -2388,6 +2392,7 @@ namespace Intercolony
         }
 
         private Vector2 contractsScroll;
+        private List<Settlement> contractProposalSettlementCache;
 
         /// <summary>
         /// Recurring contracts (DESIGN.md §29, §107). Offers first, then live agreements, then
@@ -2407,6 +2412,27 @@ namespace Intercolony
                 new Rect(0f, y, Mathf.Min(280f, inRect.width), 28f),
                 "Receive contract proposals", ref receiveProposals);
             state.ReceiveContractProposals = receiveProposals;
+
+            if (contractProposalSettlementCache == null)
+            {
+                contractProposalSettlementCache = EligibleContractProposalSettlements(state);
+            }
+
+            Rect proposeRect = new Rect(inRect.width - 190f, y, 190f, 28f);
+            if (Widgets.ButtonText(
+                    proposeRect, "Propose supply agreement",
+                    active: contractProposalSettlementCache.Count > 0))
+            {
+                ChooseContractProposalSettlement(state, contractProposalSettlementCache);
+            }
+
+            if (contractProposalSettlementCache.Count == 0)
+            {
+                TooltipHandler.TipRegion(
+                    proposeRect,
+                    "No settlement currently qualifies for a supply agreement based on your trading record.");
+            }
+
             y += 28f;
 
             if (receiveProposals)
@@ -2457,6 +2483,151 @@ namespace Intercolony
             }
 
             EndPageScrollView();
+        }
+
+        private static List<Settlement> EligibleContractProposalSettlements(
+            IntercolonyWorldComponent state)
+        {
+            List<Settlement> result = new List<Settlement>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                return result;
+            }
+
+            foreach (Settlement settlement in settlements)
+            {
+                if (EligibleContractProposalItems(state, settlement).Count > 0)
+                {
+                    result.Add(settlement);
+                }
+            }
+
+            result.Sort((a, b) => string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase));
+            return result;
+        }
+
+        private static List<ThingDef> EligibleContractProposalItems(
+            IntercolonyWorldComponent state, Settlement settlement)
+        {
+            List<ThingDef> result = new List<ThingDef>();
+            HashSet<ThingDef> seen = new HashSet<ThingDef>();
+            foreach (CommercialHistoryEntry entry in state.CommercialHistory)
+            {
+                ThingDef thingDef = entry?.thingDef;
+                if (entry == null || entry.settlementId != settlement.ID || thingDef == null ||
+                    !seen.Add(thingDef))
+                {
+                    continue;
+                }
+
+                if (ContractService.PreviewContractTerms(
+                        state, settlement, thingDef,
+                        ContractService.MinimumQuantityPerCycle) != null)
+                {
+                    result.Add(thingDef);
+                }
+            }
+
+            result.Sort((a, b) => string.Compare(
+                a.LabelCap.ToString(), b.LabelCap.ToString(), StringComparison.OrdinalIgnoreCase));
+            return result;
+        }
+
+        private void ChooseContractProposalSettlement(
+            IntercolonyWorldComponent state, List<Settlement> settlements)
+        {
+            List<FloatMenuOption> options = new List<FloatMenuOption>();
+            foreach (Settlement settlement in settlements)
+            {
+                Settlement chosenSettlement = settlement;
+                options.Add(new FloatMenuOption(
+                    chosenSettlement.Label,
+                    () => ChooseContractProposalItem(state, chosenSettlement)));
+            }
+
+            Find.WindowStack.Add(new FloatMenu(options));
+        }
+
+        private void ChooseContractProposalItem(
+            IntercolonyWorldComponent state, Settlement settlement)
+        {
+            List<ThingDef> items = EligibleContractProposalItems(state, settlement);
+            if (items.Count == 0)
+            {
+                Messages.Message(
+                    "That settlement no longer has an eligible item for a supply agreement.",
+                    MessageTypeDefOf.RejectInput,
+                    historical: false);
+                return;
+            }
+
+            List<FloatMenuOption> options = new List<FloatMenuOption>();
+            foreach (ThingDef thingDef in items)
+            {
+                ThingDef chosenThingDef = thingDef;
+                options.Add(new FloatMenuOption(
+                    chosenThingDef.LabelCap.ToString(),
+                    () => ConfirmContractProposal(state, settlement, chosenThingDef)));
+            }
+
+            Find.WindowStack.Add(new FloatMenu(options));
+        }
+
+        private void ConfirmContractProposal(
+            IntercolonyWorldComponent state, Settlement settlement, ThingDef thingDef)
+        {
+            ContractTerms initialTerms = ContractService.PreviewContractTerms(
+                state, settlement, thingDef, ContractService.MinimumQuantityPerCycle);
+            if (initialTerms == null)
+            {
+                Messages.Message(
+                    "That supply agreement is no longer eligible.",
+                    MessageTypeDefOf.RejectInput,
+                    historical: false);
+                return;
+            }
+
+            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
+                "Propose supply agreement",
+                "Propose agreement",
+                ContractService.MaximumQuantityPerCycle,
+                qty =>
+                {
+                    ContractTerms terms = ContractService.PreviewContractTerms(
+                        state, settlement, thingDef, qty);
+                    if (terms == null)
+                    {
+                        return "This supply agreement is no longer eligible.";
+                    }
+
+                    float daysBetweenDeliveries =
+                        terms.cadenceTicks / (float)GenDate.TicksPerDay;
+                    int paymentPerDelivery = Mathf.RoundToInt(terms.unitPrice * qty);
+                    return $"Propose supplying {qty}x {thingDef.LabelCap} to {settlement.Label} " +
+                           $"every {daysBetweenDeliveries:F0} days.\n\n" +
+                           $"Payment: {paymentPerDelivery} silver per delivery " +
+                           $"({terms.unitPrice:F2} each)\n\n" +
+                           "A standing agreement begins immediately, or the proposal is refused immediately with a reason.";
+                },
+                qty =>
+                {
+                    ContractProposalResult proposal =
+                        ContractService.ProposeContract(state, settlement, thingDef, qty);
+                    if (!proposal.Success)
+                    {
+                        Messages.Message(
+                            proposal.Reason,
+                            MessageTypeDefOf.RejectInput,
+                            historical: false);
+                    }
+                    else
+                    {
+                        contractProposalSettlementCache = null;
+                    }
+                },
+                ContractService.MinimumQuantityPerCycle,
+                "Per delivery:"));
         }
 
         private static int ContractRank(RecurringContract contract)
