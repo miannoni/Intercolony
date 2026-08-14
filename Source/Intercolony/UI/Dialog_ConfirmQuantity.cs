@@ -30,11 +30,16 @@ namespace Intercolony
         private readonly Action<int> onConfirm;
         private readonly Func<int, FulfillmentMode, string> fulfillmentBodyBuilder;
         private readonly Action<int, FulfillmentMode> fulfillmentOnConfirm;
+        private readonly Func<int, FulfillmentMode, float, string> discountBodyBuilder;
+        private readonly Action<int, FulfillmentMode, float> discountOnConfirm;
+        private readonly Func<int, FulfillmentMode, float, string> discountPreviewBuilder;
         private readonly bool chooseFulfillment;
+        private readonly bool chooseDiscount;
 
         private int quantity;
         private string buffer;
         private FulfillmentMode fulfillment;
+        private float discountFraction;
 
         /// <param name="minQuantity">
         /// Floor on the commitment. Hiring needs it: a worker with a five-day minimum term must
@@ -51,7 +56,7 @@ namespace Intercolony
             int minQuantity = 1,
             string quantityLabel = "Quantity:")
             : this(title, confirmLabel, maxQuantity, bodyBuilder, onConfirm, null, null,
-                FulfillmentMode.SellerDelivery, minQuantity, quantityLabel)
+                null, null, null, FulfillmentMode.SellerDelivery, minQuantity, quantityLabel)
         {
         }
 
@@ -72,7 +77,27 @@ namespace Intercolony
             int minQuantity = 1,
             string quantityLabel = "Quantity:")
             : this(title, confirmLabel, maxQuantity, null, null, bodyBuilder, onConfirm,
-                initialFulfillment, minQuantity, quantityLabel)
+                null, null, null, initialFulfillment, minQuantity, quantityLabel)
+        {
+        }
+
+        /// <summary>
+        /// Find Buyer sale variant: the discount joins quantity and logistics in the live
+        /// terms preview, while the existing fulfillment-only callers remain unchanged.
+        /// </summary>
+        public Dialog_ConfirmQuantity(
+            string title,
+            string confirmLabel,
+            int maxQuantity,
+            Func<int, FulfillmentMode, float, string> bodyBuilder,
+            Action<int, FulfillmentMode, float> onConfirm,
+            Func<int, FulfillmentMode, float, string> discountPreviewBuilder = null,
+            FulfillmentMode initialFulfillment = FulfillmentMode.BuyerPickup,
+            int minQuantity = 1,
+            string quantityLabel = "Quantity:")
+            : this(title, confirmLabel, maxQuantity, null, null, null, null,
+                bodyBuilder, onConfirm, discountPreviewBuilder, initialFulfillment,
+                minQuantity, quantityLabel)
         {
         }
 
@@ -84,6 +109,9 @@ namespace Intercolony
             Action<int> onConfirm,
             Func<int, FulfillmentMode, string> fulfillmentBodyBuilder,
             Action<int, FulfillmentMode> fulfillmentOnConfirm,
+            Func<int, FulfillmentMode, float, string> discountBodyBuilder,
+            Action<int, FulfillmentMode, float> discountOnConfirm,
+            Func<int, FulfillmentMode, float, string> discountPreviewBuilder,
             FulfillmentMode initialFulfillment,
             int minQuantity,
             string quantityLabel)
@@ -96,7 +124,11 @@ namespace Intercolony
             this.onConfirm = onConfirm;
             this.fulfillmentBodyBuilder = fulfillmentBodyBuilder;
             this.fulfillmentOnConfirm = fulfillmentOnConfirm;
-            chooseFulfillment = fulfillmentBodyBuilder != null;
+            this.discountBodyBuilder = discountBodyBuilder;
+            this.discountOnConfirm = discountOnConfirm;
+            this.discountPreviewBuilder = discountPreviewBuilder;
+            chooseDiscount = discountBodyBuilder != null;
+            chooseFulfillment = fulfillmentBodyBuilder != null || chooseDiscount;
             fulfillment = initialFulfillment;
             this.quantityLabel = quantityLabel;
 
@@ -110,7 +142,9 @@ namespace Intercolony
             absorbInputAroundWindow = true;
         }
 
-        public override Vector2 InitialSize => new Vector2(520f, chooseFulfillment ? 478f : 420f);
+        public override Vector2 InitialSize => new Vector2(
+            520f,
+            420f + (chooseFulfillment ? 58f : 0f) + (chooseDiscount ? 58f : 0f));
 
         public override void DoWindowContents(Rect inRect)
         {
@@ -125,14 +159,18 @@ namespace Intercolony
             // updates as they move the slider rather than describing the original amount.
             const float QuantityControlsHeight = 122f;
             const float FulfillmentControlsHeight = 58f;
+            const float DiscountControlsHeight = 58f;
             float controlsHeight = QuantityControlsHeight +
-                                   (chooseFulfillment ? FulfillmentControlsHeight : 0f);
+                                   (chooseFulfillment ? FulfillmentControlsHeight : 0f) +
+                                   (chooseDiscount ? DiscountControlsHeight : 0f);
             float controlsTop = inRect.height - controlsHeight;
 
             Rect bodyRect = new Rect(0f, y, inRect.width, controlsTop - y - 8f);
-            Widgets.Label(bodyRect, chooseFulfillment
-                ? fulfillmentBodyBuilder(quantity, fulfillment)
-                : bodyBuilder(quantity));
+            Widgets.Label(bodyRect, chooseDiscount
+                ? discountBodyBuilder(quantity, fulfillment, discountFraction)
+                : chooseFulfillment
+                    ? fulfillmentBodyBuilder(quantity, fulfillment)
+                    : bodyBuilder(quantity));
 
             float bottom = controlsTop;
 
@@ -150,6 +188,28 @@ namespace Intercolony
                     new Color(0.6f, 0.85f, 1f));
 
                 bottom += FulfillmentControlsHeight;
+            }
+
+            if (chooseDiscount)
+            {
+                Widgets.Label(new Rect(0f, bottom, 108f, 28f),
+                    $"Discount: {discountFraction.ToStringPercent("F0")}");
+
+                discountFraction = Mathf.Clamp01(Widgets.HorizontalSlider(
+                    new Rect(110f, bottom + 4f, 190f, 20f),
+                    discountFraction, 0f, 1f, middleAlignment: false,
+                    label: null, leftAlignedLabel: "0%", rightAlignedLabel: "100%",
+                    roundTo: 0.01f));
+
+                string paymentPreview = discountPreviewBuilder?.Invoke(
+                    quantity, fulfillment, discountFraction);
+                if (!paymentPreview.NullOrEmpty())
+                {
+                    Widgets.Label(new Rect(314f, bottom, inRect.width - 314f, 48f),
+                        paymentPreview);
+                }
+
+                bottom += DiscountControlsHeight;
             }
 
             Widgets.Label(new Rect(0f, bottom, 110f, 28f), quantityLabel);
@@ -196,7 +256,12 @@ namespace Intercolony
             if (Widgets.ButtonText(confirmRect, confirmLabel))
             {
                 int confirmedQuantity = Mathf.Clamp(quantity, minQuantity, maxQuantity);
-                if (chooseFulfillment)
+                if (chooseDiscount)
+                {
+                    discountOnConfirm?.Invoke(
+                        confirmedQuantity, fulfillment, Mathf.Clamp01(discountFraction));
+                }
+                else if (chooseFulfillment)
                 {
                     fulfillmentOnConfirm?.Invoke(confirmedQuantity, fulfillment);
                 }

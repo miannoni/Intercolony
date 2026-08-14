@@ -1827,9 +1827,10 @@ namespace Intercolony
                 "Sell to this buyer?",
                 "Create order",
                 offer.quantity,
-                (qty, fulfillment) =>
+                (qty, fulfillment, discountFraction) =>
                 {
-                    float rate = FindBuyerService.SellRateFor(offer, qty, fulfillment);
+                    SalesOrder preview = BuildSalePaymentPreview(
+                        offer, qty, fulfillment, discountFraction);
                     string logistics = fulfillment == FulfillmentMode.BuyerPickup
                         ? "No caravan is needed; the buyer handles collection and pays less for it."
                         : "You deliver: a caravan trip, paid at a premium for taking it on.";
@@ -1840,23 +1841,28 @@ namespace Intercolony
                         : $"Commit to supplying {qty}x {offer.def.LabelCap} to " +
                           $"{offer.settlement?.Label} within {DeadlineDays} days.";
                     return commitment + "\n\n" +
-                           $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
+                           $"Payment: {preview.DiscountedTotalPayment} silver " +
+                           $"({preview.unitPrice:F2} each before discount)\n" +
                            $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
                            logistics + "\n\n" +
+                           "The waived value improves your standing with the buyer's faction.\n\n" +
                            "This is a binding order. The quantity counts against what Find Buyer " +
                            "considers available, so it will not be offered to another buyer. The goods " +
                            "are not physically locked: your colony can still consume or move them, " +
                            "and you are responsible for having them ready for fulfilment." +
                            (qty < offer.quantity ? "\n\nA smaller lot earns a better rate per unit." : "");
                 },
-                (qty, fulfillment) =>
+                (qty, fulfillment, discountFraction) =>
                 {
                     BuyerOffer priced = offer;
                     priced.unitPrice = FindBuyerService.SellRateFor(offer, qty, fulfillment);
-                    if (SalesOrderService.CreateFromOffer(
-                            state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
-                            DeadlineDays, fulfillment) != null)
+                    SalesOrder order = SalesOrderService.CreateFromOffer(
+                        state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
+                        DeadlineDays, fulfillment);
+                    if (order != null)
                     {
+                        order.DiscountFraction = discountFraction;
+
                         // Deliberately stays on Find Buyer. Selling is usually several sales in
                         // a row — split a surplus across buyers, work down a list — and being
                         // thrown to Orders after each one interrupts exactly that.
@@ -1866,7 +1872,9 @@ namespace Intercolony
                         stockCache = null;
                         findBuyerCache = null;
                     }
-                }));
+                },
+                (qty, fulfillment, discountFraction) =>
+                    SalePaymentPreviewText(offer, qty, fulfillment, discountFraction)));
         }
 
         private void ConfirmAnimalSell(
@@ -1876,9 +1884,10 @@ namespace Intercolony
                 "Sell animals to this buyer?",
                 "Create order",
                 offer.quantity,
-                (qty, fulfillment) =>
+                (qty, fulfillment, discountFraction) =>
                 {
-                    float rate = FindBuyerService.SellRateFor(offer, qty, fulfillment);
+                    SalesOrder preview = BuildSalePaymentPreview(
+                        offer, qty, fulfillment, discountFraction);
                     string commitment = fulfillment == FulfillmentMode.BuyerPickup
                         ? $"Commit to sell {qty}x {offer.animalSpec.ShortLabel(offer.def)} to " +
                           $"{offer.settlement?.Label}.\n\n" +
@@ -1897,28 +1906,59 @@ namespace Intercolony
                           "is by specification, so any animal meeting it will do.";
 
                     return commitment + "\n\n" +
-                           $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
+                           $"Payment: {preview.DiscountedTotalPayment} silver " +
+                           $"({preview.unitPrice:F2} each before discount)\n" +
                            $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
                            logistics + "\n\n" +
+                           "The waived value improves your standing with the buyer's faction.\n\n" +
                            "Animals are checked again at the handover, so one that dies, is " +
                            "downed, goes feral or no longer matches will not be counted. " +
                            "Nothing is physically locked in the meantime.\n\n" +
                            "If any animal handed over is bonded, you will be asked to confirm " +
                            "and every affected colonist will be named.";
                 },
-                (qty, fulfillment) =>
+                (qty, fulfillment, discountFraction) =>
                 {
                     BuyerOffer priced = offer;
                     priced.unitPrice = FindBuyerService.SellRateFor(offer, qty, fulfillment);
-                    if (SalesOrderService.CreateFromOffer(
-                            state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
-                            deadlineDays, fulfillment) != null)
+                    SalesOrder order = SalesOrderService.CreateFromOffer(
+                        state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
+                        deadlineDays, fulfillment);
+                    if (order != null)
                     {
+                        order.DiscountFraction = discountFraction;
+
                         // Stays put for the same reason as the goods sale above.
                         animalStockCache = null;
                         findBuyerCache = null;
                     }
-                }));
+                },
+                (qty, fulfillment, discountFraction) =>
+                    SalePaymentPreviewText(offer, qty, fulfillment, discountFraction)));
+        }
+
+        private static SalesOrder BuildSalePaymentPreview(
+            BuyerOffer offer, int quantity, FulfillmentMode fulfillment,
+            float discountFraction)
+        {
+            return new SalesOrder
+            {
+                line = new OrderLine(offer.def, quantity),
+                unitPrice = FindBuyerService.SellRateFor(offer, quantity, fulfillment),
+                fulfillment = fulfillment,
+                DiscountFraction = discountFraction
+            };
+        }
+
+        private static string SalePaymentPreviewText(
+            BuyerOffer offer, int quantity, FulfillmentMode fulfillment,
+            float discountFraction)
+        {
+            SalesOrder preview = BuildSalePaymentPreview(
+                offer, quantity, fulfillment, discountFraction);
+            int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
+            return $"Paid: {preview.DiscountedTotalPayment:N0} silver\n" +
+                   $"Waived: {waived:N0} silver";
         }
 
         private Vector2 procurementScroll;
