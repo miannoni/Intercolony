@@ -1265,18 +1265,64 @@ namespace Intercolony
                 return b.id.CompareTo(a.id);
             });
 
+            int openCount = 0;
+            while (openCount < orders.Count && orders[openCount].IsOpen)
+            {
+                openCount++;
+            }
+
+            int closedCount = orders.Count - openCount;
+            int clearableCount = closedCount > 0
+                ? OrderHistoryService.CountClearableSalesOrderHistory(state)
+                : 0;
+
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, orders.Count * OrderRowHeight);
+            float contentHeight = orders.Count * OrderRowHeight +
+                                  (closedCount > 0 ? ClosedOrderSectionHeaderHeight : 0f);
+            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contentHeight);
 
             BeginPageScrollView(outRect, ref ordersScroll, viewRect);
             float rowY = 0f;
             for (int i = 0; i < orders.Count; i++)
             {
+                if (i == openCount)
+                {
+                    DrawClosedSalesOrderHeader(
+                        viewRect.width, rowY, closedCount, clearableCount, state);
+                    rowY += ClosedOrderSectionHeaderHeight;
+                }
+
                 DrawOrderRow(new Rect(0f, rowY, viewRect.width, OrderRowHeight), orders[i], i);
                 rowY += OrderRowHeight;
             }
 
             EndPageScrollView();
+        }
+
+        private static void DrawClosedSalesOrderHeader(
+            float width, float y, int closedCount, int clearableCount,
+            IntercolonyWorldComponent state)
+        {
+            const float buttonWidth = 190f;
+            Widgets.Label(new Rect(0f, y + 3f, width - buttonWidth - 8f, 24f),
+                $"Closed orders ({closedCount})");
+
+            if (clearableCount <= 0)
+            {
+                return;
+            }
+
+            Rect clearRect = new Rect(width - buttonWidth, y, buttonWidth, 28f);
+            if (Widgets.ButtonText(clearRect, "Clear completed history"))
+            {
+                string orderWord = clearableCount == 1 ? "order" : "orders";
+                Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                    $"Remove {clearableCount} closed sales {orderWord} from this list?\n\n" +
+                    "Active orders and orders still tied to an agreement or completed during " +
+                    "the current market refresh will be kept, along with your trading record.",
+                    () => OrderHistoryService.ClearSalesOrderHistory(state),
+                    destructive: true));
+            }
         }
 
         /// <summary>
@@ -1941,7 +1987,7 @@ namespace Intercolony
                 0f, 0f, inRect.width - 16f, Mathf.Max(contentHeight, outRect.height));
 
             BeginPageScrollView(outRect, ref procurementOrdersScroll, viewRect);
-            float rowY = DrawPurchaseOrders(viewRect.width, 0f, purchaseOrders);
+            float rowY = DrawPurchaseOrders(viewRect.width, 0f, purchaseOrders, state);
             if (purchaseOrders.Count == 0)
             {
                 GUI.color = Color.gray;
@@ -2106,7 +2152,8 @@ namespace Intercolony
         /// conclusions, because these are money already spent and should be the first thing the
         /// player sees on this tab.
         /// </summary>
-        private float DrawPurchaseOrders(float width, float y, List<PurchaseOrder> orders)
+        private float DrawPurchaseOrders(
+            float width, float y, List<PurchaseOrder> orders, IntercolonyWorldComponent state)
         {
             int openCount = 0;
             while (openCount < orders.Count && orders[openCount].IsOpen)
@@ -2131,8 +2178,27 @@ namespace Intercolony
             int concludedCount = orders.Count - openCount;
             if (concludedCount > 0)
             {
-                Widgets.Label(new Rect(0f, y, width, 24f),
+                const float buttonWidth = 190f;
+                int clearableCount =
+                    OrderHistoryService.CountClearablePurchaseOrderHistory(state);
+                Widgets.Label(new Rect(0f, y, width - buttonWidth - 8f, 24f),
                     $"Concluded purchases ({concludedCount})");
+                if (clearableCount > 0)
+                {
+                    Rect clearRect = new Rect(
+                        width - buttonWidth, y - 1f, buttonWidth, 26f);
+                    if (Widgets.ButtonText(clearRect, "Clear completed history"))
+                    {
+                        string purchaseWord = clearableCount == 1 ? "purchase" : "purchases";
+                        Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                            $"Remove {clearableCount} concluded {purchaseWord} from this list?\n\n" +
+                            "Purchases still on order, concluded requests, and your trading " +
+                            "record will be kept.",
+                            () => OrderHistoryService.ClearPurchaseOrderHistory(state),
+                            destructive: true));
+                    }
+                }
+
                 y += PurchaseOrderSectionHeaderHeight;
                 for (int i = openCount; i < orders.Count; i++)
                 {
@@ -3009,6 +3075,7 @@ namespace Intercolony
         }
 
         private const float OrderRowHeight = 56f;
+        private const float ClosedOrderSectionHeaderHeight = 32f;
 
         private void DrawOrderRow(Rect rect, SalesOrder order, int index)
         {

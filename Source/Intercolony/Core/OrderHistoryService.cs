@@ -22,6 +22,62 @@ namespace Intercolony
             return PruneSalesOrders(state) + PrunePurchaseOrders(state);
         }
 
+        public static int CountClearableSalesOrderHistory(IntercolonyWorldComponent state)
+        {
+            if (state?.Orders == null)
+            {
+                return 0;
+            }
+
+            HashSet<int> contractOrderIds = LiveContractOrderIds(state.Contracts);
+            int count = 0;
+            foreach (SalesOrder order in state.Orders)
+            {
+                if (MayRemoveSalesOrder(order, state.LastRefreshTick, contractOrderIds))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        public static int ClearSalesOrderHistory(IntercolonyWorldComponent state)
+        {
+            if (state?.Orders == null)
+            {
+                return 0;
+            }
+
+            HashSet<int> contractOrderIds = LiveContractOrderIds(state.Contracts);
+            return state.Orders.RemoveAll(order =>
+                MayRemoveSalesOrder(order, state.LastRefreshTick, contractOrderIds));
+        }
+
+        public static int CountClearablePurchaseOrderHistory(IntercolonyWorldComponent state)
+        {
+            if (state?.PurchaseOrders == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            foreach (PurchaseOrder order in state.PurchaseOrders)
+            {
+                if (MayRemovePurchaseOrder(order))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        public static int ClearPurchaseOrderHistory(IntercolonyWorldComponent state)
+        {
+            return state?.PurchaseOrders?.RemoveAll(MayRemovePurchaseOrder) ?? 0;
+        }
+
         private static int PruneSalesOrders(IntercolonyWorldComponent state)
         {
             List<SalesOrder> orders = state.Orders;
@@ -53,11 +109,8 @@ namespace Intercolony
 
             HashSet<int> contractOrderIds = LiveContractOrderIds(state.Contracts);
             return orders.RemoveAll(order =>
-                order != null &&
-                !order.IsOpen &&
                 !retained.Contains(order) &&
-                !contractOrderIds.Contains(order.id) &&
-                !CompletedInCurrentRefresh(order, state.LastRefreshTick));
+                MayRemoveSalesOrder(order, state.LastRefreshTick, contractOrderIds));
         }
 
         private static int PrunePurchaseOrders(IntercolonyWorldComponent state)
@@ -90,7 +143,21 @@ namespace Intercolony
             }
 
             return orders.RemoveAll(order =>
-                order != null && !order.IsOpen && !retained.Contains(order));
+                !retained.Contains(order) && MayRemovePurchaseOrder(order));
+        }
+
+        private static bool MayRemoveSalesOrder(
+            SalesOrder order, int lastRefreshTick, HashSet<int> contractOrderIds)
+        {
+            return order != null &&
+                   !order.IsOpen &&
+                   !contractOrderIds.Contains(order.id) &&
+                   !CompletedInCurrentRefresh(order, lastRefreshTick);
+        }
+
+        private static bool MayRemovePurchaseOrder(PurchaseOrder order)
+        {
+            return order != null && !order.IsOpen;
         }
 
         /// <summary>Newest completion first; no recorded completion is always oldest.</summary>
