@@ -134,25 +134,25 @@ this summary** when the time comes to test.
 Added 2026-08-09. **This is the highest-value single check on this list**, because one action
 settles several things at once and because migration is the one failure mode that damages a save.
 
-Production schema is now **31**. Schemas 25–29 and 31 add fields with safe defaults; schema 30 is
+Production schema is now **32**. Schemas 25–29 and 31 add fields with safe defaults; schema 30 is
 different and repairs existing request statuses by matching them to their purchase orders. The
-complete 24 → 31 chain and exact expected evidence are in `docs/SCHEMA_24_TO_CURRENT.md`. It has
+complete 24 → 32 chain and exact expected evidence are in `docs/SCHEMA_24_TO_CURRENT.md`. It has
 only been seen running in **isolated throwaway RimWorld installations with a stripped mod list**,
 never in the real load order.
 
 **Steps.** Launch the game normally and load any existing save.
 
-**Pass.** Player.log contains, in order, the migration header and every applicable step through 31.
+**Pass.** Player.log contains, in order, the migration header and every applicable step through 32.
 For a schema-24 save the header is:
 
 ```
-[Intercolony] Migrating state from schema 24 to 31.
+[Intercolony] Migrating state from schema 24 to 32.
 ```
 
-(The starting number depends on the save. A save already at 31 prints `State loaded (schema 31, …)`
+(The starting number depends on the save. A save already at 32 prints `State loaded (schema 32, …)`
 and no migration lines — that is also a pass, but it does not exercise the chain.)
 
-Then **save, quit to the menu, and reload**. The second load must say `State loaded (schema 31, …)`
+Then **save, quit to the menu, and reload**. The second load must say `State loaded (schema 32, …)`
 and **not** `State initialized fresh` — that distinction is what proves the round trip rather than a
 silent re-initialization.
 
@@ -395,6 +395,37 @@ vanish from the *first* colony instead. Either result means the fix did not take
 **Also worth trying once:** abandon the colony an order was marked ready on, then let the buyer
 arrive. It should fall back rather than throw. Both a same-session abandonment and one across a
 save/reload are covered by different guards, so ideally test both.
+
+### Procurement delivery and refund use the paying colony
+
+Added 2026-08-13 with the purchase-order destination fix (schema 32). Neither path is verified in
+play.
+
+**Setup.** A game with **two** player colonies. Note which was founded first, switch to the
+**second** colony, and have enough silver stored there to pay for two purchase orders.
+
+**Steps.** From the second colony, open **Intercolony** → **Procurement** → **Request goods...**.
+Create one goods request with **Supplier delivers** and another with **We collect**; wait for and
+accept a quotation for each, paying both from the second colony. Enable Development mode, remain on
+the second colony map, press **/** to open **Debug actions**, open the **Intercolony** category, and
+click **Arrive purchase orders now**. This sets each confirmed order's ready time to now and runs
+the normal order advance: the delivery order should arrive, while the pickup order becomes ready to
+collect. Do not send a caravan or cancel the pickup order. In **Procurement** → **Orders**, let its
+`collect within ...d` countdown reach zero; the debug action does not move this expiry, which remains
+the original supplier lead time plus the 10-day pickup grace. The next hourly or coarse refresh
+refunds it as uncollected goods.
+
+**Pass.** The delivered goods arrive at the **second** colony. When the uncollected pickup order
+defaults, its refunded silver is placed at the **second** colony rather than the first home map;
+the second colony gains the refunded amount and the first colony gains none. Either outcome appearing
+at the first colony means the fix did not take.
+
+**Use the same world for the sales-side check above.** This is exactly the two-colony setup needed
+by the buyer-pickup assertion that `Run order self-test` keeps skipping, so one two-colony session
+can settle both the sales side and the procurement side.
+
+**Not covered:** the no-home-map refund hold and the zero-placement refund hold have no coverage and
+are not practically reachable by hand. Do not treat this two-colony test as evidence for either.
 
 ### The buy-only setting itself has never been seen
 

@@ -5,7 +5,7 @@
 - v0.9.0 commit: `b8744e49eedc49aac1d61e13b680427015ef4ba3`
 - Starting HEAD: `fe32d70c68fddb0f2542c6cad7a6d6503c3545d5`
 - Current branch: `main` (started 30 commits ahead of `origin/main`)
-- Save schema: 31 (`IntercolonyWorldComponent.CurrentSaveVersion`)
+- Save schema: 32 (`IntercolonyWorldComponent.CurrentSaveVersion`)
 
 ## Release scope
 
@@ -46,7 +46,10 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 | `Run order self-test` | PASS | 2026-08-13 after the buy-only obligation fix: `93 passed, 0 failed`; no error/exception after the test header. The recorded-map-vs-first-home assertion was explicitly skipped because the test world has one home map, so the required two-map manual test remains open. Live-offer acceptance checks also skipped because no live offer existed; the correction-batch availability, timing and buy-only blocks ran. |
 | `Run contract self-test` | PASS | 2026-08-13: `38 passed, 0 failed`; 3 cycles ran to Completed and a real history-based offer was generated (`1050x bear meat @ 1.76 vs spot 1.53`). No failure, exception or prerequisite skip after the test header. |
 | `Run RFQ self-test` | PASS | 2026-08-13: `69 passed, 0 failed`; 24 requests produced empty/full/partial outcomes with price and quantity variation, 2 modded defs were exercised, and commodity/weapon/chair/workbench construction ran. No failure, exception or skip after the test header. |
-| Schema 24 -> 31 real-save migration and reload | NOT RUN | A current-schema load exists in the log, but that does not exercise migration. |
+| Schema 24 -> 32 real-save migration and reload | NOT RUN | A current-schema load exists in the log, but that does not exercise migration. |
+| Post-procurement-fix `dev.ps1 build` | PASS | 2026-08-13 at `4bc9adc`: 0 errors; 2 NU1900 warnings because NuGet vulnerability metadata was unreachable. |
+| Post-procurement-fix `-quicktest` clean load | PASS | 2026-08-13 at `4bc9adc`: `[Intercolony] loaded.`, `Harmony patches applied.`, `Trade blacklist rebuilt: 1 rule def(s), 10 def(s) excluded.`, and `State initialized fresh (schema 32).`; no red errors. This fresh current-schema world did not exercise the 31 -> 32 migration. |
+| Post-procurement-fix `Run order self-test` | PASS (sell-side no-regression only) | 2026-08-13 at `4bc9adc`: `93 passed, 0 failed`; the same recorded-map-vs-`Find.AnyPlayerHomeMap` and live-offer checks skipped. The suite is entirely sell-side (`SalesOrderService`, Find Buyer, buyer pickup and section 99 goods matching) and does not cover the changed procurement code: no self-test calls `PurchaseOrderService.Refund` or `GiveSilver`; only the pure `RefundableSilver` helper is asserted in `IntercolonyAnimalSelfTest.cs:415-419`. |
 
 ## Manual verification
 
@@ -71,11 +74,13 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 
 ## Blockers
 
-- **Under release-gate review:** purchase-order delivery and refund still resolve through
-  `Find.AnyPlayerHomeMap`. In a multi-colony game this silently places goods or silver at the first
-  home map rather than the colony that placed the order (`docs/BACKLOG.md`, "Procurement delivers
-  and refunds to the wrong colony"). Determine severity from the authoritative blocker policy and
-  focused verification before packaging.
+- **Resolved in code; not verified in play:** purchase-order delivery and refund now resolve the
+  colony recorded when the order was accepted, falling back to `Find.AnyPlayerHomeMap` only when
+  that map was not recorded or is no longer loaded. The same work uncovered and fixed the more
+  serious falsely-reported-refund defect: when no home map existed, an order was finalized as
+  Supplier default before any silver was placed, then reported as refunded despite paying nothing
+  and could never retry. Zero-placement refunds now hold and retry; partial placement finalizes with
+  the amount actually placed in the ledger, log and player message. Neither fault is verified in play.
 
 ## Decisions made during release prep
 
@@ -87,16 +92,24 @@ but remains wholly unplayed and is not approved for player-facing 0.9.1 claims w
 - After a code change and successful build, leave RimWorld open in development mode on a test map so
   Matteo can immediately execute the next requested in-game check.
 - Animal trading already exists in production code; no additional animal feature work is authorized.
+- The procurement defect was graded, and the decision was to fix both the colony misrouting and the
+  falsely-reported-refund fault now and accept the schema 32 bump in this point release.
+- Do not build new self-test infrastructure for the changed procurement paths. Two of the three
+  cases require a two-colony or map-less world, and the zero-placement case requires an injectable
+  placement seam; evidence is to come from play, not from more code.
 - Ordinary release-prep commits may be pushed to `main` when Matteo explicitly requests it. No
   version tag, GitHub release, Steam upload or other release publication is authorized by that.
 
 ## Current stopping point
 
-- Just completed: order, contract and RFQ self-tests pass at 93/0, 38/0 and 69/0. The buy-only
-  obligation regression found by the first order run is fixed; its rerun passed. One-home-map and
-  no-live-offer skips retain their stated limits. Project docs were reconciled for this evidence.
-- Next recommended short iteration: inspect and decide the known multi-colony procurement
-  delivery/refund defect against the 0.9.1 release-blocker policy; do not modify it in the same
-  iteration.
-- Exact starting points: `docs/BACKLOG.md` under "Procurement delivers and refunds to the wrong
-  colony", `PurchaseOrder.cs`, and `PurchaseOrderService.cs` delivery/refund sites.
+- Just completed: the procurement colony-routing and falsely-reported-refund faults are fixed in
+  code at `4bc9adc`, with the additive schema 32 destination-map field. The post-fix build passed,
+  and a fresh schema-32 `-quicktest` world loaded cleanly with no red errors.
+- The post-fix order self-test reran at 93/0, but it is entirely sell-side and is only a
+  no-regression signal; it does not touch `PurchaseOrderService`. The fresh quicktest world likewise
+  did not exercise the 31 -> 32 migration. None of the changed procurement behavior is verified in
+  play.
+- Next recommended short iteration: use one two-colony session to verify both buyer pickup and
+  purchase delivery/refund routing from the second colony, then exercise the real-save migration
+  and round trip. The map-less and zero-placement refund holds remain without practical manual
+  reproduction.
