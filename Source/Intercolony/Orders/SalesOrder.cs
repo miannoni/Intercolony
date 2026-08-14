@@ -168,7 +168,7 @@ namespace Intercolony
         /// <summary>Gets the going rate recorded when the deal was struck, if one was saved.</summary>
         public bool TryGetReferenceUnitPrice(out float price)
         {
-            if (referenceUnitPrice == NoReferenceUnitPrice)
+            if (referenceUnitPrice < 0f)
             {
                 price = 0f;
                 return false;

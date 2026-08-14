@@ -419,7 +419,29 @@ namespace Intercolony
 
         internal static void AffectGoodwill(Faction faction, int delta, string reason)
         {
+            AffectGoodwill(faction, delta, reason, preventHostility: false);
+        }
+
+        /// <summary>
+        /// Applies goodwill loss without allowing that loss to make the faction hostile. This is
+        /// intentionally separate from ordinary reputation events, which retain vanilla's
+        /// hostility letter and threshold behavior.
+        /// </summary>
+        internal static void AffectGoodwillWithoutStartingHostilities(
+            Faction faction, int delta, string reason)
+        {
+            AffectGoodwill(faction, delta, reason, preventHostility: true);
+        }
+
+        private static void AffectGoodwill(
+            Faction faction, int delta, string reason, bool preventHostility)
+        {
             if (faction == null || faction.IsPlayer || faction.Hidden || faction.defeated)
+            {
+                return;
+            }
+
+            if (delta == 0)
             {
                 return;
             }
@@ -440,11 +462,36 @@ namespace Intercolony
 
             try
             {
-                // No hostility letter: goodwill loss over a labor dispute should not be the thing
-                // that silently tips a neutral faction into war without the player being told why
-                // in the terms they understand. The employment letter already explains it.
+                if (preventHostility && delta < 0)
+                {
+                    int hostilityThreshold = DiplomacyTuning.BecomeHostileThreshold;
+                    if (faction.HostileTo(Faction.OfPlayer) ||
+                        faction.GoodwillWith(Faction.OfPlayer) <= hostilityThreshold)
+                    {
+                        return;
+                    }
+
+                    // TryAffectGoodwillWith applies the adjusted delta to base goodwill, then
+                    // tests effective goodwill against the hostile threshold. Clamp against that
+                    // stored value and account for vanilla's natural-goodwill adjustment.
+                    int minimumNonHostileGoodwill = hostilityThreshold + 1;
+                    int minimumAdjustedDelta = minimumNonHostileGoodwill -
+                                               faction.BaseGoodwillWith(Faction.OfPlayer);
+                    while (delta < 0 &&
+                           faction.CalculateAdjustedGoodwillChange(Faction.OfPlayer, delta) <
+                           minimumAdjustedDelta)
+                    {
+                        delta++;
+                    }
+
+                    if (delta == 0)
+                    {
+                        return;
+                    }
+                }
+
                 faction.TryAffectGoodwillWith(Faction.OfPlayer, delta,
-                    canSendMessage: true, canSendHostilityLetter: true);
+                    canSendMessage: true, canSendHostilityLetter: !preventHostility);
 
                 IntercolonyLog.Verbose($"Goodwill with {faction.Name} {delta:+0;-0}: {reason}.");
             }

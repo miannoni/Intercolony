@@ -409,13 +409,29 @@ namespace Intercolony
 
         private static void GrantDiscountGoodwill(SalesOrder order)
         {
-            if (order == null || order.DiscountFraction <= 0f)
+            if (order == null || order.status != SalesOrderStatus.Completed)
             {
                 return;
             }
 
-            int waivedSilver = order.TotalPayment - order.DiscountedTotalPayment;
-            if (waivedSilver <= 0)
+            bool hasReferenceRate = order.TryGetReferenceUnitPrice(out float referenceUnitPrice);
+            bool isPenalty = false;
+            int goodwillValue;
+            if (hasReferenceRate)
+            {
+                float paidUnitPrice = order.unitPrice * (1f - order.DiscountFraction);
+                float signedValue = (referenceUnitPrice - paidUnitPrice) * order.Quantity;
+                isPenalty = signedValue < 0f;
+                goodwillValue = Mathf.RoundToInt(Mathf.Abs(signedValue));
+            }
+            else
+            {
+                // Legacy orders have no reference rate. Preserve the old discount-only reward
+                // and never infer a penalty from data that was not recorded when the deal began.
+                goodwillValue = order.TotalPayment - order.DiscountedTotalPayment;
+            }
+
+            if (goodwillValue <= 0)
             {
                 return;
             }
@@ -429,16 +445,28 @@ namespace Intercolony
 
             try
             {
-                using (TemporarySilverGift gift = new TemporarySilverGift(waivedSilver))
+                using (TemporarySilverGift gift = new TemporarySilverGift(goodwillValue))
                 {
                     int goodwill = FactionGiftUtility.GetGoodwillChange(
                         new IThingHolder[] { gift }, settlement);
                     if (goodwill > 0)
                     {
-                        EmployerReputationService.AffectGoodwill(
-                            settlement.Faction,
-                            goodwill,
-                            $"Order #{order.id} completed with {waivedSilver} silver waived.");
+                        string reason = isPenalty
+                            ? $"Order #{order.id} completed {goodwillValue} silver above the reference rate."
+                            : hasReferenceRate
+                                ? $"Order #{order.id} completed {goodwillValue} silver below the reference rate."
+                                : $"Order #{order.id} completed with {goodwillValue} silver waived.";
+
+                        if (isPenalty)
+                        {
+                            EmployerReputationService.AffectGoodwillWithoutStartingHostilities(
+                                settlement.Faction, -goodwill, reason);
+                        }
+                        else
+                        {
+                            EmployerReputationService.AffectGoodwill(
+                                settlement.Faction, goodwill, reason);
+                        }
                     }
                 }
             }
@@ -447,7 +475,7 @@ namespace Intercolony
                 // A gift-calculation failure must not suppress the existing commercial
                 // reputation credit for a sale that has already completed.
                 IntercolonyLog.Warning(
-                    $"Could not calculate discount goodwill for order #{order.id}: {ex.Message}");
+                    $"Could not calculate price goodwill for order #{order.id}: {ex.Message}");
             }
         }
 
