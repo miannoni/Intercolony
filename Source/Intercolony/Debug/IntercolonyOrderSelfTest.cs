@@ -982,6 +982,23 @@ namespace Intercolony
                 Remove(competingDirect);
                 Remove(blockedPickup);
 
+                SalesOrder smallerCommitment = Plant(92010, 4);
+                SalesOrder fittingPickup = Plant(92011, 3);
+                fittingPickup.opportunityId = 42011;
+                fittingPickup.fulfillment = FulfillmentMode.BuyerPickup;
+                OrderValidationResult fittingValidation =
+                    OrderValidator.ValidateColony(fittingPickup, map);
+                bool fittingReady = SalesOrderService.MarkReadyForPickup(fittingPickup, map);
+                check("10 physical, 4 committed elsewhere, and 3 required permits Mark Ready",
+                    fittingValidation.matchedQuantity == 3 &&
+                    fittingValidation.totalPhysicalMatchingQuantity == 10 &&
+                    fittingReady && fittingPickup.status == SalesOrderStatus.AwaitingCollection,
+                    $"matched={fittingValidation.matchedQuantity}, " +
+                    $"physical={fittingValidation.totalPhysicalMatchingQuantity}, " +
+                    $"ready={fittingReady}, status={fittingPickup.status}");
+                Remove(smallerCommitment);
+                Remove(fittingPickup);
+
                 // --- B1/B2: real Mark Ready transition, shared fallback, and deadline boundary ---
                 SalesOrder timelyPickup = Plant(92030, 1);
                 timelyPickup.opportunityId = 42030;

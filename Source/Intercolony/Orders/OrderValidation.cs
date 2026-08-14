@@ -37,6 +37,12 @@ namespace Intercolony
         /// <summary>Units present that satisfy the line.</summary>
         public int matchedQuantity;
 
+        /// <summary>
+        /// Total physically present units that satisfy the line before capping to the current
+        /// obligation. Populated when validating fungible goods in colony storage.
+        /// </summary>
+        public int totalPhysicalMatchingQuantity;
+
         /// <summary>Units still required after counting what is present.</summary>
         public int missingQuantity;
 
@@ -463,6 +469,7 @@ namespace Intercolony
                 }
             }
 
+            result.totalPhysicalMatchingQuantity = found;
             result.matchedQuantity = Mathf.Min(found, required);
             result.missingQuantity = Mathf.Max(0, required - found);
             if (result.missingQuantity > 0 && result.rejected.Count == 0)
