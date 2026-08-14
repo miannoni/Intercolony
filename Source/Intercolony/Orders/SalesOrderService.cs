@@ -399,9 +399,109 @@ namespace Intercolony
             // and buyer collection arrive here, and neither can record the same order twice.
             state?.RecordCompletedSale(order);
 
+            GrantDiscountGoodwill(order);
+
             // §27: on-time delivery is worth more than a late one, so the distinction is made
             // here where the deadline is still known.
             ReputationService.NoteOrderCompleted(state, order, !order.IsOverdue(completedTick));
+        }
+
+        private static void GrantDiscountGoodwill(SalesOrder order)
+        {
+            if (order == null || order.DiscountFraction <= 0f)
+            {
+                return;
+            }
+
+            int waivedSilver = order.TotalPayment - order.DiscountedTotalPayment;
+            if (waivedSilver <= 0)
+            {
+                return;
+            }
+
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(order.settlementId);
+            if (settlement == null || !settlement.Spawned || settlement.Destroyed ||
+                settlement.Faction == null)
+            {
+                return;
+            }
+
+            try
+            {
+                using (TemporarySilverGift gift = new TemporarySilverGift(waivedSilver))
+                {
+                    int goodwill = FactionGiftUtility.GetGoodwillChange(
+                        new IThingHolder[] { gift }, settlement);
+                    if (goodwill > 0)
+                    {
+                        EmployerReputationService.AffectGoodwill(
+                            settlement.Faction,
+                            goodwill,
+                            $"Order #{order.id} completed with {waivedSilver} silver waived.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // A gift-calculation failure must not suppress the existing commercial
+                // reputation credit for a sale that has already completed.
+                IntercolonyLog.Warning(
+                    $"Could not calculate discount goodwill for order #{order.id}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Holds unspawned silver long enough for vanilla's gift utility to value it. The
+        /// contents are destroyed when disposed; they are calculation inputs, not transferred
+        /// goods.
+        /// </summary>
+        private sealed class TemporarySilverGift : IThingHolder, IDisposable
+        {
+            private readonly ThingOwner<Thing> silver;
+
+            public TemporarySilverGift(int amount)
+            {
+                silver = new ThingOwner<Thing>(this);
+
+                try
+                {
+                    int remaining = amount;
+                    while (remaining > 0)
+                    {
+                        Thing stack = ThingMaker.MakeThing(ThingDefOf.Silver);
+                        stack.stackCount = Mathf.Min(remaining, ThingDefOf.Silver.stackLimit);
+                        remaining -= stack.stackCount;
+
+                        if (!silver.TryAdd(stack, canMergeWithExistingStacks: false))
+                        {
+                            stack.Destroy(DestroyMode.Vanish);
+                            throw new InvalidOperationException(
+                                "Could not hold temporary gift silver.");
+                        }
+                    }
+                }
+                catch
+                {
+                    silver.ClearAndDestroyContents();
+                    throw;
+                }
+            }
+
+            public IThingHolder ParentHolder => null;
+
+            public void GetChildHolders(List<IThingHolder> outChildren)
+            {
+            }
+
+            public ThingOwner GetDirectlyHeldThings()
+            {
+                return silver;
+            }
+
+            public void Dispose()
+            {
+                silver.ClearAndDestroyContents();
+            }
         }
 
         /// <summary>

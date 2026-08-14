@@ -417,7 +417,7 @@ namespace Intercolony
             rep.Adjust(DebtSettledLate);
         }
 
-        private static void AffectGoodwill(Faction faction, int delta, string reason)
+        internal static void AffectGoodwill(Faction faction, int delta, string reason)
         {
             if (faction == null || faction.IsPlayer || faction.Hidden || faction.defeated)
             {
