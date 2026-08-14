@@ -53,16 +53,23 @@ namespace Intercolony
         }
     }
 
-    /// <summary>The fixed, non-random terms carried by a recurring contract proposal.</summary>
+    /// <summary>The fixed, deterministic terms carried by a recurring contract proposal.</summary>
     public sealed class ContractTerms
     {
-        internal ContractTerms(float unitPrice, float referenceUnitPrice, int cadenceTicks)
+        internal ContractTerms(
+            float unitPrice,
+            float referenceUnitPrice,
+            int cadenceTicks,
+            int paymentPerDelivery,
+            int deliveryCount)
         {
             this.unitPrice = unitPrice;
             this.referenceUnitPrice = referenceUnitPrice;
             minimumUnitPrice = 0f;
             maximumUnitPrice = referenceUnitPrice * 2f;
             this.cadenceTicks = cadenceTicks;
+            this.paymentPerDelivery = paymentPerDelivery;
+            this.deliveryCount = deliveryCount;
         }
 
         public readonly float unitPrice;
@@ -75,6 +82,12 @@ namespace Intercolony
         public readonly float maximumUnitPrice;
 
         public readonly int cadenceTicks;
+
+        /// <summary>Agreed value of one delivery, rounded by the live contract payment rule.</summary>
+        public readonly int paymentPerDelivery;
+
+        /// <summary>Number of deliveries in the agreement.</summary>
+        public readonly int deliveryCount;
 
         public bool IsUnitPriceInRange(float agreedUnitPrice)
         {
@@ -135,6 +148,9 @@ namespace Intercolony
 
         /// <summary>Keeps proposal decisions in their own deterministic economy-seed stream.</summary>
         private const int ProposalDecisionSeedSalt = 0x0C0D;
+
+        /// <summary>Keeps deterministic contract-term rolls in their own economy-seed stream.</summary>
+        private const int ContractTermsSeedSalt = 0x0C0E;
 
         /// <summary>Obviously good or bad proposals receive an answer after one day.</summary>
         private const int MinimumDecisionDelayDays = 1;
@@ -307,7 +323,7 @@ namespace Intercolony
 
                 int quantity = ContractQuantity(chosen, profile);
                 ContractTerms terms = CalculateContractTerms(
-                    settlement, profile, chosen, category, quantity);
+                    state, settlement, profile, chosen, category, quantity);
                 return BuildContract(
                     state, settlement, profile, chosen, category, quantity, terms.unitPrice);
             }
@@ -376,7 +392,8 @@ namespace Intercolony
             }
 
             ContractTerms terms = CalculateContractTerms(
-                settlement, profile, thingDef, category, quantityPerCycle);
+                state, settlement, profile, thingDef, category, quantityPerCycle,
+                agreedUnitPrice);
             float chosenUnitPrice = agreedUnitPrice ?? terms.referenceUnitPrice;
             if (!terms.IsUnitPriceInRange(chosenUnitPrice))
             {
@@ -466,7 +483,8 @@ namespace Intercolony
             IntercolonyWorldComponent state,
             Settlement settlement,
             ThingDef thingDef,
-            int quantityPerCycle)
+            int quantityPerCycle,
+            float? agreedUnitPrice = null)
         {
             if (state == null ||
                 !TryValidateEligibleCounterparty(state, settlement, out _, out _) ||
@@ -496,7 +514,8 @@ namespace Intercolony
             }
 
             return CalculateContractTerms(
-                settlement, profile, thingDef, category, quantityPerCycle);
+                state, settlement, profile, thingDef, category, quantityPerCycle,
+                agreedUnitPrice);
         }
 
         private static bool TryGetEligibleCounterparty(
@@ -624,7 +643,8 @@ namespace Intercolony
             float agreedUnitPrice)
         {
             ContractTerms terms = CalculateContractTerms(
-                settlement, profile, thingDef, category, quantityPerCycle);
+                state, settlement, profile, thingDef, category, quantityPerCycle,
+                agreedUnitPrice);
 
             return new RecurringContract
             {
@@ -635,8 +655,8 @@ namespace Intercolony
                 thingDef = thingDef,
                 quantityPerCycle = quantityPerCycle,
                 cadenceTicks = terms.cadenceTicks,
-                totalCycles = Rand.RangeInclusive(3, 6),
-                unitPrice = agreedUnitPrice,
+                totalCycles = terms.deliveryCount,
+                unitPrice = terms.unitPrice,
                 referenceUnitPrice = terms.referenceUnitPrice,
                 DiscountFraction = 0f,
                 status = ContractStatus.Offered,
@@ -646,23 +666,45 @@ namespace Intercolony
 
         /// <summary>
         /// Single source of truth for the fixed proposal terms used by previews and construction.
-        /// Random lifecycle terms such as the cycle count deliberately remain in construction.
         /// </summary>
         internal static ContractTerms CalculateContractTerms(
+            IntercolonyWorldComponent state,
             Settlement settlement,
             SettlementEconomicProfile profile,
             ThingDef thingDef,
             IntercolonyProductCategory category,
-            int quantityPerCycle)
+            int quantityPerCycle,
+            float? agreedUnitPrice = null)
         {
             float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
             float spot = IntercolonyPricing.UnitPrice(
                 thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
+            float unitPrice = agreedUnitPrice ?? spot * ContractPricePremium;
+
+            // These inputs are durable across a reload, while the salt isolates this roll from
+            // other economy-seed streams using the same settlement and item identifiers.
+            int seed = Gen.HashCombineInt(
+                state.EconomySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
+            seed = Gen.HashCombineInt(seed, unitPrice.GetHashCode());
+            seed = Gen.HashCombineInt(seed, ContractTermsSeedSalt);
+
+            int deliveryCount;
+            Rand.PushState(seed);
+            try
+            {
+                deliveryCount = Rand.RangeInclusive(3, 6);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
 
             return new ContractTerms(
-                spot * ContractPricePremium,
+                unitPrice,
                 spot,
-                GenDate.TicksPerQuadrum);
+                GenDate.TicksPerQuadrum,
+                Mathf.RoundToInt(unitPrice * quantityPerCycle),
+                deliveryCount);
         }
 
         /// <summary>
