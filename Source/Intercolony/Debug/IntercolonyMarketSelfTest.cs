@@ -742,6 +742,7 @@ namespace Intercolony
                 int interested = 0;
                 int badPrice = 0;
                 int overAppetite = 0;
+                int wrongDefaultRate = 0;
                 bool sortedByValue = true;
                 int previousTotal = int.MaxValue;
                 bool seenUninterested = false;
@@ -754,6 +755,9 @@ namespace Intercolony
                         interested++;
                         if (offer.unitPrice <= 0f) badPrice++;
                         if (offer.quantity > offer.maxQuantity) overAppetite++;
+                        float defaultRate = FindBuyerService.SellRateFor(
+                            offer, offer.quantity, FulfillmentMode.BuyerPickup);
+                        if (!Mathf.Approximately(offer.unitPrice, defaultRate)) wrongDefaultRate++;
                         if (offer.TotalPrice > previousTotal) sortedByValue = false;
                         previousTotal = offer.TotalPrice;
                         if (seenUninterested) interestedAfterUninterested = true;
@@ -807,8 +811,23 @@ namespace Intercolony
                 Check("interested offers are priced", badPrice == 0, $"{badPrice} bad");
                 Check("offers never exceed the buyer's appetite", overAppetite == 0,
                     $"{overAppetite} over");
+                Check("listed rates match confirmation's default pickup terms",
+                    wrongDefaultRate == 0, $"{wrongDefaultRate} mismatched");
                 Check("offers are ranked best-first", sortedByValue);
                 Check("uninterested settlements sort last", !interestedAfterUninterested);
+
+                PriceFactor pickup =
+                    IntercolonyPricing.LogisticsFactor(FulfillmentMode.BuyerPickup);
+                BuyerOffer fallbackOffer = new BuyerOffer
+                {
+                    unitPrice = 10f,
+                    factors = new List<PriceFactor> { pickup }
+                };
+                Check("fallback repricing does not apply pickup logistics twice",
+                    Mathf.Approximately(
+                        FindBuyerService.SellRateFor(
+                            fallbackOffer, 1, FulfillmentMode.BuyerPickup),
+                        fallbackOffer.unitPrice));
 
                 // Saturation must bite here too, or Find Buyer becomes a way to dodge §13 by
                 // routing around the market.

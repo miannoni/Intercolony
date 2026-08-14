@@ -28,7 +28,9 @@ namespace Intercolony
         /// <summary>Most units this settlement would take before saturating (§13).</summary>
         public int maxQuantity;
 
-        /// <summary>Unit price for the quantity actually being offered.</summary>
+        /// <summary>
+        /// Unit price for the quantity actually offered, with the default buyer-pickup terms.
+        /// </summary>
         public float unitPrice;
 
         /// <summary>Units this offer covers — the lesser of what is held and what is wanted.</summary>
@@ -251,9 +253,9 @@ namespace Intercolony
             }
 
             offer.quantity = Mathf.Min(wantedQuantity, offer.maxQuantity);
-            offer.unitPrice = IntercolonyPricing.UnitPrice(
-                def, stuff, offer.quantity, profile, category, offer.distanceTiles,
-                null, out List<PriceFactor> factors);
+            offer.unitPrice = SellRateFor(
+                offer, offer.quantity, FulfillmentMode.BuyerPickup,
+                out List<PriceFactor> factors);
             offer.factors = factors;
 
             return offer;
@@ -291,11 +293,75 @@ namespace Intercolony
             }
 
             offer.quantity = Mathf.Min(wantedQuantity, offer.maxQuantity);
-            offer.unitPrice = IntercolonyPricing.UnitPrice(
-                race, null, offer.animalSpec, offer.quantity, profile, category,
-                offer.distanceTiles, null, out List<PriceFactor> factors);
+            offer.unitPrice = SellRateFor(
+                offer, offer.quantity, FulfillmentMode.BuyerPickup,
+                out List<PriceFactor> factors);
             offer.factors = factors;
             return offer;
+        }
+
+        /// <summary>
+        /// Unit rate a buyer pays for this lot size and fulfilment mode. Shared by the listing
+        /// and confirmation so the advertised rate is the rate used to create the order.
+        /// </summary>
+        internal static float SellRateFor(
+            BuyerOffer offer, int quantity, FulfillmentMode fulfillment)
+        {
+            return SellRateFor(offer, quantity, fulfillment, out _);
+        }
+
+        private static float SellRateFor(
+            BuyerOffer offer,
+            int quantity,
+            FulfillmentMode fulfillment,
+            out List<PriceFactor> factors)
+        {
+            float rate;
+            if (offer?.def == null || offer.profile == null)
+            {
+                // BuyerOffer.unitPrice is stored with the listing's default pickup terms.
+                // Recover its pre-logistics rate before applying the mode currently selected.
+                PriceFactor listingLogistics =
+                    IntercolonyPricing.LogisticsFactor(FulfillmentMode.BuyerPickup);
+                float storedRate = offer?.unitPrice ?? 0f;
+                factors = offer?.factors == null
+                    ? new List<PriceFactor>()
+                    : new List<PriceFactor>(offer.factors);
+                if (listingLogistics.multiplier <= 0f || float.IsNaN(listingLogistics.multiplier) ||
+                    float.IsInfinity(listingLogistics.multiplier))
+                {
+                    IntercolonyLog.Error($"Find Buyer unit price for {offer?.def?.defName ?? "<null>"} is using its stored unscaled value because the buyer-pickup logistics multiplier {listingLogistics.multiplier} is invalid.");
+                    return storedRate;
+                }
+                rate = storedRate / listingLogistics.multiplier;
+                int lastFactor = factors.Count - 1;
+                if (lastFactor >= 0 &&
+                    factors[lastFactor].label == listingLogistics.label &&
+                    Mathf.Approximately(
+                        factors[lastFactor].multiplier, listingLogistics.multiplier))
+                {
+                    factors.RemoveAt(lastFactor);
+                }
+            }
+            else
+            {
+                IntercolonyProductCategory category =
+                    IntercolonyProductClassifier.Classify(offer.def)
+                    ?? IntercolonyProductCategory.Commodities;
+
+                rate = offer.IsAnimalOffer
+                    ? IntercolonyPricing.UnitPrice(
+                        offer.def, null, offer.animalSpec, Mathf.Max(1, quantity),
+                        offer.profile, IntercolonyProductCategory.Commodities,
+                        offer.distanceTiles, null, out factors)
+                    : IntercolonyPricing.UnitPrice(
+                        offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
+                        category, offer.distanceTiles, null, out factors);
+            }
+
+            PriceFactor logistics = IntercolonyPricing.LogisticsFactor(fulfillment);
+            factors.Add(logistics);
+            return rate * logistics.multiplier;
         }
 
         /// <summary>

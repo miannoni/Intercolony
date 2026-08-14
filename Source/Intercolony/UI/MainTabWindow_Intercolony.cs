@@ -1169,37 +1169,6 @@ namespace Intercolony
                    (Mouse.IsOver(rect) || DebugViewSettings.drawTooltipEdges);
         }
 
-        /// <summary>
-        /// Unit rate a buyer pays for this lot size. Re-computed rather than reused, so the
-        /// confirmation slider moves the per-unit price the way saturation says it should (§13).
-        /// </summary>
-        private static float SellRateFor(
-            BuyerOffer offer, int quantity, FulfillmentMode fulfillment)
-        {
-            float rate;
-            if (offer?.def == null || offer.profile == null)
-            {
-                rate = offer?.unitPrice ?? 0f;
-            }
-            else
-            {
-                IntercolonyProductCategory category =
-                    IntercolonyProductClassifier.Classify(offer.def)
-                    ?? IntercolonyProductCategory.Commodities;
-
-                rate = offer.IsAnimalOffer
-                    ? IntercolonyPricing.UnitPrice(
-                        offer.def, null, offer.animalSpec, Mathf.Max(1, quantity),
-                        offer.profile, IntercolonyProductCategory.Commodities,
-                        offer.distanceTiles, null, out _)
-                    : IntercolonyPricing.UnitPrice(
-                        offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
-                        category, offer.distanceTiles, null, out _);
-            }
-
-            return rate * IntercolonyPricing.LogisticsFactor(fulfillment).multiplier;
-        }
-
         /// <summary>Profile for a settlement id, or null if it is gone. Used for live re-pricing.</summary>
         private static SettlementEconomicProfile ProfileFor(IntercolonyWorldComponent state, int settlementId)
         {
@@ -1626,7 +1595,7 @@ namespace Intercolony
         private static readonly float[] BuyerColumnWidths = { 0.28f, 0.16f, 0.14f, 0.16f, 0.12f, 0.14f };
 
         private static readonly string[] BuyerColumnLabels =
-            { "Buyer", "Will take", "Unit", "Total", "Dist", "" };
+            { "Buyer", "Will take", "Unit @ qty", "Total", "Dist", "" };
 
         /// <summary>Sortable headers, matching the Market tab's convention.</summary>
         private void DrawBuyerHeader(Rect rect)
@@ -1763,7 +1732,7 @@ namespace Intercolony
             x += rect.width * BuyerColumnWidths[1];
 
             Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[2] - 4f, 24f),
-                $"{offer.unitPrice:F2}");
+                $"{offer.unitPrice:F2} @ {offer.quantity}");
             x += rect.width * BuyerColumnWidths[2];
 
             Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[3] - 4f, 24f),
@@ -1810,7 +1779,7 @@ namespace Intercolony
                 offer.quantity,
                 (qty, fulfillment) =>
                 {
-                    float rate = SellRateFor(offer, qty, fulfillment);
+                    float rate = FindBuyerService.SellRateFor(offer, qty, fulfillment);
                     string logistics = fulfillment == FulfillmentMode.BuyerPickup
                         ? "No caravan is needed; the buyer handles collection and pays less for it."
                         : "You deliver: a caravan trip, paid at a premium for taking it on.";
@@ -1833,7 +1802,7 @@ namespace Intercolony
                 (qty, fulfillment) =>
                 {
                     BuyerOffer priced = offer;
-                    priced.unitPrice = SellRateFor(offer, qty, fulfillment);
+                    priced.unitPrice = FindBuyerService.SellRateFor(offer, qty, fulfillment);
                     if (SalesOrderService.CreateFromOffer(
                             state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
                             DeadlineDays, fulfillment) != null)
@@ -1859,7 +1828,7 @@ namespace Intercolony
                 offer.quantity,
                 (qty, fulfillment) =>
                 {
-                    float rate = SellRateFor(offer, qty, fulfillment);
+                    float rate = FindBuyerService.SellRateFor(offer, qty, fulfillment);
                     string commitment = fulfillment == FulfillmentMode.BuyerPickup
                         ? $"Commit to sell {qty}x {offer.animalSpec.ShortLabel(offer.def)} to " +
                           $"{offer.settlement?.Label}.\n\n" +
@@ -1890,7 +1859,7 @@ namespace Intercolony
                 (qty, fulfillment) =>
                 {
                     BuyerOffer priced = offer;
-                    priced.unitPrice = SellRateFor(offer, qty, fulfillment);
+                    priced.unitPrice = FindBuyerService.SellRateFor(offer, qty, fulfillment);
                     if (SalesOrderService.CreateFromOffer(
                             state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
                             deadlineDays, fulfillment) != null)
