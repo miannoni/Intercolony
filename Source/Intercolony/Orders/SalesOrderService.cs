@@ -246,7 +246,7 @@ namespace Intercolony
             // instalments disagree, and the player is visibly short-changed — an order
             // advertised at 537 silver paid out 536.
             int payment = order.RemainingQuantity <= 0
-                ? order.TotalPayment - order.paidSilver
+                ? order.DiscountedTotalPayment - order.paidSilver
                 : order.PaymentFor(handedOver);
 
             payment = Mathf.Max(0, payment);
@@ -565,7 +565,7 @@ namespace Intercolony
                 }
 
                 int payment = taken >= owed
-                    ? order.TotalPayment - order.paidSilver
+                    ? order.DiscountedTotalPayment - order.paidSilver
                     : order.PaymentFor(taken);
 
                 order.deliveredQuantity += taken;

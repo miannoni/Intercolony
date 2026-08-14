@@ -95,6 +95,15 @@ namespace Intercolony
         /// <summary>Agreed unit price, locked at acceptance so later market drift cannot change the deal.</summary>
         public float unitPrice;
 
+        /// <summary>Fraction of the agreed value waived when silver is paid, from 0 to 1.</summary>
+        private float discountFraction;
+
+        public float DiscountFraction
+        {
+            get => discountFraction;
+            set => discountFraction = float.IsNaN(value) ? 0f : Mathf.Clamp01(value);
+        }
+
         public int acceptedTick;
         public int deadlineTick;
 
@@ -134,6 +143,10 @@ namespace Intercolony
 
         public int TotalPayment => Mathf.RoundToInt(unitPrice * Quantity);
 
+        /// <summary>The silver actually due after applying the discount to the agreed value.</summary>
+        public int DiscountedTotalPayment =>
+            Mathf.RoundToInt(unitPrice * Quantity * (1f - discountFraction));
+
         public int RemainingQuantity => Mathf.Max(0, Quantity - deliveredQuantity);
 
         public bool IsOpen => status == SalesOrderStatus.Accepted ||
@@ -167,7 +180,7 @@ namespace Intercolony
         /// </summary>
         public int PaymentFor(int units)
         {
-            return Mathf.FloorToInt(unitPrice * units);
+            return Mathf.FloorToInt(unitPrice * units * (1f - discountFraction));
         }
 
         public void ExposeData()
@@ -183,6 +196,8 @@ namespace Intercolony
                 ref designatedAnimals, "designatedAnimals", LookMode.Reference);
             Scribe_Deep.Look(ref line, "line");
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
+            Scribe_Values.Look(ref discountFraction, "discountFraction", 0f);
+            DiscountFraction = discountFraction;
 
             // Schema 6 stored the item and quantity directly on the order. Read the legacy
             // nodes so an order accepted before Phase 6 is not silently emptied — §62 forbids

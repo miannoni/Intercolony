@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 35;
+        public const int CurrentSaveVersion = 36;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1801,6 +1801,14 @@ namespace Intercolony
                 disabledContractProposalCategories.Clear();
                 IntercolonyLog.Message(
                     "  schema 34 -> 35: contract proposals are now off by default for this save; re-enable them in the Contracts page control strip.");
+            }
+
+            if (saveVersion < 36)
+            {
+                // 35 -> 36 added a discount fraction to sales orders. The absent field's zero
+                // default preserves every existing order's full agreed payment.
+                IntercolonyLog.Message(
+                    "  schema 35 -> 36: sales orders now carry a discount fraction; existing orders remain undiscounted.");
             }
 
             saveVersion = CurrentSaveVersion;
