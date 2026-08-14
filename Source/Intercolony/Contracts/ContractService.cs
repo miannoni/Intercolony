@@ -52,6 +52,20 @@ namespace Intercolony
         }
     }
 
+    /// <summary>The fixed, non-random terms carried by a recurring contract proposal.</summary>
+    public sealed class ContractTerms
+    {
+        internal ContractTerms(float unitPrice, int cadenceTicks)
+        {
+            this.unitPrice = unitPrice;
+            this.cadenceTicks = cadenceTicks;
+        }
+
+        public readonly float unitPrice;
+
+        public readonly int cadenceTicks;
+    }
+
     /// <summary>
     /// Offers, runs and ends recurring contracts (DESIGN.md §29, §30, §107).
     ///
@@ -348,6 +362,47 @@ namespace Intercolony
             return ContractProposalResult.Accepted(contract);
         }
 
+        /// <summary>
+        /// Computes the fixed terms an eligible player proposal would carry without constructing
+        /// or recording a contract. Returns null when the supplied proposal is not eligible.
+        /// </summary>
+        public static ContractTerms PreviewContractTerms(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle)
+        {
+            if (state == null ||
+                !TryValidateEligibleCounterparty(state, settlement, out _, out _) ||
+                !TryGetEligibleItemCategory(
+                    thingDef, out IntercolonyProductCategory category, out _))
+            {
+                return null;
+            }
+
+            Dictionary<int, Dictionary<ThingDef, int>> completedOrders =
+                BuildCompletedOrderCounts(state);
+            completedOrders.TryGetValue(
+                settlement.ID, out Dictionary<ThingDef, int> settlementHistory);
+            int completedSales = 0;
+            settlementHistory?.TryGetValue(thingDef, out completedSales);
+            if (completedSales < MinimumCompletedOrdersForAgreement ||
+                quantityPerCycle < MinimumQuantityPerCycle ||
+                quantityPerCycle > MaximumQuantityPerCycle)
+            {
+                return null;
+            }
+
+            SettlementEconomicProfile profile = state.GetProfile(settlement);
+            if (profile == null)
+            {
+                return null;
+            }
+
+            return CalculateContractTerms(
+                settlement, profile, thingDef, category, quantityPerCycle);
+        }
+
         private static bool TryGetEligibleCounterparty(
             IntercolonyWorldComponent state,
             Settlement settlement,
@@ -356,6 +411,30 @@ namespace Intercolony
             out string reason)
         {
             profile = null;
+            if (!TryValidateEligibleCounterparty(state, settlement, out failure, out reason))
+            {
+                return false;
+            }
+
+            profile = state.GetProfile(settlement);
+            if (profile == null)
+            {
+                failure = ContractProposalFailure.MissingEconomicProfile;
+                reason = "The settlement has no economic profile.";
+                return false;
+            }
+
+            failure = ContractProposalFailure.None;
+            reason = null;
+            return true;
+        }
+
+        private static bool TryValidateEligibleCounterparty(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            out ContractProposalFailure failure,
+            out string reason)
+        {
             if (!IntercolonyMarketAccess.IsAccessible(settlement, out string accessReason))
             {
                 failure = ContractProposalFailure.InaccessibleSettlement;
@@ -378,14 +457,6 @@ namespace Intercolony
             {
                 failure = ContractProposalFailure.ExistingContract;
                 reason = "That settlement already has a live contract or pending renewal.";
-                return false;
-            }
-
-            profile = state.GetProfile(settlement);
-            if (profile == null)
-            {
-                failure = ContractProposalFailure.MissingEconomicProfile;
-                reason = "The settlement has no economic profile.";
                 return false;
             }
 
@@ -455,9 +526,8 @@ namespace Intercolony
             IntercolonyProductCategory category,
             int quantityPerCycle)
         {
-            float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
-            float spot = IntercolonyPricing.UnitPrice(
-                thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
+            ContractTerms terms = CalculateContractTerms(
+                settlement, profile, thingDef, category, quantityPerCycle);
 
             return new RecurringContract
             {
@@ -467,12 +537,32 @@ namespace Intercolony
                 factionName = settlement.Faction?.Name ?? "",
                 thingDef = thingDef,
                 quantityPerCycle = quantityPerCycle,
-                cadenceTicks = GenDate.TicksPerQuadrum,
+                cadenceTicks = terms.cadenceTicks,
                 totalCycles = Rand.RangeInclusive(3, 6),
-                unitPrice = spot * ContractPricePremium,
+                unitPrice = terms.unitPrice,
                 status = ContractStatus.Offered,
                 offerExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay
             };
+        }
+
+        /// <summary>
+        /// Single source of truth for the fixed proposal terms used by previews and construction.
+        /// Random lifecycle terms such as the cycle count deliberately remain in construction.
+        /// </summary>
+        internal static ContractTerms CalculateContractTerms(
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            ThingDef thingDef,
+            IntercolonyProductCategory category,
+            int quantityPerCycle)
+        {
+            float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+            float spot = IntercolonyPricing.UnitPrice(
+                thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
+
+            return new ContractTerms(
+                spot * ContractPricePremium,
+                GenDate.TicksPerQuadrum);
         }
 
         /// <summary>
