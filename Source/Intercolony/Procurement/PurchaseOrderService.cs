@@ -180,12 +180,7 @@ namespace Intercolony
 
         private static void DeliverToColony(PurchaseOrder order)
         {
-            // Removed maps can remain referenced until reload after leaving Find.Maps.
-            // Treat that dangling reference like the null Scribe resolves after loading.
-            Map map = order.destinationMap != null &&
-                      Find.Maps?.Contains(order.destinationMap) == true
-                ? order.destinationMap
-                : Find.AnyPlayerHomeMap;
+            Map map = ResolveDestinationMap(order);
             if (map == null)
             {
                 // Nowhere to put them. Hold rather than destroy; the player may resettle.
@@ -214,6 +209,16 @@ namespace Intercolony
                 MessageTypeDefOf.PositiveEvent, historical: true);
         }
 
+        private static Map ResolveDestinationMap(PurchaseOrder order)
+        {
+            // Removed maps can remain referenced until reload after leaving Find.Maps.
+            // Treat that dangling reference like the null Scribe resolves after loading.
+            return order.destinationMap != null &&
+                   Find.Maps?.Contains(order.destinationMap) == true
+                ? order.destinationMap
+                : Find.AnyPlayerHomeMap;
+        }
+
         /// <summary>
         /// Hands collected goods to a caravan at the supplier's settlement (§25.3 player pickup).
         /// </summary>
@@ -235,6 +240,14 @@ namespace Intercolony
             if (goods.Count == 0)
             {
                 Refund(order, "The supplier had nothing to hand over.");
+                // Refund leaves the order open when it cannot pay anything.
+                if (order.IsOpen)
+                {
+                    Messages.Message(
+                        "The refund could not be delivered.",
+                        MessageTypeDefOf.RejectInput, historical: false);
+                }
+
                 return false;
             }
 
@@ -417,31 +430,39 @@ namespace Intercolony
                 return;
             }
 
-            order.status = PurchaseOrderStatus.SupplierDefault;
-            order.outcomeNote = reason;
-
             // Purchases are prepaid. After a partial animal handoff, quantity is only the head
             // still owed, so only that proportional balance remains refundable. Goods retain
             // their established accounting unchanged.
-            int refundSilver = RefundableSilver(order);
+            int requestedRefund = RefundableSilver(order);
+            int refundedSilver = 0;
+            if (requestedRefund > 0)
+            {
+                Map map = ResolveDestinationMap(order);
+                refundedSilver = map == null ? 0 : GiveSilver(map, requestedRefund);
+                // A refund that paid nothing is not a default; hold and retry.
+                if (map == null || refundedSilver <= 0)
+                {
+                    return;
+                }
+            }
+
+            order.status = PurchaseOrderStatus.SupplierDefault;
+            order.outcomeNote = reason;
             if (order.IsAnimalOrder)
             {
                 // Status UI uses paidSilver as the displayed refunded amount after default.
-                order.paidSilver = refundSilver;
+                order.paidSilver = refundedSilver;
             }
 
-            Map map = Find.AnyPlayerHomeMap;
-            if (map != null && refundSilver > 0)
+            if (refundedSilver > 0)
             {
-                GiveSilver(map, refundSilver);
-
-                LedgerService.Record(LedgerKind.Refund, refundSilver, order.settlementName,
+                LedgerService.Record(LedgerKind.Refund, refundedSilver, order.settlementName,
                     $"{order.quantity}x {order.thingDef?.label ?? "goods"} refunded");
             }
 
-            IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {refundSilver} silver.");
+            IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {refundedSilver} silver.");
             Messages.Message(
-                $"{order.settlementName} defaulted on your order. {refundSilver} silver refunded.",
+                $"{order.settlementName} defaulted on your order. {refundedSilver} silver refunded.",
                 MessageTypeDefOf.NegativeEvent, historical: true);
         }
 
@@ -591,18 +612,33 @@ namespace Intercolony
             return remaining <= 0;
         }
 
-        private static void GiveSilver(Map map, int amount)
+        private static int GiveSilver(Map map, int amount)
         {
             int remaining = amount;
+            int placed = 0;
             IntVec3 cell = DropCellFinder.TradeDropSpot(map);
             while (remaining > 0)
             {
                 int stack = Mathf.Min(remaining, ThingDefOf.Silver.stackLimit);
                 Thing silver = ThingMaker.MakeThing(ThingDefOf.Silver);
                 silver.stackCount = stack;
-                GenPlace.TryPlaceThing(silver, cell, map, ThingPlaceMode.Near);
+                if (!GenPlace.TryPlaceThing(
+                        silver, cell, map, ThingPlaceMode.Near,
+                        (placedThing, placedCount) => placed += placedCount))
+                {
+                    break;
+                }
+
                 remaining -= stack;
             }
+
+            if (placed < amount)
+            {
+                IntercolonyLog.Warning(
+                    $"Refund silver placement was incomplete: requested {amount}, actually placed {placed}.");
+            }
+
+            return placed;
         }
     }
 }
