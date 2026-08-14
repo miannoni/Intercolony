@@ -239,12 +239,14 @@ namespace Intercolony
 
                 Check("unit price is positive", price > 0f, price.ToString("F3"));
                 Check("breakdown has factors", factors.Count >= 3, $"count {factors.Count}");
+                PriceFactor expectedEconomy =
+                    IntercolonyPricing.SellingEconomyDifficultyFactor();
                 PriceFactor economy = factors.Find(
                     f => f.label == "Economy difficulty (selling)");
                 Check("selling breakdown names its economy difficulty factor",
                     economy.label == "Economy difficulty (selling)" &&
                     Mathf.Approximately(
-                        economy.multiplier, 2f - IntercolonyMod.Settings.economyDifficulty));
+                        economy.multiplier, expectedEconomy.multiplier));
 
                 float previousEconomyDifficulty = IntercolonyMod.Settings.economyDifficulty;
                 try

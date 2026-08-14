@@ -23,6 +23,8 @@ namespace Intercolony
 
         private const int MinDeadlineDays = 6;
         private const int MaxDeadlineDays = 20;
+        private const int MaxCratedLotSize = 8;
+        private const int MaxSingleStackLotSize = 15;
 
         private static readonly float[] ConditionFloors = { 0.6f, 0.75f, 0.85f };
 
@@ -111,6 +113,16 @@ namespace Intercolony
             int quantity = Mathf.Max(1, Mathf.RoundToInt(
                 PickQuantity(def, stuff, profile) *
                 ReputationService.OpportunitySizeFactor(reputation)));
+            // Reputation can enlarge an ordinary order, but it must not override the physical
+            // form limits for goods that cannot share a stack or crate.
+            if (def.category == ThingCategory.Building)
+            {
+                quantity = Mathf.Min(quantity, MaxCratedLotSize);
+            }
+            else if (def.stackLimit <= 1)
+            {
+                quantity = Mathf.Min(quantity, MaxSingleStackLotSize);
+            }
             QualityCategory? minQuality = PickMinimumQuality(def, profile);
             float minHitPointsPercent = PickMinimumCondition(def, profile);
 
@@ -320,13 +332,13 @@ namespace Intercolony
             // (docs/unique-goods-spike.md: "keep unique-good lot sizes small").
             if (def.category == ThingCategory.Building)
             {
-                return Mathf.Clamp(quantity, 1, 8);
+                return Mathf.Clamp(quantity, 1, MaxCratedLotSize);
             }
 
             // Single-stack items — weapons, apparel — are bulky too, just less so.
             if (def.stackLimit <= 1)
             {
-                return Mathf.Clamp(quantity, 1, 15);
+                return Mathf.Clamp(quantity, 1, MaxSingleStackLotSize);
             }
 
             // Keep lots in a sane band: never a token handful, never an unshippable mountain.
