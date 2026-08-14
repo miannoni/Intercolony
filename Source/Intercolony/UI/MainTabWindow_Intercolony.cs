@@ -1650,7 +1650,7 @@ namespace Intercolony
         private static readonly float[] BuyerColumnWidths = { 0.28f, 0.16f, 0.14f, 0.16f, 0.12f, 0.14f };
 
         private static readonly string[] BuyerColumnLabels =
-            { "Buyer", "Will take", "Unit @ qty", "Total", "Dist", "" };
+            { "Buyer", "Will take", "Unit", "Total", "Dist", "" };
 
         /// <summary>Sortable headers, matching the Market tab's convention.</summary>
         private void DrawBuyerHeader(Rect rect)
@@ -1787,7 +1787,7 @@ namespace Intercolony
             x += rect.width * BuyerColumnWidths[1];
 
             Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[2] - 4f, 24f),
-                $"{offer.unitPrice:F2} @ {offer.quantity}");
+                $"{offer.unitPrice:F2}");
             x += rect.width * BuyerColumnWidths[2];
 
             Widgets.Label(new Rect(x, rect.y + 6f, rect.width * BuyerColumnWidths[3] - 4f, 24f),
