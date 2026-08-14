@@ -47,6 +47,12 @@ namespace Intercolony
     /// </summary>
     public class SettlementEconomicProfile
     {
+        /// <summary>
+        /// Number of per-good demand rolls averaged together. This is a tuning knob: a short
+        /// window damps cycle-to-cycle variance without making local demand feel static.
+        /// </summary>
+        private const int DemandSmoothingWindowCycles = 3;
+
         /// <summary>Stable <c>WorldObject.ID</c> of the settlement this describes.</summary>
         public int settlementId;
 
@@ -89,9 +95,9 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Stable appetite for one good, layered over the settlement's category identity.
-        /// The broad weight still leads; the bounded modifier represents local shortages and
-        /// preferences that make two goods in the same category genuinely different markets.
+        /// Appetite for one good in the current market cycle, layered over the settlement's
+        /// category identity. The broad weight still leads; a smoothed, bounded modifier
+        /// represents local shortages and preferences that drift between refreshes.
         /// </summary>
         public float DemandFor(ThingDef def, IntercolonyProductCategory category)
         {
@@ -101,16 +107,29 @@ namespace Intercolony
                 return categoryDemand;
             }
 
-            int demandSeed = Gen.HashCombineInt(seed, def.shortHash, 0x4445_4D44, 0);
-            Rand.PushState(demandSeed);
-            try
+            int currentCycle = Mathf.Max(0, IntercolonyWorldComponent.Current?.RefreshCount ?? 0);
+            int firstCycle = Mathf.Max(0, currentCycle - DemandSmoothingWindowCycles + 1);
+            float multiplierSum = 0f;
+            int cycleCount = 0;
+            for (int cycle = firstCycle; cycle <= currentCycle; cycle++)
             {
-                return Mathf.Max(0.02f, categoryDemand * Rand.Range(0.55f, 1.45f));
+                // As with market opportunities, the refresh number participates directly in
+                // the seed. Older rolls are recomputed rather than stored, preserving the save
+                // schema while making every (world, settlement, good, cycle) result repeatable.
+                int demandSeed = Gen.HashCombineInt(seed, def.shortHash, cycle, 0x4445_4D44);
+                Rand.PushState(demandSeed);
+                try
+                {
+                    multiplierSum += Rand.Range(0.55f, 1.45f);
+                    cycleCount++;
+                }
+                finally
+                {
+                    Rand.PopState();
+                }
             }
-            finally
-            {
-                Rand.PopState();
-            }
+
+            return Mathf.Max(0.02f, categoryDemand * (multiplierSum / cycleCount));
         }
 
         public float SupplyFor(IntercolonyProductCategory category)
