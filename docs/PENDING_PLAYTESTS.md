@@ -427,7 +427,9 @@ can settle both the sales side and the procurement side.
 **Not covered:** the no-home-map refund hold and the zero-placement refund hold have no coverage and
 are not practically reachable by hand. Do not treat this two-colony test as evidence for either.
 
-### A proposed agreement is answered after a wait
+### ~~A proposed agreement is answered after a wait~~
+
+**Done 2026-08-15.** Matteo proposed at several prices and reported the flow working, including the differing response times and the refusal path.
 
 Added 2026-08-14 with `4dc2ae1` and `feb19e5`. Proposing a supply agreement used to accept it on the
 spot, which made the terms meaningless. It is now sent, sits pending, and the settlement answers when
@@ -449,7 +451,9 @@ and what the answer was.
 says it is awaiting the settlement's answer and offers no accept or decline buttons. A letter arrives
 for acceptance and for refusal alike.
 
-### A proposal's answer does not change on reload
+### ~~A proposal's answer does not change on reload~~
+
+**Done 2026-08-15.** Reported working; the answer held across a reload.
 
 Added 2026-08-14. The answer is seeded from the world economy seed and the contract id on purpose, so
 reloading cannot be used to fish for a better outcome.
@@ -460,7 +464,9 @@ the save and let the same day pass again.
 **Pass.** The same answer both times. A different answer means the seeding regressed and the mechanic
 can be save-scummed.
 
-### Price moves faction goodwill both ways, and never starts a war
+### ~~Price moves faction goodwill both ways, and never starts a war~~
+
+**Done 2026-08-15.** Reported working in both directions, with no hostility resulting from a price penalty.
 
 Added 2026-08-14 with `84c80f0` and `b41af87`. Price is a single lever: below the going rate is
 generosity and earns faction goodwill when a delivery completes; above it is greed and costs
@@ -476,7 +482,9 @@ and let it deliver.
 threshold as a result of a price penalty, and no hostility letter arrives from one. Commercial
 reputation continues to move on its own terms — being liked and being trusted are separate.
 
-### Save schema 38 and 39 have never been migrated from a real save
+### ~~Save schema 38 and 39 have been migrated from a real save~~
+
+**Done 2026-08-15.** A real **schema 22** save was opened and migrated cleanly all the way to 39 — a longer chain than this entry anticipated, and the last outstanding release risk for 0.9.1.
 
 Added 2026-08-14. A real save has migrated as far as **37** successfully, which is recorded above. The
 two steps added since — the market rate a deal was struck against, and the pending-decision fields —

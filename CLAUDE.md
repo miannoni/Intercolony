@@ -88,17 +88,34 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 26 complete (2026-08-08) — **0.9.0 is live and public**. The post-0.9.0
-playtest-correction batch landed on 2026-08-09: A1–A5, B1–B3, B5/B5b, C0–C2, the D1 research spike
-and **B4** (buy-only items are now an opt-in, default-off setting; see the decision log). Only
-**A playtest-feedback batch landed 2026-08-10** from Matteo's own play: worker wages doubled with a
-settings slider (existing employments keep their agreed wage; only new quotes move), the supply
-agreement popup now lets the player negotiate with Social, resize the commitment by a tenth either
-way and choose delivery or pickup, and Procurement was given the same four sub-tabs as Selling with
-Market and Contracts as declared placeholders. The focused order, contract and RFQ debug suites
-were run during 0.9.1 preparation on 2026-08-13 and passed 93/0, 38/0 and 69/0 respectively. The
-player-facing UI, real-save migration and other manual checks remain outstanding; see
-`docs/RELEASE_0.9.1_PREP.md` for the exact release state.
+**Phase:** 26 complete. **0.9.1 is live and public** (2026-08-15) — Workshop item `3780094556`
+updated, `main` pushed, tag `v0.9.1` and a GitHub pre-release created to the same standard as 0.9.0.
+**Save schema is 39.**
+
+0.9.1 fixed what the first beta players hit and added the other half of the agreement system: the
+player can now propose a standing supply agreement rather than only receiving offers. A proposal is
+*sent* and answered later, and can be refused. The response is fastest at both extremes of how
+attractive it is and slowest in the middle, because a middling offer is the only one genuinely in
+doubt. Price is one lever from zero to twice the going rate — below it earns faction goodwill on a
+completed delivery, above it costs goodwill, and a penalty is clamped against RimWorld's own hostile
+threshold so a price control can never start a war. Incoming proposals are now **off by default**,
+including in migrated saves. Order history is bounded at a hundred closed records each, clearable by
+hand, which is only safe because contract eligibility moved onto a durable commercial-history
+aggregate first.
+
+**A real schema 22 save migrated cleanly to 39**, which closed the last release risk. Read
+`docs/RELEASE_0.9.1_PREP.md` for the full record and `PROGRESS.md` for the milestone entry.
+
+**Three rules this batch established, and a future change must not break:**
+
+- **A displayed figure and a charged figure come from one calculation.** `0b1dfe9` fixed a live
+  defect where Find Buyer advertised a rate the commit then changed. Every preview since — contract
+  terms, proposal payment, delivery count — is computed by the same method construction uses. If you
+  find yourself multiplying money in a UI file, stop.
+- **A deal records the market rate it was struck against.** Demand now drifts between refreshes, so
+  recomputing spot at completion answers a different question than the player agreed to.
+- **A UI cache must reset at its own lifecycle boundary.** Main-tab windows survive being closed;
+  `44c6509` was an eligibility list that outlived the window and stayed empty for a session.
 
 **A real defect from that play was fixed the same day.** Accepting a quotation marked the purchase
 request `Cancelled` — a status that means "withdrawn by the player" — so every successful purchase

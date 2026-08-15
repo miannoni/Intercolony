@@ -2031,3 +2031,55 @@ Manual test:
   history-derived offer was generated.
 - `Run RFQ self-test`: **69 passed, 0 failed**; empty/full/partial quotations, price and quantity
   variation, two modded defs and all four goods-construction examples ran.
+
+## 0.9.1 — agreements, prices and corrections  (2026-08-15)
+
+Implemented:
+- **Player-proposed supply agreements.** A settlement could offer the player a standing deal; the
+  player could not offer one back. `ContractService.ProposeContract` builds one through the same
+  construction, eligibility, cadence, pricing and renewal path a settlement-initiated agreement
+  uses — only the 12% per-refresh roll and weighted item selection are skipped, because the player
+  is choosing rather than being rolled for.
+- **Proposals are answered, not granted.** A proposal is stored `Offered` with a decision tick and
+  an appeal score, and `AdvanceContracts` resolves it. Appeal weighs price against the going rate
+  (dominant), quantity against the settlement's appetite, and reputation. The wait is shortest at
+  *both* extremes and longest in the middle — a superb offer earns a quick yes, an absurd one a
+  quick no, and a middling one is the only one genuinely in doubt. The roll is seeded from the
+  economy seed and contract id so reloading cannot fish for a better answer.
+- **One price lever, from zero to twice spot.** Below the going rate is generosity and above it is
+  greed; each deal records the market rate it was struck against, because demand now drifts and
+  recomputing spot later would answer a different question. `FactionGiftUtility.GetGoodwillChange`
+  values the gap through unspawned Silver in a minimal `IThingHolder`, so vanilla's own maths and
+  relations curve are used rather than reimplemented. A penalty is clamped against
+  `DiplomacyTuning.BecomeHostileThreshold` and can never start a war.
+- **Incoming proposal controls**, persisted per save: a master switch plus six category filters,
+  stored as the *disabled* set so an added category is enabled for free. Filtering happens during
+  candidate selection, never after generation.
+- **Bounded order history.** The hundred most recent closed sales and purchase orders are retained
+  and pruned alongside the ledger, with `Clear completed history` on three lists. Contract
+  eligibility moved onto a durable `CommercialHistoryEntry` aggregate first — that is what made
+  pruning safe at all.
+- **A dedicated proposal window** replacing a button, two float menus and a confirm dialog.
+- Fixes: purchases deliver and refund to the ordering colony; a refund that cannot be paid is no
+  longer reported as paid; the false "0 units free" Mark Ready block; Find Buyer advertising a rate
+  the commit then changed; agreements listing undiscounted money; reputation scaling orders past
+  their transport limits; and proposal eligibility served from a cache that outlived the window.
+
+Not implemented:
+- No counteroffer or negotiation. A settlement takes the offered terms or refuses them.
+- Concluded purchase requests can be cleared by hand but have no automatic retention cap. The
+  shared predicate exists; the number was left undecided rather than inherited.
+
+Known limitations:
+- Availability remains a logical commitment, not a physical reservation.
+- Animal trading is still wholly unplayed and is not advertised.
+- Buyer pickup from a non-home or camp map is still untested; practicality never established.
+
+Manual test:
+- Order, market and contract self-tests rerun and reported green after the batch.
+- The proposal window, price lever, pending-decision flow and history clearing exercised in play.
+  Two defects found there and fixed before release (`44c6509`, `8aad4ea`).
+- **A real schema 22 save migrated cleanly to 39** — a longer chain than the release required, and
+  the last outstanding release risk.
+- Shipped: Workshop item `3780094556` updated, `main` pushed, tag `v0.9.1` and GitHub pre-release
+  created to the 0.9.0 standard.

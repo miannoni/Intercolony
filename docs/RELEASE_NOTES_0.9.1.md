@@ -1,8 +1,9 @@
-# Intercolony 0.9.1 — trade and procurement corrections
+# Intercolony 0.9.1 — agreements, prices and corrections
 
-Intercolony 0.9.1 is a point release focused on making orders, pickup, purchasing and prices
-behave the way the screen says they will. It also retunes trade and labor after the first public
-beta play sessions.
+Intercolony 0.9.1 fixes what the first beta players ran into: orders, pickup, purchasing and prices
+now behave the way the screen says they will. It also adds the other half of the agreement system —
+until now a settlement could offer you a standing supply deal, but you could not offer them one —
+and retunes trade and labor after the first public beta sessions.
 
 ## Fixes
 

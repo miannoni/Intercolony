@@ -67,14 +67,14 @@ market rate each deal was struck against; 38 -> 39 a proposal's decision due dat
 - [x] Grade and disposition the three Find Buyer defects; all three were fixed for 0.9.1.
 - [x] Land the 2026-08-14 player-feedback batch: bounded history, proposal controls, player-proposed agreements, the single price lever and two-way goodwill.
 - [x] Rerun the order, market and contract self-tests after that batch.
-- [ ] Exercise and round-trip the schema 33 -> 39 migrations on a real save (37 reached; 38 and 39 unproven).
+- [x] Exercise and round-trip the schema 33 -> 39 migrations on a real save.
 - [x] Prepare truthful 0.9.1 metadata and player-facing release notes (`f249741`).
 - [x] Build and verify `dist/Intercolony-0.9.1` and its ZIP.
 - [x] Re-read `docs/RELEASE_PROCEDURE.md` and prepare the safe Steam update handoff.
-- [ ] Prepare, but do not create, the annotated tag and GitHub pre-release.
-- [ ] Independently review the release-prep changes and verification evidence.
-- [ ] Commit only the release-preparation changes.
-- [ ] Stop before tag creation, pushing, Workshop upload or GitHub release creation.
+- [x] Create the annotated tag and GitHub pre-release, matching the 0.9.0 standard.
+- [x] Independently review the release-prep changes and verification evidence.
+- [x] Commit only the release-preparation changes.
+- [x] Publish: Workshop updated and `main` pushed, both on Matteo's explicit instruction.
 
 ## Tests actually run
 
@@ -91,7 +91,7 @@ market rate each deal was struck against; 38 -> 39 a proposal's decision due dat
 | Post-procurement-fix `-quicktest` clean load | PASS | 2026-08-13 at `4bc9adc`: `[Intercolony] loaded.`, `Harmony patches applied.`, `Trade blacklist rebuilt: 1 rule def(s), 10 def(s) excluded.`, and `State initialized fresh (schema 32).`; no red errors. This fresh current-schema world did not exercise the 31 -> 32 migration. |
 | Post-procurement-fix `Run order self-test` | PASS (sell-side no-regression only) | 2026-08-13 at `4bc9adc`: `93 passed, 0 failed`; the same recorded-map-vs-`Find.AnyPlayerHomeMap` and live-offer checks skipped. The suite is entirely sell-side (`SalesOrderService`, Find Buyer, buyer pickup and section 99 goods matching) and does not cover the changed procurement code: no self-test calls `PurchaseOrderService.Refund` or `GiveSilver`; only the pure `RefundableSilver` helper is asserted in `IntercolonyAnimalSelfTest.cs:415-419`. |
 | Order, market and contract self-tests after the 2026-08-14 batch | PASS (Matteo's report) | 2026-08-14: Matteo ran all three in game and reported them green. Counts were not captured in this session's evidence and are deliberately not quoted here. |
-| Schema 33 -> 39 real-save migration and reload | NOT RUN | A real save has been observed migrating as far as **37**. The six steps this batch added end at 39, and 38 and 39 have never been exercised from a real save — only in worlds created at the current schema, which `-quicktest` always produces. This is the outstanding risk before packaging. |
+| Schema 33 -> 39 real-save migration and reload | PASS | 2026-08-15 (Matteo's report): a real **schema 22** save was opened and migrated cleanly through to 39, a longer chain than the release required. This was the last outstanding release risk and it is closed. |
 
 | `package.ps1 -Version 0.9.1` | PASS | 2026-08-15: 9 files, 1.60 MiB folder, 1.15 MiB zip. Contents are `About/`, `Assemblies/`, `Defs/`, `LICENSE`, `README.md` and nothing else — no source, no `reference/`, and `About/PublishedFileId.txt` correctly absent. The packaged DLL's SHA-256 matches the repository build exactly (`3ce2380ac17ef143ec5934e56c310b812f074154d6d6727330775e794dd20256`). `About/Preview.png` is 933,975 bytes, under Steam's 1 MB cap. |
 
@@ -154,21 +154,25 @@ market rate each deal was struck against; 38 -> 39 a proposal's decision due dat
 - Ordinary release-prep commits may be pushed to `main` when Matteo explicitly requests it. No
   version tag, GitHub release, Steam upload or other release publication is authorized by that.
 
-## Current stopping point
+## Outcome
 
-- **Development for 0.9.1 is complete.** The player-feedback batch of 2026-08-14 landed in full,
-  taking the save schema to 39, and the order, market and contract self-tests were reported green
-  after it. Matteo exercised the new proposal window, the price lever, the pending-decision flow and
-  history clearing in play; the two defects that surfaced are fixed in `44c6509` and `8aad4ea`.
-- **The remaining work is packaging, not development.** Truthful 0.9.1 metadata and player-facing
-  release notes, then building and verifying the versioned distribution and ZIP, then the
-  release-procedure handoff — all without publishing. No tag, push, Workshop upload or GitHub
-  release is authorized.
-- **The one outstanding risk is the save schema.** A real save has been observed migrating to 37.
-  Steps 38 and 39 have never run against one, because `-quicktest` always creates a world already at
-  the current version. A broken migration is the single class of defect a point release cannot
-  undo afterwards, so open a real pre-batch save and round-trip it before packaging.
-- Everything shipped in this batch is otherwise unproven in the sense a beta expects: the proposal
-  wait, the price lever and the goodwill penalty are self-tested and recorded in
-  `docs/PENDING_PLAYTESTS.md` as never having been observed working. That is the state 0.9.0
-  shipped in and is not a blocker.
+**0.9.1 shipped on 2026-08-15.** Steam Workshop item `3780094556` was updated from the verified
+package, `main` was pushed, and the annotated tag `v0.9.1` and GitHub pre-release were created to
+the same standard as 0.9.0.
+
+- **Every release risk on this document is closed.** The last one — the save-format upgrade — was
+  settled when a real **schema 22** save migrated cleanly to 39, a longer chain than 0.9.1 needed.
+- The self-tests were rerun and reported green, and the new proposal window, price lever,
+  pending-decision flow and history clearing were all exercised in play. Two defects surfaced there
+  and were fixed before release (`44c6509`, `8aad4ea`).
+- The Workshop description is create-only and does **not** update on re-upload. The text in
+  `docs/WORKSHOP_DESCRIPTION.bbcode` must be pasted on the Steam website by hand; it was rewritten
+  for 0.9.1 because the live page still described settlement-initiated agreements as automatic, and
+  they are now off by default.
+- One check remains open and is not a blocker: buyer pickup from a non-home or camp map, kept
+  because its practicality has never been established.
+
+What this release proved about the process: packaging is safe because `package.ps1` never carries
+the Workshop identity file, the junction must be unlinked rather than deleted, and a rebuilt
+assembly will not hash-match a shipped one — 96 of 732,160 bytes differ as module GUID and
+timestamp, with no source change. That last one looks alarming and is not.
