@@ -1,0 +1,46 @@
+[h1]0.9.1[/h1]
+
+The first update since the public beta. It fixes what the first players ran into, and adds the other half of the agreement system: until now settlements could offer you a standing supply deal, but you could not offer them one.
+
+[hr][/hr]
+[h1]New[/h1]
+
+[list]
+[*][b]Propose your own supply agreements.[/b] A new window on the Contracts page: pick a settlement, an item, a quantity and a price, and see what a delivery pays, how often deliveries fall due, how many there will be and what the whole agreement is worth — before you commit. You need a settlement you have already sold that good to at least twice, and enough standing with them.
+[*][b]Proposals are answered, not granted.[/b] A proposal is [i]sent[/i], and the settlement replies after a while. It can say no. A very good offer and a very poor one are both answered quickly — the first out of courtesy, the second out of disinterest — while a middling offer takes longest, because that is the one they actually have to weigh.
+[*][b]You set the price, and it changes how the faction sees you.[/b] The price runs from nothing up to twice the going market rate, starting at the going rate. Selling below it is treated as generosity and improves standing with the buyer's faction when a delivery completes. Selling above it costs standing. Charging over the odds can cool a relationship a long way, but it will never by itself turn a faction hostile.
+[*][b]Unwanted agreement offers can be switched off.[/b] Settlements proposing agreements to you can be turned off entirely, or limited to particular kinds of goods, from the top of the Contracts page.
+[*][b]Trade history no longer grows without limit.[/b] The hundred most recent closed sales and closed purchases are kept in full and older ones are dropped. There is also a [b]Clear completed history[/b] action on the closed sales, concluded purchases and concluded requests lists. Clearing removes finished records only — your reputation, your ledger, anything still in progress, your agreements, and the trading record that qualifies a settlement for an agreement all survive it.
+[/list]
+
+[h1]Please note[/h1]
+
+[b]Incoming agreement offers are off by default, including in existing saves.[/b] If settlements used to propose agreements to you and have stopped, that is why. Turn them back on at the top of the Contracts page. Offers you had already been sent are not deleted.
+
+[h1]Fixed[/h1]
+
+[list]
+[*][b]Purchases stay with the colony that placed them.[/b] Delivered goods arrive at the colony that ordered and paid for them, and refunds return there, instead of going to your first colony.
+[*][b]A refund that could not be paid is no longer reported as paid.[/b] The order is held and tried again rather than closed with a message claiming silver you never received.
+[*][b]Mark Ready no longer invents a shortage.[/b] The false "0 units free" block is gone when the colony genuinely has enough stock to fill the order.
+[*][b]Find Buyer shows the price you will actually be paid[/b], including pickup or delivery terms, rather than a rate the confirmation then changed.
+[*][b]Agreements report what they actually pay.[/b] A discounted agreement no longer lists its undiscounted value.
+[*][b]Generated orders respect their transport limits.[/b] Good standing can still grow an order, but no longer past what can physically travel.
+[/list]
+
+[h1]Changed[/h1]
+
+[list]
+[*][b]A buyer's "Will take" amount is now real.[/b] Committing or completing a sale reduces what that settlement still wants. Cancelled or failed orders release it again.
+[*][b]What settlements want changes over time.[/b] Local interest in a good now drifts between market refreshes instead of being fixed forever, so quoted prices and agreement offers move with it. An order you already accepted keeps its agreed price.
+[*][b]Procurement has Market, Find seller, Orders and Contracts sub-tabs[/b], like Selling, and open purchases can be cancelled.
+[*][b]Trade and labor rebalanced[/b] after the first beta sessions. The two settings sliders reset to 100% once, because their scales changed.
+[/list]
+
+[h1]Saves[/h1]
+
+Existing saves are upgraded automatically when you load them. Once upgraded, a save cannot be opened again by an older version of the mod.
+
+Saves from several earlier versions have been upgraded and reloaded successfully. [b]Keep a backup of any colony you care about before loading it with this pre-release[/b] — sensible practice for a beta in any case.
+
+Still a beta: proposing agreements, the price lever and the standing effect are new and have had only light testing. Problems to the [url=https://github.com/miannoni/Intercolony/issues]GitHub issue tracker[/url], please, with your mod list and [b]Player.log[/b].
