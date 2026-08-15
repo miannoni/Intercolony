@@ -1,0 +1,63 @@
+[h1]0.9.0 — first public beta[/h1]
+
+The initial release. Nothing to compare it against, so this is what shipped rather than what changed.
+
+Intercolony gives the settlements on your world map concrete economic relationships with your colony. They want things, you decide what is worth producing, and the agreement matters after you accept it.
+
+[quote]See what settlements want → accept work you can fulfill → make or gather the goods → deliver them or wait for collection → get paid → build a record with that settlement.[/quote]
+
+[hr][/hr]
+[h1]What shipped[/h1]
+
+[list]
+[*][b]Selling.[/b] Settlement demand for commodities, intermediate goods, manufactured products, furniture, art, weapons, apparel and minifiable equipment. Sales orders carry quantities, deadlines, delivery terms, and quality or condition requirements where those make sense.
+[*][b]Direct buyers.[/b] Search for someone who wants stock you already hold.
+[*][b]Procurement.[/b] Ask settlements for quotations, compare what comes back, and buy — pickup or delivery.
+[*][b]Reputation and standing agreements.[/b] Deliveries and defaults build a commercial record, and settlements that come to trust you offer recurring supply agreements.
+[*][b]Hired labor.[/b] Direct hiring or public job postings, fixed and open-ended terms, payroll, arrears, conduct rules, dismissal with notice, and renewal — plus a separate employer reputation. Injury, capture and death carry obligations. Workers are not free temporary colonists.
+[*][b]Business report.[/b] Cash movement, payroll runway and standing agreements on one screen.
+[/list]
+
+Distance, availability, faction relations and physical transport all still matter. Intercolony is not an unlimited catalog, and it does not replace caravans or ordinary RimWorld trade.
+
+[h1]Requirements[/h1]
+
+[list]
+[*]RimWorld [b]1.6[/b]
+[*][url=https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077][b]Harmony[/b][/url], loaded [b]before[/b] Intercolony
+[/list]
+
+[h1]Why this is a pre-release[/h1]
+
+Core systems were tested extensively, but on one machine and one load order. This beta is the first external test of balance, compatibility, UX and long-running behaviour.
+
+[b]Keep normal backups of any save you use it with.[/b]
+
+[h1]The tested environment[/h1]
+
+Stated plainly rather than implying broader coverage:
+
+[list]
+[*][b]RimWorld 1.6.4871 rev590.[/b]
+[*][b]DLC: Biotech only.[/b] Royalty, Ideology and Anomaly are untested — not declared unsupported.
+[*][b]UI scale: 1.75x.[/b] The scale the layout has been judged at. Others are untested.
+[*][b]Alongside:[/b] Hospitality, Common Sense, RT Fuse, Tilled Soil and FSF Filth Vanishes With Rain And Time, with no problem attributed to their interaction. That is ordinary play, not a systematic compatibility test.
+[/list]
+
+Products are selected from their RimWorld def properties rather than a vanilla-only list, so DLC and modded items follow the same path as Core items. That is a reason to expect ordinary modded content to work — not a guarantee for every special item or mod interaction.
+
+[h1]Known limits[/h1]
+
+[list]
+[*][b]Non-minifiable buildings can never be traded.[/b] A caravan cannot crate and carry one. A permanent exclusion, not an unfinished feature.
+[*][b]English only.[/b] A project decision rather than a missing translation task: much of the writing is composed at runtime.
+[*][b]Employees are quest lodgers in your faction.[/b] Mods that assume "player faction" means "permanent colonist" — colonist bars, work-tab replacements, roster mods — are the main compatibility risk, and none has been tried.
+[/list]
+
+[h1]Saves[/h1]
+
+Save format 24. Intercolony migrates older saves forward, and the intention is to preserve saves made with this beta where that stays practical. It is a pre-release, though, so that is an intention rather than a guarantee — if a change ever makes migration impractical, the notes for that release will say so plainly.
+
+[h1]Found a problem?[/h1]
+
+Please use the [url=https://github.com/miannoni/Intercolony/issues]GitHub issue tracker[/url] rather than the comments, where it will get lost. Include reproduction steps, your full mod list and load order, UI scale for anything visual, and [b]Player.log[/b] from the failing session. Intercolony's own log lines all begin with [b][Intercolony][/b].
