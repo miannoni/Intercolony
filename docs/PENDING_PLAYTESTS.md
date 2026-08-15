@@ -134,7 +134,7 @@ this summary** when the time comes to test.
 Added 2026-08-09. **This is the highest-value single check on this list**, because one action
 settles several things at once and because migration is the one failure mode that damages a save.
 
-Production schema is now **32**. Schemas 25–29 and 31 add fields with safe defaults; schema 30 is
+Production schema is now **39**. Schemas 25–29 and 31 add fields with safe defaults; schema 30 is
 different and repairs existing request statuses by matching them to their purchase orders. The
 complete 24 → 32 chain and exact expected evidence are in `docs/SCHEMA_24_TO_CURRENT.md`. It has
 only been seen running in **isolated throwaway RimWorld installations with a stripped mod list**,

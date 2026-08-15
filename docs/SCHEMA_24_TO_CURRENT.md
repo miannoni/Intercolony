@@ -44,6 +44,16 @@ the old behaviour, so those additive steps do not need to move data.
 | 30 → 31 | A purchase request's minimum workmanship | No floor ⇒ take whatever is offered, which is how every existing request already behaved |
 | 31 → 32 | Each purchase order remembers its destination colony | No map recorded ⇒ remains null; no map is guessed or backfilled |
 | 32 → 33 | Each sales order records its completion time | No completion tick ⇒ remains the never-completed sentinel; old completed orders do not consume current demand |
+| 33 → 34 | A durable commercial-history aggregate, rebuilt from completed sales orders | Rebuilds rather than appends, so it cannot double-count if it runs twice before the upgraded state is saved |
+| 34 → 35 | Incoming contract-proposal controls | Existing saves are set to **off**, deliberately, because unwanted proposals were the complaint that prompted the feature. Offers already made are untouched |
+| 35 → 36 | A sales order can carry a discount fraction | Absent ⇒ zero, so every existing order keeps its full agreed payment |
+| 36 → 37 | A recurring contract can carry one | Same default, same reasoning |
+| 37 → 38 | Each deal records the market rate it was struck against | Absent ⇒ a negative sentinel meaning none, because zero is a legitimate price. An old deal is never punished for terms it never recorded |
+| 38 → 39 | A player proposal records its decision due date and appeal | Absent ⇒ sentinels meaning "not a pending proposal", which is what every pre-existing contract is |
+
+**Two steps are not purely additive.** **34 → 35** switches incoming contract
+proposals off in existing saves — a deliberate behaviour change, not a defaulted field, and the
+migration message says where to turn them back on.
 
 **29 → 30 is the exception to "every step is additive."** Accepting a quotation used to mark
 the request `Cancelled`, a status meaning "withdrawn by the player" — so every successful
