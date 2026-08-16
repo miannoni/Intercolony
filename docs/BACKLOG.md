@@ -232,6 +232,113 @@ inheriting a number by accident.
 
 ---
 
+## 0.9.1 play-test findings — 2026-08-15/16
+
+**Raised:** 2026-08-15/16, by Matteo, during one play-test session against the released 0.9.1.
+
+These are the player's own observations from that session.
+
+### 1. "Sell to this buyer?" dialog is visually broken and over-verbose
+
+**Verdict:** DEFECT + design request.
+
+Text renders on top of other text, some text is clipped and unreadable, and there is simply too much
+prose on the popup. A screenshot confirms a line of the explanatory paragraph is cut off mid-render
+and overlapped by the **Fulfillment:** row below it — the content overflows its area without
+scrolling. Matteo wants more use of tooltips and less text directly on popups.
+
+### 2. The employee signing fee is never disclosed before hiring
+
+**Verdict:** DEFECT.
+
+Nothing in the UI shows that an up-front signing fee is required for daily-paid employees. From
+what the player sees, they can hire; then on attempting to hire they are refused because they need
+X silver to start the contract. The cost is disclosed only at the point of failure.
+
+### 3. Buyer travel time looks inconsistent with distance
+
+**Verdict:** NEEDS DIAGNOSIS.
+
+A settlement 47 tiles away took 3 days to collect an order; one 35 tiles away took 12 days. A
+screenshot shows 160 tiles quoted at 11 days. Working hypothesis to be verified, not assumed: the
+**Distance:** figure shown is straight-line tiles while travel uses real world-path cost, so a short
+hop across mountains or water genuinely takes longer — which would make this a display defect
+rather than a travel-model defect. Unconfirmed.
+
+### 4. Animal sales are dead — Mark Ready is a silent no-op
+
+**Verdict:** DEFECT — highest priority.
+
+Selling chickens did not work; pigs did not either. The order can be created, but clicking **Mark
+ready** does absolutely nothing: no dialog, no flash, no message, no log line, no error. Evidence
+from `Player.log`: "Created order 3755 from Find Buyer: 1x chicken for Chess Township, 95 silver,
+12d, BuyerPickup." appears, but unlike every non-animal order in the same session (3771, 3772, 3773,
+3774, 3791, 4021, each of which logged "goods declared ready"), order 3755 never logged it. The
+session threw zero exceptions. This indicates an early return before anything renders.
+
+This is the first time animal trade has ever been played — `CLAUDE.md` records all five slices as
+built but never exercised. Likely two stacked defects: the silent return itself (a refusal must
+always tell the player something), and whatever made the animal ineligible underneath.
+
+### 5. Add a "mark this order ready" toggle to the "Sell to this buyer?" popup
+
+**Verdict:** ENHANCEMENT.
+
+Default on, with the default changeable in mod settings.
+
+### 6. Ready sales orders should be sortable and better laid out
+
+**Verdict:** ENHANCEMENT.
+
+Possibly a table. As it stands the information is poorly arranged and the player cannot tell what
+will arrive where, because there is too much text everywhere.
+
+### 7. Ready sales orders should show total order value
+
+**Verdict:** ENHANCEMENT.
+
+The player needs to know when money is coming in.
+
+### 8. Procurement quotes can be re-rolled — this is an exploit
+
+**Verdict:** DEFECT — exploit.
+
+A generated procurement request must persist until the market refreshes. Otherwise the player can
+generate N requests for the same need and roll the die until they get a much lower price than they
+should, from a close enough settlement. The log shows "Request 4094: 20x medicine - 99 quote(s)", so
+each reroll re-rolls ninety-nine quotes at once.
+
+Decision taken: fix via deterministic quotes — seed quote generation on the market-refresh counter
+plus the item, so withdrawing and re-requesting returns the same quote set, making the reroll
+pointless rather than forbidden. The seed must NOT include quantity, or the player nudges the amount
+by one to reroll; prices scale from a fixed per-unit roll instead. The refresh counter is already
+durably persisted, so no new state is needed for the seed.
+
+### 9. Accepting one quote should not withdraw the whole procurement request
+
+**Verdict:** DEFECT.
+
+Unless the player clicks the withdraw button, the request should stay open. Matteo requested 1000
+iron; he may want to accept more than one offer, particularly when a single offer does not fill the
+requested amount. Decisions taken: remaining quotes stay live until the next market refresh, and
+accepting a partial quantity leaves the request outstanding for the remainder.
+
+This is closely coupled to finding 8 — both are to be implemented as one procurement-request-
+lifecycle change. It likely requires a save schema bump from 39 to 40.
+
+### Agreed order of work
+
+1. Record findings (this task).
+2. Diagnose 4 and 3.
+3. Fix 4.
+4. Fix 8 and 9 together.
+5. Fix 2.
+6. UI pass covering 1, 5, 6, 7 — deliberately deferred to last at Matteo's request, but explicitly
+   not dropped.
+7. Real-save migration test, then `/codex:review --background`.
+
+---
+
 ## Rejected or superseded
 
 *(nothing yet)*
