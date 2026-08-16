@@ -180,7 +180,7 @@ namespace Intercolony
 
         private static void DeliverToColony(PurchaseOrder order)
         {
-            Map map = ResolveDestinationMap(order);
+            Map map = ResolveDestinationMap(order, out bool usedFallback);
             if (map == null)
             {
                 // Nowhere to put them. Hold rather than destroy; the player may resettle.
@@ -191,7 +191,7 @@ namespace Intercolony
             // quality, item placement, or item destruction.
             if (order.IsAnimalOrder)
             {
-                DeliverAnimalsToColony(order, map);
+                DeliverAnimalsToColony(order, map, usedFallback);
                 return;
             }
 
@@ -204,19 +204,34 @@ namespace Intercolony
 
             Complete(order, $"Delivered {spawned} to the colony.");
             Messages.Message(
-                $"{order.settlementName} delivered {spawned}x {order.thingDef.label}.",
+                $"{order.settlementName} delivered {spawned}x {order.thingDef.label}." +
+                DestinationFallbackNotice(map, usedFallback, "the delivery"),
                 new LookTargets(DropCellFinder.TradeDropSpot(map), map),
                 MessageTypeDefOf.PositiveEvent, historical: true);
         }
 
-        private static Map ResolveDestinationMap(PurchaseOrder order)
+        private static Map ResolveDestinationMap(PurchaseOrder order, out bool usedFallback)
         {
             // Removed maps can remain referenced until reload after leaving Find.Maps.
             // Treat that dangling reference like the null Scribe resolves after loading.
-            return order.destinationMap != null &&
-                   Find.Maps?.Contains(order.destinationMap) == true
-                ? order.destinationMap
-                : Find.AnyPlayerHomeMap;
+            if (order.destinationMap != null &&
+                Find.Maps?.Contains(order.destinationMap) == true)
+            {
+                usedFallback = false;
+                return order.destinationMap;
+            }
+
+            Map fallback = Find.AnyPlayerHomeMap;
+            usedFallback = fallback != null;
+            return fallback;
+        }
+
+        private static string DestinationFallbackNotice(
+            Map map, bool usedFallback, string subject)
+        {
+            return usedFallback
+                ? $" The original destination is unavailable, so {subject} was sent to {map.Parent.Label}."
+                : string.Empty;
         }
 
         /// <summary>
@@ -294,7 +309,8 @@ namespace Intercolony
             return true;
         }
 
-        private static void DeliverAnimalsToColony(PurchaseOrder order, Map map)
+        private static void DeliverAnimalsToColony(
+            PurchaseOrder order, Map map, bool usedFallback)
         {
             int requested = order.quantity;
             int delivered = 0;
@@ -331,7 +347,8 @@ namespace Intercolony
             {
                 Complete(order, $"Delivered {delivered} animals to the colony.");
                 Messages.Message(
-                    $"{order.settlementName} delivered {delivered}x {order.thingDef.label}.",
+                    $"{order.settlementName} delivered {delivered}x {order.thingDef.label}." +
+                    DestinationFallbackNotice(map, usedFallback, "the delivery"),
                     new LookTargets(lastCell, map),
                     MessageTypeDefOf.PositiveEvent, historical: true);
                 return;
@@ -345,7 +362,8 @@ namespace Intercolony
                 $"{order.quantity} still owed. {failure ?? "handoff stopped"}.");
             Messages.Message(
                 $"{order.settlementName} delivered {delivered}x {order.thingDef.label}; " +
-                $"{order.quantity} are still owed.",
+                $"{order.quantity} are still owed." +
+                DestinationFallbackNotice(map, usedFallback, "the delivery"),
                 new LookTargets(lastCell, map),
                 MessageTypeDefOf.CautionInput, historical: true);
         }
@@ -435,9 +453,11 @@ namespace Intercolony
             // their established accounting unchanged.
             int requestedRefund = RefundableSilver(order);
             int refundedSilver = 0;
+            Map map = null;
+            bool usedFallback = false;
             if (requestedRefund > 0)
             {
-                Map map = ResolveDestinationMap(order);
+                map = ResolveDestinationMap(order, out usedFallback);
                 refundedSilver = map == null ? 0 : GiveSilver(map, requestedRefund);
                 // A refund that paid nothing is not a default; hold and retry.
                 if (map == null || refundedSilver <= 0)
@@ -462,7 +482,8 @@ namespace Intercolony
 
             IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {refundedSilver} silver.");
             Messages.Message(
-                $"{order.settlementName} defaulted on your order. {refundedSilver} silver refunded.",
+                $"{order.settlementName} defaulted on your order. {refundedSilver} silver refunded." +
+                DestinationFallbackNotice(map, usedFallback, "the refund"),
                 MessageTypeDefOf.NegativeEvent, historical: true);
         }
 

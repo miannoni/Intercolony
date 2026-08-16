@@ -668,10 +668,13 @@ namespace Intercolony
                 Map map = order.fulfillmentMap != null &&
                           Find.Maps?.Contains(order.fulfillmentMap) == true
                     ? order.fulfillmentMap
-                    : Find.AnyPlayerHomeMap;
+                    : null;
 
                 if (map == null)
                 {
+                    Fail(order,
+                        "The buyer arrived, but the fulfillment colony is no longer available, " +
+                        "so the promised goods could not be collected.");
                     continue;
                 }
 
