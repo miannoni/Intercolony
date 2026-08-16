@@ -1691,6 +1691,73 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Pulls every ready buyer-pickup order's arrival time to now, then runs the real
+        /// collection handler so handover, payment and completion follow the normal path.
+        /// </summary>
+        [DebugAction(Category, "Arrive buyers now", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 47)]
+        private static void ArriveBuyersNow()
+        {
+            WithState(state =>
+            {
+                int arrived = 0;
+                int skippedNull = 0;
+                int skippedCompleted = 0;
+                int skippedCancelled = 0;
+                int skippedFailed = 0;
+                int skippedNotBuyerPickup = 0;
+                int skippedNotReady = 0;
+                int skippedNotAwaitingCollection = 0;
+
+                foreach (SalesOrder order in state.Orders)
+                {
+                    if (order == null)
+                    {
+                        skippedNull++;
+                    }
+                    else if (order.status == SalesOrderStatus.Completed)
+                    {
+                        skippedCompleted++;
+                    }
+                    else if (order.status == SalesOrderStatus.Cancelled)
+                    {
+                        skippedCancelled++;
+                    }
+                    else if (order.status == SalesOrderStatus.Failed)
+                    {
+                        skippedFailed++;
+                    }
+                    else if (order.fulfillment != FulfillmentMode.BuyerPickup)
+                    {
+                        skippedNotBuyerPickup++;
+                    }
+                    else if (order.buyerArrivalTick < 0)
+                    {
+                        skippedNotReady++;
+                    }
+                    else if (order.status != SalesOrderStatus.AwaitingCollection)
+                    {
+                        skippedNotAwaitingCollection++;
+                    }
+                    else
+                    {
+                        order.buyerArrivalTick = GenTicks.TicksGame;
+                        arrived++;
+                    }
+                }
+
+                SalesOrderService.ProcessBuyerCollections(state.Orders);
+
+                int skipped = skippedNull + skippedCompleted + skippedCancelled + skippedFailed +
+                              skippedNotBuyerPickup + skippedNotReady + skippedNotAwaitingCollection;
+                Report($"Arrive buyers now: arrived {arrived}; skipped {skipped} " +
+                       $"(null: {skippedNull}, completed: {skippedCompleted}, cancelled: {skippedCancelled}, " +
+                       $"failed: {skippedFailed}, " +
+                       $"not buyer pickup: {skippedNotBuyerPickup}, not ready: {skippedNotReady}, " +
+                       $"not awaiting collection: {skippedNotAwaitingCollection}).");
+            });
+        }
+
+        /// <summary>
         /// Pulls every open purchase order's ready time to now and advances it, so a delivery
         /// or a pickup readiness can be seen without playing out the supplier's lead time.
         ///
