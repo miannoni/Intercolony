@@ -26,9 +26,9 @@ namespace Intercolony
     public static class EmploymentService
     {
         /// <summary>
-        /// Hires a worker under one of §37's wage structures and one of §42's combat clauses. Only
-        /// prepaid takes silver now; periodic structures take nothing at hire and pay at the end of
-        /// each period (§38).
+        /// Hires a worker under one of §37's wage structures and one of §42's combat clauses.
+        /// Prepaid takes the whole discounted term at hire; periodic structures take a signing fee
+        /// at hire, then pay at the end of each period (§38).
         /// </summary>
         /// <param name="clause">
         /// §42's combat clause. **Required, not defaulted**, and for the reason Phase 19 recorded

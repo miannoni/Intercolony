@@ -358,7 +358,7 @@ namespace Intercolony
         }
 
         private const float PostingHeaderHeight = 54f;
-        private const float ApplicantRowHeight = 46f;
+        private const float ApplicantRowHeight = 66f;
 
         private static float PostingBlockHeight(JobPosting posting)
         {
@@ -418,7 +418,7 @@ namespace Intercolony
             Widgets.DrawHighlightIfMouseover(rect);
 
             float actionWidth = 100f;
-            float textWidth = rect.width - actionWidth * 2f - 20f;
+            float textWidth = rect.width - actionWidth * 2f - 48f;
 
             Widgets.Label(new Rect(rect.x + 24f, rect.y + 2f, textWidth, 22f),
                 $"{applicant.Name}  —  {applicant.SkillSummary(4)}");
@@ -436,7 +436,17 @@ namespace Intercolony
                 value);
             GUI.color = Color.white;
 
-            Rect hireRect = new Rect(rect.xMax - actionWidth * 2f - 14f, rect.y + 8f, actionWidth, 30f);
+            int upFront = WageStructureUtility.UpFrontCost(
+                posting.wageStructure, posting.wageOffered, posting.termDays);
+            int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
+            bool affordable = available >= upFront;
+
+            GUI.color = affordable ? new Color(1f, 1f, 1f, 0.65f) : new Color(1f, 0.6f, 0.6f);
+            Widgets.Label(new Rect(rect.x + 24f, rect.y + 42f, textWidth, 22f),
+                $"Due now: {upFront} silver.  In storage: {available}.");
+            GUI.color = Color.white;
+
+            Rect hireRect = new Rect(rect.xMax - actionWidth * 2f - 14f, rect.y + 18f, actionWidth, 30f);
             if (Widgets.ButtonText(hireRect, "Take on"))
             {
                 pendingAction = () =>
@@ -450,7 +460,7 @@ namespace Intercolony
                 };
             }
 
-            Rect rejectRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 8f, actionWidth, 30f);
+            Rect rejectRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 18f, actionWidth, 30f);
             if (Widgets.ButtonText(rejectRect, "Turn away"))
             {
                 pendingAction = () => JobPostingService.Reject(posting, applicant);

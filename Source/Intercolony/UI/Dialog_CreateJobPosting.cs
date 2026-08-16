@@ -211,12 +211,17 @@ namespace Intercolony
 
             // --- Commit ---
             int total = WageStructureUtility.TotalCost(structure, wageOffered, termDays) * positions;
+            int upFront = WageStructureUtility.UpFrontCost(structure, wageOffered, termDays);
             int death = wageOffered * clause.DeathCompensationDays();
             string totalSummary =
                 $"If every position is filled and served out: {total} silver across {positions} " +
                 $"worker{(positions == 1 ? "" : "s")}.";
+            string upFrontSummary = structure == WageStructure.Prepaid
+                ? $"Due when you take on each applicant: {upFront} silver for the whole term, paid at once."
+                : $"Due when you take on each applicant: {upFront} silver signing fee.";
             string deathSummary = $"Compensation if one of them dies: {death} silver each.";
             float totalSummaryHeight = Text.CalcHeight(totalSummary, inRect.width);
+            float upFrontSummaryHeight = Text.CalcHeight(upFrontSummary, inRect.width);
             float deathSummaryHeight = Text.CalcHeight(deathSummary, inRect.width);
 
             y += 8f;
@@ -224,6 +229,8 @@ namespace Intercolony
             GUI.color = new Color(1f, 1f, 1f, 0.7f);
             Widgets.Label(new Rect(0f, y, inRect.width, totalSummaryHeight), totalSummary);
             y += totalSummaryHeight + 2f;
+            Widgets.Label(new Rect(0f, y, inRect.width, upFrontSummaryHeight), upFrontSummary);
+            y += upFrontSummaryHeight + 2f;
             Widgets.Label(new Rect(0f, y, inRect.width, deathSummaryHeight), deathSummary);
             GUI.color = Color.white;
             y += deathSummaryHeight + 8f;
