@@ -53,10 +53,14 @@ Plan for the item being visible immediately:
 ## Before you start
 
 1. Final `About/Preview.png` in place and **under 1 MB**.
-2. `powershell -ExecutionPolicy Bypass -File package.ps1` run clean.
-3. Description text and gallery screenshots ready to paste and upload.
-4. Steam running and logged in.
-5. Development mode on: **Options → General → Development mode**. The upload option is gated on
+2. Set `About/About.xml`'s `<modVersion>` to the version being released. Do this before running
+   `package.ps1`: the value is baked into the package and shipped to the Workshop. If the bump is
+   missed, the startup log line confidently reports the wrong version. That is worse than reporting
+   no version at all, because the figure will be trusted when triaging a bug report.
+3. `powershell -ExecutionPolicy Bypass -File package.ps1` run clean.
+4. Description text and gallery screenshots ready to paste and upload.
+5. Steam running and logged in.
+6. Development mode on: **Options → General → Development mode**. The upload option is gated on
    `Prefs.DevMode` and does not appear without it.
 
 ---
@@ -125,18 +129,50 @@ rather than a disaster.
 
 Test the uploaded build, not the one on disk.
 
+The file comparison can be done while the `Mods\Intercolony` junction remains in place and without
+launching RimWorld. Steam downloads a subscription to
+`steamapps\workshop\content\294100\<item-id>` regardless, so compare that folder directly with the
+matching `dist\Intercolony-<version>` folder.
+
+The file half of this check was run for 0.9.1 on 2026-08-16. Item `3780094556` was subscribed, and
+`steamapps\workshop\content\294100\3780094556` was compared with `dist\Intercolony-0.9.1`:
+
+- All 9 packaged files were byte-identical by SHA-256, including
+  `Assemblies\Intercolony.dll` at 732,160 bytes.
+- The served top level contained only `About`, `Assemblies`, `Defs`, `LICENSE`, and `README.md`.
+  There was no `Source`, `reference`, `docs`, or `.git` leakage. Total served size was 1,676,250
+  bytes.
+- The one expected file not present in `dist/` was `About\PublishedFileId.txt`: 10 bytes containing
+  `3780094556`. `package.ps1` deliberately omits it and it is restored by hand before upload, so
+  subscribers receive it. Its presence also confirms that the upload updated the intended item
+  instead of creating a second one.
+
+Steam does not always deliver an update promptly. Version 0.9.1 was published on 2026-08-15, but on
+2026-08-16 one subscriber continued to receive 0.9.0 until they unsubscribed and resubscribed.
+Auto-update is the intended behavior and normally works; treat this as one known failure mode, not
+evidence that most subscribers were affected. This is why `modVersion` belongs in `About.xml`: a bug
+report can be tied to the build actually running.
+
+Only the in-game half of the smoke test requires unlinking the development junction. Before launching
+RimWorld for that test:
+
 ```powershell
 # The local copy must go, or two mods will share packageId miannoni.intercolony.
 Remove-Item -Recurse -Force "$mods\Intercolony"
 ```
 
-Subscribe on the item page — you can subscribe to your own hidden item — let Steam download it, and
-start RimWorld. Check:
+Never launch RimWorld while both the junction and a Workshop subscription exist. Both copies declare
+`miannoni.intercolony`, which risks play-testing the released build instead of the working tree.
+Subscribe on the item page — you can subscribe to your own hidden item — let Steam download it, then
+start RimWorld and check:
 
 - Intercolony appears in the mod list as a **Steam** mod, with the preview image showing.
 - Its content is only release files: no `Source`, no `reference`, no `docs`, no `Screenshots`.
 - Enable it below Harmony, start a colony, open the **intercolony** tab, no red errors.
 - `powershell -ExecutionPolicy Bypass -File dev.ps1 log` for anything unexpected.
+
+The in-game half is redundant when a real subscriber is already confirmed running the item. When the
+check is finished, unsubscribe before restoring or using the development junction.
 
 ### 6. Restore the junction
 

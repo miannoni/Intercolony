@@ -3,6 +3,7 @@
   <packageId>miannoni.intercolony</packageId>
   <name>Intercolony</name>
   <author>Matteo Iannoni</author>
+  <modVersion>0.9.1</modVersion>
   <supportedVersions>
     <li>1.6</li>
   </supportedVersions>

@@ -15,7 +15,9 @@ namespace Intercolony
         public IntercolonyMod(ModContentPack content) : base(content)
         {
             settings = GetSettings<IntercolonySettings>();
-            IntercolonyLog.Message("loaded.");
+            string modVersion = Content.ModMetaData?.ModVersion;
+            string versionLabel = string.IsNullOrEmpty(modVersion) ? "unknown" : modVersion;
+            IntercolonyLog.Message($"loaded, version {versionLabel}.");
         }
 
         public override string SettingsCategory()
