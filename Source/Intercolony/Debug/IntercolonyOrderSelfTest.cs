@@ -185,6 +185,7 @@ namespace Intercolony
             Check("no caravan reports the full shortfall", noCaravan.missingQuantity == 10,
                 noCaravan.missingQuantity.ToString());
             Check("failure summary is non-empty", !string.IsNullOrEmpty(noCaravan.Summary()));
+            RunMixedAnimalColonyValidationCheck(map, sb, Check);
 
             // --- §99 acceptance: one centralized validation path supports all test cases ---
             // The four cases named in §99, each driven through OrderValidator.Matches with a
@@ -378,6 +379,58 @@ namespace Intercolony
 
             sb.AppendLine($"    {caseName}: {line.ShortLabel()}");
             good.Destroy(DestroyMode.Vanish);
+        }
+
+        private static void RunMixedAnimalColonyValidationCheck(
+            Map map, StringBuilder sb, Action<string, bool, string> check)
+        {
+            const string assertion =
+                "enough matching colony animals validate alongside non-matching same-species animals";
+            List<Pawn> animals = FindBuyerService.EligibleColonyAnimalCandidates(map);
+
+            for (int i = 0; i < animals.Count; i++)
+            {
+                Pawn matching = animals[i];
+                if (matching.gender != Gender.Female && matching.gender != Gender.Male)
+                {
+                    continue;
+                }
+
+                for (int j = i + 1; j < animals.Count; j++)
+                {
+                    Pawn rejected = animals[j];
+                    if (rejected.def != matching.def || rejected.gender == matching.gender ||
+                        (rejected.gender != Gender.Female && rejected.gender != Gender.Male))
+                    {
+                        continue;
+                    }
+
+                    SalesOrder probe = NewOrder(matching.def, 1, 0f);
+                    probe.id = -917_402;
+                    probe.line.animalSpec = new AnimalSpec { gender = matching.gender };
+
+                    // Each side of the sex constraint needs a free animal so this reaches the
+                    // exact matched-plus-rejected validation path rather than a reservation path.
+                    SalesOrder oppositeProbe = NewOrder(rejected.def, 1, 0f);
+                    oppositeProbe.id = -917_403;
+                    oppositeProbe.line.animalSpec = new AnimalSpec { gender = rejected.gender };
+                    if (OrderValidator.MatchingColonyAnimals(probe, map, 1).Count == 0 ||
+                        OrderValidator.MatchingColonyAnimals(oppositeProbe, map, 1).Count == 0)
+                    {
+                        continue;
+                    }
+
+                    OrderValidationResult validation = OrderValidator.ValidateColony(probe, map);
+                    check(assertion,
+                        validation.Success && validation.matchedQuantity == 1 &&
+                        validation.missingQuantity == 0 && validation.failures.Count == 0,
+                        validation.Summary());
+                    return;
+                }
+            }
+
+            sb.AppendLine($"  SKIPPED  {assertion} — " +
+                          "no eligible, uncommitted opposite-sex pair of one species on this map");
         }
 
         private static SalesOrder NewOrder(ThingDef def, int quantity, float unitPrice)

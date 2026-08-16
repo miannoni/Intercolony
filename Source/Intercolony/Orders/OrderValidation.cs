@@ -250,7 +250,7 @@ namespace Intercolony
 
             result.matchedQuantity = Mathf.Min(matching, required);
             result.missingQuantity = Mathf.Max(0, required - matching);
-            if (rejected > 0)
+            if (result.missingQuantity > 0 && rejected > 0)
             {
                 result.failures.Add(
                     $"{rejected} carried {order.ThingDef.label} no longer meet the animal " +
@@ -390,7 +390,7 @@ namespace Intercolony
 
             result.matchedQuantity = Mathf.Min(matching, required);
             result.missingQuantity = Mathf.Max(0, required - matching);
-            if (rejected > 0)
+            if (result.missingQuantity > 0 && rejected > 0)
             {
                 result.failures.Add(
                     $"{rejected} {order.ThingDef.label} in the colony no longer meet the animal " +
@@ -437,7 +437,7 @@ namespace Intercolony
 
             if (map == null)
             {
-                result.failures.Add("No colony map.");
+                result.failures.Add("The order's fulfillment colony is no longer available.");
                 result.missingQuantity = order.RemainingQuantity;
                 return result;
             }

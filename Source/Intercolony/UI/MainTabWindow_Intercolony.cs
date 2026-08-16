@@ -3330,29 +3330,43 @@ namespace Intercolony
             // Buyer pickup: the player declares the goods ready and the buyer travels (§25.2).
             if (order.CanMarkReady)
             {
-                Map map = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+                // A removed map can remain referenced until reload, so only a still-loaded
+                // fulfillment colony is valid. Never redirect an order to another colony.
+                Map map = order.fulfillmentMap != null &&
+                          Find.Maps?.Contains(order.fulfillmentMap) == true
+                    ? order.fulfillmentMap
+                    : null;
                 OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
                 bool enough = validation.Success;
 
                 Rect readyRect = new Rect(rect.xMax - 210f, rect.y + 14f, 110f, 28f);
-                if (Widgets.ButtonText(readyRect, "Mark ready", active: enough))
+                // RimWorld draws an inactive text button like a live one. Keep this clickable
+                // so an invalid attempt reaches the service and explains the refusal.
+                if (Widgets.ButtonText(readyRect, "Mark ready"))
                 {
-                    // Marking an animal order ready commits these particular animals, so the
-                    // bond warning belongs here rather than only at a caravan handover.
                     SalesOrder readyOrder = order;
                     Map readyMap = map;
-                    string bondWarning =
-                        SalesOrderService.BuildBondedAnimalWarning(readyOrder, readyMap);
-                    if (bondWarning.NullOrEmpty())
+                    if (!enough)
                     {
                         SalesOrderService.MarkReadyForPickup(readyOrder, readyMap);
                     }
                     else
                     {
-                        Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
-                            bondWarning,
-                            () => SalesOrderService.MarkReadyForPickup(readyOrder, readyMap),
-                            destructive: true));
+                        // Marking an animal order ready commits these particular animals, so the
+                        // bond warning belongs here rather than only at a caravan handover.
+                        string bondWarning =
+                            SalesOrderService.BuildBondedAnimalWarning(readyOrder, readyMap);
+                        if (bondWarning.NullOrEmpty())
+                        {
+                            SalesOrderService.MarkReadyForPickup(readyOrder, readyMap);
+                        }
+                        else
+                        {
+                            Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                                bondWarning,
+                                () => SalesOrderService.MarkReadyForPickup(readyOrder, readyMap),
+                                destructive: true));
+                        }
                     }
                 }
 
