@@ -3086,12 +3086,10 @@ namespace Intercolony
 
             // A partial quote is flagged, not hidden: §20 makes partial answers a first-class
             // outcome, and combining two suppliers is a legitimate move.
-            GUI.color = partial ? new Color(0.9f, 0.8f, 0.5f) : Color.white;
-            Widgets.Label(Cell(1),
-                partial
-                    ? $"{quote.quantityOffered} of {outstanding}"
-                    : $"{quote.quantityOffered}");
-            GUI.color = Color.white;
+            Color previousColor = GUI.color;
+            GUI.color = partial ? Color.yellow : previousColor;
+            Widgets.Label(Cell(1), quote.quantityOffered.ToString());
+            GUI.color = previousColor;
 
             Widgets.Label(Cell(2), $"{quote.unitPrice:F2}");
             Widgets.Label(Cell(3), quote.TotalPrice.ToString());
