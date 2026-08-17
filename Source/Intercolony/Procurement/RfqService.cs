@@ -112,9 +112,9 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Rolls each accessible settlement's answer. Seeded on the request id so a given
-        /// request always produces the same quotes, which keeps save/load stable and makes a
-        /// reported problem reproducible (§60).
+        /// Rolls each accessible settlement's answer. Seeded on the market refresh and requested
+        /// def so repeating the same request within one market window produces the same quotes,
+        /// which keeps save/load stable and makes a reported problem reproducible (§60).
         /// </summary>
         private static void GenerateResponses(IntercolonyWorldComponent state, PurchaseRequest request)
         {
@@ -137,7 +137,8 @@ namespace Intercolony
             int considered = 0;
             int couldNotSupply = 0;
 
-            Rand.PushState(Gen.HashCombineInt(state.EconomySeed, request.id, 0x7C21, 0));
+            Rand.PushState(Gen.HashCombineInt(
+                state.EconomySeed, state.RefreshCount, request.thingDef.shortHash, 0x7C21));
             try
             {
                 foreach (Settlement settlement in settlements)
