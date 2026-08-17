@@ -90,8 +90,10 @@ Target framework is `net472`.
 
 **Phase:** 26 complete. **0.9.1 is live and public** (2026-08-15) — Workshop item `3780094556`
 updated, `main` pushed, tag `v0.9.1` and a GitHub pre-release created to the same standard as 0.9.0.
-**Save schema is 41.** Schema 40 records the distance behind a buyer-pickup promise; schema 41
-records how much of a purchase request has been ordered.
+**0.9.2 is prepared but not yet released; nothing has been uploaded.**
+**Save schema is 42.** Schema 40 records the distance behind a buyer-pickup promise; 41 records how
+much of a purchase request has been ordered; 42 records how much of a supplier's offer the player has
+already bought within a market refresh window.
 
 0.9.1 fixed what the first beta players hit and added the other half of the agreement system: the
 player can now propose a standing supply agreement rather than only receiving offers. A proposal is
@@ -126,7 +128,7 @@ now an `Ordered` status, Find seller shows only live requests, concluded ones si
 than guessing. It is the first migration step that changes existing values rather than adding a
 field.
 
-D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 41**; the whole
+D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 42**; the whole
 chain from 24 is documented as one consolidated test in `docs/SCHEMA_24_TO_CURRENT.md`, which is the
 file to read rather than reconstructing the steps. Next: continue beta corrections in point releases;
 there is no Phase 27 plan yet.
