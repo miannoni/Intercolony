@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 39;
+        public const int CurrentSaveVersion = 40;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1833,6 +1833,14 @@ namespace Intercolony
                 // absent sentinels keep every existing contract out of that pending lifecycle.
                 IntercolonyLog.Message(
                     "  schema 38 -> 39: recurring contracts now record pending player-proposal decisions; existing contracts have none.");
+            }
+
+            if (saveVersion < 40)
+            {
+                // 39 -> 40 records the route used for a buyer-pickup promise. There is no
+                // trustworthy value to reconstruct, so old orders keep the unknown-route sentinel.
+                IntercolonyLog.Message(
+                    "  schema 39 -> 40: sales orders now record their promised buyer-pickup distance; existing orders use the unknown-route fallback.");
             }
 
             saveVersion = CurrentSaveVersion;

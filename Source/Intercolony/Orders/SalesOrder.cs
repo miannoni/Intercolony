@@ -124,6 +124,12 @@ namespace Intercolony
         /// <summary>How the goods move (§25). Fixed at acceptance; the price already reflects it.</summary>
         public FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery;
 
+        /// <summary>Sentinel meaning this order has no recorded buyer-pickup route.</summary>
+        public const float UnknownBuyerPickupDistance = -1f;
+
+        /// <summary>Distance used for the buyer-pickup estimate promised at acceptance.</summary>
+        public float buyerPickupDistanceTiles = UnknownBuyerPickupDistance;
+
         /// <summary>Buyer-pickup only: tick the buyer's caravan arrives. -1 until goods are declared ready.</summary>
         public int buyerArrivalTick = -1;
 
@@ -233,6 +239,8 @@ namespace Intercolony
             Scribe_Values.Look(ref completedTick, "completedTick", NeverCompletedTick);
             Scribe_Values.Look(ref status, "status", SalesOrderStatus.Accepted);
             Scribe_Values.Look(ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
+            Scribe_Values.Look(
+                ref buyerPickupDistanceTiles, "buyerPickupDistanceTiles", UnknownBuyerPickupDistance);
             Scribe_Values.Look(ref buyerArrivalTick, "buyerArrivalTick", -1);
             Scribe_Values.Look(ref deliveredQuantity, "deliveredQuantity", 0);
             Scribe_Values.Look(ref paidSilver, "paidSilver", 0);

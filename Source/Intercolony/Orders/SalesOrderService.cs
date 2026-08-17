@@ -185,6 +185,7 @@ namespace Intercolony
                 referenceUnitPrice = offer.unitPrice,
                 acceptedTick = GenTicks.TicksGame,
                 fulfillment = fulfillment,
+                buyerPickupDistanceTiles = offer.distanceTiles,
                 fulfillmentMap = map,
                 deadlineTick = GenTicks.TicksGame + deadlineDays * GenDate.TicksPerDay,
                 status = SalesOrderStatus.Accepted
@@ -585,14 +586,7 @@ namespace Intercolony
                 return false;
             }
 
-            float distance = -1f;
-            Settlement settlement = IntercolonyMarketAccess.FindSettlement(order.settlementId);
-            if (settlement != null)
-            {
-                distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
-            }
-
-            int travelDays = EstimateBuyerPickupTravelDays(distance);
+            int travelDays = EstimateBuyerPickupTravelDays(order.buyerPickupDistanceTiles);
 
             // Goods are fungible, so a head count is the whole promise. Animals are not: the
             // buyer comes for these animals. Record them now, while the player is looking at
