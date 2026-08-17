@@ -552,18 +552,16 @@ namespace Intercolony
             // A missing record is compatible with cycle orders created before fulfillment maps
             // were assigned: adopt the colony the player is acting from. A recorded map that is
             // now gone is a different state and must never be redirected to another colony.
-            if (order.fulfillmentMap != null)
+            if (order.fulfillmentMap != null &&
+                Find.Maps?.Contains(order.fulfillmentMap) != true)
             {
-                if (!ReferenceEquals(order.fulfillmentMap, map) ||
-                    Find.Maps?.Contains(order.fulfillmentMap) != true)
-                {
-                    Messages.Message(
-                        $"Order #{order.id}: its recorded fulfillment colony is no longer available.",
-                        MessageTypeDefOf.RejectInput, historical: false);
-                    return false;
-                }
+                Messages.Message(
+                    $"Order #{order.id}: its recorded fulfillment colony is no longer available.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return false;
             }
-            else if (map == null || Find.Maps?.Contains(map) != true || !map.IsPlayerHome)
+            else if (order.fulfillmentMap == null &&
+                     (map == null || Find.Maps?.Contains(map) != true || !map.IsPlayerHome))
             {
                 Messages.Message(
                     $"Order #{order.id}: select an available player colony before marking it ready.",
@@ -679,13 +677,26 @@ namespace Intercolony
                     continue;
                 }
 
-                // A removed map stays reachable through arbitrary fields until reload even
-                // though Game.DeinitAndRemoveMap has removed it from Find.Maps. Treat that
-                // dangling runtime reference like the null Scribe resolves after loading.
-                Map map = order.fulfillmentMap != null &&
-                          Find.Maps?.Contains(order.fulfillmentMap) == true
-                    ? order.fulfillmentMap
-                    : null;
+                // A recorded colony remains authoritative and may not be redirected if it is
+                // gone. Legacy cycle orders with no record can adopt an available player home,
+                // and persist that choice just as Mark Ready does.
+                Map map;
+                if (order.fulfillmentMap != null)
+                {
+                    // A removed map stays reachable through arbitrary fields until reload even
+                    // though Game.DeinitAndRemoveMap has removed it from Find.Maps.
+                    map = Find.Maps?.Contains(order.fulfillmentMap) == true
+                        ? order.fulfillmentMap
+                        : null;
+                }
+                else
+                {
+                    map = Find.AnyPlayerHomeMap;
+                    if (map != null)
+                    {
+                        order.fulfillmentMap = map;
+                    }
+                }
 
                 if (map == null)
                 {
