@@ -260,13 +260,22 @@ namespace Intercolony
 
             if (offer == null)
             {
-                sb.AppendLine("  (no live offer; acceptance checks skipped — run Advance refresh first)");
+                sb.AppendLine(
+                    "  SKIPPED  accepting a market opportunity carries its known pickup distance " +
+                    "(no live offer; run Advance refresh first)");
             }
             else
             {
                 int offerId = offer.id;
                 SalesOrder accepted = SalesOrderService.Accept(state, offer);
                 Check("accepting produces an order", accepted != null);
+                Check("accepting a market opportunity carries its known pickup distance",
+                    accepted != null &&
+                    accepted.buyerPickupDistanceTiles != SalesOrder.UnknownBuyerPickupDistance &&
+                    Mathf.Approximately(accepted.buyerPickupDistanceTiles, offer.distanceTiles),
+                    accepted == null
+                        ? "acceptance returned null"
+                        : $"order={accepted.buyerPickupDistanceTiles}, offer={offer.distanceTiles}");
                 if (accepted != null)
                 {
                     Check("accepted order is open", accepted.IsOpen);
@@ -1346,18 +1355,36 @@ namespace Intercolony
 
             try
             {
+                Map absentRecordedMap = new Map();
+                SalesOrder refusesAbsentMap = PlantPickup(93004, absentRecordedMap);
+                bool absentMapReady = SalesOrderService.MarkReadyForPickup(refusesAbsentMap, map);
+                check("Mark Ready refuses an order whose recorded colony is absent",
+                    !absentMapReady &&
+                    refusesAbsentMap.status == SalesOrderStatus.Accepted &&
+                    ReferenceEquals(refusesAbsentMap.fulfillmentMap, absentRecordedMap),
+                    $"ready={absentMapReady}, status={refusesAbsentMap.status}, " +
+                    $"record unchanged={ReferenceEquals(refusesAbsentMap.fulfillmentMap, absentRecordedMap)}");
+                state.Orders.Remove(refusesAbsentMap);
+                testOrders.Remove(refusesAbsentMap);
+
                 if (!TrySpawnStoredStock(map, 3, out _))
                 {
                     check("pickup-map test found temporary storage on the current colony", false,
                         "no empty unzoned cell near the trade drop spot");
+                    sb.AppendLine(
+                        "    SKIPPED  Mark Ready adopts and persists the current colony when none was recorded " +
+                        "(no empty unzoned cell near the trade drop spot)");
                     return;
                 }
 
                 SalesOrder recordsReadyMap = PlantPickup(93001);
+                bool startedWithoutRecordedMap = recordsReadyMap.fulfillmentMap == null;
                 bool recordedReady = SalesOrderService.MarkReadyForPickup(recordsReadyMap, map);
-                check("Mark Ready records the colony that validated the goods",
-                    recordedReady && ReferenceEquals(recordsReadyMap.fulfillmentMap, map),
-                    $"ready={recordedReady}, recorded={recordsReadyMap.fulfillmentMap?.ToString() ?? "null"}");
+                check("Mark Ready adopts and persists the current colony when none was recorded",
+                    startedWithoutRecordedMap && recordedReady &&
+                    ReferenceEquals(recordsReadyMap.fulfillmentMap, map),
+                    $"started null={startedWithoutRecordedMap}, ready={recordedReady}, " +
+                    $"recorded={recordsReadyMap.fulfillmentMap?.ToString() ?? "null"}");
                 state.Orders.Remove(recordsReadyMap);
                 testOrders.Remove(recordsReadyMap);
 
