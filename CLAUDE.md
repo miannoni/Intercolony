@@ -90,7 +90,8 @@ Target framework is `net472`.
 
 **Phase:** 26 complete. **0.9.1 is live and public** (2026-08-15) — Workshop item `3780094556`
 updated, `main` pushed, tag `v0.9.1` and a GitHub pre-release created to the same standard as 0.9.0.
-**Save schema is 39.**
+**Save schema is 41.** Schema 40 records the distance behind a buyer-pickup promise; schema 41
+records how much of a purchase request has been ordered.
 
 0.9.1 fixed what the first beta players hit and added the other half of the agreement system: the
 player can now propose a standing supply agreement rather than only receiving offers. A proposal is
@@ -125,14 +126,21 @@ now an `Ordered` status, Find seller shows only live requests, concluded ones si
 than guessing. It is the first migration step that changes existing values rather than adding a
 field.
 
-D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 39**; the whole
+D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 41**; the whole
 chain from 24 is documented as one consolidated test in `docs/SCHEMA_24_TO_CURRENT.md`, which is the
 file to read rather than reconstructing the steps. Next: continue beta corrections in point releases;
 there is no Phase 27 plan yet.
 
-**Animal trade is COMPLETE — all five slices are built, and none has ever been played.**
+**Animal trade is COMPLETE, and was first played on 2026-08-16 — it did not work.**
 E1 `c0a0f91` representation, E2 `4f199fc` pricing, E3a `b0d8f9a` generation and delivery,
 E3b `574d5d1` the request UI, E4 `75b87d2` sell by caravan, E5 `ab0dc0e` sell by buyer pickup.
+
+Mark Ready was a silent no-op for every animal order, fixed in `b50b2e2`: validation treated *any*
+same-species animal that failed the specification as a fatal failure, so one rooster blocked a hen
+order permanently, and RimWorld draws an inactive `Widgets.ButtonText` identically to a live one so
+the refusal was invisible. **E5 sell-by-pickup is now proven end to end** — a chicken and a bonded
+labrador both sold, the bond warning naming the right colonist. **E3a animal procurement and E4
+sell-by-caravan are still unplayed.** Do not treat the whole system as proven because half of it is.
 
 The rules that hold it together, and that a future change must not break:
 

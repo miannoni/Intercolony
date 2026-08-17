@@ -124,46 +124,40 @@ the exact pre-modification value rather than assuming it was `Buyable`.
 the test**: the test spawns an item, completes a sale and moves silver, then undoes all of it. If
 silver, letters or orders differ afterwards, the restoration is wrong even if every check passed.
 
-### Schema migration 24 → current — see `docs/SCHEMA_24_TO_CURRENT.md`
+### Schema migration 39 → 41 — see `docs/SCHEMA_24_TO_CURRENT.md`
 
-**Moved to its own file on 2026-08-09**, because the chain kept growing during one development
-run and the owner chose — reasonably — to test the whole chain once at the end rather than
-interrupt the work for each step. That file is kept current as steps land; **read it rather than
-this summary** when the time comes to test.
+The chain through 39 was proven from a real schema-22 save on 2026-08-15. Two steps landed on
+2026-08-16 and must now be proved in one real load: 39 → 40 records the distance behind a
+buyer-pickup promise, and 40 → 41 records how much of a purchase request has been ordered. Neither
+new step has run in the real load order.
 
-Added 2026-08-09. **This is the highest-value single check on this list**, because one action
-settles several things at once and because migration is the one failure mode that damages a save.
+**Steps.** Launch the game normally and load a schema-39 save containing at least one sales order and
+one open purchase request. Do not use `dev.ps1`: it launches `-quicktest`, which creates a fresh world
+already at schema 41 and therefore cannot exercise either migration.
 
-Production schema is now **39**. Schemas 25–29 and 31 add fields with safe defaults; schema 30 is
-different and repairs existing request statuses by matching them to their purchase orders. The
-complete 24 → 32 chain and exact expected evidence are in `docs/SCHEMA_24_TO_CURRENT.md`. It has
-only been seen running in **isolated throwaway RimWorld installations with a stripped mod list**,
-never in the real load order.
-
-**Steps.** Launch the game normally and load any existing save.
-
-**Pass.** Player.log contains, in order, the migration header and every applicable step through 32.
-For a schema-24 save the header is:
-
-```
-[Intercolony] Migrating state from schema 24 to 32.
-```
-
-(The starting number depends on the save. A save already at 32 prints `State loaded (schema 32, …)`
-and no migration lines — that is also a pass, but it does not exercise the chain.)
-
-Then **save, quit to the menu, and reload**. The second load must say `State loaded (schema 32, …)`
-and **not** `State initialized fresh` — that distinction is what proves the round trip rather than a
-silent re-initialization.
+**Pass.** Player.log names both migration steps, in order, and reports schema 41. Existing orders and
+requests still appear. Then **save, quit to the menu, and reload**; the second load must say
+`State loaded (schema 41, …)` and not `State initialized fresh`.
 
 **Failure.** Any red error during load, any order or purchase reported as dropped, a lower schema
 number than expected, or `State initialized fresh` on the reload.
 
-**Why this cannot be settled any other way.** `dev.ps1` launches with `-quicktest`, which creates a
-*new* world — and a new world initializes at the current schema, so the migration chain never runs.
-Its log reader also targets the real user profile while a sandboxed game writes elsewhere, so the
-displayed log can be stale and show an old schema entirely. Neither the dev loop nor a self-test can
-prove this; only opening a real save can.
+**Why this cannot be settled any other way.** A new world initializes at the current schema, so the
+migration chain never runs. Only opening a real older save proves both steps in their real order.
+
+### Procurement quotes are deterministic within a market refresh
+
+Added 2026-08-16 with `a11a97f`. Raise a request and note its quotes, withdraw it, then raise the same
+request again before the market refreshes. **Pass:** the quote set is identical. Changing only the
+quantity must not reroll the per-unit offers either. A changed settlement, price or lead time means
+the request is still seeding from fresh request state.
+
+### A partial quote acceptance leaves the request open
+
+Added 2026-08-16 with `f1e6852` (schema 41). Request a quantity larger than one quotation can fill and
+accept that quotation. **Pass:** the request stays open for exactly the remainder, and its other
+quotes remain acceptable until the market refresh. The request disappearing, retaining the original
+quantity, or invalidating all other quotes is a failure.
 
 ### The 2026-08-10 playtest-feedback batch
 
@@ -249,9 +243,9 @@ resurface, note what was on screen** — that is the missing piece.
 contract — the player cannot tell a good negotiator is worth waiting for until the popup is
 open.
 
-### Two debug actions exist to make the tests below bearable
+### Three debug actions exist to make the tests below bearable
 
-Added 2026-08-10. **F12** → **orange bug icon** → type the name.
+First added 2026-08-10; expanded 2026-08-16. **F12** → **orange bug icon** → type the name.
 
 - **`Arrive purchase orders now`** — pulls every confirmed purchase order's ready time to now
   and runs the ordinary advance, so procurement can be tested without playing out the
@@ -259,13 +253,12 @@ Added 2026-08-10. **F12** → **orange bug icon** → type the name.
   calling delivery directly, so the status transitions, the animal branch and the refund
   branches are all genuinely exercised. Orders already waiting to be collected are reported
   separately and left alone — they are waiting for a caravan, not for time.
+- **`Arrive buyers now`** — added in `4fbec43`. Pulls travelling buyers forward and runs the real
+  collection handler rather than completing orders directly. It has already arrived six orders in
+  play; use it for the remaining buyer-pickup edge cases below.
 - **`Explain unsold animals`** — lists the animals some trader buys but none sells, and says
   whether the setting below is on. With Core + Biotech this should be exactly one entry:
   Thrumbo, 4000 silver.
-
-**There is no equivalent for the sell side yet.** Buyer-pickup tests still need the buyer to
-travel in real game time, which makes the designated-animal test below slow. Worth adding an
-"arrive buyers now" sibling before attempting it.
 
 ### Buying animals no trader sells — off by default
 
@@ -281,12 +274,11 @@ toggle, so it must not need a restart. Ordering one costs full market price.
 or *more* than one animal listed by `Explain unsold animals` in a Core + Biotech load order,
 which would mean the rule is catching animals it should not.
 
-### Animal trade, end to end — the whole feature is unplayed
+### Animal trade, end to end — buyer pickup proven, other paths remain
 
-Added 2026-08-10. All five animal slices are built and **not one of them has been seen
-working**. Everything below is believed correct and unproven. This is the largest block of
-unproven work in the project, and it is deliberately listed as one entry because the pieces
-only mean anything together.
+Added 2026-08-10. All five animal slices are built. Buyer pickup was proven on 2026-08-16 with a
+chicken and, in a separate save, a bonded labrador retriever whose warning appeared correctly. The
+buying and seller-delivery paths and the pickup edge cases below remain unproven.
 
 **Buying.** Open **Intercolony** → **Procurement** → **New request**, switch the mode from
 goods to animals, pick a species, and set some combination of sex, life stage and pregnancy.
@@ -313,8 +305,8 @@ with **You deliver**, load matching animals into a caravan and take them.
 
 **Selling by buyer pickup.** Same, but choose **Buyer collects**, then **Mark ready**.
 
-- **Pass:** marking ready sets aside particular animals; when the buyer arrives *those*
-  animals go and you are paid.
+- **Proven 2026-08-16:** order 4215 sold a chicken end to end, and a separate save sold a bonded
+  labrador retriever with the bond warning appearing correctly.
 - **Must check:** after marking ready, **kill or slaughter one of the designated animals**
   before the buyer arrives. The order must deliver the rest and treat the missing one as a
   shortfall — it must **not** quietly substitute another matching animal from your colony.
@@ -392,9 +384,8 @@ records the completion normally.
 goods were not there" even though the goods are plainly sitting in the second colony, or the goods
 vanish from the *first* colony instead. Either result means the fix did not take.
 
-**Also worth trying once:** abandon the colony an order was marked ready on, then let the buyer
-arrive. It should fall back rather than throw. Both a same-session abandonment and one across a
-save/reload are covered by different guards, so ideally test both.
+**Do not reuse this as the abandoned-colony test.** Since `b6e868e`, collection must never substitute
+another colony after the fulfilment colony disappears; that refusal path is the separate test below.
 
 ### Procurement delivery and refund use the paying colony
 
@@ -426,6 +417,21 @@ can settle both the sales side and the procurement side.
 
 **Not covered:** the no-home-map refund hold and the zero-placement refund hold have no coverage and
 are not practically reachable by hand. Do not treat this two-colony test as evidence for either.
+
+### Destination-colony fallbacks after `b6e868e`
+
+Added 2026-08-16. Both paths require a game with **two player colonies** so there is a wrong colony
+available to expose an accidental substitution.
+
+**Taking from the player — collection refuses.** Mark a buyer-pickup order ready at the second
+colony, then abandon that fulfilment colony before the buyer arrives. Use **Arrive buyers now**.
+**Pass:** the collection refuses, the order fails with a reason, and no matching goods or animals are
+taken from the surviving colony. Completion from substitute stock is a failure.
+
+**Giving to the player — fallback is disclosed.** From the second colony, create supplier-delivery
+and refund paths, then remove that destination while the first colony survives. **Pass:** delivered
+goods and refunded silver fall back to the surviving colony, and the player-facing message names it.
+Silent placement, lost value, or naming the vanished colony is a failure.
 
 ### ~~A proposed agreement is answered after a wait~~
 
@@ -698,6 +704,11 @@ tries to assign them work.
 
 ## Proven in play
 
+- ~~**Animal sale by buyer pickup, including the bond warning**~~ — 2026-08-16. After `b50b2e2`,
+  order 4215 sold a chicken end to end. In a separate save, a bonded labrador retriever was sold and
+  the confirmation displayed the bond warning correctly: the first player-proven animal trade.
+- ~~**`Arrive buyers now` uses the real collection handler**~~ — 2026-08-16, `4fbec43`. The debug
+  action arrived six orders through the ordinary buyer-collection path rather than bypassing it.
 - ~~**The distributed build works as distributed**~~ — 2026-08-08, Steam Workshop item `3780094556`.
   Not a gameplay test: the thing it settles is that what a stranger downloads is what was built.
   Subscribed to the hidden item and verified what Steam *serves*, not what was uploaded — all 9

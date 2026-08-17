@@ -247,7 +247,7 @@ prose on the popup. A screenshot confirms a line of the explanatory paragraph is
 and overlapped by the **Fulfillment:** row below it — the content overflows its area without
 scrolling. Matteo wants more use of tooltips and less text directly on popups.
 
-### 2. The employee signing fee is never disclosed before hiring
+### ~~2. The employee signing fee is never disclosed before hiring~~
 
 **Verdict:** DEFECT.
 
@@ -255,9 +255,13 @@ Nothing in the UI shows that an up-front signing fee is required for daily-paid 
 what the player sees, they can hire; then on attempting to hire they are refused because they need
 X silver to start the contract. The cost is disclosed only at the point of failure.
 
-### 3. Buyer travel-time promise is not persisted and its presentation is confusing
+**Resolved 2026-08-16** (`66848bb`). The hiring UI now discloses the signing fee, and Matteo confirmed
+the figure appears in play. The label says **Due now**, which reads oddly beside "signing fee"; Matteo
+deliberately left that wording for the Tier 2 UI pass rather than reopening the functional fix.
 
-**Verdict:** DEFECT — persistence is Tier 1; presentation is Tier 2.
+### 3. ~~Buyer travel-time promise is not persisted~~; its presentation is confusing
+
+**Verdict:** DEFECT — persistence resolved; presentation remains Tier 2.
 
 The original hypothesis that the displayed distance is straight-line while travel uses real
 world-path cost has been investigated and disproved. No pathfinder is invoked anywhere in `Source/`:
@@ -284,7 +288,11 @@ can disagree. This is the same "a displayed figure and a charged figure come fro
 rule that `CLAUDE.md` records as established by commit `0b1dfe9`. Persisting the promised distance is
 a Tier 1 defect; making the presentation unambiguous is Tier 2.
 
-### 4. Animal sales are dead — Mark Ready is a silent no-op
+**Persistence resolved 2026-08-16** (`ec1ccdd`). `SalesOrder` now records the distance from which its
+buyer-pickup promise was computed, and dispatch consumes that value instead of recomputing it. This
+is schema 39 → 40. The confusing presentation described above is unchanged and remains in Tier 2.
+
+### ~~4. Animal sales are dead — Mark Ready is a silent no-op~~
 
 **Verdict:** DEFECT — highest priority.
 
@@ -298,6 +306,10 @@ session threw zero exceptions. This indicates an early return before anything re
 This is the first time animal trade has ever been played — `CLAUDE.md` records all five slices as
 built but never exercised. Likely two stacked defects: the silent return itself (a refusal must
 always tell the player something), and whatever made the animal ineligible underneath.
+
+**Resolved and proven 2026-08-16** (`b50b2e2`). Order 4215 sold a chicken by buyer pickup, and a
+separate save sold a bonded labrador retriever with the bond warning appearing correctly. This was
+the first time animal trade had ever worked for a player.
 
 ### 5. Add a "mark this order ready" toggle to the "Sell to this buyer?" popup
 
@@ -318,7 +330,7 @@ will arrive where, because there is too much text everywhere.
 
 The player needs to know when money is coming in.
 
-### 8. Procurement quotes can be re-rolled — this is an exploit
+### ~~8. Procurement quotes can be re-rolled — this is an exploit~~
 
 **Verdict:** DEFECT — exploit.
 
@@ -333,7 +345,11 @@ pointless rather than forbidden. The seed must NOT include quantity, or the play
 by one to reroll; prices scale from a fixed per-unit roll instead. The refresh counter is already
 durably persisted, so no new state is needed for the seed.
 
-### 9. Accepting one quote should not withdraw the whole procurement request
+**Resolved 2026-08-16** (`a11a97f`), not yet proven in play. Quote generation was already seeded, but
+the seed used the fresh `request.id`, so recreating a request still rerolled it. It now keys on the
+market refresh counter and requested def, deliberately excluding quantity.
+
+### ~~9. Accepting one quote should not withdraw the whole procurement request~~
 
 **Verdict:** DEFECT.
 
@@ -342,8 +358,10 @@ iron; he may want to accept more than one offer, particularly when a single offe
 requested amount. Decisions taken: remaining quotes stay live until the next market refresh, and
 accepting a partial quantity leaves the request outstanding for the remainder.
 
-This is closely coupled to finding 8 — both are to be implemented as one procurement-request-
-lifecycle change. It likely requires a save schema bump from 39 to 40.
+This is closely coupled to finding 8 — both belong to the same procurement-request lifecycle.
+
+**Resolved 2026-08-16** (`f1e6852`), not yet proven in play. A partial acceptance now leaves the
+request open for the outstanding quantity and keeps its other quotes live. This is schema 40 → 41.
 
 ### 10. Quality and material do not affect the price when selling — only when buying
 
@@ -386,27 +404,18 @@ arrive.
 
 #### Tier 1 — defects, target a 0.9.2 point release
 
-1. **Finding 4 — animal Mark Ready silent no-op.** Diagnosed; fix pending. The verified root cause is
-   that `Source/Intercolony/Orders/OrderValidation.cs:393` adds a validation failure whenever
-   `rejected > 0`, regardless of whether enough matching animals exist, while
-   `OrderValidationResult.Success` (`:35`) requires an empty failure list. One non-matching
-   same-species animal therefore blocks the order permanently. This is compounded by
-   `Widgets.ButtonText(active: false)` having no disabled appearance in RimWorld, so the button looks
-   live and silently eats the click.
-2. **Finding 2 — employee signing fee never disclosed before hiring.**
-3. **Findings 8 and 9 — procurement request lifecycle.** Implement together. Likely a save schema
-   bump from 39 to 40.
-4. **Finding 3 — persist the promised distance.** The presentation half is in Tier 2.
+No open work. Findings 2, 4, 8 and 9 and the persistence half of finding 3 are resolved above.
 
 #### Tier 2 — UI pass
 
 Deferred to last at Matteo's request, but explicitly not dropped.
 
-1. **Finding 1 — clipping and over-verbosity.** The clipping is probably the same root cause as the
-   existing backlog entry **Empty-state paragraphs use hard-coded heights and can clip**; fix them
-   together.
+1. **Finding 1 — clipping and over-verbosity**, together with the existing backlog entry
+   **Empty-state paragraphs use hard-coded heights and can clip**.
 2. **Findings 5, 6 and 7.**
 3. **Finding 3 — display.** Make the ready deadline and arrival estimate unambiguous.
+4. **Finding 2 follow-up — wording.** Replace the odd **Due now** label with explicit signing-fee
+   language.
 
 #### Tier 3 — features, Phase 27 candidates
 
@@ -416,26 +425,35 @@ Explicitly out of scope for any point release.
 
 ---
 
-## `Find.AnyPlayerHomeMap` is a systematic error class
+## ~~`Find.AnyPlayerHomeMap` is a systematic error class~~
 
 **Raised:** 2026-08-16, while investigating finding 3 above.
-**Size:** small — one dedicated API sweep, with any resulting fixes scoped separately.
-**Status:** open decision. A sweep has been proposed; Matteo has not yet decided whether to take it.
+**Size:** small — one dedicated API sweep, with resulting fixes scoped separately.
+**Status:** swept 2026-08-16; two shipped sites fixed and the remaining occurrences reviewed.
 
 `Find.AnyPlayerHomeMap` returns the first player home map, which is correct only in a single-colony
-game. Four known sites show that this is a systematic error class rather than an isolated mistake:
+game. Five sites made this a systematic error class rather than an isolated mistake:
 
-1. **Buyer pickup collection** — already fixed, as recorded in `CLAUDE.md`.
+1. **Buyer pickup collection** — its original recorded-map fix is in `CLAUDE.md`.
 2. **Mark Ready validation** — `Source/Intercolony/UI/MainTabWindow_Intercolony.cs:3333` uses
    `Find.CurrentMap ?? Find.AnyPlayerHomeMap` instead of the persisted `SalesOrder.fulfillmentMap`,
-   reintroducing the same defect in the same code path.
+   part of the taking-side path corrected by the sweep.
 3. **Distance computation** — `Source/Intercolony/Market/MarketOpportunityGenerator.cs:377` uses the
-   first player home map.
-4. **Purchase-order delivery and refund sites** — latent, already recorded in this backlog and
-   deliberately left alone.
+   first player home map; this was reviewed and is correct because generation has no order to key on.
+4. **Purchase-order delivery and refund sites** — the giving-side fallback corrected by the sweep.
+5. **`ProcessBuyerCollections`** — collection could fall back to another colony after the fulfilment
+   colony disappeared; this was the fifth site found and the taking-side fallback corrected by the
+   sweep.
 
-A dedicated sweep of this API has been proposed as its own work item. **This is an open decision,
-not an agreed plan.**
+**Resolved 2026-08-16** (`b6e868e`) at the two shipped fallback sites, with a deliberate asymmetry.
+Taking from the player must never substitute a colony: buyer collection now refuses to collect and
+fails the order with a reason if its fulfilment colony is gone. Giving to the player may substitute,
+but must disclose it: procurement deliveries and refunds can fall back to a surviving colony and
+name that colony.
+
+The remaining occurrences were reviewed and are correct. Labor reads `contract.destinationMap`
+first and uses `AnyPlayerHomeMap` only as a last resort; market generation has no order to key on;
+and debug and self-test files do not ship.
 
 ---
 
