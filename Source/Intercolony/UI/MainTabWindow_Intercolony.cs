@@ -2982,7 +2982,11 @@ namespace Intercolony
         {
             Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, RequestSummaryHeight));
 
-            string header = $"#{request.id}  {request.quantityRequested}x {request.ItemLabel()}";
+            string quantityLabel = request.quantityOrdered > 0 && request.IsOpen
+                ? $"{request.QuantityOutstanding}x {request.ItemLabel()} still wanted " +
+                  $"({request.quantityOrdered} of {request.quantityRequested} ordered)"
+                : $"{request.quantityRequested}x {request.ItemLabel()}";
+            string header = $"#{request.id}  {quantityLabel}";
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width - 200f, 22f), header);
 
             string sub;
@@ -3063,7 +3067,8 @@ namespace Intercolony
         {
             Widgets.DrawHighlightIfMouseover(rect);
 
-            bool partial = quote.quantityOffered < request.quantityRequested;
+            int outstanding = request.QuantityOutstanding;
+            bool partial = quote.quantityOffered < outstanding;
 
             Rect Cell(int index)
             {
@@ -3084,7 +3089,7 @@ namespace Intercolony
             GUI.color = partial ? new Color(0.9f, 0.8f, 0.5f) : Color.white;
             Widgets.Label(Cell(1),
                 partial
-                    ? $"{quote.quantityOffered} of {request.quantityRequested}"
+                    ? $"{quote.quantityOffered} of {outstanding}"
                     : $"{quote.quantityOffered}");
             GUI.color = Color.white;
 
@@ -3108,7 +3113,7 @@ namespace Intercolony
             {
                 TooltipHandler.TipRegion(rect,
                     $"{quote.settlementName} ({quote.factionName})\n" +
-                    $"{quote.quantityOffered} of {request.quantityRequested} requested\n" +
+                    $"{quote.quantityOffered} offered; {outstanding} still wanted\n" +
                     (quote.offeredQuality.HasValue
                         ? $"Quality: {quote.offeredQuality.Value.GetLabel()}\n"
                         : "") +
@@ -3237,10 +3242,16 @@ namespace Intercolony
 
             int silver = PurchaseOrderService.CountColonySilver(map);
 
+            int maximum = Mathf.Min(quote.quantityOffered, request.QuantityOutstanding);
+            if (maximum <= 0)
+            {
+                return;
+            }
+
             Find.WindowStack.Add(new Dialog_ConfirmQuantity(
                 "Confirm purchase?",
                 "Buy",
-                quote.quantityOffered,
+                maximum,
                 qty =>
                 {
                     int cost = Mathf.RoundToInt(quote.unitPrice * qty);

@@ -18,7 +18,7 @@ namespace Intercolony
         Cancelled,
 
         /// <summary>
-        /// Answered: the player took one of its quotations and a purchase order exists. This
+        /// Filled: the player has ordered the entire requested quantity. This
         /// was reported as <see cref="Cancelled"/> until 2026-08-10, which told the player they
         /// had abandoned the very requests they had successfully acted on.
         /// </summary>
@@ -173,6 +173,9 @@ namespace Intercolony
 
         public int quantityRequested;
 
+        /// <summary>Units already committed through accepted quotations.</summary>
+        public int quantityOrdered;
+
         /// <summary>How soon the player wants it. Suppliers who cannot meet it still quote (§19).</summary>
         public int desiredDays;
 
@@ -198,6 +201,8 @@ namespace Intercolony
 
         public bool IsOpen => status == PurchaseRequestStatus.Open;
 
+        public int QuantityOutstanding => Mathf.Max(0, quantityRequested - quantityOrdered);
+
         public bool IsAnimalOrder => animalSpec != null;
 
         public int TicksRemaining => expiryTick - GenTicks.TicksGame;
@@ -216,7 +221,7 @@ namespace Intercolony
                 Quotation best = null;
                 foreach (Quotation quote in quotes)
                 {
-                    if (quote.quantityOffered < quantityRequested)
+                    if (quote.quantityOffered < QuantityOutstanding)
                     {
                         continue;
                     }
@@ -268,6 +273,7 @@ namespace Intercolony
             Scribe_Defs.Look(ref stuffDef, "stuffDef");
             Scribe_Values.Look(ref minQuality, "minQuality");
             Scribe_Values.Look(ref quantityRequested, "quantityRequested", 0);
+            Scribe_Values.Look(ref quantityOrdered, "quantityOrdered", 0);
             Scribe_Values.Look(ref desiredDays, "desiredDays", 0);
             Scribe_Values.Look(ref createdTick, "createdTick", 0);
             Scribe_Values.Look(ref expiryTick, "expiryTick", 0);

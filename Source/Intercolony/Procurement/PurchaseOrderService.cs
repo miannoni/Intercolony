@@ -23,7 +23,7 @@ namespace Intercolony
         private const int PickupGraceDays = 10;
 
         /// <summary>
-        /// Accepts a quote: takes payment, creates the order, and closes the request.
+        /// Accepts a quote: takes payment, creates the order, and reduces the request remainder.
         /// Returns null with a message if it cannot proceed.
         /// </summary>
         public static PurchaseOrder AcceptQuote(
@@ -46,14 +46,32 @@ namespace Intercolony
                 return null;
             }
 
-            quantity = Mathf.Clamp(quantity, 1, quote.quantityOffered);
-
             if (!request.IsOpen)
             {
                 Messages.Message($"That request is {request.status}.",
                     MessageTypeDefOf.RejectInput, historical: false);
                 return null;
             }
+
+            // Membership is the consumption token. Once removed, the same quotation object
+            // cannot create another order even while its request remains open.
+            if (!request.quotes.Contains(quote))
+            {
+                Messages.Message("That quotation is no longer available.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return null;
+            }
+
+            int maximum = Mathf.Min(quote.quantityOffered, request.QuantityOutstanding);
+            if (maximum <= 0)
+            {
+                request.status = PurchaseRequestStatus.Ordered;
+                Messages.Message("That request has already been fully ordered.",
+                    MessageTypeDefOf.RejectInput, historical: false);
+                return null;
+            }
+
+            quantity = Mathf.Clamp(quantity, 1, maximum);
 
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(quote.settlementId);
             if (settlement == null)
@@ -122,12 +140,12 @@ namespace Intercolony
 
             state.AddPurchaseOrder(order);
 
-            // The request is answered; remaining quotes are no longer on the table. Leaving it
-            // open would let the player buy the same goods repeatedly off one request. It is
-            // Ordered rather than Cancelled: the player acted on this request, and calling that
-            // a cancellation reads as though they had walked away from it.
-            request.TryCancel();
-            request.status = PurchaseRequestStatus.Ordered;
+            request.quotes.Remove(quote);
+            request.quantityOrdered += quantity;
+            if (request.QuantityOutstanding == 0)
+            {
+                request.status = PurchaseRequestStatus.Ordered;
+            }
 
             IntercolonyLog.Message(
                 $"Purchase {order.id}: {order.quantity}x {order.ItemLabel()} from {order.settlementName} " +

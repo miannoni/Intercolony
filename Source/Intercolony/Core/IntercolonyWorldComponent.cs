@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 40;
+        public const int CurrentSaveVersion = 41;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1841,6 +1841,28 @@ namespace Intercolony
                 // trustworthy value to reconstruct, so old orders keep the unknown-route sentinel.
                 IntercolonyLog.Message(
                     "  schema 39 -> 40: sales orders now record their promised buyer-pickup distance; existing orders use the unknown-route fallback.");
+            }
+
+            if (saveVersion < 41)
+            {
+                // 40 -> 41 records how much of each purchase request has been ordered. Old
+                // Open requests cannot have an accepted quotation under the previous lifecycle,
+                // so zero is exact. Old Ordered requests are kept concluded and interpreted as
+                // fully ordered: PurchaseOrder.quantity can shrink during partial handoff, so
+                // it cannot safely reconstruct the quantity originally accepted.
+                int concluded = 0;
+                foreach (PurchaseRequest request in requests)
+                {
+                    if (request != null && request.status == PurchaseRequestStatus.Ordered)
+                    {
+                        request.quantityOrdered = request.quantityRequested;
+                        concluded++;
+                    }
+                }
+
+                IntercolonyLog.Message(
+                    $"  schema 40 -> 41: purchase requests now record ordered quantity; " +
+                    $"kept {concluded} legacy Ordered requests fully concluded.");
             }
 
             saveVersion = CurrentSaveVersion;
