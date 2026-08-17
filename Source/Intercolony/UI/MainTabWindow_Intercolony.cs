@@ -3339,12 +3339,23 @@ namespace Intercolony
             // Buyer pickup: the player declares the goods ready and the buyer travels (§25.2).
             if (order.CanMarkReady)
             {
-                // A removed map can remain referenced until reload, so only a still-loaded
-                // fulfillment colony is valid. Never redirect an order to another colony.
-                Map map = order.fulfillmentMap != null &&
-                          Find.Maps?.Contains(order.fulfillmentMap) == true
-                    ? order.fulfillmentMap
-                    : null;
+                // A recorded colony remains authoritative and may not be redirected if it is
+                // gone. Legacy cycle orders with no record can adopt the colony the player is
+                // acting from; the service persists that choice after validation succeeds.
+                Map map;
+                if (order.fulfillmentMap != null)
+                {
+                    map = Find.Maps?.Contains(order.fulfillmentMap) == true
+                        ? order.fulfillmentMap
+                        : null;
+                }
+                else
+                {
+                    Map currentMap = Find.CurrentMap;
+                    map = currentMap?.IsPlayerHome == true
+                        ? currentMap
+                        : Find.AnyPlayerHomeMap;
+                }
                 OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
                 bool enough = validation.Success;
 
@@ -3381,8 +3392,8 @@ namespace Intercolony
 
                 if (ShouldBuildTooltip(readyRect))
                 {
-                    float distance = BuyerPickupDistanceTiles(order.settlementId);
-                    int pickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(distance);
+                    int pickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(
+                        order.buyerPickupDistanceTiles);
                     TooltipHandler.TipRegion(readyRect, enough
                         ? $"Tell {order.settlementName} the goods are ready. Their caravan will " +
                           $"take approximately {pickupDays} days to arrive and collect them " +
@@ -3428,12 +3439,5 @@ namespace Intercolony
             return $"{order.status}: {order.outcomeNote}";
         }
 
-        private static float BuyerPickupDistanceTiles(int settlementId)
-        {
-            Settlement settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
-            return settlement == null
-                ? -1f
-                : MarketOpportunityGenerator.DistanceToPlayer(settlement);
-        }
     }
 }

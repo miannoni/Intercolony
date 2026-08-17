@@ -94,6 +94,7 @@ namespace Intercolony
                     opportunity, state.GetProfile(settlement), quantity, out _),
                 acceptedTick = GenTicks.TicksGame,
                 fulfillment = opportunity.fulfillment,
+                buyerPickupDistanceTiles = opportunity.distanceTiles,
                 fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap,
 
                 // The deadline starts counting at acceptance, which is what the market tab
@@ -545,6 +546,28 @@ namespace Intercolony
         {
             if (order == null || !order.CanMarkReady)
             {
+                return false;
+            }
+
+            // A missing record is compatible with cycle orders created before fulfillment maps
+            // were assigned: adopt the colony the player is acting from. A recorded map that is
+            // now gone is a different state and must never be redirected to another colony.
+            if (order.fulfillmentMap != null)
+            {
+                if (!ReferenceEquals(order.fulfillmentMap, map) ||
+                    Find.Maps?.Contains(order.fulfillmentMap) != true)
+                {
+                    Messages.Message(
+                        $"Order #{order.id}: its recorded fulfillment colony is no longer available.",
+                        MessageTypeDefOf.RejectInput, historical: false);
+                    return false;
+                }
+            }
+            else if (map == null || Find.Maps?.Contains(map) != true || !map.IsPlayerHome)
+            {
+                Messages.Message(
+                    $"Order #{order.id}: select an available player colony before marking it ready.",
+                    MessageTypeDefOf.RejectInput, historical: false);
                 return false;
             }
 
