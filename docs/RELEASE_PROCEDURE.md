@@ -54,9 +54,11 @@ Plan for the item being visible immediately:
 
 1. Final `About/Preview.png` in place and **under 1 MB**.
 2. Set `About/About.xml`'s `<modVersion>` to the version being released. Do this before running
-   `package.ps1`: the value is baked into the package and shipped to the Workshop. If the bump is
-   missed, the startup log line confidently reports the wrong version. That is worse than reporting
-   no version at all, because the figure will be trusted when triaging a bug report.
+   `package.ps1`: the script now takes its package version from this field, so the two can no longer
+   disagree and the bump must happen first. The value is baked into the package and shipped to the
+   Workshop. If the bump is missed, the startup log line confidently reports the wrong version. That
+   is worse than reporting no version at all, because the figure will be trusted when triaging a bug
+   report.
 3. `powershell -ExecutionPolicy Bypass -File package.ps1` run clean.
 4. Description text and gallery screenshots ready to paste and upload.
 5. Steam running and logged in.

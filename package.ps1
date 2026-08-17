@@ -9,7 +9,25 @@
 
 param(
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = "0.9.0"
+    [string]$Version = (& {
+        $aboutXmlPath = Join-Path $PSScriptRoot "About\About.xml"
+        if (-not (Test-Path -LiteralPath $aboutXmlPath -PathType Leaf)) {
+            throw "About\About.xml is missing. Set <modVersion> in About\About.xml or pass -Version."
+        }
+
+        try {
+            [xml]$aboutXml = Get-Content -LiteralPath $aboutXmlPath -Raw -ErrorAction Stop
+        } catch {
+            throw "About\About.xml could not be parsed as XML. Set <modVersion> in About\About.xml or pass -Version. $($_.Exception.Message)"
+        }
+
+        $modVersionElement = $aboutXml.SelectSingleNode('/ModMetaData/modVersion')
+        if ($null -eq $modVersionElement -or [string]::IsNullOrWhiteSpace($modVersionElement.InnerText)) {
+            throw "About\About.xml has no non-empty <modVersion> element. Set <modVersion> in About\About.xml or pass -Version."
+        }
+
+        $modVersionElement.InnerText.Trim()
+    })
 )
 
 $ErrorActionPreference = "Stop"
