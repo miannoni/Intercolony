@@ -140,7 +140,9 @@ namespace Intercolony
 
             state.AddPurchaseOrder(order);
 
-            request.quotes.Remove(quote);
+            state.ConsumeSupplierOffer(
+                quote.refreshWindow, request.thingDef, quote.settlementId, quantity);
+
             request.quantityOrdered += quantity;
             if (request.QuantityOutstanding == 0)
             {

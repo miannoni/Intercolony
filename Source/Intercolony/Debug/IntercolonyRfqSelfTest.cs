@@ -49,6 +49,64 @@ namespace Intercolony
 
             List<PurchaseRequest> created = new List<PurchaseRequest>();
 
+            // Supplier stock belongs to its refresh window, not to any one RFQ. Exercise the
+            // state mechanism without touching the live world's ledger or requests.
+            ThingDef finiteOfferDef = new ThingDef { shortHash = 321 };
+            IntercolonyWorldComponent finiteOfferState = new IntercolonyWorldComponent(null);
+            Quotation sameWindowA = new Quotation
+            {
+                settlementId = 77,
+                refreshWindow = 12,
+                quantityOffered = 300
+            };
+            Quotation sameWindowB = new Quotation
+            {
+                settlementId = 77,
+                refreshWindow = 12,
+                quantityOffered = 300
+            };
+            Quotation priorWindow = new Quotation
+            {
+                settlementId = 77,
+                refreshWindow = 11,
+                quantityOffered = 300
+            };
+            finiteOfferState.AddRequest(new PurchaseRequest
+            {
+                thingDef = finiteOfferDef,
+                quantityRequested = 300,
+                quotes = new List<Quotation> { sameWindowA }
+            });
+            finiteOfferState.AddRequest(new PurchaseRequest
+            {
+                thingDef = finiteOfferDef,
+                quantityRequested = 300,
+                quotes = new List<Quotation> { sameWindowB }
+            });
+            finiteOfferState.AddRequest(new PurchaseRequest
+            {
+                thingDef = finiteOfferDef,
+                quantityRequested = 300,
+                quotes = new List<Quotation> { priorWindow }
+            });
+
+            finiteOfferState.ConsumeSupplierOffer(12, finiteOfferDef, 77, 100);
+            Check("partial purchase remains on the accepted quotation",
+                sameWindowA.quantityOffered == 200, $"{sameWindowA.quantityOffered} left");
+            Check("parallel RFQs share finite supplier stock",
+                sameWindowB.quantityOffered == 200, $"{sameWindowB.quantityOffered} left");
+            Check("consumption is isolated by refresh window",
+                priorWindow.quantityOffered == 300, $"{priorWindow.quantityOffered} left");
+            Check("consumption ledger records the genuine count",
+                finiteOfferState.SupplierOfferConsumptionFor(12, finiteOfferDef, 77) == 100);
+            Check("absent consumption is zero",
+                finiteOfferState.SupplierOfferConsumptionFor(12, finiteOfferDef, 78) == 0);
+
+            finiteOfferState.ConsumeSupplierOffer(12, finiteOfferDef, 77, 200);
+            Check("exhausted supplier disappears from every matching RFQ",
+                finiteOfferState.Requests[0].quotes.Count == 0 &&
+                finiteOfferState.Requests[1].quotes.Count == 0);
+
             // Sample across the def list and across quantities, because scarcity depends on
             // both what is asked for and how much.
             int totalRequests = 0;

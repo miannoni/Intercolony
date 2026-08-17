@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 41;
+        public const int CurrentSaveVersion = 42;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -165,6 +165,108 @@ namespace Intercolony
         private List<PurchaseRequest> requests = new List<PurchaseRequest>();
 
         public List<PurchaseRequest> Requests => requests;
+
+        /// <summary>
+        /// Units already bought from each supplier's finite offer in a market window.
+        /// This belongs to the world rather than a request so withdrawing and recreating an
+        /// RFQ cannot restore stock the supplier has already sold.
+        /// </summary>
+        private List<SupplierOfferConsumption> supplierOfferConsumption =
+            new List<SupplierOfferConsumption>();
+
+        /// <summary>
+        /// Returns how much of one supplier's item offer has already been bought in the named
+        /// market window. Absence is the genuine count zero, never a sentinel.
+        /// </summary>
+        public int SupplierOfferConsumptionFor(
+            int refreshWindow, ThingDef thingDef, int settlementId)
+        {
+            if (thingDef == null)
+            {
+                return 0;
+            }
+
+            ushort thingDefShortHash = thingDef.shortHash;
+            foreach (SupplierOfferConsumption entry in supplierOfferConsumption)
+            {
+                if (entry.refreshWindow == refreshWindow &&
+                    entry.thingDefShortHash == thingDefShortHash &&
+                    entry.settlementId == settlementId)
+                {
+                    return Mathf.Max(0, entry.quantityPurchased);
+                }
+            }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Consumes units from one supplier's finite offer for this market window. Every matching
+        /// live quotation is reduced immediately, including quotations created before the purchase.
+        /// </summary>
+        public void ConsumeSupplierOffer(
+            int refreshWindow, ThingDef thingDef, int settlementId, int quantityPurchased)
+        {
+            if (thingDef == null || quantityPurchased <= 0)
+            {
+                return;
+            }
+
+            ushort thingDefShortHash = thingDef.shortHash;
+            foreach (SupplierOfferConsumption entry in supplierOfferConsumption)
+            {
+                if (entry.refreshWindow == refreshWindow &&
+                    entry.thingDefShortHash == thingDefShortHash &&
+                    entry.settlementId == settlementId)
+                {
+                    entry.quantityPurchased += quantityPurchased;
+                    ReduceLiveSupplierQuotes(
+                        refreshWindow, thingDefShortHash, settlementId, quantityPurchased);
+                    return;
+                }
+            }
+
+            supplierOfferConsumption.Add(new SupplierOfferConsumption
+            {
+                refreshWindow = refreshWindow,
+                thingDefShortHash = thingDefShortHash,
+                settlementId = settlementId,
+                quantityPurchased = quantityPurchased
+            });
+
+            ReduceLiveSupplierQuotes(
+                refreshWindow, thingDefShortHash, settlementId, quantityPurchased);
+        }
+
+        private void ReduceLiveSupplierQuotes(
+            int refreshWindow, ushort thingDefShortHash, int settlementId, int quantityPurchased)
+        {
+            foreach (PurchaseRequest request in requests)
+            {
+                if (!request.IsOpen || request.thingDef == null ||
+                    request.thingDef.shortHash != thingDefShortHash)
+                {
+                    continue;
+                }
+
+                for (int i = request.quotes.Count - 1; i >= 0; i--)
+                {
+                    Quotation quote = request.quotes[i];
+                    if (quote.refreshWindow != refreshWindow ||
+                        quote.settlementId != settlementId)
+                    {
+                        continue;
+                    }
+
+                    quote.quantityOffered = Mathf.Max(
+                        0, quote.quantityOffered - quantityPurchased);
+                    if (quote.quantityOffered == 0)
+                    {
+                        request.quotes.RemoveAt(i);
+                    }
+                }
+            }
+        }
 
         public void AddRequest(PurchaseRequest request)
         {
@@ -779,6 +881,8 @@ namespace Intercolony
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
             Scribe_Collections.Look(ref commercialHistory, "commercialHistory", LookMode.Deep);
+            Scribe_Collections.Look(
+                ref supplierOfferConsumption, "supplierOfferConsumption", LookMode.Deep);
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
@@ -875,6 +979,16 @@ namespace Intercolony
                             "commercial-history entries while loading. Unresolvable usually means " +
                             "a mod supplying the item was removed.");
                     }
+                }
+
+                if (supplierOfferConsumption == null)
+                {
+                    supplierOfferConsumption = new List<SupplierOfferConsumption>();
+                }
+                else
+                {
+                    supplierOfferConsumption.RemoveAll(entry =>
+                        entry == null || entry.quantityPurchased <= 0);
                 }
 
                 if (requests == null)
@@ -1187,6 +1301,7 @@ namespace Intercolony
         {
             lastRefreshTick = GenTicks.TicksGame;
             refreshCount++;
+            supplierOfferConsumption.Clear();
             PruneProfileCache();
 
             LedgerService.Prune(this);
@@ -1865,6 +1980,35 @@ namespace Intercolony
                     $"kept {concluded} legacy Ordered requests fully concluded.");
             }
 
+            if (saveVersion < 42)
+            {
+                // 41 -> 42 added finite supplier-offer consumption per market window and records
+                // the originating window on quotations. Existing saves have no ledger, which
+                // correctly means nothing has been bought this window, so no consumption value
+                // repair is needed. Live legacy quotes are assigned to the current window because
+                // the new identity field did not exist; this prevents accepting one immediately
+                // after upgrade and then regenerating its supplier's full current-window stock.
+                int initializedQuotes = 0;
+                foreach (PurchaseRequest request in requests)
+                {
+                    if (request == null || !request.IsOpen)
+                    {
+                        continue;
+                    }
+
+                    foreach (Quotation quote in request.quotes)
+                    {
+                        quote.refreshWindow = refreshCount;
+                        initializedQuotes++;
+                    }
+                }
+
+                IntercolonyLog.Message(
+                    $"  schema 41 -> 42: finite supplier offers now retain consumption on world " +
+                    $"state; existing saves start with none consumed this window and " +
+                    $"{initializedQuotes} live legacy quote(s) were assigned to it.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -2025,5 +2169,26 @@ namespace Intercolony
         /// <summary>"never" or the tick, for display.</summary>
         public string LastRefreshTickDescription =>
             lastRefreshTick < 0 ? "never" : lastRefreshTick.ToString();
+    }
+
+    /// <summary>
+    /// Persisted quantity bought from one settlement's offer for one item in one market window.
+    /// Stable scalar identities are used because neither requests nor object references own this
+    /// stock, and withdrawing a request must not restore it.
+    /// </summary>
+    public class SupplierOfferConsumption : IExposable
+    {
+        public int refreshWindow;
+        public ushort thingDefShortHash;
+        public int settlementId = -1;
+        public int quantityPurchased;
+
+        public void ExposeData()
+        {
+            Scribe_Values.Look(ref refreshWindow, "refreshWindow", 0);
+            Scribe_Values.Look(ref thingDefShortHash, "thingDefShortHash", (ushort)0);
+            Scribe_Values.Look(ref settlementId, "settlementId", -1);
+            Scribe_Values.Look(ref quantityPurchased, "quantityPurchased", 0);
+        }
     }
 }

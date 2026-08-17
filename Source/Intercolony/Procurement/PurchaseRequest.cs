@@ -52,6 +52,12 @@ namespace Intercolony
         public string settlementName = "";
         public string factionName = "";
 
+        /// <summary>
+        /// Market refresh window that rolled this offer. Persisted so a quotation that outlives
+        /// its window never consumes stock from a newer one.
+        /// </summary>
+        public int refreshWindow;
+
         /// <summary>Units this supplier can actually provide. May be less than requested.</summary>
         public int quantityOffered;
 
@@ -98,6 +104,7 @@ namespace Intercolony
             Scribe_Values.Look(ref settlementId, "settlementId", -1);
             Scribe_Values.Look(ref settlementName, "settlementName", "");
             Scribe_Values.Look(ref factionName, "factionName", "");
+            Scribe_Values.Look(ref refreshWindow, "refreshWindow", 0);
             Scribe_Values.Look(ref quantityOffered, "quantityOffered", 0);
             Scribe_Values.Look(ref unitPrice, "unitPrice", 0f);
             Scribe_Values.Look(ref leadTimeDays, "leadTimeDays", 0);

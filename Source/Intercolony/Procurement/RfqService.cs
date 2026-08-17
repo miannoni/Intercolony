@@ -158,6 +158,18 @@ namespace Intercolony
                     Quotation quote = TryQuote(request, settlement, profile, category.Value);
                     if (quote != null)
                     {
+                        // Roll the complete quotation first, then subtract stock already bought.
+                        // This preserves both the deterministic offer and every later random draw.
+                        quote.refreshWindow = state.RefreshCount;
+                        int consumed = state.SupplierOfferConsumptionFor(
+                            quote.refreshWindow, request.thingDef, settlement.ID);
+                        quote.quantityOffered = Mathf.Max(0, quote.quantityOffered - consumed);
+                        if (quote.quantityOffered == 0)
+                        {
+                            couldNotSupply++;
+                            continue;
+                        }
+
                         quote.id = state.NextId();
                         request.quotes.Add(quote);
                     }
