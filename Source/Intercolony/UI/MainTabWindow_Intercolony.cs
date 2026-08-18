@@ -709,12 +709,12 @@ namespace Intercolony
             if (live.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(0f, y, inRect.width, 60f),
-                    totalAvailable == 0
+                string emptyMessage = totalAvailable == 0
                         ? "No settlement is currently asking for anything.\n" +
                           "Demand is refreshed periodically as the world turns."
                         : $"All {totalAvailable} current offers are beyond your distance limit.\n" +
-                          "Raise the limit above to see them.");
+                          "Raise the limit above to see them.";
+                Widgets.Label(new Rect(0f, y, inRect.width, Text.CalcHeight(emptyMessage, inRect.width)), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }
@@ -1257,8 +1257,8 @@ namespace Intercolony
             if (orders.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(0f, y, inRect.width, 60f),
-                    "No orders yet. Accept an offer in the Market tab to commit to one.");
+                string emptyMessage = "No orders yet. Accept an offer in the Market tab to commit to one.";
+                Widgets.Label(new Rect(0f, y, inRect.width, Text.CalcHeight(emptyMessage, inRect.width)), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }
@@ -1401,12 +1401,12 @@ namespace Intercolony
             if (empty)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(0f, y, inRect.width, 60f),
-                    findBuyerAnimalMode
+                string emptyMessage = findBuyerAnimalMode
                         ? "No eligible colony animals are currently available to sell.\n" +
                           "Humanlikes, hosted pawns and animals already committed are excluded."
                         : "Nothing tradeable is currently available to sell.\n" +
-                          "Counts include only stockpiled goods that are not already committed.");
+                          "Counts include only stockpiled goods that are not already committed.";
+                Widgets.Label(new Rect(0f, y, inRect.width, Text.CalcHeight(emptyMessage, inRect.width)), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }
@@ -2024,7 +2024,10 @@ namespace Intercolony
             float contentHeight = PurchaseOrdersHeight(purchaseOrders);
             if (purchaseOrders.Count == 0)
             {
-                contentHeight += 70f;
+                string emptyMessage = "Nothing on order.\n\n" +
+                                      "Accept a supplier's quotation on Find seller and the purchase appears here " +
+                                      "until it arrives.";
+                contentHeight += Text.CalcHeight(emptyMessage, inRect.width - 16f);
             }
 
             if (concludedRequests.Count > 0)
@@ -2043,12 +2046,13 @@ namespace Intercolony
             if (purchaseOrders.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(0f, rowY, viewRect.width, 70f),
-                    "Nothing on order.\n\n" +
-                    "Accept a supplier's quotation on Find seller and the purchase appears here " +
-                    "until it arrives.");
+                string emptyMessage = "Nothing on order.\n\n" +
+                                      "Accept a supplier's quotation on Find seller and the purchase appears here " +
+                                      "until it arrives.";
+                float emptyMessageHeight = Text.CalcHeight(emptyMessage, viewRect.width);
+                Widgets.Label(new Rect(0f, rowY, viewRect.width, emptyMessageHeight), emptyMessage);
                 GUI.color = Color.white;
-                rowY += 70f;
+                rowY += emptyMessageHeight;
             }
 
             if (concludedRequests.Count > 0)
@@ -2197,7 +2201,11 @@ namespace Intercolony
 
             if (requests.Count == 0)
             {
-                contentHeight += 70f;
+                string emptyMessage = "No requests out.\n\n" +
+                                      "Intercolony is not a shop. You state what you need, and known settlements " +
+                                      "answer if they can — sometimes with less than you asked for, sometimes not " +
+                                      "at all. Requests you have already acted on are under Orders.";
+                contentHeight += Text.CalcHeight(emptyMessage, inRect.width - 16f);
             }
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
@@ -2209,11 +2217,11 @@ namespace Intercolony
             if (requests.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(0f, rowY, viewRect.width, 70f),
-                    "No requests out.\n\n" +
-                    "Intercolony is not a shop. You state what you need, and known settlements " +
-                    "answer if they can — sometimes with less than you asked for, sometimes not " +
-                    "at all. Requests you have already acted on are under Orders.");
+                string emptyMessage = "No requests out.\n\n" +
+                                      "Intercolony is not a shop. You state what you need, and known settlements " +
+                                      "answer if they can — sometimes with less than you asked for, sometimes not " +
+                                      "at all. Requests you have already acted on are under Orders.";
+                Widgets.Label(new Rect(0f, rowY, viewRect.width, Text.CalcHeight(emptyMessage, viewRect.width)), emptyMessage);
                 GUI.color = Color.white;
             }
 
@@ -2532,11 +2540,11 @@ namespace Intercolony
             if (contracts.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(0f, y, inRect.width, 80f),
-                    "No supply agreements.\n\n" +
-                    "Settlements that trust you may offer standing agreements — a fixed quantity " +
-                    "every quadrum for a fixed term, at better than spot prices. Build a trading " +
-                    "record first: a settlement will not stake a year of supply on a stranger.");
+                string emptyMessage = "No supply agreements.\n\n" +
+                                      "Settlements that trust you may offer standing agreements — a fixed quantity " +
+                                      "every quadrum for a fixed term, at better than spot prices. Build a trading " +
+                                      "record first: a settlement will not stake a year of supply on a stranger.";
+                Widgets.Label(new Rect(0f, y, inRect.width, Text.CalcHeight(emptyMessage, inRect.width)), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }
@@ -2872,11 +2880,11 @@ namespace Intercolony
             if (records.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(0f, y, inRect.width, 60f),
-                    "No trading history yet.\n\n" +
-                    "Complete or fail an order and that settlement will form an opinion. " +
-                    "Reputation is held per settlement and is separate from faction goodwill — " +
-                    "being liked is not the same as being relied on.");
+                string emptyMessage = "No trading history yet.\n\n" +
+                                      "Complete or fail an order and that settlement will form an opinion. " +
+                                      "Reputation is held per settlement and is separate from faction goodwill — " +
+                                      "being liked is not the same as being relied on.";
+                Widgets.Label(new Rect(0f, y, inRect.width, Text.CalcHeight(emptyMessage, inRect.width)), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }

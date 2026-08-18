@@ -49,6 +49,25 @@ SAVES            = %USERPROFILE%\AppData\LocalLow\Ludeon Studios\RimWorld by Lud
 5. **Ask before widening scope.** If a task requires touching a system outside the
    current phase, stop and say so rather than expanding silently.
 
+6. **UI presents key/value rows, not prose.** Set by Matteo on 2026-08-17 as the
+   standard for *every* popup and panel in the mod. On the face of a dialog put only
+   what the player is agreeing to and the number they get, as labelled rows; push the
+   *why* — rationale, side effects, "this is binding" — into tooltips; delete any
+   sentence that restates what a control already shows. This is not cosmetic. Six
+   paragraphs on the "Sell to this buyer?" dialog put a fixed 12-day *mark ready*
+   deadline in a sentence adjacent to the buyer's *arrival* estimate, and it misled
+   the mod's own author into reading them as one number (backlog finding 3). Prose
+   lets two unrelated facts read as one; a labelled row cannot.
+
+7. **Text composed at runtime is measured, never boxed.** Any `Widgets.Label` fed by a
+   builder or an interpolated string gets `Text.CalcHeight(text, width)` — never a
+   literal pixel height. `Widgets.Label` neither clips nor scrolls: it paints the whole
+   string from the top-left regardless of the rect, so an oversized body silently
+   overdraws whatever is beneath it. That is one defect, not two, and it produced both
+   the overlap and the clipping in backlog finding 1. A dialog whose content varies
+   sizes to its measured content, clamped to a fraction of `UI.screenHeight`, and
+   scrolls past the clamp.
+
 ---
 
 ## Build and test loop

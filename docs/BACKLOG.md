@@ -408,14 +408,56 @@ No open work. Findings 2, 4, 8 and 9 and the persistence half of finding 3 are r
 
 #### Tier 2 — UI pass
 
-Deferred to last at Matteo's request, but explicitly not dropped.
+**Started 2026-08-17.** Re-ranked into three slices after a design pass. The original list mixed a
+structural defect with editorial work; separating them means the box is fixed before the text is
+rewritten, so the trimming is a design choice rather than a bug workaround — and a later wording
+change cannot reopen the overlap.
 
-1. **Finding 1 — clipping and over-verbosity**, together with the existing backlog entry
-   **Empty-state paragraphs use hard-coded heights and can clip**.
-2. **Findings 5, 6 and 7.**
-3. **Finding 3 — display.** Make the ready deadline and arrival estimate unambiguous.
-4. **Finding 2 follow-up — wording.** Replace the odd **Due now** label with explicit signing-fee
-   language.
+**The root cause of finding 1 is confirmed and is shared with the empty-state entry above.**
+`Dialog_ConfirmQuantity.DoWindowContents` draws the body with a bare `Widgets.Label` into leftover
+space (`Dialog_ConfirmQuantity.cs:171-176`) inside a fixed `520 × 536` window (`:148-150`).
+`Widgets.Label` neither clips nor scrolls — it paints the whole string from the top-left of the rect
+regardless of the rect's height — so a body taller than the space left overdraws the
+**Fulfillment:** row at `:182`. The overlap and the clipping are one defect: **unmeasured text in a
+fixed box.** The body it is handed for a buyer-pickup sale is six blocks, ~700 characters
+(`MainTabWindow_Intercolony.cs:1842-1858`), which cannot fit at 1.75x UI scale.
+
+The empty-state sweep is larger than the five sites listed above: the line numbers there date from
+2026-08-08 and have drifted. As of 2026-08-17 there are roughly ten, including
+`MainTabWindow_Intercolony.cs` at ~712, ~1260, ~1404, ~2875 (`60f`) and ~2046, ~2212 (`70f`),
+`MainTabWindow_Intercolony_Labor.cs` at ~181 and ~243, and `MainTabWindow_Intercolony_Business.cs`
+at ~149 and ~220. Sweep by pattern, not by that list.
+
+**2a — measurement, no wording changes.** `Dialog_ConfirmQuantity` sizes to its measured body,
+clamped to ~70% of `UI.screenHeight` and scrolling past the clamp, with the controls block pinned
+outside the scroll view; plus `Text.CalcHeight` across every empty-state paragraph. Both auto-size
+and scroll are required — auto-size alone still breaks at high UI scale on a small screen, and
+scroll alone makes the player scroll a four-line body. Independently testable at 1.75x scale.
+Now a hard rule in `CLAUDE.md` (#7).
+
+**2b — the sell dialog, editorially.** Finding 1's verbosity, finding 3's presentation, finding 2's
+**Due now** wording, and finding 5's toggle. The body becomes a labelled key/value block — payment,
+distance, fulfilment rate, *mark ready by*, *buyer arrives* — with rationale moved into tooltips.
+That resolves finding 3's display half as a side effect: the deadline and the arrival estimate
+become two rows with different verbs and different units, so they can no longer be read as one
+number, which is exactly the misreading that produced the original report.
+
+**Matteo's decision, 2026-08-17: key/value rather than prose is now the standard for every popup
+and every panel in the mod, not just this dialog.** Recorded as `CLAUDE.md` hard rule #6.
+
+**Finding 5's toggle, as decided.** Default on, default changeable in mod settings. If **Mark ready
+now** is ticked and the goods do not validate, the order is **not** created, the dialog stays open
+so the player can correct a misclick, and the refusal speaks — per the standing rule that RimWorld
+draws a disabled `Widgets.ButtonText` identically to a live one, so a silent refusal is an invisible
+dead control. Because the toggle defaults on, its refusal must name its own escape hatch — "untick
+**Mark ready now** to create the order and ready it later" — otherwise the ordinary "I will craft it
+next week" flow is walled off on every sale.
+
+**2c — the orders list.** Findings 6 and 7: a sortable table with columns `#`, buyer, goods,
+quantity, value, status/ETA, sorted by soonest deadline by default. Finding 7 is narrower than it
+looks — `OrderDetailText` already shows silver while an order is open
+(`MainTabWindow_Intercolony.cs:3434-3436`), but the `BuyerEnRoute` branch drops it entirely
+(`:3422-3426`), which is precisely the "ready orders show no value" report.
 
 #### Tier 3 — features, Phase 27 candidates
 

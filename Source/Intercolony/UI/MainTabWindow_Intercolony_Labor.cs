@@ -178,11 +178,11 @@ namespace Intercolony
             if (pool.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(6f, y, inRect.width - 12f, 76f),
-                    "No workers on offer.\n\n" +
-                    "Settlements you can reach are not releasing labor at the moment. The listing " +
-                    "changes with the market — check back after the next refresh, or post a job and " +
-                    "let people come to you.");
+                string emptyMessage = "No workers on offer.\n\n" +
+                                      "Settlements you can reach are not releasing labor at the moment. The listing " +
+                                      "changes with the market — check back after the next refresh, or post a job and " +
+                                      "let people come to you.";
+                Widgets.Label(new Rect(6f, y, inRect.width - 12f, Text.CalcHeight(emptyMessage, inRect.width - 12f)), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }
@@ -240,10 +240,11 @@ namespace Intercolony
             if (live.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(6f, y, inRect.width - 12f, 44f),
-                    "Nobody hired. Find someone under Hire, or post a job and let them come to you.");
+                string emptyMessage = "Nobody hired. Find someone under Hire, or post a job and let them come to you.";
+                float emptyMessageHeight = Text.CalcHeight(emptyMessage, inRect.width - 12f);
+                Widgets.Label(new Rect(6f, y, inRect.width - 12f, emptyMessageHeight), emptyMessage);
                 GUI.color = Color.white;
-                y += 48f;
+                y += emptyMessageHeight + 4f;
             }
             else
             {
@@ -314,13 +315,13 @@ namespace Intercolony
             if (live.Count == 0)
             {
                 GUI.color = Color.gray;
-                Widgets.Label(new Rect(6f, y, inRect.width - 12f, 120f),
-                    "Nothing advertised.\n\n" +
-                    "A posting says what you need and what you will pay. Workers who can do the job, " +
-                    "and who will work for that, apply as the market brings them past — including " +
-                    "people who are not advertising themselves and would never appear under Hire.\n\n" +
-                    "It costs nothing to leave one up. There are only so many workers in the world, " +
-                    "so posting the same job twice gets you the same people.");
+                string emptyMessage = "Nothing advertised.\n\n" +
+                                      "A posting says what you need and what you will pay. Workers who can do the job, " +
+                                      "and who will work for that, apply as the market brings them past — including " +
+                                      "people who are not advertising themselves and would never appear under Hire.\n\n" +
+                                      "It costs nothing to leave one up. There are only so many workers in the world, " +
+                                      "so posting the same job twice gets you the same people.";
+                Widgets.Label(new Rect(6f, y, inRect.width - 12f, Text.CalcHeight(emptyMessage, inRect.width - 12f)), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }

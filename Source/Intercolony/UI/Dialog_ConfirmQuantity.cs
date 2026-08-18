@@ -36,10 +36,19 @@ namespace Intercolony
         private readonly bool chooseFulfillment;
         private readonly bool chooseDiscount;
 
+        private const float WindowWidth = 520f;
+        private const float WindowMargin = 18f;
+        private const float TitleHeight = 38f;
+        private const float BodyControlsGap = 8f;
+        private const float QuantityControlsHeight = 122f;
+        private const float FulfillmentControlsHeight = 58f;
+        private const float DiscountControlsHeight = 58f;
+
         private int quantity;
         private string buffer;
         private FulfillmentMode fulfillment;
         private float discountFraction;
+        private Vector2 bodyScroll;
 
         /// <param name="minQuantity">
         /// Floor on the commitment. Hiring needs it: a worker with a five-day minimum term must
@@ -145,9 +154,21 @@ namespace Intercolony
             absorbInputAroundWindow = true;
         }
 
-        public override Vector2 InitialSize => new Vector2(
-            520f,
-            420f + (chooseFulfillment ? 58f : 0f) + (chooseDiscount ? 58f : 0f));
+        public override Vector2 InitialSize
+        {
+            get
+            {
+                Text.Font = GameFont.Small;
+                float bodyHeight = Text.CalcHeight(BuildBody(), WindowWidth - WindowMargin * 2f);
+                float fixedHeight = WindowMargin * 2f + TitleHeight + BodyControlsGap +
+                                    ControlsHeight();
+
+                // InitialSize is only consumed when the window opens. Later slider changes can
+                // lengthen the live body, so DoWindowContents scrolls any growth beyond this slot.
+                float height = Mathf.Min(fixedHeight + bodyHeight, UI.screenHeight * 0.7f);
+                return new Vector2(WindowWidth, Mathf.Max(fixedHeight + Text.LineHeight, height));
+            }
+        }
 
         public override void DoWindowContents(Rect inRect)
         {
@@ -160,20 +181,25 @@ namespace Intercolony
 
             // Body is rebuilt for the current quantity, so the price the player is agreeing to
             // updates as they move the slider rather than describing the original amount.
-            const float QuantityControlsHeight = 122f;
-            const float FulfillmentControlsHeight = 58f;
-            const float DiscountControlsHeight = 58f;
-            float controlsHeight = QuantityControlsHeight +
-                                   (chooseFulfillment ? FulfillmentControlsHeight : 0f) +
-                                   (chooseDiscount ? DiscountControlsHeight : 0f);
+            float controlsHeight = ControlsHeight();
             float controlsTop = inRect.height - controlsHeight;
 
-            Rect bodyRect = new Rect(0f, y, inRect.width, controlsTop - y - 8f);
-            Widgets.Label(bodyRect, chooseDiscount
-                ? discountBodyBuilder(quantity, fulfillment, discountFraction)
-                : chooseFulfillment
-                    ? fulfillmentBodyBuilder(quantity, fulfillment)
-                    : bodyBuilder(quantity));
+            string body = BuildBody();
+            Rect bodyRect = new Rect(0f, y, inRect.width, controlsTop - y - BodyControlsGap);
+            float bodyHeight = Text.CalcHeight(body, bodyRect.width);
+            if (bodyHeight <= bodyRect.height)
+            {
+                Widgets.Label(bodyRect, body);
+            }
+            else
+            {
+                float viewWidth = bodyRect.width - 16f;
+                float viewHeight = Text.CalcHeight(body, viewWidth);
+                Rect viewRect = new Rect(0f, 0f, viewWidth, viewHeight);
+                Widgets.BeginScrollView(bodyRect, ref bodyScroll, viewRect);
+                Widgets.Label(viewRect, body);
+                Widgets.EndScrollView();
+            }
 
             float bottom = controlsTop;
 
@@ -287,6 +313,22 @@ namespace Intercolony
             quantity = Mathf.Clamp(value, minQuantity, maxQuantity);
             buffer = quantity.ToString();
             SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+        }
+
+        private float ControlsHeight()
+        {
+            return QuantityControlsHeight +
+                   (chooseFulfillment ? FulfillmentControlsHeight : 0f) +
+                   (chooseDiscount ? DiscountControlsHeight : 0f);
+        }
+
+        private string BuildBody()
+        {
+            return chooseDiscount
+                ? discountBodyBuilder(quantity, fulfillment, discountFraction)
+                : chooseFulfillment
+                    ? fulfillmentBodyBuilder(quantity, fulfillment)
+                    : bodyBuilder(quantity);
         }
 
         private void DrawFulfillmentChoice(

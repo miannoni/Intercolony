@@ -146,12 +146,13 @@ namespace Intercolony
             if (report.entryCount == 0)
             {
                 GUI.color = new Color(1f, 1f, 1f, 0.6f);
-                Widgets.Label(new Rect(6f, y, inRect.width, 44f),
-                    state.LedgerStartTick == LedgerService.NoHistory
+                string emptyMessage = state.LedgerStartTick == LedgerService.NoHistory
                         ? "Nothing has moved yet. Sell something, hire someone, and this fills in."
-                        : "No money moved in this period.");
+                        : "No money moved in this period.";
+                float emptyMessageHeight = Text.CalcHeight(emptyMessage, inRect.width);
+                Widgets.Label(new Rect(6f, y, inRect.width, emptyMessageHeight), emptyMessage);
                 GUI.color = Color.white;
-                return y + 44f;
+                return y + emptyMessageHeight;
             }
 
             // Said plainly rather than shown as a confident total. A colony twelve days old reading
@@ -217,10 +218,11 @@ namespace Intercolony
             if (estimates.Count == 0)
             {
                 GUI.color = new Color(1f, 1f, 1f, 0.6f);
-                Widgets.Label(new Rect(6f, y, inRect.width, 44f),
-                    "No standing agreements. Build a trading record and settlements will propose them.");
+                string emptyMessage = "No standing agreements. Build a trading record and settlements will propose them.";
+                float emptyMessageHeight = Text.CalcHeight(emptyMessage, inRect.width);
+                Widgets.Label(new Rect(6f, y, inRect.width, emptyMessageHeight), emptyMessage);
                 GUI.color = Color.white;
-                return y + 44f;
+                return y + emptyMessageHeight;
             }
 
             GUI.color = new Color(1f, 1f, 1f, 0.6f);
