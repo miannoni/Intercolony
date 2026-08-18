@@ -128,7 +128,8 @@ namespace Intercolony
             int available = PurchaseOrderService.CountColonySilver(paymentMap);
             if (available < upFront)
             {
-                failReason = $"Not enough silver in storage: {available} of {upFront} needed.";
+                string payment = structure.IsPeriodic() ? "the signing fee" : "the prepaid wages";
+                failReason = $"Not enough silver in storage for {payment}: {available} of {upFront} needed.";
                 return null;
             }
 
@@ -259,7 +260,10 @@ namespace Intercolony
             int available = PurchaseOrderService.CountColonySilver(paymentMap);
             if (available < upFront)
             {
-                failReason = $"Not enough silver in storage: {available} of {upFront} needed.";
+                string payment = posting.wageStructure.IsPeriodic()
+                    ? "the signing fee"
+                    : "the prepaid wages";
+                failReason = $"Not enough silver in storage for {payment}: {available} of {upFront} needed.";
                 return null;
             }
 

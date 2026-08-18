@@ -444,7 +444,9 @@ namespace Intercolony
 
             GUI.color = affordable ? new Color(1f, 1f, 1f, 0.65f) : new Color(1f, 0.6f, 0.6f);
             Widgets.Label(new Rect(rect.x + 24f, rect.y + 42f, textWidth, 22f),
-                $"Due now: {upFront} silver.  In storage: {available}.");
+                posting.wageStructure.IsPeriodic()
+                    ? $"Signing fee: {upFront} silver.  In storage: {available}."
+                    : $"Prepaid wages: {upFront} silver.  In storage: {available}.");
             GUI.color = Color.white;
 
             Rect hireRect = new Rect(rect.xMax - actionWidth * 2f - 14f, rect.y + 18f, actionWidth, 30f);

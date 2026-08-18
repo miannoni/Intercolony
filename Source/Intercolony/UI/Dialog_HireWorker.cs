@@ -223,9 +223,11 @@ namespace Intercolony
 
             GUI.color = affordable ? new Color(1f, 1f, 1f, 0.7f) : new Color(1f, 0.6f, 0.6f);
             Widgets.Label(new Rect(0f, bottom - 26f, inRect.width, 24f),
-                upFront > 0
-                    ? $"Due now: {upFront} silver.  In storage: {available}."
-                    : $"Nothing due now. In storage: {available}.");
+                structure.IsPeriodic()
+                    ? (upFront > 0
+                        ? $"Signing fee: {upFront} silver.  In storage: {available}."
+                        : $"No signing fee.  In storage: {available}.")
+                    : $"Prepaid wages: {upFront} silver.  In storage: {available}.");
             GUI.color = Color.white;
 
             if (Widgets.ButtonText(new Rect(0f, bottom, 170f, 36f), "Hire"))
