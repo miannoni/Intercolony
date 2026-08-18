@@ -21,6 +21,12 @@ namespace Intercolony
     /// </summary>
     public class Dialog_CreateJobPosting : Window
     {
+        private const float WindowWidth = 1000f;
+        private const float WindowMargin = 18f;
+        private const float MaxScreenHeightFraction = 0.9f;
+        private const float BottomButtonsHeight = 40f;
+        private const float OptionColumnGap = 12f;
+
         private readonly IntercolonyWorldComponent state;
         private readonly Action<SkillDef, int, int, int, int, WageStructure, CombatClause> onConfirm;
 
@@ -60,35 +66,55 @@ namespace Intercolony
             absorbInputAroundWindow = true;
         }
 
-        public override Vector2 InitialSize => new Vector2(660f, 760f);
+        public override Vector2 InitialSize
+        {
+            get
+            {
+                Text.Font = GameFont.Small;
+                RefreshRate();
+                float contentWidth = WindowWidth - WindowMargin * 2f;
+                BuildSummaries(out string totalSummary, out string upFrontSummary,
+                    out string deathSummary);
+                float fixedHeight = WindowMargin * 2f + BottomButtonsHeight +
+                                    SummaryHeight(contentWidth, totalSummary, upFrontSummary,
+                                        deathSummary);
+                float contentHeight = OptionsHeight(contentWidth);
+                float height = Mathf.Min(fixedHeight + contentHeight,
+                    UI.screenHeight * MaxScreenHeightFraction);
+                return new Vector2(WindowWidth,
+                    Mathf.Max(fixedHeight + Text.LineHeight, height));
+            }
+        }
 
         public override void DoWindowContents(Rect inRect)
         {
-            int total = WageStructureUtility.TotalCost(structure, wageOffered, termDays) * positions;
-            int upFront = WageStructureUtility.UpFrontCost(structure, wageOffered, termDays);
-            int death = wageOffered * clause.DeathCompensationDays();
-            string totalSummary =
-                $"If every position is filled and served out: {total} silver across {positions} " +
-                $"worker{(positions == 1 ? "" : "s")}.";
-            string upFrontSummary = structure == WageStructure.Prepaid
-                ? $"Due when you take on each applicant: {upFront} silver for the whole term, paid at once."
-                : $"Due when you take on each applicant: {upFront} silver signing fee.";
-            string deathSummary = $"Compensation if one of them dies: {death} silver each.";
+            Text.Font = GameFont.Small;
+            BuildSummaries(out string totalSummary, out string upFrontSummary,
+                out string deathSummary);
             float totalSummaryHeight = Text.CalcHeight(totalSummary, inRect.width);
             float upFrontSummaryHeight = Text.CalcHeight(upFrontSummary, inRect.width);
             float deathSummaryHeight = Text.CalcHeight(deathSummary, inRect.width);
-            float summaryHeight = 8f + totalSummaryHeight + 2f + upFrontSummaryHeight + 2f +
-                                  deathSummaryHeight + 8f;
-            float bottom = inRect.height - 40f;
+            float summaryHeight = SummaryHeight(inRect.width, totalSummary, upFrontSummary,
+                deathSummary);
+            float bottom = inRect.height - BottomButtonsHeight;
             float optionsBottom = bottom - summaryHeight;
             Rect optionsRect = new Rect(0f, 0f, inRect.width, Mathf.Max(1f, optionsBottom));
-            float optionsWidth = optionsRect.width - 16f;
             RefreshRate();
-            Rect optionsView = new Rect(0f, 0f, optionsWidth, OptionsHeight(optionsWidth));
-
-            Widgets.BeginScrollView(optionsRect, ref optionsScroll, optionsView);
-            DrawOptions(optionsWidth);
-            Widgets.EndScrollView();
+            float optionsHeight = OptionsHeight(optionsRect.width);
+            if (optionsHeight <= optionsRect.height)
+            {
+                optionsScroll = Vector2.zero;
+                DrawOptions(optionsRect.width);
+            }
+            else
+            {
+                float optionsWidth = optionsRect.width - 16f;
+                Rect optionsView = new Rect(0f, 0f, optionsWidth,
+                    OptionsHeight(optionsWidth));
+                Widgets.BeginScrollView(optionsRect, ref optionsScroll, optionsView);
+                DrawOptions(optionsWidth);
+                Widgets.EndScrollView();
+            }
 
             float y = optionsBottom + 8f;
 
@@ -153,23 +179,24 @@ namespace Intercolony
 
             y += 34f;
 
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Positions:");
+            const float controlGap = 16f;
+            float controlWidth = (width - controlGap) / 2f;
+            Rect positionsRect = new Rect(0f, y, controlWidth, 28f);
+            Widgets.Label(new Rect(positionsRect.x, y, 78f, 28f), "Positions:");
             float slots = positions;
-            Widgets.HorizontalSlider(new Rect(92f, y + 4f, 240f, 20f), ref slots,
+            Widgets.HorizontalSlider(new Rect(positionsRect.x + 80f, y + 4f,
+                    positionsRect.width - 80f, 20f), ref slots,
                 new FloatRange(1f, 6f), $"{positions}", 1f);
             positions = Mathf.RoundToInt(slots);
 
             const string postingGuidance = "Stays up until filled, or until you take it down.";
-            float guidanceWidth = width - 348f;
-            float postingGuidanceHeight = Text.CalcHeight(postingGuidance, guidanceWidth);
-            GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(344f, y, guidanceWidth, postingGuidanceHeight), postingGuidance);
-            GUI.color = Color.white;
-            y += Mathf.Max(34f, postingGuidanceHeight + 4f);
+            TooltipHandler.TipRegion(positionsRect, postingGuidance);
 
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Term:");
+            Rect termRect = new Rect(controlWidth + controlGap, y, controlWidth, 28f);
+            Widgets.Label(new Rect(termRect.x, y, 54f, 28f), "Term:");
             float term = termDays;
-            Widgets.HorizontalSlider(new Rect(92f, y + 4f, 240f, 20f), ref term,
+            Widgets.HorizontalSlider(new Rect(termRect.x + 56f, y + 4f,
+                    termRect.width - 56f, 20f), ref term,
                 new FloatRange(2f, LaborCandidateService.MaxTermDays), $"{termDays} days", 1f);
             if (Mathf.RoundToInt(term) != termDays)
             {
@@ -178,33 +205,9 @@ namespace Intercolony
             }
 
             const string termGuidance = "Longer terms cost less per day.";
-            float termGuidanceHeight = Text.CalcHeight(termGuidance, guidanceWidth);
-            GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(344f, y + 3f, guidanceWidth, termGuidanceHeight), termGuidance);
-            GUI.color = Color.white;
-            y += Mathf.Max(34f, termGuidanceHeight + 7f);
+            TooltipHandler.TipRegion(termRect, termGuidance);
+            y += 34f;
 
-            Widgets.Label(new Rect(0f, y, width, 24f), "Clause:");
-            y += 24f;
-            foreach (CombatClause option in CombatClauseUtility.All)
-            {
-                y = LaborOptionRows.Draw(width, y, CombatClauseUtility.Summary(option, wageOffered),
-                    option.Explain(), clause == option, () => clause = option);
-            }
-
-            y += 6f;
-            Widgets.Label(new Rect(0f, y, width, 24f), "Paid:");
-            y += 24f;
-            foreach (WageStructure option in
-                     new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
-            {
-                WageStructure captured = option;
-                y = LaborOptionRows.Draw(width, y, StructureTitle(option),
-                    WageStructureUtility.Explain(option, wageOffered, termDays), structure == option,
-                    () => structure = captured);
-            }
-
-            y += 10f;
             Widgets.DrawLineHorizontal(0f, y, width);
             y += 10f;
 
@@ -237,36 +240,101 @@ namespace Intercolony
                 SetWage(Mathf.RoundToInt(slid));
             }
 
-            DrawRateAdvice(new Rect(0f, 0f, width, 0f), y + 30f);
+            y = DrawRateAdvice(new Rect(0f, 0f, width, 0f), y + 30f);
+
+            y += 6f;
+            Widgets.DrawLineHorizontal(0f, y, width);
+            y += 10f;
+
+            float columnWidth = (width - OptionColumnGap) / 2f;
+            float clauseHeight = ClauseColumnHeight(columnWidth);
+            float structureHeight = StructureColumnHeight(columnWidth);
+
+            GUI.BeginGroup(new Rect(0f, y, columnWidth, clauseHeight));
+            Widgets.Label(new Rect(0f, 0f, columnWidth, 24f), "Clause:");
+            float clauseY = 24f;
+            foreach (CombatClause option in CombatClauseUtility.All)
+            {
+                CombatClause captured = option;
+                clauseY = LaborOptionRows.Draw(columnWidth, clauseY,
+                    CombatClauseUtility.Summary(option, wageOffered), option.Explain(),
+                    clause == option, () => clause = captured);
+            }
+            GUI.EndGroup();
+
+            GUI.BeginGroup(new Rect(columnWidth + OptionColumnGap, y, columnWidth, structureHeight));
+            Widgets.Label(new Rect(0f, 0f, columnWidth, 24f), "Paid:");
+            float structureY = 24f;
+            foreach (WageStructure option in
+                     new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
+            {
+                WageStructure captured = option;
+                structureY = LaborOptionRows.Draw(columnWidth, structureY, StructureTitle(option),
+                    WageStructureUtility.Explain(option, wageOffered, termDays), structure == option,
+                    () => structure = captured);
+            }
+            GUI.EndGroup();
         }
 
         private float OptionsHeight(float width)
         {
             string intro = "You name the terms and the wage. Workers who can do the job, and who will work for " +
                            "what you are offering, apply as the market brings them past.";
-            const string postingGuidance = "Stays up until filled, or until you take it down.";
-            const string termGuidance = "Longer terms cost less per day.";
-            float guidanceWidth = width - 348f;
             float height = 36f + Text.CalcHeight(intro, width) + 4f + 34f;
-            height += Mathf.Max(34f, Text.CalcHeight(postingGuidance, guidanceWidth) + 4f);
-            height += Mathf.Max(34f, Text.CalcHeight(termGuidance, guidanceWidth) + 7f);
-            height += 24f;
+            height += 34f;
+            height += 10f + 36f + 30f + RateAdviceHeight(width);
+            height += 16f;
 
+            float columnWidth = (width - OptionColumnGap) / 2f;
+            height += Mathf.Max(ClauseColumnHeight(columnWidth),
+                StructureColumnHeight(columnWidth));
+            return height;
+        }
+
+        private float ClauseColumnHeight(float width)
+        {
+            float height = 24f;
             foreach (CombatClause option in CombatClauseUtility.All)
             {
                 height += LaborOptionRows.Height(CombatClauseUtility.Summary(option, wageOffered),
                     option.Explain(), width);
             }
+            return height;
+        }
 
-            height += 30f;
+        private float StructureColumnHeight(float width)
+        {
+            float height = 24f;
             foreach (WageStructure option in
                      new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
             {
                 height += LaborOptionRows.Height(StructureTitle(option),
                     WageStructureUtility.Explain(option, wageOffered, termDays), width);
             }
+            return height;
+        }
 
-            return height + 20f + 36f + 30f + RateAdviceHeight(width);
+        private void BuildSummaries(out string totalSummary, out string upFrontSummary,
+            out string deathSummary)
+        {
+            int total = WageStructureUtility.TotalCost(structure, wageOffered, termDays) * positions;
+            int upFront = WageStructureUtility.UpFrontCost(structure, wageOffered, termDays);
+            int death = wageOffered * clause.DeathCompensationDays();
+            totalSummary =
+                $"If every position is filled and served out: {total} silver across {positions} " +
+                $"worker{(positions == 1 ? "" : "s")}.";
+            upFrontSummary = structure == WageStructure.Prepaid
+                ? $"Due when you take on each applicant: {upFront} silver for the whole term, paid at once."
+                : $"Due when you take on each applicant: {upFront} silver signing fee.";
+            deathSummary = $"Compensation if one of them dies: {death} silver each.";
+        }
+
+        private static float SummaryHeight(float width, string totalSummary,
+            string upFrontSummary, string deathSummary)
+        {
+            return 8f + Text.CalcHeight(totalSummary, width) + 2f +
+                   Text.CalcHeight(upFrontSummary, width) + 2f +
+                   Text.CalcHeight(deathSummary, width) + 8f;
         }
 
         private string StructureTitle(WageStructure option)
