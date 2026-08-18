@@ -24,6 +24,7 @@ namespace Intercolony
             StringBuilder sb = new StringBuilder();
             int passed = 0;
             int failed = 0;
+            List<string> skippedAssertions = new List<string>();
 
             void Check(string name, bool ok, string detail = null)
             {
@@ -38,13 +39,39 @@ namespace Intercolony
                 }
             }
 
+            void Skip(string name, string reason)
+            {
+                skippedAssertions.Add(name);
+                sb.AppendLine($"  SKIPPED  {name} — {reason}");
+            }
+
+            string Summarize()
+            {
+                if (skippedAssertions.Count == 0)
+                {
+                    sb.AppendLine($"  {passed} passed, {failed} failed, 0 skipped.");
+                }
+                else
+                {
+                    sb.AppendLine($"  {passed} passed, {failed} failed, " +
+                                  $"{skippedAssertions.Count} SKIPPED — not a clean run.");
+                    sb.AppendLine("  Skipped assertions:");
+                    foreach (string name in skippedAssertions)
+                    {
+                        sb.AppendLine($"  SKIPPED  {name}");
+                    }
+                }
+
+                return sb.ToString();
+            }
+
             sb.AppendLine("RFQ self-test");
 
             List<ThingDef> tradable = IntercolonyProductClassifier.TradableDefs;
             if (tradable.Count == 0 || state.AllProfiles().Count == 0)
             {
-                sb.AppendLine("  (no tradable defs or no settlements; skipped)");
-                return sb.ToString();
+                Skip("RFQ self-test prerequisites", "no tradable defs or no settlements");
+                return Summarize();
             }
 
             List<PurchaseRequest> created = new List<PurchaseRequest>();
@@ -223,7 +250,7 @@ namespace Intercolony
             }
             else
             {
-                sb.AppendLine("  (no high-tech tradable def found; scarce probe skipped)");
+                Skip("scarce high-tech supplier probe", "no high-tech tradable def found");
             }
 
             Check("requests were generated", totalRequests > 0);
@@ -394,16 +421,15 @@ namespace Intercolony
             // Built through the same path a real purchase uses, then inspected. §104's four
             // named cases: commodity, weapon/apparel, chair, workbench.
             sb.AppendLine("  §104 goods construction:");
-            CheckGoods(sb, Check, "commodity", ThingDefOf.Steel, null, null, 120);
-            CheckGoods(sb, Check, "weapon", ThingDefOf.MeleeWeapon_Knife,
+            CheckGoods(sb, Check, Skip, "commodity", ThingDefOf.Steel, null, null, 120);
+            CheckGoods(sb, Check, Skip, "weapon", ThingDefOf.MeleeWeapon_Knife,
                 ThingDefOf.Plasteel, QualityCategory.Excellent, 3);
-            CheckGoods(sb, Check, "chair", ThingDefOf.DiningChair,
+            CheckGoods(sb, Check, Skip, "chair", ThingDefOf.DiningChair,
                 ThingDefOf.WoodLog, QualityCategory.Good, 4);
-            CheckGoods(sb, Check, "workbench",
+            CheckGoods(sb, Check, Skip, "workbench",
                 DefDatabase<ThingDef>.GetNamedSilentFail("ElectricStove"), ThingDefOf.Steel, null, 1);
 
-            sb.AppendLine($"  {passed} passed, {failed} failed.");
-            return sb.ToString();
+            return Summarize();
         }
 
         /// <summary>
@@ -624,6 +650,7 @@ namespace Intercolony
         private static void CheckGoods(
             StringBuilder sb,
             System.Action<string, bool, string> check,
+            System.Action<string, string> skip,
             string caseName,
             ThingDef def,
             ThingDef stuff,
@@ -632,7 +659,7 @@ namespace Intercolony
         {
             if (def == null)
             {
-                sb.AppendLine($"    {caseName}: SKIPPED (def not in this install)");
+                skip(caseName, "def not in this install");
                 return;
             }
 

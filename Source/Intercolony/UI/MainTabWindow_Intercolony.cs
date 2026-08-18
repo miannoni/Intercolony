@@ -3495,8 +3495,6 @@ namespace Intercolony
             Widgets.LabelFit(Cell(2), order.line?.ShortLabel() ?? "<missing>");
             Text.Anchor = TextAnchor.UpperRight;
             Widgets.Label(Cell(3), order.Quantity.ToString());
-            Text.Anchor = TextAnchor.UpperLeft;
-            Text.Anchor = TextAnchor.UpperRight;
             Widgets.LabelFit(Cell(4), $"{order.DiscountedTotalPayment:N0} silver");
             Text.Anchor = TextAnchor.UpperLeft;
 

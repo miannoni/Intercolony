@@ -365,6 +365,27 @@ faking it: the assertion that collection uses the order's *recorded* map instead
 one colony the two values are identical and the assertion would pass vacuously. **Seeing that
 `SKIPPED` is the correct result in a single-colony save.** The real proof is the play-test below.
 
+**Run 2026-08-17 in a two-colony save — the assertion finally executed, and passed.** Matteo ran
+`Run order self-test` in a world with two player colonies, twice, with the same result: the
+`Buyer-pickup colony binding` section reports no `SKIPPED` line at all, and the suite ends **107
+passed, 0 failed**. This is the first time `recorded-map collection vs AnyPlayerHomeMap` has run for
+real since it was written — it had exactly one prior execution in its history and it *failed* it.
+
+**Do not read this as the whole fix being proven.** Two limits stand:
+
+- The suite is a self-test, not a play-test. **The manual two-colony reproduction below is still
+  owed** — the assertion checks the resolution logic, not that a buyer physically walks to the right
+  colony and takes goods from that stockpile.
+- **The same run skipped a different assertion**: "enough matching colony animals validate alongside
+  non-matching same-species animals — no eligible, uncommitted opposite-sex pair of one species on
+  this map". The two-colony world traded one blind spot for another. To clear it, the save needs a
+  male and a female of one species, both eligible and uncommitted, before the run.
+
+Both runs reported the identical `107 passed, 0 failed` as the single-colony run that skipped the
+colony assertion instead — **the summary line did not mention a skip in either case.** That is the
+project's own "a SKIP is not a pass" rule with nothing enforcing it, and it is being fixed: the
+summary now reports the skip count and re-lists the skipped assertions at the end.
+
 ### The buyer-pickup colony fix needs two colonies
 
 Added 2026-08-09. This is the only way to actually prove the bug is gone, and a self-test cannot do

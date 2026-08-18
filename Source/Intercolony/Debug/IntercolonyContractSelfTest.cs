@@ -28,6 +28,7 @@ namespace Intercolony
             StringBuilder sb = new StringBuilder();
             int passed = 0;
             int failed = 0;
+            List<string> skippedAssertions = new List<string>();
 
             void Check(string name, bool ok, string detail = null)
             {
@@ -40,6 +41,32 @@ namespace Intercolony
                     failed++;
                     sb.AppendLine($"  FAIL  {name}{(detail == null ? "" : " — " + detail)}");
                 }
+            }
+
+            void Skip(string name, string reason)
+            {
+                skippedAssertions.Add(name);
+                sb.AppendLine($"  SKIPPED  {name} — {reason}");
+            }
+
+            string Summarize()
+            {
+                if (skippedAssertions.Count == 0)
+                {
+                    sb.AppendLine($"  {passed} passed, {failed} failed, 0 skipped.");
+                }
+                else
+                {
+                    sb.AppendLine($"  {passed} passed, {failed} failed, " +
+                                  $"{skippedAssertions.Count} SKIPPED — not a clean run.");
+                    sb.AppendLine("  Skipped assertions:");
+                    foreach (string name in skippedAssertions)
+                    {
+                        sb.AppendLine($"  SKIPPED  {name}");
+                    }
+                }
+
+                return sb.ToString();
             }
 
             sb.AppendLine("Recurring contract self-test");
@@ -66,8 +93,9 @@ namespace Intercolony
             Settlement subject = FirstAccessibleSettlement();
             if (subject == null || IntercolonyProductClassifier.TradableDefs.Count == 0)
             {
-                sb.AppendLine("  (no accessible settlement or tradable defs; skipped)");
-                return sb.ToString();
+                Skip("contract self-test prerequisites",
+                    "no accessible settlement or tradable defs");
+                return Summarize();
             }
 
             List<RecurringContract> savedContracts = new List<RecurringContract>(state.Contracts);
@@ -529,8 +557,7 @@ namespace Intercolony
                 state.CommercialHistory.AddRange(savedCommercialHistory);
             }
 
-            sb.AppendLine($"  {passed} passed, {failed} failed.");
-            return sb.ToString();
+            return Summarize();
         }
 
         /// <summary>Leaves a live multi-cycle contract in the save for the reload check (§107).</summary>

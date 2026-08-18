@@ -23,6 +23,7 @@ namespace Intercolony
             StringBuilder sb = new StringBuilder();
             int passed = 0;
             int failed = 0;
+            List<string> skippedAssertions = new List<string>();
 
             void Check(string name, bool ok, string detail = null)
             {
@@ -35,6 +36,12 @@ namespace Intercolony
                     failed++;
                     sb.AppendLine($"  FAIL  {name}{(detail == null ? "" : " — " + detail)}");
                 }
+            }
+
+            void Skip(string name, string reason)
+            {
+                skippedAssertions.Add(name);
+                sb.AppendLine($"  SKIPPED  {name} — {reason}");
             }
 
             sb.AppendLine("Sales order self-test");
@@ -181,7 +188,7 @@ namespace Intercolony
             RunAvailabilityChecks(state, map, sb, Check);
 
             // --- Buyer-pickup orders stay bound to the colony that declared them ready ---
-            RunBuyerPickupMapChecks(state, map, sb, Check);
+            RunBuyerPickupMapChecks(state, map, sb, Check, Skip);
 
             // --- Validation contract (§18, §74) ---
             OrderValidationResult nullOrder = OrderValidator.ValidateCaravan(null, null);
@@ -199,19 +206,19 @@ namespace Intercolony
             Check("no caravan reports the full shortfall", noCaravan.missingQuantity == 10,
                 noCaravan.missingQuantity.ToString());
             Check("failure summary is non-empty", !string.IsNullOrEmpty(noCaravan.Summary()));
-            RunMixedAnimalColonyValidationCheck(map, sb, Check);
+            RunMixedAnimalColonyValidationCheck(map, Check, Skip);
 
             // --- §99 acceptance: one centralized validation path supports all test cases ---
             // The four cases named in §99, each driven through OrderValidator.Matches with a
             // real spawned Thing rather than asserted in the abstract.
             sb.AppendLine("  §99 test cases:");
-            RunCase(sb, Check, "1,000 Rice",
+            RunCase(sb, Check, Skip, "1,000 Rice",
                 ThingDefOf.RawPotatoes, 1000, null, null);
-            RunCase(sb, Check, "200 Cloth",
+            RunCase(sb, Check, Skip, "200 Cloth",
                 ThingDefOf.Cloth, 200, null, null);
-            RunCase(sb, Check, "5 Normal-or-better weapons",
+            RunCase(sb, Check, Skip, "5 Normal-or-better weapons",
                 ThingDefOf.MeleeWeapon_Knife, 5, QualityCategory.Normal, ThingDefOf.Steel);
-            RunCase(sb, Check, "20 Excellent Dining Chairs",
+            RunCase(sb, Check, Skip, "20 Excellent Dining Chairs",
                 ThingDefOf.DiningChair, 20, QualityCategory.Excellent, ThingDefOf.WoodLog);
 
             // --- Matching (§74): def identity is the whole test for unconstrained lines ---
@@ -274,10 +281,10 @@ namespace Intercolony
 
             if (offer == null)
             {
-                sb.AppendLine(
-                    "  SKIPPED  accepting a market opportunity carries its known pickup distance " +
-                    "(no live offer; run Advance refresh first)");
+                Skip("accepting a market opportunity carries its known pickup distance",
+                    "no live offer; run Advance refresh first");
             }
+
             else
             {
                 int offerId = offer.id;
@@ -335,7 +342,20 @@ namespace Intercolony
                 }
             }
 
-            sb.AppendLine($"  {passed} passed, {failed} failed.");
+            if (skippedAssertions.Count == 0)
+            {
+                sb.AppendLine($"  {passed} passed, {failed} failed, 0 skipped.");
+            }
+            else
+            {
+                sb.AppendLine($"  {passed} passed, {failed} failed, " +
+                              $"{skippedAssertions.Count} SKIPPED — not a clean run.");
+                sb.AppendLine("  Skipped assertions:");
+                foreach (string name in skippedAssertions)
+                {
+                    sb.AppendLine($"  SKIPPED  {name}");
+                }
+            }
             return sb.ToString();
         }
 
@@ -346,6 +366,7 @@ namespace Intercolony
         private static void RunCase(
             StringBuilder sb,
             System.Action<string, bool, string> check,
+            System.Action<string, string> skip,
             string caseName,
             ThingDef def,
             int quantity,
@@ -354,7 +375,7 @@ namespace Intercolony
         {
             if (def == null)
             {
-                sb.AppendLine($"    {caseName}: SKIPPED (def not present in this install)");
+                skip(caseName, "def not present in this install");
                 return;
             }
 
@@ -368,7 +389,7 @@ namespace Intercolony
                 CompQuality comp = good.TryGetComp<CompQuality>();
                 if (comp == null)
                 {
-                    sb.AppendLine($"    {caseName}: SKIPPED ({def.defName} has no quality comp)");
+                    skip(caseName, $"{def.defName} has no quality comp");
                     good.Destroy(DestroyMode.Vanish);
                     return;
                 }
@@ -405,7 +426,7 @@ namespace Intercolony
         }
 
         private static void RunMixedAnimalColonyValidationCheck(
-            Map map, StringBuilder sb, Action<string, bool, string> check)
+            Map map, Action<string, bool, string> check, Action<string, string> skip)
         {
             const string assertion =
                 "enough matching colony animals validate alongside non-matching same-species animals";
@@ -452,8 +473,8 @@ namespace Intercolony
                 }
             }
 
-            sb.AppendLine($"  SKIPPED  {assertion} — " +
-                          "no eligible, uncommitted opposite-sex pair of one species on this map");
+            skip(assertion,
+                "no eligible, uncommitted opposite-sex pair of one species on this map");
         }
 
         private static SalesOrder NewOrder(ThingDef def, int quantity, float unitPrice)
@@ -1246,7 +1267,8 @@ namespace Intercolony
             IntercolonyWorldComponent state,
             Map map,
             StringBuilder sb,
-            Action<string, bool, string> check)
+            Action<string, bool, string> check,
+            Action<string, string> skip)
         {
             sb.AppendLine("  Buyer-pickup colony binding:");
             Map fallbackMap = Find.AnyPlayerHomeMap;
@@ -1385,9 +1407,8 @@ namespace Intercolony
                 {
                     check("pickup-map test found temporary storage on the current colony", false,
                         "no empty unzoned cell near the trade drop spot");
-                    sb.AppendLine(
-                        "    SKIPPED  Mark Ready adopts and persists the current colony when none was recorded " +
-                        "(no empty unzoned cell near the trade drop spot)");
+                    skip("Mark Ready adopts and persists the current colony when none was recorded",
+                        "no empty unzoned cell near the trade drop spot");
                     return;
                 }
 
@@ -1422,18 +1443,18 @@ namespace Intercolony
 
                 if (distinctHomeMap == null)
                 {
-                    sb.AppendLine(
-                        "    SKIPPED  recorded-map collection vs AnyPlayerHomeMap " +
-                        "(this test world has only one player home map; human multi-colony test required)");
+                    skip("recorded-map collection vs AnyPlayerHomeMap",
+                        "this test world has only one player home map; " +
+                        "human multi-colony test required");
                 }
                 else
                 {
                     if (!ReferenceEquals(distinctHomeMap, map) &&
                         !TrySpawnStoredStock(distinctHomeMap, 1, out _))
                     {
-                        sb.AppendLine(
-                            "    SKIPPED  recorded-map collection vs AnyPlayerHomeMap " +
-                            "(the second home map has no temporary storage cell; human multi-colony test required)");
+                        skip("recorded-map collection vs AnyPlayerHomeMap",
+                            "the second home map has no temporary storage cell; " +
+                            "human multi-colony test required");
                     }
                     else
                     {

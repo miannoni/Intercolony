@@ -21,6 +21,7 @@ namespace Intercolony
             int passed = 0;
             int failed = 0;
             int skipped = 0;
+            List<string> skippedAssertions = new List<string>();
 
             void Check(string name, bool ok, string detail = null)
             {
@@ -38,6 +39,7 @@ namespace Intercolony
             void Skip(string name, string reason)
             {
                 skipped++;
+                skippedAssertions.Add(name);
                 sb.AppendLine($"  SKIPPED  {name} — {reason}");
             }
 
@@ -55,7 +57,20 @@ namespace Intercolony
             CheckEligibility(Check, Skip, state, map);
             CheckAnimalSalePath(Check, Skip, state, map);
 
-            sb.AppendLine($"  {passed} passed, {failed} failed, {skipped} skipped");
+            if (skipped == 0)
+            {
+                sb.AppendLine($"  {passed} passed, {failed} failed, 0 skipped.");
+            }
+            else
+            {
+                sb.AppendLine($"  {passed} passed, {failed} failed, " +
+                              $"{skipped} SKIPPED — not a clean run.");
+                sb.AppendLine("  Skipped assertions:");
+                foreach (string name in skippedAssertions)
+                {
+                    sb.AppendLine($"  SKIPPED  {name}");
+                }
+            }
             return sb.ToString();
         }
 

@@ -149,7 +149,7 @@ namespace Intercolony
             Check("generation leaves global RNG untouched", expected == actual,
                 $"next Rand.Int was {actual}, expected {expected}");
 
-            sb.AppendLine($"  {passed} passed, {failed} failed.");
+            sb.AppendLine($"  {passed} passed, {failed} failed, 0 skipped.");
             return sb.ToString();
         }
     }
