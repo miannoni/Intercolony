@@ -288,10 +288,10 @@ namespace Intercolony
             if (Widgets.ButtonText(new Rect(inRect.width - 160f, y + 2f, 150f, 30f), "New posting"))
             {
                 Find.WindowStack.Add(new Dialog_CreateJobPosting(state,
-                    (skill, minLevel, positions, termDays, wage, structure, clause, lifespan) =>
+                    (skill, minLevel, positions, termDays, wage, structure, clause) =>
                     {
                         if (JobPostingService.TryPost(state, skill, minLevel, positions, termDays,
-                                wage, structure, clause, lifespan, out string failReason) == null)
+                                wage, structure, clause, out string failReason) == null)
                         {
                             Messages.Message(failReason ?? "Could not post.",
                                 MessageTypeDefOf.RejectInput, historical: false);
@@ -475,7 +475,7 @@ namespace Intercolony
             string text =
                 $"{posting.Headline()}\n\n" +
                 $"Posted {posting.DaysPosted:0.#} days ago, " +
-                $"{Mathf.Max(0f, posting.DaysUntilExpiry):0.#} days left.\n" +
+                $"{posting.ExpiryLabel}.\n" +
                 $"{posting.hired} of {posting.positions} filled.\n\n" +
                 $"If every position is filled and served out: {posting.TotalCommitment} silver.\n" +
                 $"Compensation if one of them dies: " +

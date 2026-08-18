@@ -504,7 +504,7 @@ namespace Intercolony
         {
             JobPosting posting = JobPostingService.TryPost(
                 state, SkillDefOf.Construction, 0, 2, 20, 50, WageStructure.Daily,
-                CombatClause.Civilian, 30, out string failReason);
+                CombatClause.Civilian, out string failReason);
 
             r.Check(posting != null, "a posting can be created through the real service", failReason ?? "");
             if (posting == null)
@@ -515,18 +515,21 @@ namespace Intercolony
             r.Check(posting.IsOpen && posting.PositionsRemaining == 2,
                 "a new posting is open with every position unfilled",
                 $"{posting.PositionsRemaining} of {posting.positions}");
+            r.Check(posting.NeverExpires && posting.ExpiryLabel == "stays up until filled",
+                "a new posting never expires and describes its lifespan without formatting the sentinel",
+                $"never expires: {posting.NeverExpires}, label \"{posting.ExpiryLabel}\"");
 
             r.Check(JobPostingService.TryPost(state, null, 0, 0, 20, 50, WageStructure.Daily,
-                        CombatClause.Civilian, 30, out _) == null,
+                        CombatClause.Civilian, out _) == null,
                 "a posting with no positions is refused");
 
             r.Check(JobPostingService.TryPost(state, null, 0, 1, 20, 0, WageStructure.Daily,
-                        CombatClause.Civilian, 30, out _) == null,
+                        CombatClause.Civilian, out _) == null,
                 "a posting offering nothing is refused");
 
             r.Check(JobPostingService.TryPost(state, null, 0, 1,
                         LaborCandidateService.MaxTermDays + 1, 50, WageStructure.Daily,
-                        CombatClause.Civilian, 30, out _) == null,
+                        CombatClause.Civilian, out _) == null,
                 "a posting past the term cap is refused",
                 $"cap is {LaborCandidateService.MaxTermDays}d");
 
@@ -594,7 +597,7 @@ namespace Intercolony
         {
             return JobPostingService.TryPost(
                 state, skill, minLevel, 6, term, wage, WageStructure.Daily,
-                CombatClause.Civilian, JobPostingService.DefaultLifespanDays, out _);
+                CombatClause.Civilian, out _);
         }
 
         private static int BestSkillLevel(Pawn pawn)

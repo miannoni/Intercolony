@@ -20,12 +20,6 @@ namespace Intercolony
     /// </summary>
     public static class JobPostingService
     {
-        /// <summary>How long a posting stays up before lapsing, unless the player picks otherwise.</summary>
-        public const int DefaultLifespanDays = 30;
-
-        public const int MinLifespanDays = 5;
-        public const int MaxLifespanDays = 120;
-
         /// <summary>
         /// Waiting applicants a posting will hold beyond the positions it is filling. Some slack is
         /// the point — §35.2's own example shows 4 applicants for 3 positions, because choosing is
@@ -44,7 +38,7 @@ namespace Intercolony
         public static JobPosting TryPost(
             IntercolonyWorldComponent state, SkillDef skill, int minSkillLevel, int positions,
             int termDays, int wageOffered, WageStructure structure, CombatClause clause,
-            int lifespanDays, out string failReason)
+            out string failReason)
         {
             failReason = null;
 
@@ -83,8 +77,7 @@ namespace Intercolony
                 wageStructure = structure,
                 combatClause = clause,
                 postedTick = GenTicks.TicksGame,
-                expiryTick = GenTicks.TicksGame +
-                             Mathf.Clamp(lifespanDays, MinLifespanDays, MaxLifespanDays) * GenDate.TicksPerDay,
+                expiryTick = -1,
                 status = JobPostingStatus.Open
             };
 
@@ -472,7 +465,7 @@ namespace Intercolony
                         $"Posting {posting.id}: {withdrew} applicant(s) withdrew after waiting.");
                 }
 
-                if (now >= posting.expiryTick)
+                if (!posting.NeverExpires && now >= posting.expiryTick)
                 {
                     Close(posting, JobPostingStatus.Expired,
                         posting.hired > 0

@@ -226,7 +226,23 @@ namespace Intercolony
 
         public int PositionsRemaining => Mathf.Max(0, positions - hired);
 
-        public float DaysUntilExpiry => (expiryTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
+        public bool NeverExpires => expiryTick == -1;
+
+        /// <summary>How long the posting remains available, in words. Never formats the sentinel.</summary>
+        public string ExpiryLabel
+        {
+            get
+            {
+                if (NeverExpires)
+                {
+                    return "stays up until filled";
+                }
+
+                float daysUntilExpiry =
+                    (expiryTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
+                return $"{Mathf.Max(0f, daysUntilExpiry):0.#}d left";
+            }
+        }
 
         public float DaysPosted => (GenTicks.TicksGame - postedTick) / (float)GenDate.TicksPerDay;
 
@@ -258,10 +274,10 @@ namespace Intercolony
 
                     if (emptyCycles > 0)
                     {
-                        return $"no replies yet — {Mathf.Max(0f, DaysUntilExpiry):0.#}d left";
+                        return $"no replies yet — {ExpiryLabel}";
                     }
 
-                    return $"posted, awaiting replies — {Mathf.Max(0f, DaysUntilExpiry):0.#}d left";
+                    return $"posted, awaiting replies — {ExpiryLabel}";
                 case JobPostingStatus.Filled:
                     return $"filled — {hired} hired";
                 case JobPostingStatus.Withdrawn:

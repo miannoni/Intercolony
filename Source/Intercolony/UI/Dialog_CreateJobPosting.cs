@@ -23,14 +23,13 @@ namespace Intercolony
     public class Dialog_CreateJobPosting : Window
     {
         private readonly IntercolonyWorldComponent state;
-        private readonly Action<SkillDef, int, int, int, int, WageStructure, CombatClause, int> onConfirm;
+        private readonly Action<SkillDef, int, int, int, int, WageStructure, CombatClause> onConfirm;
 
         private SkillDef skill;
         private int minLevel = 8;
         private int positions = 1;
         private int termDays = 20;
         private int wageOffered = 30;
-        private int lifespanDays = JobPostingService.DefaultLifespanDays;
         private WageStructure structure = WageStructure.Daily;
         private CombatClause clause = CombatClause.Civilian;
 
@@ -45,7 +44,7 @@ namespace Intercolony
 
         public Dialog_CreateJobPosting(
             IntercolonyWorldComponent state,
-            Action<SkillDef, int, int, int, int, WageStructure, CombatClause, int> onConfirm)
+            Action<SkillDef, int, int, int, int, WageStructure, CombatClause> onConfirm)
         {
             this.state = state;
             this.onConfirm = onConfirm;
@@ -111,7 +110,7 @@ namespace Intercolony
 
             GUI.color = new Color(1f, 1f, 1f, 0.55f);
             Widgets.Label(new Rect(344f, y, inRect.width - 348f, 40f),
-                "Stays up until filled, or until it lapses.");
+                "Stays up until filled, or until you take it down.");
             GUI.color = Color.white;
             y += 34f;
 
@@ -131,20 +130,6 @@ namespace Intercolony
                 "Longer terms cost less per day.");
             GUI.color = Color.white;
             y += 34f;
-
-            // --- Lifespan ---
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Advertise:");
-            float life = lifespanDays;
-            Widgets.HorizontalSlider(new Rect(92f, y + 4f, 240f, 20f), ref life,
-                new FloatRange(JobPostingService.MinLifespanDays, JobPostingService.MaxLifespanDays),
-                $"{lifespanDays} days", 1f);
-            lifespanDays = Mathf.RoundToInt(life);
-
-            GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(344f, y + 3f, inRect.width - 348f, 24f),
-                "How long the notice stays up.");
-            GUI.color = Color.white;
-            y += 38f;
 
             // --- Clause (§42) ---
             Widgets.Label(new Rect(0f, y, 90f, 28f), "Clause:");
@@ -238,7 +223,7 @@ namespace Intercolony
             if (Widgets.ButtonText(new Rect(0f, y, 170f, 36f), "Post"))
             {
                 onConfirm?.Invoke(skill, minLevel, positions, termDays, wageOffered, structure,
-                    clause, lifespanDays);
+                    clause);
                 Close();
             }
 
