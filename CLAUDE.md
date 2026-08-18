@@ -88,9 +88,15 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 26 complete. **0.9.1 is live and public** (2026-08-15) — Workshop item `3780094556`
-updated, `main` pushed, tag `v0.9.1` and a GitHub pre-release created to the same standard as 0.9.0.
-**0.9.2 is prepared but not yet released; nothing has been uploaded.**
+**Phase:** 26 complete. **0.9.2 is live and public** (2026-08-17) — Workshop item `3780094556`
+updated, `main` pushed, tag `v0.9.2` and a GitHub pre-release with `Intercolony-0.9.2.zip` attached.
+0.9.1 shipped 2026-08-15 and 0.9.0 on 2026-08-08, all to the same standard.
+
+0.9.2 is a bug-fix release closing six defects from the first real play of 0.9.1. **Animal trade did
+not work at all** until it; see below. The others: the employee signing fee was disclosed only when a
+hire was refused; procurement quotes could be re-rolled by withdrawing and re-requesting; a
+supplier's stock reset on re-request; accepting one quotation closed the whole request; and orders
+resolved colonies through `Find.AnyPlayerHomeMap`.
 **Save schema is 42.** Schema 40 records the distance behind a buyer-pickup promise; 41 records how
 much of a purchase request has been ordered; 42 records how much of a supplier's offer the player has
 already bought within a market refresh window.
