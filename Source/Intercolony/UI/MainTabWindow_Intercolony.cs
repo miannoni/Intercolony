@@ -3370,8 +3370,13 @@ namespace Intercolony
                 bool active = (int)orderSortColumn == i;
                 Widgets.DrawHighlightIfMouseover(cell);
                 GUI.color = active ? Color.white : new Color(1f, 1f, 1f, 0.6f);
+                if (i == (int)OrderColumn.Quantity || i == (int)OrderColumn.Value)
+                {
+                    Text.Anchor = TextAnchor.UpperRight;
+                }
                 Widgets.Label(cell,
                     OrderColumnLabels[i] + (active ? (orderSortDescending ? " v" : " ^") : ""));
+                Text.Anchor = TextAnchor.UpperLeft;
                 GUI.color = Color.white;
 
                 if (Widgets.ButtonInvisible(cell))
@@ -3488,8 +3493,12 @@ namespace Intercolony
             Widgets.Label(Cell(0), order.id.ToString());
             Widgets.LabelFit(Cell(1), order.settlementName);
             Widgets.LabelFit(Cell(2), order.line?.ShortLabel() ?? "<missing>");
+            Text.Anchor = TextAnchor.UpperRight;
             Widgets.Label(Cell(3), order.Quantity.ToString());
+            Text.Anchor = TextAnchor.UpperLeft;
+            Text.Anchor = TextAnchor.UpperRight;
             Widgets.LabelFit(Cell(4), $"{order.DiscountedTotalPayment:N0} silver");
+            Text.Anchor = TextAnchor.UpperLeft;
 
             // §17: show progress and time remaining, and warn rather than fail silently.
             Color colour = Color.white;

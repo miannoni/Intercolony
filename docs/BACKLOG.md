@@ -459,6 +459,48 @@ looks — `OrderDetailText` already shows silver while an order is open
 (`MainTabWindow_Intercolony.cs:3434-3436`), but the `BuyerEnRoute` branch drops it entirely
 (`:3422-3426`), which is precisely the "ready orders show no value" report.
 
+#### Tier 2 progress — 2026-08-17
+
+**2a done, `c1610af`.** `Dialog_ConfirmQuantity` measures and scrolls; twelve empty-state
+paragraphs measured. The sweep found roughly ten sites, not the five listed above.
+
+**2b done, `713dd1e`.** `TermRow` (label, value, tooltip) plus a rows-builder overload; both sell
+dialogs converted. **Confirmed in play the same day** — Matteo's screenshot shows the block
+rendering correctly at his UI scale with no overlap and no clipping, and finding 3's presentation
+half resolved: *Mark ready by 12 days from now* and *Buyer arrives about 6 days after you mark
+ready* now read as two facts, which is what the original misreading turned on.
+
+**2c done, `c8c4d1a`.** Sortable table with the agreed columns; `Value` uses
+`DiscountedTotalPayment` in every state including en route, which was the actual gap.
+
+Two defects the review caught before 2c landed, both worth remembering:
+
+- **The sentinel self-test was orphaned.** `IntercolonyOrderSelfTest.cs` asserted "an unset
+  buyer-arrival sentinel is never formatted as a duration" against `OrderDetailText`, but the table
+  renders through a new `OrderStatusEtaText`. The assertion would have passed for ever while the
+  live path went unguarded. It now targets the live method, `OrderDetailText` is deleted rather than
+  kept alive by its own test, and a second case covers open and closed orders. **This is the same
+  family as the two-colony SKIP: a green test that tests nothing.**
+- **The closed-order outcome note was dropped**, which is the only place the player learns why an
+  order failed and where `HostilityPolicy` writes its explanations. Restored as a row tooltip.
+
+**`854b7f1`** seats the discount slider: `Widgets.HorizontalSlider` draws its end labels *above* the
+track (`reference/decompiled/Verse/Widgets.cs:2116` — `rect.y - 18f + 3f`), so at an offset of `4f`
+the `0%`/`100%` captions sat 11px above the row and crowded the fulfilment buttons. Confirmed fixed
+in play. The same commit corrects two Business empty states that drew at `x=6f` while measuring at
+the full `inRect.width` — the c1610af defect class, missed by c1610af.
+
+**Self-test after 2c: 107 passed, 0 failed** — but on a single-colony quicktest world, so
+`recorded-map collection vs AnyPlayerHomeMap` reported SKIPPED again. The changes were
+presentation-only, so the risk is low, but **that assertion still has exactly one real execution to
+its name and it failed on it.** A two-colony run is owed before the next release.
+
+**Still open in Tier 2:** finding 5 (mark-ready toggle and its setting), finding 2's **Due now**
+wording, and converting the remaining `Dialog_ConfirmQuantity` callers to rows. The
+market-opportunity acceptance dialog is the one that matters there: it still calls
+`BuyerPickupTimingExplanation` and so still carries the deadline-beside-arrival prose that the sell
+dialog just shed.
+
 #### Tier 3 — features, Phase 27 candidates
 
 Explicitly out of scope for any point release.
