@@ -23,7 +23,14 @@ namespace Intercolony
     {
         private const float WindowWidth = 1000f;
         private const float WindowMargin = 18f;
-        private const float MaxScreenHeightFraction = 0.9f;
+        /// <summary>
+        /// This is a dense form — four sliders, two option columns and three commitment
+        /// summaries — and every slider needs a clear band above it for the end labels
+        /// HorizontalSlider draws there. 90% left it about 20px short and put a scrollbar on
+        /// a dialog that has no business scrolling; the extra 5% buys the room without
+        /// removing anything the player needs to read.
+        /// </summary>
+        private const float MaxScreenHeightFraction = 0.95f;
         private const float BottomButtonsHeight = 40f;
         private const float ContentInset = 8f;
         private const float ScrollbarGutter = 16f;
@@ -38,6 +45,16 @@ namespace Intercolony
         private const float OptionColumnGap = 12f;
         private const float ControlRowHeight = 28f;
         private const float SliderHeight = 20f;
+
+        /// <summary>
+        /// Widgets.HorizontalSlider draws its end labels above the track, not beside it
+        /// (Widgets.cs:2116), so every slider needs this much clear space above its rect
+        /// or the labels land in the row above.
+        /// </summary>
+        private const float SliderLabelBand = 19f;
+
+        /// <summary>Height of a row that contains a slider: label band, track, and a little air.</summary>
+        private const float SliderRowHeight = SliderLabelBand + SliderHeight + 6f;
         private const float SkillButtonWidth = 200f;
         private const float WageFieldWidth = 90f;
         private const float WageUnitWidth = 120f;
@@ -188,10 +205,12 @@ namespace Intercolony
             {
                 skillX += SkillButtonWidth + RowGap;
                 float qualifierWidth = Text.CalcSize("at least").x;
-                Widgets.Label(new Rect(skillX, y, qualifierWidth, ControlRowHeight), "at least");
+                Widgets.Label(new Rect(skillX, y + SliderLabelBand, qualifierWidth, ControlRowHeight),
+                    "at least");
                 skillX += qualifierWidth + RowGap;
                 float level = minLevel;
-                Widgets.HorizontalSlider(new Rect(skillX, y + 4f, width - skillX, SliderHeight),
+                Widgets.HorizontalSlider(
+                    new Rect(skillX, y + SliderLabelBand, width - skillX, SliderHeight),
                     ref level,
                     new FloatRange(0f, 20f), $"{minLevel}", 1f);
                 if (Mathf.RoundToInt(level) != minLevel)
@@ -201,16 +220,17 @@ namespace Intercolony
                 }
             }
 
-            y += ControlRowHeight + SectionGap;
+            y += SliderRowHeight + SectionGap;
 
             float controlWidth = (width - OptionColumnGap) / 2f;
-            Rect positionsRect = new Rect(0f, y, controlWidth, ControlRowHeight);
+            Rect positionsRect = new Rect(0f, y, controlWidth, SliderRowHeight);
             float positionsLabelWidth = Text.CalcSize("Positions:").x;
-            Widgets.Label(new Rect(positionsRect.x, y, positionsLabelWidth, ControlRowHeight),
+            Widgets.Label(
+                new Rect(positionsRect.x, y + SliderLabelBand, positionsLabelWidth, ControlRowHeight),
                 "Positions:");
             float slots = positions;
             float positionsSliderX = positionsRect.x + positionsLabelWidth + RowGap;
-            Widgets.HorizontalSlider(new Rect(positionsSliderX, y + 4f,
+            Widgets.HorizontalSlider(new Rect(positionsSliderX, y + SliderLabelBand,
                     positionsRect.xMax - positionsSliderX, SliderHeight), ref slots,
                 new FloatRange(1f, 6f), $"{positions}", 1f);
             positions = Mathf.RoundToInt(slots);
@@ -219,12 +239,13 @@ namespace Intercolony
             TooltipHandler.TipRegion(positionsRect, postingGuidance);
 
             Rect termRect = new Rect(controlWidth + OptionColumnGap, y, controlWidth,
-                ControlRowHeight);
+                SliderRowHeight);
             float termLabelWidth = Text.CalcSize("Term:").x;
-            Widgets.Label(new Rect(termRect.x, y, termLabelWidth, ControlRowHeight), "Term:");
+            Widgets.Label(new Rect(termRect.x, y + SliderLabelBand, termLabelWidth, ControlRowHeight),
+                "Term:");
             float term = termDays;
             float termSliderX = termRect.x + termLabelWidth + RowGap;
-            Widgets.HorizontalSlider(new Rect(termSliderX, y + 4f,
+            Widgets.HorizontalSlider(new Rect(termSliderX, y + SliderLabelBand,
                     termRect.xMax - termSliderX, SliderHeight), ref term,
                 new FloatRange(2f, LaborCandidateService.MaxTermDays), $"{termDays} days", 1f);
             if (Mathf.RoundToInt(term) != termDays)
@@ -235,7 +256,7 @@ namespace Intercolony
 
             const string termGuidance = "Longer terms cost less per day.";
             TooltipHandler.TipRegion(termRect, termGuidance);
-            y += ControlRowHeight;
+            y += SliderRowHeight;
 
             y = DrawSectionDivider(width, y);
 
@@ -267,14 +288,14 @@ namespace Intercolony
             y += Mathf.Max(wageTitleHeight, ControlRowHeight) + RowGap;
             float slid = wageOffered;
             int sliderMax = Mathf.Max(rateValid ? rateHigh * 2 : 100, wageOffered);
-            Widgets.HorizontalSlider(new Rect(0f, y, width, SliderHeight), ref slid,
+            Widgets.HorizontalSlider(new Rect(0f, y + SliderLabelBand, width, SliderHeight), ref slid,
                 new FloatRange(1f, sliderMax), null, 1f);
             if (Mathf.RoundToInt(slid) != wageOffered)
             {
                 SetWage(Mathf.RoundToInt(slid));
             }
 
-            y = DrawRateAdvice(new Rect(0f, 0f, width, 0f), y + SliderHeight + RowGap);
+            y = DrawRateAdvice(new Rect(0f, 0f, width, 0f), y + SliderRowHeight);
 
             y = DrawSectionDivider(width, y);
 
@@ -327,10 +348,10 @@ namespace Intercolony
             float wageTitleHeight = Text.CalcHeight("Wage offered", width);
             Text.Font = GameFont.Small;
 
-            float height = titleHeight + SectionGap + ControlRowHeight + SectionGap;
-            height += ControlRowHeight + SectionGap;
+            float height = titleHeight + SectionGap + SliderRowHeight + SectionGap;
+            height += SliderRowHeight + SectionGap;
             height += Mathf.Max(wageTitleHeight, ControlRowHeight) + RowGap;
-            height += SliderHeight + RowGap + RateAdviceHeight(width) + SectionGap;
+            height += SliderRowHeight + RateAdviceHeight(width) + SectionGap;
 
             float columnWidth = (width - OptionColumnGap) / 2f;
             height += Mathf.Max(ClauseColumnHeight(columnWidth),
