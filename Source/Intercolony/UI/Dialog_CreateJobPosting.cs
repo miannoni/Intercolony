@@ -25,7 +25,27 @@ namespace Intercolony
         private const float WindowMargin = 18f;
         private const float MaxScreenHeightFraction = 0.9f;
         private const float BottomButtonsHeight = 40f;
+        private const float ContentInset = 8f;
+        private const float ScrollbarGutter = 16f;
+
+        /// <summary>
+        /// The scrollbar gutter is reserved on both sides, not just the side the scrollbar
+        /// appears on, so the visual margin does not change when the scroll view engages.
+        /// </summary>
+        private const float ContentLeft = ContentInset + ScrollbarGutter;
+        private const float RowGap = 4f;
+        private const float SectionGap = 8f;
         private const float OptionColumnGap = 12f;
+        private const float ControlRowHeight = 28f;
+        private const float SliderHeight = 20f;
+        private const float SkillButtonWidth = 200f;
+        private const float WageFieldWidth = 90f;
+        private const float WageUnitWidth = 120f;
+        private const float MatchTopButtonWidth = 140f;
+
+        private const string IntroText =
+            "You name the terms and the wage. Workers who can do the job, and who will work for " +
+            "what you are offering, apply as the market brings them past.";
 
         private readonly IntercolonyWorldComponent state;
         private readonly Action<SkillDef, int, int, int, int, WageStructure, CombatClause> onConfirm;
@@ -72,7 +92,7 @@ namespace Intercolony
             {
                 Text.Font = GameFont.Small;
                 RefreshRate();
-                float contentWidth = WindowWidth - WindowMargin * 2f;
+                float contentWidth = ContentWidth(WindowWidth - WindowMargin * 2f);
                 BuildSummaries(out string totalSummary, out string upFrontSummary,
                     out string deathSummary);
                 float fixedHeight = WindowMargin * 2f + BottomButtonsHeight +
@@ -91,50 +111,53 @@ namespace Intercolony
             Text.Font = GameFont.Small;
             BuildSummaries(out string totalSummary, out string upFrontSummary,
                 out string deathSummary);
-            float totalSummaryHeight = Text.CalcHeight(totalSummary, inRect.width);
-            float upFrontSummaryHeight = Text.CalcHeight(upFrontSummary, inRect.width);
-            float deathSummaryHeight = Text.CalcHeight(deathSummary, inRect.width);
-            float summaryHeight = SummaryHeight(inRect.width, totalSummary, upFrontSummary,
+            float contentWidth = ContentWidth(inRect.width);
+            float totalSummaryHeight = Text.CalcHeight(totalSummary, contentWidth);
+            float upFrontSummaryHeight = Text.CalcHeight(upFrontSummary, contentWidth);
+            float deathSummaryHeight = Text.CalcHeight(deathSummary, contentWidth);
+            float summaryHeight = SummaryHeight(contentWidth, totalSummary, upFrontSummary,
                 deathSummary);
             float bottom = inRect.height - BottomButtonsHeight;
             float optionsBottom = bottom - summaryHeight;
-            Rect optionsRect = new Rect(0f, 0f, inRect.width, Mathf.Max(1f, optionsBottom));
+            Rect optionsRect = new Rect(ContentLeft, 0f, contentWidth + ScrollbarGutter,
+                Mathf.Max(1f, optionsBottom));
             RefreshRate();
-            float optionsHeight = OptionsHeight(optionsRect.width);
+            float optionsHeight = OptionsHeight(contentWidth);
             if (optionsHeight <= optionsRect.height)
             {
                 optionsScroll = Vector2.zero;
-                DrawOptions(optionsRect.width);
+                GUI.BeginGroup(new Rect(ContentLeft, 0f, contentWidth, optionsRect.height));
+                DrawOptions(contentWidth);
+                GUI.EndGroup();
             }
             else
             {
-                float optionsWidth = optionsRect.width - 16f;
-                Rect optionsView = new Rect(0f, 0f, optionsWidth,
-                    OptionsHeight(optionsWidth));
+                Rect optionsView = new Rect(0f, 0f, contentWidth, optionsHeight);
                 Widgets.BeginScrollView(optionsRect, ref optionsScroll, optionsView);
-                DrawOptions(optionsWidth);
+                DrawOptions(contentWidth);
                 Widgets.EndScrollView();
             }
 
-            float y = optionsBottom + 8f;
+            float y = optionsBottom + SectionGap;
 
             GUI.color = new Color(1f, 1f, 1f, 0.7f);
-            Widgets.Label(new Rect(0f, y, inRect.width, totalSummaryHeight), totalSummary);
-            y += totalSummaryHeight + 2f;
-            Widgets.Label(new Rect(0f, y, inRect.width, upFrontSummaryHeight), upFrontSummary);
-            y += upFrontSummaryHeight + 2f;
-            Widgets.Label(new Rect(0f, y, inRect.width, deathSummaryHeight), deathSummary);
+            Widgets.Label(new Rect(ContentLeft, y, contentWidth, totalSummaryHeight), totalSummary);
+            y += totalSummaryHeight + RowGap;
+            Widgets.Label(new Rect(ContentLeft, y, contentWidth, upFrontSummaryHeight),
+                upFrontSummary);
+            y += upFrontSummaryHeight + RowGap;
+            Widgets.Label(new Rect(ContentLeft, y, contentWidth, deathSummaryHeight), deathSummary);
             GUI.color = Color.white;
-            y += deathSummaryHeight + 8f;
 
-            if (Widgets.ButtonText(new Rect(0f, bottom, 170f, 36f), "Post"))
+            if (Widgets.ButtonText(new Rect(ContentLeft, bottom, 170f, 36f), "Post"))
             {
                 onConfirm?.Invoke(skill, minLevel, positions, termDays, wageOffered, structure,
                     clause);
                 Close();
             }
 
-            if (Widgets.ButtonText(new Rect(inRect.width - 130f, bottom, 120f, 36f), "Cancel"))
+            if (Widgets.ButtonText(new Rect(ContentLeft + contentWidth - 120f, bottom, 120f, 36f),
+                    "Cancel"))
             {
                 Close();
             }
@@ -145,20 +168,17 @@ namespace Intercolony
             float y = 0f;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, width, 32f), "Post a job");
-            y += 36f;
+            float titleHeight = Text.CalcHeight("Post a job", width);
+            Rect titleRect = new Rect(0f, y, width, titleHeight);
+            Widgets.Label(titleRect, "Post a job");
+            TooltipHandler.TipRegion(titleRect, IntroText);
+            y += titleHeight + SectionGap;
             Text.Font = GameFont.Small;
 
-            string intro = "You name the terms and the wage. Workers who can do the job, and who will work for " +
-                           "what you are offering, apply as the market brings them past.";
-            float introHeight = Text.CalcHeight(intro, width);
-            GUI.color = new Color(1f, 1f, 1f, 0.7f);
-            Widgets.Label(new Rect(0f, y, width, introHeight), intro);
-            GUI.color = Color.white;
-            y += introHeight + 4f;
-
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Skill:");
-            if (Widgets.ButtonText(new Rect(92f, y, 200f, 28f),
+            float skillLabelWidth = Text.CalcSize("Skill:").x;
+            float skillX = skillLabelWidth + RowGap;
+            Widgets.Label(new Rect(0f, y, skillLabelWidth, ControlRowHeight), "Skill:");
+            if (Widgets.ButtonText(new Rect(skillX, y, SkillButtonWidth, ControlRowHeight),
                     skill == null ? "Any work" : skill.skillLabel.CapitalizeFirst()))
             {
                 OpenSkillMenu();
@@ -166,9 +186,13 @@ namespace Intercolony
 
             if (skill != null)
             {
-                Widgets.Label(new Rect(302f, y, 60f, 28f), "at least");
+                skillX += SkillButtonWidth + RowGap;
+                float qualifierWidth = Text.CalcSize("at least").x;
+                Widgets.Label(new Rect(skillX, y, qualifierWidth, ControlRowHeight), "at least");
+                skillX += qualifierWidth + RowGap;
                 float level = minLevel;
-                Widgets.HorizontalSlider(new Rect(368f, y + 4f, width - 420f, 20f), ref level,
+                Widgets.HorizontalSlider(new Rect(skillX, y + 4f, width - skillX, SliderHeight),
+                    ref level,
                     new FloatRange(0f, 20f), $"{minLevel}", 1f);
                 if (Mathf.RoundToInt(level) != minLevel)
                 {
@@ -177,26 +201,31 @@ namespace Intercolony
                 }
             }
 
-            y += 34f;
+            y += ControlRowHeight + SectionGap;
 
-            const float controlGap = 16f;
-            float controlWidth = (width - controlGap) / 2f;
-            Rect positionsRect = new Rect(0f, y, controlWidth, 28f);
-            Widgets.Label(new Rect(positionsRect.x, y, 78f, 28f), "Positions:");
+            float controlWidth = (width - OptionColumnGap) / 2f;
+            Rect positionsRect = new Rect(0f, y, controlWidth, ControlRowHeight);
+            float positionsLabelWidth = Text.CalcSize("Positions:").x;
+            Widgets.Label(new Rect(positionsRect.x, y, positionsLabelWidth, ControlRowHeight),
+                "Positions:");
             float slots = positions;
-            Widgets.HorizontalSlider(new Rect(positionsRect.x + 80f, y + 4f,
-                    positionsRect.width - 80f, 20f), ref slots,
+            float positionsSliderX = positionsRect.x + positionsLabelWidth + RowGap;
+            Widgets.HorizontalSlider(new Rect(positionsSliderX, y + 4f,
+                    positionsRect.xMax - positionsSliderX, SliderHeight), ref slots,
                 new FloatRange(1f, 6f), $"{positions}", 1f);
             positions = Mathf.RoundToInt(slots);
 
             const string postingGuidance = "Stays up until filled, or until you take it down.";
             TooltipHandler.TipRegion(positionsRect, postingGuidance);
 
-            Rect termRect = new Rect(controlWidth + controlGap, y, controlWidth, 28f);
-            Widgets.Label(new Rect(termRect.x, y, 54f, 28f), "Term:");
+            Rect termRect = new Rect(controlWidth + OptionColumnGap, y, controlWidth,
+                ControlRowHeight);
+            float termLabelWidth = Text.CalcSize("Term:").x;
+            Widgets.Label(new Rect(termRect.x, y, termLabelWidth, ControlRowHeight), "Term:");
             float term = termDays;
-            Widgets.HorizontalSlider(new Rect(termRect.x + 56f, y + 4f,
-                    termRect.width - 56f, 20f), ref term,
+            float termSliderX = termRect.x + termLabelWidth + RowGap;
+            Widgets.HorizontalSlider(new Rect(termSliderX, y + 4f,
+                    termRect.xMax - termSliderX, SliderHeight), ref term,
                 new FloatRange(2f, LaborCandidateService.MaxTermDays), $"{termDays} days", 1f);
             if (Mathf.RoundToInt(term) != termDays)
             {
@@ -206,53 +235,56 @@ namespace Intercolony
 
             const string termGuidance = "Longer terms cost less per day.";
             TooltipHandler.TipRegion(termRect, termGuidance);
-            y += 34f;
+            y += ControlRowHeight;
 
-            Widgets.DrawLineHorizontal(0f, y, width);
-            y += 10f;
+            y = DrawSectionDivider(width, y);
 
             RefreshRate();
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, 240f, 32f), "Wage offered");
+            float wageTitleHeight = Text.CalcHeight("Wage offered", width);
+            float matchX = width - MatchTopButtonWidth;
+            float unitX = matchX - RowGap - WageUnitWidth;
+            float fieldX = unitX - RowGap - WageFieldWidth;
+            Widgets.Label(new Rect(0f, y, fieldX - RowGap, wageTitleHeight), "Wage offered");
             Text.Font = GameFont.Small;
 
             int typed = wageOffered;
-            Widgets.TextFieldNumeric(new Rect(240f, y + 2f, 90f, 28f), ref typed, ref wageBuffer, 1, 9999);
+            Widgets.TextFieldNumeric(new Rect(fieldX, y, WageFieldWidth, ControlRowHeight),
+                ref typed, ref wageBuffer, 1, 9999);
             if (typed != wageOffered)
             {
                 wageOffered = typed;
             }
 
-            Widgets.Label(new Rect(336f, y + 5f, 120f, 24f), "silver / day");
-            if (rateValid && Widgets.ButtonText(new Rect(width - 150f, y + 2f, 140f, 28f),
+            Widgets.Label(new Rect(unitX, y, WageUnitWidth, ControlRowHeight), "silver / day");
+            if (rateValid && Widgets.ButtonText(
+                    new Rect(matchX, y, MatchTopButtonWidth, ControlRowHeight),
                     $"Match top ({rateHigh})"))
             {
                 SetWage(rateHigh);
             }
 
-            y += 36f;
+            y += Mathf.Max(wageTitleHeight, ControlRowHeight) + RowGap;
             float slid = wageOffered;
             int sliderMax = Mathf.Max(rateValid ? rateHigh * 2 : 100, wageOffered);
-            Widgets.HorizontalSlider(new Rect(0f, y + 4f, width, 20f), ref slid,
+            Widgets.HorizontalSlider(new Rect(0f, y, width, SliderHeight), ref slid,
                 new FloatRange(1f, sliderMax), null, 1f);
             if (Mathf.RoundToInt(slid) != wageOffered)
             {
                 SetWage(Mathf.RoundToInt(slid));
             }
 
-            y = DrawRateAdvice(new Rect(0f, 0f, width, 0f), y + 30f);
+            y = DrawRateAdvice(new Rect(0f, 0f, width, 0f), y + SliderHeight + RowGap);
 
-            y += 6f;
-            Widgets.DrawLineHorizontal(0f, y, width);
-            y += 10f;
+            y = DrawSectionDivider(width, y);
 
             float columnWidth = (width - OptionColumnGap) / 2f;
             float clauseHeight = ClauseColumnHeight(columnWidth);
             float structureHeight = StructureColumnHeight(columnWidth);
 
             GUI.BeginGroup(new Rect(0f, y, columnWidth, clauseHeight));
-            Widgets.Label(new Rect(0f, 0f, columnWidth, 24f), "Clause:");
-            float clauseY = 24f;
+            float clauseY = Text.CalcHeight("Clause:", columnWidth);
+            Widgets.Label(new Rect(0f, 0f, columnWidth, clauseY), "Clause:");
             foreach (CombatClause option in CombatClauseUtility.All)
             {
                 CombatClause captured = option;
@@ -263,8 +295,8 @@ namespace Intercolony
             GUI.EndGroup();
 
             GUI.BeginGroup(new Rect(columnWidth + OptionColumnGap, y, columnWidth, structureHeight));
-            Widgets.Label(new Rect(0f, 0f, columnWidth, 24f), "Paid:");
-            float structureY = 24f;
+            float structureY = Text.CalcHeight("Paid:", columnWidth);
+            Widgets.Label(new Rect(0f, 0f, columnWidth, structureY), "Paid:");
             foreach (WageStructure option in
                      new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
             {
@@ -276,14 +308,29 @@ namespace Intercolony
             GUI.EndGroup();
         }
 
+        private static float ContentWidth(float availableWidth)
+        {
+            return availableWidth - ContentLeft * 2f;
+        }
+
+        private static float DrawSectionDivider(float width, float y)
+        {
+            y += SectionGap / 2f;
+            Widgets.DrawLineHorizontal(0f, y, width);
+            return y + SectionGap / 2f;
+        }
+
         private float OptionsHeight(float width)
         {
-            string intro = "You name the terms and the wage. Workers who can do the job, and who will work for " +
-                           "what you are offering, apply as the market brings them past.";
-            float height = 36f + Text.CalcHeight(intro, width) + 4f + 34f;
-            height += 34f;
-            height += 10f + 36f + 30f + RateAdviceHeight(width);
-            height += 16f;
+            Text.Font = GameFont.Medium;
+            float titleHeight = Text.CalcHeight("Post a job", width);
+            float wageTitleHeight = Text.CalcHeight("Wage offered", width);
+            Text.Font = GameFont.Small;
+
+            float height = titleHeight + SectionGap + ControlRowHeight + SectionGap;
+            height += ControlRowHeight + SectionGap;
+            height += Mathf.Max(wageTitleHeight, ControlRowHeight) + RowGap;
+            height += SliderHeight + RowGap + RateAdviceHeight(width) + SectionGap;
 
             float columnWidth = (width - OptionColumnGap) / 2f;
             height += Mathf.Max(ClauseColumnHeight(columnWidth),
@@ -293,7 +340,7 @@ namespace Intercolony
 
         private float ClauseColumnHeight(float width)
         {
-            float height = 24f;
+            float height = Text.CalcHeight("Clause:", width);
             foreach (CombatClause option in CombatClauseUtility.All)
             {
                 height += LaborOptionRows.Height(CombatClauseUtility.Summary(option, wageOffered),
@@ -304,7 +351,7 @@ namespace Intercolony
 
         private float StructureColumnHeight(float width)
         {
-            float height = 24f;
+            float height = Text.CalcHeight("Paid:", width);
             foreach (WageStructure option in
                      new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
             {
@@ -332,9 +379,9 @@ namespace Intercolony
         private static float SummaryHeight(float width, string totalSummary,
             string upFrontSummary, string deathSummary)
         {
-            return 8f + Text.CalcHeight(totalSummary, width) + 2f +
-                   Text.CalcHeight(upFrontSummary, width) + 2f +
-                   Text.CalcHeight(deathSummary, width) + 8f;
+            return SectionGap + Text.CalcHeight(totalSummary, width) + RowGap +
+                   Text.CalcHeight(upFrontSummary, width) + RowGap +
+                   Text.CalcHeight(deathSummary, width) + SectionGap;
         }
 
         private string StructureTitle(WageStructure option)
@@ -359,7 +406,7 @@ namespace Intercolony
                     ? "Nobody is reachable for work at all right now. Check the Hire tab."
                     : $"Nobody reachable has {skill.skillLabel.CapitalizeFirst()} {minLevel}+. " +
                       "You can still post — the market changes — but expect a wait.";
-                return Text.CalcHeight(advice, width) + 4f;
+                return Text.CalcHeight(advice, width);
             }
 
             string marketGuidance =
@@ -375,7 +422,8 @@ namespace Intercolony
                         : Mathf.InverseLerp(rateLow, rateHigh, wageOffered) < 0.67f
                             ? "Your offer sits mid-band — expect a reasonable choice."
                             : "Your offer sits high in the band — expect most of them to be interested.";
-            return Text.CalcHeight(marketGuidance, width) + 4f + Text.CalcHeight(verdict, width) + 4f;
+            return Text.CalcHeight(marketGuidance, width) + RowGap +
+                   Text.CalcHeight(verdict, width);
         }
 
 
@@ -398,7 +446,7 @@ namespace Intercolony
                 GUI.color = new Color(1f, 0.8f, 0.5f);
                 Widgets.Label(new Rect(0f, y, inRect.width, adviceHeight), advice);
                 GUI.color = Color.white;
-                return y + adviceHeight + 4f;
+                return y + adviceHeight;
             }
 
             string marketGuidance =
@@ -409,7 +457,7 @@ namespace Intercolony
             GUI.color = new Color(1f, 1f, 1f, 0.75f);
             Widgets.Label(new Rect(0f, y, inRect.width, marketGuidanceHeight), marketGuidance);
             GUI.color = Color.white;
-            y += marketGuidanceHeight + 4f;
+            y += marketGuidanceHeight + RowGap;
 
             string verdict;
             Color colour;
@@ -440,7 +488,7 @@ namespace Intercolony
             float verdictHeight = Text.CalcHeight(verdict, inRect.width);
             Widgets.Label(new Rect(0f, y, inRect.width, verdictHeight), verdict);
             GUI.color = Color.white;
-            return y + verdictHeight + 4f;
+            return y + verdictHeight;
         }
 
         /// <summary>
