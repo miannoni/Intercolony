@@ -255,40 +255,9 @@ namespace Intercolony
         private float DrawClauseOption(float width, float y, CombatClause option)
         {
             int optionWage = WageFor(option);
-            int death = optionWage * option.DeathCompensationDays();
-            string title = $"{option.LabelCap()} — {optionWage} silver/day, {death} silver if they die";
-            string explanation = option.Explain();
-            float textWidth = width - 40f;
-            float titleHeight = Text.CalcHeight(title, textWidth);
-            float explanationHeight = Text.CalcHeight(explanation, textWidth);
-            float rowHeight = OptionHeight(title, explanation, textWidth);
-            Rect row = new Rect(0f, y, width, rowHeight);
-
-            if (clause == option)
-            {
-                Widgets.DrawHighlightSelected(row);
-            }
-            else
-            {
-                Widgets.DrawHighlightIfMouseover(row);
-            }
-
-            Widgets.RadioButton(new Vector2(4f, y + (rowHeight - 24f) / 2f), clause == option);
-
-            Widgets.Label(new Rect(34f, y + 2f, textWidth, titleHeight), title);
-
-            GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(34f, y + 4f + titleHeight, textWidth, explanationHeight),
-                explanation);
-            GUI.color = Color.white;
-
-            if (Widgets.ButtonInvisible(row) && clause != option)
-            {
-                clause = option;
-                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
-            }
-
-            return y + rowHeight;
+            string title = option.Summary(optionWage);
+            return LaborOptionRows.Draw(width, y, title, option.Explain(), clause == option,
+                () => clause = option);
         }
 
         /// <summary>
@@ -299,70 +268,32 @@ namespace Intercolony
         private float DrawStructureOption(float width, float y, WageStructure option, int wage)
         {
             string title = StructureTitle(option, wage);
-            string explanation = WageStructureUtility.Explain(option, wage, termDays);
-            float textWidth = width - 40f;
-            float titleHeight = Text.CalcHeight(title, textWidth);
-            float explanationHeight = Text.CalcHeight(explanation, textWidth);
-            float rowHeight = OptionHeight(title, explanation, textWidth);
-            Rect row = new Rect(0f, y, width, rowHeight);
-
-            if (structure == option)
-            {
-                Widgets.DrawHighlightSelected(row);
-            }
-            else
-            {
-                Widgets.DrawHighlightIfMouseover(row);
-            }
-
-            Widgets.RadioButton(new Vector2(4f, y + (rowHeight - 24f) / 2f), structure == option);
-
-            Rect textRect = new Rect(34f, y + 2f, textWidth, titleHeight);
-            Widgets.Label(textRect, title);
-
-            GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(34f, y + 4f + titleHeight, textWidth, explanationHeight),
-                explanation);
-            GUI.color = Color.white;
-
-            if (Widgets.ButtonInvisible(row) && structure != option)
-            {
-                structure = option;
-                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
-            }
-
-            return y + rowHeight;
+            return LaborOptionRows.Draw(width, y, title,
+                WageStructureUtility.Explain(option, wage, termDays), structure == option,
+                () => structure = option);
         }
 
         private float OptionsHeight(float width, int wage)
         {
-            float textWidth = width - 40f;
             float height = OptionsHeaderHeight;
             foreach (CombatClause option in CombatClauseUtility.All)
             {
                 int optionWage = WageFor(option);
-                int death = optionWage * option.DeathCompensationDays();
-                height += OptionHeight(
-                    $"{option.LabelCap()} — {optionWage} silver/day, {death} silver if they die",
-                    option.Explain(), textWidth);
+                height += LaborOptionRows.Height(
+                    option.Summary(optionWage),
+                    option.Explain(), width);
             }
 
             height += OptionsSectionGap + OptionsHeaderHeight;
             foreach (WageStructure option in
                      new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
             {
-                height += OptionHeight(
+                height += LaborOptionRows.Height(
                     StructureTitle(option, wage),
-                    WageStructureUtility.Explain(option, wage, termDays),
-                    textWidth);
+                    WageStructureUtility.Explain(option, wage, termDays), width);
             }
 
             return height;
-        }
-
-        private static float OptionHeight(string title, string explanation, float textWidth)
-        {
-            return 8f + Text.CalcHeight(title, textWidth) + Text.CalcHeight(explanation, textWidth);
         }
 
         private string StructureTitle(WageStructure option, int wage)

@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
-using Verse.Sound;
 
 namespace Intercolony
 {
@@ -34,6 +33,7 @@ namespace Intercolony
         private CombatClause clause = CombatClause.Civilian;
 
         private string wageBuffer;
+        private Vector2 optionsScroll;
 
         /// <summary>Cached band, recomputed only when an input that feeds it changes.</summary>
         private int rateLow;
@@ -60,141 +60,10 @@ namespace Intercolony
             absorbInputAroundWindow = true;
         }
 
-        public override Vector2 InitialSize => new Vector2(660f, 720f);
+        public override Vector2 InitialSize => new Vector2(660f, 760f);
 
         public override void DoWindowContents(Rect inRect)
         {
-            float y = 0f;
-
-            Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, inRect.width, 32f), "Post a job");
-            y += 36f;
-            Text.Font = GameFont.Small;
-
-            GUI.color = new Color(1f, 1f, 1f, 0.7f);
-            Widgets.Label(new Rect(0f, y, inRect.width, 40f),
-                "You name the terms and the wage. Workers who can do the job, and who will work for " +
-                "what you are offering, apply as the market brings them past.");
-            GUI.color = Color.white;
-            y += 44f;
-
-            // --- Requirement ---
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Skill:");
-            if (Widgets.ButtonText(new Rect(92f, y, 200f, 28f),
-                    skill == null ? "Any work" : skill.skillLabel.CapitalizeFirst()))
-            {
-                OpenSkillMenu();
-            }
-
-            if (skill != null)
-            {
-                Widgets.Label(new Rect(302f, y, 60f, 28f), "at least");
-                float level = minLevel;
-                Widgets.HorizontalSlider(new Rect(368f, y + 4f, inRect.width - 420f, 20f), ref level,
-                    new FloatRange(0f, 20f), $"{minLevel}", 1f);
-                if (Mathf.RoundToInt(level) != minLevel)
-                {
-                    minLevel = Mathf.RoundToInt(level);
-                    rateKey = int.MinValue;
-                }
-            }
-
-            y += 34f;
-
-            // --- Positions ---
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Positions:");
-            float slots = positions;
-            Widgets.HorizontalSlider(new Rect(92f, y + 4f, 240f, 20f), ref slots,
-                new FloatRange(1f, 6f), $"{positions}", 1f);
-            positions = Mathf.RoundToInt(slots);
-
-            GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(344f, y, inRect.width - 348f, 40f),
-                "Stays up until filled, or until you take it down.");
-            GUI.color = Color.white;
-            y += 34f;
-
-            // --- Duration ---
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Term:");
-            float term = termDays;
-            Widgets.HorizontalSlider(new Rect(92f, y + 4f, 240f, 20f), ref term,
-                new FloatRange(2f, LaborCandidateService.MaxTermDays), $"{termDays} days", 1f);
-            if (Mathf.RoundToInt(term) != termDays)
-            {
-                termDays = Mathf.RoundToInt(term);
-                rateKey = int.MinValue;
-            }
-
-            GUI.color = new Color(1f, 1f, 1f, 0.55f);
-            Widgets.Label(new Rect(344f, y + 3f, inRect.width - 348f, 24f),
-                "Longer terms cost less per day.");
-            GUI.color = Color.white;
-            y += 34f;
-
-            // --- Clause (§42) ---
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Clause:");
-            float x = 92f;
-            foreach (CombatClause option in CombatClauseUtility.All)
-            {
-                x = DrawChoice(x, y, option.LabelCap(), clause == option, () => clause = option);
-            }
-
-            y += 34f;
-
-            // --- Wage structure (§37) ---
-            Widgets.Label(new Rect(0f, y, 90f, 28f), "Paid:");
-            x = 92f;
-            foreach (WageStructure option in
-                     new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
-            {
-                WageStructure captured = option;
-                x = DrawChoice(x, y, option.Label().CapitalizeFirst(), structure == option,
-                    () => structure = captured);
-            }
-
-            y += 40f;
-
-            Widgets.DrawLineHorizontal(0f, y, inRect.width);
-            y += 10f;
-
-            // --- The wage, and what it is worth ---
-            RefreshRate();
-
-            Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, 240f, 32f), "Wage offered");
-            Text.Font = GameFont.Small;
-
-            int typed = wageOffered;
-            Widgets.TextFieldNumeric(new Rect(240f, y + 2f, 90f, 28f), ref typed, ref wageBuffer, 1, 9999);
-            if (typed != wageOffered)
-            {
-                wageOffered = typed;
-            }
-
-            Widgets.Label(new Rect(336f, y + 5f, 120f, 24f), "silver / day");
-
-            if (rateValid && Widgets.ButtonText(new Rect(inRect.width - 150f, y + 2f, 140f, 28f),
-                    $"Match top ({rateHigh})"))
-            {
-                SetWage(rateHigh);
-            }
-
-            y += 36f;
-
-            float slid = wageOffered;
-            int sliderMax = Mathf.Max(rateValid ? rateHigh * 2 : 100, wageOffered);
-            Widgets.HorizontalSlider(new Rect(0f, y + 4f, inRect.width, 20f), ref slid,
-                new FloatRange(1f, sliderMax), null, 1f);
-            if (Mathf.RoundToInt(slid) != wageOffered)
-            {
-                SetWage(Mathf.RoundToInt(slid));
-            }
-
-            y += 30f;
-
-            y = DrawRateAdvice(inRect, y);
-
-            // --- Commit ---
             int total = WageStructureUtility.TotalCost(structure, wageOffered, termDays) * positions;
             int upFront = WageStructureUtility.UpFrontCost(structure, wageOffered, termDays);
             int death = wageOffered * clause.DeathCompensationDays();
@@ -208,8 +77,20 @@ namespace Intercolony
             float totalSummaryHeight = Text.CalcHeight(totalSummary, inRect.width);
             float upFrontSummaryHeight = Text.CalcHeight(upFrontSummary, inRect.width);
             float deathSummaryHeight = Text.CalcHeight(deathSummary, inRect.width);
+            float summaryHeight = 8f + totalSummaryHeight + 2f + upFrontSummaryHeight + 2f +
+                                  deathSummaryHeight + 8f;
+            float bottom = inRect.height - 40f;
+            float optionsBottom = bottom - summaryHeight;
+            Rect optionsRect = new Rect(0f, 0f, inRect.width, Mathf.Max(1f, optionsBottom));
+            float optionsWidth = optionsRect.width - 16f;
+            RefreshRate();
+            Rect optionsView = new Rect(0f, 0f, optionsWidth, OptionsHeight(optionsWidth));
 
-            y += 8f;
+            Widgets.BeginScrollView(optionsRect, ref optionsScroll, optionsView);
+            DrawOptions(optionsWidth);
+            Widgets.EndScrollView();
+
+            float y = optionsBottom + 8f;
 
             GUI.color = new Color(1f, 1f, 1f, 0.7f);
             Widgets.Label(new Rect(0f, y, inRect.width, totalSummaryHeight), totalSummary);
@@ -220,44 +101,215 @@ namespace Intercolony
             GUI.color = Color.white;
             y += deathSummaryHeight + 8f;
 
-            if (Widgets.ButtonText(new Rect(0f, y, 170f, 36f), "Post"))
+            if (Widgets.ButtonText(new Rect(0f, bottom, 170f, 36f), "Post"))
             {
                 onConfirm?.Invoke(skill, minLevel, positions, termDays, wageOffered, structure,
                     clause);
                 Close();
             }
 
-            if (Widgets.ButtonText(new Rect(inRect.width - 130f, y, 120f, 36f), "Cancel"))
+            if (Widgets.ButtonText(new Rect(inRect.width - 130f, bottom, 120f, 36f), "Cancel"))
             {
                 Close();
             }
         }
 
-        /// <summary>
-        /// One choice in a row of them, drawn so the chosen one actually looks chosen.
-        ///
-        /// The highlight has to go **after** the button, not before. `Widgets.ButtonText` paints its
-        /// own background, so a `DrawHighlightSelected` drawn first is simply covered up — which is
-        /// why the clause and payment rows showed no selection at all while the hire dialog, which
-        /// highlights a plain row rather than a button, looked right.
-        /// </summary>
-        private static float DrawChoice(float x, float y, string label, bool selected, Action choose)
+        private void DrawOptions(float width)
         {
-            Rect button = new Rect(x, y, 150f, 28f);
+            float y = 0f;
 
-            if (Widgets.ButtonText(button, label) && !selected)
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, width, 32f), "Post a job");
+            y += 36f;
+            Text.Font = GameFont.Small;
+
+            string intro = "You name the terms and the wage. Workers who can do the job, and who will work for " +
+                           "what you are offering, apply as the market brings them past.";
+            float introHeight = Text.CalcHeight(intro, width);
+            GUI.color = new Color(1f, 1f, 1f, 0.7f);
+            Widgets.Label(new Rect(0f, y, width, introHeight), intro);
+            GUI.color = Color.white;
+            y += introHeight + 4f;
+
+            Widgets.Label(new Rect(0f, y, 90f, 28f), "Skill:");
+            if (Widgets.ButtonText(new Rect(92f, y, 200f, 28f),
+                    skill == null ? "Any work" : skill.skillLabel.CapitalizeFirst()))
             {
-                choose();
-                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+                OpenSkillMenu();
             }
 
-            if (selected)
+            if (skill != null)
             {
-                Widgets.DrawHighlightSelected(button);
+                Widgets.Label(new Rect(302f, y, 60f, 28f), "at least");
+                float level = minLevel;
+                Widgets.HorizontalSlider(new Rect(368f, y + 4f, width - 420f, 20f), ref level,
+                    new FloatRange(0f, 20f), $"{minLevel}", 1f);
+                if (Mathf.RoundToInt(level) != minLevel)
+                {
+                    minLevel = Mathf.RoundToInt(level);
+                    rateKey = int.MinValue;
+                }
             }
 
-            return x + 154f;
+            y += 34f;
+
+            Widgets.Label(new Rect(0f, y, 90f, 28f), "Positions:");
+            float slots = positions;
+            Widgets.HorizontalSlider(new Rect(92f, y + 4f, 240f, 20f), ref slots,
+                new FloatRange(1f, 6f), $"{positions}", 1f);
+            positions = Mathf.RoundToInt(slots);
+
+            const string postingGuidance = "Stays up until filled, or until you take it down.";
+            float guidanceWidth = width - 348f;
+            float postingGuidanceHeight = Text.CalcHeight(postingGuidance, guidanceWidth);
+            GUI.color = new Color(1f, 1f, 1f, 0.55f);
+            Widgets.Label(new Rect(344f, y, guidanceWidth, postingGuidanceHeight), postingGuidance);
+            GUI.color = Color.white;
+            y += Mathf.Max(34f, postingGuidanceHeight + 4f);
+
+            Widgets.Label(new Rect(0f, y, 90f, 28f), "Term:");
+            float term = termDays;
+            Widgets.HorizontalSlider(new Rect(92f, y + 4f, 240f, 20f), ref term,
+                new FloatRange(2f, LaborCandidateService.MaxTermDays), $"{termDays} days", 1f);
+            if (Mathf.RoundToInt(term) != termDays)
+            {
+                termDays = Mathf.RoundToInt(term);
+                rateKey = int.MinValue;
+            }
+
+            const string termGuidance = "Longer terms cost less per day.";
+            float termGuidanceHeight = Text.CalcHeight(termGuidance, guidanceWidth);
+            GUI.color = new Color(1f, 1f, 1f, 0.55f);
+            Widgets.Label(new Rect(344f, y + 3f, guidanceWidth, termGuidanceHeight), termGuidance);
+            GUI.color = Color.white;
+            y += Mathf.Max(34f, termGuidanceHeight + 7f);
+
+            Widgets.Label(new Rect(0f, y, width, 24f), "Clause:");
+            y += 24f;
+            foreach (CombatClause option in CombatClauseUtility.All)
+            {
+                y = LaborOptionRows.Draw(width, y, CombatClauseUtility.Summary(option, wageOffered),
+                    option.Explain(), clause == option, () => clause = option);
+            }
+
+            y += 6f;
+            Widgets.Label(new Rect(0f, y, width, 24f), "Paid:");
+            y += 24f;
+            foreach (WageStructure option in
+                     new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
+            {
+                WageStructure captured = option;
+                y = LaborOptionRows.Draw(width, y, StructureTitle(option),
+                    WageStructureUtility.Explain(option, wageOffered, termDays), structure == option,
+                    () => structure = captured);
+            }
+
+            y += 10f;
+            Widgets.DrawLineHorizontal(0f, y, width);
+            y += 10f;
+
+            RefreshRate();
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, y, 240f, 32f), "Wage offered");
+            Text.Font = GameFont.Small;
+
+            int typed = wageOffered;
+            Widgets.TextFieldNumeric(new Rect(240f, y + 2f, 90f, 28f), ref typed, ref wageBuffer, 1, 9999);
+            if (typed != wageOffered)
+            {
+                wageOffered = typed;
+            }
+
+            Widgets.Label(new Rect(336f, y + 5f, 120f, 24f), "silver / day");
+            if (rateValid && Widgets.ButtonText(new Rect(width - 150f, y + 2f, 140f, 28f),
+                    $"Match top ({rateHigh})"))
+            {
+                SetWage(rateHigh);
+            }
+
+            y += 36f;
+            float slid = wageOffered;
+            int sliderMax = Mathf.Max(rateValid ? rateHigh * 2 : 100, wageOffered);
+            Widgets.HorizontalSlider(new Rect(0f, y + 4f, width, 20f), ref slid,
+                new FloatRange(1f, sliderMax), null, 1f);
+            if (Mathf.RoundToInt(slid) != wageOffered)
+            {
+                SetWage(Mathf.RoundToInt(slid));
+            }
+
+            DrawRateAdvice(new Rect(0f, 0f, width, 0f), y + 30f);
         }
+
+        private float OptionsHeight(float width)
+        {
+            string intro = "You name the terms and the wage. Workers who can do the job, and who will work for " +
+                           "what you are offering, apply as the market brings them past.";
+            const string postingGuidance = "Stays up until filled, or until you take it down.";
+            const string termGuidance = "Longer terms cost less per day.";
+            float guidanceWidth = width - 348f;
+            float height = 36f + Text.CalcHeight(intro, width) + 4f + 34f;
+            height += Mathf.Max(34f, Text.CalcHeight(postingGuidance, guidanceWidth) + 4f);
+            height += Mathf.Max(34f, Text.CalcHeight(termGuidance, guidanceWidth) + 7f);
+            height += 24f;
+
+            foreach (CombatClause option in CombatClauseUtility.All)
+            {
+                height += LaborOptionRows.Height(CombatClauseUtility.Summary(option, wageOffered),
+                    option.Explain(), width);
+            }
+
+            height += 30f;
+            foreach (WageStructure option in
+                     new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
+            {
+                height += LaborOptionRows.Height(StructureTitle(option),
+                    WageStructureUtility.Explain(option, wageOffered, termDays), width);
+            }
+
+            return height + 20f + 36f + 30f + RateAdviceHeight(width);
+        }
+
+        private string StructureTitle(WageStructure option)
+        {
+            int total = WageStructureUtility.TotalCost(option, wageOffered, termDays);
+            switch (option)
+            {
+                case WageStructure.Prepaid:
+                    return $"Prepaid — {total} silver total";
+                case WageStructure.Daily:
+                    return $"Daily — {total} silver total";
+                default:
+                    return $"Per quadrum — {total} silver total";
+            }
+        }
+
+        private float RateAdviceHeight(float width)
+        {
+            if (!rateValid)
+            {
+                string advice = skill == null
+                    ? "Nobody is reachable for work at all right now. Check the Hire tab."
+                    : $"Nobody reachable has {skill.skillLabel.CapitalizeFirst()} {minLevel}+. " +
+                      "You can still post — the market changes — but expect a wait.";
+                return Text.CalcHeight(advice, width) + 4f;
+            }
+
+            string marketGuidance =
+                $"{qualified} reachable worker{(qualified == 1 ? "" : "s")} can do this. " +
+                $"For {termDays} days as a {clause.Label()} they ask " +
+                $"{rateLow} to {rateHigh} silver a day.";
+            string verdict = wageOffered < rateLow
+                ? $"Your offer is below all of them. Expect no replies until the market changes — the cheapest wants {rateLow}."
+                : wageOffered >= rateHigh
+                    ? "Your offer clears everyone who qualifies. Expect the best of them."
+                    : Mathf.InverseLerp(rateLow, rateHigh, wageOffered) < 0.34f
+                        ? "Your offer sits low in that band — expect few replies, and not the strongest."
+                        : Mathf.InverseLerp(rateLow, rateHigh, wageOffered) < 0.67f
+                            ? "Your offer sits mid-band — expect a reasonable choice."
+                            : "Your offer sits high in the band — expect most of them to be interested.";
+            return Text.CalcHeight(marketGuidance, width) + 4f + Text.CalcHeight(verdict, width) + 4f;
+        }
+
 
         /// <summary>
         /// The going rate, and a plain sentence about where the offer sits in it.
