@@ -532,6 +532,34 @@ were in the listing tooltip but not in front of the player at the moment of comm
 **Tier 2 is complete.** Remaining: finding 10 only, which is Tier 3 and must not enter a point
 release.
 
+### Follow-on: the hire dialog predates the measurement pass
+
+**Raised 2026-08-17** by Matteo, playing the Tier 2 build: the **No end date** checkbox on the hire
+popup was drawn on top of the term-length slider.
+
+**Fixed the same day.** `Dialog_HireWorker.cs` positioned it with `new Rect(inRect.width - 220f,
+y - 34f, 210f, 28f)`. The negative offset was written to reach back and sit the toggle *beside* the
+term row, as its §36.4 comment says — but `y` advances twice between that row and the checkbox, so
+it landed on the slider instead, which spans the full width. It now has its own measured row below
+the slider, and `y` advances past it before the wage summary is drawn.
+
+**This is a distinct defect class from `c1610af`'s** and worth naming separately: not an unmeasured
+box, but **a rect positioned by a negative offset from a cursor that later gained an intervening
+line**. It is invisible when written and breaks when someone inserts anything between the anchor and
+the thing anchored to it. A layout that says "34px above wherever we are now" is a latent bug even
+when it currently renders correctly.
+
+**Two latent items in the same file, found by the sweep and deliberately left for later** — both are
+hard-coded heights holding text that can wrap, i.e. the `c1610af` class:
+
+- `Dialog_HireWorker.cs:94` — the candidate name uses a fixed `32f` title height with no wrap
+  protection. A long name at high UI scale clips.
+- `Dialog_HireWorker.cs:229` — the signing-fee / prepaid-wages disclosure uses a fixed `24f`. The
+  wording got longer in `69b6041`, so this is likelier to wrap now than when it was written.
+
+Neither was folded into the checkbox fix, to keep that one revertable. Small, well-understood, good
+candidates for the next point release.
+
 #### Tier 3 — features, Phase 27 candidates
 
 Explicitly out of scope for any point release.

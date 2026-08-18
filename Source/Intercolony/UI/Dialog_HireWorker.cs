@@ -145,15 +145,19 @@ namespace Intercolony
 
             y += 32f;
 
-            // §36.4. Offered as a toggle beside the term rather than a fourth wage structure,
+            // §36.4. Offered as a toggle below the term rather than a fourth wage structure,
             // because it is not a way of paying — it is the absence of an end date.
-            Rect openRect = new Rect(inRect.width - 220f, y - 34f, 210f, 28f);
+            const float openEndedWidth = 210f;
+            float openEndedHeight = Mathf.Max(
+                24f, Text.CalcHeight("No end date", openEndedWidth - 24f));
+            Rect openRect = new Rect(0f, y, openEndedWidth, openEndedHeight);
             bool wasOpenEnded = openEnded;
             Widgets.CheckboxLabeled(openRect, "No end date", ref openEnded);
             if (openEnded != wasOpenEnded)
             {
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
             }
+            y += openEndedHeight + 2f;
 
             string wageSummary = openEnded
                 ? $"{wage} silver/day, open-ended \u2014 they stay until one of you ends it."
