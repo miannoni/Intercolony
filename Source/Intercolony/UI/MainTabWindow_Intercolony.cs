@@ -165,6 +165,19 @@ namespace Intercolony
         private QuoteColumn quoteSortColumn = QuoteColumn.Quantity;
         private bool quoteSortDescending = true;
 
+        private enum OrderColumn
+        {
+            Id = 0,
+            Buyer = 1,
+            Goods = 2,
+            Quantity = 3,
+            Value = 4,
+            StatusEta = 5
+        }
+
+        private OrderColumn orderSortColumn = OrderColumn.StatusEta;
+        private bool orderSortDescending;
+
         /// <summary>Minimum total value filter (§53 "minimum value").</summary>
         private int minValueFilter;
 
@@ -1263,44 +1276,31 @@ namespace Intercolony
                 return;
             }
 
-            // Open orders first, then most recent, so the actionable ones are always on top.
-            orders.Sort((a, b) =>
-            {
-                if (a.IsOpen != b.IsOpen)
-                {
-                    return a.IsOpen ? -1 : 1;
-                }
+            SortOrders(orders);
 
-                return b.id.CompareTo(a.id);
-            });
-
-            int openCount = 0;
-            while (openCount < orders.Count && orders[openCount].IsOpen)
-            {
-                openCount++;
-            }
-
-            int closedCount = orders.Count - openCount;
+            int closedCount = orders.Count(order => !order.IsOpen);
             int clearableCount = closedCount > 0
                 ? OrderHistoryService.CountClearableSalesOrderHistory(state)
                 : 0;
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            float contentHeight = orders.Count * OrderRowHeight +
+            float contentHeight = OrderHeaderHeight + orders.Count * OrderRowHeight +
                                   (closedCount > 0 ? ClosedOrderSectionHeaderHeight : 0f);
             Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contentHeight);
 
             BeginPageScrollView(outRect, ref ordersScroll, viewRect);
             float rowY = 0f;
+            if (closedCount > 0)
+            {
+                DrawClosedSalesOrderHeader(
+                    viewRect.width, rowY, closedCount, clearableCount, state);
+                rowY += ClosedOrderSectionHeaderHeight;
+            }
+
+            DrawOrderHeader(new Rect(0f, rowY, viewRect.width, OrderHeaderHeight));
+            rowY += OrderHeaderHeight;
             for (int i = 0; i < orders.Count; i++)
             {
-                if (i == openCount)
-                {
-                    DrawClosedSalesOrderHeader(
-                        viewRect.width, rowY, closedCount, clearableCount, state);
-                    rowY += ClosedOrderSectionHeaderHeight;
-                }
-
                 DrawOrderRow(new Rect(0f, rowY, viewRect.width, OrderRowHeight), orders[i], i);
                 rowY += OrderRowHeight;
             }
@@ -3350,8 +3350,119 @@ namespace Intercolony
                 qty => PurchaseOrderService.AcceptQuote(state, request, quote, map, qty)));
         }
 
+        private const float OrderHeaderHeight = 24f;
         private const float OrderRowHeight = 56f;
         private const float ClosedOrderSectionHeaderHeight = 32f;
+
+        private static readonly float[] OrderColumnWidths =
+            { 0.06f, 0.18f, 0.23f, 0.07f, 0.11f, 0.35f };
+
+        private static readonly string[] OrderColumnLabels =
+            { "#", "Buyer", "Goods", "Qty", "Value", "Status / ETA" };
+
+        private void DrawOrderHeader(Rect rect)
+        {
+            float x = rect.x;
+            for (int i = 0; i < OrderColumnLabels.Length; i++)
+            {
+                float width = rect.width * OrderColumnWidths[i];
+                Rect cell = new Rect(x, rect.y, width - 4f, rect.height);
+                bool active = (int)orderSortColumn == i;
+                Widgets.DrawHighlightIfMouseover(cell);
+                GUI.color = active ? Color.white : new Color(1f, 1f, 1f, 0.6f);
+                Widgets.Label(cell,
+                    OrderColumnLabels[i] + (active ? (orderSortDescending ? " v" : " ^") : ""));
+                GUI.color = Color.white;
+
+                if (Widgets.ButtonInvisible(cell))
+                {
+                    if (active)
+                    {
+                        orderSortDescending = !orderSortDescending;
+                    }
+                    else
+                    {
+                        orderSortColumn = (OrderColumn)i;
+                        orderSortDescending = orderSortColumn == OrderColumn.Id ||
+                                              orderSortColumn == OrderColumn.Quantity ||
+                                              orderSortColumn == OrderColumn.Value;
+                    }
+
+                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+                }
+
+                x += width;
+            }
+        }
+
+        private void SortOrders(List<SalesOrder> orders)
+        {
+            Comparison<SalesOrder> comparison;
+            switch (orderSortColumn)
+            {
+                case OrderColumn.Id:
+                    comparison = (a, b) => a.id.CompareTo(b.id);
+                    break;
+                case OrderColumn.Buyer:
+                    comparison = (a, b) => string.Compare(
+                        a.settlementName ?? "", b.settlementName ?? "",
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case OrderColumn.Goods:
+                    comparison = (a, b) => string.Compare(
+                        a.line?.ShortLabel() ?? "", b.line?.ShortLabel() ?? "",
+                        StringComparison.CurrentCultureIgnoreCase);
+                    break;
+                case OrderColumn.Quantity:
+                    comparison = (a, b) => a.Quantity.CompareTo(b.Quantity);
+                    break;
+                case OrderColumn.Value:
+                    comparison = (a, b) =>
+                        a.DiscountedTotalPayment.CompareTo(b.DiscountedTotalPayment);
+                    break;
+                default:
+                    comparison = CompareOrderDeadline;
+                    break;
+            }
+
+            orders.Sort((a, b) =>
+            {
+                int result = comparison(a, b);
+                if (result != 0)
+                {
+                    return orderSortDescending ? -result : result;
+                }
+
+                return a.id.CompareTo(b.id);
+            });
+        }
+
+        private static int CompareOrderDeadline(SalesOrder a, SalesOrder b)
+        {
+            bool aHasDeadline = a.IsOpen && !a.BuyerEnRoute;
+            bool bHasDeadline = b.IsOpen && !b.BuyerEnRoute;
+            if (aHasDeadline != bHasDeadline)
+            {
+                return aHasDeadline ? -1 : 1;
+            }
+
+            if (aHasDeadline)
+            {
+                return a.deadlineTick.CompareTo(b.deadlineTick);
+            }
+
+            if (a.BuyerEnRoute != b.BuyerEnRoute)
+            {
+                return a.BuyerEnRoute ? -1 : 1;
+            }
+
+            if (a.BuyerEnRoute && a.buyerArrivalTick >= 0 && b.buyerArrivalTick >= 0)
+            {
+                return a.buyerArrivalTick.CompareTo(b.buyerArrivalTick);
+            }
+
+            return a.status.CompareTo(b.status);
+        }
 
         private void DrawOrderRow(Rect rect, SalesOrder order, int index)
         {
@@ -3362,14 +3473,25 @@ namespace Intercolony
 
             Widgets.DrawHighlightIfMouseover(rect);
 
-            Rect main = new Rect(rect.x + 4f, rect.y + 3f, rect.width - 200f, rect.height - 6f);
-            string title = $"#{order.id}  {order.settlementName} — {order.Quantity}x " +
-                           $"{order.line?.ShortLabel() ?? "<missing>"}";
+            Rect Cell(int column)
+            {
+                float x = rect.x + 4f;
+                for (int i = 0; i < column; i++)
+                {
+                    x += rect.width * OrderColumnWidths[i];
+                }
 
-            Widgets.Label(new Rect(main.x, main.y, main.width, 22f), title);
+                return new Rect(x, rect.y + 4f,
+                    rect.width * OrderColumnWidths[column] - 8f, 22f);
+            }
+
+            Widgets.Label(Cell(0), order.id.ToString());
+            Widgets.LabelFit(Cell(1), order.settlementName);
+            Widgets.LabelFit(Cell(2), order.line?.ShortLabel() ?? "<missing>");
+            Widgets.Label(Cell(3), order.Quantity.ToString());
+            Widgets.LabelFit(Cell(4), $"{order.DiscountedTotalPayment:N0} silver");
 
             // §17: show progress and time remaining, and warn rather than fail silently.
-            string detail = OrderDetailText(order);
             Color colour = Color.white;
             if (order.BuyerEnRoute)
             {
@@ -3390,8 +3512,13 @@ namespace Intercolony
             }
 
             GUI.color = colour;
-            Widgets.Label(new Rect(main.x, main.y + 24f, main.width, 22f), detail);
+            Widgets.LabelFit(Cell(5), OrderStatusEtaText(order));
             GUI.color = Color.white;
+
+            if (!order.IsOpen && !order.outcomeNote.NullOrEmpty() && ShouldBuildTooltip(rect))
+            {
+                TooltipHandler.TipRegion(rect, "Outcome: " + order.outcomeNote);
+            }
 
             if (!order.IsOpen)
             {
@@ -3421,7 +3548,7 @@ namespace Intercolony
                 OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
                 bool enough = validation.Success;
 
-                Rect readyRect = new Rect(rect.xMax - 210f, rect.y + 14f, 110f, 28f);
+                Rect readyRect = new Rect(rect.xMax - 210f, rect.y + 27f, 110f, 26f);
                 // RimWorld draws an inactive text button like a live one. Keep this clickable
                 // so an invalid attempt reaches the service and explains the refusal.
                 if (Widgets.ButtonText(readyRect, "Mark ready"))
@@ -3464,7 +3591,7 @@ namespace Intercolony
                 }
             }
 
-            Rect cancelRect = new Rect(rect.xMax - 90f, rect.y + 14f, 80f, 28f);
+            Rect cancelRect = new Rect(rect.xMax - 90f, rect.y + 27f, 80f, 26f);
             if (Widgets.ButtonText(cancelRect, "Cancel"))
             {
                 Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
@@ -3475,30 +3602,24 @@ namespace Intercolony
             }
         }
 
-        internal static string OrderDetailText(SalesOrder order)
+        internal static string OrderStatusEtaText(SalesOrder order)
         {
             if (order.BuyerEnRoute)
             {
-                // AwaitingCollection retires the readiness deadline, but a countdown is only
-                // meaningful after dispatch assigned a real arrival tick.
                 return order.buyerArrivalTick >= 0
-                    ? $"{order.settlementName} arriving in {order.DaysUntilBuyerArrives:F1}d " +
-                      $"to collect {order.RemainingQuantity} — keep them in storage"
-                    : $"{order.settlementName} collection dispatched — keep " +
-                      $"{order.RemainingQuantity} in storage";
+                    ? $"En route — {order.DaysUntilBuyerArrives:F1}d"
+                    : "Collection dispatched";
             }
 
             if (order.IsOpen)
             {
-                string mode = order.fulfillment == FulfillmentMode.BuyerPickup
-                    ? "buyer collects"
-                    : "you deliver";
-                return $"{order.deliveredQuantity}/{order.Quantity} delivered   " +
-                       $"{order.DaysRemaining:F1}d left   " +
-                       $"{order.TotalPayment} silver   ({mode})";
+                string progress = order.deliveredQuantity > 0
+                    ? $" — {order.deliveredQuantity}/{order.Quantity} delivered"
+                    : "";
+                return $"{order.DaysRemaining:F1}d left{progress}";
             }
 
-            return $"{order.status}: {order.outcomeNote}";
+            return order.status.ToString();
         }
 
     }

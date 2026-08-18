@@ -98,12 +98,26 @@ namespace Intercolony
             unsetArrival.fulfillment = FulfillmentMode.BuyerPickup;
             unsetArrival.status = SalesOrderStatus.AwaitingCollection;
             unsetArrival.buyerArrivalTick = -1;
-            string unsetArrivalDetail = MainTabWindow_Intercolony.OrderDetailText(unsetArrival);
+            string unsetArrivalDetail = MainTabWindow_Intercolony.OrderStatusEtaText(unsetArrival);
             Check("an unset buyer-arrival sentinel is never formatted as a duration",
-                !unsetArrivalDetail.Contains("arriving in") &&
+                !unsetArrivalDetail.Contains("En route") &&
                 !unsetArrivalDetail.Contains("-1") &&
                 !unsetArrivalDetail.Contains("d left"),
                 unsetArrivalDetail);
+
+            SalesOrder openDeadline = NewOrder(sample, 10, 1f);
+            openDeadline.status = SalesOrderStatus.Accepted;
+            openDeadline.deadlineTick = GenTicks.TicksGame + GenDate.TicksPerDay;
+            string openStatus = MainTabWindow_Intercolony.OrderStatusEtaText(openDeadline);
+            SalesOrder closedDeadline = NewOrder(sample, 10, 1f);
+            closedDeadline.status = SalesOrderStatus.Failed;
+            closedDeadline.deadlineTick = -1;
+            closedDeadline.buyerArrivalTick = -1;
+            string closedStatus = MainTabWindow_Intercolony.OrderStatusEtaText(closedDeadline);
+            Check("open and closed status cells never format a sentinel as a negative duration",
+                !openStatus.Contains("-") && !closedStatus.Contains("-") &&
+                !openStatus.Contains("-1") && !closedStatus.Contains("-1"),
+                $"open \"{openStatus}\", closed \"{closedStatus}\"");
 
             // --- Payment arithmetic across partial deliveries ---
             SalesOrder partial = NewOrder(sample, 100, 1.37f);
