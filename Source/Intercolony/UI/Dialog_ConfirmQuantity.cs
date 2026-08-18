@@ -48,9 +48,11 @@ namespace Intercolony
         private readonly Func<int, FulfillmentMode, float, string> discountBodyBuilder;
         private readonly Func<int, FulfillmentMode, float, List<TermRow>> discountRowsBuilder;
         private readonly Action<int, FulfillmentMode, float> discountOnConfirm;
+        private Func<int, FulfillmentMode, float, bool, bool> discountRowsOnConfirm;
         private readonly Func<int, FulfillmentMode, float, string> discountPreviewBuilder;
         private readonly bool chooseFulfillment;
         private readonly bool chooseDiscount;
+        private bool showMarkReadyToggle;
 
         private const float WindowWidth = 520f;
         private const float WindowMargin = 18f;
@@ -58,6 +60,7 @@ namespace Intercolony
         private const float BodyControlsGap = 8f;
         private const float QuantityControlsHeight = 122f;
         private const float FulfillmentControlsHeight = 58f;
+        private const float MarkReadyControlsGap = 6f;
         private const float DiscountControlsHeight = 58f;
         private const float DiscountPreviewTop = 5f;
         private const float DiscountCaptionTop = 14f;
@@ -71,6 +74,7 @@ namespace Intercolony
         private string buffer;
         private FulfillmentMode fulfillment;
         private float discountFraction;
+        private bool markReadyNow;
         private Vector2 bodyScroll;
 
         /// <param name="minQuantity">
@@ -111,6 +115,30 @@ namespace Intercolony
                 null, rowsBuilder, onConfirm, discountPreviewBuilder, initialFulfillment,
                 minQuantity, quantityLabel, allowFulfillmentChoice)
         {
+        }
+
+        /// <summary>
+        /// Rows variant with a per-sale readiness choice. Returning false keeps the dialog open.
+        /// </summary>
+        public Dialog_ConfirmQuantity(
+            string title,
+            string confirmLabel,
+            int maxQuantity,
+            Func<int, FulfillmentMode, float, List<TermRow>> rowsBuilder,
+            Func<int, FulfillmentMode, float, bool, bool> onConfirm,
+            Func<int, FulfillmentMode, float, string> discountPreviewBuilder = null,
+            FulfillmentMode initialFulfillment = FulfillmentMode.BuyerPickup,
+            int minQuantity = 1,
+            string quantityLabel = "Quantity:",
+            bool allowFulfillmentChoice = true,
+            bool initialMarkReadyNow = true)
+            : this(title, confirmLabel, maxQuantity, null, null, null, null,
+                null, rowsBuilder, null, discountPreviewBuilder, initialFulfillment,
+                minQuantity, quantityLabel, allowFulfillmentChoice)
+        {
+            discountRowsOnConfirm = onConfirm;
+            showMarkReadyToggle = true;
+            markReadyNow = initialMarkReadyNow;
         }
 
         /// <summary>
@@ -210,7 +238,7 @@ namespace Intercolony
                     ? MeasureRows(BuildRows(), bodyWidth)
                     : Text.CalcHeight(BuildBody(), bodyWidth);
                 float fixedHeight = WindowMargin * 2f + TitleHeight + BodyControlsGap +
-                                    ControlsHeight();
+                                    ControlsHeight(bodyWidth);
 
                 // InitialSize is only consumed when the window opens. Later slider changes can
                 // lengthen the live body, so DoWindowContents scrolls any growth beyond this slot.
@@ -230,7 +258,7 @@ namespace Intercolony
 
             // Body is rebuilt for the current quantity, so the price the player is agreeing to
             // updates as they move the slider rather than describing the original amount.
-            float controlsHeight = ControlsHeight();
+            float controlsHeight = ControlsHeight(inRect.width);
             float controlsTop = inRect.height - controlsHeight;
 
             Rect bodyRect = new Rect(0f, y, inRect.width, controlsTop - y - BodyControlsGap);
@@ -287,6 +315,15 @@ namespace Intercolony
                     new Color(0.6f, 0.85f, 1f));
 
                 bottom += FulfillmentControlsHeight;
+            }
+
+            if (ShowMarkReadyToggle)
+            {
+                float checkboxHeight = MarkReadyControlsHeight(inRect.width);
+                Widgets.CheckboxLabeled(
+                    new Rect(0f, bottom, inRect.width, checkboxHeight),
+                    MarkReadyNowLabel, ref markReadyNow);
+                bottom += checkboxHeight + MarkReadyControlsGap;
             }
 
             if (chooseDiscount)
@@ -358,7 +395,14 @@ namespace Intercolony
             if (Widgets.ButtonText(confirmRect, confirmLabel))
             {
                 int confirmedQuantity = Mathf.Clamp(quantity, minQuantity, maxQuantity);
-                if (chooseDiscount)
+                bool shouldClose = true;
+                if (discountRowsOnConfirm != null)
+                {
+                    shouldClose = discountRowsOnConfirm(
+                        confirmedQuantity, fulfillment, Mathf.Clamp01(discountFraction),
+                        markReadyNow);
+                }
+                else if (chooseDiscount)
                 {
                     discountOnConfirm?.Invoke(
                         confirmedQuantity, fulfillment, Mathf.Clamp01(discountFraction));
@@ -371,7 +415,10 @@ namespace Intercolony
                 {
                     onConfirm?.Invoke(confirmedQuantity);
                 }
-                Close();
+                if (shouldClose)
+                {
+                    Close();
+                }
             }
 
             Rect cancelRect = new Rect(inRect.width - 130f, bottom, 120f, 36f);
@@ -388,10 +435,24 @@ namespace Intercolony
             SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
         }
 
-        private float ControlsHeight()
+        private bool ShowMarkReadyToggle =>
+            showMarkReadyToggle && fulfillment == FulfillmentMode.BuyerPickup;
+
+        private const string MarkReadyNowLabel = "Mark ready now";
+
+        private static float MarkReadyControlsHeight(float width)
+        {
+            return Mathf.Max(24f,
+                Text.CalcHeight(MarkReadyNowLabel, Mathf.Max(1f, width - 28f)));
+        }
+
+        private float ControlsHeight(float width)
         {
             return QuantityControlsHeight +
                    (chooseFulfillment ? FulfillmentControlsHeight : 0f) +
+                   (ShowMarkReadyToggle
+                       ? MarkReadyControlsHeight(width) + MarkReadyControlsGap
+                       : 0f) +
                    (chooseDiscount ? DiscountControlsHeight : 0f);
         }
 

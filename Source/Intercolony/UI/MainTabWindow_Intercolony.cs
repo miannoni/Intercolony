@@ -1884,16 +1884,36 @@ namespace Intercolony
                         "having them ready."));
                     return rows;
                 },
-                (qty, fulfillment, discountFraction) =>
+                (qty, fulfillment, discountFraction, markReadyNow) =>
                 {
                     BuyerOffer priced = offer;
                     priced.unitPrice = FindBuyerService.SellRateFor(offer, qty, fulfillment);
+                    Map fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+                    if (fulfillment == FulfillmentMode.BuyerPickup && markReadyNow)
+                    {
+                        SalesOrder pending = SalesOrderService.BuildOrderFromOffer(
+                            priced, qty, DeadlineDays, fulfillment, fulfillmentMap);
+                        if (!SalesOrderService.CanMarkReadyNow(
+                                pending, fulfillmentMap, out string reason))
+                        {
+                            Messages.Message(
+                                $"Order not created: {reason}\n" +
+                                "Untick \"Mark ready now\" to create the order and ready it later.",
+                                MessageTypeDefOf.RejectInput, historical: false);
+                            return false;
+                        }
+                    }
+
                     SalesOrder order = SalesOrderService.CreateFromOffer(
-                        state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
+                        state, fulfillmentMap, priced, qty,
                         DeadlineDays, fulfillment);
                     if (order != null)
                     {
                         order.DiscountFraction = discountFraction;
+                        if (fulfillment == FulfillmentMode.BuyerPickup && markReadyNow)
+                        {
+                            SalesOrderService.MarkReadyForPickup(order, fulfillmentMap);
+                        }
 
                         // Deliberately stays on Find Buyer. Selling is usually several sales in
                         // a row — split a surplus across buyers, work down a list — and being
@@ -1904,15 +1924,18 @@ namespace Intercolony
                         stockCache = null;
                         findBuyerCache = null;
                     }
+                    return true;
                 },
                 (qty, fulfillment, discountFraction) =>
-                    SalePaymentPreviewText(offer, qty, fulfillment, discountFraction)));
+                    SalePaymentPreviewText(offer, qty, fulfillment, discountFraction),
+                initialMarkReadyNow: IntercolonyMod.Settings.markReadyNowByDefault));
         }
 
         private void ConfirmAnimalSell(
             IntercolonyWorldComponent state, BuyerOffer offer, int deadlineDays)
         {
-            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
+            Dialog_ConfirmQuantity sellDialog = null;
+            sellDialog = new Dialog_ConfirmQuantity(
                 "Sell animals to this buyer?",
                 "Create order",
                 offer.quantity,
@@ -1976,24 +1999,85 @@ namespace Intercolony
                         "affected colonist is named."));
                     return rows;
                 },
-                (qty, fulfillment, discountFraction) =>
+                (qty, fulfillment, discountFraction, markReadyNow) =>
                 {
                     BuyerOffer priced = offer;
                     priced.unitPrice = FindBuyerService.SellRateFor(offer, qty, fulfillment);
-                    SalesOrder order = SalesOrderService.CreateFromOffer(
-                        state, Find.CurrentMap ?? Find.AnyPlayerHomeMap, priced, qty,
-                        deadlineDays, fulfillment);
-                    if (order != null)
+                    Map fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+                    SalesOrder pending = null;
+                    if (fulfillment == FulfillmentMode.BuyerPickup && markReadyNow)
                     {
-                        order.DiscountFraction = discountFraction;
+                        pending = SalesOrderService.BuildOrderFromOffer(
+                            priced, qty, deadlineDays, fulfillment, fulfillmentMap);
+                        if (!SalesOrderService.CanMarkReadyNow(
+                                pending, fulfillmentMap, out string reason))
+                        {
+                            Messages.Message(
+                                $"Order not created: {reason}\n" +
+                                "Untick \"Mark ready now\" to create the order and ready it later.",
+                                MessageTypeDefOf.RejectInput, historical: false);
+                            return false;
+                        }
+                    }
 
+                    Func<bool> createOrder = () =>
+                    {
+                        SalesOrder order = SalesOrderService.CreateFromOffer(
+                            state, fulfillmentMap, priced, qty, deadlineDays, fulfillment);
+                        if (order == null)
+                        {
+                            return false;
+                        }
+
+                        order.DiscountFraction = discountFraction;
+                        if (fulfillment == FulfillmentMode.BuyerPickup && markReadyNow)
+                        {
+                            SalesOrderService.MarkReadyForPickup(order, fulfillmentMap);
+                        }
                         // Stays put for the same reason as the goods sale above.
                         animalStockCache = null;
                         findBuyerCache = null;
+                        return true;
+                    };
+
+                    if (pending != null)
+                    {
+                        string bondWarning =
+                            SalesOrderService.BuildBondedAnimalWarning(pending, fulfillmentMap);
+                        if (!bondWarning.NullOrEmpty())
+                        {
+                            Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                                bondWarning,
+                                () =>
+                                {
+                                    SalesOrder currentPending = SalesOrderService.BuildOrderFromOffer(
+                                        priced, qty, deadlineDays, fulfillment, fulfillmentMap);
+                                    if (!SalesOrderService.CanMarkReadyNow(
+                                            currentPending, fulfillmentMap, out string reason))
+                                    {
+                                        Messages.Message(
+                                            $"Order not created: {reason}\n" +
+                                            "Untick \"Mark ready now\" to create the order and ready it later.",
+                                            MessageTypeDefOf.RejectInput, historical: false);
+                                        return;
+                                    }
+                                    if (createOrder())
+                                    {
+                                        sellDialog.Close();
+                                    }
+                                },
+                                destructive: true));
+                            return false;
+                        }
                     }
+
+                    createOrder();
+                    return true;
                 },
                 (qty, fulfillment, discountFraction) =>
-                    SalePaymentPreviewText(offer, qty, fulfillment, discountFraction)));
+                    SalePaymentPreviewText(offer, qty, fulfillment, discountFraction),
+                initialMarkReadyNow: IntercolonyMod.Settings.markReadyNowByDefault);
+            Find.WindowStack.Add(sellDialog);
         }
 
         private static SalesOrder BuildSalePaymentPreview(

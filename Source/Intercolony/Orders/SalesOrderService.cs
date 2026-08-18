@@ -170,27 +170,9 @@ namespace Intercolony
                 return null;
             }
 
-            SalesOrder order = new SalesOrder
-            {
-                id = state.NextId(),
-                opportunityId = 0,
-                settlementId = offer.settlement.ID,
-                settlementName = offer.settlement.Label ?? "unnamed",
-                factionName = offer.settlement.Faction?.Name ?? "",
-                line = new OrderLine(offer.def, quantity)
-                {
-                    allowedStuff = offer.stuff,
-                    animalSpec = offer.animalSpec?.Copy()
-                },
-                unitPrice = offer.unitPrice,
-                referenceUnitPrice = offer.unitPrice,
-                acceptedTick = GenTicks.TicksGame,
-                fulfillment = fulfillment,
-                buyerPickupDistanceTiles = offer.distanceTiles,
-                fulfillmentMap = map,
-                deadlineTick = GenTicks.TicksGame + deadlineDays * GenDate.TicksPerDay,
-                status = SalesOrderStatus.Accepted
-            };
+            SalesOrder order = BuildOrderFromOffer(
+                offer, quantity, deadlineDays, fulfillment, map);
+            order.id = state.NextId();
 
             state.AddOrder(order);
 
@@ -209,6 +191,44 @@ namespace Intercolony
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             return order;
+        }
+
+        /// <summary>
+        /// Builds both the pre-check order and the order CreateFromOffer will register, so the
+        /// pre-check always evaluates exactly what creation will produce when fields are added.
+        /// </summary>
+        internal static SalesOrder BuildOrderFromOffer(
+            BuyerOffer offer, int quantity, int deadlineDays,
+            FulfillmentMode fulfillment, Map fulfillmentMap)
+        {
+            if (offer?.settlement == null || offer.def == null || quantity <= 0)
+            {
+                return null;
+            }
+
+            return new SalesOrder
+            {
+                // Transient orders are never registered. Zero cannot collide with a persisted ID,
+                // because world IDs start at one, and avoids consuming an ID for a pre-check.
+                id = 0,
+                opportunityId = 0,
+                settlementId = offer.settlement.ID,
+                settlementName = offer.settlement.Label ?? "unnamed",
+                factionName = offer.settlement.Faction?.Name ?? "",
+                line = new OrderLine(offer.def, quantity)
+                {
+                    allowedStuff = offer.stuff,
+                    animalSpec = offer.animalSpec?.Copy()
+                },
+                unitPrice = offer.unitPrice,
+                referenceUnitPrice = offer.unitPrice,
+                acceptedTick = GenTicks.TicksGame,
+                fulfillment = fulfillment,
+                buyerPickupDistanceTiles = offer.distanceTiles,
+                fulfillmentMap = fulfillmentMap,
+                deadlineTick = GenTicks.TicksGame + deadlineDays * GenDate.TicksPerDay,
+                status = SalesOrderStatus.Accepted
+            };
         }
 
         /// <summary>
@@ -544,66 +564,14 @@ namespace Intercolony
         /// </summary>
         public static bool MarkReadyForPickup(SalesOrder order, Map map)
         {
-            if (order == null || !order.CanMarkReady)
+            if (!CanMarkReadyNow(order, map, out string reason, out List<Pawn> designatedAnimals))
             {
-                return false;
-            }
-
-            // A missing record is compatible with cycle orders created before fulfillment maps
-            // were assigned: adopt the colony the player is acting from. A recorded map that is
-            // now gone is a different state and must never be redirected to another colony.
-            if (order.fulfillmentMap != null &&
-                Find.Maps?.Contains(order.fulfillmentMap) != true)
-            {
-                Messages.Message(
-                    $"Order #{order.id}: its recorded fulfillment colony is no longer available.",
-                    MessageTypeDefOf.RejectInput, historical: false);
-                return false;
-            }
-            else if (order.fulfillmentMap == null &&
-                     (map == null || Find.Maps?.Contains(map) != true || !map.IsPlayerHome))
-            {
-                Messages.Message(
-                    $"Order #{order.id}: select an available player colony before marking it ready.",
-                    MessageTypeDefOf.RejectInput, historical: false);
-                return false;
-            }
-
-            if (order.IsOverdue(GenTicks.TicksGame))
-            {
-                Messages.Message(
-                    $"Order #{order.id}: the deadline to mark the goods ready has passed.",
-                    MessageTypeDefOf.RejectInput, historical: false);
-                return false;
-            }
-
-            OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
-            if (!validation.Success)
-            {
-                Messages.Message(
-                    $"Order #{order.id}: {validation.Summary()}",
-                    MessageTypeDefOf.RejectInput, historical: false);
-                return false;
-            }
-
-            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
-            int available = order.IsAnimalOrder
-                ? FindBuyerService.AvailableAnimalQuantity(
-                    state, map, order.ThingDef, order.line.animalSpec, order.id)
-                // Validate against all physical stock matching this accepted order's locked line,
-                // without reapplying current trade eligibility. A disabled buy-only category must
-                // not strand the obligation; only other open-order commitments reduce this total.
-                : Mathf.Max(0, validation.totalPhysicalMatchingQuantity -
-                    FindBuyerService.CommittedQuantity(state, order.ThingDef, order.id));
-            if (available < order.RemainingQuantity)
-            {
-                int committedElsewhere = FindBuyerService.CommittedQuantity(
-                    state, order.ThingDef, order.id);
-                Messages.Message(
-                    $"Order #{order.id}: only {available:N0} {order.ThingDef.label} are free; " +
-                    $"{committedElsewhere:N0} matching units are already committed elsewhere. " +
-                    $"This order still needs {order.RemainingQuantity:N0}.",
-                    MessageTypeDefOf.RejectInput, historical: false);
+                if (!reason.NullOrEmpty())
+                {
+                    Messages.Message(
+                        ReadyRefusal(order, reason),
+                        MessageTypeDefOf.RejectInput, historical: false);
+                }
                 return false;
             }
 
@@ -614,19 +582,7 @@ namespace Intercolony
             // the colony that has them, rather than picking substitutes on arrival.
             if (order.IsAnimalOrder)
             {
-                List<Pawn> designated = OrderValidator.MatchingColonyAnimals(
-                    order, map, order.RemainingQuantity);
-                if (designated.Count < order.RemainingQuantity)
-                {
-                    Messages.Message(
-                        $"Order #{order.id}: only {designated.Count:N0} eligible " +
-                        $"{order.line.animalSpec.ShortLabel(order.ThingDef)} are here; " +
-                        $"{order.RemainingQuantity:N0} are needed.",
-                        MessageTypeDefOf.RejectInput, historical: false);
-                    return false;
-                }
-
-                order.designatedAnimals = designated;
+                order.designatedAnimals = designatedAnimals;
             }
 
             order.fulfillmentMap = map;
@@ -644,6 +600,104 @@ namespace Intercolony
                 LetterDefOf.PositiveEvent);
 
             return true;
+        }
+
+        /// <summary>
+        /// Applies the complete, non-mutating decision used before declaring pickup goods ready.
+        /// The returned reason omits the order prefix so pre-creation callers can present the
+        /// same detail without pretending that an order already exists.
+        /// </summary>
+        internal static bool CanMarkReadyNow(SalesOrder order, Map map, out string reason)
+        {
+            return CanMarkReadyNow(order, map, out reason, out _);
+        }
+
+        private static bool CanMarkReadyNow(
+            SalesOrder order, Map map, out string reason, out List<Pawn> designatedAnimals)
+        {
+            reason = null;
+            designatedAnimals = null;
+            if (order == null)
+            {
+                reason = "the sale offer is no longer valid.";
+                return false;
+            }
+
+            if (!order.CanMarkReady)
+            {
+                return false;
+            }
+
+            // A missing record is compatible with cycle orders created before fulfillment maps
+            // were assigned: adopt the colony the player is acting from. A recorded map that is
+            // now gone is a different state and must never be redirected to another colony.
+            if (order.fulfillmentMap != null &&
+                Find.Maps?.Contains(order.fulfillmentMap) != true)
+            {
+                reason = "its recorded fulfillment colony is no longer available.";
+                return false;
+            }
+            else if (order.fulfillmentMap == null &&
+                     (map == null || Find.Maps?.Contains(map) != true || !map.IsPlayerHome))
+            {
+                reason = "select an available player colony before marking it ready.";
+                return false;
+            }
+
+            if (order.IsOverdue(GenTicks.TicksGame))
+            {
+                reason = "the deadline to mark the goods ready has passed.";
+                return false;
+            }
+
+            OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
+            if (!validation.Success)
+            {
+                reason = validation.Summary();
+                return false;
+            }
+
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            int available = order.IsAnimalOrder
+                ? FindBuyerService.AvailableAnimalQuantity(
+                    state, map, order.ThingDef, order.line.animalSpec, order.id)
+                // Validate against all physical stock matching this accepted order's locked line,
+                // without reapplying current trade eligibility. A disabled buy-only category must
+                // not strand the obligation; only other open-order commitments reduce this total.
+                : Mathf.Max(0, validation.totalPhysicalMatchingQuantity -
+                    FindBuyerService.CommittedQuantity(state, order.ThingDef, order.id));
+            if (available < order.RemainingQuantity)
+            {
+                int committedElsewhere = FindBuyerService.CommittedQuantity(
+                    state, order.ThingDef, order.id);
+                reason = $"only {available:N0} {order.ThingDef.label} are free; " +
+                         $"{committedElsewhere:N0} matching units are already committed elsewhere. " +
+                         $"This order still needs {order.RemainingQuantity:N0}.";
+                return false;
+            }
+
+            // Goods are fungible, so a head count is the whole promise. Animals are not: the
+            // buyer comes for these animals. Record them now, while the player is looking at
+            // the colony that has them, rather than picking substitutes on arrival.
+            if (order.IsAnimalOrder)
+            {
+                designatedAnimals = OrderValidator.MatchingColonyAnimals(
+                    order, map, order.RemainingQuantity);
+                if (designatedAnimals.Count < order.RemainingQuantity)
+                {
+                    reason = $"only {designatedAnimals.Count:N0} eligible " +
+                             $"{order.line.animalSpec.ShortLabel(order.ThingDef)} are here; " +
+                             $"{order.RemainingQuantity:N0} are needed.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string ReadyRefusal(SalesOrder order, string reason)
+        {
+            return order != null && order.id > 0 ? $"Order #{order.id}: {reason}" : reason;
         }
 
         /// <summary>

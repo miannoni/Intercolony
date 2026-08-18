@@ -120,6 +120,21 @@ namespace Intercolony
             }
 
             SectionGap(ref y);
+            SectionTitle("Find Buyer", width, ref y, draw);
+            bool markReadyByDefault = Settings.markReadyNowByDefault;
+            float markReadyHeight = Mathf.Max(
+                24f, Text.CalcHeight(MarkReadyByDefaultLabel, Mathf.Max(1f, width - 28f)));
+            Rect markReadyRect = new Rect(0f, y, width, markReadyHeight);
+            if (draw)
+            {
+                Widgets.CheckboxLabeled(
+                    markReadyRect, MarkReadyByDefaultLabel, ref markReadyByDefault);
+                TooltipHandler.TipRegion(markReadyRect, MarkReadyByDefaultTooltip);
+                Settings.markReadyNowByDefault = markReadyByDefault;
+            }
+            y += markReadyHeight + 2f;
+
+            SectionGap(ref y);
             SectionTitle("Economy difficulty", width, ref y, draw);
             float difficulty = Settings.economyDifficulty;
             Paragraph(
@@ -228,6 +243,10 @@ namespace Intercolony
 
         private const string AllowUnsoldAnimalsLabel =
             "Allow ordering animals that no trader sells";
+        private const string MarkReadyByDefaultLabel =
+            "Mark buyer-pickup sales ready immediately by default";
+        private const string MarkReadyByDefaultTooltip =
+            "Sets the initial state of Mark ready now in Find Buyer sale dialogs.";
 
         private static string RefreshDaysLabel(float refreshDays)
         {

@@ -44,6 +44,11 @@ namespace Intercolony
         /// example everyone knows.
         /// </summary>
         public bool allowBuyingUnsoldAnimals;
+        /// <summary>
+        /// Whether new Find Buyer pickup dialogs initially offer to mark the sale ready now.
+        /// This is only a per-dialog starting value; the player can change it for each sale.
+        /// </summary>
+        public bool markReadyNowByDefault = true;
         public float laborCostMultiplier = DefaultLaborCostMultiplier;
 
         public override void ExposeData()
@@ -64,6 +69,8 @@ namespace Intercolony
                 "enabledBuyOnlyTradeCategoryKeys", LookMode.Value);
             Scribe_Values.Look(
                 ref allowBuyingUnsoldAnimals, "allowBuyingUnsoldAnimals", false);
+            Scribe_Values.Look(
+                ref markReadyNowByDefault, "markReadyNowByDefault", true);
             Scribe_Values.Look(
                 ref laborCostMultiplier, "laborCostMultiplierV2", DefaultLaborCostMultiplier);
 
