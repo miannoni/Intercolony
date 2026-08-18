@@ -1836,26 +1836,53 @@ namespace Intercolony
                 {
                     SalesOrder preview = BuildSalePaymentPreview(
                         offer, qty, fulfillment, discountFraction);
-                    string logistics = fulfillment == FulfillmentMode.BuyerPickup
-                        ? "No caravan is needed; the buyer handles collection and pays less for it."
-                        : "You deliver: a caravan trip, paid at a premium for taking it on.";
-                    string commitment = fulfillment == FulfillmentMode.BuyerPickup
-                        ? $"Commit to sell {qty}x {offer.def.LabelCap} to {offer.settlement?.Label}.\n\n" +
-                          BuyerPickupTimingExplanation(
-                              offer.settlement?.Label, DeadlineDays, offer.distanceTiles)
-                        : $"Commit to supplying {qty}x {offer.def.LabelCap} to " +
-                          $"{offer.settlement?.Label} within {DeadlineDays} days.";
-                    return commitment + "\n\n" +
-                           $"Payment: {preview.DiscountedTotalPayment} silver " +
-                           $"({preview.unitPrice:F2} each before discount)\n" +
-                           $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
-                           logistics + "\n\n" +
-                           "The waived value improves your standing with the buyer's faction.\n\n" +
-                           "This is a binding order. The quantity counts against what Find Buyer " +
-                           "considers available, so it will not be offered to another buyer. The goods " +
-                           "are not physically locked: your colony can still consume or move them, " +
-                           "and you are responsible for having them ready for fulfilment." +
-                           (qty < offer.quantity ? "\n\nA smaller lot earns a better rate per unit." : "");
+                    int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
+                    string tiles = offer.distanceTiles < 0f
+                        ? "unknown"
+                        : $"{offer.distanceTiles:F0}";
+                    string paymentTip = $"{preview.unitPrice:F2} each before discount. Waived: " +
+                        $"{waived} silver. The waived value improves your standing with the " +
+                        "buyer's faction." +
+                        (qty < offer.quantity
+                            ? " A smaller lot earns a better rate per unit."
+                            : "");
+                    List<TermRow> rows = new List<TermRow>
+                    {
+                        new TermRow(null,
+                            $"Sell {qty}x {offer.def.LabelCap} to {offer.settlement?.Label}"),
+                        new TermRow("Payment", $"{preview.DiscountedTotalPayment} silver", paymentTip),
+                        new TermRow("Distance",
+                            offer.distanceTiles < 0f ? "unknown" : $"{tiles} tiles")
+                    };
+
+                    if (fulfillment == FulfillmentMode.BuyerPickup)
+                    {
+                        int pickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(
+                            offer.distanceTiles);
+                        string distanceBasis = offer.distanceTiles < 0f
+                            ? "an unknown distance"
+                            : $"{tiles} tiles";
+                        rows.Add(new TermRow("Fulfilment", "Buyer collects",
+                            "No caravan is needed; the buyer handles collection and pays less for it."));
+                        rows.Add(new TermRow("Mark ready by", $"{DeadlineDays} days from now",
+                            "A fixed deadline to declare the goods ready. It does not depend on distance."));
+                        rows.Add(new TermRow("Buyer arrives",
+                            $"about {pickupDays} days after you mark ready",
+                            $"Travel time from {offer.settlement?.Label}, estimated from {distanceBasis}."));
+                    }
+                    else
+                    {
+                        rows.Add(new TermRow("Fulfilment", "You deliver",
+                            "A caravan trip, paid at a premium for taking it on."));
+                        rows.Add(new TermRow("Deliver within", $"{DeadlineDays} days"));
+                    }
+
+                    rows.Add(new TermRow("Commitment", "Binding",
+                        "The quantity counts against what Find Buyer considers available, so it " +
+                        "will not be offered to another buyer. The goods are not physically locked: " +
+                        "your colony can still consume or move them, and you are responsible for " +
+                        "having them ready."));
+                    return rows;
                 },
                 (qty, fulfillment, discountFraction) =>
                 {
@@ -1893,34 +1920,61 @@ namespace Intercolony
                 {
                     SalesOrder preview = BuildSalePaymentPreview(
                         offer, qty, fulfillment, discountFraction);
-                    string commitment = fulfillment == FulfillmentMode.BuyerPickup
-                        ? $"Commit to sell {qty}x {offer.animalSpec.ShortLabel(offer.def)} to " +
-                          $"{offer.settlement?.Label}.\n\n" +
-                          BuyerPickupTimingExplanation(
-                              offer.settlement?.Label, deadlineDays, offer.distanceTiles)
-                        : $"Commit to supplying {qty}x {offer.animalSpec.ShortLabel(offer.def)} " +
-                          $"to {offer.settlement?.Label} within {deadlineDays} days.";
+                    int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
+                    string tiles = offer.distanceTiles < 0f
+                        ? "unknown"
+                        : $"{offer.distanceTiles:F0}";
+                    string paymentTip = $"{preview.unitPrice:F2} each before discount. Waived: " +
+                        $"{waived} silver. The waived value improves your standing with the " +
+                        "buyer's faction." +
+                        (qty < offer.quantity
+                            ? " A smaller lot earns a better rate per unit."
+                            : "");
+                    List<TermRow> rows = new List<TermRow>
+                    {
+                        new TermRow(null,
+                            $"Sell {qty}x {offer.animalSpec.ShortLabel(offer.def)} to " +
+                            $"{offer.settlement?.Label}"),
+                        new TermRow("Payment", $"{preview.DiscountedTotalPayment} silver", paymentTip),
+                        new TermRow("Distance",
+                            offer.distanceTiles < 0f ? "unknown" : $"{tiles} tiles")
+                    };
 
-                    // The two modes differ in a way that matters for animals and not for
-                    // goods: pickup names the individual animals up front, delivery does not.
-                    string logistics = fulfillment == FulfillmentMode.BuyerPickup
-                        ? "No caravan is needed. When you mark the order ready you set aside " +
-                          "the particular animals the buyer will collect, and the buyer takes " +
-                          "those animals rather than any matching ones."
-                        : "You deliver: load matching animals into your caravan. The promise " +
-                          "is by specification, so any animal meeting it will do.";
+                    if (fulfillment == FulfillmentMode.BuyerPickup)
+                    {
+                        int pickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(
+                            offer.distanceTiles);
+                        string distanceBasis = offer.distanceTiles < 0f
+                            ? "an unknown distance"
+                            : $"{tiles} tiles";
+                        rows.Add(new TermRow("Fulfilment", "Buyer collects",
+                            "No caravan is needed. When you mark the order ready you set aside " +
+                            "the particular animals the buyer will collect, and the buyer takes " +
+                            "those rather than any matching ones."));
+                        rows.Add(new TermRow("Mark ready by", $"{deadlineDays} days from now",
+                            "A fixed deadline to declare the animals ready. It does not depend on distance."));
+                        rows.Add(new TermRow("Buyer arrives",
+                            $"about {pickupDays} days after you mark ready",
+                            $"Travel time from {offer.settlement?.Label}, estimated from {distanceBasis}."));
+                    }
+                    else
+                    {
+                        rows.Add(new TermRow("Fulfilment", "You deliver",
+                            "Load matching animals into your caravan. The promise is by specification, " +
+                            "so any animal meeting it will do."));
+                        rows.Add(new TermRow("Deliver within", $"{deadlineDays} days"));
+                    }
 
-                    return commitment + "\n\n" +
-                           $"Payment: {preview.DiscountedTotalPayment} silver " +
-                           $"({preview.unitPrice:F2} each before discount)\n" +
-                           $"Distance: {(offer.distanceTiles < 0f ? "unknown" : $"{offer.distanceTiles:F0} tiles")}\n\n" +
-                           logistics + "\n\n" +
-                           "The waived value improves your standing with the buyer's faction.\n\n" +
-                           "Animals are checked again at the handover, so one that dies, is " +
-                           "downed, goes feral or no longer matches will not be counted. " +
-                           "Nothing is physically locked in the meantime.\n\n" +
-                           "If any animal handed over is bonded, you will be asked to confirm " +
-                           "and every affected colonist will be named.";
+                    rows.Add(new TermRow("Commitment", "Binding",
+                        "The quantity counts against what Find Buyer considers available, so it " +
+                        "will not be offered to another buyer."));
+                    rows.Add(new TermRow("Re-checked", "At handover",
+                        "An animal that dies, is downed, goes feral or no longer matches will not " +
+                        "be counted, and nothing is physically locked in the meantime."));
+                    rows.Add(new TermRow("Bonded animals", "Confirmation if applicable",
+                        "If any animal handed over is bonded you will be asked to confirm, and every " +
+                        "affected colonist is named."));
+                    return rows;
                 },
                 (qty, fulfillment, discountFraction) =>
                 {
