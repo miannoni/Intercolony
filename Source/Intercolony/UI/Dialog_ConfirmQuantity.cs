@@ -42,6 +42,7 @@ namespace Intercolony
         private readonly int minQuantity;
         private readonly string quantityLabel;
         private readonly Func<int, string> bodyBuilder;
+        private readonly Func<int, List<TermRow>> rowsBuilder;
         private readonly Action<int> onConfirm;
         private readonly Func<int, FulfillmentMode, string> fulfillmentBodyBuilder;
         private readonly Action<int, FulfillmentMode> fulfillmentOnConfirm;
@@ -94,6 +95,23 @@ namespace Intercolony
             : this(title, confirmLabel, maxQuantity, bodyBuilder, onConfirm, null, null,
                 null, null, null, null, FulfillmentMode.SellerDelivery, minQuantity, quantityLabel)
         {
+        }
+
+        /// <summary>
+        /// Quantity-only variant whose live terms are presented as measured key/value rows.
+        /// </summary>
+        public Dialog_ConfirmQuantity(
+            string title,
+            string confirmLabel,
+            int maxQuantity,
+            Func<int, List<TermRow>> rowsBuilder,
+            Action<int> onConfirm,
+            int minQuantity = 1,
+            string quantityLabel = "Quantity:")
+            : this(title, confirmLabel, maxQuantity, null, onConfirm, null, null,
+                null, null, null, null, FulfillmentMode.SellerDelivery, minQuantity, quantityLabel)
+        {
+            this.rowsBuilder = rowsBuilder;
         }
 
         /// <summary>
@@ -234,7 +252,7 @@ namespace Intercolony
             {
                 Text.Font = GameFont.Small;
                 float bodyWidth = WindowWidth - WindowMargin * 2f;
-                float bodyHeight = discountRowsBuilder != null
+                float bodyHeight = UsesRows
                     ? MeasureRows(BuildRows(), bodyWidth)
                     : Text.CalcHeight(BuildBody(), bodyWidth);
                 float fixedHeight = WindowMargin * 2f + TitleHeight + BodyControlsGap +
@@ -262,7 +280,7 @@ namespace Intercolony
             float controlsTop = inRect.height - controlsHeight;
 
             Rect bodyRect = new Rect(0f, y, inRect.width, controlsTop - y - BodyControlsGap);
-            if (discountRowsBuilder != null)
+            if (UsesRows)
             {
                 List<TermRow> rows = BuildRows();
                 float rowsHeight = MeasureRows(rows, bodyRect.width);
@@ -467,9 +485,13 @@ namespace Intercolony
 
         private List<TermRow> BuildRows()
         {
-            return discountRowsBuilder(quantity, fulfillment, discountFraction) ??
+            return (rowsBuilder != null
+                       ? rowsBuilder(quantity)
+                       : discountRowsBuilder(quantity, fulfillment, discountFraction)) ??
                    new List<TermRow>();
         }
+
+        private bool UsesRows => rowsBuilder != null || discountRowsBuilder != null;
 
         private static float MeasureRows(List<TermRow> rows, float width)
         {

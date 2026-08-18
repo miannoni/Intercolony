@@ -1221,31 +1221,74 @@ namespace Intercolony
                 opportunity.quantity,
                 qty =>
                 {
-                    string logistics = opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                        ? "No caravan is needed; the buyer handles collection and pays less for it."
-                        : "You deliver by caravan. Missing the deadline fails the order.";
+                    SalesOrder preview = BuildOpportunityPaymentPreview(state, opportunity, qty);
+                    string partialTip = qty < opportunity.quantity
+                        ? $"The buyer asked for {opportunity.quantity}. Committing to {qty} is a " +
+                          "smaller deal, not a partial one — you owe exactly what you accept."
+                        : null;
+                    string paymentTip = $"{preview.unitPrice:F2} each" +
+                        (qty < opportunity.quantity
+                            ? ". A smaller lot earns a better rate per unit."
+                            : "");
+                    string tiles = opportunity.distanceTiles < 0f
+                        ? "unknown"
+                        : $"{opportunity.distanceTiles:F0}";
+                    List<TermRow> rows = new List<TermRow>
+                    {
+                        new TermRow(null,
+                            $"Accept {qty}x {opportunity.ItemLabel()} for " +
+                            $"{opportunity.settlementName}", partialTip),
+                        new TermRow("Payment", $"{preview.TotalPayment} silver", paymentTip),
+                        new TermRow("Distance",
+                            opportunity.distanceTiles < 0f ? "unknown" : $"{tiles} tiles")
+                    };
 
-                    string partial = qty < opportunity.quantity
-                        ? $"\n\nThe buyer asked for {opportunity.quantity}. Committing to {qty} is a " +
-                          "smaller deal, not a partial one — you owe exactly what you accept.\n" +
-                          "A smaller lot earns a better rate per unit."
-                        : "";
+                    if (opportunity.minQuality.HasValue)
+                    {
+                        string quality = opportunity.minQuality.Value.GetLabel();
+                        rows.Add(new TermRow("Quality", $"{quality} or better",
+                            $"Only items of {quality} quality or better will be accepted."));
+                    }
 
-                    float rate = IntercolonyPricing.RepriceForQuantity(
-                        opportunity, ProfileFor(state, opportunity.settlementId), qty, out _);
+                    if (opportunity.stuffDef != null)
+                    {
+                        rows.Add(new TermRow("Material", opportunity.stuffDef.LabelCap,
+                            $"The goods must be made of {opportunity.stuffDef.label}."));
+                    }
 
-                    string commitment = opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                        ? $"Accept {qty}x {opportunity.ItemLabel()} for {opportunity.settlementName}.\n\n" +
-                          BuyerPickupTimingExplanation(
-                              opportunity.settlementName, opportunity.deadlineDays,
-                              opportunity.distanceTiles)
-                        : $"Supply {qty}x {opportunity.ItemLabel()} to {opportunity.settlementName} " +
-                          $"within {opportunity.deadlineDays} days.";
+                    if (opportunity.HasConditionConstraint)
+                    {
+                        int condition = Mathf.RoundToInt(opportunity.minHitPointsPercent * 100f);
+                        rows.Add(new TermRow("Condition", $"{condition}% or better",
+                            $"Items below {condition}% condition will be refused at delivery."));
+                    }
 
-                    return commitment + "\n\n" +
-                           $"Payment: {Mathf.RoundToInt(rate * qty)} silver ({rate:F2} each)\n" +
-                           $"Distance: {(opportunity.distanceTiles < 0f ? "unknown" : $"{opportunity.distanceTiles:F0} tiles")}\n\n" +
-                           logistics + partial;
+                    if (opportunity.fulfillment == FulfillmentMode.BuyerPickup)
+                    {
+                        int pickupDays = SalesOrderService.EstimateBuyerPickupTravelDays(
+                            opportunity.distanceTiles);
+                        string distanceBasis = opportunity.distanceTiles < 0f
+                            ? "an unknown distance"
+                            : $"{tiles} tiles";
+                        rows.Add(new TermRow("Fulfilment", "Buyer collects",
+                            "No caravan is needed; the buyer handles collection and pays less for it."));
+                        rows.Add(new TermRow("Mark ready by",
+                            $"{opportunity.deadlineDays} days from now",
+                            "A fixed deadline to declare the goods ready. It does not depend on distance."));
+                        rows.Add(new TermRow("Buyer arrives",
+                            $"about {pickupDays} days after you mark ready",
+                            $"Travel time from {opportunity.settlementName}, estimated from " +
+                            $"{distanceBasis}."));
+                    }
+                    else
+                    {
+                        rows.Add(new TermRow("Fulfilment", "You deliver",
+                            "You deliver by caravan. Missing the deadline fails the order."));
+                        rows.Add(new TermRow("Deliver within",
+                            $"{opportunity.deadlineDays} days"));
+                    }
+
+                    return rows;
                 },
                 qty =>
                 {
@@ -1255,6 +1298,17 @@ namespace Intercolony
                         tab = Tab.Orders;
                     }
                 }));
+        }
+
+        private static SalesOrder BuildOpportunityPaymentPreview(
+            IntercolonyWorldComponent state, MarketOpportunity opportunity, int quantity)
+        {
+            return new SalesOrder
+            {
+                line = new OrderLine(opportunity.thingDef, quantity),
+                unitPrice = IntercolonyPricing.RepriceForQuantity(
+                    opportunity, ProfileFor(state, opportunity.settlementId), quantity, out _)
+            };
         }
 
         private void DrawOrders(Rect inRect, IntercolonyWorldComponent state)
