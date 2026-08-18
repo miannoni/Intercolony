@@ -188,8 +188,6 @@ namespace Intercolony
 
         public int minSkillLevel;
 
-        public int positions = 1;
-
         public int termDays;
 
         /// <summary>Silver per day the colony is offering. The whole point: the player sets this.</summary>
@@ -224,8 +222,6 @@ namespace Intercolony
 
         public bool IsOpen => status == JobPostingStatus.Open;
 
-        public int PositionsRemaining => Mathf.Max(0, positions - hired);
-
         public bool NeverExpires => expiryTick == -1;
 
         /// <summary>How long the posting remains available, in words. Never formats the sentinel.</summary>
@@ -246,9 +242,9 @@ namespace Intercolony
 
         public float DaysPosted => (GenTicks.TicksGame - postedTick) / (float)GenDate.TicksPerDay;
 
-        /// <summary>What the whole posting costs if every position is filled and served out.</summary>
+        /// <summary>What each worker taken on from this posting costs over the full term.</summary>
         public int TotalCommitment =>
-            WageStructureUtility.TotalCost(wageStructure, wageOffered, termDays) * positions;
+            WageStructureUtility.TotalCost(wageStructure, wageOffered, termDays);
 
         public string SkillLabel =>
             skill == null ? "any work" : $"{skill.skillLabel.CapitalizeFirst()} {minSkillLevel}+";
@@ -256,8 +252,7 @@ namespace Intercolony
         /// <summary>§35.2's headline, one line.</summary>
         public string Headline()
         {
-            string positionsText = positions == 1 ? "1 position" : $"{positions} positions";
-            return $"{SkillLabel} — {positionsText}, {termDays}d, {wageOffered} silver/day " +
+            return $"{SkillLabel} — open, {termDays}d, {wageOffered} silver/day " +
                    $"{wageStructure.Label()}, {combatClause.Label()}";
         }
 
@@ -269,7 +264,7 @@ namespace Intercolony
                     if (applicants.Count > 0)
                     {
                         return $"{applicants.Count} applicant{(applicants.Count == 1 ? "" : "s")} waiting" +
-                               (hired > 0 ? $", {hired} of {positions} hired" : "");
+                               (hired > 0 ? $", {hired} hired so far" : "");
                     }
 
                     if (emptyCycles > 0)
@@ -284,7 +279,7 @@ namespace Intercolony
                     return "withdrawn";
                 default:
                     return outcomeNote.NullOrEmpty()
-                        ? $"expired — {hired} of {positions} filled"
+                        ? $"expired — {hired} hired"
                         : outcomeNote;
             }
         }
@@ -348,7 +343,6 @@ namespace Intercolony
             Scribe_Values.Look(ref id, "id", 0);
             Scribe_Defs.Look(ref skill, "skill");
             Scribe_Values.Look(ref minSkillLevel, "minSkillLevel", 0);
-            Scribe_Values.Look(ref positions, "positions", 1);
             Scribe_Values.Look(ref termDays, "termDays", 0);
             Scribe_Values.Look(ref wageOffered, "wageOffered", 0);
             Scribe_Values.Look(ref wageStructure, "wageStructure", WageStructure.Daily);
@@ -380,12 +374,12 @@ namespace Intercolony
             }
         }
 
-        public bool IsValidAfterLoad => positions > 0 && termDays > 0 && wageOffered > 0;
+        public bool IsValidAfterLoad => termDays > 0 && wageOffered > 0;
 
         public override string ToString()
         {
             return $"Posting #{id} {Headline()} [{status}] — {applicants.Count} applicant(s), " +
-                   $"{hired}/{positions} hired";
+                   $"{hired} hired";
         }
     }
 }

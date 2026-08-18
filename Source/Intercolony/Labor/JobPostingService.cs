@@ -21,11 +21,11 @@ namespace Intercolony
     public static class JobPostingService
     {
         /// <summary>
-        /// Waiting applicants a posting will hold beyond the positions it is filling. Some slack is
-        /// the point — §35.2's own example shows 4 applicants for 3 positions, because choosing is
-        /// the interesting part — but an unbounded queue would pin pawns in the world pool forever.
+        /// A posting no longer names a number of positions, so the waiting pool needs its own
+        /// ceiling or it would grow without limit. Applicants past this simply do not apply;
+        /// the player hires from those waiting and more arrive as the market turns over.
         /// </summary>
-        public const int ApplicantSlack = 3;
+        public const int MaxWaitingApplicants = 6;
 
         /// <summary>
         /// Days an applicant will wait before withdrawing. Long enough that the player need not
@@ -36,7 +36,7 @@ namespace Intercolony
         // --- Creating ----------------------------------------------------------------------
 
         public static JobPosting TryPost(
-            IntercolonyWorldComponent state, SkillDef skill, int minSkillLevel, int positions,
+            IntercolonyWorldComponent state, SkillDef skill, int minSkillLevel,
             int termDays, int wageOffered, WageStructure structure, CombatClause clause,
             out string failReason)
         {
@@ -45,12 +45,6 @@ namespace Intercolony
             if (state == null)
             {
                 failReason = "No world state.";
-                return null;
-            }
-
-            if (positions < 1)
-            {
-                failReason = "A posting needs at least one position.";
                 return null;
             }
 
@@ -71,7 +65,6 @@ namespace Intercolony
                 id = state.NextId(),
                 skill = skill,
                 minSkillLevel = skill == null ? 0 : Mathf.Clamp(minSkillLevel, 0, 20),
-                positions = positions,
                 termDays = termDays,
                 wageOffered = wageOffered,
                 wageStructure = structure,
@@ -250,8 +243,7 @@ namespace Intercolony
         /// <summary>How many more applicants this posting will hold.</summary>
         private static int Room(JobPosting posting)
         {
-            return Mathf.Max(0,
-                posting.PositionsRemaining + ApplicantSlack - posting.Applicants.Count);
+            return Mathf.Max(0, MaxWaitingApplicants - posting.Applicants.Count);
         }
 
         /// <summary>
@@ -345,8 +337,7 @@ namespace Intercolony
                     arrived == 1 ? "1 applicant" : $"{arrived} applicants",
                     $"Your posting — {posting.Headline()} — drew " +
                     (arrived == 1 ? "an applicant" : $"{arrived} applicants") + ".\n\n" +
-                    $"{posting.Applicants.Count} waiting in total, for {posting.PositionsRemaining} " +
-                    $"open position{(posting.PositionsRemaining == 1 ? "" : "s")}. Review them in the " +
+                    $"{posting.Applicants.Count} waiting in total. Review them in the " +
                     "Labor tab under Posts.\n\n" +
                     $"They will wait about {ApplicantPatienceDays} days.",
                     LetterDefOf.PositiveEvent);
@@ -469,7 +460,7 @@ namespace Intercolony
                 {
                     Close(posting, JobPostingStatus.Expired,
                         posting.hired > 0
-                            ? $"Expired after filling {posting.hired} of {posting.positions}."
+                            ? $"Expired after filling {posting.hired}."
                             : "Expired without filling any position.");
 
                     IntercolonyLetters.Send(
@@ -531,9 +522,9 @@ namespace Intercolony
                 return null;
             }
 
-            if (!posting.IsOpen || posting.PositionsRemaining <= 0)
+            if (!posting.IsOpen)
             {
-                failReason = "That posting is already filled.";
+                failReason = "That posting is not open.";
                 return null;
             }
 
@@ -547,12 +538,6 @@ namespace Intercolony
 
             posting.Applicants.Remove(applicant);
             posting.hired++;
-
-            if (posting.PositionsRemaining <= 0)
-            {
-                Close(posting, JobPostingStatus.Filled,
-                    $"All {posting.positions} position{(posting.positions == 1 ? "" : "s")} filled.");
-            }
 
             return contract;
         }

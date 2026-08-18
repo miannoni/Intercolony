@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
@@ -9,9 +9,11 @@ namespace Intercolony
     /// <summary>
     /// Writing a job advertisement (DESIGN.md §35.2, §114).
     ///
-    /// §35.2's example screen has four lines — requirement, positions, duration, wage offered — and
-    /// this is those four plus the two terms every employment already carries (§37's wage structure
-    /// and §42's combat clause), because an applicant is accepting all of it at once.
+    /// §35.2's example screen has three lines — requirement, duration, wage offered — and this is
+    /// those three plus the two terms every employment already carries (§37's wage structure and
+    /// §42's combat clause), because an applicant is accepting all of it at once. The posting itself
+    /// names no number of positions: it stays open and the player hires as many applicants as they
+    /// like.
     ///
     /// The going-rate band is the difference between this and a blind guess. It is **measured, not
     /// modelled**: it asks the same question the matcher will ask, of the same pool, so the numbers
@@ -23,14 +25,7 @@ namespace Intercolony
     {
         private const float WindowWidth = 1000f;
         private const float WindowMargin = 18f;
-        /// <summary>
-        /// This is a dense form — four sliders, two option columns and three commitment
-        /// summaries — and every slider needs a clear band above it for the end labels
-        /// HorizontalSlider draws there. 90% left it about 20px short and put a scrollbar on
-        /// a dialog that has no business scrolling; the extra 5% buys the room without
-        /// removing anything the player needs to read.
-        /// </summary>
-        private const float MaxScreenHeightFraction = 0.95f;
+        private const float MaxScreenHeightFraction = 0.9f;
         private const float BottomButtonsHeight = 40f;
         private const float ContentInset = 8f;
         private const float ScrollbarGutter = 16f;
@@ -44,17 +39,28 @@ namespace Intercolony
         private const float SectionGap = 8f;
         private const float OptionColumnGap = 12f;
         private const float ControlRowHeight = 28f;
-        private const float SliderHeight = 20f;
 
         /// <summary>
-        /// Widgets.HorizontalSlider draws its end labels above the track, not beside it
-        /// (Widgets.cs:2116), so every slider needs this much clear space above its rect
-        /// or the labels land in the row above.
+        /// Widgets.HorizontalSlider draws its end labels above the track when asked to
+        /// (Widgets.cs:2110-2134). Every slider in this dialog is called with
+        /// label/leftAlignedLabel/rightAlignedLabel all null, which skips that block entirely —
+        /// no text drawn, no shift to the track rect — so the min/current/max labels are drawn by
+        /// this file, underneath the track, instead.
         /// </summary>
-        private const float SliderLabelBand = 19f;
+        private const float SliderTrackHeight = 20f;
+        private const float SliderScaleHeight = 18f;
+        private const float SliderScaleGap = 2f;
+        private const float SliderRowHeight =
+            SliderTrackHeight + SliderScaleGap + SliderScaleHeight;
 
-        /// <summary>Height of a row that contains a slider: label band, track, and a little air.</summary>
-        private const float SliderRowHeight = SliderLabelBand + SliderHeight + 6f;
+        /// <summary>
+        /// The two-column grid every row in the upper form lines up on: labels in a fixed-width
+        /// left column, every control starting at the same x in the column to its right.
+        /// </summary>
+        private const float LabelColumnWidth = 130f;
+        private const float LabelColumnGap = 12f;
+        private const float SliderWidth = 460f;
+
         private const float SkillButtonWidth = 200f;
         private const float WageFieldWidth = 90f;
         private const float WageUnitWidth = 120f;
@@ -65,11 +71,10 @@ namespace Intercolony
             "what you are offering, apply as the market brings them past.";
 
         private readonly IntercolonyWorldComponent state;
-        private readonly Action<SkillDef, int, int, int, int, WageStructure, CombatClause> onConfirm;
+        private readonly Action<SkillDef, int, int, int, WageStructure, CombatClause> onConfirm;
 
         private SkillDef skill;
         private int minLevel = 8;
-        private int positions = 1;
         private int termDays = 20;
         private int wageOffered = 30;
         private WageStructure structure = WageStructure.Daily;
@@ -87,7 +92,7 @@ namespace Intercolony
 
         public Dialog_CreateJobPosting(
             IntercolonyWorldComponent state,
-            Action<SkillDef, int, int, int, int, WageStructure, CombatClause> onConfirm)
+            Action<SkillDef, int, int, int, WageStructure, CombatClause> onConfirm)
         {
             this.state = state;
             this.onConfirm = onConfirm;
@@ -168,7 +173,7 @@ namespace Intercolony
 
             if (Widgets.ButtonText(new Rect(ContentLeft, bottom, 170f, 36f), "Post"))
             {
-                onConfirm?.Invoke(skill, minLevel, positions, termDays, wageOffered, structure,
+                onConfirm?.Invoke(skill, minLevel, termDays, wageOffered, structure,
                     clause);
                 Close();
             }
@@ -182,6 +187,7 @@ namespace Intercolony
 
         private void DrawOptions(float width)
         {
+            float controlsX = LabelColumnWidth + LabelColumnGap;
             float y = 0f;
 
             Text.Font = GameFont.Medium;
@@ -192,82 +198,55 @@ namespace Intercolony
             y += titleHeight + SectionGap;
             Text.Font = GameFont.Small;
 
-            float skillLabelWidth = Text.CalcSize("Skill:").x;
-            float skillX = skillLabelWidth + RowGap;
-            Widgets.Label(new Rect(0f, y, skillLabelWidth, ControlRowHeight), "Skill:");
-            if (Widgets.ButtonText(new Rect(skillX, y, SkillButtonWidth, ControlRowHeight),
+            // Skill row.
+            DrawRowLabel("Skill", y, ControlRowHeight);
+            if (Widgets.ButtonText(new Rect(controlsX, y, SkillButtonWidth, ControlRowHeight),
                     skill == null ? "Any work" : skill.skillLabel.CapitalizeFirst()))
             {
                 OpenSkillMenu();
             }
+            y += ControlRowHeight + RowGap;
 
+            // Minimum level row — only when a skill is set.
             if (skill != null)
             {
-                skillX += SkillButtonWidth + RowGap;
-                float qualifierWidth = Text.CalcSize("at least").x;
-                Widgets.Label(new Rect(skillX, y + SliderLabelBand, qualifierWidth, ControlRowHeight),
-                    "at least");
-                skillX += qualifierWidth + RowGap;
+                DrawRowLabel("Minimum level", y, SliderTrackHeight);
                 float level = minLevel;
-                Widgets.HorizontalSlider(
-                    new Rect(skillX, y + SliderLabelBand, width - skillX, SliderHeight),
-                    ref level,
-                    new FloatRange(0f, 20f), $"{minLevel}", 1f);
+                DrawLabeledSlider(controlsX, y, ref level, 0f, 20f, "0", $"{minLevel}", "20", 1f);
                 if (Mathf.RoundToInt(level) != minLevel)
                 {
                     minLevel = Mathf.RoundToInt(level);
                     rateKey = int.MinValue;
                 }
+                y += SliderRowHeight + RowGap;
             }
 
-            y += SliderRowHeight + SectionGap;
-
-            float controlWidth = (width - OptionColumnGap) / 2f;
-            Rect positionsRect = new Rect(0f, y, controlWidth, SliderRowHeight);
-            float positionsLabelWidth = Text.CalcSize("Positions:").x;
-            Widgets.Label(
-                new Rect(positionsRect.x, y + SliderLabelBand, positionsLabelWidth, ControlRowHeight),
-                "Positions:");
-            float slots = positions;
-            float positionsSliderX = positionsRect.x + positionsLabelWidth + RowGap;
-            Widgets.HorizontalSlider(new Rect(positionsSliderX, y + SliderLabelBand,
-                    positionsRect.xMax - positionsSliderX, SliderHeight), ref slots,
-                new FloatRange(1f, 6f), $"{positions}", 1f);
-            positions = Mathf.RoundToInt(slots);
-
-            const string postingGuidance = "Stays up until filled, or until you take it down.";
-            TooltipHandler.TipRegion(positionsRect, postingGuidance);
-
-            Rect termRect = new Rect(controlWidth + OptionColumnGap, y, controlWidth,
-                SliderRowHeight);
-            float termLabelWidth = Text.CalcSize("Term:").x;
-            Widgets.Label(new Rect(termRect.x, y + SliderLabelBand, termLabelWidth, ControlRowHeight),
-                "Term:");
+            // Term row.
+            DrawRowLabel("Term", y, SliderTrackHeight);
             float term = termDays;
-            float termSliderX = termRect.x + termLabelWidth + RowGap;
-            Widgets.HorizontalSlider(new Rect(termSliderX, y + SliderLabelBand,
-                    termRect.xMax - termSliderX, SliderHeight), ref term,
-                new FloatRange(2f, LaborCandidateService.MaxTermDays), $"{termDays} days", 1f);
+            DrawLabeledSlider(controlsX, y, ref term, 2f, LaborCandidateService.MaxTermDays, "2",
+                $"{termDays} days", $"{LaborCandidateService.MaxTermDays}", 1f);
             if (Mathf.RoundToInt(term) != termDays)
             {
                 termDays = Mathf.RoundToInt(term);
                 rateKey = int.MinValue;
             }
-
             const string termGuidance = "Longer terms cost less per day.";
-            TooltipHandler.TipRegion(termRect, termGuidance);
+            TooltipHandler.TipRegion(new Rect(0f, y, width, SliderRowHeight), termGuidance);
             y += SliderRowHeight;
 
             y = DrawSectionDivider(width, y);
 
             RefreshRate();
-            Text.Font = GameFont.Medium;
-            float wageTitleHeight = Text.CalcHeight("Wage offered", width);
-            float matchX = width - MatchTopButtonWidth;
-            float unitX = matchX - RowGap - WageUnitWidth;
-            float fieldX = unitX - RowGap - WageFieldWidth;
-            Widgets.Label(new Rect(0f, y, fieldX - RowGap, wageTitleHeight), "Wage offered");
-            Text.Font = GameFont.Small;
+
+            // Wage row: label, field, unit, Match top — all on the controls column x.
+            float wageLabelHeight = Text.CalcHeight("Wage offered", LabelColumnWidth);
+            float wageRowHeight = Mathf.Max(wageLabelHeight, ControlRowHeight);
+            DrawRowLabel("Wage offered", y, wageRowHeight);
+
+            float fieldX = controlsX;
+            float unitX = fieldX + WageFieldWidth + RowGap;
+            float matchX = controlsX + SliderWidth - MatchTopButtonWidth;
 
             int typed = wageOffered;
             Widgets.TextFieldNumeric(new Rect(fieldX, y, WageFieldWidth, ControlRowHeight),
@@ -285,20 +264,24 @@ namespace Intercolony
                 SetWage(rateHigh);
             }
 
-            y += Mathf.Max(wageTitleHeight, ControlRowHeight) + RowGap;
+            y += wageRowHeight + RowGap;
+
+            // Wage slider row, directly beneath the field, same controls column x and width.
             float slid = wageOffered;
             int sliderMax = Mathf.Max(rateValid ? rateHigh * 2 : 100, wageOffered);
-            Widgets.HorizontalSlider(new Rect(0f, y + SliderLabelBand, width, SliderHeight), ref slid,
-                new FloatRange(1f, sliderMax), null, 1f);
+            DrawLabeledSlider(controlsX, y, ref slid, 1f, sliderMax, "1",
+                $"{wageOffered} silver/day", $"{sliderMax}", 1f);
             if (Mathf.RoundToInt(slid) != wageOffered)
             {
                 SetWage(Mathf.RoundToInt(slid));
             }
+            y += SliderRowHeight;
 
-            y = DrawRateAdvice(new Rect(0f, 0f, width, 0f), y + SliderRowHeight);
+            y = DrawRateAdvice(controlsX, width - controlsX, y);
 
             y = DrawSectionDivider(width, y);
 
+            // Clause / Paid columns — unchanged.
             float columnWidth = (width - OptionColumnGap) / 2f;
             float clauseHeight = ClauseColumnHeight(columnWidth);
             float structureHeight = StructureColumnHeight(columnWidth);
@@ -329,6 +312,51 @@ namespace Intercolony
             GUI.EndGroup();
         }
 
+        /// <summary>
+        /// Draws a row label in the fixed-width left column, vertically centred against the
+        /// height of the control it labels rather than aligned to the top of the row.
+        /// </summary>
+        private static void DrawRowLabel(string label, float rowY, float controlHeight)
+        {
+            float labelHeight = Text.CalcHeight(label, LabelColumnWidth);
+            float labelY = rowY + (controlHeight - labelHeight) / 2f;
+            Widgets.Label(new Rect(0f, labelY, LabelColumnWidth, labelHeight), label);
+        }
+
+        /// <summary>
+        /// A bare slider track (all three HorizontalSlider label parameters null, so it draws
+        /// nothing above itself) with min / current / max drawn underneath, dimmed.
+        /// </summary>
+        private static void DrawLabeledSlider(float x, float y, ref float value, float min,
+            float max, string minLabel, string currentLabel, string maxLabel, float roundTo)
+        {
+            Rect trackRect = new Rect(x, y, SliderWidth, SliderTrackHeight);
+            value = Widgets.HorizontalSlider(trackRect, value, min, max, middleAlignment: false,
+                label: null, leftAlignedLabel: null, rightAlignedLabel: null, roundTo: roundTo);
+
+            Rect scaleRect = new Rect(x, y + SliderTrackHeight + SliderScaleGap, SliderWidth,
+                SliderScaleHeight);
+            Color color = GUI.color;
+            GameFont font = Text.Font;
+            GUI.color = new Color(1f, 1f, 1f, 0.55f);
+            Text.Font = GameFont.Small;
+
+            Text.Anchor = TextAnchor.UpperLeft;
+            Widgets.Label(scaleRect, minLabel);
+            Text.Anchor = TextAnchor.UpperLeft;
+
+            Text.Anchor = TextAnchor.UpperCenter;
+            Widgets.Label(scaleRect, currentLabel);
+            Text.Anchor = TextAnchor.UpperLeft;
+
+            Text.Anchor = TextAnchor.UpperRight;
+            Widgets.Label(scaleRect, maxLabel);
+            Text.Anchor = TextAnchor.UpperLeft;
+
+            Text.Font = font;
+            GUI.color = color;
+        }
+
         private static float ContentWidth(float availableWidth)
         {
             return availableWidth - ContentLeft * 2f;
@@ -343,15 +371,27 @@ namespace Intercolony
 
         private float OptionsHeight(float width)
         {
+            float controlsX = LabelColumnWidth + LabelColumnGap;
+
             Text.Font = GameFont.Medium;
             float titleHeight = Text.CalcHeight("Post a job", width);
-            float wageTitleHeight = Text.CalcHeight("Wage offered", width);
             Text.Font = GameFont.Small;
 
-            float height = titleHeight + SectionGap + SliderRowHeight + SectionGap;
-            height += SliderRowHeight + SectionGap;
-            height += Mathf.Max(wageTitleHeight, ControlRowHeight) + RowGap;
-            height += SliderRowHeight + RateAdviceHeight(width) + SectionGap;
+            float height = titleHeight + SectionGap;
+            height += ControlRowHeight + RowGap;
+            if (skill != null)
+            {
+                height += SliderRowHeight + RowGap;
+            }
+            height += SliderRowHeight;
+            height += SectionGap;
+
+            float wageLabelHeight = Text.CalcHeight("Wage offered", LabelColumnWidth);
+            float wageRowHeight = Mathf.Max(wageLabelHeight, ControlRowHeight);
+            height += wageRowHeight + RowGap;
+            height += SliderRowHeight;
+            height += RateAdviceHeight(width - controlsX);
+            height += SectionGap;
 
             float columnWidth = (width - OptionColumnGap) / 2f;
             height += Mathf.Max(ClauseColumnHeight(columnWidth),
@@ -385,12 +425,11 @@ namespace Intercolony
         private void BuildSummaries(out string totalSummary, out string upFrontSummary,
             out string deathSummary)
         {
-            int total = WageStructureUtility.TotalCost(structure, wageOffered, termDays) * positions;
+            int total = WageStructureUtility.TotalCost(structure, wageOffered, termDays);
             int upFront = WageStructureUtility.UpFrontCost(structure, wageOffered, termDays);
             int death = wageOffered * clause.DeathCompensationDays();
             totalSummary =
-                $"If every position is filled and served out: {total} silver across {positions} " +
-                $"worker{(positions == 1 ? "" : "s")}.";
+                $"Each worker you take on: {total} silver over the full term.";
             upFrontSummary = structure == WageStructure.Prepaid
                 ? $"Due when you take on each applicant: {upFront} silver for the whole term, paid at once."
                 : $"Due when you take on each applicant: {upFront} silver signing fee.";
@@ -453,9 +492,10 @@ namespace Intercolony
         ///
         /// The sentence matters more than the numbers. "34 to 46" tells a player who already
         /// understands the market what to do; "your offer is below what anyone will take" tells a
-        /// player who does not.
+        /// player who does not. Drawn starting at the controls column x so it aligns under the
+        /// wage controls above it.
         /// </summary>
-        private float DrawRateAdvice(Rect inRect, float y)
+        private float DrawRateAdvice(float x, float width, float y)
         {
             if (!rateValid)
             {
@@ -463,9 +503,9 @@ namespace Intercolony
                     ? "Nobody is reachable for work at all right now. Check the Hire tab."
                     : $"Nobody reachable has {skill.skillLabel.CapitalizeFirst()} {minLevel}+. " +
                       "You can still post — the market changes — but expect a wait.";
-                float adviceHeight = Text.CalcHeight(advice, inRect.width);
+                float adviceHeight = Text.CalcHeight(advice, width);
                 GUI.color = new Color(1f, 0.8f, 0.5f);
-                Widgets.Label(new Rect(0f, y, inRect.width, adviceHeight), advice);
+                Widgets.Label(new Rect(x, y, width, adviceHeight), advice);
                 GUI.color = Color.white;
                 return y + adviceHeight;
             }
@@ -474,9 +514,9 @@ namespace Intercolony
                 $"{qualified} reachable worker{(qualified == 1 ? "" : "s")} can do this. " +
                 $"For {termDays} days as a {clause.Label()} they ask " +
                 $"{rateLow} to {rateHigh} silver a day.";
-            float marketGuidanceHeight = Text.CalcHeight(marketGuidance, inRect.width);
+            float marketGuidanceHeight = Text.CalcHeight(marketGuidance, width);
             GUI.color = new Color(1f, 1f, 1f, 0.75f);
-            Widgets.Label(new Rect(0f, y, inRect.width, marketGuidanceHeight), marketGuidance);
+            Widgets.Label(new Rect(x, y, width, marketGuidanceHeight), marketGuidance);
             GUI.color = Color.white;
             y += marketGuidanceHeight + RowGap;
 
@@ -506,8 +546,8 @@ namespace Intercolony
             }
 
             GUI.color = colour;
-            float verdictHeight = Text.CalcHeight(verdict, inRect.width);
-            Widgets.Label(new Rect(0f, y, inRect.width, verdictHeight), verdict);
+            float verdictHeight = Text.CalcHeight(verdict, width);
+            Widgets.Label(new Rect(x, y, width, verdictHeight), verdict);
             GUI.color = Color.white;
             return y + verdictHeight;
         }
