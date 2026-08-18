@@ -495,11 +495,42 @@ the full `inRect.width` — the c1610af defect class, missed by c1610af.
 presentation-only, so the risk is low, but **that assertion still has exactly one real execution to
 its name and it failed on it.** A two-colony run is owed before the next release.
 
-**Still open in Tier 2:** finding 5 (mark-ready toggle and its setting), finding 2's **Due now**
-wording, and converting the remaining `Dialog_ConfirmQuantity` callers to rows. The
-market-opportunity acceptance dialog is the one that matters there: it still calls
-`BuyerPickupTimingExplanation` and so still carries the deadline-beside-arrival prose that the sell
-dialog just shed.
+**`69b6041` names the signing fee**, replacing **Due now**. It turned out to be more than wording:
+prepaid-pay workers have *no* signing fee — their whole discounted term is charged up front, which
+is a different charge — so the disclosure now distinguishes **Signing fee**, **No signing fee** and
+**Prepaid wages**, keyed off `WageStructure.IsPeriodic()` (literally `!= Prepaid`). Calling a term
+prepayment a signing fee would have named a mechanic the game does not have. Both
+insufficient-silver refusals in `EmploymentService` were aligned to the same vocabulary, which was
+the actual confusion.
+
+**`dbf4e4f` adds the Mark ready now toggle** (finding 5), default on, setting
+`markReadyNowByDefault`. Shown only for buyer pickup, because `CanMarkReady` is
+`status == Accepted && fulfillment == BuyerPickup` and a control that does nothing is worse than
+none. On refusal nothing is created and the dialog stays open, per Matteo's decision.
+
+The design rule it established: **the pre-check and the creation it predicts must be one
+construction.** `MarkReadyForPickup`'s decision half is extracted into a non-mutating
+`CanMarkReadyNow`, and `CreateFromOffer` and the pre-check both build through one
+`BuildOrderFromOffer`, with the real id assigned after. It was first written as a second copy of the
+same initializer — correct that day, and silently wrong the moment anyone adds a field to one of
+them. Review also caught the transient dereferencing `offer.settlement` where `CreateFromOffer`
+guards it, which crashed exactly where the real path fails safely.
+
+Two invariants a future change must not break: a transient carries `id 0`, and `ReadyRefusal` keys
+on `order.id > 0` to avoid naming an order that does not exist; and `CanMarkReadyNow` returns false
+with **no reason** for `!CanMarkReady`, which is unreachable from the pre-check only because the
+transient is always `Accepted` + `BuyerPickup`. Calling the pre-check for seller delivery would
+produce a wordless refusal.
+
+**`d8f83e4` converts the market acceptance dialog**, the last one building its body as prose and the
+origin of the whole problem: it called `BuyerPickupTimingExplanation`, which states the readiness
+deadline and the travel estimate as one sentence. `BuildListingTooltip` still calls that helper and
+is deliberately unchanged — a tooltip is already where explanation belongs. The dialog also stopped
+multiplying money in a UI file, and now shows the quality, material and condition constraints, which
+were in the listing tooltip but not in front of the player at the moment of committing.
+
+**Tier 2 is complete.** Remaining: finding 10 only, which is Tier 3 and must not enter a point
+release.
 
 #### Tier 3 — features, Phase 27 candidates
 
