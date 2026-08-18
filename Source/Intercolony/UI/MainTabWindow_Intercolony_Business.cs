@@ -149,8 +149,9 @@ namespace Intercolony
                 string emptyMessage = state.LedgerStartTick == LedgerService.NoHistory
                         ? "Nothing has moved yet. Sell something, hire someone, and this fills in."
                         : "No money moved in this period.";
-                float emptyMessageHeight = Text.CalcHeight(emptyMessage, inRect.width);
-                Widgets.Label(new Rect(6f, y, inRect.width, emptyMessageHeight), emptyMessage);
+                float emptyMessageWidth = inRect.width - 12f;
+                float emptyMessageHeight = Text.CalcHeight(emptyMessage, emptyMessageWidth);
+                Widgets.Label(new Rect(6f, y, emptyMessageWidth, emptyMessageHeight), emptyMessage);
                 GUI.color = Color.white;
                 return y + emptyMessageHeight;
             }
@@ -219,8 +220,9 @@ namespace Intercolony
             {
                 GUI.color = new Color(1f, 1f, 1f, 0.6f);
                 string emptyMessage = "No standing agreements. Build a trading record and settlements will propose them.";
-                float emptyMessageHeight = Text.CalcHeight(emptyMessage, inRect.width);
-                Widgets.Label(new Rect(6f, y, inRect.width, emptyMessageHeight), emptyMessage);
+                float emptyMessageWidth = inRect.width - 12f;
+                float emptyMessageHeight = Text.CalcHeight(emptyMessage, emptyMessageWidth);
+                Widgets.Label(new Rect(6f, y, emptyMessageWidth, emptyMessageHeight), emptyMessage);
                 GUI.color = Color.white;
                 return y + emptyMessageHeight;
             }

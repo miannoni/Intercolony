@@ -59,6 +59,9 @@ namespace Intercolony
         private const float QuantityControlsHeight = 122f;
         private const float FulfillmentControlsHeight = 58f;
         private const float DiscountControlsHeight = 58f;
+        private const float DiscountPreviewTop = 5f;
+        private const float DiscountCaptionTop = 14f;
+        private const float DiscountSliderTop = 20f;
         private const float TermLabelWidth = 150f;
         private const float TermColumnGap = 8f;
         private const float TermRowGap = 5f;
@@ -288,11 +291,11 @@ namespace Intercolony
 
             if (chooseDiscount)
             {
-                Widgets.Label(new Rect(0f, bottom, 108f, 28f),
+                Widgets.Label(new Rect(0f, bottom + DiscountCaptionTop, 108f, 28f),
                     $"Discount: {discountFraction.ToStringPercent("F0")}");
 
                 discountFraction = Mathf.Clamp01(Widgets.HorizontalSlider(
-                    new Rect(110f, bottom + 4f, 190f, 20f),
+                    new Rect(110f, bottom + DiscountSliderTop, 190f, 20f),
                     discountFraction, 0f, 1f, middleAlignment: false,
                     label: null, leftAlignedLabel: "0%", rightAlignedLabel: "100%",
                     roundTo: 0.01f));
@@ -301,7 +304,10 @@ namespace Intercolony
                     quantity, fulfillment, discountFraction);
                 if (!paymentPreview.NullOrEmpty())
                 {
-                    Widgets.Label(new Rect(314f, bottom, inRect.width - 314f, 48f),
+                    float paymentPreviewWidth = inRect.width - 314f;
+                    float paymentPreviewHeight = Text.CalcHeight(paymentPreview, paymentPreviewWidth);
+                    Widgets.Label(new Rect(314f, bottom + DiscountPreviewTop,
+                            paymentPreviewWidth, paymentPreviewHeight),
                         paymentPreview);
                 }
 
