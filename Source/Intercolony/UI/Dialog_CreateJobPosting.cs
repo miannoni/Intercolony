@@ -25,7 +25,13 @@ namespace Intercolony
     {
         private const float WindowWidth = 1000f;
         private const float WindowMargin = 18f;
-        private const float MaxScreenHeightFraction = 0.9f;
+
+        /// <summary>
+        /// This is a dense form — a title, up to three labelled sliders with scale text, a wage
+        /// field row, two option columns and three summary lines — and genuinely needs the room.
+        /// Capped short of the full screen only so the window never touches the edges.
+        /// </summary>
+        private const float MaxScreenHeightFraction = 0.95f;
         private const float BottomButtonsHeight = 40f;
         private const float ContentInset = 8f;
         private const float ScrollbarGutter = 16f;
@@ -48,10 +54,24 @@ namespace Intercolony
         /// this file, underneath the track, instead.
         /// </summary>
         private const float SliderTrackHeight = 20f;
-        private const float SliderScaleHeight = 18f;
+
+        /// <summary>
+        /// HorizontalSlider's rail and handle occupy only the first ~12px of the rect it is
+        /// given (Widgets.cs — rail at +2 height 8, handle 12px from the rail centre), so the
+        /// scale is placed against where the slider visually ends rather than the rect's full
+        /// height, which would leave a gap.
+        /// </summary>
+        private const float SliderVisibleHeight = 12f;
+
         private const float SliderScaleGap = 2f;
-        private const float SliderRowHeight =
-            SliderTrackHeight + SliderScaleGap + SliderScaleHeight;
+
+        /// <summary>
+        /// Row height is measured, not guessed — the scale text below the track is a full line
+        /// under GameFont.Small (Text.LineHeight), tall enough to hold descenders such as the
+        /// 'y' in "day". A hard-coded height clipped them.
+        /// </summary>
+        private static float SliderRowHeight =>
+            SliderVisibleHeight + SliderScaleGap + SliderScaleTextHeight();
 
         /// <summary>
         /// The two-column grid every row in the upper form lines up on: labels in a fixed-width
@@ -334,8 +354,8 @@ namespace Intercolony
             value = Widgets.HorizontalSlider(trackRect, value, min, max, middleAlignment: false,
                 label: null, leftAlignedLabel: null, rightAlignedLabel: null, roundTo: roundTo);
 
-            Rect scaleRect = new Rect(x, y + SliderTrackHeight + SliderScaleGap, SliderWidth,
-                SliderScaleHeight);
+            Rect scaleRect = new Rect(x, y + SliderVisibleHeight + SliderScaleGap, SliderWidth,
+                SliderScaleTextHeight());
             Color color = GUI.color;
             GameFont font = Text.Font;
             GUI.color = new Color(1f, 1f, 1f, 0.55f);
@@ -357,15 +377,32 @@ namespace Intercolony
             GUI.color = color;
         }
 
+        /// <summary>
+        /// Text.LineHeight is indexed by the current GameFont, so this pins it to Small rather
+        /// than trusting whatever font the caller left set — the same height this dialog uses
+        /// for the scale labels themselves.
+        /// </summary>
+        private static float SliderScaleTextHeight()
+        {
+            GameFont font = Text.Font;
+            Text.Font = GameFont.Small;
+            float height = Text.LineHeight;
+            Text.Font = font;
+            return height;
+        }
+
         private static float ContentWidth(float availableWidth)
         {
             return availableWidth - ContentLeft * 2f;
         }
 
+        /// <summary>A separator should be felt, not read.</summary>
+        private static readonly Color DividerColor = new Color(1f, 1f, 1f, 0.18f);
+
         private static float DrawSectionDivider(float width, float y)
         {
             y += SectionGap / 2f;
-            Widgets.DrawLineHorizontal(0f, y, width);
+            Widgets.DrawLineHorizontal(0f, y, width, DividerColor);
             return y + SectionGap / 2f;
         }
 
