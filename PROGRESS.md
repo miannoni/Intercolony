@@ -2084,6 +2084,76 @@ Manual test:
 - Shipped: Workshop item `3780094556` updated, `main` pushed, tag `v0.9.1` and GitHub pre-release
   created to the 0.9.0 standard.
 
+## 0.9.2 — animal sales and procurement fixes  (2026-08-17)
+
+Written retrospectively on 2026-08-18: this entry was missed when the release shipped. It is
+reconstructed from the twenty commits in `v0.9.1..v0.9.2`, their messages, and
+`docs/RELEASE_NOTES_0.9.2.md` — not from memory of the session. Work landed 2026-08-15 and -16; the
+tag is dated 2026-08-16 and both channels went out on 2026-08-17.
+
+A bug-fix release closing six defects from the first real play of 0.9.1. No new player-facing
+features. **Animal trade did not work at all until it.**
+
+Implemented:
+- **Animal orders could never be marked ready** (`b50b2e2`), and this is the repair the release
+  exists for. Validation treated *any* same-species animal that failed the specification as a fatal
+  failure, so one rooster blocked a hen order permanently. RimWorld draws an inactive
+  `Widgets.ButtonText` identically to a live one, so the refusal was completely invisible — no
+  message, no error, nothing. Two defects compounding: a wrong rule, and a UI that could not show
+  it had refused.
+- **The employee signing fee is disclosed before hiring** (`66848bb`). It had been shown only when
+  a hire was *refused* for insufficient silver — after the decision, too late to plan for.
+- **Procurement quotes cannot be re-rolled** (`a11a97f`). Withdrawing a request and raising it again
+  produced fresh prices, which made retrying a strictly dominant strategy. Quotes are now seeded so
+  they hold until the market refreshes; changing only the quantity does not reroll them either.
+- **A supplier's offer is finite within a market window** (`4b5b5ef`, **schema 42**), so buying a
+  supplier out and re-requesting no longer restores their stock.
+- **Accepting one quotation leaves the rest of the request open** (`f1e6852`, **schema 41**). The
+  first acceptance used to close the whole request; it now stays open for exactly the remainder with
+  its other quotes still live. `d457465` fixed the quotation list showing more than the quantity
+  actually offered.
+- **The buyer-pickup distance a promise was made from is persisted** (`ec1ccdd`, **schema 40**),
+  because recomputing it later answers a different question than the player agreed to.
+- **Colonies are no longer resolved through `Find.AnyPlayerHomeMap`** (`b6e868e`), which returns the
+  *first* player home map and is correct only in a single-colony game. The two remaining shipped
+  sites were deliberately fixed in opposite directions, and the asymmetry is the point: **taking
+  from the player must never substitute a colony**, so buyer collection now refuses and fails the
+  order with a reason; **giving to the player may substitute but must disclose**, so procurement
+  delivery and refunds fall back to a surviving colony and name it, holding for retry when there is
+  no colony at all. No schema change — both maps already persisted.
+- **Supply-agreement cycle orders could not be marked ready** (`929f173`).
+- **`Arrive buyers now` debug action** (`4fbec43`), pulling travelling buyers forward through the
+  real collection handler rather than completing orders directly. Its absence had made every
+  sell-side pickup test cost real travel time.
+- **The running build identifies itself at startup** (`6579857`), read from `About.xml`, so a bug
+  report can be tied to the build that produced it. `930d496` then made `package.ps1` take its
+  version from the same field, so the two can no longer disagree.
+
+Not implemented:
+- No new features. Everything above is a repair, a debug affordance, or build identification.
+
+Known limitations:
+- **Only half of animal trade was proven.** E5 sell-by-buyer-pickup was played end to end on
+  2026-08-16 — a chicken, and in a separate save a bonded labrador whose warning named the right
+  colonist. **E3a animal procurement and E4 sell-by-caravan were still entirely unplayed at
+  release**, and the whole system must not be read as proven because half of it is.
+- The manual two-colony reproduction of buyer-pickup collection remained outstanding.
+- `PurchaseOrderService` was left with the same latent flaw at its delivery and refund sites that
+  `b6e868e` addressed elsewhere; recorded in `docs/BACKLOG.md` rather than widened into this batch.
+
+Manual test:
+- **Matteo ran the order self-test in a real two-colony save, and it found a regression the
+  single-colony world could not.** The assertion "collection uses the order's recorded colony, not
+  `AnyPlayerHomeMap`" had reported `SKIPPED` since 0.9.0 for want of a second colony; **its first
+  ever real run failed.** `9ca5062` fixed two wrong-colony regressions introduced by `b6e868e` and
+  `929f173`, both from conflating "no colony was ever recorded" — normal for older and for cycle
+  orders — with "the recorded colony is gone". The first of those destroyed a completed sale and
+  cost reputation with no player action involved. Ten more assertions execute in a two-colony world
+  than in a one-colony one, which is the durable lesson.
+- Animal sale by buyer pickup proven in play, as above; recorded in `docs/PENDING_PLAYTESTS.md`.
+- Shipped: Workshop item `3780094556` updated, `main` pushed, tag `v0.9.2` and a GitHub pre-release
+  with `Intercolony-0.9.2.zip` attached.
+
 ## 0.9.3 — the Tier 2 UI pass  (2026-08-18)
 
 Eighteen commits since `v0.9.2`, one batch: `docs/BACKLOG.md`'s Tier 2 UI work plus a labor-UI
@@ -2128,8 +2198,8 @@ Known limitations:
   is deliberate, but a player holding an old posting sees different behaviour from a new one.
 - Nothing in this batch had a full regression pass. Each UI change was confirmed visually as it
   landed.
-- **PROGRESS.md has no 0.9.2 entry.** That release shipped without one; this entry does not
-  backfill it.
+- PROGRESS.md had no 0.9.2 entry when this one was written. It was backfilled on the same day, from
+  the commit range rather than from memory, and is marked as retrospective.
 
 Manual test:
 - **The save-compatibility pre-flight passed before packaging.** No save on the machine actually
