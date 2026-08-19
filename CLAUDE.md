@@ -107,9 +107,27 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 26 complete. **0.9.2 is live and public** (2026-08-17) — Workshop item `3780094556`
-updated, `main` pushed, tag `v0.9.2` and a GitHub pre-release with `Intercolony-0.9.2.zip` attached.
-0.9.1 shipped 2026-08-15 and 0.9.0 on 2026-08-08, all to the same standard.
+**Phase:** 26 complete. **0.9.3 is live and public** (2026-08-18) — Workshop item `3780094556`
+updated, `main` pushed, tag `v0.9.3` and a GitHub pre-release with `Intercolony-0.9.3.zip` attached.
+0.9.2 shipped 2026-08-17, 0.9.1 on 2026-08-15 and 0.9.0 on 2026-08-08, all to the same standard.
+
+0.9.3 is the Tier 2 UI batch from `docs/BACKLOG.md` plus a labor-UI polish pass: dialog and
+empty-state text is measured rather than boxed (a live defect — the sell dialog drew over its own
+controls), the sell and market-acceptance dialogs state their terms as labelled rows, sales orders
+became a sortable table showing each order's value, Find Buyer can mark a sale ready as it is
+created, and Post a job was rebuilt on a grid. **The only behaviour change is that a job posting has
+no position count and never expires** — `JobPosting.positions` was deleted, field and Scribe line
+both. **Save schema stayed at 42 and no migration was added, because none was needed.**
+
+**Two things changed under existing saves, and the pre-flight that cleared them is worth reusing.**
+An old save carries a `<positions>` node with nothing to read it into, and a posting made before
+`f594594` keeps its finite `expiryTick` and still expires. The first could not be tested by any real
+save: every posting ever made used 1 position, which is the Scribe default, and RimWorld **omits a
+value equal to its default**, so no `<positions>` node exists on disk anywhere. The test was a copy
+of a real save with `<positions>3</positions>` injected and one posting reopened on its original
+finite expiry; it loaded at schema 42 with zero exceptions and nothing dropped. **When a field is
+deleted, check whether its old value was the Scribe default before assuming a real save exercises
+the removal.**
 
 0.9.2 is a bug-fix release closing six defects from the first real play of 0.9.1. **Animal trade did
 not work at all** until it; see below. The others: the employee signing fee was disclosed only when a

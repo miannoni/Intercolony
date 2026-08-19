@@ -2083,3 +2083,66 @@ Manual test:
   the last outstanding release risk.
 - Shipped: Workshop item `3780094556` updated, `main` pushed, tag `v0.9.1` and GitHub pre-release
   created to the 0.9.0 standard.
+
+## 0.9.3 — the Tier 2 UI pass  (2026-08-18)
+
+Eighteen commits since `v0.9.2`, one batch: `docs/BACKLOG.md`'s Tier 2 UI work plus a labor-UI
+polish pass that grew out of it. Presentation throughout, with a single behaviour change.
+
+Implemented:
+- **Text composed at runtime is measured, not boxed** (`c1610af`). `Widgets.Label` neither clips nor
+  scrolls — it paints the whole string from the top-left regardless of the rect — so a builder-fed
+  body silently overdrew the controls beneath it. This was a live defect on the sell dialog, not a
+  cosmetic one. Dialogs and empty states now size to `Text.CalcHeight`.
+- **The sell dialog states its terms as labelled rows** (`713dd1e`), and the market acceptance
+  dialog followed (`d8f83e4`). This is CLAUDE.md rule 6 applied to the two dialogs that most needed
+  it: prose let two unrelated facts read as one number, which had already misled the mod's own
+  author once.
+- **Sales orders are a sortable table showing each order's value** (`c8c4d1a`), with the discount
+  slider seated in its own row (`854b7f1`) and numeric columns right-aligned (`0585605`).
+- **"Mark ready now" on the Find Buyer sale dialog** (`dbf4e4f`), default on, with a mod setting.
+  It refuses without creating the order and keeps the dialog open, rather than creating an
+  obligation the player cannot meet.
+- **The signing fee is named rather than labelled "Due now"** (`69b6041`).
+- **Job postings never expire and the Advertise slider is gone** (`f594594`); the "No end date"
+  checkbox no longer sits on the term slider (`7955395`).
+- **A job posting has no position count** (`a283de0`) — it stays open and the player hires as many
+  applicants as they like. **The only behaviour change in the release.** `JobPosting.positions` was
+  deleted, field and Scribe line both; `IsValidAfterLoad` became correspondingly *less* strict, so
+  no old posting can be dropped by it.
+- **Post a job rebuilt on a grid** (`4f39cb0`, `bc5e7aa`, `cbb7374`, `853f9a0`, `5a5d114`) — one
+  margin, an even rhythm, every slider given room for the labels it draws above itself, and it fits
+  on one screen again.
+- **A skipped self-test assertion is now visible in the summary** (`51ef4d7`), closing the gap where
+  a `SKIPPED` line could be read as a pass because the count never mentioned it.
+
+Not implemented:
+- Backlog finding 10 (player-posted market sale offers; quality and material when selling) was
+  explicitly held out of scope for a point release.
+
+Known limitations:
+- **Save schema stayed at 42 and no migration was added**, because none was needed —
+  `IntercolonyWorldComponent.cs` is not in the diff at all. Two things nonetheless changed under
+  existing saves: an old save carries a `<positions>` node with nothing to read it into, and a
+  posting created before `f594594` keeps its finite `expiryTick` and will still expire. The second
+  is deliberate, but a player holding an old posting sees different behaviour from a new one.
+- Nothing in this batch had a full regression pass. Each UI change was confirmed visually as it
+  landed.
+- **PROGRESS.md has no 0.9.2 entry.** That release shipped without one; this entry does not
+  backfill it.
+
+Manual test:
+- **The save-compatibility pre-flight passed before packaging.** No save on the machine actually
+  contained a `<positions>` node — every posting ever made used 1, the Scribe default, which
+  RimWorld omits — so a real save would not have exercised the deleted field at all. A copy of
+  **Fenhana** was prepared with `<positions>3</positions>` injected into all three postings and
+  posting #4054 reopened while keeping its original finite `expiryTick` (7110770, ~10.5 days ahead
+  of the save's tick). Loaded on 2026-08-18: `[Intercolony] loaded, version 0.9.3.` and
+  `[Intercolony] State loaded (schema 42, nextId 6826).` — **loaded, not initialized fresh** — with
+  **zero exceptions in Player.log**, no dropped-posting warning, and the posting rendering as
+  `Crafting 15+ — open, 60d, 130 silver/day per quadrum, civilian` / `no replies yet — 10.5d left`.
+- The two-colony manual reproduction of buyer-pickup collection remains outstanding and was
+  **explicitly decided not to block this release** — it is a 0.9.0-era fix untouched by this batch,
+  and it stays in `docs/PENDING_PLAYTESTS.md`.
+- Shipped: Workshop item `3780094556` updated (menu confirmed reading **Update**, not Upload),
+  `main` pushed, tag `v0.9.3` and GitHub pre-release created to the 0.9.0 standard.

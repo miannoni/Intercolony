@@ -1,0 +1,40 @@
+[h1]0.9.3[/h1]
+
+Mostly a presentation update: the trade and labor dialogs were rebuilt so the terms you are agreeing to and the number you get are labelled rows instead of paragraphs. One thing genuinely behaves differently — job postings.
+
+[hr][/hr]
+[h1]Changed behaviour[/h1]
+
+[list]
+[*][b]A job posting has no position count, and never expires.[/b] Post the job once and hire as many applicants as you like from it. It stays up until it fills or you take it down. The position spinner and the Advertise duration slider are both gone from the form.
+[*][b]Postings made before this update keep their original expiry[/b] and will still lapse when it runs out. Only new postings are open-ended — so if an old posting comes down on you, that is why.
+[/list]
+
+[h1]Selling[/h1]
+
+[list]
+[*][b]The sell dialog no longer draws over its own buttons.[/b] A long confirmation could paint text on top of the controls beneath it. That was a real defect, not just an ugly one. Dialogs now measure their text and size themselves to it.
+[*][b]The sell dialog states its terms as rows.[/b] Price, quantity, payment, deadline and fulfilment are labelled values with the explanation moved into tooltips, instead of six paragraphs where two unrelated numbers could read as one.
+[*][b]Sales orders are a sortable table[/b], and every row shows what that order is worth. Numeric columns are right-aligned so you can compare them down the column.
+[*][b]You can mark a sale ready as you create it.[/b] The Find Buyer confirmation offers [i]Mark ready now[/i], on by default, with a setting under Mod options if you would rather it were not. If the goods are not actually there it refuses and keeps the dialog open instead of creating an order you cannot fulfil.
+[*][b]The market acceptance dialog reads as rows too[/b], matching the sell dialog.
+[/list]
+
+[h1]Labor[/h1]
+
+[list]
+[*][b]Post a job was rebuilt on a grid[/b] and fits on one screen again, with every slider given room for the labels it draws above itself.
+[*][b]It offers its terms the way the Hire dialog does[/b], so the two screens no longer disagree about how the same choice is presented.
+[*][b]The signing fee is named[/b] rather than labelled "Due now".
+[*][b]The "No end date" checkbox no longer sits on top of the term slider.[/b]
+[/list]
+
+[h1]Saves[/h1]
+
+[b]The save format did not change.[/b] Saves stay at schema 42 and no migration runs, so 0.9.2 colonies open directly.
+
+Because postings lost their position count, an old save carries a leftover value with nothing to read it into. RimWorld ignores unmatched fields, and this was checked before release on a real save carrying job postings with that field present: it loaded with no errors, no posting was dropped, and an existing posting rendered correctly with its expiry intact.
+
+[b]Keep a backup of any colony you care about before loading it with this pre-release.[/b]
+
+Still a beta. Problems to the [url=https://github.com/miannoni/Intercolony/issues]GitHub issue tracker[/url], please, with your mod list and [b]Player.log[/b].
