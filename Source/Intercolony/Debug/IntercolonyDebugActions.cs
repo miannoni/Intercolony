@@ -529,10 +529,16 @@ namespace Intercolony
             });
         }
 
+        [DebugAction(Category, "Capture market baseline", allowedGameStates = AllowedGameStates.Playing, displayPriority = 54)]
+        private static void CaptureMarketBaseline()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyMarketBaseline.Run(state)));
+        }
+
         [DebugAction(Category, "Run timeline self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 55)]
         private static void RunTimelineSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(IntercolonyTimelineSelfTest.Run(state)));
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyTimelineSelfTest.Run(state)));
         }
 
         [DebugAction(Category, "Dump commercial timeline", allowedGameStates = AllowedGameStates.Playing, displayPriority = 82)]
@@ -554,7 +560,7 @@ namespace Intercolony
         [DebugAction(Category, "Run RFQ self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 56)]
         private static void RunRfqSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(IntercolonyRfqSelfTest.Run(state)));
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyRfqSelfTest.Run(state)));
         }
 
         [DebugAction(Category, "Dump requests", allowedGameStates = AllowedGameStates.Playing, displayPriority = 83)]
@@ -603,7 +609,7 @@ namespace Intercolony
         [DebugAction(Category, "Run order self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 58)]
         private static void RunOrderSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyOrderSelfTest.Run(state, Find.CurrentMap)));
         }
 
@@ -1376,7 +1382,7 @@ namespace Intercolony
         [DebugAction(Category, "Run combat clause self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 62)]
         private static void RunCombatClauseSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyCombatClauseSelfTest.Run(state, Find.CurrentMap)));
         }
 
@@ -1927,6 +1933,29 @@ namespace Intercolony
             }
 
             action(state);
+        }
+
+        /// <summary>
+        /// As <see cref="WithState"/>, but leaves the commercial timeline exactly as it found it.
+        ///
+        /// Since Stage 0.3b the real order, purchase and contract transitions record commercial
+        /// events, and self-tests drive those transitions deliberately — so without this a single
+        /// self-test run writes dozens of rows into the player's trading history for settlements
+        /// that do not exist.
+        ///
+        /// **Applies to self-tests only.** Debug actions that intentionally advance the world, such
+        /// as arriving purchase orders or building a save/load fixture, must keep their records:
+        /// those events really did happen.
+        /// </summary>
+        private static void WithGuardedState(Action<IntercolonyWorldComponent> action)
+        {
+            WithState(state =>
+            {
+                using (new IntercolonyTimelineGuard(state))
+                {
+                    action(state);
+                }
+            });
         }
 
         private static void Report(string text)

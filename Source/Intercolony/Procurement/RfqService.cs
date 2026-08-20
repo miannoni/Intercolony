@@ -116,7 +116,13 @@ namespace Intercolony
         /// def so repeating the same request within one market window produces the same quotes,
         /// which keeps save/load stable and makes a reported problem reproducible (§60).
         /// </summary>
-        private static void GenerateResponses(IntercolonyWorldComponent state, PurchaseRequest request)
+        /// <remarks>
+        /// Internal rather than private so the Stage 0.2 market baseline can quote a throwaway
+        /// request without adding it to world state or announcing it to the player. The baseline
+        /// has to measure the real quoting path — a diagnostic that reimplemented it would be
+        /// measuring itself.
+        /// </remarks>
+        internal static void GenerateResponses(IntercolonyWorldComponent state, PurchaseRequest request)
         {
             List<Settlement> settlements = Find.WorldObjects?.Settlements;
             if (settlements == null)
