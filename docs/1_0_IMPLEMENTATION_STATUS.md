@@ -337,8 +337,8 @@ the index rebuild, or the load-time padding is wrong, 2B's mean reversion is wha
 it — as pressure that silently resets, or records that accumulate forever, both of which look
 like balance problems rather than persistence bugs and would be chased in the wrong place.
 
-Running the six suites is a few minutes and converts most of Stage 0's and Stage 1's
-"by construction" claims into observed ones. The list is in `docs/PENDING_PLAYTESTS.md`.
+It is now one action — **`Run ALL self-tests`** — which runs all seventeen suites, prints one
+verdict, and checks that the guards held. Steps are in `docs/PENDING_PLAYTESTS.md`.
 
 ---
 

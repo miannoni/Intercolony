@@ -195,6 +195,15 @@ namespace Intercolony
             return created;
         }
 
+        /// <summary>
+        /// Invalidates the lookup index after the list was replaced wholesale, which only a
+        /// diagnostic restoring a snapshot does.
+        /// </summary>
+        public void RefreshMarketStateIndex()
+        {
+            RebuildMarketStateIndex();
+        }
+
         private void RebuildMarketStateIndex()
         {
             marketStateIndex = new Dictionary<int, SettlementMarketState>();
@@ -964,6 +973,15 @@ namespace Intercolony
         public int NextId()
         {
             return nextId++;
+        }
+
+        /// <summary>
+        /// The ID that would be allocated next, without allocating it. For diagnostics that want
+        /// to report how many IDs something consumed.
+        /// </summary>
+        public int PeekNextId()
+        {
+            return nextId;
         }
 
         public override void ExposeData()

@@ -41,28 +41,31 @@ test result.
 
 ## Outstanding
 
-### 1.0 program — the six suites owed, in one sitting
+### The whole suite, in one action
 
-Nothing from Stages 0–2A has been executed in game. All six are the same route: **F12** →
-**orange bug icon** (top-right) → type the name → click the **Intercolony** entry. Then
-`powershell -ExecutionPolicy Bypass -File dev.ps1 log` to read the results.
+**`Run ALL self-tests`.** Enable **Development mode** (Options → General), load a colony **with
+a map**, press **F12**, click the **orange bug icon** top-right, type `Run ALL`, and click
+**Intercolony → Run ALL self-tests**. Read it with
+`powershell -ExecutionPolicy Bypass -File dev.ps1 log`.
 
-| Run this | Proves |
-|---|---|
-| `Run economy self-test` | Stage 2A market pressure persists and prunes correctly |
-| `Run timeline self-test` | the commercial timeline records, bounds and restores |
-| `Run market self-test` | Stage 1's per-good demand, and the affinity/interest-threshold guard |
-| `Run profile self-test` | settlement identity is still deterministic and archetypes still differ |
-| `Run order self-test` | no regression from the new write sites |
-| `Run RFQ self-test` | same, on the procurement side |
+It runs all seventeen suites, prints one table, and ends with a `VERDICT:` line. That line is
+the whole answer:
 
-**Pass for all six: `0 failed`, no red exceptions.**
+- `all clean` — nothing more to do.
+- `no failures, but assertions were skipped` — a skipped assertion is not proof; the table says
+  which suite.
+- `no failures, but not everything ran` — you were probably on the main menu rather than in a
+  colony; ten suites need a map.
+- `FAILURES` — the full output of only the failing suites is printed underneath it.
 
-**Then one extra check, which is the point of running them together:** afterwards run
-`Dump commercial timeline` and `Dump market pressure`. Both should report the same counts as
-before the suites ran — the suites deliberately create synthetic orders and pressure, and each
-is wrapped in a guard that restores what it found. A row naming `Testholme`, `MatrixTest` or a
-settlement that does not exist means a guard is not working, and that is worth stopping for.
+**It also answers the question no single suite can.** Suites drive real transitions on synthetic
+orders, which since Stage 0.3b writes commercial events and from Stage 2B will move market
+pressure. Each runs inside a guard that restores what it found, and a broken guard is invisible
+from inside the suite that tripped it — so the runner records the world's counts before and
+after and prints a `did anything leak into the world?` block. `OK` on both lines means the
+guards held. `LEAK` means stop: a diagnostic is writing into the player's real history.
+
+The individual per-suite actions still exist for when one of them is being worked on.
 
 ### 1.0 program — Stage 0
 

@@ -529,6 +529,20 @@ namespace Intercolony
             });
         }
 
+        /// <summary>
+        /// The one entry point worth having. Seventeen suites behind seventeen menu entries means
+        /// "is the mod still sound?" costs seventeen clicks, so in practice it stops being asked.
+        /// </summary>
+        [DebugAction(Category, "Run ALL self-tests", allowedGameStates = AllowedGameStates.Playing, displayPriority = 100)]
+        private static void RunAllSelfTests()
+        {
+            // Not WithGuardedState: the runner guards each suite individually so that a crash in
+            // one still leaves the world clean for the next, and so its own leak check has
+            // something real to measure.
+            WithState(state => IntercolonyLog.Message(
+                IntercolonyAllSelfTests.Run(state, Find.CurrentMap)));
+        }
+
         [DebugAction(Category, "Run economy self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 53)]
         private static void RunEconomySelfTest()
         {
@@ -1977,7 +1991,7 @@ namespace Intercolony
         {
             WithState(state =>
             {
-                using (new IntercolonyTimelineGuard(state))
+                using (new IntercolonyDiagnosticGuard(state))
                 {
                     action(state);
                 }
