@@ -85,6 +85,24 @@ drives the real production transitions (`SalesOrderService.Fail`/`.Cancel`,
 its own events, so a passing run is genuine evidence that the write sites fire — but nobody
 has run it.
 
+#### Stage 1 — profile and market suites, plus a look at the new tooltip
+
+`Run profile self-test` and `Run market self-test` (F12 → orange bug icon). Stage 1 rewrote
+exact-good demand, so the market suite's per-good assertions are the ones that matter: they now
+read the affinity-spread constant rather than the old 0.55–1.45 cycle range, and two new checks
+prove the affinity depends on seed and def alone.
+
+**Pass.** Both report 0 failed. Specifically look for `exact-good affinity depends only on seed
+and def`, `exact-good affinity differs between settlements`, and
+`per-good demand crosses the interest threshold both ways` — that last one is the guard that the
+0.15 band still straddles the 0.9 interest threshold. If it fails, the band and the threshold
+have drifted apart and Find Buyer has quietly stopped saying "No current interest".
+
+**Also worth 30 seconds of looking:** hover a row in the **Market** tab and a row in
+**Relations**. Both tooltips should now carry four rows — economy, usually supplies, usually
+demands, quality preference. The question is whether they read as identity or as noise, which no
+self-test can answer.
+
 #### The three suites that now touch the timeline — rerun to confirm no regression
 
 Stage 0 gate criterion 6. `IntercolonyOrderSelfTest`, `IntercolonyRfqSelfTest` and

@@ -3,9 +3,9 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 1 — Settlement economies
-Current slice:      1.2 — separate baseline demand from changing demand
-Last completed:     Stage 0, gate 5/6 (only the self-test rerun is open)
+Current stage:      Stage 2 — Market fundamentals overhaul
+Current slice:      2A — persist neutral per-settlement market pressure
+Last completed:     Stage 1 (1.2, 1.4, 1.5); gate 7/7, five by construction
 Current save schema: 43
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -78,7 +78,52 @@ fold into the record:
 - **The probe basket was junk.** Alphabetically-first-per-category selected ancient ruins
   scenery. It now ranks by observed demand from the same sample.
 
+## Stage 1 acceptance gate
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Same seed + settlement yields the same baseline across save/load | **PASS by construction** — generation unchanged; profiles are still regenerated, never persisted |
+| 2 | Baseline no longer depends on the refresh count | **PASS** — the cycle roll is gone; asserted as purity in the market suite |
+| 3 | Same-archetype settlements still differ modestly | **PASS by construction** — `SettlementProfileGenerator`'s jitter is untouched |
+| 4 | Different archetypes produce visibly different tendencies | **PASS by construction** — archetype weight tables untouched |
+| 5 | Modded/undefined tech faction handling stays safe | **PASS by construction** — no tech-tier code was touched |
+| 6 | Existing consumers compile; adapters marked for deletion | **PASS** — renamed at all eight call sites, no adapters were needed |
+| 7 | Player can identify a settlement's economy without debug numbers | **PASS** — needs a look in play to confirm it reads well |
+
+"PASS by construction" means the slice did not touch that path and the existing profile suite
+already covers it — not that it was re-observed. Running `Run profile self-test` and
+`Run market self-test` would convert 1–5 into observed passes and is the open item.
+
 ## Slice log
+
+### 1.2 / 1.4 / 1.5 — settlement economies (2026-08-20)
+
+**Claim:** a settlement's economic identity is stable, independent of the market clock, and
+visible to the player without debug output.
+**Files:** `Core/SettlementEconomicProfile.cs`, `UI/MainTabWindow_Intercolony.cs`,
+`Market/FindBuyerService.cs`, `Market/IntercolonyPricing.cs`,
+`Market/MarketOpportunityGenerator.cs`, `Procurement/RfqService.cs`, three self-tests.
+**Commits:** `12c8972`, `5711ee0`. **Schema:** unchanged at 43 — the profile is not persisted.
+
+`DemandFor`/`SupplyFor` became `BaseDemandFor`/`BaseSupplyFor` at all eight call sites. The
+rename is the point, not tidiness: Stage 2 puts an effective-economy layer over these, and a
+caller that says "demand" when it means "identity" is how the two get conflated.
+
+**The affinity band is 0.15 and the number is constrained, not chosen.** It has to straddle
+`FindBuyerService.InterestThreshold` (0.9) against category weights clustering at 1.0. The
+plan's illustrative ±0.08 would put every good in a wanted category above the threshold, making
+"No current interest" dead code — the exact flattening that threshold's own comment says it
+exists to prevent, and which the market self-test asserts against. Caught by reading the
+threshold before picking the number rather than by the test failing afterwards.
+
+**Expected interim effect:** Find Buyer will feel more uniform within a category until Stage 2
+adds pressure back. That is the shape of the change, not a regression, and it is worth
+remembering when 1.2's results are first seen in play.
+
+**UI placement — the plan's open A/B choice.** Chose *both* tooltips over a new screen:
+Relations alone would not do, because it only lists settlements already traded with and the
+question is asked before the first trade. The summary is on the Market listing tooltip, where a
+buyer is actually chosen, and on the Relations row. One helper, two call sites.
 
 ### 0.2 — market baseline (2026-08-20)
 
@@ -247,7 +292,21 @@ it. This is the same standing gap already recorded for the three earlier migrati
 
 ## Next executable slice
 
-**Capture the baseline, then Stage 1.1–1.2.**
+**Stage 2 — the foundational stage.** `2A` persists a compact per-settlement market-state
+record on `IntercolonyWorldComponent`: demand and supply pressure per category, centred on 1.0,
+neutral on migration. That is a schema bump to 44 with a narrow additive migration.
+
+Then `2B` mean reversion, `2C` deleting what remains of cycle noise, `2D`–`2F` pointing
+selling, pricing and RFQs at one effective-economy API, `2G` player trades nudging pressure,
+`2H` chain propagation, `2I` regional diffusion, `2J` explanations, `2K` the migration and play
+gate.
+
+**Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
+and the plan says so twice.
+
+---
+
+### Superseded: capture the baseline, then Stage 1.1–1.2
 
 The capture is one debug action and it belongs to whoever is at the keyboard; the steps are in
 `docs/PENDING_PLAYTESTS.md`. Save its output into `docs/` as the recorded baseline — the point
