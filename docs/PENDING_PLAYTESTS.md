@@ -41,6 +41,29 @@ test result.
 
 ## Outstanding
 
+### 1.0 program — the six suites owed, in one sitting
+
+Nothing from Stages 0–2A has been executed in game. All six are the same route: **F12** →
+**orange bug icon** (top-right) → type the name → click the **Intercolony** entry. Then
+`powershell -ExecutionPolicy Bypass -File dev.ps1 log` to read the results.
+
+| Run this | Proves |
+|---|---|
+| `Run economy self-test` | Stage 2A market pressure persists and prunes correctly |
+| `Run timeline self-test` | the commercial timeline records, bounds and restores |
+| `Run market self-test` | Stage 1's per-good demand, and the affinity/interest-threshold guard |
+| `Run profile self-test` | settlement identity is still deterministic and archetypes still differ |
+| `Run order self-test` | no regression from the new write sites |
+| `Run RFQ self-test` | same, on the procurement side |
+
+**Pass for all six: `0 failed`, no red exceptions.**
+
+**Then one extra check, which is the point of running them together:** afterwards run
+`Dump commercial timeline` and `Dump market pressure`. Both should report the same counts as
+before the suites ran — the suites deliberately create synthetic orders and pressure, and each
+is wrapped in a guard that restores what it found. A row naming `Testholme`, `MatrixTest` or a
+settlement that does not exist means a guard is not working, and that is worth stopping for.
+
 ### 1.0 program — Stage 0
 
 #### ~~Capture the market baseline~~ — DONE 2026-08-20

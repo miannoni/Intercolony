@@ -4,8 +4,9 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2A — persist neutral per-settlement market pressure
-Last completed:     Stage 1 (1.2, 1.4, 1.5); gate 7/7, five by construction
+Current slice:      2B — advance and mean-revert pressure (BLOCKED, see below)
+Last completed:     2A — persisted market pressure, schema 44
+Current save schema: 44
 Current save schema: 43
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -95,6 +96,29 @@ already covers it — not that it was re-observed. Running `Run profile self-tes
 `Run market self-test` would convert 1–5 into observed passes and is the open item.
 
 ## Slice log
+
+### 2A — persisted market pressure (2026-08-20)
+
+**Claim:** a settlement's economy can hold a non-neutral condition that survives save and load,
+and an undisturbed world persists nothing.
+**Files:** `Economy/SettlementMarketState.cs` (new), `Debug/IntercolonyEconomySelfTest.cs` (new),
+`Core/IntercolonyWorldComponent.cs`, `Debug/IntercolonyDebugActions.cs`.
+**Commit:** `d49fd86`. **Schema:** 43 → 44, migration writes nothing.
+**Verified in game:** `State initialized fresh (schema 44)`, no exceptions.
+**Tests:** `Run economy self-test` — sparse defaults, create-on-demand, prune keeps disturbed and
+drops settled, Scribe round trip, short-save padding. **Not yet executed.**
+
+**Sparse, not one record per settlement.** The baseline was captured on a 358-settlement world;
+a record each would put thousands of floats in every save to say nothing is happening. Records
+appear on first disturbance and are dropped when they settle. "Settled" is an epsilon rather
+than equality because mean reversion approaches 1.0 asymptotically — with exact comparison a
+record would never become prunable and the save would only ever grow.
+
+**Scribe has no array overload.** `Scribe_Collections.Look` takes List, HashSet, Stack, Queue and
+Dictionary; verified against `reference/decompiled`. Arrays cross the boundary as lists and stay
+arrays in memory, since pressure is read by category index on paths Stage 2 will make hot. A
+short or missing list loads padded with **neutral, not zero** — zero would read as no demand at
+all, a shortage nobody caused.
 
 ### 1.2 / 1.4 / 1.5 — settlement economies (2026-08-20)
 
@@ -292,17 +316,29 @@ it. This is the same standing gap already recorded for the three earlier migrati
 
 ## Next executable slice
 
-**Stage 2 — the foundational stage.** `2A` persists a compact per-settlement market-state
-record on `IntercolonyWorldComponent`: demand and supply pressure per category, centred on 1.0,
-neutral on migration. That is a schema bump to 44 with a narrow additive migration.
-
-Then `2B` mean reversion, `2C` deleting what remains of cycle noise, `2D`–`2F` pointing
-selling, pricing and RFQs at one effective-economy API, `2G` player trades nudging pressure,
-`2H` chain propagation, `2I` regional diffusion, `2J` explanations, `2K` the migration and play
-gate.
+**2B — advance and mean-revert pressure.** Then `2C` removing what remains of cycle noise,
+`2D`–`2F` pointing selling, pricing and RFQs at one effective-economy API, `2G` player trades
+nudging pressure, `2H` chain propagation, `2I` regional diffusion, `2J` explanations, `2K` the
+migration and play gate.
 
 **Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
 and the plan says so twice.
+
+### Why 2B should wait for one round of self-test runs
+
+**Six suites have been changed or added across Stages 0–2A and not one has been executed.**
+That is the position `CLAUDE.md` describes as how a system ends up believed-working and
+untested, and 2B is the first slice that makes pressure *move* — every slice after it inherits
+whatever 2A got wrong about persistence.
+
+The specific risk is not hypothetical. 2A's whole design rests on sparse storage: absence means
+neutral, records are created on disturbance and pruned when they settle. If the prune epsilon,
+the index rebuild, or the load-time padding is wrong, 2B's mean reversion is what would surface
+it — as pressure that silently resets, or records that accumulate forever, both of which look
+like balance problems rather than persistence bugs and would be chased in the wrong place.
+
+Running the six suites is a few minutes and converts most of Stage 0's and Stage 1's
+"by construction" claims into observed ones. The list is in `docs/PENDING_PLAYTESTS.md`.
 
 ---
 
