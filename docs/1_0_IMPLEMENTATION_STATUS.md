@@ -55,6 +55,46 @@ Worth noting *why this surfaced now*: the assertion picks whichever race the cur
 happens to have loaded, so its result depended on the save. This run drew `Bear_Grizzly` and hit
 a rounding edge that other worlds do not.
 
+### The other four failures — one structural, two stale assertions, one still open
+
+Triaged by Codex; every file:line it cited was checked against the source before acting on it,
+and it corrected one of my own hypotheses.
+
+**`long term` — INTERFERENCE, and the cause was the runner.** Employer standing is global to the
+colony, not per settlement. The payroll suite drives real missed payrolls and a walkout on
+purpose (−6 each, −18) and its cleanup restores silver and candidates but never the reputation.
+`RenewalService.MinimumStandingToRenew` is 40, so by the time the long-term suite asked whether
+a well-treated worker would stay, payroll had already put standing below the threshold.
+
+**This was worse than a test-ordering problem: running the payroll self-test permanently
+damaged the player's real standing as an employer**, and always had — it ran under plain
+`WithState`. The diagnostic guard now snapshots and restores employer standing, and *every*
+self-test action is wrapped in it rather than the four I had covered. The contract save/load
+probes stay unguarded deliberately: they exist to plant state that survives.
+
+**`ledger` ×2 — the assertions measured the wrong thing.** `LedgerService.Summarise` reports the
+whole ledger; the test added three fixtures and asserted on the total, so on a colony that had
+actually traded it was counting the world's real sales too — 13,851 against a ceiling of 1,700.
+The windowing was working correctly. Both assertions are deltas now.
+
+*My hypothesis here was wrong and worth recording as such:* I guessed a low game tick on a
+`-quicktest` world. It cannot be — the window cutoff and the fixture ages are both computed by
+subtracting from `GenTicks.TicksGame`, so it cancels out entirely.
+
+**`payroll` — a stale assertion.** It claimed a periodic hire takes nothing up front, which
+stopped being true when daily and per-quadrum hires gained a five-day signing fee;
+`WageStructureUtility.UpFrontCost` returns `SigningFee` for every non-prepaid structure, and
+0.9.2 shipped a fix specifically to *disclose* that fee. The same suite already asserts signing
+fees exist sixty lines earlier. It now checks the fee is exactly the signing fee and that the
+whole term is not charged.
+
+**`job posting` — still open, deliberately left failing.** Six world pawns appear inside that
+suite's own measurement interval (74 → 80), so it is not earlier suites' pawns being counted.
+It may be `MatchAll` materialising applicants for postings it did not create. **This project has
+history here** — `CLAUDE.md` records a static pool that leaked pawns and `Faction` objects
+between games for four phases — so this is not something to quiet down while unexplained. To
+settle it: run `Run job posting self-test` alone on a fresh map with no open postings.
+
 ### The 8 skipped assertions are the world, not the code
 
 All eight are the animal suite reporting honestly that a bare `-quicktest` map has no prisoner,

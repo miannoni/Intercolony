@@ -72,6 +72,44 @@ namespace Intercolony
 
         public float Score => score;
 
+        /// <summary>
+        /// A detached copy, for a diagnostic that needs to put this back exactly as it found it.
+        ///
+        /// Employer standing is global to the colony rather than per settlement, so a self-test
+        /// that drives real payroll failures — as the payroll suite deliberately does — permanently
+        /// damages the player's actual reputation unless something restores it. It also makes any
+        /// later suite that reads standing depend on run order.
+        /// </summary>
+        public EmployerReputation Snapshot()
+        {
+            EmployerReputation copy = new EmployerReputation();
+            copy.RestoreFrom(this);
+            return copy;
+        }
+
+        /// <summary>Overwrites every field from <paramref name="other"/>. Pairs with <see cref="Snapshot"/>.</summary>
+        public void RestoreFrom(EmployerReputation other)
+        {
+            if (other == null)
+            {
+                return;
+            }
+
+            score = other.score;
+            contractsCompleted = other.contractsCompleted;
+            latePayrollIncidents = other.latePayrollIncidents;
+            employeeDeaths = other.employeeDeaths;
+            unpaidCompensation = other.unpaidCompensation;
+            walkOuts = other.walkOuts;
+            earlyDismissals = other.earlyDismissals;
+            combatClauseBreaches = other.combatClauseBreaches;
+            safePassageDenials = other.safePassageDenials;
+            renewals = other.renewals;
+            noticesSkipped = other.noticesSkipped;
+            transitions = other.transitions;
+            defections = other.defections;
+        }
+
         public int ScoreDisplay => Mathf.RoundToInt(score);
 
         public EmployerTier Tier

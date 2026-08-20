@@ -120,6 +120,16 @@ namespace Intercolony
         {
             int start = state.Ledger.Count;
 
+            // Baselines first. Summarise reports the *whole* ledger, so on any colony that has
+            // actually traded these assertions were measuring the world's real sales plus the
+            // fixtures below. In the first full-suite run that read 13,851 against an expected
+            // ceiling of 1,700 — the windowing was working perfectly and the assertion was
+            // measuring the wrong thing. Everything below is a delta.
+            int quadrumBefore = LedgerService
+                .Summarise(state, BusinessReportService.QuadrumDays).Of(LedgerKind.SalePayment);
+            int yearBefore = LedgerService
+                .Summarise(state, BusinessReportService.YearDays).Of(LedgerKind.SalePayment);
+
             // Inside the quadrum window.
             state.Ledger.Add(Aged(LedgerKind.SalePayment, 1000, 3));
             // Inside the year window but outside the quadrum.
@@ -127,21 +137,22 @@ namespace Intercolony
             // Outside both.
             state.Ledger.Add(Aged(LedgerKind.SalePayment, 9999, 400));
 
-            LedgerService.Report quadrum =
-                LedgerService.Summarise(state, BusinessReportService.QuadrumDays);
-            LedgerService.Report year =
-                LedgerService.Summarise(state, BusinessReportService.YearDays);
+            int quadrumAdded = LedgerService
+                .Summarise(state, BusinessReportService.QuadrumDays)
+                .Of(LedgerKind.SalePayment) - quadrumBefore;
+            int yearAdded = LedgerService
+                .Summarise(state, BusinessReportService.YearDays)
+                .Of(LedgerKind.SalePayment) - yearBefore;
 
-            r.Check(quadrum.Of(LedgerKind.SalePayment) >= 1000 &&
-                    quadrum.Of(LedgerKind.SalePayment) < 1700,
+            r.Check(quadrumAdded == 1000,
                 "the quadrum window excludes older movements",
-                $"{quadrum.Of(LedgerKind.SalePayment)} in quadrum");
+                $"{quadrumAdded} of the 11,699 added fell inside the quadrum");
 
-            r.Check(year.Of(LedgerKind.SalePayment) > quadrum.Of(LedgerKind.SalePayment),
+            r.Check(yearAdded == 1700,
                 "the year window includes what the quadrum leaves out",
-                $"{year.Of(LedgerKind.SalePayment)} in year");
+                $"{yearAdded} of the 11,699 added fell inside the year");
 
-            r.Check(year.Of(LedgerKind.SalePayment) < 9999,
+            r.Check(yearAdded < 9999,
                 "neither window includes movements older than a year",
                 "the 400-day entry is excluded");
 

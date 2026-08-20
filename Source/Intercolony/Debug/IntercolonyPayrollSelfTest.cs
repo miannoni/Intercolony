@@ -173,8 +173,21 @@ namespace Intercolony
                 return;
             }
 
-            r.Check(contract.paidSilver == 0,
-                "a periodic hire takes nothing up front (§37)", $"{contract.paidSilver} silver");
+            // A periodic hire takes the signing fee up front and nothing else — not the term.
+            // This asserted `paidSilver == 0`, which stopped being true when daily and per-quadrum
+            // hires gained a five-day signing fee: WageStructure.UpFrontCost returns SigningFee
+            // for every non-prepaid structure, and 0.9.2 shipped a fix specifically to *disclose*
+            // that fee, so the charge is deliberate and the assertion was stale. The distinction
+            // still worth guarding is that a periodic hire is not charged for the whole term.
+            int expectedSigningFee =
+                WageStructureUtility.SigningFee(WageStructure.Daily, contract.dailyWage);
+            r.Check(contract.paidSilver == expectedSigningFee,
+                "a periodic hire pays the signing fee up front and no more (§37)",
+                $"{contract.paidSilver} silver, expected {expectedSigningFee}");
+            r.Check(
+                contract.paidSilver <
+                WageStructureUtility.TotalCost(WageStructure.Daily, contract.dailyWage, term),
+                "and is not charged for the whole term");
             r.Check(contract.nextPaymentTick < 0,
                 "the pay clock does not start until the worker arrives");
 

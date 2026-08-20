@@ -28,6 +28,7 @@ namespace Intercolony
         private readonly IntercolonyWorldComponent state;
         private readonly List<CommercialEventRecord> savedTimeline;
         private readonly List<SettlementMarketState> savedMarketStates;
+        private readonly EmployerReputation savedEmployerStanding;
         private readonly int savedTimelineStartTick;
 
         public IntercolonyDiagnosticGuard(IntercolonyWorldComponent state)
@@ -40,6 +41,7 @@ namespace Intercolony
 
             savedTimeline = new List<CommercialEventRecord>(state.CommercialTimeline);
             savedMarketStates = new List<SettlementMarketState>(state.MarketStates);
+            savedEmployerStanding = state.EmployerStanding?.Snapshot();
             savedTimelineStartTick = state.CommercialTimelineStartTick;
         }
 
@@ -56,6 +58,14 @@ namespace Intercolony
             state.MarketStates.Clear();
             state.MarketStates.AddRange(savedMarketStates);
             state.RefreshMarketStateIndex();
+
+            // Employer standing is global to the colony, not per settlement. The payroll suite
+            // drives real missed payrolls and a walkout on purpose, which costs -6 and -18, and
+            // nothing gave it back — so running that self-test permanently damaged the player's
+            // reputation as an employer, and left every later suite reading a value that depended
+            // on what had run before it. That is what made the long-term suite's renewal
+            // assertion fail in the first full-suite run: renewal needs a standing of 40.
+            state.EmployerStanding?.RestoreFrom(savedEmployerStanding);
 
             // Recording stamps this on the first ever event. A self-test must not be the thing
             // that decides when this colony's trading history began.

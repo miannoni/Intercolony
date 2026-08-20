@@ -95,7 +95,7 @@ namespace Intercolony
         [DebugAction(Category, "Run market self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 59)]
         private static void RunMarketSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(IntercolonyMarketSelfTest.Run(state)));
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyMarketSelfTest.Run(state)));
         }
 
         /// <summary>
@@ -428,7 +428,7 @@ namespace Intercolony
         [DebugAction(Category, "Run contract self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 58)]
         private static void RunContractSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(IntercolonyContractSelfTest.Run(state)));
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyContractSelfTest.Run(state)));
         }
 
         [DebugAction(Category, "Plant contract probe", allowedGameStates = AllowedGameStates.Playing, displayPriority = 54)]
@@ -510,7 +510,7 @@ namespace Intercolony
         [DebugAction(Category, "Run reputation self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 57)]
         private static void RunReputationSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(IntercolonyReputationSelfTest.Run(state)));
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyReputationSelfTest.Run(state)));
         }
 
         [DebugAction(Category, "Dump reputations", allowedGameStates = AllowedGameStates.Playing, displayPriority = 82)]
@@ -656,7 +656,7 @@ namespace Intercolony
         [DebugAction(Category, "Run animal spec self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 57)]
         private static void RunAnimalSpecSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyAnimalSelfTest.Run(state, Find.CurrentMap)));
         }
 
@@ -914,7 +914,7 @@ namespace Intercolony
         [DebugAction(Category, "Run employer reputation self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 61)]
         private static void RunEmployerReputationSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyEmployerReputationSelfTest.Run(state, Find.CurrentMap)));
         }
 
@@ -1387,7 +1387,7 @@ namespace Intercolony
         [DebugAction(Category, "Run ledger self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 66)]
         private static void RunLedgerSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyLedgerSelfTest.Run(state, Find.CurrentMap)));
         }
 
@@ -1401,21 +1401,21 @@ namespace Intercolony
         [DebugAction(Category, "Run transition self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 65)]
         private static void RunTransitionSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyTransitionSelfTest.Run(state, Find.CurrentMap)));
         }
 
         [DebugAction(Category, "Run long-term employment self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 64)]
         private static void RunLongTermSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyLongTermSelfTest.Run(state, Find.CurrentMap)));
         }
 
         [DebugAction(Category, "Run job posting self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 63)]
         private static void RunJobPostingSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyJobPostingSelfTest.Run(state, Find.CurrentMap)));
         }
 
@@ -1559,7 +1559,7 @@ namespace Intercolony
         [DebugAction(Category, "Run payroll self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 60)]
         private static void RunPayrollSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyPayrollSelfTest.Run(state, Find.CurrentMap)));
         }
 
@@ -1603,7 +1603,7 @@ namespace Intercolony
         [DebugAction(Category, "Run labor self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 59)]
         private static void RunLaborSelfTest()
         {
-            WithState(state => IntercolonyLog.Message(
+            WithGuardedState(state => IntercolonyLog.Message(
                 IntercolonyLaborSelfTest.Run(state, Find.CurrentMap)));
         }
 
