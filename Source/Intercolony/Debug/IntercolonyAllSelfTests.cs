@@ -39,10 +39,16 @@ namespace Intercolony
         /// Matches the summary every suite ends with. They agree on
         /// "N passed, M failed" and some add ", K skipped"; nothing else in the output looks
         /// like that, so one pattern reads all seventeen.
+        ///
+        /// **Case-insensitive, and that is not cosmetic.** The animal suite writes its skip count
+        /// as "8 SKIPPED — not a clean run", so a case-sensitive pattern matched the first two
+        /// groups, missed the third, and reported zero skips for a suite that was shouting about
+        /// them. An aggregator that hides skips is worse than no aggregator: §20.1 exists because
+        /// a skipped assertion is not proof, and this quietly turned eight of them into proof.
         /// </summary>
         private static readonly Regex SummaryPattern = new Regex(
             @"(\d+)\s+passed,\s*(\d+)\s+failed(?:,\s*(\d+)\s+skipped)?",
-            RegexOptions.Compiled);
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public static string Run(IntercolonyWorldComponent state, Map map)
         {

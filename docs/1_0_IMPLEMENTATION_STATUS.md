@@ -23,6 +23,45 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [ ] Stage 7 — Commercial history
 - [ ] Stage 8 — 1.0 integration and release gate
 
+## First full-suite run — 2026-08-20
+
+`Run ALL self-tests` on a `-quicktest` world. **17/17 suites ran, 853 passed, 8 failed**, and
+the leak check read `OK` on both lines — the guards held, nothing was written into the player's
+history. 3,108 entity ids consumed, which is expected.
+
+**The runner had a bug of its own, found by its first run.** The animal suite ends
+`58 passed, 3 failed, 8 SKIPPED — not a clean run`, and the table reported `skipped 0`. The
+summary regex was case-sensitive and the suite shouts `SKIPPED`, so the third group never
+matched. An aggregator that hides skips is worse than no aggregator — §20.1 exists precisely
+because a skipped assertion is not proof, and this quietly turned eight of them into proof.
+Fixed with `RegexOptions.IgnoreCase`.
+
+### The two animal failures — neither was a regression
+
+**`goods price is bit-for-bit unchanged from the pre-animal formula`** — expected 2.702, got
+1.756, a ratio of exactly 0.65. `EffectiveEconomyDifficulty` is the slider times
+`EconomyDifficultyBaseline` (1.35), and the selling factor is `2 - that`, so a slider set to
+1.0 leaves **0.65, not 1.0**. The test's economy-difficulty slot read `expected *= 1f` and had
+done since before the difficulty scales were recentred on 2026-08-10 — so it claimed production
+had changed when only a constant had. The test was wrong; production was right.
+
+**`adult female pregnant animal price exactly applies 1.20 then 1.40`** — expected 1176, got
+1176.00012, about one float32 ULP. It cannot be a Stage 1 regression: that path calls
+`IntercolonyPricing.BaseValue(race, null, spec)`, which takes no profile, so demand never
+reaches it. Two multiplications in a different order differ in the last bit, and exact `==`
+cannot tell that from a changed formula. It now compares within one ULP.
+
+Worth noting *why this surfaced now*: the assertion picks whichever race the current world
+happens to have loaded, so its result depended on the save. This run drew `Bear_Grizzly` and hit
+a rounding edge that other worlds do not.
+
+### The 8 skipped assertions are the world, not the code
+
+All eight are the animal suite reporting honestly that a bare `-quicktest` map has no prisoner,
+no slave, no caravan, no bonded pair and no pregnant animal to test against. **The animal suite
+is only fully meaningful on a real colony** — worth re-running the full suite on the `Fenhana`
+save, which would also exercise the migration path again.
+
 ## Stage 0 acceptance gate
 
 Four of six criteria are closed. The two open ones need a human at the keyboard; neither is
