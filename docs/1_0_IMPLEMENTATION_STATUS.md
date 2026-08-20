@@ -3,9 +3,9 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 0 — Program spine
-Current slice:      0.2 — capture the 0.9.3 market baseline
-Last completed:     0.3b — timeline write sites (committed, self-test not yet run)
+Current stage:      Stage 0 — Program spine, code-complete; gate 4/6
+Current slice:      BLOCKED — capture the market baseline before Stage 1 touches generation
+Last completed:     0.2 — market baseline diagnostic (committed, not yet run)
 Current save schema: 43
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -22,7 +22,66 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [ ] Stage 7 — Commercial history
 - [ ] Stage 8 — 1.0 integration and release gate
 
+## Stage 0 acceptance gate
+
+Four of six criteria are closed. The two open ones need a human at the keyboard; neither is
+a code gap.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Clean build passes | **PASS** — 0 errors, 0 warnings |
+| 2 | 1.0 status ledger exists | **PASS** — this file |
+| 3 | Baseline market diagnostics exist | **PASS** — `IntercolonyMarketBaseline`, but see below |
+| 4 | Timeline has an owner and bounded retention | **PASS** — `IntercolonyWorldComponent`, 1,000 records |
+| 5 | Prior 0.9.3 save loads after the schema change | **OPEN** — needs a real schema-42 save |
+| 6 | No existing self-test regressed | **OPEN** — needs the suites run in game |
+
+Runtime evidence obtained: the mod loads with no errors and reports
+`State initialized fresh (schema 43)`, so the new persisted fields and the schema bump do not
+break world initialization. That is not the migration, which only a real save exercises.
+
+On criterion 6, the one plausible regression from 0.3b was ruled out by inspection rather
+than left to chance: the new write sites consume entity IDs, so any self-test asserting on a
+specific ID would break. Grepping every assertion in `Debug/` found only the timeline
+suite's own literals, which it constructs itself. Nothing else depends on ID sequencing.
+
+**Stage 1 is blocked on one action, and the ordering is not negotiable.** The baseline
+diagnostic exists but the baseline itself has not been *captured*. Stage 1.2 changes
+`DemandFor`, which changes generation, which is the thing being measured — so the capture has
+to happen first or the evidence is gone permanently. See `docs/PENDING_PLAYTESTS.md`.
+
 ## Slice log
+
+### 0.2 — market baseline (2026-08-20)
+
+**Claim:** the 0.9.3 market's behaviour can be measured, reproducibly, without altering it.
+**Files:** `Debug/IntercolonyMarketBaseline.cs` (new), `Debug/IntercolonyTimelineGuard.cs`
+(new), `Debug/IntercolonyDebugActions.cs`, `Procurement/RfqService.cs`.
+**Commit:** `fe011b7`. **Schema:** unchanged at 43.
+**Tests:** the diagnostic resamples the same cycles and compares, because a figure that moves
+between two runs of one seed is not evidence. Not yet executed in game.
+
+Measures the production owners — `MarketOpportunityGenerator.GenerateFor`,
+`RfqService.GenerateResponses`, `IntercolonyPricing.BaseValue` — rather than reimplementing
+them, so a change to any of them surfaces here instead of hiding behind a parallel copy of
+the arithmetic. Offers are generated against synthetic cycle numbers past the world's own, so
+a sample can never be confused with the live market. Probe goods come from the loaded defs by
+category, not a hardcoded vanilla list, so the baseline still means something under mods.
+
+**Known limitation:** the procurement half can only measure the current refresh window. Quote
+seeding reads `state.RefreshCount`, and advancing it would mean running real refreshes on the
+player's world. The report says so rather than implying an average.
+
+**It also fixed a consequence of 0.3b, found by audit rather than by failing.** Self-tests
+drive the real transitions on purpose, and those now record — so the order, RFQ and
+combat-clause suites were each about to write dozens of rows into the player's trading history
+for settlements that do not exist. `IntercolonyTimelineGuard` restores the list contents
+around a self-test run. Contents, not length: pruning removes from the front, so restoring by
+count leaves synthetic records where the real ones were. It is deliberately not a suppression
+flag on the recording service — a global "stop recording" bit that leaked would silently lose
+real history, which is far worse than a debug list needing cleanup. It is applied to
+self-tests only; debug actions that genuinely advance the world keep their records, because
+those events really happened.
 
 ### 0.3b — timeline write sites (2026-08-20)
 
@@ -160,16 +219,21 @@ it. This is the same standing gap already recorded for the three earlier migrati
 
 ## Next executable slice
 
-**0.2 — capture the 0.9.3 market baseline**, the last item in Stage 0. Deterministic debug
-output over several forced refreshes recording opportunities per settlement, category
-distribution, exact-good turnover, lot sizes, unit-price factor spread, RFQ response rate,
-full/partial/zero quote frequency, effective supplier quantities, and how all of it differs
-by archetype.
+**Capture the baseline, then Stage 1.1–1.2.**
 
-It is not there to preserve 0.9.3's balance. It is the evidence that tells us whether the
-Stage 2 economy has accidentally produced no offers, one dominant category everywhere,
-infinite supply, runaway prices, or archetypes that stopped mattering. **It has to be taken
-before Stage 1 touches `SettlementEconomicProfile`**, and market generation is still
-untouched today, so this is the moment.
+The capture is one debug action and it belongs to whoever is at the keyboard; the steps are in
+`docs/PENDING_PLAYTESTS.md`. Save its output into `docs/` as the recorded baseline — the point
+is to have the numbers on disk before they become unreproducible.
 
-Then the Stage 0 acceptance gate, then Stage 1.
+Then Stage 1 proper:
+
+- **1.1** keep profile generation deterministic from economy seed + settlement ID, and do not
+  persist it. Nothing to change here yet; it is a constraint on 1.2, not a task.
+- **1.2** split baseline demand from changing demand. `DemandFor(def, category)` currently
+  mixes stable identity with a rolling `Rand.Range(0.55f, 1.45f)` seeded on `RefreshCount`
+  (`Core/SettlementEconomicProfile.cs:102`). Consumers need to be able to ask for baseline
+  without silently getting cycle noise. Exact-good variation stays, but as a *stable* affinity
+  that does not move every cycle.
+- **1.4/1.5** make the identity legible in the Relations surface and keep debug visibility.
+
+1.2 is the slice the baseline exists to protect. Do not start it before the capture.

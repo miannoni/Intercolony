@@ -41,7 +41,34 @@ test result.
 
 ## Outstanding
 
-### 1.0 program — Stage 0 (commercial timeline spine, `04be001`)
+### 1.0 program — Stage 0
+
+#### Capture the market baseline — BLOCKS STAGE 1
+
+**This one is not optional and not reorderable.** Stage 1.2 changes how demand is calculated,
+which changes what the baseline measures. Once that lands, the 0.9.3 numbers cannot be
+recovered from any save — the code that produced them is gone. Capture first.
+
+**Full path.** From RimWorld's main menu, open **Options** → **General** and enable
+**Development mode**. Load a colony — any colony with settlements around it; the numbers
+describe the generator, not that particular save. Press **F12**, click the **orange bug icon**
+in the top-right toolbar, type `Capture market baseline`, and click
+**Intercolony → Capture market baseline**.
+
+It takes about a second and writes one long block to the debug log. Nothing in the world
+changes: offers are generated into a throwaway list against cycle numbers past the world's
+own, and the procurement probe quotes a request that is never filed.
+
+**Then save the output.** `powershell -ExecutionPolicy Bypass -File dev.ps1 log` will show it;
+paste the block from `=== Intercolony 0.9.3 market baseline ===` to the end into
+`docs/MARKET_BASELINE_0_9_3.md`. That file is the evidence Stage 2 gets compared against.
+
+**Pass.** The block contains a `-- determinism --` line reading `PASS`, a non-zero
+`offers generated`, and a `-- by archetype --` table where different archetypes show different
+rates. If determinism reads `FAIL`, stop and say so — the baseline is worthless and something
+is wrong with seeding.
+
+### Stage 0 self-tests (commercial timeline, `04be001` / `a502b63`)
 
 #### Timeline self-test — never run
 
@@ -61,6 +88,20 @@ drives the real production transitions (`SalesOrderService.Fail`/`.Cancel`,
 `PurchaseOrderService.Cancel`, and both `HostilityPolicy` war paths) rather than recording
 its own events, so a passing run is genuine evidence that the write sites fire — but nobody
 has run it.
+
+#### The three suites that now touch the timeline — rerun to confirm no regression
+
+Stage 0 gate criterion 6. `IntercolonyOrderSelfTest`, `IntercolonyRfqSelfTest` and
+`IntercolonyCombatClauseSelfTest` all drive transitions that now record commercial events, and
+each is wrapped in `IntercolonyTimelineGuard` so the records are rolled back afterwards.
+
+**Full path.** Same F12 → orange bug icon route. Run `Run order self-test`,
+`Run RFQ self-test` and `Run combat clause self-test`.
+
+**Pass.** Each reports its usual counts with **0 failed** and no new skips, and — the point of
+the guard — running `Dump commercial timeline` afterwards shows the **same record count as
+before the suites ran**, with no `Testholme`, `MatrixTest` or `Test faction` rows. A row from
+a settlement that does not exist means the guard is not working.
 
 #### Contract timeline events — no self-test coverage
 
