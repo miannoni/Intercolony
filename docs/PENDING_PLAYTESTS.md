@@ -41,6 +41,40 @@ test result.
 
 ## Outstanding
 
+### 1.0 program — Stage 0 (commercial timeline spine, `04be001`)
+
+#### Timeline self-test — never run
+
+**Full path.** From RimWorld's main menu, open **Options** → **General** and enable
+**Development mode**. Load any colony. Press **F12**, click the **orange bug icon** in the
+top-right toolbar, type `Run timeline self-test`, and click the exact action
+**Intercolony → Run timeline self-test**.
+
+**Pass.** The debug log begins `Commercial timeline spine self-test`, ends with a line
+reading `N passed, 0 failed`, and contains no `FAIL` line and no red exception. It also
+prints `commercial timeline restored to N record(s)` — that line is not decoration. The test
+deliberately overfills the timeline past its 1,000-record cap and prunes it, so if the
+restore is wrong it destroys real history. Confirm that count matches what was there before.
+
+**Why it is not proven.** The slice is committed on a clean build alone. Nothing writes to
+the timeline yet, so the test currently runs against an empty list; it is worth rerunning
+once slice 0.3b wires the write sites and there is real data for the restore to protect.
+
+#### Schema 42 → 43 migration under a real save — never run
+
+**Full path.** Load an actual save made with 0.9.3 (schema 42) — not a new colony. Then read
+the log with `powershell -ExecutionPolicy Bypass -File dev.ps1 log`.
+
+**Pass.** The log contains `Migrating state from schema 42 to 43` followed by
+`schema 42 -> 43: commercial timeline record spine added; history starts recording at tick N`,
+with no red errors, and every existing order, contract, request and employment still present
+afterwards.
+
+**Why `dev.ps1` cannot prove this.** It launches `-quicktest`, which creates a *new* world
+that initializes at the current schema and therefore never enters the migration path at all.
+Only opening a real save exercises it. This is the same standing gap already recorded below
+for the three earlier migrations.
+
 ### Correction-batch self-tests
 
 These are dev actions, not play-tests, but their procedures remain here so later changes can rerun
