@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -241,7 +241,7 @@ namespace Intercolony
                 distanceTiles = MarketOpportunityGenerator.DistanceToPlayer(settlement)
             };
 
-            float demand = profile.DemandFor(def, category);
+            float demand = profile.BaseDemandFor(def, category);
             if (demand < InterestThreshold)
             {
                 offer.noInterestReason = "no current interest";
@@ -290,7 +290,7 @@ namespace Intercolony
             };
 
             const IntercolonyProductCategory category = IntercolonyProductCategory.Commodities;
-            float demand = profile.DemandFor(race, category);
+            float demand = profile.BaseDemandFor(race, category);
             if (demand < InterestThreshold)
             {
                 offer.noInterestReason = "no current interest";
@@ -401,7 +401,7 @@ namespace Intercolony
                 return 0;
             }
 
-            float demand = profile.DemandFor(def, category);
+            float demand = profile.BaseDemandFor(def, category);
             return MaxAppetite(def, stuff, profile, demand);
         }
 

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -193,14 +193,14 @@ namespace Intercolony
             float total = 0f;
             foreach (IntercolonyProductCategory category in tradable)
             {
-                total += Mathf.Max(0.01f, profile.DemandFor(category));
+                total += Mathf.Max(0.01f, profile.BaseDemandFor(category));
             }
 
             float roll = Rand.Range(0f, total);
             float running = 0f;
             foreach (IntercolonyProductCategory category in tradable)
             {
-                running += Mathf.Max(0.01f, profile.DemandFor(category));
+                running += Mathf.Max(0.01f, profile.BaseDemandFor(category));
                 if (roll < running)
                 {
                     return category;

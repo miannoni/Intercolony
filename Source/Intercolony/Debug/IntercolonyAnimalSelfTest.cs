@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -914,7 +914,7 @@ namespace Intercolony
                 // reconstructed from the returned factors. Bit equality protects its operation
                 // order as well as its numerical result.
                 float expected = ThingDefOf.Steel.BaseMarketValue;
-                expected *= Mathf.Clamp(profile.DemandFor(ThingDefOf.Steel, category), 0.4f, 2f);
+                expected *= Mathf.Clamp(profile.BaseDemandFor(ThingDefOf.Steel, category), 0.4f, 2f);
                 expected *= 0.95f;
                 expected *= Mathf.Lerp(1.22f, 0.96f, Mathf.Clamp01(quantity / 2000f));
                 expected *= 1f;

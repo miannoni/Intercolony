@@ -240,7 +240,7 @@ namespace Intercolony
                 return null;
             }
 
-            float supply = profile.SupplyFor(category);
+            float supply = profile.BaseSupplyFor(category);
             if (supply < 0.35f)
             {
                 return null;

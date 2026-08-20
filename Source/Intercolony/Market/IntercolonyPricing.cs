@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text;
 using RimWorld;
 using UnityEngine;
@@ -129,7 +129,7 @@ namespace Intercolony
 
             // The category supplies the settlement's broad economic character; the good-specific
             // perturbation keeps that character from making every item in the category rank alike.
-            float demand = Mathf.Clamp(profile.DemandFor(def, category), 0.4f, 2.0f);
+            float demand = Mathf.Clamp(profile.BaseDemandFor(def, category), 0.4f, 2.0f);
             factors.Add(new PriceFactor("Local demand", demand));
 
             float wealth = WealthFactor(profile.wealthTier);

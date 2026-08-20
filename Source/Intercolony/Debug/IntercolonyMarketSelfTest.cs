@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
@@ -156,20 +156,27 @@ namespace Intercolony
                 {
                     foreach (SettlementEconomicProfile candidateProfile in profiles)
                     {
-                        float categoryDemand = candidateProfile.DemandFor(demandProbeCategory);
-                        float first = candidateProfile.DemandFor(
+                        float categoryDemand = candidateProfile.BaseDemandFor(demandProbeCategory);
+                        float first = candidateProfile.BaseDemandFor(
                             sameCategoryGoods[0], demandProbeCategory);
                         float low = first;
                         float high = first;
                         for (int i = 0; i < 3; i++)
                         {
-                            float demand = candidateProfile.DemandFor(
+                            float demand = candidateProfile.BaseDemandFor(
                                 sameCategoryGoods[i], demandProbeCategory);
-                            float repeated = candidateProfile.DemandFor(
+                            float repeated = candidateProfile.BaseDemandFor(
                                 sameCategoryGoods[i], demandProbeCategory);
                             perGoodDemandStable &= Mathf.Abs(demand - repeated) < 0.0001f;
-                            perGoodDemandBounded &= demand >= categoryDemand * 0.55f - 0.0001f &&
-                                                    demand <= categoryDemand * 1.45f + 0.0001f;
+
+                            // Bounded by the standing affinity spread, not the old 0.55-1.45
+                            // cycle roll. Asserting the loose old range would let the band widen
+                            // back out unnoticed, and a wide standing affinity is a different
+                            // thing from the cycle noise Stage 1 removed.
+                            float spread = SettlementEconomicProfile.ExactGoodAffinitySpread;
+                            perGoodDemandBounded &=
+                                demand >= categoryDemand * (1f - spread) - 0.0001f &&
+                                demand <= categoryDemand * (1f + spread) + 0.0001f;
                             low = Mathf.Min(low, demand);
                             high = Mathf.Max(high, demand);
                         }
@@ -182,6 +189,47 @@ namespace Intercolony
                 Check("same-category goods have distinct demand", perGoodDemandDiffers,
                     sameCategoryGoods == null ? "no category had three goods" : null);
                 Check("per-good demand remains a bounded category perturbation", perGoodDemandBounded);
+
+                // Stage 1 acceptance criterion 2: the baseline profile must not depend on the
+                // current refresh count. Before Stage 1.2 it did — exact-good demand was rolled
+                // per cycle off IntercolonyWorldComponent.Current.RefreshCount.
+                //
+                // Proven as purity rather than by moving the clock: forcing a real refresh to
+                // observe the difference would advance the player's whole economy — generating
+                // offers, expiring listings, running contract cycles — for one assertion. Instead
+                // two profiles carrying the same seed but nothing else in common must agree, and
+                // two seeds must disagree. A function of (seed, def) alone cannot be reading the
+                // refresh count, and the affinity is the only per-good term left.
+                ThingDef purityGood = sameCategoryGoods?[0];
+                bool affinityIsPure = true;
+                bool affinityVariesBySeed = false;
+                if (purityGood != null)
+                {
+                    SettlementEconomicProfile twinA = new SettlementEconomicProfile
+                    {
+                        seed = 8191,
+                        archetype = IntercolonyArchetype.Agricultural,
+                        wealthTier = IntercolonyWealthTier.Destitute
+                    };
+                    SettlementEconomicProfile twinB = new SettlementEconomicProfile
+                    {
+                        seed = 8191,
+                        archetype = IntercolonyArchetype.Industrial,
+                        wealthTier = IntercolonyWealthTier.Wealthy
+                    };
+                    SettlementEconomicProfile other = new SettlementEconomicProfile { seed = 8192 };
+
+                    float a = twinA.ExactGoodAffinityFor(purityGood);
+                    float b = twinB.ExactGoodAffinityFor(purityGood);
+                    affinityIsPure = Mathf.Abs(a - b) < 0.0001f;
+                    affinityVariesBySeed =
+                        Mathf.Abs(a - other.ExactGoodAffinityFor(purityGood)) > 0.0001f;
+                }
+
+                Check("exact-good affinity depends only on seed and def", affinityIsPure,
+                    purityGood == null ? "no category had three goods" : null);
+                Check("exact-good affinity differs between settlements", affinityVariesBySeed,
+                    purityGood == null ? "no category had three goods" : null);
 
                 SettlementEconomicProfile[] demandProbes = new SettlementEconomicProfile[5];
                 bool[] seenInterested = new bool[demandProbes.Length];
@@ -204,7 +252,7 @@ namespace Intercolony
                     float bestDemand = float.MinValue;
                     for (int i = 0; i < demandProbes.Length; i++)
                     {
-                        float demand = demandProbes[i].DemandFor(good, demandProbeCategory);
+                        float demand = demandProbes[i].BaseDemandFor(good, demandProbeCategory);
                         seenInterested[i] |= demand >= FindBuyerService.InterestThreshold;
                         seenUninterested[i] |= demand < FindBuyerService.InterestThreshold;
                         if (demand > bestDemand)
