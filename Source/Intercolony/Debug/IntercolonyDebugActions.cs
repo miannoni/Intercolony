@@ -529,6 +529,28 @@ namespace Intercolony
             });
         }
 
+        [DebugAction(Category, "Run timeline self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 55)]
+        private static void RunTimelineSelfTest()
+        {
+            WithState(state => IntercolonyLog.Message(IntercolonyTimelineSelfTest.Run(state)));
+        }
+
+        [DebugAction(Category, "Dump commercial timeline", allowedGameStates = AllowedGameStates.Playing, displayPriority = 82)]
+        private static void DumpCommercialTimeline()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Commercial timeline ({state.CommercialTimeline.Count} record(s), cap {CommercialTimelineService.MaxTimelineRecords})");
+                foreach (CommercialEventRecord record in state.CommercialTimeline)
+                {
+                    sb.AppendLine($"  {record}");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
         [DebugAction(Category, "Run RFQ self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 56)]
         private static void RunRfqSelfTest()
         {

@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 42;
+        public const int CurrentSaveVersion = 43;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -120,6 +120,28 @@ namespace Intercolony
             new List<CommercialHistoryEntry>();
 
         public List<CommercialHistoryEntry> CommercialHistory => commercialHistory;
+
+        /// <summary>
+        /// Detailed commercial timeline records (the 1.0 program Stage 0.3, docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 7).
+        /// Persisted and bounded by <see cref="CommercialTimelineService.MaxTimelineRecords"/>.
+        /// </summary>
+        private List<CommercialEventRecord> commercialTimeline =
+            new List<CommercialEventRecord>();
+
+        public List<CommercialEventRecord> CommercialTimeline => commercialTimeline;
+
+        /// <summary>
+        /// When the first commercial timeline entry was recorded, or <see cref="CommercialTimelineService.NoHistory"/> before any.
+        /// Allows distinguishing an unmigrated/fresh colony with no trade from a migrated save where recording began at upgrade
+        /// (docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 0.4, Stage 7.3).
+        /// </summary>
+        private int commercialTimelineStartTick = CommercialTimelineService.NoHistory;
+
+        public int CommercialTimelineStartTick
+        {
+            get => commercialTimelineStartTick;
+            set => commercialTimelineStartTick = value;
+        }
 
         public CommercialHistoryEntry FindCommercialHistory(int settlementId, ThingDef thingDef)
         {
@@ -882,6 +904,12 @@ namespace Intercolony
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
             Scribe_Collections.Look(ref commercialHistory, "commercialHistory", LookMode.Deep);
             Scribe_Collections.Look(
+                ref commercialTimeline, "commercialTimeline", LookMode.Deep);
+            Scribe_Values.Look(
+                ref commercialTimelineStartTick,
+                "commercialTimelineStartTick",
+                CommercialTimelineService.NoHistory);
+            Scribe_Collections.Look(
                 ref supplierOfferConsumption, "supplierOfferConsumption", LookMode.Deep);
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
@@ -978,6 +1006,24 @@ namespace Intercolony
                             $"Dropped {nullEntries} null and {unresolvableEntries} unresolvable " +
                             "commercial-history entries while loading. Unresolvable usually means " +
                             "a mod supplying the item was removed.");
+                    }
+                }
+
+                if (commercialTimeline == null)
+                {
+                    commercialTimeline = new List<CommercialEventRecord>();
+                }
+                else
+                {
+                    // Deliberately drops null entries only and does NOT drop records with an unresolvable thingDef:
+                    // CommercialHistoryEntry records are keyed by ThingDef and are meaningless without one,
+                    // whereas a CommercialEventRecord still reads as a valid historical event even when the item's mod
+                    // has been removed.
+                    int nullTimelineEntries = commercialTimeline.RemoveAll(e => e == null);
+                    if (nullTimelineEntries > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullTimelineEntries} null commercial timeline record(s) while loading.");
                     }
                 }
 
@@ -1306,6 +1352,7 @@ namespace Intercolony
 
             LedgerService.Prune(this);
             OrderHistoryService.Prune(this);
+            CommercialTimelineService.Prune(this);
 
             int expired = ExpireStaleOpportunities();
             int withdrawn = DropInaccessibleOpportunities();
@@ -2009,6 +2056,18 @@ namespace Intercolony
                     $"{initializedQuotes} live legacy quote(s) were assigned to it.");
             }
 
+            if (saveVersion < 43)
+            {
+                // 42 -> 43 added the detailed commercial timeline spine (the 1.0 program Stage 0.3).
+                // Purely additive: a save from schema 42 has no timeline records yet,
+                // which is the correct initial state. Existing compact cumulative
+                // commercial history (CommercialHistoryEntry) is preserved.
+                // Recording starts at upgrade time (docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 0.4, Stage 7.3).
+                commercialTimelineStartTick = GenTicks.TicksGame;
+                IntercolonyLog.Message(
+                    $"  schema 42 -> 43: commercial timeline record spine added; history starts recording at tick {commercialTimelineStartTick}.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -2093,6 +2152,14 @@ namespace Intercolony
                 }
             }
 
+            foreach (CommercialEventRecord record in commercialTimeline)
+            {
+                if (record != null && record.id > highest)
+                {
+                    highest = record.id;
+                }
+            }
+
             if (highest >= nextId)
             {
                 IntercolonyLog.Warning(
@@ -2152,6 +2219,10 @@ namespace Intercolony
                 }
             }
 
+            sb.AppendLine($"  timeline     : {commercialTimeline.Count} record(s)" +
+                          (commercialTimelineStartTick == CommercialTimelineService.NoHistory
+                              ? ", no history yet"
+                              : $", since tick {commercialTimelineStartTick}"));
             sb.AppendLine($"  ledger       : {ledger.Count} entr(ies)" +
                           (ledgerStartTick == LedgerService.NoHistory
                               ? ", no history yet"
