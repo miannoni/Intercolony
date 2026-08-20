@@ -422,6 +422,16 @@ namespace Intercolony
             // and buyer collection arrive here, and neither can record the same order twice.
             state?.RecordCompletedSale(order);
 
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.SaleCompleted,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.ThingDef,
+                order.deliveredQuantity,
+                order.paidSilver);
+
             GrantDiscountGoodwill(order);
 
             // §27: on-time delivery is worth more than a late one, so the distinction is made
@@ -853,6 +863,14 @@ namespace Intercolony
             order.status = SalesOrderStatus.Failed;
             order.outcomeNote = note;
             ReputationService.NoteOrderFailed(IntercolonyWorldComponent.Current, order);
+            CommercialTimelineService.Record(
+                CommercialEventType.SaleFailed,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.ThingDef,
+                order.Quantity,
+                compactDetail: note);
             IntercolonyLog.Message($"Order {order.id} failed: {note}");
             Messages.Message($"Order failed for {order.settlementName}: {note}",
                 MessageTypeDefOf.NegativeEvent, historical: true);
@@ -870,6 +888,14 @@ namespace Intercolony
             order.status = SalesOrderStatus.Cancelled;
             order.outcomeNote = "Cancelled by the player.";
             ReputationService.NoteOrderCancelled(IntercolonyWorldComponent.Current, order);
+            CommercialTimelineService.Record(
+                CommercialEventType.SaleCancelled,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.ThingDef,
+                order.Quantity,
+                compactDetail: "Withdrawn by the player");
             IntercolonyLog.Message($"Order {order.id} cancelled by the player.");
             return true;
         }

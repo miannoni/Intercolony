@@ -56,9 +56,20 @@ prints `commercial timeline restored to N record(s)` — that line is not decora
 deliberately overfills the timeline past its 1,000-record cap and prunes it, so if the
 restore is wrong it destroys real history. Confirm that count matches what was there before.
 
-**Why it is not proven.** The slice is committed on a clean build alone. Nothing writes to
-the timeline yet, so the test currently runs against an empty list; it is worth rerunning
-once slice 0.3b wires the write sites and there is real data for the restore to protect.
+**Why it is not proven.** Both slices are committed on a clean build alone. The test now
+drives the real production transitions (`SalesOrderService.Fail`/`.Cancel`,
+`PurchaseOrderService.Cancel`, and both `HostilityPolicy` war paths) rather than recording
+its own events, so a passing run is genuine evidence that the write sites fire — but nobody
+has run it.
+
+#### Contract timeline events — no self-test coverage
+
+`ContractStarted`, `ContractCompleted`, `ContractFailed` and `ContractCancelled` are wired at
+six sites in `ContractService` but are **not** covered by the timeline self-test: driving them
+needs a live contract with cycles running, which `IntercolonyContractSelfTest` already builds.
+The cheapest proof is play — accept a supply agreement and confirm a `ContractStarted` row
+appears in **Dump commercial timeline** (same F12 menu). Worth folding into the contract
+self-test if Stage 5 touches these paths anyway.
 
 #### Schema 42 → 43 migration under a real save — never run
 

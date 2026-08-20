@@ -457,6 +457,14 @@ namespace Intercolony
             order.status = PurchaseOrderStatus.Completed;
             order.outcomeNote = note;
             ReputationService.NotePurchaseCompleted(IntercolonyWorldComponent.Current, order);
+            CommercialTimelineService.Record(
+                CommercialEventType.PurchaseCompleted,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.thingDef,
+                order.quantity,
+                order.paidSilver);
             IntercolonyLog.Message($"Purchase {order.id} completed. {note}");
         }
 
@@ -500,6 +508,19 @@ namespace Intercolony
                     $"{order.quantity}x {order.thingDef?.label ?? "goods"} refunded");
             }
 
+            // Recorded here rather than at the status assignment above so the timeline carries the
+            // silver actually returned. The early return before it means a refund that paid nothing
+            // is not a default, and so is not an event either.
+            CommercialTimelineService.Record(
+                CommercialEventType.PurchaseFailed,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.thingDef,
+                order.quantity,
+                refundedSilver,
+                reason);
+
             IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {refundedSilver} silver.");
             Messages.Message(
                 $"{order.settlementName} defaulted on your order. {refundedSilver} silver refunded." +
@@ -530,6 +551,15 @@ namespace Intercolony
             order.status = PurchaseOrderStatus.Cancelled;
             order.outcomeNote = $"Cancelled by the player. {order.paidSilver} silver forfeited.";
             ReputationService.NotePurchaseCancelled(IntercolonyWorldComponent.Current, order);
+            CommercialTimelineService.Record(
+                CommercialEventType.PurchaseCancelled,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.thingDef,
+                order.quantity,
+                order.paidSilver,
+                "Withdrawn by the player; payment forfeited");
             IntercolonyLog.Message($"Purchase {order.id} cancelled; {order.paidSilver} silver forfeited.");
             Messages.Message(
                 $"Purchase #{order.id} cancelled; {order.paidSilver} silver was forfeited.",

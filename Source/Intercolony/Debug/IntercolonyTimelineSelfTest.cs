@@ -64,6 +64,7 @@ namespace Intercolony
             try
             {
                 CheckRecording(r, state);
+                CheckWriteSites(r, state);
                 CheckQuerying(r, state);
                 CheckRetentionAndPruning(r, state);
                 CheckScribeRoundTrip(r);
@@ -143,17 +144,10 @@ namespace Intercolony
             r.Check(!string.IsNullOrEmpty(nullDefStr) && !nullDefStr.Contains("x ") && nullDefStr.Contains("ContractStarted"),
                 "ToString handles null thingDef without throwing", nullDefStr);
 
-            // Verify all enum types can be recorded without issue
-            CommercialEventType[] allTypes = new CommercialEventType[]
-            {
-                CommercialEventType.SaleCompleted,
-                CommercialEventType.SaleFailed,
-                CommercialEventType.PurchaseCompleted,
-                CommercialEventType.PurchaseCancelled,
-                CommercialEventType.ContractStarted,
-                CommercialEventType.ContractCompleted,
-                CommercialEventType.ContractFailed
-            };
+            // Read from the enum rather than a hand-written list, so a type added later cannot
+            // leave this assertion quietly testing an outdated set.
+            CommercialEventType[] allTypes =
+                (CommercialEventType[])Enum.GetValues(typeof(CommercialEventType));
 
             int typeCount = 0;
             foreach (CommercialEventType eventType in allTypes)
@@ -166,7 +160,97 @@ namespace Intercolony
                 }
             }
 
-            r.Check(typeCount == allTypes.Length, "all initial CommercialEventType variants record cleanly", $"{typeCount}/{allTypes.Length}");
+            r.Check(typeCount == allTypes.Length, "every CommercialEventType variant records cleanly", $"{typeCount}/{allTypes.Length}");
+        }
+
+        // --- Write sites -------------------------------------------------------------------
+
+        /// <summary>
+        /// Drives the real order transitions rather than calling <see cref="CommercialTimelineService"/>
+        /// directly, because the claim under test is that the production paths record at all — a test
+        /// that recorded its own events would pass with every write site deleted.
+        ///
+        /// The settlement IDs are deliberately fictitious. <c>ReputationService.ForSettlement</c>
+        /// resolves through <c>IntercolonyMarketAccess.FindSettlement</c>, which returns null for an
+        /// ID no settlement owns, so the reputation hooks on these paths no-op and leave no records
+        /// behind. <c>IntercolonyOrderSelfTest</c> relies on the same property.
+        /// </summary>
+        private static void CheckWriteSites(Results r, IntercolonyWorldComponent state)
+        {
+            const int settlementId = 9101;
+            ThingDef def = ThingDefOf.Silver;
+
+            SalesOrder failing = NewSalesOrder(state, settlementId, def);
+            r.Check(SalesOrderService.Fail(failing, "test failure"), "Fail transition succeeded");
+            r.Check(FindRecordFor(state, failing.id, CommercialEventType.SaleFailed) != null,
+                "SalesOrderService.Fail writes a SaleFailed record");
+
+            SalesOrder cancelling = NewSalesOrder(state, settlementId, def);
+            r.Check(SalesOrderService.Cancel(cancelling), "Cancel transition succeeded");
+            CommercialEventRecord cancelRecord =
+                FindRecordFor(state, cancelling.id, CommercialEventType.SaleCancelled);
+            r.Check(cancelRecord != null, "SalesOrderService.Cancel writes a SaleCancelled record");
+            r.Check(cancelRecord != null && cancelRecord.settlementName == "Testholme",
+                "the write site freezes the settlement name", cancelRecord?.settlementName);
+
+            // A war voids an order without blaming the player, so it must not land as SaleFailed.
+            SalesOrder atWar = NewSalesOrder(state, settlementId, def);
+            r.Check(HostilityPolicy.ApplyToSalesOrder(atWar, sendLetter: false),
+                "war cancellation transition succeeded");
+            r.Check(FindRecordFor(state, atWar.id, CommercialEventType.SaleCancelled) != null,
+                "a war-voided order records as cancelled, not failed");
+            r.Check(FindRecordFor(state, atWar.id, CommercialEventType.SaleFailed) == null,
+                "a war-voided order records no failure against the player");
+
+            PurchaseOrder purchase = NewPurchaseOrder(state, settlementId, def);
+            r.Check(PurchaseOrderService.Cancel(purchase), "purchase cancel transition succeeded");
+            r.Check(FindRecordFor(state, purchase.id, CommercialEventType.PurchaseCancelled) != null,
+                "PurchaseOrderService.Cancel writes a PurchaseCancelled record");
+
+            // The supplier failing to deliver is not the player withdrawing.
+            PurchaseOrder lost = NewPurchaseOrder(state, settlementId, def);
+            r.Check(HostilityPolicy.ApplyToPurchaseOrder(lost, sendLetter: false),
+                "purchase lost-to-war transition succeeded");
+            r.Check(FindRecordFor(state, lost.id, CommercialEventType.PurchaseFailed) != null,
+                "an order lost to war records as a purchase failure");
+            r.Check(FindRecordFor(state, lost.id, CommercialEventType.PurchaseCancelled) == null,
+                "an order lost to war is not recorded as a player cancellation");
+        }
+
+        private static SalesOrder NewSalesOrder(
+            IntercolonyWorldComponent state, int settlementId, ThingDef def)
+        {
+            return new SalesOrder
+            {
+                id = state.NextId(),
+                settlementId = settlementId,
+                settlementName = "Testholme",
+                factionName = "Test faction",
+                line = new OrderLine(def, 10),
+                status = SalesOrderStatus.Accepted
+            };
+        }
+
+        private static PurchaseOrder NewPurchaseOrder(
+            IntercolonyWorldComponent state, int settlementId, ThingDef def)
+        {
+            return new PurchaseOrder
+            {
+                id = state.NextId(),
+                settlementId = settlementId,
+                settlementName = "Testholme",
+                factionName = "Test faction",
+                thingDef = def,
+                quantity = 10,
+                status = PurchaseOrderStatus.Confirmed
+            };
+        }
+
+        private static CommercialEventRecord FindRecordFor(
+            IntercolonyWorldComponent state, int relatedEntityId, CommercialEventType type)
+        {
+            return state.CommercialTimeline.Find(
+                e => e != null && e.relatedEntityId == relatedEntityId && e.type == type);
         }
 
         // --- Querying ----------------------------------------------------------------------

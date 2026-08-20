@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 0 — Program spine
-Current slice:      0.3b — wire the timeline write sites
-Last completed:     0.3 — commercial timeline spine (committed, self-test not yet run)
+Current slice:      0.2 — capture the 0.9.3 market baseline
+Last completed:     0.3b — timeline write sites (committed, self-test not yet run)
 Current save schema: 43
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -23,6 +23,45 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [ ] Stage 8 — 1.0 integration and release gate
 
 ## Slice log
+
+### 0.3b — timeline write sites (2026-08-20)
+
+**Claim:** every terminal commercial transition in production code writes exactly one
+timeline record, at the point the status actually changes.
+**Files:** `Orders/SalesOrderService.cs`, `Procurement/PurchaseOrderService.cs`,
+`Contracts/ContractService.cs`, `Core/HostilityPolicy.cs`,
+`Core/CommercialEventRecord.cs`, `Debug/IntercolonyTimelineSelfTest.cs`.
+**Schema:** unchanged at 43. Scribe writes enums by name, so the three added
+`CommercialEventType` values need no migration.
+**Tests:** `CheckWriteSites` drives the real transitions — `SalesOrderService.Fail`,
+`.Cancel`, `PurchaseOrderService.Cancel`, and both `HostilityPolicy` war paths — and asserts
+the record appears. It deliberately does not call the timeline service itself: a test that
+recorded its own events would pass with every write site deleted. Still not executed in game.
+
+**Every write goes where the status assignment already is**, so a record cannot exist for an
+event that did not happen. `SalesOrderService.Complete` already documented itself as the
+exactly-once boundary for both delivery and collection; the others (`Fail`, `Cancel`,
+`Refund`) are each documented as the only path to their status.
+
+**Three enum values were added, and the reason is a correctness one.** The plan's initial
+list has no `SaleCancelled`, `PurchaseFailed` or `ContractCancelled`, but all three
+transitions exist in the code today and the existing values misstate them. `HostilityPolicy`
+tells the player in as many words that a war-voided order "does not count against you as a
+supplier" — recording it as `SaleFailed` would contradict the letter the player just read.
+A supplier defaulting is not the player cancelling. The enum now covers
+completed/failed/cancelled in both directions.
+
+**Two transitions are deliberately not recorded, and say so at the site.** War *suspension*
+of a supply agreement and the in-flight cycle it withdraws: suspension has no event type
+yet, so recording only its side effect would leave a cancelled order in the player's history
+with nothing to explain it, and the cycle is re-issued on resume anyway. And contract
+*refusal*: no agreement began, and the other two decline paths are a button click and an
+offer lapsing. Both belong with Stage 5, which owns proposal and negotiation outcomes.
+
+**A near miss worth remembering.** `RecurringContract.TryAccept` has two production callers,
+not one — the incoming-offer path and the player-proposal path added in 0.9.1. Wiring only
+`AcceptOffer` would have silently dropped every agreement the player initiated. Grepping the
+callers of the funnel, rather than trusting the first one found, is what caught it.
 
 ### 0.3 — commercial timeline spine (2026-08-20)
 
@@ -121,13 +160,16 @@ it. This is the same standing gap already recorded for the three earlier migrati
 
 ## Next executable slice
 
-**0.3b — wire the timeline write sites.** The spine is committed but nothing writes to it.
-Record `SaleCompleted` / `SaleFailed` from the sales-order transitions, `PurchaseCompleted`
-/ `PurchaseCancelled` from `PurchaseOrderService`, and the three contract events from
-`ContractService`. Each write goes where the status transition already happens, so a record
-cannot be created for an event that did not occur. Freeze the settlement name at the call
-site.
+**0.2 — capture the 0.9.3 market baseline**, the last item in Stage 0. Deterministic debug
+output over several forced refreshes recording opportunities per settlement, category
+distribution, exact-good turnover, lot sizes, unit-price factor spread, RFQ response rate,
+full/partial/zero quote frequency, effective supplier quantities, and how all of it differs
+by archetype.
 
-Then **0.2 — capture the 0.9.3 market baseline** before Stage 1 changes it. 0.2 is listed
-before 0.3 in the plan but does not depend on it, and the baseline is only meaningful while
-market generation is still untouched — which it still is.
+It is not there to preserve 0.9.3's balance. It is the evidence that tells us whether the
+Stage 2 economy has accidentally produced no offers, one dominant category everywhere,
+infinite supply, runaway prices, or archetypes that stopped mattering. **It has to be taken
+before Stage 1 touches `SettlementEconomicProfile`**, and market generation is still
+untouched today, so this is the moment.
+
+Then the Stage 0 acceptance gate, then Stage 1.

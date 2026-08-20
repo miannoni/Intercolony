@@ -8,15 +8,31 @@ namespace Intercolony
     /// Identifies the kind of commercial event recorded in the timeline
     /// (docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 0.3, read in Stage 7).
     /// </summary>
+    /// <remarks>
+    /// One value per commercial transition that actually exists in the code today, and no more.
+    ///
+    /// Failure and cancellation are separate on purpose, in both directions. A cancelled sale is
+    /// the player withdrawing, or a war voiding the order — <see cref="HostilityPolicy"/> tells the
+    /// player outright that it "does not count against you as a supplier" — while a failed sale is
+    /// a missed deadline. A cancelled purchase is the player forfeiting their payment; a failed one
+    /// is the supplier defaulting. Collapsing either pair would make the timeline state something
+    /// that did not happen, which is worse than recording nothing.
+    ///
+    /// Scribe writes enums by name, so new values may be appended without a schema change, but an
+    /// existing name must never be renamed or reordered out from under a save.
+    /// </remarks>
     public enum CommercialEventType
     {
         SaleCompleted,
         SaleFailed,
+        SaleCancelled,
         PurchaseCompleted,
+        PurchaseFailed,
         PurchaseCancelled,
         ContractStarted,
         ContractCompleted,
-        ContractFailed
+        ContractFailed,
+        ContractCancelled
     }
 
     /// <summary>

@@ -245,6 +245,17 @@ namespace Intercolony
                     LetterDefOf.NeutralEvent);
             }
 
+            // Cancelled rather than failed, matching the letter above: a war voiding an order is
+            // explicitly not held against the player as a supplier.
+            CommercialTimelineService.Record(
+                CommercialEventType.SaleCancelled,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.ThingDef,
+                order.Quantity,
+                compactDetail: $"Void: war with {order.factionName}");
+
             IntercolonyLog.Message($"Sales order {order.id} cancelled by war with {order.factionName}.");
             return true;
         }
@@ -302,6 +313,18 @@ namespace Intercolony
                     LetterDefOf.NegativeEvent);
             }
 
+            // The silver is gone rather than refunded, so this is the supplier failing to deliver
+            // and not the player withdrawing. Recorded with what was lost, not what was returned.
+            CommercialTimelineService.Record(
+                CommercialEventType.PurchaseFailed,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.thingDef,
+                order.quantity,
+                order.paidSilver,
+                $"Lost to war with {order.factionName}; nothing recovered");
+
             IntercolonyLog.Message(
                 $"Purchase order {order.id} lost to war with {order.factionName}; " +
                 $"{order.paidSilver} silver forfeited.");
@@ -357,6 +380,11 @@ namespace Intercolony
 
             // The cycle in flight is withdrawn rather than failed — the player cannot deliver to an
             // enemy, so counting it against them would be punishing them for the war.
+            //
+            // Deliberately not written to the commercial timeline. Suspension itself has no event
+            // type yet, so recording only its side effect would leave a cancelled order in the
+            // player's history with nothing to explain it, and the cycle is re-issued on resume
+            // anyway. Suspension and resume belong with the relationship work in Stage 5.
             if (contract.activeOrderId != 0)
             {
                 SalesOrder order = state?.FindOrder(contract.activeOrderId);
