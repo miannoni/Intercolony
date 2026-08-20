@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 43;
+        public const int CurrentSaveVersion = 44;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -141,6 +141,86 @@ namespace Intercolony
         {
             get => commercialTimelineStartTick;
             set => commercialTimelineStartTick = value;
+        }
+
+        /// <summary>
+        /// Current market pressure, for the settlements that currently have any
+        /// (docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 2.1).
+        ///
+        /// Sparse on purpose: a settlement whose economy is undisturbed has no record, and one
+        /// that reverts to neutral loses its record again on the refresh. Absence means neutral,
+        /// so an untouched world persists nothing at all.
+        /// </summary>
+        private List<SettlementMarketState> marketStates = new List<SettlementMarketState>();
+
+        public List<SettlementMarketState> MarketStates => marketStates;
+
+        /// <summary>
+        /// Index over <see cref="marketStates"/>. Not persisted and not authoritative — the list
+        /// is. Rebuilt on load and maintained on insert, because effective demand is asked for
+        /// per settlement per good and a linear scan would be on that path.
+        /// </summary>
+        private Dictionary<int, SettlementMarketState> marketStateIndex;
+
+        /// <summary>
+        /// This settlement's current pressure, or null when it is undisturbed and
+        /// <paramref name="createIfMissing"/> is false. A null answer means neutral; it is never
+        /// an error.
+        /// </summary>
+        public SettlementMarketState MarketStateFor(int settlementId, bool createIfMissing = false)
+        {
+            if (settlementId < 0)
+            {
+                return null;
+            }
+
+            if (marketStateIndex == null)
+            {
+                RebuildMarketStateIndex();
+            }
+
+            if (marketStateIndex.TryGetValue(settlementId, out SettlementMarketState existing))
+            {
+                return existing;
+            }
+
+            if (!createIfMissing)
+            {
+                return null;
+            }
+
+            SettlementMarketState created = new SettlementMarketState(settlementId);
+            marketStates.Add(created);
+            marketStateIndex[settlementId] = created;
+            return created;
+        }
+
+        private void RebuildMarketStateIndex()
+        {
+            marketStateIndex = new Dictionary<int, SettlementMarketState>();
+            foreach (SettlementMarketState state in marketStates)
+            {
+                if (state != null && state.settlementId >= 0)
+                {
+                    marketStateIndex[state.settlementId] = state;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drops records that have settled back to neutral. Without this the sparse representation
+        /// would be sparse only until the first shock and then permanent.
+        /// </summary>
+        public int PruneNeutralMarketStates()
+        {
+            int removed = marketStates.RemoveAll(
+                state => state == null || state.settlementId < 0 || state.IsNeutral);
+            if (removed > 0)
+            {
+                RebuildMarketStateIndex();
+            }
+
+            return removed;
         }
 
         public CommercialHistoryEntry FindCommercialHistory(int settlementId, ThingDef thingDef)
@@ -905,6 +985,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref commercialHistory, "commercialHistory", LookMode.Deep);
             Scribe_Collections.Look(
                 ref commercialTimeline, "commercialTimeline", LookMode.Deep);
+            Scribe_Collections.Look(ref marketStates, "marketStates", LookMode.Deep);
             Scribe_Values.Look(
                 ref commercialTimelineStartTick,
                 "commercialTimelineStartTick",
@@ -1026,6 +1107,21 @@ namespace Intercolony
                             $"Dropped {nullTimelineEntries} null commercial timeline record(s) while loading.");
                     }
                 }
+
+                if (marketStates == null)
+                {
+                    marketStates = new List<SettlementMarketState>();
+                }
+                else
+                {
+                    // A record that survived to disk already neutral is dead weight; a null child
+                    // is a corrupt save. Dropping both here means the index below never has to
+                    // consider either case.
+                    marketStates.RemoveAll(
+                        s => s == null || s.settlementId < 0 || s.IsNeutral);
+                }
+
+                marketStateIndex = null;
 
                 if (supplierOfferConsumption == null)
                 {
@@ -1353,6 +1449,7 @@ namespace Intercolony
             LedgerService.Prune(this);
             OrderHistoryService.Prune(this);
             CommercialTimelineService.Prune(this);
+            PruneNeutralMarketStates();
 
             int expired = ExpireStaleOpportunities();
             int withdrawn = DropInaccessibleOpportunities();
@@ -2066,6 +2163,18 @@ namespace Intercolony
                 commercialTimelineStartTick = GenTicks.TicksGame;
                 IntercolonyLog.Message(
                     $"  schema 42 -> 43: commercial timeline record spine added; history starts recording at tick {commercialTimelineStartTick}.");
+            }
+
+            if (saveVersion < 44)
+            {
+                // 43 -> 44 added per-settlement market pressure. Nothing to write: pressure is
+                // sparse and absence means neutral, which is exactly the right starting state.
+                // The plan is explicit that a migrated save must not have historical shortages
+                // inferred for it from old random rolls - there were none, the old variation was
+                // noise, and inventing pressure here would fabricate an economy the player never
+                // traded through.
+                IntercolonyLog.Message(
+                    "  schema 43 -> 44: market pressure added; every settlement starts undisturbed.");
             }
 
             saveVersion = CurrentSaveVersion;

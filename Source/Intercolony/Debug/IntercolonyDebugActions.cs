@@ -529,6 +529,32 @@ namespace Intercolony
             });
         }
 
+        [DebugAction(Category, "Run economy self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 53)]
+        private static void RunEconomySelfTest()
+        {
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyEconomySelfTest.Run(state)));
+        }
+
+        [DebugAction(Category, "Dump market pressure", allowedGameStates = AllowedGameStates.Playing, displayPriority = 81)]
+        private static void DumpMarketPressure()
+        {
+            WithState(state =>
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine(
+                    $"Market pressure ({state.MarketStates.Count} settlement(s) currently disturbed; " +
+                    "absent means neutral)");
+                foreach (SettlementMarketState pressure in state.MarketStates)
+                {
+                    Settlement settlement =
+                        IntercolonyMarketAccess.FindSettlement(pressure.settlementId);
+                    sb.AppendLine($"  {settlement?.Label ?? "(gone)"}: {pressure}");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
         [DebugAction(Category, "Capture market baseline", allowedGameStates = AllowedGameStates.Playing, displayPriority = 54)]
         private static void CaptureMarketBaseline()
         {
