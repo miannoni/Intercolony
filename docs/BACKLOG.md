@@ -16,6 +16,33 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## Suppliers quote ancient ruins scenery
+
+**Raised:** 2026-08-20, from the Stage 0.2 market baseline.
+**Size:** small — probably one classifier rule.
+**Status:** open, not in the 1.0 program.
+
+The baseline's first probe basket took the alphabetically first classifiable def per category
+and landed on `AncientAPC`, `AncientBandNode` and `AncientCryptosleepCasket`. All three were
+quoted by suppliers: 88, 69 and 79 settlements respectively offered to sell them, an Ancient
+Cryptosleep Casket at a mean 723 silver.
+
+These are map scenery from ancient ruins. Whether a settlement should be able to *manufacture
+and deliver* one is a real question — vanilla treats them as things you find, not things anyone
+makes. `IntercolonyProductClassifier` classifies them as tradeable products, which is what puts
+them in supplier reach.
+
+Not fixed now because it is outside the 1.0 program's scope and nothing in that program depends
+on it: the baseline's probe basket was changed to rank by observed demand instead, so the
+diagnostic no longer asks about goods nobody trades. But a player who requests an Ancient APC
+and gets 88 quotes is seeing something odd, and the same classifier rule presumably lets them
+be *demanded* too.
+
+Worth checking against `IntercolonyTradeBlacklistDef`, which already exists to exclude defs and
+currently excludes 10.
+
+---
+
 ## Procurement should be as complete a system as selling
 
 **Raised:** 2026-08-07, by Matteo, while looking at the tab structure.

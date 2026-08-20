@@ -3,9 +3,9 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 0 — Program spine, code-complete; gate 4/6
-Current slice:      BLOCKED — capture the market baseline before Stage 1 touches generation
-Last completed:     0.2 — market baseline diagnostic (committed, not yet run)
+Current stage:      Stage 1 — Settlement economies
+Current slice:      1.2 — separate baseline demand from changing demand
+Last completed:     Stage 0, gate 5/6 (only the self-test rerun is open)
 Current save schema: 43
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -31,24 +31,52 @@ a code gap.
 |---|---|---|
 | 1 | Clean build passes | **PASS** — 0 errors, 0 warnings |
 | 2 | 1.0 status ledger exists | **PASS** — this file |
-| 3 | Baseline market diagnostics exist | **PASS** — `IntercolonyMarketBaseline`, but see below |
+| 3 | Baseline market diagnostics exist | **PASS** — captured to `docs/MARKET_BASELINE_0_9_3.md` |
 | 4 | Timeline has an owner and bounded retention | **PASS** — `IntercolonyWorldComponent`, 1,000 records |
-| 5 | Prior 0.9.3 save loads after the schema change | **OPEN** — needs a real schema-42 save |
+| 5 | Prior 0.9.3 save loads after the schema change | **PASS** — see below |
 | 6 | No existing self-test regressed | **OPEN** — needs the suites run in game |
 
-Runtime evidence obtained: the mod loads with no errors and reports
-`State initialized fresh (schema 43)`, so the new persisted fields and the schema bump do not
-break world initialization. That is not the migration, which only a real save exercises.
+### Criterion 5 — the migration ran for real, and this is the first time
+
+A 21.5 MB schema-42 colony save (`Fenhana` / `Intercolony 0.9.3 preflight`, economy seed
+`-1586549745`, refresh 432, `nextId 6826`) was loaded on the schema-43 build. The log:
+
+```
+[Intercolony] State loaded (schema 42, nextId 6826).
+[Intercolony] Migrating state from schema 42 to 43.
+[Intercolony]   schema 42 -> 43: commercial timeline record spine added;
+                history starts recording at tick 6473557.
+```
+
+Zero exceptions in the session and no Intercolony warnings or dropped records.
+
+**This matters beyond Stage 0.** `CLAUDE.md` records that none of the three earlier migrations
+had ever run in the real load order — only in isolated throwaway installs — and names it the
+top item in `docs/PENDING_PLAYTESTS.md`. This run went through the ordinary path: real save,
+real load order, real mod list. `dev.ps1 run -MainMenu` was added so it stays repeatable;
+`-quicktest` cannot do it, because a new world initializes at the current schema and never
+enters the migration at all.
 
 On criterion 6, the one plausible regression from 0.3b was ruled out by inspection rather
 than left to chance: the new write sites consume entity IDs, so any self-test asserting on a
 specific ID would break. Grepping every assertion in `Debug/` found only the timeline
 suite's own literals, which it constructs itself. Nothing else depends on ID sequencing.
 
-**Stage 1 is blocked on one action, and the ordering is not negotiable.** The baseline
-diagnostic exists but the baseline itself has not been *captured*. Stage 1.2 changes
-`DemandFor`, which changes generation, which is the thing being measured — so the capture has
-to happen first or the evidence is gone permanently. See `docs/PENDING_PLAYTESTS.md`.
+**Stage 1 is unblocked.** The baseline is captured to `docs/MARKET_BASELINE_0_9_3.md`, taken on
+a persistent save rather than a throwaway world, so the same economy can be measured again after
+Stage 2 instead of a merely similar one.
+
+The capture exposed two flaws in the diagnostic itself, both since fixed, both worth a rerun to
+fold into the record:
+
+- **It reported generator appetite as though it were market size.** `MaxLiveOpportunities` is a
+  global flat ceiling on live offers; a real refresh in the log created 13 while the sample
+  projected ~200 per cycle. The report now prints the ceiling and says plainly that the market
+  is ceiling-bound, not generator-bound. Appetite is still the right measurement — the ceiling
+  would mask a dead generator until it fell below the cap — but reporting it unqualified would
+  have misled every later comparison.
+- **The probe basket was junk.** Alphabetically-first-per-category selected ancient ruins
+  scenery. It now ranks by observed demand from the same sample.
 
 ## Slice log
 

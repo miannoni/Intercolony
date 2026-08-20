@@ -70,7 +70,7 @@ namespace Intercolony
             AppendTopGoods(sb, sample);
             AppendLotsAndPrices(sb, sample);
             AppendDeterminism(sb, state, settlements, refreshSamples, sample);
-            AppendProcurement(sb, state, settlements.Count);
+            AppendProcurement(sb, state, settlements.Count, sample);
 
             return sb.ToString();
         }
@@ -171,14 +171,26 @@ namespace Intercolony
         private static void AppendOpportunityTotals(
             StringBuilder sb, List<MarketOpportunity> sample, int settlementCount, int refreshSamples)
         {
-            sb.AppendLine("-- offer generation --");
+            sb.AppendLine("-- offer generation (appetite, not what the player sees) --");
             float perCycle = sample.Count / (float)refreshSamples;
             float perSettlementCycle = sample.Count / (float)(refreshSamples * settlementCount);
+            int ceiling = IntercolonyWorldComponent.MaxLiveOpportunities;
             sb.AppendLine($"  offers generated       {sample.Count}");
             sb.AppendLine($"  per cycle              {perCycle:F2}");
             sb.AppendLine($"  per settlement/cycle   {perSettlementCycle:F3}");
-            sb.AppendLine($"  outstanding cap        {MarketOpportunityGenerator.MaxPerSettlement} " +
-                          "per settlement (not applied to these figures)");
+            sb.AppendLine($"  per-settlement cap     {MarketOpportunityGenerator.MaxPerSettlement} " +
+                          "outstanding (not applied above)");
+            sb.AppendLine($"  GLOBAL LIVE CEILING    {ceiling}   <- what actually reaches the market");
+            sb.AppendLine();
+            sb.AppendLine($"  The figures above are what the generator *wants* to post. The market is");
+            sb.AppendLine($"  ceiling-bound, not generator-bound: GenerateOpportunities stops at");
+            sb.AppendLine($"  {ceiling} live offers however many settlements ask. On this world the");
+            sb.AppendLine($"  generator's appetite is ~{perCycle:F0}/cycle against a ceiling of {ceiling}, so");
+            sb.AppendLine($"  roughly {(perCycle <= 0f ? 0f : 100f - Mathf.Min(100f, ceiling / perCycle * 100f)):F0}% of what it offers is never listed.");
+            sb.AppendLine();
+            sb.AppendLine("  Appetite is still the right thing to measure for Stage 2: the ceiling");
+            sb.AppendLine("  would hide a generator that had stopped working until the moment it fell");
+            sb.AppendLine("  below the cap. But do not read these as market size.");
             sb.AppendLine();
         }
 
@@ -409,14 +421,18 @@ namespace Intercolony
         /// and the report says so rather than implying more.
         /// </summary>
         private static void AppendProcurement(
-            StringBuilder sb, IntercolonyWorldComponent state, int settlementCount)
+            StringBuilder sb,
+            IntercolonyWorldComponent state,
+            int settlementCount,
+            List<MarketOpportunity> sample)
         {
-            List<ThingDef> probes = PickProbeGoods();
+            List<ThingDef> probes = PickProbeGoods(sample);
 
             sb.AppendLine($"-- procurement, refresh window {state.RefreshCount} only --");
+            sb.AppendLine("  probes are the most-demanded goods per category in the sample above");
             if (probes.Count == 0)
             {
-                sb.AppendLine("  no classifiable tradeable goods found");
+                sb.AppendLine("  no classifiable demanded goods found");
                 return;
             }
 
@@ -475,44 +491,68 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Picks probe goods from what is actually loaded rather than from a hardcoded vanilla
-        /// list, so the baseline still means something in a modded load order. Sorted by defName
-        /// so the same world always probes the same goods.
+        /// Picks the most-demanded goods per category out of the sampled offers.
+        ///
+        /// The first version took the alphabetically first classifiable def per category, which
+        /// filled the basket with `AncientAPC`, `AncientBandNode` and `AncientCryptosleepCasket` —
+        /// ruins scenery nobody trades. Measuring supply for goods no demand ever asks about tells
+        /// us nothing about whether procurement still works.
+        ///
+        /// Ranking by observed demand keeps both halves of the report describing one economy, stays
+        /// deterministic because the sample is, and needs no hardcoded vanilla list. Ties break on
+        /// defName so two runs probe the same goods.
         /// </summary>
-        private static List<ThingDef> PickProbeGoods()
+        private static List<ThingDef> PickProbeGoods(List<MarketOpportunity> sample)
         {
-            Dictionary<IntercolonyProductCategory, List<ThingDef>> byCategory =
-                new Dictionary<IntercolonyProductCategory, List<ThingDef>>();
+            Dictionary<IntercolonyProductCategory, Dictionary<ThingDef, int>> demand =
+                new Dictionary<IntercolonyProductCategory, Dictionary<ThingDef, int>>();
 
-            List<ThingDef> all = new List<ThingDef>(DefDatabase<ThingDef>.AllDefsListForReading);
-            all.Sort((a, b) => string.CompareOrdinal(a.defName, b.defName));
-
-            foreach (ThingDef def in all)
+            foreach (MarketOpportunity opportunity in sample)
             {
-                IntercolonyProductCategory? category = IntercolonyProductClassifier.Classify(def);
+                if (opportunity.thingDef == null)
+                {
+                    continue;
+                }
+
+                IntercolonyProductCategory? category =
+                    IntercolonyProductClassifier.Classify(opportunity.thingDef);
                 if (!category.HasValue)
                 {
                     continue;
                 }
 
-                if (!byCategory.TryGetValue(category.Value, out List<ThingDef> list))
+                if (!demand.TryGetValue(category.Value, out Dictionary<ThingDef, int> counts))
                 {
-                    list = new List<ThingDef>();
-                    byCategory[category.Value] = list;
+                    counts = new Dictionary<ThingDef, int>();
+                    demand[category.Value] = counts;
                 }
 
-                if (list.Count < ProbesPerCategory)
-                {
-                    list.Add(def);
-                }
+                counts.TryGetValue(opportunity.thingDef, out int seen);
+                counts[opportunity.thingDef] = seen + 1;
             }
 
             List<ThingDef> probes = new List<ThingDef>();
             foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
             {
-                if (byCategory.TryGetValue(category, out List<ThingDef> list))
+                if (!demand.TryGetValue(category, out Dictionary<ThingDef, int> counts))
                 {
-                    probes.AddRange(list);
+                    continue;
+                }
+
+                List<KeyValuePair<ThingDef, int>> ranked =
+                    new List<KeyValuePair<ThingDef, int>>(counts);
+                ranked.Sort((a, b) =>
+                {
+                    int byCount = b.Value.CompareTo(a.Value);
+                    return byCount != 0
+                        ? byCount
+                        : string.CompareOrdinal(a.Key.defName, b.Key.defName);
+                });
+
+                int take = Mathf.Min(ProbesPerCategory, ranked.Count);
+                for (int i = 0; i < take; i++)
+                {
+                    probes.Add(ranked[i].Key);
                 }
             }
 

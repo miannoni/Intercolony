@@ -43,30 +43,26 @@ test result.
 
 ### 1.0 program — Stage 0
 
-#### Capture the market baseline — BLOCKS STAGE 1
+#### ~~Capture the market baseline~~ — DONE 2026-08-20
 
-**This one is not optional and not reorderable.** Stage 1.2 changes how demand is calculated,
-which changes what the baseline measures. Once that lands, the 0.9.3 numbers cannot be
-recovered from any save — the code that produced them is gone. Capture first.
+Captured on the `Fenhana` / `Intercolony 0.9.3 preflight` save (schema 42, economy seed
+`-1586549745`, refresh 432), determinism **PASS**, written up in
+`docs/MARKET_BASELINE_0_9_3.md`. Taken on a persistent save rather than a `-quicktest` world,
+so the same economy is re-measurable after Stage 2.
 
-**Full path.** From RimWorld's main menu, open **Options** → **General** and enable
-**Development mode**. Load a colony — any colony with settlements around it; the numbers
-describe the generator, not that particular save. Press **F12**, click the **orange bug icon**
-in the top-right toolbar, type `Capture market baseline`, and click
-**Intercolony → Capture market baseline**.
+**Rerun wanted, low priority.** The capture exposed two flaws in the diagnostic, both fixed
+since: it reported generator appetite without the global live-offer ceiling that actually
+governs market size, and its probe basket was alphabetically chosen and full of ancient ruins
+scenery. Rerunning on the same save replaces the two affected sections. Not blocking — the
+figures that matter for Stage 2 comparison (offer rate, category shares, price factor spread)
+are unaffected by either flaw.
 
-It takes about a second and writes one long block to the debug log. Nothing in the world
-changes: offers are generated into a throwaway list against cycle numbers past the world's
-own, and the procurement probe quotes a request that is never filed.
+#### ~~Schema 42 → 43 migration under a real save~~ — DONE 2026-08-20
 
-**Then save the output.** `powershell -ExecutionPolicy Bypass -File dev.ps1 log` will show it;
-paste the block from `=== Intercolony 0.9.3 market baseline ===` to the end into
-`docs/MARKET_BASELINE_0_9_3.md`. That file is the evidence Stage 2 gets compared against.
-
-**Pass.** The block contains a `-- determinism --` line reading `PASS`, a non-zero
-`offers generated`, and a `-- by archetype --` table where different archetypes show different
-rates. If determinism reads `FAIL`, stop and say so — the baseline is worthless and something
-is wrong with seeding.
+Ran in the real load order on a 21.5 MB schema-42 colony, `nextId 6826`, zero exceptions and no
+dropped records. **This was the first time any Intercolony migration ran outside a throwaway
+install** — see the top of this file's Outstanding list, which said so for the three earlier
+ones. `dev.ps1 run -MainMenu` now exists to keep it repeatable.
 
 ### Stage 0 self-tests (commercial timeline, `04be001` / `a502b63`)
 

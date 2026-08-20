@@ -10,6 +10,9 @@
         .\dev.ps1              # build -> restart game -> wait -> show log
         .\dev.ps1 build        # build only
         .\dev.ps1 run          # build + restart game, don't wait
+        .\dev.ps1 run -MainMenu   # ...but boot to the menu so a real save can be
+                                  # loaded. Needed for schema migrations, which a
+                                  # -quicktest world never exercises.
         .\dev.ps1 log          # everything from this session (filtered)
         .\dev.ps1 log -Full    # everything, unfiltered (rarely wanted)
         .\dev.ps1 mark "tried selling corn"   # drop a labelled divider
@@ -32,6 +35,12 @@ param(
     [string]$Note = "",
 
     [switch]$Full,
+
+    # Boot to the main menu instead of a throwaway test map, so a real save can be
+    # loaded. Required for anything a -quicktest world cannot show: schema migrations
+    # (a new world initializes at the current schema and never enters the migration
+    # path) and any measurement that has to be repeatable on the same world later.
+    [switch]$MainMenu,
 
     # Substring signalling the mod finished loading. Polling stops when this
     # appears, or when -TimeoutSec elapses.
@@ -56,9 +65,10 @@ $Log      = Join-Path $env:USERPROFILE `
 $StateFile  = Join-Path $Repo ".dev-log-offset"
 $MarkFile   = Join-Path $Repo ".dev-log-marks"
 
-# Boot straight into a throwaway test map instead of the main menu.
-# Remove -quicktest when you need to load a real save.
-$LaunchArgs = @("-quicktest")
+# Boot straight into a throwaway test map instead of the main menu, unless -MainMenu
+# was asked for. Every -quicktest launch generates a *new* world, so it can neither
+# exercise a schema migration nor let the same world be measured twice.
+$LaunchArgs = if ($MainMenu) { @() } else { @("-quicktest") }
 
 # ------------------------------------------------------------- utilities ----
 
@@ -197,7 +207,14 @@ function Start-RimWorld {
     Set-Offset 0
     if (Test-Path $MarkFile) { Remove-Item $MarkFile -Force }
     Write-Host "Launching RimWorld $($LaunchArgs -join ' ')..." -ForegroundColor Cyan
-    Start-Process -FilePath $Exe -ArgumentList $LaunchArgs -WorkingDirectory $RimWorld
+
+    # -ArgumentList rejects an empty array, so the no-args launch must omit the
+    # parameter rather than pass @().
+    if ($LaunchArgs.Count -gt 0) {
+        Start-Process -FilePath $Exe -ArgumentList $LaunchArgs -WorkingDirectory $RimWorld
+    } else {
+        Start-Process -FilePath $Exe -WorkingDirectory $RimWorld
+    }
 }
 
 function Wait-ForLoad {
