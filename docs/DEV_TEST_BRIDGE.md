@@ -60,17 +60,23 @@ cannot prove its isolation must not claim it.
 Exit codes:
 
 ```
-0   no failures
+0   clean
 1   assertions failed
-2   connection, build, protocol, or environment-setup failure
+2   connection, build, protocol, or environment-setup failure,
+    or assertions passed but the log gained new exceptions
 ```
 
-A skipped assertion is **not** a failure and does not turn the exit code red — a healthy full run
-skips thirteen in the animal suite alone. It is also not proof, so it is reported on its own line.
+`1` means specifically "the assertions ran and some failed". Everything that is not that answer
+is `2`, including a launch that never got far enough to run anything — a caller that cannot tell
+those apart will report a broken launch as a broken build.
 
 Three signals come back and all three matter: the test result, the skip count, and the new
 `Player.log` lines. **A suite can pass while the log fills with exceptions. That is not a clean
-run.**
+run**, which is why it exits 2 rather than 0.
+
+A skipped assertion is a third thing. It is **not** a failure and does not turn the exit code red
+— a healthy full run skips thirteen in the animal suite alone — but it is not proof either, so it
+is reported on its own line and kept out of `success`.
 
 ---
 

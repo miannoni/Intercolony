@@ -113,10 +113,12 @@ prove**. Without `-Fresh` nothing restarts, which is what you want while iterati
 such a run "clean" or "isolated".
 
 The report gives you passed/failed/skipped, the **world-pawn delta**, postings before and after,
-and the new `Player.log` lines. Exit codes: `0` clean, `1` assertions failed, `2` connection,
-build, or environment-setup failure. Read all three signals — **a suite can pass while the log
-fills with exceptions, and that is not a clean run.** A skipped assertion is not a failure and
-does not turn the exit code red, but it is not proof either, so it is reported separately.
+and the new `Player.log` lines. Exit codes: `0` clean, `1` assertions failed, `2` everything else
+— connection, build, environment-setup failure, **and a run whose assertions passed but whose log
+gained new exceptions.** That last one is deliberate: **a suite can pass while the log fills with
+exceptions, and that is not a clean run**, so it does not get to exit 0. A skipped assertion is a
+different thing again — not a failure, so it does not turn the exit code red, but not proof
+either, so it is reported on its own line.
 
 Test ids come from `tests.list`, not from the display names: `job-posting`, `combat-clause`,
 `employer-reputation`, `long-term`, and the plain ones (`economy`, `market`, `payroll`, …).
