@@ -12,7 +12,8 @@ You are continuing a multi-session implementation program on branch `1.0` of
 ## Orient first
 
 1. Read `docs/1_0_IMPLEMENTATION_STATUS.md` **in full**. It is the continuity
-   record and says where the program actually is.
+   record and says where the program actually is. Its slice log carries the
+   reasoning behind each decision, not just what changed.
 2. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md` **by stage, never whole**
    (~2,400 lines). Read §17 (proceed/decide/ask rails), §18 (do-not-get-stuck),
    §19 (adjacent issue rule) and §20 (testing rules) now — they govern how you
@@ -22,159 +23,188 @@ You are continuing a multi-session implementation program on branch `1.0` of
 
 ## Where the program stands
 
-Two of nine stages complete. Save schema is **44**. Mod version 0.9.3 on `main`;
-`main` stays releasable, all 1.0 work lands on branch `1.0` and merges at Stage 8.
+Two of nine stages complete and **Stage 2 is ~95% done**. Save schema **44**.
+Mod version 0.9.3 on `main`; `main` stays releasable, all 1.0 work lands on
+branch `1.0` and merges at Stage 8. Last commit `21ae362`.
 
-Stage 0 (spine) and Stage 1 (settlement economies) are closed. Stage 2 (market
-fundamentals) is ~20% done: 2A persisted market pressure, 2B made it mean-revert.
-**Pressure moves and nothing reads it yet** — that is the safe state between slices.
+Stage 2 slices done, in the order they were actually built — **not** ledger
+letter order:
 
-## Your next slice — read this carefully, the ledger's letters are misleading
+- **§2.2** one authoritative effective-economy API (`EffectiveEconomyService`)
+- **2D/2E** selling and pricing read effective demand
+- **2F** RFQs quote against effective supply
+- **2C** market opportunity *size* reads current demand
+- **2G** completed trades nudge pressure (the write side)
+- **2H** coarse economic chains between categories
+- **2I** modest regional pressure diffusion
 
-The next item is **plan §2.2, one authoritative effective-economy API**: a single
-read model answering effective demand/supply per settlement per good, combining
-stable profile baseline × persistent pressure × (later) event modifiers, bounded.
+The full suite runs **~950 passed / 0 failed / 13–14 skipped** on a `-quicktest`
+world, and **944 / 0 / 9** on the real colony save.
 
-**§2.2 has no slice letter of its own** — the ledger jumps 2B → "2C remove the
-cycle noise". Do not follow that order. §2.3 is explicit that the old
-`0.55–1.45` roll may only be deleted *once all consumers use the new API*, so
-2.2 must exist and be adopted first. Give it its own slice. After it: 2D–2F
-migrate selling, pricing and RFQs onto it, then 2C removes the noise.
+## Your next slice — 2J, then the 2K play gate
 
-Do not rush Stage 2 to reach later stages. The plan says so twice. Everything
-downstream reads from it.
+**2J is explainability (plan §2.11) and is mostly wiring.** The mechanism
+already exists: `EffectiveEconomyService.ExplainDemand` / `ExplainSupply`
+return `List<PriceFactor>` whose product *is* the effective value, and
+`IntercolonyPricing.Explain` already renders a factor list. §2.11 explicitly
+says to use that system rather than build a second one.
+
+Two constraints:
+
+- **Never apply both a factor list and an effective value.** The product of
+  `ExplainDemand` equals the effective demand, so a surface doing both
+  double-counts (§2.10). Already asserted in the economy suite — keep it so.
+- **Do not expose propagation coefficients.** A shortage that arrived by
+  chain or diffusion should read as a shortage, not as
+  "IntermediateGoods ×0.05 from ManufacturedGoods".
+
+**2K is much cheaper than the plan assumes.** Its migration half is already
+proven — the 42 → 43 → 44 chain ran on the real 22.5 MB colony with zero
+exceptions, and it is now one command. What remains is the **play gate**:
+whether the market feels alive rather than flat or chaotic, which §20.4 says
+no self-test settles. Do that in the same sitting as Stage 1 criterion 7,
+since both are judgements about what a player can actually see.
 
 ---
 
-## You can test your own work. This is new — use it.
+## Delegation — this changed, and Matteo corrected me on it mid-session
 
-For most of this project's life, verifying a change meant asking Matteo to open
-RimWorld's debug menu, click "Run ALL self-tests", and read the result back. That
-is no longer the default and **you should not ask him to do it.**
+**Send implementation to `codex:codex-rescue`. Do not write code yourself in
+the main session.** His words, on seeing me writing a service and a self-test
+by hand: *"I'm seeing heavy writes and I believe you should be delegating
+these to codex."* The trigger is **volume of writing**, not difficulty. Small
+size is not a reason to keep it — the global `CLAUDE.md` is explicit that
+"it's only one file" and "it would be faster" are not on the list.
 
-There is now a **dev test bridge**: a loopback TCP listener inside a running
-RimWorld that answers questions about the live game and runs Intercolony's
-seventeen self-test suites on demand. A stdio MCP server (`intercolony-rimworld`,
-already approved) exposes it to you directly. Full detail in
-`docs/DEV_TEST_BRIDGE.md` — read it before your first run.
+Keep in the main session: the design decision, the prompt that specifies it,
+review of what comes back, verification runs, and the ledger write-up.
 
-What this means in practice: you can make a change, build it, restart the game,
-run 874 assertions against the real running game, read the failures, and iterate
-— entirely on your own. Matteo is needed only for things a self-test structurally
-cannot settle, which is a short list (below).
+`agy` is for massive reads and images only. Never for producing code.
 
-### The tools
+**Codex cannot restart RimWorld** — its sandbox is denied permission to kill
+the process. Tell it to stop at the build; you run the suite. It also
+sometimes hands off to its own background task and returns only a task id;
+when that happens, wait for the working tree to change and read the diff off
+disk rather than waiting for a report.
 
-MCP: `rimworld_status`, `rimworld_list_self_tests`, `rimworld_run_self_test`,
-`rimworld_run_all_self_tests`, `rimworld_state_summary`, `rimworld_posting_count`,
-`rimworld_world_pawn_count`, `rimworld_recent_log`.
+**Spot-check what it reports.** It has been reliable on this program, but one
+subagent explicitly relayed Codex's claims without verifying them. Read the
+diff yourself before believing a description of it.
 
-Or through `dev.ps1`, which also handles build-and-restart:
+---
+
+## You can test your own work — including migrations
+
+A **dev test bridge** (loopback TCP inside a running RimWorld) plus an MCP
+server (`intercolony-rimworld`) lets you run the suites against the live game
+and read results directly. Full detail in `docs/DEV_TEST_BRIDGE.md`.
 
 ```powershell
-dotnet build Source\Intercolony\Intercolony.csproj -p:EnableDevBridge=true
-powershell -ExecutionPolicy Bypass -File dev.ps1 bridge              # launch a bridge-enabled game
-powershell -ExecutionPolicy Bypass -File dev.ps1 test economy        # one suite, game already running
-powershell -ExecutionPolicy Bypass -File dev.ps1 test economy -Fresh # clean -quicktest world first
-powershell -ExecutionPolicy Bypass -File dev.ps1 test all -Fresh     # whole suite, clean world
+powershell -ExecutionPolicy Bypass -File dev.ps1 test all -Fresh    # clean -quicktest world
+powershell -ExecutionPolicy Bypass -File dev.ps1 test economy       # one suite, game already up
+powershell -ExecutionPolicy Bypass -File dev.ps1 bridge -Save Fenhana   # boot into a REAL save
 ```
 
-Test ids come from `tests.list`, not display names: `economy`, `timeline`,
-`profile`, `market`, `reputation`, `contract`, `rfq`, `order`, `animal`,
-`ledger`, `labor`, `payroll`, `transition`, `job-posting`, `combat-clause`,
+Test ids come from `tests.list`: `economy`, `timeline`, `profile`, `market`,
+`reputation`, `contract`, `rfq`, `order`, `animal`, `ledger`, `labor`,
+`payroll`, `transition`, `job-posting`, `combat-clause`,
 `employer-reputation`, `long-term`.
 
-### It never ships
+### `bridge -Save` is new and it closed a standing item
 
-The bridge is behind two independent gates: a compile gate
-(`-p:EnableDevBridge=true` defines `INTERCOLONY_DEV_BRIDGE`) and a runtime gate
-(`INTERCOLONY_DEV_BRIDGE=1` in the game process's environment). A normal build
-contains no listener at all. `package.ps1` reads the built assembly and refuses
-to package one containing the bridge's markers, because "the code looks gated" is
-not proof. The listener binds loopback only and there is deliberately no setting
-for the address.
+The old seed said the bridge could not prove a migration. **That was true of
+`-quicktest` and false in general.** RimWorld loads a save named exactly
+`autostart` at boot in dev mode, via the real `GameDataSaveLoader.LoadGame`
+(`reference/decompiled/Verse/Root_Entry.cs:18-23`). `dev.ps1 bridge -Save <name>`
+stages a copy, launches, waits, and deletes the copy.
 
-If you ever extend it: add a verb with a contract, never an interpreter. **Never
-add** `eval`, `execute_csharp`, `invoke_method`, `set_field`, or anything that
-runs arbitrary input — this executes inside a player's game.
+Three things that cost real time to learn:
+
+- **Autostart must not be combined with `-quicktest`.** `Root_Entry` and
+  `Root_Play` consume the same one-shot `Root.checkedAutostartSaveFile`, so
+  Play then calls `InitNewGame()` on the already-loaded save and throws at
+  `Find.get_WorldObjects`. The launch passes no arguments at all.
+- **Always a copy, never the original**, and delete it after. A leftover
+  `Autostart.rws` hijacks every later launch **including `-Fresh`**, which
+  goes on claiming an isolation it silently lost.
+- Running the suite on the real colony converts skips (13 → 9) because a real
+  colony has the prisoner, caravan and bonded pair a bare map lacks.
 
 ### Reading a run honestly
 
-Three signals come back and **all three matter**: the assertion result, the skip
-count, and the new `Player.log` lines.
+`success` = nothing failed. `clean` = additionally nothing was skipped. **A
+suite can pass while the log fills with exceptions — that is not a clean run**
+and exits 2, not 0. A skipped assertion is neither failure nor proof (§20.1).
+Exit codes: `0` clean, `1` assertions failed, `2` everything else.
 
-- `success` = nothing failed. `clean` = additionally nothing was skipped. They
-  are separate on purpose; collapsing them silences one or the other.
-- **A suite can pass while the log fills with exceptions. That is not a clean
-  run** — it exits `2`, not `0`.
-- A skipped assertion is not a failure and not a pass. A healthy full run skips
-  ~13 in the animal suite alone, because a bare `-quicktest` map has no prisoner,
-  slave, caravan, bonded pair or pregnant animal. Report skips; never count them
-  as proof (§20.1).
-- Exit codes: `0` clean, `1` assertions ran and some failed, `2` everything else
-  — connection, build, environment-setup, or passing-with-new-exceptions.
-- `-Fresh` verifies its own preconditions and **refuses to run rather than claim
-  an isolation it cannot prove**. Without `-Fresh` nothing restarts, which is what
-  you want while iterating — but do not call such a run "clean" or "isolated".
-- `world_pawns.count` exists for a specific reason: the runner's leak check
-  watches the timeline, market pressure and entity ids but **not world pawns**,
-  and the one open anomaly is a world-pawn leak. Read it either side of a run.
+**A rebuilt assembly needs a game restart** — a running game holds the old DLL,
+so a test run after a rebuild silently tests the previous code. You have
+standing authorization to kill and relaunch RimWorld yourself.
 
-### Three traps already paid for
+Watch `world_pawns.count` either side of a run; the leak check does not.
 
-- **A rebuilt assembly needs a game restart.** A running game holds the old DLL,
-  so a test run after a rebuild silently tests the previous code. You have
-  standing authorization to kill and relaunch RimWorld yourself.
-- **`rimworld_recent_log` can return the stale startup profile.** To check for
-  exceptions, grep `Player.log` directly, excluding RimWorld's own
-  `Error check all defs` profiler line and `Fallback handler` noise.
-- **The bridge cannot prove a migration.** It launches `-quicktest`, which
-  creates a *new* world that initializes at the current schema and never enters
-  the migration path at all. Only `dev.ps1 run -MainMenu` and a real save do.
+---
 
-If the bridge does not answer, in this order: is RimWorld running; was it built
-with `-p:EnableDevBridge=true`; was it launched with `INTERCOLONY_DEV_BRIDGE=1`;
-is something else on port 34117 (the log names it). Everything the MCP server can
-do is also reachable as `node tools/intercolony-dev/dist/cli.js status` — which is
-how you tell a broken bridge from a broken agent.
+## The testing standard — learned the hard way this session, do not relax it
 
-### Why the suites are safe to run repeatedly
+**Mutation proves *sensitivity*. It does not prove *stability*. These are two
+different properties and both need evidence.**
 
-Self-tests drive real transitions on synthetic orders and deliberately miss
-payrolls. Every path that runs a suite goes through `IntercolonyDiagnosticGuard`,
-which snapshots and restores the player's commercial timeline, market pressure and
-employer standing. Without it, automation would damage real state on every
-invocation — running the payroll suite once permanently cost the colony employer
-standing before this was found. Do not add a suite-running path that bypasses it.
+Two assertions were shipped this session that had been mutation-tested, gone
+red, and were trusted on that basis. Both were flaky: same code, one fresh
+world green, the next red. A statistical assertion over a small sample can be
+perfectly sensitive to the bug and still fail at random.
+
+Before trusting any new assertion:
+
+1. **Sensitive** — revert the production change, run, confirm red, restore.
+2. **Stable** — run unmutated on **at least four fresh worlds**, all green.
+
+Two further rules that came out of the same failures:
+
+- **A skip guard must measure the same quantity the assertion compares.** The
+  RFQ check skipped below 8 *settlements* while comparing *quotations*, and a
+  21-settlement world returned 2 quotations, so the guard never fired.
+- **When an assertion is statistical, enlarge the sample rather than loosening
+  `<` to `<=`.** Loosening makes it pass with the feature deleted, which is
+  how a flaky test usually gets "fixed".
+
+When you delegate a test, state **what it must be able to fail on**, not just
+what it should claim. Three delegated tests looked like coverage and were
+hollow before that was added to the prompts.
 
 ---
 
 ## Per-slice discipline
 
-Build clean (0 warnings), run the slice's suite, run the **full** suite before
-committing, confirm world-pawn delta 0 and both leak guards `OK`, and check the
-log for exceptions. Commit each working slice and add its entry to the ledger's
-slice log in the same style as the 2A and 2B entries.
+Build clean (0 warnings), run the slice's suite, run the **full** suite on
+four fresh worlds before committing, confirm world-pawn delta 0 and both leak
+guards `OK`, and check the log for exceptions. Commit each working slice and
+add its entry to the ledger's slice log in the style of the existing ones —
+they record *why*, including the trap avoided, not just what changed.
 
 **Push to `origin/1.0` as you go — standing authorization, no need to ask.**
-Keeping the remote current is low-risk on a feature branch and it is the backup.
-Push after each slice's commit rather than letting work pile up locally. Two
-limits: never force-push, and never push to `main` — `main` stays at the released
-0.9.3 and the 1.0 branch merges there only at Stage 8.
+Never force-push, never push to `main`.
 
-Verify before claiming. Do not report a system as working on a clean build alone
-— that failure mode has bitten this project repeatedly and the ledger records it.
+Verify before claiming. Do not report a system as working on a clean build
+alone.
 
 ## How to work — autonomy
 
-**Decide and continue by default.** The plan resolves most questions; §17 is the
-rail. HIGH confidence → decide and keep going. MEDIUM → take the smaller option,
-log it as a DECISION in the ledger, continue. Only LOW-confidence or structural
-questions come back to Matteo.
+**Decide and continue by default.** §17 is the rail. HIGH confidence → decide
+and keep going. MEDIUM → take the smaller option, log it as a DECISION in the
+ledger, continue. Only LOW-confidence or structural questions come back to
+Matteo.
 
 Do not stop to ask permission to proceed, to confirm an obvious reading, or to
-report a passing test. Do not widen scope mid-slice — adjacent issues go to
-`docs/BACKLOG.md` per §19 unless they are RED (fix or stop).
+report a passing test. Adjacent issues go to `docs/BACKLOG.md` per §19 unless
+they are RED.
+
+**Correct the record when you find it wrong.** Several claims in these
+documents turned out to be false this session — that the bridge could not
+prove a migration, that `volatility` was dead code, that diffusion shared the
+chains' stability budget. Each was written down and corrected in place. A
+grep with an exclusion in it is not an audit.
 
 ## How to report back
 
@@ -184,7 +214,7 @@ report a passing test. Do not widen scope mid-slice — adjacent issues go to
 |---|---|---|
 | 0 — Program spine | ✅ Complete | |
 | 1 — Settlement economies | ✅ Complete | |
-| 2 — Market fundamentals | 🔨 ~20% | |
+| 2 — Market fundamentals | 🔨 ~95% | 2J explainability, then the 2K play gate |
 | 3 — Circumstance events | ⬜ Not started | |
 | 4 — Brand strength | ⬜ Not started | |
 | 5 — Relationships & negotiation | ⬜ Not started | |
@@ -192,19 +222,29 @@ report a passing test. Do not widen scope mid-slice — adjacent issues go to
 | 7 — Commercial history | ⬜ Not started | |
 | 8 — Integration & release gate | ⬜ Not started | |
 
-Macro stages only — Matteo does not want per-item status. Follow it with the next
-steps, and anything genuinely needing his decision. Keep it short; skip detail he
-cannot act on.
+Macro stages only — Matteo does not want per-item status. Follow it with next
+steps and anything genuinely needing his decision. Keep it short; skip detail
+he cannot act on.
 
 ## Standing open items a self-test cannot settle
 
-These are the things that legitimately need Matteo. Carry them forward:
+- **The Stage 2 play gate (2K)** — does the market feel alive rather than flat
+  or chaotic? The coefficients (`ReversionRetention`, `NudgeValueScale`, the
+  chain and diffusion coefficients) are all deliberately conservative and
+  documented as retune-at-2K.
+- **Stage 1 criterion 7** — whether a settlement's economy reads clearly from
+  the Market and Relations tooltips. A judgement about text.
+- **The `job posting` pawn-count anomaly is still not explained**, but it did
+  **not** reproduce on a 74-pawn world — its original failing condition, which
+  had never been retried until this session. Every earlier non-reproduction was
+  on a 12-pawn world. Not closed; the world has moved on since the failure, so
+  a changed condition is as good a hypothesis as a fixed defect.
+- **Known gap in 2I:** no assertion separates diffusing the *difference* from
+  diffusing the *level* with a symmetric transfer, since that variant is still
+  conservative. It would pump rather than average. Close it only if diffusion
+  looks wrong in play.
 
-- The **43 → 44 migration has never run on a real save**. The proven one was
-  42 → 43, before 2A bumped the schema.
-- **Stage 1 criterion 7** — whether a settlement's economy reads clearly from the
-  Market and Relations tooltips. A judgement about text, needs eyes in play.
-- **The `job posting` pawn-count anomaly** stopped reproducing without being
-  explained (74-pawn world failed, 12-pawn world passes). Not closed.
+~~The 43 → 44 migration has never run on a real save.~~ **Closed this session**
+— it ran on the 22.5 MB `Fenhana` colony with zero exceptions.
 
-Start by orienting, then begin §2.2.
+Start by orienting, then begin 2J.
