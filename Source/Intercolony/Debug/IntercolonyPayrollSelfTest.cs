@@ -161,6 +161,16 @@ namespace Intercolony
             LaborCandidate candidate = pool[0];
             int term = Mathf.Max(candidate.minTermDays, 20);
 
+            // The pool's quoted daily wage is not quite the wage TryHire will use: hiring prices
+            // the chosen term again with the settlement, distance, reputation and combat clause.
+            // Keep that money calculation in EmploymentService rather than duplicating it here,
+            // and fund four times the quote's up-front cost as a deliberately generous margin.
+            // Over-funding is harmless because this test strips every silver stack before it starts
+            // missing payroll; the extra balance therefore cannot soften the escalation under test.
+            int quotedUpFront = WageStructureUtility.UpFrontCost(
+                WageStructure.Daily, candidate.dailyWage, term);
+            IntercolonyLaborSelfTestSupport.EnsureSilver(map, quotedUpFront * 4);
+
             // Daily wage, so one pay period is one day and the escalation can be driven without
             // simulating a quadrum.
             EmploymentContract contract = EmploymentService.TryHire(
@@ -179,8 +189,17 @@ namespace Intercolony
             // for every non-prepaid structure, and 0.9.2 shipped a fix specifically to *disclose*
             // that fee, so the charge is deliberate and the assertion was stale. The distinction
             // still worth guarding is that a periodic hire is not charged for the whole term.
+            // Multiply the days out here rather than calling SigningFee, because SigningFee takes
+            // the *base* wage and applies the daily premium itself (WageStructure.cs:82), while
+            // contract.dailyWage has already had that premium applied (EmploymentService.cs:126,
+            // 168). Passing one into the other charges the premium twice: on a base of 60 that is
+            // 60 -> 81 -> 109, so the test demanded 545 where the hire correctly took 405.
+            //
+            // This assertion had never actually executed. The hire above it always failed for want
+            // of silver, and the method returns early when it does, so the arithmetic was written
+            // when the signing fee was introduced and then never run until the funding fix landed.
             int expectedSigningFee =
-                WageStructureUtility.SigningFee(WageStructure.Daily, contract.dailyWage);
+                contract.dailyWage * WageStructureUtility.SigningFeeDays(WageStructure.Daily);
             r.Check(contract.paidSilver == expectedSigningFee,
                 "a periodic hire pays the signing fee up front and no more (§37)",
                 $"{contract.paidSilver} silver, expected {expectedSigningFee}");

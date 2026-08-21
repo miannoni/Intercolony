@@ -93,6 +93,46 @@ four phases before a save/load test caught it, because every symptom surfaced so
 
 ---
 
+## Automated in-game tests — run them yourself, do not ask Matteo to click
+
+When a change can be checked by a self-test, **run it through the dev test bridge**. Do not ask
+Matteo to open the debug menu and press "Run ALL self-tests". That request is no longer the
+default and should only come back if the bridge itself is broken, or the check is genuinely
+visual.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File dev.ps1 test job-posting          # against the live game
+powershell -ExecutionPolicy Bypass -File dev.ps1 test job-posting -Fresh   # clean -quicktest world first
+powershell -ExecutionPolicy Bypass -File dev.ps1 test all -Fresh           # whole suite, clean world
+powershell -ExecutionPolicy Bypass -File dev.ps1 bridge                    # just launch a bridge-enabled game
+```
+
+Use `-Fresh` when isolation matters — it rebuilds bridge-enabled, restarts into a new world,
+waits for the bridge to answer, and **refuses to run rather than claim an isolation it cannot
+prove**. Without `-Fresh` nothing restarts, which is what you want while iterating; do not call
+such a run "clean" or "isolated".
+
+The report gives you passed/failed/skipped, the **world-pawn delta**, postings before and after,
+and the new `Player.log` lines. Exit codes: `0` clean, `1` assertions failed, `2` everything else
+— connection, build, environment-setup failure, **and a run whose assertions passed but whose log
+gained new exceptions.** That last one is deliberate: **a suite can pass while the log fills with
+exceptions, and that is not a clean run**, so it does not get to exit 0. A skipped assertion is a
+different thing again — not a failure, so it does not turn the exit code red, but not proof
+either, so it is reported on its own line.
+
+Test ids come from `tests.list`, not from the display names: `job-posting`, `combat-clause`,
+`employer-reputation`, `long-term`, and the plain ones (`economy`, `market`, `payroll`, …).
+
+**If the bridge does not answer**, in this order: is RimWorld running; was it built with
+`-p:EnableDevBridge=true`; was it launched with `INTERCOLONY_DEV_BRIDGE=1` in its environment;
+is something else already on port 34117 (the log says so by name). A normal build has no bridge
+in it at all, which is deliberate — see `docs/DEV_TEST_BRIDGE.md`.
+
+**The bridge is a development tool and must never ship.** `package.ps1` reads the built assembly
+and refuses to package one containing it, so a release cannot accidentally carry a listener.
+
+---
+
 ## Dependencies
 
 - `Krafs.Rimworld.Ref` — reference assemblies, so no game DLLs are committed

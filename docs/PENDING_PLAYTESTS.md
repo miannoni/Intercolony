@@ -43,6 +43,21 @@ test result.
 
 ### The whole suite, in one action
 
+**This no longer needs a human.** Since the dev test bridge landed, the whole suite runs from a
+shell and reports its own counts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File dev.ps1 test all -Fresh
+```
+
+`-Fresh` restarts into a clean `-quicktest` world first and refuses to run at all rather than
+claim an isolation it cannot verify. Exit code 0 means clean, 1 means assertions failed, 2 means
+everything else — including a run whose assertions passed but whose log gained new exceptions.
+See `docs/DEV_TEST_BRIDGE.md`. **Do not ask for the manual click-through below unless the bridge
+itself is broken.**
+
+The manual route, kept because it is the fallback when the bridge will not start:
+
 **`Run ALL self-tests`.** Enable **Development mode** (Options → General), load a colony **with
 a map**, press **F12**, click the **orange bug icon** top-right, type `Run ALL`, and click
 **Intercolony → Run ALL self-tests**. Read it with
@@ -66,6 +81,31 @@ after and prints a `did anything leak into the world?` block. `OK` on both lines
 guards held. `LEAK` means stop: a diagnostic is writing into the player's real history.
 
 The individual per-suite actions still exist for when one of them is being worked on.
+
+### The dev test bridge — what it has not shown
+
+The bridge was proven against a live game on 2026-08-21: both builds, the runtime gate, all seven
+commands, malformed and oversized and unknown requests, the CLI's three exit codes, and the eight
+MCP tools driven over stdio. These are the parts that were **not** exercised.
+
+- **The bridge has only ever run on `-quicktest` worlds.** Every run generated a fresh world. It
+  has never been pointed at a real save, so it has never seen a schema migration, a colony with
+  history, or a world with more than a handful of world pawns. `dev.ps1 run -MainMenu` exists for
+  loading a real save; the bridge has not been used that way.
+- **Two colonies.** Every bridge run had one map. `Find.CurrentMap` is what `tests.run` resolves,
+  and the mod has a documented history of one-map assumptions being wrong — the 0.9.0 buyer-pickup
+  defect was exactly that. A suite run through the bridge with two colonies loaded is untested.
+- **A genuinely crashing suite.** `tests.run` claims to report an exception with its text and
+  `success=false`, and the runner treats output with no summary line as not having completed.
+  Neither path has been triggered on purpose, because no suite currently throws.
+- **Port-in-use reporting.** The `AddressAlreadyInUse` branch names the likely cause, but two
+  bridge-enabled games have never been run at once to see it.
+- **The command timeout.** Ten minutes, chosen because the full suite runs synchronously on the
+  main thread. No run has come close, so the timeout path and its tombstoning of an abandoned
+  command are unexercised in play.
+- **Anyone else's machine.** `.mcp.json` uses a repo-relative path and was driven from this repo
+  root, but has only been loaded on one machine, with one Node version, one RimWorld install, and
+  a `Mods\Intercolony` junction that had to be repointed by hand to test at all.
 
 ### 1.0 program — Stage 0
 

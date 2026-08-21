@@ -547,7 +547,10 @@ switch ($Task) {
     }
 
     "bridge" {
-        if (-not (Start-BridgeSession)) { exit 1 }
+        # 2, not 1. Failing to build or launch a bridge-enabled game is an infrastructure
+        # failure, and 1 is reserved for "the assertions ran and some failed". A caller that
+        # cannot tell those apart will report a broken launch as a broken build of the mod.
+        if (-not (Start-BridgeSession)) { exit 2 }
     }
 
     "test" {
