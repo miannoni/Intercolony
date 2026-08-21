@@ -61,7 +61,8 @@ namespace Intercolony
 
             // §28: a trusted partner posts more often. Bounded to about half again, so a
             // good record widens the pipeline rather than flooding it.
-            float reputation = ReputationService.ScoreFor(IntercolonyWorldComponent.Current, settlement);
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            float reputation = ReputationService.ScoreFor(state, settlement);
             float postChance = PostChance * ReputationService.OpportunityFrequencyFactor(reputation);
 
             Rand.PushState(seed);
@@ -76,7 +77,7 @@ namespace Intercolony
                 for (int i = 0; i < wanted; i++)
                 {
                     MarketOpportunity opportunity =
-                        CreateOne(settlement, profile, distance, reputation, idAllocator);
+                        CreateOne(state, settlement, profile, distance, reputation, idAllocator);
                     if (opportunity != null)
                     {
                         created.Add(opportunity);
@@ -93,13 +94,14 @@ namespace Intercolony
 
         /// <summary>Must be called inside a pushed Rand state.</summary>
         private static MarketOpportunity CreateOne(
+            IntercolonyWorldComponent state,
             Settlement settlement,
             SettlementEconomicProfile profile,
             float distance,
             float reputation,
             System.Func<int> idAllocator)
         {
-            IntercolonyProductCategory category = PickCategory(profile);
+            IntercolonyProductCategory category = PickCategory(state, profile);
             List<ThingDef> candidates = IntercolonyProductClassifier.DefsInCategory(category);
             if (candidates.Count == 0)
             {
@@ -134,7 +136,7 @@ namespace Intercolony
                 : FulfillmentMode.SellerDelivery;
 
             float unitPrice = IntercolonyPricing.UnitPrice(
-                def, stuff, quantity, profile, category, distance, minQuality,
+                state, def, stuff, quantity, profile, category, distance, minQuality,
                 out List<PriceFactor> factors);
 
             // §105 logistics pricing modifier: the mode has to change the money, or the two
@@ -183,7 +185,9 @@ namespace Intercolony
         /// trade yet — furniture, capital equipment, art — are skipped, because they need the
         /// unique-item path from §23.2 / §24.
         /// </summary>
-        private static IntercolonyProductCategory PickCategory(SettlementEconomicProfile profile)
+        private static IntercolonyProductCategory PickCategory(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile)
         {
             // Phase 8 (§101): furniture, capital equipment and art are now normal market
             // participants. Only minifiable buildings reach this point — the classifier
@@ -193,14 +197,16 @@ namespace Intercolony
             float total = 0f;
             foreach (IntercolonyProductCategory category in tradable)
             {
-                total += Mathf.Max(0.01f, profile.BaseDemandFor(category));
+                total += Mathf.Max(0.01f,
+                    EffectiveEconomyService.EffectiveDemand(state, profile, category));
             }
 
             float roll = Rand.Range(0f, total);
             float running = 0f;
             foreach (IntercolonyProductCategory category in tradable)
             {
-                running += Mathf.Max(0.01f, profile.BaseDemandFor(category));
+                running += Mathf.Max(0.01f,
+                    EffectiveEconomyService.EffectiveDemand(state, profile, category));
                 if (roll < running)
                 {
                     return category;

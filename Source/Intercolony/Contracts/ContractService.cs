@@ -454,7 +454,7 @@ namespace Intercolony
                 : unitPrice <= 0f ? 1f : 0f;
 
             int appetite = FindBuyerService.MaximumAppetite(
-                thingDef, null, profile, category);
+                state, thingDef, null, profile, category);
             float quantityAppeal = quantityPerCycle > 0
                 ? Mathf.Clamp01(appetite / (float)quantityPerCycle)
                 : 0f;
@@ -683,7 +683,7 @@ namespace Intercolony
         {
             float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
             float spot = IntercolonyPricing.UnitPrice(
-                thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
+                state, thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
             float unitPrice = agreedUnitPrice ?? spot * ContractPricePremium;
 
             // These inputs are durable across a reload, while the salt isolates this roll from

@@ -241,14 +241,14 @@ namespace Intercolony
                 distanceTiles = MarketOpportunityGenerator.DistanceToPlayer(settlement)
             };
 
-            float demand = profile.BaseDemandFor(def, category);
+            float demand = EffectiveEconomyService.EffectiveDemand(state, profile, def, category);
             if (demand < InterestThreshold)
             {
                 offer.noInterestReason = "no current interest";
                 return offer;
             }
 
-            int maxAppetite = MaximumAppetite(def, stuff, profile, category);
+            int maxAppetite = MaximumAppetite(state, def, stuff, profile, category);
             if (maxAppetite <= 0)
             {
                 offer.noInterestReason = "cannot afford a worthwhile lot";
@@ -265,7 +265,7 @@ namespace Intercolony
 
             offer.quantity = Mathf.Min(wantedQuantity, offer.maxQuantity);
             offer.unitPrice = SellRateFor(
-                offer, offer.quantity, FulfillmentMode.BuyerPickup,
+                state, offer, offer.quantity, FulfillmentMode.BuyerPickup,
                 out List<PriceFactor> factors);
             offer.factors = factors;
 
@@ -290,7 +290,7 @@ namespace Intercolony
             };
 
             const IntercolonyProductCategory category = IntercolonyProductCategory.Commodities;
-            float demand = profile.BaseDemandFor(race, category);
+            float demand = EffectiveEconomyService.EffectiveDemand(state, profile, race, category);
             if (demand < InterestThreshold)
             {
                 offer.noInterestReason = "no current interest";
@@ -314,7 +314,7 @@ namespace Intercolony
 
             offer.quantity = Mathf.Min(wantedQuantity, offer.maxQuantity);
             offer.unitPrice = SellRateFor(
-                offer, offer.quantity, FulfillmentMode.BuyerPickup,
+                state, offer, offer.quantity, FulfillmentMode.BuyerPickup,
                 out List<PriceFactor> factors);
             offer.factors = factors;
             return offer;
@@ -325,12 +325,16 @@ namespace Intercolony
         /// and confirmation so the advertised rate is the rate used to create the order.
         /// </summary>
         internal static float SellRateFor(
-            BuyerOffer offer, int quantity, FulfillmentMode fulfillment)
+            IntercolonyWorldComponent state,
+            BuyerOffer offer,
+            int quantity,
+            FulfillmentMode fulfillment)
         {
-            return SellRateFor(offer, quantity, fulfillment, out _);
+            return SellRateFor(state, offer, quantity, fulfillment, out _);
         }
 
         private static float SellRateFor(
+            IntercolonyWorldComponent state,
             BuyerOffer offer,
             int quantity,
             FulfillmentMode fulfillment,
@@ -371,11 +375,11 @@ namespace Intercolony
 
                 rate = offer.IsAnimalOffer
                     ? IntercolonyPricing.UnitPrice(
-                        offer.def, null, offer.animalSpec, Mathf.Max(1, quantity),
+                        state, offer.def, null, offer.animalSpec, Mathf.Max(1, quantity),
                         offer.profile, IntercolonyProductCategory.Commodities,
                         offer.distanceTiles, null, out factors)
                     : IntercolonyPricing.UnitPrice(
-                        offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
+                        state, offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
                         category, offer.distanceTiles, null, out factors);
             }
 
@@ -391,6 +395,7 @@ namespace Intercolony
         /// the same crated-goods reasoning as generation (docs/unique-goods-spike.md).
         /// </summary>
         internal static int MaximumAppetite(
+            IntercolonyWorldComponent state,
             ThingDef def,
             ThingDef stuff,
             SettlementEconomicProfile profile,
@@ -401,7 +406,7 @@ namespace Intercolony
                 return 0;
             }
 
-            float demand = profile.BaseDemandFor(def, category);
+            float demand = EffectiveEconomyService.EffectiveDemand(state, profile, def, category);
             return MaxAppetite(def, stuff, profile, demand);
         }
 

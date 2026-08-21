@@ -91,7 +91,7 @@ namespace Intercolony
                 // Re-priced for the quantity actually accepted, so the order matches what the
                 // confirmation showed. A smaller lot earns a better rate (§13).
                 unitPrice = IntercolonyPricing.RepriceForQuantity(
-                    opportunity, state.GetProfile(settlement), quantity, out _),
+                    state, opportunity, state.GetProfile(settlement), quantity, out _),
                 acceptedTick = GenTicks.TicksGame,
                 fulfillment = opportunity.fulfillment,
                 buyerPickupDistanceTiles = opportunity.distanceTiles,

@@ -71,6 +71,7 @@ namespace Intercolony
                 CheckEffectiveSupplyInvertsScarcity(r, state);
                 CheckEffectiveEconomyBounds(r, state);
                 CheckEffectiveEconomyExplanations(r, state);
+                CheckSyntheticProfilesIgnoreMarketPressure(r, state);
             }
             catch (Exception ex)
             {
@@ -781,6 +782,50 @@ namespace Intercolony
 
             r.Check(EffectiveEconomyService.ExplainDemand(state, null, def, Category).Count == 0,
                 "a settlement with no profile explains nothing rather than throwing");
+
+            ClearProbe(state);
+        }
+
+        /// <summary>
+        /// Generic estimates have no settlement whose current conditions they can inherit. Their
+        /// sentinel must therefore remain neutral even while a real settlement is disturbed.
+        /// </summary>
+        private static void CheckSyntheticProfilesIgnoreMarketPressure(
+            Results r, IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            SettlementEconomicProfile synthetic = new SettlementEconomicProfile();
+            const IntercolonyProductCategory Category = IntercolonyProductCategory.Commodities;
+            // A zero baseline stays zero under any pressure, so it cannot expose the defect.
+            synthetic.demandWeights[(int)Category] = 1.20f;
+
+            r.Check(synthetic.settlementId == -1,
+                "a newly constructed profile is synthetic rather than settlement zero",
+                synthetic.settlementId.ToString());
+
+            float baseline = synthetic.BaseDemandFor(Category);
+            MarketPressureService.ApplyDemandShock(
+                state, ProbeSettlementId, Category, 0.30f);
+
+            float pressure = EffectiveEconomyService.CurrentDemandPressure(
+                state, synthetic.settlementId, Category);
+            r.Check(Mathf.Approximately(pressure, SettlementMarketState.Neutral),
+                "a synthetic profile reads neutral demand pressure despite another settlement's shock",
+                pressure.ToString("F3"));
+
+            float effective = EffectiveEconomyService.EffectiveDemand(state, synthetic, Category);
+            r.Check(effective == baseline,
+                "a synthetic profile's effective demand equals its baseline exactly",
+                $"{baseline:F5} vs {effective:F5}");
+
+            SettlementEconomicProfile shocked = new SettlementEconomicProfile();
+            shocked.demandWeights[(int)Category] = synthetic.demandWeights[(int)Category];
+            shocked.settlementId = ProbeSettlementId;
+            float shockedBaseline = shocked.BaseDemandFor(Category);
+            float shockedEffective = EffectiveEconomyService.EffectiveDemand(state, shocked, Category);
+            r.Check(shockedEffective > shockedBaseline,
+                "a profile naming the shocked settlement reads demand above its baseline",
+                $"{shockedBaseline:F5} vs {shockedEffective:F5}");
 
             ClearProbe(state);
         }

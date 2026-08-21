@@ -878,6 +878,7 @@ namespace Intercolony
 
                 SettlementEconomicProfile animalProfile = FixedPricingProfile();
                 float animalUnitPrice = IntercolonyPricing.UnitPrice(
+                    null,
                     race,
                     ThingDefOf.Steel,
                     adultFemalePregnant,
@@ -929,7 +930,7 @@ namespace Intercolony
                 expected = Mathf.Max(0.01f, expected);
 
                 float actual = IntercolonyPricing.UnitPrice(
-                    ThingDefOf.Steel, null, quantity, profile, category, -1f, null, out _);
+                    null, ThingDefOf.Steel, null, quantity, profile, category, -1f, null, out _);
                 int expectedBits = BitConverter.ToInt32(BitConverter.GetBytes(expected), 0);
                 int actualBits = BitConverter.ToInt32(BitConverter.GetBytes(actual), 0);
                 check("goods price is bit-for-bit unchanged from the pre-animal formula",

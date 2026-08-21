@@ -65,8 +65,12 @@ namespace Intercolony
         /// </summary>
         public const float ExactGoodAffinitySpread = 0.15f;
 
-        /// <summary>Stable <c>WorldObject.ID</c> of the settlement this describes.</summary>
-        public int settlementId;
+        /// <summary>
+        /// Stable <c>WorldObject.ID</c> of the settlement this describes. A value of <c>-1</c>
+        /// marks a synthetic profile for a generic estimate; current market pressure is looked up
+        /// by this ID, so defaulting to zero would silently borrow a real settlement's conditions.
+        /// </summary>
+        public int settlementId = -1;
 
         /// <summary>
         /// <c>Faction.loadID</c> at generation time. Cached profiles are invalidated when a

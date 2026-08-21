@@ -55,6 +55,7 @@ namespace Intercolony
         /// in which case the distance factor is skipped rather than guessed.
         /// </summary>
         public static float UnitPrice(
+            IntercolonyWorldComponent state,
             ThingDef def,
             int quantity,
             SettlementEconomicProfile profile,
@@ -63,7 +64,7 @@ namespace Intercolony
             QualityCategory? minQuality,
             out List<PriceFactor> factors)
         {
-            return UnitPrice(def, null, quantity, profile, category, distanceTiles, minQuality, out factors);
+            return UnitPrice(state, def, null, quantity, profile, category, distanceTiles, minQuality, out factors);
         }
 
         /// <summary>
@@ -74,6 +75,7 @@ namespace Intercolony
         /// would quote the same silver for both.
         /// </summary>
         public static float UnitPrice(
+            IntercolonyWorldComponent state,
             ThingDef def,
             ThingDef stuff,
             int quantity,
@@ -84,7 +86,7 @@ namespace Intercolony
             out List<PriceFactor> factors)
         {
             return UnitPrice(
-                def, stuff, null, quantity, profile, category, distanceTiles, minQuality, out factors);
+                state, def, stuff, null, quantity, profile, category, distanceTiles, minQuality, out factors);
         }
 
         /// <summary>
@@ -93,6 +95,7 @@ namespace Intercolony
         /// Animals never enter material or quality valuation.
         /// </summary>
         public static float UnitPrice(
+            IntercolonyWorldComponent state,
             ThingDef def,
             ThingDef stuff,
             AnimalSpec animalSpec,
@@ -129,7 +132,8 @@ namespace Intercolony
 
             // The category supplies the settlement's broad economic character; the good-specific
             // perturbation keeps that character from making every item in the category rank alike.
-            float demand = Mathf.Clamp(profile.BaseDemandFor(def, category), 0.4f, 2.0f);
+            float demand = Mathf.Clamp(
+                EffectiveEconomyService.EffectiveDemand(state, profile, def, category), 0.4f, 2.0f);
             factors.Add(new PriceFactor("Local demand", demand));
 
             float wealth = WealthFactor(profile.wealthTier);
@@ -188,6 +192,7 @@ namespace Intercolony
         /// than the unit rate rises. That is why the confirmation slider only ever reduces.
         /// </summary>
         public static float RepriceForQuantity(
+            IntercolonyWorldComponent state,
             MarketOpportunity opportunity,
             SettlementEconomicProfile profile,
             int quantity,
@@ -211,6 +216,7 @@ namespace Intercolony
                 ?? IntercolonyProductCategory.Commodities;
 
             float price = UnitPrice(
+                state,
                 opportunity.thingDef,
                 opportunity.stuffDef,
                 Mathf.Max(1, quantity),

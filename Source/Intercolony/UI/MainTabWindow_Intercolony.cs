@@ -1392,7 +1392,7 @@ namespace Intercolony
             {
                 line = new OrderLine(opportunity.thingDef, quantity),
                 unitPrice = IntercolonyPricing.RepriceForQuantity(
-                    opportunity, ProfileFor(state, opportunity.settlementId), quantity, out _)
+                    state, opportunity, ProfileFor(state, opportunity.settlementId), quantity, out _)
             };
         }
 
@@ -1974,7 +1974,7 @@ namespace Intercolony
                 (qty, fulfillment, discountFraction) =>
                 {
                     SalesOrder preview = BuildSalePaymentPreview(
-                        offer, qty, fulfillment, discountFraction);
+                        state, offer, qty, fulfillment, discountFraction);
                     int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
                     string tiles = offer.distanceTiles < 0f
                         ? "unknown"
@@ -2026,7 +2026,7 @@ namespace Intercolony
                 (qty, fulfillment, discountFraction, markReadyNow) =>
                 {
                     BuyerOffer priced = offer;
-                    priced.unitPrice = FindBuyerService.SellRateFor(offer, qty, fulfillment);
+                    priced.unitPrice = FindBuyerService.SellRateFor(state, offer, qty, fulfillment);
                     Map fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
                     if (fulfillment == FulfillmentMode.BuyerPickup && markReadyNow)
                     {
@@ -2066,7 +2066,7 @@ namespace Intercolony
                     return true;
                 },
                 (qty, fulfillment, discountFraction) =>
-                    SalePaymentPreviewText(offer, qty, fulfillment, discountFraction),
+                    SalePaymentPreviewText(state, offer, qty, fulfillment, discountFraction),
                 initialMarkReadyNow: IntercolonyMod.Settings.markReadyNowByDefault));
         }
 
@@ -2081,7 +2081,7 @@ namespace Intercolony
                 (qty, fulfillment, discountFraction) =>
                 {
                     SalesOrder preview = BuildSalePaymentPreview(
-                        offer, qty, fulfillment, discountFraction);
+                        state, offer, qty, fulfillment, discountFraction);
                     int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
                     string tiles = offer.distanceTiles < 0f
                         ? "unknown"
@@ -2141,7 +2141,7 @@ namespace Intercolony
                 (qty, fulfillment, discountFraction, markReadyNow) =>
                 {
                     BuyerOffer priced = offer;
-                    priced.unitPrice = FindBuyerService.SellRateFor(offer, qty, fulfillment);
+                    priced.unitPrice = FindBuyerService.SellRateFor(state, offer, qty, fulfillment);
                     Map fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
                     SalesOrder pending = null;
                     if (fulfillment == FulfillmentMode.BuyerPickup && markReadyNow)
@@ -2214,30 +2214,32 @@ namespace Intercolony
                     return true;
                 },
                 (qty, fulfillment, discountFraction) =>
-                    SalePaymentPreviewText(offer, qty, fulfillment, discountFraction),
+                    SalePaymentPreviewText(state, offer, qty, fulfillment, discountFraction),
                 initialMarkReadyNow: IntercolonyMod.Settings.markReadyNowByDefault);
             Find.WindowStack.Add(sellDialog);
         }
 
         private static SalesOrder BuildSalePaymentPreview(
+            IntercolonyWorldComponent state,
             BuyerOffer offer, int quantity, FulfillmentMode fulfillment,
             float discountFraction)
         {
             return new SalesOrder
             {
                 line = new OrderLine(offer.def, quantity),
-                unitPrice = FindBuyerService.SellRateFor(offer, quantity, fulfillment),
+                unitPrice = FindBuyerService.SellRateFor(state, offer, quantity, fulfillment),
                 fulfillment = fulfillment,
                 DiscountFraction = discountFraction
             };
         }
 
         private static string SalePaymentPreviewText(
+            IntercolonyWorldComponent state,
             BuyerOffer offer, int quantity, FulfillmentMode fulfillment,
             float discountFraction)
         {
             SalesOrder preview = BuildSalePaymentPreview(
-                offer, quantity, fulfillment, discountFraction);
+                state, offer, quantity, fulfillment, discountFraction);
             int waived = preview.TotalPayment - preview.DiscountedTotalPayment;
             return $"Paid: {preview.DiscountedTotalPayment:N0} silver\n" +
                    $"Waived: {waived:N0} silver";

@@ -685,7 +685,7 @@ namespace Intercolony
             }
 
             float unitPrice = IntercolonyPricing.UnitPrice(
-                selected, null, animalSpec, Mathf.Max(1, quantity), AnimalPreviewProfile,
+                state, selected, null, animalSpec, Mathf.Max(1, quantity), AnimalPreviewProfile,
                 IntercolonyProductCategory.Commodities, -1f, null,
                 out List<PriceFactor> factors);
             string priceSummary =

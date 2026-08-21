@@ -302,7 +302,7 @@ namespace Intercolony
                     Check("accepted order is open", accepted.IsOpen);
                     Check("accepted order records the offer", accepted.opportunityId == offerId);
                     float expectedAcceptedPrice = IntercolonyPricing.RepriceForQuantity(
-                        offer,
+                        state, offer,
                         state.GetProfile(IntercolonyMarketAccess.FindSettlement(offer.settlementId)),
                         offer.quantity,
                         out _);

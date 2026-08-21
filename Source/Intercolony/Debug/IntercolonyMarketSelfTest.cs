@@ -283,7 +283,7 @@ namespace Intercolony
                 Check("per-good demand changes settlement ordering", demandRankingChanges);
 
                 float price = IntercolonyPricing.UnitPrice(
-                    sample, 500, profile, category, 25f, null, out List<PriceFactor> factors);
+                    null, sample, 500, profile, category, 25f, null, out List<PriceFactor> factors);
 
                 Check("unit price is positive", price > 0f, price.ToString("F3"));
                 Check("breakdown has factors", factors.Count >= 3, $"count {factors.Count}");
@@ -338,7 +338,8 @@ namespace Intercolony
 
                     IntercolonyProductCategory c =
                         IntercolonyProductClassifier.Classify(def) ?? IntercolonyProductCategory.Commodities;
-                    IntercolonyPricing.UnitPrice(def, 100, profile, c, 10f, null, out List<PriceFactor> defFactors);
+                    IntercolonyPricing.UnitPrice(
+                        null, def, 100, profile, c, 10f, null, out List<PriceFactor> defFactors);
                     foreach (PriceFactor factor in defFactors)
                     {
                         if (factor.label.Contains("Quality"))
@@ -806,7 +807,7 @@ namespace Intercolony
                         if (offer.unitPrice <= 0f) badPrice++;
                         if (offer.quantity > offer.maxQuantity) overAppetite++;
                         float defaultRate = FindBuyerService.SellRateFor(
-                            offer, offer.quantity, FulfillmentMode.BuyerPickup);
+                            state, offer, offer.quantity, FulfillmentMode.BuyerPickup);
                         if (!Mathf.Approximately(offer.unitPrice, defaultRate)) wrongDefaultRate++;
                         if (offer.TotalPrice > previousTotal) sortedByValue = false;
                         previousTotal = offer.TotalPrice;
@@ -876,7 +877,7 @@ namespace Intercolony
                 Check("fallback repricing does not apply pickup logistics twice",
                     Mathf.Approximately(
                         FindBuyerService.SellRateFor(
-                            fallbackOffer, 1, FulfillmentMode.BuyerPickup),
+                            state, fallbackOffer, 1, FulfillmentMode.BuyerPickup),
                         fallbackOffer.unitPrice));
 
                 // Saturation must bite here too, or Find Buyer becomes a way to dodge §13 by
@@ -916,7 +917,7 @@ namespace Intercolony
             IntercolonyPricing.SaturationFactor(123);
             if (profiles.Count > 0 && tradable.Count > 0)
             {
-                IntercolonyPricing.UnitPrice(tradable[0], 100, profiles[0],
+                IntercolonyPricing.UnitPrice(null, tradable[0], 100, profiles[0],
                     IntercolonyProductCategory.Commodities, 10f, null, out _);
             }
 
