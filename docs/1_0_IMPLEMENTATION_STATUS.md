@@ -4,17 +4,16 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2B — advance and mean-revert pressure (BLOCKED, see below)
+Current slice:      2B — advance and mean-revert pressure (UNBLOCKED 2026-08-21)
 Last completed:     2A — persisted market pressure, schema 44
 Current save schema: 44
-Current save schema: 43
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
 
 ## Stage status
 
-- [ ] Stage 0 — Program spine
-- [ ] Stage 1 — Settlement economies
+- [x] Stage 0 — Program spine (gate closed 2026-08-21)
+- [x] Stage 1 — Settlement economies (gate closed 2026-08-21; criterion 7 is a UI read, see below)
 - [ ] Stage 2 — Market fundamentals overhaul
 - [ ] Stage 3 — Circumstance-driven economic events
 - [ ] Stage 4 — Brand strength & colony specialization
@@ -22,6 +21,33 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [ ] Stage 6 — Procurement parity
 - [ ] Stage 7 — Commercial history
 - [ ] Stage 8 — 1.0 integration and release gate
+
+## Second full-suite run — 2026-08-21, and 2B is unblocked
+
+Run through the dev test bridge (MCP `rimworld_run_all_self_tests`) against a live `-quicktest`
+world, no human at the keyboard. **17/17 suites ran, 847 passed, 0 failed, 13 skipped.** World-pawn
+delta 0 (12 → 12), open postings 0 → 0, and both leak guards read `OK` — timeline unchanged at 0
+records, market pressure unchanged at 0 settlements. `Player.log` gained no exceptions; the only
+`Error` matches are RimWorld's own `Error check all defs` profiler line. 566 entity ids consumed.
+
+**Every fix from the 2026-08-20 triage is confirmed.** The two animal assertions, the payroll
+signing-fee assertion, both ledger deltas and the `long term` interference all pass. The six suites
+that had been written and never executed have now run: `economy` 19, `timeline` 47, `profile` 154,
+`market` 81.
+
+**The `job posting` failure did not reproduce, and was checked in isolation first.** Run alone on a
+world with 0 open postings and 12 world pawns, it passed 25/0 with a world-pawn delta of **0** — then
+0 again inside the full run. That is consistent with the standing `MatchAll` hypothesis (applicants
+materialised for postings the suite did not create), because this world had no foreign postings for
+it to match against. **It is not proof of the hypothesis.** The failing run was on a 74-pawn world
+and this one is a bare 12-pawn world, so the condition that produced it may simply be absent rather
+than fixed. The decisive experiment — open a posting, then run the suite — is not reachable through
+the bridge, which exposes no posting-creation action. Left recorded rather than closed.
+
+**The 13 skips are the world, not the code**, same as before and now two more of them: `animal` 11
+and `order` 2. A bare `-quicktest` map has no prisoner, slave, caravan, bonded pair or pregnant
+animal, and one home map cannot exercise the two-colony assertion. Re-running the suite on the
+`Fenhana` save would convert most of these and exercise the migration path again.
 
 ## First full-suite run — 2026-08-20
 
@@ -88,12 +114,15 @@ stopped being true when daily and per-quadrum hires gained a five-day signing fe
 fees exist sixty lines earlier. It now checks the fee is exactly the signing fee and that the
 whole term is not charged.
 
-**`job posting` — still open, deliberately left failing.** Six world pawns appear inside that
-suite's own measurement interval (74 → 80), so it is not earlier suites' pawns being counted.
-It may be `MatchAll` materialising applicants for postings it did not create. **This project has
-history here** — `CLAUDE.md` records a static pool that leaked pawns and `Faction` objects
-between games for four phases — so this is not something to quiet down while unexplained. To
-settle it: run `Run job posting self-test` alone on a fresh map with no open postings.
+**`job posting` — did not reproduce on 2026-08-21, and is not closed.** Six world pawns appear
+inside that suite's own measurement interval (74 → 80), so it is not earlier suites' pawns being
+counted. It may be `MatchAll` materialising applicants for postings it did not create. **This
+project has history here** — `CLAUDE.md` records a static pool that leaked pawns and `Faction`
+objects between games for four phases — so this is not something to quiet down while unexplained.
+The prescribed check (the suite alone, fresh map, no open postings) was run and passed 25/0 with a
+delta of 0, as did the full run. That is consistent with the `MatchAll` hypothesis but does not
+confirm it: the failing world had 74 pawns and the passing one has 12, so the *condition* may be
+absent rather than the *defect* fixed. See the 2026-08-21 run above.
 
 ### The 8 skipped assertions are the world, not the code
 
@@ -104,8 +133,8 @@ save, which would also exercise the migration path again.
 
 ## Stage 0 acceptance gate
 
-Four of six criteria are closed. The two open ones need a human at the keyboard; neither is
-a code gap.
+**All six criteria are closed as of 2026-08-21.** Criterion 6 was the last, and the dev test bridge
+closed it without a human at the keyboard.
 
 | # | Criterion | Status |
 |---|---|---|
@@ -114,7 +143,7 @@ a code gap.
 | 3 | Baseline market diagnostics exist | **PASS** — captured to `docs/MARKET_BASELINE_0_9_3.md` |
 | 4 | Timeline has an owner and bounded retention | **PASS** — `IntercolonyWorldComponent`, 1,000 records |
 | 5 | Prior 0.9.3 save loads after the schema change | **PASS** — see below |
-| 6 | No existing self-test regressed | **OPEN** — needs the suites run in game |
+| 6 | No existing self-test regressed | **PASS** — 17/17 suites, 847 passed, 0 failed (2026-08-21) |
 
 ### Criterion 5 — the migration ran for real, and this is the first time
 
@@ -170,9 +199,14 @@ fold into the record:
 | 6 | Existing consumers compile; adapters marked for deletion | **PASS** — renamed at all eight call sites, no adapters were needed |
 | 7 | Player can identify a settlement's economy without debug numbers | **PASS** — needs a look in play to confirm it reads well |
 
-"PASS by construction" means the slice did not touch that path and the existing profile suite
-already covers it — not that it was re-observed. Running `Run profile self-test` and
-`Run market self-test` would convert 1–5 into observed passes and is the open item.
+"PASS by construction" meant the slice did not touch that path and the existing profile suite
+already covers it — not that it was re-observed. **That open item is now closed:** on 2026-08-21 the
+profile suite ran 154 passed / 0 failed and the market suite 81 / 0, so criteria 1–5 are observed
+rather than argued.
+
+**Criterion 7 is the one that a self-test cannot settle.** Whether a settlement's economy reads
+clearly from the Market and Relations tooltips is a judgement about text, and it needs eyes on it in
+play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
 
@@ -185,7 +219,7 @@ and an undisturbed world persists nothing.
 **Commit:** `d49fd86`. **Schema:** 43 → 44, migration writes nothing.
 **Verified in game:** `State initialized fresh (schema 44)`, no exceptions.
 **Tests:** `Run economy self-test` — sparse defaults, create-on-demand, prune keeps disturbed and
-drops settled, Scribe round trip, short-save padding. **Not yet executed.**
+drops settled, Scribe round trip, short-save padding. **Executed 2026-08-21: 19 passed, 0 failed.**
 
 **Sparse, not one record per settlement.** The baseline was captured on a 358-settlement world;
 a record each would put thousands of floats in every save to say nothing is happening. Records
@@ -244,6 +278,10 @@ the arithmetic. Offers are generated against synthetic cycle numbers past the wo
 a sample can never be confused with the live market. Probe goods come from the loaded defs by
 category, not a hardcoded vanilla list, so the baseline still means something under mods.
 
+**The market suite covering this ran clean on 2026-08-21** (81 passed, 0 failed). The baseline
+*diagnostic* is a debug action rather than a suite, so it is still only as re-verified as its last
+manual capture.
+
 **Known limitation:** the procurement half can only measure the current refresh window. Quote
 seeding reads `state.RefreshCount`, and advancing it would mean running real refreshes on the
 player's world. The report says so rather than implying an average.
@@ -271,7 +309,8 @@ timeline record, at the point the status actually changes.
 **Tests:** `CheckWriteSites` drives the real transitions — `SalesOrderService.Fail`,
 `.Cancel`, `PurchaseOrderService.Cancel`, and both `HostilityPolicy` war paths — and asserts
 the record appears. It deliberately does not call the timeline service itself: a test that
-recorded its own events would pass with every write site deleted. Still not executed in game.
+recorded its own events would pass with every write site deleted. **Executed 2026-08-21 as part of
+the timeline suite: 47 passed, 0 failed.**
 
 **Every write goes where the status assignment already is**, so a record cannot exist for an
 event that did not happen. `SalesOrderService.Complete` already documented itself as the
@@ -312,8 +351,8 @@ callers of the funnel, rather than trusting the first one found, is what caught 
 **Tests:** `IntercolonyTimelineSelfTest` asserts event types, monotonic IDs,
 settlement/recency queries, retention pruning verified by record identity rather than by
 count, survival of a record whose `ThingDef` no longer resolves, and a Scribe round-trip.
-**It compiles and has never been executed.** The build is clean at 0 errors and 0 warnings,
-which is the only thing verified so far. Running it needs a game session — see below.
+**Executed 2026-08-21 through the dev test bridge: 47 passed, 0 failed.** Until then the only thing
+verified was a clean build at 0 errors and 0 warnings.
 
 **One destructive defect was caught in review before it could ship.** The first version of
 the self-test snapshotted the record *count* and restored by trimming the tail, but `Prune`
@@ -380,16 +419,21 @@ No correction to the plan is needed.
 
 ## Play evidence still required
 
-**Run the timeline self-test.** Dev mode → the Intercolony debug category → **Run timeline
-self-test**, in a loaded game. It must report every assertion passed with no failures. This
-has never been run; the slice is committed on a clean build alone.
+~~**Run the timeline self-test.**~~ **DONE 2026-08-21** — 47 passed, 0 failed, through the bridge.
 
-**Load a real schema-42 save.** The 42 → 43 migration must run in the real load order and
-report `schema 42 -> 43: commercial timeline record spine added`. `dev.ps1` cannot prove
-this — it launches `-quicktest`, which creates a new world that initializes at the current
-schema and so never enters the migration at all. Only opening an actual 0.9.3 save proves
-it. This is the same standing gap already recorded for the three earlier migrations in
-`docs/PENDING_PLAYTESTS.md`.
+~~**Load a real schema-42 save.**~~ **DONE 2026-08-20** (`9a588a2`) — the 42 → 43 step ran in the
+real load order on the 21.5 MB `Fenhana` save, zero exceptions, nothing dropped. Repeat it with
+`dev.ps1 run -MainMenu`; neither `dev.ps1 -Fresh` nor the bridge can prove a migration, because both
+launch `-quicktest`, which creates a new world that initializes at the current schema and never
+enters the migration at all.
+
+**Still required — the 43 → 44 step has never run on a real save.** 2A bumped the schema after the
+`Fenhana` load, so the migration that has been proven is not the current one. It writes nothing by
+design, which makes it low-risk but not zero-risk: the load-time padding in
+`SettlementMarketState.FromSaved` and the index rebuild both run on that path.
+
+**Still required — criterion 7, the Stage 1 UI read.** Whether a settlement's economy is legible
+from the Market listing and Relations tooltips, without debug numbers.
 
 `docs/PENDING_PLAYTESTS.md` still holds the 0.9.x backlog, which this program does not clear.
 
@@ -403,21 +447,17 @@ migration and play gate.
 **Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
 and the plan says so twice.
 
-### Why 2B should wait for one round of self-test runs
+### Resolved: why 2B was waiting for one round of self-test runs
 
-**Six suites have been changed or added across Stages 0–2A and not one has been executed.**
-That is the position `CLAUDE.md` describes as how a system ends up believed-working and
-untested, and 2B is the first slice that makes pressure *move* — every slice after it inherits
-whatever 2A got wrong about persistence.
+Six suites had been changed or added across Stages 0–2A and not one had been executed — the position
+`CLAUDE.md` describes as how a system ends up believed-working and untested. 2B is the first slice
+that makes pressure *move*, so every slice after it would have inherited whatever 2A got wrong about
+persistence: a wrong prune epsilon, index rebuild or load-time padding would surface as pressure
+that silently resets or records that accumulate forever, both of which look like balance problems
+and would be chased in the wrong place.
 
-The specific risk is not hypothetical. 2A's whole design rests on sparse storage: absence means
-neutral, records are created on disturbance and pruned when they settle. If the prune epsilon,
-the index rebuild, or the load-time padding is wrong, 2B's mean reversion is what would surface
-it — as pressure that silently resets, or records that accumulate forever, both of which look
-like balance problems rather than persistence bugs and would be chased in the wrong place.
-
-It is now one action — **`Run ALL self-tests`** — which runs all seventeen suites, prints one
-verdict, and checks that the guards held. Steps are in `docs/PENDING_PLAYTESTS.md`.
+**All six ran clean on 2026-08-21** and the hold is lifted. Worth keeping the reasoning: the block
+was correct, and it cost one bridge call to clear rather than a stage of misattributed debugging.
 
 ---
 

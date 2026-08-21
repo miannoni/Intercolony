@@ -151,6 +151,14 @@ Target framework is `net472`.
 updated, `main` pushed, tag `v0.9.3` and a GitHub pre-release with `Intercolony-0.9.3.zip` attached.
 0.9.2 shipped 2026-08-17, 0.9.1 on 2026-08-15 and 0.9.0 on 2026-08-08, all to the same standard.
 
+**Work on 1.0 happens on branch `1.0`, not `main`, and it is a nine-stage program with its own
+documents.** Read `docs/1_0_IMPLEMENTATION_STATUS.md` **first** — it is the continuity record and
+says where in the program the work actually is; `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md` is the
+spec and is ~2,000 lines, so read it by stage, not whole. `main` stays at 0.9.3 and directly
+releasable as a point release, which is why the branch exists: Stage 0 bumped the save schema and
+`main` will not be shippable again until Stage 8 merges. Stages 0 and 1 are closed; Stage 2 (market
+fundamentals) is in progress and is the stage every later one reads from.
+
 0.9.3 is the Tier 2 UI batch from `docs/BACKLOG.md` plus a labor-UI polish pass: dialog and
 empty-state text is measured rather than boxed (a live defect — the sell dialog drew over its own
 controls), the sell and market-acceptance dialogs state their terms as labelled rows, sales orders
@@ -174,9 +182,13 @@ not work at all** until it; see below. The others: the employee signing fee was 
 hire was refused; procurement quotes could be re-rolled by withdrawing and re-requesting; a
 supplier's stock reset on re-request; accepting one quotation closed the whole request; and orders
 resolved colonies through `Find.AnyPlayerHomeMap`.
-**Save schema is 42.** Schema 40 records the distance behind a buyer-pickup promise; 41 records how
-much of a purchase request has been ordered; 42 records how much of a supplier's offer the player has
-already bought within a market refresh window.
+**Save schema is 44**, bumped twice on branch `1.0` after 0.9.3 shipped at 42. Schema 40 records the
+distance behind a buyer-pickup promise; 41 records how much of a purchase request has been ordered;
+42 records how much of a supplier's offer the player has already bought within a market refresh
+window; 43 adds the commercial timeline record spine (`04be001`), starting the history at upgrade
+tick rather than inventing a past; 44 adds per-settlement market pressure (`d49fd86`), which writes
+nothing on migration because absence means neutral and inferring shortages from old random rolls
+would fabricate an economy the player never traded through.
 
 0.9.1 fixed what the first beta players hit and added the other half of the agreement system: the
 player can now propose a standing supply agreement rather than only receiving offers. A proposal is
@@ -211,7 +223,7 @@ now an `Ordered` status, Find seller shows only live requests, concluded ones si
 than guessing. It is the first migration step that changes existing values rather than adding a
 field.
 
-D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 42**; the whole
+D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 44**; the whole
 chain from 24 is documented as one consolidated test in `docs/SCHEMA_24_TO_CURRENT.md`, which is the
 file to read rather than reconstructing the steps. Next: continue beta corrections in point releases;
 there is no Phase 27 plan yet.
@@ -256,10 +268,14 @@ supplier lead time through the real advance path) and `Explain unsold animals`. 
 "arrive buyers now"**, so every sell-side pickup test costs real travel time — worth building first
 if the sell side is being tested.
 
-**None of the three migrations has ever run in the real load order** — only in isolated throwaway
-installs. `dev.ps1` cannot prove a migration: it launches `-quicktest`, which creates a *new* world
-that initializes at the current schema, and its log reader can show a stale profile entirely. Only
-opening a real save proves it. This is the top item in `docs/PENDING_PLAYTESTS.md`.
+**One migration has now run in the real load order, and it is the only one that has.** On
+2026-08-20 (`9a588a2`) the 42 → 43 step ran on a persistent 21.5 MB colony save with zero exceptions
+and nothing dropped. Every earlier migration has still only been exercised in isolated throwaway
+installs. `dev.ps1 -Fresh` and the MCP bridge cannot prove a migration either: both launch
+`-quicktest`, which creates a *new* world that initializes at the current schema and never enters
+the migration path at all, and the log reader can show a stale profile entirely. Use
+`dev.ps1 -MainMenu` and open a real save — that switch exists for this. `docs/PENDING_PLAYTESTS.md`
+has the remaining ones.
 
 **A real 0.9.0 defect was found and fixed on 2026-08-09: buyer pickup collected from the wrong
 colony.** Mark Ready validated against `Find.CurrentMap` while collection used
