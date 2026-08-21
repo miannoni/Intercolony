@@ -546,6 +546,40 @@ what it saw, not how much it saw.**
 
 ## Decisions / deviations
 
+### 2026-08-21 — Stage 2C — CORRECTION
+
+An earlier entry in this file claimed `SettlementEconomicProfile.volatility` was "written and
+never read outside its own debug line", and proposed deleting it. **That was wrong**, and the
+error is worth naming because it nearly deleted live behaviour: the grep that produced it
+explicitly excluded `SettlementProfileGenerator.cs`, which is the one file that reads the field.
+`FillWeights` passes it to `Jitter` for both weight arrays, so `volatility` is what makes two
+settlements of the same archetype differ from each other. Deleting it would have changed every
+profile in every world.
+
+What is actually wrong with it is only its doc comment, which still claims it controls how much
+"prices and opportunities swing between refreshes" — untrue since Stage 1.2 removed the per-refresh
+swing. The field is kept and the comment corrected. **A grep with an exclusion in it is not an
+audit**; the exclusion was there to reduce noise and it removed the only evidence that mattered.
+
+### 2026-08-21 — Stage 2C — DECISION
+
+**Question:** `ContractService.ContractQuantity` sizes a standing-agreement offer from
+`Rand.Range(1500f, 5000f)`, seeded on `RefreshCount` and reading no demand at all. Should 2C make
+it demand-aware, as 2C is doing for market opportunity size?
+**Evidence:** §2.8's step list explicitly names opportunity sizing, and §2.3 targets "a large
+random multiplier masquerading as demand state". Contract *terms* are already demand-aware —
+`CalculateContractTerms` prices through `IntercolonyPricing`, which reads effective demand as of
+2E — and its seed deliberately excludes `RefreshCount` so accepted terms are durable across a
+reload. So the only part that ignores the economy is the size of the initial offer.
+**Choice:** leave it, and revisit at the 2K play gate.
+**Why it preserves this plan:** contract offer size is balance, and §18 says balance is tuned at
+the stage's play gate rather than guessed at during implementation. Changing it now would alter
+what the player is offered with no evidence about whether current sizes are already right, and a
+contract is a much larger commitment than a spot lot — getting its size wrong is more costly than
+getting an opportunity's wrong.
+**Revisit if:** the 2K play gate shows contract offers feel disconnected from a settlement's
+visible economy, which is exactly the symptom this would cause.
+
 ### 2026-08-19 — Stage 0 — DECISION
 
 **Question:** where do the 1.0 program's commits land, given Stage 0 bumps the save schema
@@ -637,12 +671,16 @@ three things, none of them a demand multiplier:
   scaling terms.
 - `Labor/LaborCandidateService` refreshes its worker pool per cycle. Not the goods market; out of
   scope.
-- `SettlementEconomicProfile.volatility` is now **written and never read** outside its own debug
-  line. It survives as generation-time jitter on the weights and nothing consumes it as a
-  per-refresh swing any more. Decide-or-delete, and say which in the ledger.
+- `SettlementEconomicProfile.volatility` is **live** — `SettlementProfileGenerator.FillWeights`
+  reads it to jitter both weight arrays at generation time. Only its doc comment is wrong. See the
+  CORRECTION below; an earlier version of this section said it was dead, and it is not.
 
-So 2C is an audit that ends in a short deletion, not a removal of a live system. Do not go hunting
-for a roll that is not there.
+**What the audit actually found, and it is not a deletion.** The remaining cycle noise is in
+opportunity *sizing*: `MarketOpportunityGenerator.PickQuantity` opens with
+`Rand.Range(400f, 3000f)`, a 7.5x multiplier re-rolled every cycle that reads no demand at all,
+while §2.8's step 5 requires size to come from the effective economic context. Price was migrated
+in 2E and size was not, which left acceptance criterion 4 — "a forced shortage changes selling
+prices **and opportunities** in the expected direction" — only half met.
 
 **Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
 and the plan says so twice.
