@@ -33,6 +33,8 @@ namespace Intercolony
             public Func<object> Work;
             public object Result;
             public Exception Failure;
+            // 0 queued, 1 claimed by Update(), 2 abandoned after the socket timed out.
+            public int State;
             public readonly ManualResetEventSlim Done = new ManualResetEventSlim(false);
         }
 
@@ -82,6 +84,10 @@ namespace Intercolony
 
             if (!pending.Done.Wait(timeoutMs))
             {
+                // Leave a tombstone in the queue rather than removing from ConcurrentQueue out of
+                // order. Update() recognizes it and, crucially, does not execute a command after
+                // its caller has already been told that it timed out.
+                Interlocked.CompareExchange(ref pending.State, 2, 0);
                 result = null;
                 failure = null;
                 return false;
@@ -100,6 +106,15 @@ namespace Intercolony
                 if (!Queue.TryDequeue(out pending))
                 {
                     return;
+                }
+
+                // Claim and execute, or discard a request whose socket already timed out. The
+                // compare/exchange closes the race where timeout and this frame happen together:
+                // whichever side claims the queued command first decides whether it runs.
+                if (Interlocked.CompareExchange(ref pending.State, 1, 0) != 0)
+                {
+                    pending.Done.Set();
+                    continue;
                 }
 
                 try
