@@ -23,9 +23,10 @@ You are continuing a multi-session implementation program on branch `1.0` of
 
 ## Where the program stands
 
-Two of nine stages complete and **Stage 2 is ~95% done**. Save schema **44**.
-Mod version 0.9.3 on `main`; `main` stays releasable, all 1.0 work lands on
-branch `1.0` and merges at Stage 8. Last commit `21ae362`.
+Two of nine stages complete and **Stage 2 is code-complete** — every slice is
+built, and only its play gate remains. Save schema **44**. Mod version 0.9.3 on
+`main`; `main` stays releasable, all 1.0 work lands on branch `1.0` and merges
+at Stage 8. Last commit `cf2557f`.
 
 Stage 2 slices done, in the order they were actually built — **not** ledger
 letter order:
@@ -37,33 +38,35 @@ letter order:
 - **2G** completed trades nudge pressure (the write side)
 - **2H** coarse economic chains between categories
 - **2I** modest regional pressure diffusion
+- **2J** price breakdowns name the current shortage or surplus
 
-The full suite runs **~950 passed / 0 failed / 13–14 skipped** on a `-quicktest`
-world, and **944 / 0 / 9** on the real colony save.
+The full suite runs **968–969 passed / 0 failed / 13–14 skipped** on a
+`-quicktest` world, and **944 / 0 / 9** on the real colony save (that figure
+predates 2J's 19 assertions).
 
-## Your next slice — 2J, then the 2K play gate
+## Your next slice — 2K, and it is not a coding task
 
-**2J is explainability (plan §2.11) and is mostly wiring.** The mechanism
-already exists: `EffectiveEconomyService.ExplainDemand` / `ExplainSupply`
-return `List<PriceFactor>` whose product *is* the effective value, and
-`IntercolonyPricing.Explain` already renders a factor list. §2.11 explicitly
-says to use that system rather than build a second one.
+**Everything left in Stage 2 is a judgement a self-test cannot make** (§20.4).
+Do not write more code to substitute for it; `CLAUDE.md` names that as how a
+project grows features instead of confidence.
 
-Two constraints:
+**The migration half is already proven** — the 42 → 43 → 44 chain ran on the
+real 22.5 MB colony with zero exceptions and the suite then passed 944/0/9
+against it. `dev.ps1 bridge -Save <name>` makes it one command. Re-run it as a
+regression check if something later touches persistence; it is not open work.
 
-- **Never apply both a factor list and an effective value.** The product of
-  `ExplainDemand` equals the effective demand, so a surface doing both
-  double-counts (§2.10). Already asserted in the economy suite — keep it so.
-- **Do not expose propagation coefficients.** A shortage that arrived by
-  chain or diffusion should read as a shortage, not as
-  "IntermediateGoods ×0.05 from ManufacturedGoods".
+**What remains is feel.** Does the market read as alive rather than flat or
+chaotic? Do regions form? Every Stage 2 coefficient — `ReversionRetention`
+(0.82), `NudgeValueScale`, the chain table, `DiffusionCoefficient` — was chosen
+conservatively and documented as retune-at-2K, per §18. Expect to move numbers,
+not structure. Fold in **Stage 1 criterion 7** (whether a settlement's economy
+reads from the Market and Relations tooltips), since it is the same kind of
+question.
 
-**2K is much cheaper than the plan assumes.** Its migration half is already
-proven — the 42 → 43 → 44 chain ran on the real 22.5 MB colony with zero
-exceptions, and it is now one command. What remains is the **play gate**:
-whether the market feels alive rather than flat or chaotic, which §20.4 says
-no self-test settles. Do that in the same sitting as Stage 1 criterion 7,
-since both are judgements about what a player can actually see.
+**The gate is written as exact steps in `docs/PENDING_PLAYTESTS.md`** — dev
+mode, the world map, `/` for the debug menu, `Shock settlement economy`, and
+what to compare against what. It needs Matteo at the keyboard; you can prepare
+the world but not answer the question.
 
 ---
 
@@ -136,6 +139,16 @@ Three things that cost real time to learn:
 suite can pass while the log fills with exceptions — that is not a clean run**
 and exits 2, not 0. A skipped assertion is neither failure nor proof (§20.1).
 Exit codes: `0` clean, `1` assertions failed, `2` everything else.
+
+**A logged-out Steam client breaks the bridge and does not look like it does.**
+Cost ~15 minutes on 2026-08-21. `SteamAPI.Init()` fails, RimWorld finds no
+Workshop mods, **deactivates Harmony**, rewrites `ModsConfig.xml` down to Core
+plus DLC, and Intercolony dies at `TypeLoadException ... HarmonyPatch` — which
+surfaces only as a bridge connection timeout. Check
+`HKCU:\Software\Valve\Steam\ActiveProcess\ActiveUser`; **`0` means logged out**,
+and Steam merely running is not enough. Only Matteo can fix it — ask, do not
+work around it. Recover the overwritten mod list from `Player-prev.log`, which
+prints it in load order. Full detail is in `CLAUDE.md`.
 
 **A rebuilt assembly needs a game restart** — a running game holds the old DLL,
 so a test run after a rebuild silently tests the previous code. You have
@@ -214,7 +227,7 @@ grep with an exclusion in it is not an audit.
 |---|---|---|
 | 0 — Program spine | ✅ Complete | |
 | 1 — Settlement economies | ✅ Complete | |
-| 2 — Market fundamentals | 🔨 ~95% | 2J explainability, then the 2K play gate |
+| 2 — Market fundamentals | 🔨 Code complete | Only the 2K play gate, which needs Matteo |
 | 3 — Circumstance events | ⬜ Not started | |
 | 4 — Brand strength | ⬜ Not started | |
 | 5 — Relationships & negotiation | ⬜ Not started | |
@@ -244,7 +257,19 @@ he cannot act on.
   conservative. It would pump rather than average. Close it only if diffusion
   looks wrong in play.
 
-~~The 43 → 44 migration has never run on a real save.~~ **Closed this session**
+~~The 43 → 44 migration has never run on a real save.~~ **Closed 2026-08-21**
 — it ran on the 22.5 MB `Fenhana` colony with zero exceptions.
 
-Start by orienting, then begin 2J.
+## One lesson from 2J worth carrying, because it cost a design
+
+**A rule that disposes of the awkward case usually disposes of the point.** 2J
+splits a price's demand row into standing appetite plus current condition. The
+first rule collapsed it back to one fused row whenever the `[0.4, 2.0]` price
+clamp bound — which sounds conservative and is the opposite: baseline demand of
+0.53 is ordinary, so an everyday glut hits the floor and the explanation would
+vanish *exactly* where the price is most extreme, the one case §2.11 exists for.
+The first test run said so; review had not. When a rule's edge case is "and then
+we show nothing", check how often the edge is actually reached before accepting
+it.
+
+Start by orienting, then run the 2K play gate with Matteo.
