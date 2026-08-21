@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2G — player trades nudge local pressure
-Last completed:     2C — market opportunity size reads current demand (2026-08-21)
+Current slice:      2H — coarse economic chains between categories
+Last completed:     2G — completed trades nudge local pressure (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,71 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2G — completed trades nudge local pressure (2026-08-21)
+
+**Claim:** the player's concluded trades move a settlement's economy in proportion to total value,
+and splitting a trade cannot multiply the effect.
+**Files:** `Economy/MarketPressureService.cs`, `Orders/SalesOrderService.cs`,
+`Procurement/PurchaseOrderService.cs`, `Debug/IntercolonyEconomySelfTest.cs`, plus flakiness repairs
+in `Debug/IntercolonyMarketSelfTest.cs` and `Debug/IntercolonyRfqSelfTest.cs`.
+**Commit:** `94f512b`. **Schema:** unchanged at 44 — pressure was already persisted by 2A.
+**Tests:** full suite green on **four consecutive fresh worlds** (935–937 passed, 0 failed, 13–14
+skipped), world-pawn delta 0, both leak guards OK, log clean. Economy suite 91 → 97.
+
+**This is the first slice that writes pressure from gameplay.** Until now only a debug action moved
+it. Both writes sit at the existing exactly-once completion boundaries, so a settlement's economy
+cannot move for a trade that did not conclude — the same reasoning that put the timeline record
+there in 0.3b.
+
+**The magnitude formula is the slice, and the obvious version is a live exploit.** Pressure moves
+multiplicatively in its *offset*:
+
+```
+bound + (current - bound) * exp(-value / NudgeValueScale)
+```
+
+The natural implementation — a diminishing per-trade delta such as `MaxNudge * v / (v + K)` — is
+**subadditive**: any concave `f` with `f(0) = 0` satisfies `f(a) + f(b) > f(a+b)`, so ten small
+trades move pressure *further* than one large one of the same total. That is precisely the
+split-to-multiply lever §2.5 forbids and acceptance criterion 10 tests for. **Measured, not
+argued:** with the naive shape temporarily in place, ten 1,000-silver trades reached 0.855 where one
+10,000-silver trade reached 0.875 — a 16% larger effect for identical value. The exponential
+composes exactly (`exp(-a/K)·exp(-b/K) = exp(-(a+b)/K)`), so splitting gains **nothing at all**,
+not merely less. It is also the same shape as 2B's mean reversion, aimed at a bound rather than at
+neutral.
+
+**Two `Complete` methods became `internal`** so the suite drives the real transition, following the
+`ContractService.BuildOffer` precedent already in the codebase. The first version used reflection;
+that keeps compiling after a rename while silently testing nothing.
+
+### The flakiness that this slice exposed, and the reasoning error behind it
+
+**Two assertions committed earlier the same day were flaky, and both were mine.** Same production
+code, one fresh world green and the next red:
+
+- **2C lot size** sampled one settlement in one cycle. `PickQuantity` clamps crated goods to
+  `MaxCratedLotSize` and single-stack goods to `MaxSingleStackLotSize`, so a cycle that drew only
+  those had lots pinned *at their cap* and scaling changed nothing — seen as `8 -> 8`, `9 -> 9`,
+  `16 -> 16`. Now aggregates twelve settlements; totals run 480–564, far outside the clamp regime.
+- **2F RFQ counts** skipped below eight *settlements* while comparing *quotations*. A 21-settlement
+  world returned two of them, and a strict `<` cannot reliably move a total of two. **The honesty
+  guard measured a proxy rather than the quantity under test, so it never fired.** Now aggregates
+  twelve defs and guards on the undisturbed quotation total; totals run 76–86.
+
+**The reasoning error is worth more than either fix. Mutation proves *sensitivity*, not
+*stability*.** Both assertions were mutation-tested when written and both went red, and that was
+treated as sufficient. It shows only that the test notices when the code is wrong; it says nothing
+about whether it passes reliably when the code is right. Those are separate properties and both
+need evidence. The standard from here:
+
+1. **Sensitive** — revert the production change, confirm red, restore.
+2. **Stable** — run unmutated on **at least four fresh worlds**, all green.
+
+And a skip guard must measure the same quantity the assertion compares. When an assertion is
+statistical, enlarge the sample rather than loosening `<` to `<=` — loosening makes it pass with the
+feature deleted, which is how a flaky test usually gets "fixed". Both repairs here were re-verified
+in both directions: green on four worlds, red on two under mutation.
 
 ### 2C — market opportunity size reads current demand (2026-08-21)
 
@@ -745,31 +810,34 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2G — player transactions nudge local pressure** (plan §2.5), then `2H` chain propagation,
-`2I` regional diffusion, `2J` explanations, `2K` the migration and play gate.
+**2H — coarse economic chains between categories** (plan §2.6), then `2I` regional diffusion,
+`2J` explanations, `2K` the migration and play gate.
 
-**The read side of Stage 2 is finished.** Selling, pricing, opportunity sizing and RFQs all read
-effective values; the only deliberate holdout is `UI/MainTabWindow_Intercolony.cs:1233-1234`, the
-Stage 1 identity tooltip, which answers what a settlement *is* rather than what it is going through.
-2G opens the **write** side: until now the only thing that moves pressure is a debug action.
+**Both halves of Stage 2's core now work.** Every consumer reads effective values, and completed
+trades write back into pressure. The only deliberate read holdout is
+`UI/MainTabWindow_Intercolony.cs:1233-1234`, the Stage 1 identity tooltip, which answers what a
+settlement *is* rather than what it is going through.
 
-**What §2.5 requires, and the trap in it.** Completing a large sale into a settlement should
-slightly relieve its demand pressure; buying heavily should tighten a supplier's supply pressure.
-The stated constraint is that impact must derive from **total economic value, not transaction
-count**, with diminishing returns — otherwise splitting one trade into ten creates ten times the
-effect, and the player can pump a market back and forth for profit. Acceptance criterion 10 is
-exactly that: no obvious buy-low/sell-high arbitrage.
+**What §2.6 asks for, and what it explicitly does not.** Small directional relationships between the
+six existing categories, centralised in one table or service — *not* a bill-of-materials
+simulation. The plan's initial links: manufactured-goods demand lifts intermediate-goods demand;
+furniture demand lifts commodities and intermediates; capital-equipment demand lifts intermediates;
+tight commodity supply tightens intermediates and then, more weakly, furniture and capital
+equipment. Coefficients deliberately small. The goal is "a steel shortage has consequences", not a
+500-node input-output matrix, and the tests must prove **direction and boundedness** rather than a
+supposedly correct coefficient.
 
-**Where the write belongs.** `SalesOrderService.Complete` already documents itself as the
-exactly-once boundary for both delivery and collection, and Stage 0.3b put the timeline record
-there for that reason. The pressure nudge belongs at the same site, for the same reason: a
-settlement's economy must not move for a sale that did not conclude.
+**The trap is feedback.** Propagation writes pressure that later propagation reads. Without a rule
+about ordering and iteration depth, a chain can amplify itself across refreshes — categories that
+lift each other in a cycle diverge to the bounds and stay there, which reads as a permanently broken
+economy rather than a bug. Decide propagation depth explicitly, apply it from a snapshot rather than
+in place so the order categories are visited in cannot change the result, and assert that repeated
+refreshes without a new shock still converge toward neutral. 2B's mean reversion is what keeps the
+system stable; propagation must not outrun it.
 
-**A note for whoever writes the test.** Both mutation checks this stage relied on the generator
-being reproducible from an explicit seed and refresh number. A pressure *write* has no such seam —
-it is a side effect on world state — so assert it by driving the real transition and reading the
-record either side, never by calling `MarketPressureService` directly and checking it did what it
-was told.
+**Testing note carried forward.** A pressure *write* has no reproducible-seed seam the way the
+generator does, so drive the real path and read the record either side. And per 2G: verify any new
+assertion in **both** directions — red under mutation, green on four fresh worlds.
 
 **Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
 and the plan says so twice.
