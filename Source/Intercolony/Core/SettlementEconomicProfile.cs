@@ -99,7 +99,10 @@ namespace Intercolony
         /// <summary>Placeholder multiplier on available workers. Labor is Phase 8+ (§9, §96).</summary>
         public float laborSupplyModifier = 1f;
 
-        /// <summary>How much prices and opportunities swing between refreshes (§9 volatility).</summary>
+        /// <summary>
+        /// Generation-time jitter that makes two settlements of the same archetype differ (§9
+        /// volatility). Applied once when the profile is created and never re-rolled per cycle.
+        /// </summary>
         public float volatility;
 
         /// <summary>The seed this profile was derived from. Printed for reproducible debugging (§60).</summary>

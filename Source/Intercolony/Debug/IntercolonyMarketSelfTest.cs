@@ -451,6 +451,119 @@ namespace Intercolony
                             "every cycle produced identical demand");
                     }
 
+                    // Quantity must read current demand without letting category selection muddy
+                    // the comparison. Equal pressure on every category scales every category
+                    // weight and the weighted roll together, leaving the chosen goods unchanged.
+                    SettlementMarketState savedMarketState =
+                        state.MarketStateFor(settlement.ID, createIfMissing: false);
+                    if (savedMarketState != null)
+                    {
+                        state.MarketStates.Remove(savedMarketState);
+                        state.RefreshMarketStateIndex();
+                    }
+
+                    try
+                    {
+                        int quantityRefresh = -1;
+                        List<MarketOpportunity> undisturbedLots = null;
+                        int firstSyntheticRefresh = state.RefreshCount + 1000;
+                        for (int r = firstSyntheticRefresh;
+                             r < firstSyntheticRefresh + 60 && quantityRefresh < 0;
+                             r++)
+                        {
+                            int c = 3000;
+                            List<MarketOpportunity> candidate =
+                                MarketOpportunityGenerator.GenerateFor(
+                                    settlement, settlementProfile, 4242, r, 0, () => c++);
+                            if (candidate.Count > 0)
+                            {
+                                quantityRefresh = r;
+                                undisturbedLots = candidate;
+                            }
+                        }
+
+                        if (quantityRefresh < 0)
+                        {
+                            sb.AppendLine(
+                                "  SKIPPED  demand condition sizes market lots — " +
+                                "60 synthetic cycles produced nothing");
+                        }
+                        else
+                        {
+                            int undisturbedTotal = 0;
+                            foreach (MarketOpportunity opportunity in undisturbedLots)
+                            {
+                                undisturbedTotal += opportunity.quantity;
+                            }
+
+                            foreach (IntercolonyProductCategory pressureCategory in
+                                     IntercolonyProductCategoryUtility.All)
+                            {
+                                MarketPressureService.ApplyDemandShock(
+                                    state, settlement.ID, pressureCategory,
+                                    MarketPressureService.MaxPressure);
+                            }
+
+                            int shortageId = 3000;
+                            List<MarketOpportunity> shortageLots =
+                                MarketOpportunityGenerator.GenerateFor(
+                                    settlement, settlementProfile, 4242, quantityRefresh, 0,
+                                    () => shortageId++);
+                            int shortageTotal = 0;
+                            foreach (MarketOpportunity opportunity in shortageLots)
+                            {
+                                shortageTotal += opportunity.quantity;
+                            }
+
+                            state.MarketStates.RemoveAll(
+                                s => s != null && s.settlementId == settlement.ID);
+                            state.RefreshMarketStateIndex();
+                            foreach (IntercolonyProductCategory pressureCategory in
+                                     IntercolonyProductCategoryUtility.All)
+                            {
+                                MarketPressureService.ApplyDemandShock(
+                                    state, settlement.ID, pressureCategory,
+                                    -MarketPressureService.MaxPressure);
+                            }
+
+                            int glutId = 3000;
+                            List<MarketOpportunity> glutLots =
+                                MarketOpportunityGenerator.GenerateFor(
+                                    settlement, settlementProfile, 4242, quantityRefresh, 0,
+                                    () => glutId++);
+                            int glutTotal = 0;
+                            foreach (MarketOpportunity opportunity in glutLots)
+                            {
+                                glutTotal += opportunity.quantity;
+                            }
+
+                            Check("a demand shortage increases total market lot quantity",
+                                shortageTotal > undisturbedTotal,
+                                $"{undisturbedTotal} -> {shortageTotal}");
+                            Check("a demand glut decreases total market lot quantity",
+                                glutTotal < undisturbedTotal,
+                                $"{undisturbedTotal} -> {glutTotal}");
+                            int roundingAllowance = undisturbedLots.Count * 50;
+                            Check("demand-conditioned lot quantity stays within the economy bound",
+                                shortageTotal <=
+                                    undisturbedTotal * EffectiveEconomyService.MaxCondition +
+                                    roundingAllowance,
+                                $"{undisturbedTotal} -> {shortageTotal}, allowance " +
+                                roundingAllowance);
+                        }
+                    }
+                    finally
+                    {
+                        state.MarketStates.RemoveAll(
+                            s => s != null && s.settlementId == settlement.ID);
+                        if (savedMarketState != null)
+                        {
+                            state.MarketStates.Add(savedMarketState);
+                        }
+
+                        state.RefreshMarketStateIndex();
+                    }
+
                     Check("respects the per-settlement cap",
                         MarketOpportunityGenerator.GenerateFor(
                             settlement, settlementProfile, 4242, 7,

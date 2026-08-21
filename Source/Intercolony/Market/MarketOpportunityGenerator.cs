@@ -113,7 +113,7 @@ namespace Intercolony
             ThingDef stuff = PickStuff(def, profile);
             // §28 "larger orders": trusted partners commit to more, capped at +40%.
             int quantity = Mathf.Max(1, Mathf.RoundToInt(
-                PickQuantity(def, stuff, profile) *
+                PickQuantity(state, def, stuff, profile, category) *
                 ReputationService.OpportunitySizeFactor(reputation)));
             // Reputation can enlarge an ordinary order, but it must not override the physical
             // form limits for goods that cannot share a stack or crate.
@@ -327,9 +327,17 @@ namespace Intercolony
         /// Quantity scaled so the lot is worth a plausible amount of silver rather than a
         /// fixed unit count — 1,200 corn and 1,200 components are wildly different asks (§11).
         /// </summary>
-        private static int PickQuantity(ThingDef def, ThingDef stuff, SettlementEconomicProfile profile)
+        private static int PickQuantity(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category)
         {
             float targetSilver = Rand.Range(400f, 3000f) * WealthScale(profile.wealthTier);
+            // Category selection already counted baseline appetite through effective demand;
+            // size reads only the current condition so that standing appetite is not counted twice.
+            targetSilver *= EffectiveEconomyService.DemandCondition(state, profile, category);
             float unitValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(def, stuff));
             int quantity = Mathf.RoundToInt(targetSilver / unitValue);
 
