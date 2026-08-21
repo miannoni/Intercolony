@@ -16,6 +16,21 @@
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
+  <!--
+    The dev test bridge opens a TCP listener inside the running game, so it is not merely
+    disabled in a release build - it is not compiled into one at all. Nothing defines this
+    constant unless the build is asked for it explicitly:
+
+        dotnet build Source\Intercolony\Intercolony.csproj -p:EnableDevBridge=true
+
+    A second gate at runtime (the INTERCOLONY_DEV_BRIDGE environment variable) keeps even a
+    bridge-enabled build silent unless asked. package.ps1 checks the built assembly for the
+    bridge's markers, because neither gate is visible in the artefact it ships.
+  -->
+  <PropertyGroup Condition=" '$(EnableDevBridge)' == 'true' ">
+    <DefineConstants>$(DefineConstants);INTERCOLONY_DEV_BRIDGE</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Krafs.Rimworld.Ref" Version="1.6.4850" PrivateAssets="all" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
