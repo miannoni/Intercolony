@@ -126,6 +126,11 @@ namespace Intercolony
 
         private void OnDestroy()
         {
+            // The pump owns the listener's ability to complete work. Once Unity destroys it, stop
+            // accepting requests before releasing anything already queued; otherwise every new
+            // request would wait the full command timeout for an Update() that can never happen.
+            IntercolonyDevBridgeHost.Stop();
+
             if (instance == this)
             {
                 instance = null;

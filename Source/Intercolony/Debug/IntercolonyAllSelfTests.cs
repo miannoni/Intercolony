@@ -40,11 +40,53 @@ namespace Intercolony
             public int skipped;
             public bool crashed;
             public string skipReason;
+            public string preconditionError;
+            public string exceptionText;
+            public bool unknownSuite;
             public string output = "";
             public long durationMs;
 
-            public bool Ran => !crashed && skipReason == null;
+            public bool Ran => !unknownSuite && !crashed && skipReason == null;
             public bool Clean => Ran && failed == 0;
+        }
+
+        /// <summary>
+        /// The data and the exact human-readable report from one pass through the registry.
+        /// Keeping them together matters: if the bridge ran the suites once for counts and again
+        /// for text, the two answers could describe different state and every test would take
+        /// twice as long.
+        /// </summary>
+        public sealed class AllSuitesResult
+        {
+            public readonly List<SuiteResult> results = new List<SuiteResult>();
+            public int passed;
+            public int failed;
+            public int skipped;
+            public int notRun;
+
+            /// <summary>
+            /// Nothing failed and nothing was prevented from running.
+            ///
+            /// Deliberately does **not** fold in skipped assertions, and the distinction is load
+            /// bearing rather than pedantic. A caller turns this into an exit code where 1 means
+            /// "assertions failed", and the animal suite skips thirteen assertions on an ordinary
+            /// healthy run - so counting skips here would make every run exit 1 and the failure
+            /// signal would stop carrying information at all.
+            /// </summary>
+            public bool success;
+
+            /// <summary>
+            /// Nothing failed, nothing was prevented from running, and nothing was skipped - the
+            /// runner's own "all clean" verdict.
+            ///
+            /// Kept separate from <see cref="success"/> because the project's testing rules are
+            /// explicit that a skipped assertion is not proof. Collapsing the two would either
+            /// silence that or drown the failure signal; reporting both says the true thing twice.
+            /// </summary>
+            public bool clean;
+
+            public long durationMs;
+            public string output = "";
         }
 
         /// <summary>
@@ -137,8 +179,8 @@ namespace Intercolony
         /// which is the entire point of automating this — would otherwise do that damage on every
         /// invocation.
         ///
-        /// Returns null for an unknown id so the caller can say so precisely rather than reporting
-        /// a suite that failed.
+        /// An unknown id is data too. Returning a distinct result rather than null or throwing lets
+        /// a protocol caller tell a misspelled id from a suite that existed and failed to run.
         /// </summary>
         public static SuiteResult RunOne(string id, IntercolonyWorldComponent state, Map map)
         {
@@ -154,7 +196,23 @@ namespace Intercolony
 
             if (definition == null)
             {
-                return null;
+                return new SuiteResult
+                {
+                    id = id,
+                    unknownSuite = true,
+                    output = ""
+                };
+            }
+
+            if (state == null)
+            {
+                return new SuiteResult
+                {
+                    id = definition.Id,
+                    name = definition.Label,
+                    skipReason = "no world state",
+                    preconditionError = "no world state"
+                };
             }
 
             return RunDefinition(state, definition, map);
@@ -177,31 +235,62 @@ namespace Intercolony
 
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
+            return RunAll(state, map).output;
+        }
+
+        /// <summary>
+        /// Runs the registry once and returns both structured totals and the same report
+        /// <see cref="Run"/> has always returned. All rendering remains below, unchanged, so the
+        /// debug action's text stays a compatibility surface rather than becoming bridge output.
+        /// </summary>
+        public static AllSuitesResult RunAll(IntercolonyWorldComponent state, Map map)
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            AllSuitesResult suite = new AllSuitesResult();
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("=== Intercolony: all self-tests ===");
 
             if (state == null)
             {
                 sb.AppendLine("No world state. Load a game first.");
-                return sb.ToString();
+                stopwatch.Stop();
+                suite.notRun = Definitions.Length;
+                suite.durationMs = stopwatch.ElapsedMilliseconds;
+                suite.output = sb.ToString();
+                return suite;
             }
 
             int timelineBefore = state.CommercialTimeline.Count;
             int pressureBefore = state.MarketStates.Count;
             int nextIdBefore = state.PeekNextId();
 
-            List<SuiteResult> results = new List<SuiteResult>();
             foreach (SelfTestDefinition definition in Definitions)
             {
-                results.Add(RunDefinition(state, definition, map));
+                SuiteResult result = RunDefinition(state, definition, map);
+                suite.results.Add(result);
+                if (result.Ran)
+                {
+                    suite.passed += result.passed;
+                    suite.failed += result.failed;
+                    suite.skipped += result.skipped;
+                }
+                else
+                {
+                    suite.notRun++;
+                }
             }
 
-            AppendTable(sb, results);
+            AppendTable(sb, suite.results);
             AppendLeakCheck(sb, state, timelineBefore, pressureBefore, nextIdBefore);
-            AppendVerdict(sb, results);
-            AppendFailureDetail(sb, results);
+            AppendVerdict(sb, suite.results);
+            AppendFailureDetail(sb, suite.results);
 
-            return sb.ToString();
+            stopwatch.Stop();
+            suite.success = suite.failed == 0 && suite.notRun == 0;
+            suite.clean = suite.success && suite.skipped == 0;
+            suite.durationMs = stopwatch.ElapsedMilliseconds;
+            suite.output = sb.ToString();
+            return suite;
         }
 
         /// <summary>
@@ -221,7 +310,8 @@ namespace Intercolony
                 {
                     id = definition.Id,
                     name = definition.Label,
-                    skipReason = "no current map"
+                    skipReason = "no current map",
+                    preconditionError = "no current map"
                 };
             }
 
@@ -239,7 +329,8 @@ namespace Intercolony
             catch (Exception ex)
             {
                 result.crashed = true;
-                result.output = ex.ToString();
+                result.exceptionText = ex.ToString();
+                result.output = result.exceptionText;
             }
             finally
             {

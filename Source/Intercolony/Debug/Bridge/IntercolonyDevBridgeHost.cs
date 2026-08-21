@@ -135,7 +135,7 @@ namespace Intercolony
             IntercolonyLog.Message($"dev bridge listening on 127.0.0.1:{port}.");
         }
 
-        private static void Stop()
+        internal static void Stop()
         {
             stopping = true;
             try
@@ -163,7 +163,7 @@ namespace Intercolony
                     client = listener.AcceptTcpClient();
                     HandleConnection(client);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     if (stopping)
                     {
@@ -171,8 +171,8 @@ namespace Intercolony
                     }
 
                     // One bad connection must never take the listener down with it - the next
-                    // command has to work. This is the whole reason the loop catches broadly.
-                    IntercolonyLog.Warning($"dev bridge: connection failed: {ex.Message}");
+                    // command has to work. Do not log here: even Verse.Log is outside the socket
+                    // thread's deliberately tiny accept/read/queue/wait/write boundary.
                 }
                 finally
                 {
@@ -322,9 +322,201 @@ namespace Intercolony
             {
                 case "status":
                     return Status();
+                case "tests.list":
+                    return TestsList();
+                case "tests.run":
+                    return TestsRun(IntercolonyDevBridgeProtocol.GetString(args, "name"));
+                case "tests.run_all":
+                    return TestsRunAll();
+                case "state.summary":
+                    return StateSummary();
+                case "world_pawns.count":
+                    return WorldPawnCount();
+                case "postings.count":
+                    return PostingCount();
                 default:
                     throw new InvalidOperationException($"unknown command '{command}'");
             }
+        }
+
+        /// <summary>
+        /// The suites this build knows about, straight from the runner's registry. Not a copy —
+        /// a second list here would drift the first time a suite was added, which is the failure
+        /// this whole arrangement exists to avoid.
+        /// </summary>
+        private static object TestsList()
+        {
+            List<object> tests = new List<object>();
+            foreach (IntercolonyAllSelfTests.SelfTestDefinition definition in
+                     IntercolonyAllSelfTests.List())
+            {
+                tests.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                {
+                    ["id"] = definition.Id,
+                    ["label"] = definition.Label,
+                    ["requiresMap"] = definition.RequiresMap
+                });
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["tests"] = tests
+            };
+        }
+
+        /// <summary>
+        /// Runs one suite by id.
+        ///
+        /// A missing precondition is reported as a precondition, never as a skip and never as a
+        /// pass. The distinction is the point of the command: a caller has to be able to tell
+        /// "this failed", "this was not exercised", and "this could not run here" apart, and the
+        /// cheapest way to lose that is to let one of them wear another's clothes.
+        /// </summary>
+        private static object TestsRun(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                throw new InvalidOperationException("tests.run needs args.name");
+            }
+
+            IntercolonyAllSelfTests.SuiteResult result =
+                IntercolonyAllSelfTests.RunOne(
+                    name, IntercolonyWorldComponent.Current, Find.CurrentMap);
+
+            return DescribeResult(result);
+        }
+
+        private static Dictionary<string, object> DescribeResult(
+            IntercolonyAllSelfTests.SuiteResult result)
+        {
+            // `crashed` covers two cases the runner deliberately conflates for its table: the suite
+            // threw, and the suite returned output with no summary line to verify. Both mean "this
+            // did not complete", both leave the real text in output, and neither may be reported as
+            // a pass - so success is false for both and the output carries the detail.
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["id"] = result.id,
+                ["label"] = result.name,
+                ["passed"] = result.passed,
+                ["failed"] = result.failed,
+                ["skipped"] = result.skipped,
+                ["success"] = result.Clean,
+                ["durationMs"] = result.durationMs,
+                ["output"] = result.output,
+                ["preconditionError"] = result.preconditionError,
+                ["exceptionText"] = result.exceptionText,
+                ["unknownSuite"] = result.unknownSuite
+            };
+        }
+
+        /// <summary>
+        /// The whole suite, through the runner's own entry point so the report a client reads and
+        /// the report the debug menu prints are the same text produced by the same code.
+        ///
+        /// The runner returns counts and its existing report from one pass through the registry.
+        /// That matters beyond speed: two passes could observe different game state and return
+        /// numbers that did not describe the text beside them.
+        /// </summary>
+        private static object TestsRunAll()
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            IntercolonyAllSelfTests.AllSuitesResult suite =
+                IntercolonyAllSelfTests.RunAll(state, Find.CurrentMap);
+            List<object> tests = new List<object>();
+            foreach (IntercolonyAllSelfTests.SuiteResult result in suite.results)
+            {
+                tests.Add(DescribeResult(result));
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                // Two signals, never collapsed into one. success drives the caller's exit code and
+                // means "nothing failed and nothing was blocked"; clean additionally means nothing
+                // was skipped, which is the runner's own verdict and the project's rule that a
+                // skipped assertion is not proof. A healthy run legitimately has skips, so folding
+                // them into success would make every run look like a failure.
+                ["success"] = suite.success,
+                ["clean"] = suite.clean,
+                ["passed"] = suite.passed,
+                ["failed"] = suite.failed,
+                ["skipped"] = suite.skipped,
+                ["notRun"] = suite.notRun,
+                ["durationMs"] = suite.durationMs,
+                ["tests"] = tests,
+                ["output"] = suite.output,
+                ["preconditionError"] = state == null
+                    ? "no world loaded - load a colony first"
+                    : null
+            };
+        }
+
+        /// <summary>The existing authoritative dump, not a second handwritten one.</summary>
+        private static object StateSummary()
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null)
+            {
+                throw new InvalidOperationException("no world loaded - load a colony first");
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["summary"] = state.DebugStateSummary()
+            };
+        }
+
+        /// <summary>
+        /// World pawn totals.
+        ///
+        /// This exists so the job-posting pawn leak is observable from outside the suite that trips
+        /// it. Applicants are pinned world pawns, and a posting that closes without discarding them
+        /// leaks one pawn per applicant permanently. The runner's own leak check watches the
+        /// commercial timeline, market pressure and entity ids — not world pawns — so nothing in
+        /// the game would otherwise report this. Reading it either side of a run makes the delta a
+        /// number rather than a suspicion.
+        /// </summary>
+        private static object WorldPawnCount()
+        {
+            if (Find.World == null)
+            {
+                throw new InvalidOperationException("no world loaded - load a colony first");
+            }
+
+            // Deliberately the same accessor the job-posting and animal suites assert on
+            // (Find.WorldPawns?.AllPawnsAliveOrDead?.Count). Reading a different one would give a
+            // number that could not be compared against the assertion it is meant to explain.
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["allPawnsAliveOrDead"] = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0
+            };
+        }
+
+        /// <summary>
+        /// Total and open job postings, so an orchestrator can verify the precondition a fresh-world
+        /// run claims — no open postings before the job-posting suite runs — instead of assuming it.
+        /// </summary>
+        private static object PostingCount()
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null)
+            {
+                throw new InvalidOperationException("no world loaded - load a colony first");
+            }
+
+            int open = 0;
+            foreach (JobPosting posting in state.Postings)
+            {
+                if (posting.IsOpen)
+                {
+                    open++;
+                }
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["total"] = state.Postings.Count,
+                ["open"] = open
+            };
         }
 
         /// <summary>

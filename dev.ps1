@@ -488,10 +488,22 @@ function Invoke-DevTest($Name) {
     Write-Host "Postings: $postingsBefore -> $postingsAfter"
     Write-Host "Test signal: $(if ($success -and $failed -eq 0) { 'PASS' } else { 'FAIL' })" `
         -ForegroundColor $(if ($success -and $failed -eq 0) { 'Green' } else { 'Red' })
+    # Reported separately from PASS/FAIL rather than folded into it. A skipped assertion is not
+    # a failure and must not turn the exit code red - a healthy full run skips thirteen in the
+    # animal suite alone - but it is also not proof, so it does not get to hide inside "PASS".
+    if ($skipped -gt 0) {
+        Write-Host "Skip signal: $skipped assertion(s) skipped - passed, but not proof." `
+            -ForegroundColor Yellow
+    }
     Write-Host "Log signal: $(if ($logHasExceptions) { 'NEW EXCEPTIONS FOUND' } else { 'CLEAN' })" `
         -ForegroundColor $(if ($logHasExceptions) { 'Red' } else { 'Green' })
 
-    $failureLines = @($rawOutput -split "`r?`n" | Where-Object { $_ -match 'FAIL' })
+    # -cmatch, anchored, and not plain 'FAIL'. PowerShell's -match is case-INsensitive, so
+    # 'FAIL' also matches the summary line every suite ends with - "25 passed, 0 failed." -
+    # and a completely clean run printed its own summary under "Failing assertions:". The
+    # suites mark a failed assertion as "  FAIL  <label>" at the start of the line, so match
+    # that and nothing else.
+    $failureLines = @($rawOutput -split "`r?`n" | Where-Object { $_ -cmatch '^\s*FAIL\s' })
     if ($failureLines.Count -gt 0) {
         Write-Host "Failing assertions:" -ForegroundColor Red
         $failureLines | ForEach-Object { Write-Host $_ -ForegroundColor Red }
