@@ -11,8 +11,7 @@
         .\dev.ps1 build        # build only
         .\dev.ps1 run          # build + restart game, don't wait
         .\dev.ps1 run -MainMenu   # ...but boot to the menu so a real save can be
-                                  # loaded. Needed for schema migrations, which a
-                                  # -quicktest world never exercises.
+                                  # selected and loaded by hand.
         .\dev.ps1 log          # everything from this session (filtered)
         .\dev.ps1 log -Full    # everything, unfiltered (rarely wanted)
         .\dev.ps1 mark "tried selling corn"   # drop a labelled divider
@@ -20,6 +19,8 @@
         .\dev.ps1 reset        # make the next 'new' show the whole log
         .\dev.ps1 bridge       # bridge build + fresh game + wait for TCP readiness
         .\dev.ps1 bridge -Fresh              # same, stated explicitly
+        .\dev.ps1 bridge -Save "Colony 1"     # bridge build + autoload an existing
+                                              # save (also accepts Colony 1.rws)
         .\dev.ps1 test job-posting           # test the currently running game
         .\dev.ps1 test job-posting -Fresh    # test a clean -quicktest world
         .\dev.ps1 test all -Fresh            # full suite on a clean world
@@ -45,13 +46,16 @@ param(
 
     [switch]$Full,
 
-    # Boot to the main menu instead of a throwaway test map, so a real save can be
-    # loaded. Required for anything a -quicktest world cannot show: schema migrations
-    # (a new world initializes at the current schema and never enters the migration
-    # path) and any measurement that has to be repeatable on the same world later.
+    # Boot to the main menu instead of a throwaway test map so a real save can be
+    # selected and loaded by hand. Use bridge -Save to autoload an existing save and
+    # prove schema migrations through the bridge.
     [switch]$MainMenu,
 
     [switch]$Fresh,
+
+    # Existing save to stage as Autostart.rws for a bridge-enabled launch. The source
+    # is copied, never renamed or moved, and may be named with or without .rws.
+    [string]$Save = "",
 
     # Substring signalling the mod finished loading. Polling stops when this
     # appears, or when -TimeoutSec elapses.
@@ -73,6 +77,8 @@ $RimWorld = "C:\Program Files (x86)\Steam\steamapps\common\RimWorld"
 $Exe      = Join-Path $RimWorld "RimWorldWin64.exe"
 $Log      = Join-Path $env:USERPROFILE `
             "AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Player.log"
+$Saves    = Join-Path $env:USERPROFILE `
+            "AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Saves"
 
 # Where we remember how much of the log has already been reported, and any
 # manual markers. Both are gitignored.
@@ -80,10 +86,10 @@ $StateFile  = Join-Path $Repo ".dev-log-offset"
 $MarkFile   = Join-Path $Repo ".dev-log-marks"
 $TestOutput = Join-Path ([System.IO.Path]::GetTempPath()) "Intercolony-dev-test-output.txt"
 
-# Boot straight into a throwaway test map instead of the main menu, unless -MainMenu
-# was asked for. Every -quicktest launch generates a *new* world, so it can neither
-# exercise a schema migration nor let the same world be measured twice.
-$LaunchArgs = if ($MainMenu) { @() } else { @("-quicktest") }
+# Boot straight into a throwaway test map unless -MainMenu or -Save was asked for.
+# Autostart must receive no launch arguments: combining it with -quicktest consumes
+# RimWorld's one-shot autostart flag before quick-test setup and crashes during play.
+$LaunchArgs = if ($MainMenu -or -not [string]::IsNullOrWhiteSpace($Save)) { @() } else { @("-quicktest") }
 
 # ------------------------------------------------------------- utilities ----
 
@@ -227,7 +233,7 @@ function Start-RimWorld([switch]$Bridge) {
     if (Test-Path $MarkFile) { Remove-Item $MarkFile -Force }
     Write-Host "Launching RimWorld $($LaunchArgs -join ' ')..." -ForegroundColor Cyan
 
-    # -ArgumentList rejects an empty array, so the -MainMenu launch must omit the
+    # -ArgumentList rejects an empty array, so -MainMenu and -Save launches must omit the
     # parameter rather than pass @(). Both the plain and the bridge path need this,
     # so it lives in one place.
     $launch = {
@@ -334,10 +340,10 @@ function Wait-ForLoad {
     return $false
 }
 
-function Wait-ForBridge([switch]$RequireMap) {
+function Wait-ForBridge([switch]$RequireMap, [int]$ReadinessTimeoutSec = $BridgeTimeoutSec) {
     $need = if ($RequireMap) { "world and map" } else { "world" }
-    Write-Host "Waiting for bridge $need readiness (timeout ${BridgeTimeoutSec}s)..." -ForegroundColor Cyan
-    $deadline = (Get-Date).AddSeconds($BridgeTimeoutSec)
+    Write-Host "Waiting for bridge $need readiness (timeout ${ReadinessTimeoutSec}s)..." -ForegroundColor Cyan
+    $deadline = (Get-Date).AddSeconds($ReadinessTimeoutSec)
     $answered = $false
     $worldLoaded = $false
     $mapLoaded = $false
@@ -365,18 +371,64 @@ function Wait-ForBridge([switch]$RequireMap) {
     }
 
     if (-not $answered) {
-        Write-Host "Timed out after ${BridgeTimeoutSec}s: bridge never answered. Last error: $lastError" -ForegroundColor Red
+        Write-Host "Timed out after ${ReadinessTimeoutSec}s: bridge never answered. Last error: $lastError" -ForegroundColor Red
     } elseif (-not $worldLoaded) {
-        Write-Host "Timed out: bridge answered but worldLoaded is still false after ${BridgeTimeoutSec}s." -ForegroundColor Red
+        Write-Host "Timed out: bridge answered but worldLoaded is still false after ${ReadinessTimeoutSec}s." -ForegroundColor Red
     } else {
-        Write-Host "Timed out: bridge answered and worldLoaded is true, but mapLoaded is still false after ${BridgeTimeoutSec}s." -ForegroundColor Red
+        Write-Host "Timed out: bridge answered and worldLoaded is true, but mapLoaded is still false after ${ReadinessTimeoutSec}s." -ForegroundColor Red
     }
     return $false
 }
 
 function Start-BridgeSession {
+    $sourceSave = $null
+    $autostartSave = Join-Path $Saves "Autostart.rws"
+    if (-not [string]::IsNullOrWhiteSpace($Save)) {
+        $saveFileName = $Save.Trim()
+        if (-not $saveFileName.EndsWith(".rws", [System.StringComparison]::OrdinalIgnoreCase)) {
+            $saveFileName += ".rws"
+        }
+        if ([System.IO.Path]::GetFileName($saveFileName) -ne $saveFileName) {
+            Write-Host "BRIDGE SAVE LAUNCH FAILED: -Save accepts a save name, not a path." -ForegroundColor Red
+            return $false
+        }
+        $sourceSave = Join-Path $Saves $saveFileName
+        if (-not (Test-Path -LiteralPath $sourceSave -PathType Leaf)) {
+            Write-Host "BRIDGE SAVE LAUNCH FAILED: save not found at $sourceSave" -ForegroundColor Red
+            return $false
+        }
+        if (Test-Path -LiteralPath $autostartSave) {
+            Write-Host "BRIDGE SAVE LAUNCH FAILED: $autostartSave already exists; refusing to overwrite it." -ForegroundColor Red
+            return $false
+        }
+    }
+
     if (-not (Invoke-Build -Bridge)) { return $false }
     Stop-RimWorld
+
+    if ($null -ne $sourceSave) {
+        $createdAutostart = $false
+        try {
+            # Claim the destination without clobbering a save that appeared after preflight.
+            New-Item -Path $autostartSave -ItemType File -ErrorAction Stop | Out-Null
+            $createdAutostart = $true
+            Copy-Item -LiteralPath $sourceSave -Destination $autostartSave -Force
+            Start-RimWorld -Bridge
+            # Large real saves (22 MB and above) can take well over the normal 180s.
+            $saveTimeoutSec = [Math]::Max($BridgeTimeoutSec, 600)
+            return (Wait-ForBridge -RequireMap -ReadinessTimeoutSec $saveTimeoutSec)
+        } catch {
+            Write-Host "BRIDGE SAVE LAUNCH FAILED: $($_.Exception.Message)" -ForegroundColor Red
+            return $false
+        } finally {
+            if ($createdAutostart) {
+                # A leftover silently hijacks later launches, including -Fresh, so this
+                # must run after success, timeout, or error.
+                Remove-Item -LiteralPath $autostartSave -Force
+            }
+        }
+    }
+
     try {
         Start-RimWorld -Bridge
     } catch {
