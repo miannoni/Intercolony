@@ -114,6 +114,51 @@ function Assert-PackagePath($relativePath, $shouldExist) {
     }
 }
 
+<#
+    Refuses to package an assembly that was built with -p:EnableDevBridge=true.
+
+    The dev test bridge opens a TCP listener inside the running game. It is gated twice
+    - compiled out unless EnableDevBridge is set, and dormant unless the environment
+    variable is also set - but neither gate is visible in the artefact this script ships.
+    package.ps1 never builds: it copies whatever Assemblies\Intercolony.dll happens to be
+    sitting there, which is routinely the output of the last local build. One
+    `dotnet build -p:EnableDevBridge=true` followed by a release package would publish a
+    listener to the Workshop, and nothing else in this pipeline would notice.
+
+    So this reads the artefact rather than trusting the build flags. Type names live in the
+    metadata #Strings heap as UTF-8; string literals live in the #US heap as UTF-16. A
+    bridge build necessarily contains both markers and a normal build contains neither, so
+    each is checked in the encoding its heap actually uses.
+#>
+function Assert-NoDevBridge($assemblyPath) {
+    $bytes = [System.IO.File]::ReadAllBytes($assemblyPath)
+
+    # ISO-8859-1 maps every byte to the code point of the same value, so a byte array becomes
+    # a searchable string with no re-encoding and no loss - which UTF-8 decoding would not
+    # guarantee on arbitrary metadata bytes.
+    #
+    # Not [System.Text.Encoding]::Latin1: that property arrived in .NET 5, and this script runs
+    # under Windows PowerShell 5.1 on .NET Framework, where it resolves to **null** rather than
+    # throwing. A guard built on it would have looked correct and done nothing.
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+    $asText = $latin1.GetString($bytes)
+
+    $markers = @{
+        "IntercolonyDevBridgeHost" = [System.Text.Encoding]::UTF8
+        "INTERCOLONY_DEV_BRIDGE"   = [System.Text.Encoding]::Unicode
+    }
+
+    foreach ($marker in $markers.Keys) {
+        $needle = $latin1.GetString($markers[$marker].GetBytes($marker))
+        if ($asText.Contains($needle)) {
+            throw "Package verification failed: '$assemblyPath' contains the dev test bridge " +
+                  "(found '$marker'). It was built with -p:EnableDevBridge=true. " +
+                  "Rebuild with a plain 'dotnet build' and package again - a release must " +
+                  "never ship a build that can open a listener."
+        }
+    }
+}
+
 # ------------------------------------------------------------------ build ----
 
 if (Test-Path -LiteralPath $OutputRoot) {
@@ -175,6 +220,8 @@ foreach ($forbidden in @(
 )) {
     Assert-PackagePath $forbidden $false
 }
+
+Assert-NoDevBridge (Join-Path $PackageDir "Assemblies\Intercolony.dll")
 
 $allowedRootNames = @($ReleaseDirectories) + @($ReleaseFiles)
 foreach ($rootItem in Get-ChildItem -LiteralPath $PackageDir -Force) {
