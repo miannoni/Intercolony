@@ -87,6 +87,7 @@ namespace Intercolony
                 CheckEffectiveSupplyInvertsScarcity(r, state);
                 CheckEffectiveEconomyBounds(r, state);
                 CheckEffectiveEconomyExplanations(r, state);
+                CheckPricingExplainsEffectiveDemand(r, state);
                 CheckSyntheticProfilesIgnoreMarketPressure(r, state);
             }
             catch (Exception ex)
@@ -1336,6 +1337,243 @@ namespace Intercolony
                 "a settlement with no profile explains nothing rather than throwing");
 
             ClearProbe(state);
+        }
+
+        /// <summary>
+        /// The player sees pricing's factors rather than the effective-economy service directly,
+        /// so the integration boundary is the claim that matters. These checks deliberately enter
+        /// through <see cref="IntercolonyPricing.UnitPrice(IntercolonyWorldComponent, ThingDef, int, SettlementEconomicProfile, IntercolonyProductCategory, float, QualityCategory?, out List{PriceFactor})"/>
+        /// and verify that its rows both name current conditions and still reconstruct the exact
+        /// price. Calling the explanation service alone would stay green if pricing fused the rows
+        /// again or applied pressure a second time.
+        /// </summary>
+        private static void CheckPricingExplainsEffectiveDemand(
+            Results r, IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            try
+            {
+                SettlementEconomicProfile profile = EffectiveProbeProfile();
+                ThingDef def = ThingDefOf.Steel;
+                IntercolonyProductCategory category =
+                    IntercolonyProductClassifier.Classify(def).Value;
+
+                // This assertion is about pricing's clamp reconciliation, so each fixture puts
+                // the category baseline on the intended side of that clamp deterministically.
+                // Depending on the generated profile or on which category Steel maps to would
+                // turn the boundary cases back into accidents. The generated settlementId stays
+                // untouched because pressure reaches the probe through that sentinel.
+                profile.demandWeights[(int)category] = 1f;
+                float quietPrice = IntercolonyPricing.UnitPrice(
+                    state, def, 1, profile, category, -1f, null,
+                    out List<PriceFactor> quietFactors);
+                List<PriceFactor> quietDemandRows = new List<PriceFactor>();
+                foreach (PriceFactor factor in quietFactors)
+                {
+                    if (factor.label == "Local demand" ||
+                        factor.label == EffectiveEconomyService.ShortageLabel ||
+                        factor.label == EffectiveEconomyService.SurplusLabel)
+                    {
+                        quietDemandRows.Add(factor);
+                    }
+                }
+
+                r.Check(quietDemandRows.Count == 1 &&
+                        quietDemandRows[0].label == "Local demand",
+                    "undisturbed pricing has one Local demand row and no current-condition row",
+                    $"{quietDemandRows.Count} demand row(s)");
+                float quietReconstructed = IntercolonyPricing.BaseValue(def, null) *
+                                           Product(quietFactors);
+                r.Check(Mathf.Abs(quietReconstructed - quietPrice) <=
+                        Mathf.Abs(quietPrice) * 0.0001f,
+                    "undisturbed pricing factors reconstruct the returned unit price",
+                    $"{quietReconstructed:F5} vs {quietPrice:F5}");
+                float quietEffective = Mathf.Clamp(EffectiveEconomyService.EffectiveDemand(
+                    state, profile, def, category), 0.4f, 2.0f);
+                r.Check(Mathf.Abs(Product(quietDemandRows) - quietEffective) < 0.0001f,
+                    "undisturbed pricing's demand rows reconstruct clamped effective demand",
+                    $"{Product(quietDemandRows):F5} vs {quietEffective:F5}");
+
+                ClearProbe(state);
+                profile.demandWeights[(int)category] = 1f;
+                MarketPressureService.ApplyDemandShock(
+                    state, ProbeSettlementId, category, 0.30f);
+                float shortagePrice = IntercolonyPricing.UnitPrice(
+                    state, def, 1, profile, category, -1f, null,
+                    out List<PriceFactor> shortageFactors);
+                List<PriceFactor> shortageDemandRows = new List<PriceFactor>();
+                foreach (PriceFactor factor in shortageFactors)
+                {
+                    if (factor.label == "Local demand" ||
+                        factor.label == EffectiveEconomyService.ShortageLabel ||
+                        factor.label == EffectiveEconomyService.SurplusLabel)
+                    {
+                        shortageDemandRows.Add(factor);
+                    }
+                }
+
+                r.Check(shortageDemandRows.Count == 2 &&
+                        shortageDemandRows[1].label == EffectiveEconomyService.ShortageLabel,
+                    "pricing splits a demand shock into a named current-shortage row",
+                    shortageDemandRows.Count == 2 ? shortageDemandRows[1].label : "<missing>");
+                float shortageReconstructed = IntercolonyPricing.BaseValue(def, null) *
+                                              Product(shortageFactors);
+                r.Check(Mathf.Abs(shortageReconstructed - shortagePrice) <=
+                        Mathf.Abs(shortagePrice) * 0.0001f,
+                    "shocked pricing factors reconstruct the returned unit price without double counting",
+                    $"{shortageReconstructed:F5} vs {shortagePrice:F5}");
+                float shortageEffective = Mathf.Clamp(EffectiveEconomyService.EffectiveDemand(
+                    state, profile, def, category), 0.4f, 2.0f);
+                r.Check(Mathf.Abs(Product(shortageDemandRows) - shortageEffective) < 0.0001f,
+                    "shocked pricing's demand rows reconstruct clamped effective demand",
+                    $"{Product(shortageDemandRows):F5} vs {shortageEffective:F5}");
+                float shortageCondition = EffectiveEconomyService.DemandCondition(
+                    state, profile, category);
+                r.Check(shortageDemandRows.Count == 2 &&
+                        Mathf.Abs(shortageDemandRows[1].multiplier - shortageCondition) < 0.0001f,
+                    "an unclamped shortage row retains the true demand condition",
+                    shortageDemandRows.Count == 2
+                        ? $"{shortageDemandRows[1].multiplier:F5} vs {shortageCondition:F5}"
+                        : "<missing>");
+
+                ClearProbe(state);
+                profile.demandWeights[(int)category] = 1f;
+                MarketPressureService.ApplyDemandShock(
+                    state, ProbeSettlementId, category, -0.30f);
+                float surplusPrice = IntercolonyPricing.UnitPrice(
+                    state, def, 1, profile, category, -1f, null,
+                    out List<PriceFactor> surplusFactors);
+                List<PriceFactor> surplusDemandRows = new List<PriceFactor>();
+                foreach (PriceFactor factor in surplusFactors)
+                {
+                    if (factor.label == "Local demand" ||
+                        factor.label == EffectiveEconomyService.ShortageLabel ||
+                        factor.label == EffectiveEconomyService.SurplusLabel)
+                    {
+                        surplusDemandRows.Add(factor);
+                    }
+                }
+
+                r.Check(surplusDemandRows.Count == 2 &&
+                        surplusDemandRows[1].label == EffectiveEconomyService.SurplusLabel,
+                    "pricing labels an unclamped demand glut as a surplus, not a shortage",
+                    surplusDemandRows.Count == 2 ? surplusDemandRows[1].label : "<missing>");
+                float surplusReconstructed = IntercolonyPricing.BaseValue(def, null) *
+                                             Product(surplusFactors);
+                r.Check(Mathf.Abs(surplusReconstructed - surplusPrice) <=
+                        Mathf.Abs(surplusPrice) * 0.0001f,
+                    "unclamped surplus factors reconstruct the returned unit price",
+                    $"{surplusReconstructed:F5} vs {surplusPrice:F5}");
+
+                ClearProbe(state);
+                profile.demandWeights[(int)category] = 0.5f;
+                MarketPressureService.ApplyDemandShock(
+                    state, ProbeSettlementId, category, -99f);
+                float floorRawEffective = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, def, category);
+                float floorPrice = IntercolonyPricing.UnitPrice(
+                    state, def, 1, profile, category, -1f, null,
+                    out List<PriceFactor> floorFactors);
+                List<PriceFactor> floorDemandRows = new List<PriceFactor>();
+                foreach (PriceFactor factor in floorFactors)
+                {
+                    if (factor.label == "Local demand" ||
+                        factor.label == EffectiveEconomyService.ShortageLabel ||
+                        factor.label == EffectiveEconomyService.SurplusLabel)
+                    {
+                        floorDemandRows.Add(factor);
+                    }
+                }
+
+                r.Check(floorRawEffective < 0.4f,
+                    "the floor-clamp fixture places raw effective demand below 0.4",
+                    floorRawEffective.ToString("F5"));
+                r.Check(floorDemandRows.Count == 2 &&
+                        floorDemandRows[1].label == EffectiveEconomyService.SurplusLabel,
+                    "a binding floor preserves two demand rows and the surplus label",
+                    floorDemandRows.Count == 2 ? floorDemandRows[1].label : "<missing>");
+                r.Check(Mathf.Abs(Product(floorDemandRows) - 0.4f) < 0.0001f,
+                    "floor-clamped demand rows reconstruct 0.4",
+                    Product(floorDemandRows).ToString("F5"));
+                float floorReconstructed = IntercolonyPricing.BaseValue(def, null) *
+                                           Product(floorFactors);
+                r.Check(Mathf.Abs(floorReconstructed - floorPrice) <=
+                        Mathf.Abs(floorPrice) * 0.0001f,
+                    "floor-clamped factors reconstruct the returned unit price",
+                    $"{floorReconstructed:F5} vs {floorPrice:F5}");
+
+                ClearProbe(state);
+                // 1.7 is deliberate rather than a rounder high weight. Even at the affinity
+                // ceiling its base row is 1.7 * 1.15 = 1.955, still inside pricing's split range;
+                // at the affinity floor under maximum pressure it is 1.7 * 0.85 * 1.60 = 2.312,
+                // so the price ceiling binds across the entire affinity band rather than by hash.
+                profile.demandWeights[(int)category] = 1.7f;
+                MarketPressureService.ApplyDemandShock(
+                    state, ProbeSettlementId, category, 99f);
+                float ceilingPrice = IntercolonyPricing.UnitPrice(
+                    state, def, 1, profile, category, -1f, null,
+                    out List<PriceFactor> ceilingFactors);
+                List<PriceFactor> ceilingDemandRows = new List<PriceFactor>();
+                foreach (PriceFactor factor in ceilingFactors)
+                {
+                    if (factor.label == "Local demand" ||
+                        factor.label == EffectiveEconomyService.ShortageLabel ||
+                        factor.label == EffectiveEconomyService.SurplusLabel)
+                    {
+                        ceilingDemandRows.Add(factor);
+                    }
+                }
+
+                r.Check(ceilingDemandRows.Count == 2 &&
+                        ceilingDemandRows[1].label == EffectiveEconomyService.ShortageLabel,
+                    "a binding ceiling preserves two demand rows and the shortage label",
+                    ceilingDemandRows.Count == 2 ? ceilingDemandRows[1].label : "<missing>");
+                r.Check(Mathf.Abs(Product(ceilingDemandRows) - 2.0f) < 0.0001f,
+                    "ceiling-clamped demand rows reconstruct 2.0",
+                    Product(ceilingDemandRows).ToString("F5"));
+                float ceilingReconstructed = IntercolonyPricing.BaseValue(def, null) *
+                                             Product(ceilingFactors);
+                r.Check(Mathf.Abs(ceilingReconstructed - ceilingPrice) <=
+                        Mathf.Abs(ceilingPrice) * 0.0001f,
+                    "ceiling-clamped factors reconstruct the returned unit price",
+                    $"{ceilingReconstructed:F5} vs {ceilingPrice:F5}");
+
+                ClearProbe(state);
+                profile.demandWeights[(int)category] = 2.5f;
+                MarketPressureService.ApplyDemandShock(
+                    state, ProbeSettlementId, category, 0.30f);
+                float outsideBasePrice = IntercolonyPricing.UnitPrice(
+                    state, def, 1, profile, category, -1f, null,
+                    out List<PriceFactor> outsideBaseFactors);
+                List<PriceFactor> outsideBaseDemandRows = new List<PriceFactor>();
+                foreach (PriceFactor factor in outsideBaseFactors)
+                {
+                    if (factor.label == "Local demand" ||
+                        factor.label == EffectiveEconomyService.ShortageLabel ||
+                        factor.label == EffectiveEconomyService.SurplusLabel)
+                    {
+                        outsideBaseDemandRows.Add(factor);
+                    }
+                }
+
+                r.Check(outsideBaseDemandRows.Count == 1 &&
+                        outsideBaseDemandRows[0].label == "Local demand",
+                    "a base demand outside the clamp collapses a conditioned price to one truthful row",
+                    $"{outsideBaseDemandRows.Count} demand row(s)");
+                r.Check(Mathf.Abs(Product(outsideBaseDemandRows) - 2.0f) < 0.0001f,
+                    "the collapsed outside-base demand row reconstructs 2.0",
+                    Product(outsideBaseDemandRows).ToString("F5"));
+                float outsideBaseReconstructed = IntercolonyPricing.BaseValue(def, null) *
+                                                 Product(outsideBaseFactors);
+                r.Check(Mathf.Abs(outsideBaseReconstructed - outsideBasePrice) <=
+                        Mathf.Abs(outsideBasePrice) * 0.0001f,
+                    "outside-base factors reconstruct the returned unit price",
+                    $"{outsideBaseReconstructed:F5} vs {outsideBasePrice:F5}");
+            }
+            finally
+            {
+                ClearProbe(state);
+            }
         }
 
         /// <summary>

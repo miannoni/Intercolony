@@ -132,9 +132,40 @@ namespace Intercolony
 
             // The category supplies the settlement's broad economic character; the good-specific
             // perturbation keeps that character from making every item in the category rank alike.
-            float demand = Mathf.Clamp(
-                EffectiveEconomyService.EffectiveDemand(state, profile, def, category), 0.4f, 2.0f);
-            factors.Add(new PriceFactor("Local demand", demand));
+            List<PriceFactor> demandRows =
+                EffectiveEconomyService.ExplainDemand(state, profile, def, category);
+            float effectiveDemand = demandRows.Count == 0 ? 0f : 1f;
+            foreach (PriceFactor row in demandRows)
+            {
+                effectiveDemand *= row.multiplier;
+            }
+
+            float clampedDemand = Mathf.Clamp(effectiveDemand, 0.4f, 2.0f);
+
+            // The service's rows are the effective demand, not modifiers to apply on top of it.
+            // Pricing owns the separate sanity clamp, so when a condition exists its displayed
+            // multiplier is reconciled to the price actually charged. If the base row is inside
+            // the bound, clamping can only pull the product back toward that base; the adjusted
+            // ratio therefore keeps the condition's direction and never labels a shortage as a
+            // reduction or a surplus as an increase. A base already outside the bound cannot make
+            // that promise, so that genuinely contradictory case stays collapsed to one row.
+            if (demandRows.Count == 1)
+            {
+                factors.Add(new PriceFactor("Local demand", clampedDemand));
+            }
+            else if (demandRows.Count > 1 && demandRows[0].multiplier > 0f &&
+                     demandRows[0].multiplier >= 0.4f && demandRows[0].multiplier <= 2.0f)
+            {
+                PriceFactor baseRow = demandRows[0];
+                PriceFactor conditionRow = demandRows[1];
+                factors.Add(baseRow);
+                factors.Add(new PriceFactor(
+                    conditionRow.label, clampedDemand / baseRow.multiplier));
+            }
+            else
+            {
+                factors.Add(new PriceFactor("Local demand", clampedDemand));
+            }
 
             float wealth = WealthFactor(profile.wealthTier);
             factors.Add(new PriceFactor("Buyer wealth", wealth));

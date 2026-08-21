@@ -549,7 +549,7 @@ namespace Intercolony
             WithGuardedState(state => IntercolonyLog.Message(IntercolonyEconomySelfTest.Run(state)));
         }
 
-        [DebugAction(Category, "Dump market pressure", allowedGameStates = AllowedGameStates.Playing, displayPriority = 81)]
+        [DebugAction(Category, "Dump effective economy", allowedGameStates = AllowedGameStates.Playing, displayPriority = 81)]
         private static void DumpMarketPressure()
         {
             WithState(state =>
@@ -562,7 +562,39 @@ namespace Intercolony
                 {
                     Settlement settlement =
                         IntercolonyMarketAccess.FindSettlement(pressure.settlementId);
-                    sb.AppendLine($"  {settlement?.Label ?? "(gone)"}: {pressure}");
+                    SettlementEconomicProfile profile = settlement == null
+                        ? null
+                        : state.GetProfile(settlement);
+                    string settlementLabel = settlement?.Label ?? $"settlement {pressure.settlementId} (gone)";
+                    if (profile == null)
+                    {
+                        sb.AppendLine($"  {settlementLabel}: profile unavailable");
+                        continue;
+                    }
+
+                    string elapsed = pressure.lastAdvancedRefresh == SettlementMarketState.NeverAdvanced
+                        ? "never advanced"
+                        : $"{Mathf.Max(0, state.RefreshCount - pressure.lastAdvancedRefresh)} refresh(es) elapsed";
+                    sb.AppendLine($"  {settlementLabel}: {elapsed}");
+                    foreach (IntercolonyProductCategory category in
+                             IntercolonyProductCategoryUtility.All)
+                    {
+                        // Keep the diagnostic on the same read model as pricing and procurement.
+                        // Repeating their composition here would make the debugging view look
+                        // plausible precisely when a later economy layer made it stale.
+                        float demandPressure = EffectiveEconomyService.CurrentDemandPressure(
+                            state, pressure.settlementId, category);
+                        float effectiveDemand = EffectiveEconomyService.EffectiveDemand(
+                            state, profile, category);
+                        float supplyPressure = EffectiveEconomyService.CurrentSupplyPressure(
+                            state, pressure.settlementId, category);
+                        float effectiveSupply = EffectiveEconomyService.EffectiveSupply(
+                            state, profile, category);
+                        sb.AppendLine(
+                            $"    {category.Label(),-14} " +
+                            $"demand baseline {profile.BaseDemandFor(category):F3}, pressure {demandPressure:F3}, effective {effectiveDemand:F3}; " +
+                            $"supply baseline {profile.BaseSupplyFor(category):F3}, pressure {supplyPressure:F3}, effective {effectiveSupply:F3}");
+                    }
                 }
 
                 IntercolonyLog.Message(sb.ToString());

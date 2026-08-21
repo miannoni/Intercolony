@@ -287,7 +287,7 @@ namespace Intercolony
                                 ProcurementFulfillmentPreference.SupplierDelivers ||
                             (request.fulfillmentPreference == ProcurementFulfillmentPreference.Either &&
                              Rand.Value < DeliveryChance(profile, distance));
-            float unitPrice = QuotedUnitPrice(request, offeredStuff, offeredQuality, profile,
+            float unitPrice = QuotedUnitPrice(state, request, offeredStuff, offeredQuality, profile,
                 category, supply, distance, delivers, out string explanation);
             int leadTime = LeadTimeDays(distance, delivers, supply);
 
@@ -464,6 +464,7 @@ namespace Intercolony
         public const float SupplierMargin = 1.15f;
 
         private static float QuotedUnitPrice(
+            IntercolonyWorldComponent state,
             PurchaseRequest request,
             ThingDef stuff,
             QualityCategory? quality,
@@ -490,9 +491,20 @@ namespace Intercolony
             // Buyer's spread: the counterparty is selling, so they mark up.
             factors.Add(new PriceFactor("Supplier margin", SupplierMargin));
 
-            // Scarcity: a supplier with plenty charges less than one scraping the barrel.
+            // Scarcity is affine in effective supply, so splitting it into multiplicative base and
+            // condition rows would change the quote. Name the current condition on the one truthful
+            // row instead. SupplyCondition inverts bounded scarcity pressure, which means below
+            // neutral is the shortage direction; treating above neutral as short would reverse it.
             float scarcity = Mathf.Clamp(1.6f - supply * 0.5f, 0.9f, 1.6f);
-            factors.Add(new PriceFactor("Local scarcity", scarcity));
+            float supplyCondition =
+                EffectiveEconomyService.SupplyCondition(state, profile, category);
+            string scarcityLabel = Mathf.Approximately(
+                    supplyCondition, SettlementMarketState.Neutral)
+                ? "Local scarcity"
+                : supplyCondition < SettlementMarketState.Neutral
+                    ? "Local scarcity (shortage)"
+                    : "Local scarcity (surplus)";
+            factors.Add(new PriceFactor(scarcityLabel, scarcity));
 
             if (distance >= 0f)
             {
