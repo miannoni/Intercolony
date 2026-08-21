@@ -64,6 +64,8 @@ namespace Intercolony
                 CheckReversion(r);
                 CheckReversionIsDrivenByElapsedCycles(r);
                 CheckShockBounds(r, state);
+                CheckCompletedTradeNudges(r, state);
+                CheckTradeNudgeFormula(r, state);
                 CheckReversionSettlesAndPrunes(r, state);
                 CheckEffectiveEconomyIsBaselineWhenUndisturbed(r, state);
                 CheckEffectiveEconomyReadsAreFree(r, state);
@@ -90,6 +92,126 @@ namespace Intercolony
         }
 
         private const int ProbeSettlementId = 971_101;
+
+        private static void CheckCompletedTradeNudges(Results r, IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            ThingDef def = ThingDefOf.WoodLog;
+            IntercolonyProductCategory? category = IntercolonyProductClassifier.Classify(def);
+            using (new IntercolonyDiagnosticGuard(state))
+            {
+                SalesOrder sale = new SalesOrder
+                {
+                    id = -971101,
+                    settlementId = ProbeSettlementId,
+                    settlementName = "economy probe",
+                    line = new OrderLine(def, 1),
+                    status = SalesOrderStatus.Accepted,
+                    deliveredQuantity = 1,
+                    paidSilver = 1000
+                };
+                SalesOrderService.Complete(state, sale, GenTicks.TicksGame, "probe");
+                SettlementMarketState afterSale = state.MarketStateFor(ProbeSettlementId);
+                bool otherCategoriesNeutral = true;
+                if (afterSale != null && category.HasValue)
+                {
+                    for (int i = 0; i < afterSale.demandPressure.Length; i++)
+                    {
+                        if (i != (int)category.Value &&
+                            !Mathf.Approximately(
+                                afterSale.demandPressure[i], SettlementMarketState.Neutral))
+                        {
+                            otherCategoriesNeutral = false;
+                        }
+                    }
+                }
+
+                r.Check(
+                    category.HasValue && afterSale != null &&
+                    afterSale.DemandPressureFor(category.Value) < SettlementMarketState.Neutral &&
+                    otherCategoriesNeutral,
+                    "a completed sale lowers demand pressure only for its category",
+                    category.HasValue && afterSale != null
+                        ? afterSale.DemandPressureFor(category.Value).ToString("F6")
+                        : "completion did not create pressure");
+
+                ClearProbe(state);
+                PurchaseOrder purchase = new PurchaseOrder
+                {
+                    id = -971102,
+                    settlementId = ProbeSettlementId,
+                    settlementName = "economy probe",
+                    thingDef = def,
+                    quantity = 1,
+                    paidSilver = 1000,
+                    status = PurchaseOrderStatus.Confirmed
+                };
+                PurchaseOrderService.Complete(purchase, "probe");
+                SettlementMarketState afterPurchase = state.MarketStateFor(ProbeSettlementId);
+                r.Check(
+                    category.HasValue && afterPurchase != null &&
+                    afterPurchase.SupplyPressureFor(category.Value) > SettlementMarketState.Neutral,
+                    "a completed purchase raises supply pressure toward scarce",
+                    category.HasValue && afterPurchase != null
+                        ? afterPurchase.SupplyPressureFor(category.Value).ToString("F6")
+                        : "completion did not create pressure");
+
+                ClearProbe(state);
+                SalesOrder unresolved = new SalesOrder
+                {
+                    id = -971103,
+                    settlementId = ProbeSettlementId,
+                    settlementName = "economy probe",
+                    line = new OrderLine(new ThingDef(), 1),
+                    status = SalesOrderStatus.Accepted,
+                    deliveredQuantity = 1,
+                    paidSilver = 1000
+                };
+                SalesOrderService.Complete(state, unresolved, GenTicks.TicksGame, "probe");
+                r.Check(state.MarketStateFor(ProbeSettlementId) == null,
+                    "an unresolved category does not change pressure");
+            }
+
+            state.CommercialHistory.RemoveAll(h => h != null && h.settlementId == ProbeSettlementId);
+            state.Reputations.Remove(ProbeSettlementId);
+            ClearProbe(state);
+        }
+
+        private static void CheckTradeNudgeFormula(Results r, IntercolonyWorldComponent state)
+        {
+            const IntercolonyProductCategory Category = IntercolonyProductCategory.Commodities;
+            const float Value = 10_000f;
+
+            ClearProbe(state);
+            float single = MarketPressureService.NudgeDemandDown(
+                state, ProbeSettlementId, Category, Value);
+            ClearProbe(state);
+            float split = SettlementMarketState.Neutral;
+            for (int i = 0; i < 10; i++)
+            {
+                split = MarketPressureService.NudgeDemandDown(
+                    state, ProbeSettlementId, Category, Value / 10f);
+            }
+            r.Check(Mathf.Abs(single - split) < 0.00001f,
+                "one trade and ten equal splits compose to the same pressure",
+                $"single {single:F6}, split {split:F6}");
+
+            ClearProbe(state);
+            float tiny = MarketPressureService.NudgeDemandDown(
+                state, ProbeSettlementId, Category, 1f);
+            r.Check(Mathf.Abs(tiny - SettlementMarketState.Neutral) < 0.0001f,
+                "a tiny trade moves pressure only negligibly",
+                tiny.ToString("F6"));
+
+            ClearProbe(state);
+            float enormous = MarketPressureService.NudgeSupplyUp(
+                state, ProbeSettlementId, Category, float.MaxValue);
+            r.Check(enormous <= MarketPressureService.MaxPressure &&
+                    enormous >= MarketPressureService.MinPressure,
+                "an enormous trade cannot cross the pressure bound",
+                enormous.ToString("F6"));
+            ClearProbe(state);
+        }
 
         private static void CheckSparseDefaults(Results r, IntercolonyWorldComponent state)
         {

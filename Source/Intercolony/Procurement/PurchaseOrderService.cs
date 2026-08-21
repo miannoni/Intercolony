@@ -452,11 +452,25 @@ namespace Intercolony
             return true;
         }
 
-        private static void Complete(PurchaseOrder order, string note)
+        /// <summary>
+        /// Internal so self-tests exercise the real completion transition; a hand-completed order
+        /// would only verify arithmetic chosen by the test itself.
+        /// </summary>
+        internal static void Complete(PurchaseOrder order, string note)
         {
             order.status = PurchaseOrderStatus.Completed;
             order.outcomeNote = note;
-            ReputationService.NotePurchaseCompleted(IntercolonyWorldComponent.Current, order);
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            IntercolonyProductCategory? category = order.IsAnimalOrder
+                ? IntercolonyProductCategory.Commodities
+                : IntercolonyProductClassifier.Classify(order.thingDef);
+            if (category.HasValue)
+            {
+                MarketPressureService.NudgeSupplyUp(
+                    state, order.settlementId, category.Value, order.paidSilver);
+            }
+
+            ReputationService.NotePurchaseCompleted(state, order);
             CommercialTimelineService.Record(
                 CommercialEventType.PurchaseCompleted,
                 order.settlementId,

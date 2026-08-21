@@ -31,6 +31,14 @@ namespace Intercolony
         public const float ReversionRetention = 0.82f;
 
         /// <summary>
+        /// Silver value over which a completed trade makes a substantial pressure nudge.
+        /// This is conservative balance tuning: ordinary lots should barely move a regional
+        /// market, while exceptional lots should move it clearly. Retune at the Stage 2K play
+        /// gate; tests intentionally assert direction, composition and bounds, not this value.
+        /// </summary>
+        public const float NudgeValueScale = 20_000f;
+
+        /// <summary>
         /// The most extreme shortage or keenness pressure may reach.
         ///
         /// Pressure is not a price multiplier — the effective-economy layer bounds it again before
@@ -168,6 +176,71 @@ namespace Intercolony
             int index = (int)category;
             record.supplyPressure[index] = Clamp(record.supplyPressure[index] + delta);
             return record.supplyPressure[index];
+        }
+
+        /// <summary>
+        /// Relieves demand after value is sold into a settlement. The exponential multiplies the
+        /// pressure offset exactly as <see cref="Revert"/> does, but aims it at a bound instead of
+        /// neutral. Consequently split trades compose by value: exp(-a/K) * exp(-b/K) equals
+        /// exp(-(a+b)/K). Do not replace this with a concave per-trade delta; with f(0) = 0 that
+        /// shape is subadditive, so f(a) + f(b) &gt; f(a+b) and splitting trades becomes an exploit.
+        /// </summary>
+        public static float NudgeDemandDown(
+            IntercolonyWorldComponent state,
+            int settlementId,
+            IntercolonyProductCategory category,
+            float value)
+        {
+            // The sparse-representation invariant requires invalid nudges to leave undisturbed
+            // settlements absent, because absence itself represents neutral pressure.
+            if (value <= 0f || float.IsNaN(value))
+            {
+                return state?.MarketStateFor(settlementId)?.DemandPressureFor(category) ??
+                    SettlementMarketState.Neutral;
+            }
+
+            SettlementMarketState record = PrepareForShock(state, settlementId);
+            if (record == null)
+            {
+                return record?.DemandPressureFor(category) ?? SettlementMarketState.Neutral;
+            }
+
+            int index = (int)category;
+            record.demandPressure[index] = Nudge(record.demandPressure[index], MinPressure, value);
+            return record.demandPressure[index];
+        }
+
+        /// <summary>Tightens supply after value is purchased from a settlement.</summary>
+        public static float NudgeSupplyUp(
+            IntercolonyWorldComponent state,
+            int settlementId,
+            IntercolonyProductCategory category,
+            float value)
+        {
+            // The sparse-representation invariant requires invalid nudges to leave undisturbed
+            // settlements absent, because absence itself represents neutral pressure.
+            if (value <= 0f || float.IsNaN(value))
+            {
+                return state?.MarketStateFor(settlementId)?.SupplyPressureFor(category) ??
+                    SettlementMarketState.Neutral;
+            }
+
+            SettlementMarketState record = PrepareForShock(state, settlementId);
+            if (record == null)
+            {
+                return record?.SupplyPressureFor(category) ?? SettlementMarketState.Neutral;
+            }
+
+            int index = (int)category;
+            record.supplyPressure[index] = Nudge(record.supplyPressure[index], MaxPressure, value);
+            return record.supplyPressure[index];
+        }
+
+        private static float Nudge(float current, float bound, float value)
+        {
+            float newPressure = bound +
+                (current - bound) * Mathf.Exp(-value / NudgeValueScale);
+            return Clamp(newPressure);
         }
 
         /// <summary>

@@ -406,7 +406,11 @@ namespace Intercolony
                    "animal had been sold to any other trader. Continue with the handoff?";
         }
 
-        private static void Complete(
+        /// <summary>
+        /// Internal so self-tests can drive the real completion transition; constructing an already
+        /// completed order would only demonstrate the test fixture's arithmetic.
+        /// </summary>
+        internal static void Complete(
             IntercolonyWorldComponent state, SalesOrder order, int completedTick, string outcomeNote)
         {
             if (order == null || order.status == SalesOrderStatus.Completed)
@@ -421,6 +425,15 @@ namespace Intercolony
             // The transition guard above is the exactly-once boundary. Both seller delivery
             // and buyer collection arrive here, and neither can record the same order twice.
             state?.RecordCompletedSale(order);
+
+            IntercolonyProductCategory? category = order.IsAnimalOrder
+                ? IntercolonyProductCategory.Commodities
+                : IntercolonyProductClassifier.Classify(order.ThingDef);
+            if (category.HasValue)
+            {
+                MarketPressureService.NudgeDemandDown(
+                    state, order.settlementId, category.Value, order.paidSilver);
+            }
 
             CommercialTimelineService.Record(
                 state,

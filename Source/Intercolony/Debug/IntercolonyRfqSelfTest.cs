@@ -501,8 +501,9 @@ namespace Intercolony
             IntercolonyWorldComponent state)
         {
             const string Assertion = "RFQ response count falls under maximum supply scarcity";
-            ThingDef def = ThingDefOf.WoodLog;
-            IntercolonyProductCategory? category = IntercolonyProductClassifier.Classify(def);
+            const int ProbesPerCategory = 2;
+            const int MinimumUndisturbedQuotes = 6;
+            const int Requested = 50;
             List<Settlement> accessible = new List<Settlement>();
             List<Settlement> settlements = Find.WorldObjects?.Settlements;
             if (settlements != null)
@@ -518,32 +519,121 @@ namespace Intercolony
             }
 
             int settlementCount = accessible.Count;
-            if (!category.HasValue || settlementCount < 8)
+            if (settlementCount == 0)
             {
                 skip(Assertion,
-                    $"{settlementCount} accessible settlements with profiles; at least 8 required");
+                    "0 accessible settlements with profiles, 0 undisturbed quotations");
                 return;
             }
 
-            const int Requested = 50;
-            PurchaseRequest undisturbedRequest = new PurchaseRequest
+            // Match the market baseline's probe selection: sample deterministic future market
+            // cycles, then take the most-demanded loaded defs per category. Future refresh numbers
+            // keep the sample distinct from the live market without advancing the player's world.
+            Dictionary<IntercolonyProductCategory, Dictionary<ThingDef, int>> demand =
+                new Dictionary<IntercolonyProductCategory, Dictionary<ThingDef, int>>();
+            int syntheticId = 1;
+            int firstSyntheticRefresh = state.RefreshCount + 1;
+            for (int refresh = firstSyntheticRefresh;
+                 refresh < firstSyntheticRefresh + IntercolonyMarketBaseline.DefaultRefreshSamples;
+                 refresh++)
             {
-                thingDef = def,
-                quantityRequested = Requested,
-                desiredDays = 10,
-                fulfillmentPreference = ProcurementFulfillmentPreference.Either,
-                minQuality = null,
-                stuffDef = null
-            };
+                foreach (Settlement settlement in accessible)
+                {
+                    SettlementEconomicProfile profile = state.GetProfile(settlement);
+                    List<MarketOpportunity> opportunities =
+                        MarketOpportunityGenerator.GenerateFor(
+                            settlement, profile, state.EconomySeed, refresh, existingCount: 0,
+                            idAllocator: () => syntheticId++);
+                    foreach (MarketOpportunity opportunity in opportunities)
+                    {
+                        if (opportunity.thingDef == null)
+                        {
+                            continue;
+                        }
 
-            RfqService.GenerateResponses(state, undisturbedRequest);
-            int undisturbedCount = undisturbedRequest.quotes.Count;
+                        IntercolonyProductCategory? category =
+                            IntercolonyProductClassifier.Classify(opportunity.thingDef);
+                        if (!category.HasValue)
+                        {
+                            continue;
+                        }
+
+                        if (!demand.TryGetValue(
+                                category.Value, out Dictionary<ThingDef, int> counts))
+                        {
+                            counts = new Dictionary<ThingDef, int>();
+                            demand[category.Value] = counts;
+                        }
+
+                        counts.TryGetValue(opportunity.thingDef, out int seen);
+                        counts[opportunity.thingDef] = seen + 1;
+                    }
+                }
+            }
+
+            List<ThingDef> probes = new List<ThingDef>();
+            List<IntercolonyProductCategory> probeCategories =
+                new List<IntercolonyProductCategory>();
+            foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
+            {
+                if (!demand.TryGetValue(category, out Dictionary<ThingDef, int> counts))
+                {
+                    continue;
+                }
+
+                List<KeyValuePair<ThingDef, int>> ranked =
+                    new List<KeyValuePair<ThingDef, int>>(counts);
+                ranked.Sort((a, b) =>
+                {
+                    int byCount = b.Value.CompareTo(a.Value);
+                    return byCount != 0
+                        ? byCount
+                        : string.CompareOrdinal(a.Key.defName, b.Key.defName);
+                });
+
+                int take = Mathf.Min(ProbesPerCategory, ranked.Count);
+                for (int i = 0; i < take; i++)
+                {
+                    probes.Add(ranked[i].Key);
+                }
+
+                if (take > 0)
+                {
+                    probeCategories.Add(category);
+                }
+            }
+
+            int undisturbedCount = 0;
+            foreach (ThingDef def in probes)
+            {
+                PurchaseRequest request = new PurchaseRequest
+                {
+                    thingDef = def,
+                    quantityRequested = Requested,
+                    desiredDays = 10,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.Either,
+                    minQuality = null,
+                    stuffDef = null
+                };
+
+                RfqService.GenerateResponses(state, request);
+                undisturbedCount += request.quotes.Count;
+            }
+
+            if (undisturbedCount < MinimumUndisturbedQuotes)
+            {
+                skip(Assertion,
+                    $"{settlementCount} accessible settlements with profiles, " +
+                    $"{undisturbedCount} undisturbed quotations across {probes.Count} defs; " +
+                    $"at least {MinimumUndisturbedQuotes} required");
+                return;
+            }
 
             Dictionary<int, SettlementMarketState> savedRecords =
                 new Dictionary<int, SettlementMarketState>();
-            Dictionary<int, float> savedSupply = new Dictionary<int, float>();
+            Dictionary<int, float[]> savedDemand = new Dictionary<int, float[]>();
+            Dictionary<int, float[]> savedSupply = new Dictionary<int, float[]>();
             Dictionary<int, int> savedRefreshes = new Dictionary<int, int>();
-            int categoryIndex = (int)category.Value;
 
             try
             {
@@ -554,28 +644,42 @@ namespace Intercolony
                     if (record != null)
                     {
                         savedRecords.Add(settlement.ID, record);
-                        savedSupply.Add(settlement.ID, record.supplyPressure[categoryIndex]);
+                        savedDemand.Add(
+                            settlement.ID, (float[])record.demandPressure.Clone());
+                        savedSupply.Add(
+                            settlement.ID, (float[])record.supplyPressure.Clone());
                         savedRefreshes.Add(settlement.ID, record.lastAdvancedRefresh);
                     }
 
-                    MarketPressureService.ApplySupplyShock(
-                        state, settlement.ID, category.Value, MarketPressureService.MaxPressure);
+                    foreach (IntercolonyProductCategory category in probeCategories)
+                    {
+                        MarketPressureService.ApplySupplyShock(
+                            state, settlement.ID, category, MarketPressureService.MaxPressure);
+                    }
                 }
 
-                PurchaseRequest scarceRequest = new PurchaseRequest
+                int scarceCount = 0;
+                foreach (ThingDef def in probes)
                 {
-                    thingDef = def,
-                    quantityRequested = Requested,
-                    desiredDays = 10,
-                    fulfillmentPreference = ProcurementFulfillmentPreference.Either,
-                    minQuality = null,
-                    stuffDef = null
-                };
+                    PurchaseRequest request = new PurchaseRequest
+                    {
+                        thingDef = def,
+                        quantityRequested = Requested,
+                        desiredDays = 10,
+                        fulfillmentPreference = ProcurementFulfillmentPreference.Either,
+                        minQuality = null,
+                        stuffDef = null
+                    };
 
-                RfqService.GenerateResponses(state, scarceRequest);
-                int scarceCount = scarceRequest.quotes.Count;
+                    // GenerateResponses seeds on the refresh and def, so each scarce request
+                    // repeats its undisturbed random rolls and isolates effective supply.
+                    RfqService.GenerateResponses(state, request);
+                    scarceCount += request.quotes.Count;
+                }
+
                 check(Assertion, scarceCount < undisturbedCount,
-                    $"{settlementCount} settlements, {undisturbedCount} -> {scarceCount} quotations");
+                    $"{settlementCount} settlements, {probes.Count} defs, " +
+                    $"{undisturbedCount} -> {scarceCount} quotations");
             }
             finally
             {
@@ -583,7 +687,14 @@ namespace Intercolony
                 {
                     if (savedRecords.TryGetValue(settlement.ID, out SettlementMarketState record))
                     {
-                        record.supplyPressure[categoryIndex] = savedSupply[settlement.ID];
+                        float[] demandBefore = savedDemand[settlement.ID];
+                        float[] supplyBefore = savedSupply[settlement.ID];
+                        for (int i = 0; i < demandBefore.Length; i++)
+                        {
+                            record.demandPressure[i] = demandBefore[i];
+                            record.supplyPressure[i] = supplyBefore[i];
+                        }
+
                         record.lastAdvancedRefresh = savedRefreshes[settlement.ID];
                     }
                     else
