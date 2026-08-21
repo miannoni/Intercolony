@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2C — audit and remove what remains of cycle noise
-Last completed:     2F — RFQs quote against effective supply (2026-08-21)
+Current slice:      2G — player trades nudge local pressure
+Last completed:     2C — market opportunity size reads current demand (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,50 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2C — market opportunity size reads current demand (2026-08-21)
+
+**Claim:** a settlement under demand pressure asks for larger lots and one with a glut asks for
+smaller ones, so a shortage changes the opportunities themselves and not only their prices.
+**Files:** `Market/MarketOpportunityGenerator.cs`, `Core/SettlementEconomicProfile.cs`,
+`Debug/IntercolonyMarketSelfTest.cs`.
+**Commit:** `8d69f99`. **Schema:** unchanged at 44.
+**Tests:** full suite 930 passed / 0 failed / 13 skipped, world-pawn delta 0 (16 → 16), both leak
+guards OK, log clean. Market suite 81 → 84.
+
+**2C turned out to be an addition, not the deletion its name implies.** The `0.55–1.45` roll the
+plan writes against was already gone — Stage 1.2 removed it, which was the whole point of the
+`BaseDemandFor` rename — so the two stacked dynamic systems §2.3 warns about never existed. What the
+audit actually found was the opposite problem: `PickQuantity` opened with `Rand.Range(400f, 3000f)`,
+a 7.5x multiplier re-rolled every cycle that read no demand at all. That is §2.3's "large random
+multiplier masquerading as demand state", and §2.8's step 5 requires size to come from the effective
+economic context. **2E migrated price and left size behind**, so acceptance criterion 4 — a forced
+shortage changes selling prices *and opportunities* — was only half met and nothing said so.
+
+**Size scales by the demand condition, not by effective demand, and the distinction is the slice.**
+`PickCategory` already weights categories by effective demand a few lines earlier, so the
+settlement's baseline appetite is counted in *which* category got picked. Multiplying size by the
+full effective value would count that standing appetite a second time. The condition is only the
+"right now" part. This is §2.10's no-double-counting rule applied to quantity instead of price —
+worth noting that the rule generalises, because the plan only ever states it about pricing.
+
+**The assertion is deterministic, not statistical, and that was a design choice.** Shocking all six
+categories *equally* leaves category selection untouched: `PickCategory` draws `Rand.Range(0f, total)`
+and compares against running sums, so scaling every weight by the same factor scales the draw and the
+thresholds together and the same category, def and rolls come out. `targetSilver` is then the only
+thing that moves. Shocking one category would have changed which good was picked and made the
+comparison meaningless.
+
+**Verified by mutation.** Replacing the multiplication with `* 1f` turns both directional assertions
+red at `8 -> 8`; restoring it turns them green. The third assertion — the upper bound — stays green
+under the mutation, which is correct and worth understanding rather than "fixing": a bound is
+trivially satisfied when nothing moves, so it is not the assertion that detects the deletion.
+
+**`volatility` keeps its field and loses its docstring's claim.** See the CORRECTION below. It is
+live — `SettlementProfileGenerator.FillWeights` reads it to jitter both weight arrays at generation
+time — but its comment still described a per-refresh swing that Stage 1.2 removed. A field whose
+documented meaning outlived its behaviour is the same failure this project keeps meeting in the
+sentinel bugs, one level up: the value was fine and the story about it was false.
 
 ### 2F — RFQs quote against effective supply (2026-08-21)
 
@@ -648,39 +692,31 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2C — audit and remove what remains of cycle noise**, then `2G` player trades nudging pressure,
-`2H` chain propagation, `2I` regional diffusion, `2J` explanations, `2K` the migration and play gate.
+**2G — player transactions nudge local pressure** (plan §2.5), then `2H` chain propagation,
+`2I` regional diffusion, `2J` explanations, `2K` the migration and play gate.
 
-**Every demand and supply call site is now on the API.** Selling, pricing and RFQs all read
+**The read side of Stage 2 is finished.** Selling, pricing, opportunity sizing and RFQs all read
 effective values; the only deliberate holdout is `UI/MainTabWindow_Intercolony.cs:1233-1234`, the
 Stage 1 identity tooltip, which answers what a settlement *is* rather than what it is going through.
+2G opens the **write** side: until now the only thing that moves pressure is a debug action.
 
-**2C comes last for a reason.** §2.3 is explicit that the old
-`0.55–1.45` roll may only be deleted *once all consumers use the new effective-economy API* — two
-dynamic systems must not be left stacked, but neither may the market be left with no dynamics at
-all. That is why §2.2 got its own slice ahead of the letters.
+**What §2.5 requires, and the trap in it.** Completing a large sale into a settlement should
+slightly relieve its demand pressure; buying heavily should tighten a supplier's supply pressure.
+The stated constraint is that impact must derive from **total economic value, not transaction
+count**, with diminishing returns — otherwise splitting one trade into ten creates ten times the
+effect, and the player can pump a market back and forth for profit. Acceptance criterion 10 is
+exactly that: no obvious buy-low/sell-high arbitrage.
 
-**2C is smaller than the plan assumes, and the reason is worth writing down before someone goes
-looking for work that is not there.** The `0.55–1.45` roll it names was already deleted in Stage 1.2
-— that was the whole point of the `BaseDemandFor` rename — so the two dynamic systems the plan warns
-about were never actually stacked. A grep of production code for refresh-seeded randomness leaves
-three things, none of them a demand multiplier:
+**Where the write belongs.** `SalesOrderService.Complete` already documents itself as the
+exactly-once boundary for both delivery and collection, and Stage 0.3b put the timeline record
+there for that reason. The pressure nudge belongs at the same site, for the same reason: a
+settlement's economy must not move for a sale that did not conclude.
 
-- `Contracts/ContractService.cs:229` seeds a contract-generation roll on `RefreshCount`. Needs a
-  read: it decides *whether* an offer appears, which §2.3 permits, but confirm it is not also
-  scaling terms.
-- `Labor/LaborCandidateService` refreshes its worker pool per cycle. Not the goods market; out of
-  scope.
-- `SettlementEconomicProfile.volatility` is **live** — `SettlementProfileGenerator.FillWeights`
-  reads it to jitter both weight arrays at generation time. Only its doc comment is wrong. See the
-  CORRECTION below; an earlier version of this section said it was dead, and it is not.
-
-**What the audit actually found, and it is not a deletion.** The remaining cycle noise is in
-opportunity *sizing*: `MarketOpportunityGenerator.PickQuantity` opens with
-`Rand.Range(400f, 3000f)`, a 7.5x multiplier re-rolled every cycle that reads no demand at all,
-while §2.8's step 5 requires size to come from the effective economic context. Price was migrated
-in 2E and size was not, which left acceptance criterion 4 — "a forced shortage changes selling
-prices **and opportunities** in the expected direction" — only half met.
+**A note for whoever writes the test.** Both mutation checks this stage relied on the generator
+being reproducible from an explicit seed and refresh number. A pressure *write* has no such seam —
+it is a side effect on world state — so assert it by driving the real transition and reading the
+record either side, never by calling `MarketPressureService` directly and checking it did what it
+was told.
 
 **Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
 and the plan says so twice.
