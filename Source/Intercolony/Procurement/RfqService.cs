@@ -161,7 +161,7 @@ namespace Intercolony
                     }
 
                     considered++;
-                    Quotation quote = TryQuote(request, settlement, profile, category.Value);
+                    Quotation quote = TryQuote(state, request, settlement, profile, category.Value);
                     if (quote != null)
                     {
                         // Roll the complete quotation first, then subtract stock already bought.
@@ -224,6 +224,7 @@ namespace Intercolony
         /// quantity, distance, and random variation.
         /// </summary>
         private static Quotation TryQuote(
+            IntercolonyWorldComponent state,
             PurchaseRequest request,
             Settlement settlement,
             SettlementEconomicProfile profile,
@@ -240,7 +241,7 @@ namespace Intercolony
                 return null;
             }
 
-            float supply = profile.BaseSupplyFor(category);
+            float supply = EffectiveEconomyService.EffectiveSupply(state, profile, category);
             if (supply < 0.35f)
             {
                 return null;

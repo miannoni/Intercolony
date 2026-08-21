@@ -19,6 +19,8 @@ namespace Intercolony
     /// </summary>
     public static class IntercolonyRfqSelfTest
     {
+        private const int SupplyProbeSettlementId = 971_102;
+
         public static string Run(IntercolonyWorldComponent state)
         {
             StringBuilder sb = new StringBuilder();
@@ -75,6 +77,9 @@ namespace Intercolony
             }
 
             List<PurchaseRequest> created = new List<PurchaseRequest>();
+
+            CheckEffectiveSupplyForRfq(Check, state);
+            CheckRfqResponseCountUsesEffectiveSupply(Check, Skip, state);
 
             // Supplier stock belongs to its refresh window, not to any one RFQ. Exercise the
             // state mechanism without touching the live world's ledger or requests.
@@ -430,6 +435,166 @@ namespace Intercolony
                 DefDatabase<ThingDef>.GetNamedSilentFail("ElectricStove"), ThingDefOf.Steel, null, 1);
 
             return Summarize();
+        }
+
+        private static void CheckEffectiveSupplyForRfq(
+            System.Action<string, bool, string> check,
+            IntercolonyWorldComponent state)
+        {
+            const IntercolonyProductCategory Category =
+                IntercolonyProductCategory.IntermediateGoods;
+            SettlementEconomicProfile profile = new SettlementEconomicProfile
+            {
+                settlementId = SupplyProbeSettlementId
+            };
+            profile.supplyWeights[(int)Category] = 1f;
+
+            ClearSupplyProbe(state);
+            try
+            {
+                float baseline = profile.BaseSupplyFor(Category);
+                float undisturbed =
+                    EffectiveEconomyService.EffectiveSupply(state, profile, Category);
+                check("RFQ supply probe has a non-zero category baseline", baseline > 0f,
+                    baseline.ToString("F3"));
+                check("undisturbed RFQ effective supply equals its baseline exactly",
+                    Mathf.Approximately(undisturbed, baseline),
+                    $"{baseline:F3} -> {undisturbed:F3}");
+
+                MarketPressureService.ApplySupplyShock(
+                    state, SupplyProbeSettlementId, Category, 0.35f);
+                float scarce = EffectiveEconomyService.EffectiveSupply(state, profile, Category);
+                check("supply pressure gives RFQs less effective supply than baseline",
+                    scarce < undisturbed, $"{undisturbed:F3} -> {scarce:F3}");
+                check("scarce RFQ effective supply stays within the economy bounds",
+                    scarce >= baseline * EffectiveEconomyService.MinCondition &&
+                    scarce <= baseline * EffectiveEconomyService.MaxCondition,
+                    scarce.ToString("F3"));
+
+                ClearSupplyProbe(state);
+                MarketPressureService.ApplySupplyShock(
+                    state, SupplyProbeSettlementId, Category, -0.25f);
+                float surplus = EffectiveEconomyService.EffectiveSupply(state, profile, Category);
+                check("a supply surplus gives RFQs more effective supply than baseline",
+                    surplus > undisturbed, $"{undisturbed:F3} -> {surplus:F3}");
+                check("surplus RFQ effective supply stays within the economy bounds",
+                    surplus >= baseline * EffectiveEconomyService.MinCondition &&
+                    surplus <= baseline * EffectiveEconomyService.MaxCondition,
+                    surplus.ToString("F3"));
+            }
+            finally
+            {
+                ClearSupplyProbe(state);
+            }
+        }
+
+        private static void ClearSupplyProbe(IntercolonyWorldComponent state)
+        {
+            state.MarketStates.RemoveAll(
+                s => s != null && s.settlementId == SupplyProbeSettlementId);
+            state.RefreshMarketStateIndex();
+        }
+
+        private static void CheckRfqResponseCountUsesEffectiveSupply(
+            System.Action<string, bool, string> check,
+            System.Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            const string Assertion = "RFQ response count falls under maximum supply scarcity";
+            ThingDef def = ThingDefOf.WoodLog;
+            IntercolonyProductCategory? category = IntercolonyProductClassifier.Classify(def);
+            List<Settlement> accessible = new List<Settlement>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements != null)
+            {
+                foreach (Settlement settlement in settlements)
+                {
+                    if (IntercolonyMarketAccess.IsAccessible(settlement) &&
+                        state.GetProfile(settlement) != null)
+                    {
+                        accessible.Add(settlement);
+                    }
+                }
+            }
+
+            int settlementCount = accessible.Count;
+            if (!category.HasValue || settlementCount < 8)
+            {
+                skip(Assertion,
+                    $"{settlementCount} accessible settlements with profiles; at least 8 required");
+                return;
+            }
+
+            const int Requested = 50;
+            PurchaseRequest undisturbedRequest = new PurchaseRequest
+            {
+                thingDef = def,
+                quantityRequested = Requested,
+                desiredDays = 10,
+                fulfillmentPreference = ProcurementFulfillmentPreference.Either,
+                minQuality = null,
+                stuffDef = null
+            };
+
+            RfqService.GenerateResponses(state, undisturbedRequest);
+            int undisturbedCount = undisturbedRequest.quotes.Count;
+
+            Dictionary<int, SettlementMarketState> savedRecords =
+                new Dictionary<int, SettlementMarketState>();
+            Dictionary<int, float> savedSupply = new Dictionary<int, float>();
+            Dictionary<int, int> savedRefreshes = new Dictionary<int, int>();
+            int categoryIndex = (int)category.Value;
+
+            try
+            {
+                foreach (Settlement settlement in accessible)
+                {
+                    SettlementMarketState record =
+                        state.MarketStateFor(settlement.ID, createIfMissing: false);
+                    if (record != null)
+                    {
+                        savedRecords.Add(settlement.ID, record);
+                        savedSupply.Add(settlement.ID, record.supplyPressure[categoryIndex]);
+                        savedRefreshes.Add(settlement.ID, record.lastAdvancedRefresh);
+                    }
+
+                    MarketPressureService.ApplySupplyShock(
+                        state, settlement.ID, category.Value, MarketPressureService.MaxPressure);
+                }
+
+                PurchaseRequest scarceRequest = new PurchaseRequest
+                {
+                    thingDef = def,
+                    quantityRequested = Requested,
+                    desiredDays = 10,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.Either,
+                    minQuality = null,
+                    stuffDef = null
+                };
+
+                RfqService.GenerateResponses(state, scarceRequest);
+                int scarceCount = scarceRequest.quotes.Count;
+                check(Assertion, scarceCount < undisturbedCount,
+                    $"{settlementCount} settlements, {undisturbedCount} -> {scarceCount} quotations");
+            }
+            finally
+            {
+                foreach (Settlement settlement in accessible)
+                {
+                    if (savedRecords.TryGetValue(settlement.ID, out SettlementMarketState record))
+                    {
+                        record.supplyPressure[categoryIndex] = savedSupply[settlement.ID];
+                        record.lastAdvancedRefresh = savedRefreshes[settlement.ID];
+                    }
+                    else
+                    {
+                        state.MarketStates.RemoveAll(
+                            s => s != null && s.settlementId == settlement.ID);
+                    }
+                }
+
+                state.RefreshMarketStateIndex();
+            }
         }
 
         /// <summary>
