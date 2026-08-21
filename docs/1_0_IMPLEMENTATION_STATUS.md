@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2D–2F — point selling, pricing and RFQs at the effective-economy API
-Last completed:     2.2 — one authoritative effective-economy API (2026-08-21)
+Current slice:      2F — point RFQs at the effective-economy API
+Last completed:     2D/2E — selling and pricing read effective demand (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,53 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2D/2E — selling and pricing read effective demand (2026-08-21)
+
+**Claim:** a shortage in a settlement widens the opportunities it generates, the appetite it offers
+and the price it pays, because all three now ask the effective-economy API instead of reading the
+settlement's standing identity.
+**Files:** `Market/MarketOpportunityGenerator.cs`, `Market/FindBuyerService.cs`,
+`Market/IntercolonyPricing.cs`, `Core/SettlementEconomicProfile.cs`, plus state threaded through
+`Contracts/ContractService.cs`, `Orders/SalesOrderService.cs`, `UI/MainTabWindow_Intercolony.cs`,
+`UI/Dialog_CreateRequest.cs` and four self-tests.
+**Commit:** `4e4b31b`. **Schema:** unchanged at 44.
+**Tests:** full suite 920 passed / 0 failed / 13 skipped, world-pawn delta 0 (14 → 14), both leak
+guards OK, log clean. Economy suite 87 → 91.
+
+**Pressure is applied exactly once.** `"Local demand"` is the same single price factor it always
+was, now fed the effective value rather than the baseline. No second shortage multiplier was added
+anywhere in the chain — that is §2.10's double-counting prohibition, and it is the defect that would
+not look wrong at either site. The `0.4–2.0` clamp in pricing is a *price sanity* bound and stays;
+it is a different concern from the API's condition bound.
+
+**`MainTabWindow_Intercolony.cs:1233-1234` deliberately still reads baseline.** That is the Stage 1
+economic-identity tooltip. It answers what a settlement *is*, not what it is currently going
+through, and moving it onto effective demand would make a settlement's advertised character change
+every time its market moved — undoing the separation Stage 1 exists to establish.
+
+**A latent defect became live and was fixed at its source.** `SettlementEconomicProfile.settlementId`
+had no initializer, so it defaulted to `0`. That was harmless until this slice, because nothing
+looked pressure up by it — and pressure is looked up by the id *on the profile*. Synthetic profiles
+built for a generic estimate never set the field, and `Dialog_CreateRequest.CreatePreviewProfile`
+is one, feeding the procurement dialog's "Market estimate". Settlement ID `0` is a plausible real
+`WorldObject.ID`, so a generic preview would have priced itself against whatever settlement zero
+happened to be going through: a wrong number, shown to the player, attributable to nothing. The
+field now defaults to `-1`, which `MarketStateFor` already treats as no settlement. Fixed at the
+field rather than the call site, which also covers four synthetic profiles in the self-tests.
+
+**The regression test for it had to be rewritten before it meant anything.** The obvious version —
+construct a profile, assert its effective demand equals its baseline — cannot fail: a default
+profile's `demandWeights` are zero, and zero times any pressure is still zero. It now sets a
+non-zero weight and pairs two profiles with identical weights differing *only* in whether they name
+a settlement, one moving under the shock and one not. Without that pairing the assertion cannot
+distinguish "the sentinel works" from "pressure is not being read at all". §20.1 again, in a new
+disguise: this one was not a skip, it was a check that could only ever pass.
+
+**Suite counts wobble with the world and that is not a regression.** Across three runs today the
+animal suite read 58/11, 57/12 and 58/11, and rfq 74 then 75, with zero failures throughout. Those
+suites size themselves to what the loaded `-quicktest` world contains. Compare failures and the
+leak guards across runs; do not compare raw totals.
 
 ### 2.2 — one authoritative effective-economy API (2026-08-21)
 
@@ -527,28 +574,43 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2D–2F — point selling, pricing and RFQs at `EffectiveEconomyService`**, then `2C` removes what
-remains of cycle noise, then `2G` player trades nudging pressure, `2H` chain propagation, `2I`
-regional diffusion, `2J` explanations, `2K` the migration and play gate.
+**2F — point RFQs at `EffectiveEconomyService`**, then `2C` removes what remains of cycle noise,
+then `2G` player trades nudging pressure, `2H` chain propagation, `2I` regional diffusion, `2J`
+explanations, `2K` the migration and play gate.
 
-**The API exists as of `0823d49`; the eight call sites still read baseline directly.** They are:
-`Market/MarketOpportunityGenerator.cs:196,203` (category weighting),
-`Market/FindBuyerService.cs:244,293,404`, `Market/IntercolonyPricing.cs:132` (the "Local demand"
-factor), `Procurement/RfqService.cs:243` (supplier capability), and
-`UI/MainTabWindow_Intercolony.cs:1233-1234` — the last is the Stage 1 identity tooltip and should
-**stay** on baseline, because it answers what a settlement *is*, not what it is going through.
+**Only one demand/supply call site is left unmigrated:** `Procurement/RfqService.cs:243`, where
+`TryQuote` reads `profile.BaseSupplyFor(category)`. It needs effective supply, so a settlement whose
+category is currently scarce answers fewer RFQs.
 
-**Two traps to carry into 2E specifically.** §2.10 forbids double counting: once `IntercolonyPricing`
-takes effective demand, it must not also multiply a separate pressure factor under another name —
-`EffectiveEconomyService.ExplainDemand` returns factors whose product *is* the effective value, so a
-caller uses one or the other. And the pricing site clamps demand to `[0.4, 2.0]`; that clamp is
-about price sanity and is separate from the condition bound, so it stays.
+**The trap in 2F is the direction.** Supply pressure counts upward toward *scarce*; a supply weight
+counts upward toward *able to sell*. `EffectiveEconomyService.EffectiveSupply` already divides where
+demand multiplies, so the call site must not invert anything itself. And per §2.9 the existing
+finite offer consumption stays untouched — pressure is broad current scarcity, consumption is "you
+already bought 80 of the 100 units this supplier offered this window", and they answer different
+questions.
 
-**2C and 2D are coupled and the plan says which comes first.** §2.3 is explicit that the old
+**Then 2C, and the plan says why it comes last.** §2.3 is explicit that the old
 `0.55–1.45` roll may only be deleted *once all consumers use the new effective-economy API* — two
 dynamic systems must not be left stacked, but neither may the market be left with no dynamics at
-all. That is why §2.2 got its own slice ahead of the letters. **Pressure currently moves and can now
-be read correctly, but nothing consumes it**, which is the safe state to be in between the two.
+all. That is why §2.2 got its own slice ahead of the letters.
+
+**2C is smaller than the plan assumes, and the reason is worth writing down before someone goes
+looking for work that is not there.** The `0.55–1.45` roll it names was already deleted in Stage 1.2
+— that was the whole point of the `BaseDemandFor` rename — so the two dynamic systems the plan warns
+about were never actually stacked. A grep of production code for refresh-seeded randomness leaves
+three things, none of them a demand multiplier:
+
+- `Contracts/ContractService.cs:229` seeds a contract-generation roll on `RefreshCount`. Needs a
+  read: it decides *whether* an offer appears, which §2.3 permits, but confirm it is not also
+  scaling terms.
+- `Labor/LaborCandidateService` refreshes its worker pool per cycle. Not the goods market; out of
+  scope.
+- `SettlementEconomicProfile.volatility` is now **written and never read** outside its own debug
+  line. It survives as generation-time jitter on the weights and nothing consumes it as a
+  per-refresh swing any more. Decide-or-delete, and say which in the ledger.
+
+So 2C is an audit that ends in a short deletion, not a removal of a live system. Do not go hunting
+for a roll that is not there.
 
 **Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
 and the plan says so twice.
