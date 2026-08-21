@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2C — remove what remains of cycle noise
-Last completed:     2B — advance and mean-revert pressure (2026-08-21)
+Current slice:      2D–2F — point selling, pricing and RFQs at the effective-economy API
+Last completed:     2.2 — one authoritative effective-economy API (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,55 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2.2 — one authoritative effective-economy API (2026-08-21)
+
+**Claim:** every market system can ask one owner what a settlement wants and can supply right now,
+and get baseline identity composed with current pressure, bounded, without reading either directly.
+**Files:** `Economy/EffectiveEconomyService.cs` (new), `Debug/IntercolonyEconomySelfTest.cs`.
+**Commit:** `0823d49`. **Schema:** unchanged at 44 — a read model persists nothing.
+**Tests:** economy suite 46 → 87 assertions. Full suite 914 passed / 0 failed / 14 skipped,
+world-pawn delta 0 (18 → 18), both leak guards OK, log clean.
+
+**It has no slice letter, and that is the point.** The ledger jumped 2B → 2C, but §2.3 only permits
+deleting the old `0.55–1.45` roll *once all consumers use the new API*, so §2.2 has to exist and be
+adopted first. Order is 2.2 → 2D–2F → 2C.
+
+**Supply pressure and supply weight count in opposite directions, and this is where they are
+reconciled.** Pressure counts upward toward *scarce*; `BaseSupplyFor` counts upward toward *able to
+sell*. So effective supply divides where effective demand multiplies. Multiplying is the natural
+mistake, it looks correct at the call site, and each of the five consumers would have made it
+independently — which is most of the argument for a single owner rather than a helper.
+
+**Reads are free of consequence, and two separate defects are guarded.** Nothing in the service
+creates, stamps or advances a record. A read using `createIfMissing: true` would put one neutral
+entry per settlement into the save on the first UI hover, undoing 2A's sparseness; a read that
+advanced reversion would make a shortage decay faster the more often the player looked at it.
+Asserted directly: ten reads move neither the value nor `lastAdvancedRefresh`.
+
+**The bound is on the *condition*, not on effective demand.** Clamping the composed result would
+clip archetype differences — a military settlement's appetite for weapons is meant to be visibly
+larger — so what is bounded is only how far the dynamic layers may move that identity.
+`MaxCondition` is 2.0 against pressure's own 1.60, so today it is headroom and the strongest
+possible shock arrives unclipped (asserted). It begins to bind in Stage 3, where an event modifier
+multiplies a settlement that is already under pressure; two layers each individually restrained
+still multiply to an unrestrained number. Floor is the exact inverse, same discipline as 2B.
+
+**Explanations reuse `PriceFactor` and multiply to exactly the value they explain**, per §2.11's
+instruction to use the existing explanation system rather than build a second one. The assertion
+that the factors' product equals the effective value is the guard against §2.10's double counting:
+that defect arrives as a caller multiplying an effective value that already contains pressure by a
+factor list that contains it again, and it looks correct at both sites. A neutral condition
+contributes no line — a row reading `x1.00` buries the row that matters.
+
+**Nothing consumes it yet.** That is deliberate and is the same safe state 2B left: pressure moves,
+and after this it can be *read* correctly, but no player-facing system has been repointed. 2D–2F do
+that.
+
+**One skip count moved and is not explained.** The full run skips 14 where 2B's skipped 13 — animal
+11 → 12 with its passes 58 → 57. Nothing in this slice touches the animal path, and that suite's
+skips depend on what the loaded world happens to contain, so this is most likely the world rather
+than the code. Recorded rather than assumed.
 
 ### 2B — advance and mean-revert pressure (2026-08-21)
 
@@ -478,16 +527,28 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2C — remove what remains of cycle noise**, then `2D`–`2F` pointing selling, pricing and RFQs at
-one effective-economy API, `2G` player trades nudging pressure, `2H` chain propagation, `2I`
+**2D–2F — point selling, pricing and RFQs at `EffectiveEconomyService`**, then `2C` removes what
+remains of cycle noise, then `2G` player trades nudging pressure, `2H` chain propagation, `2I`
 regional diffusion, `2J` explanations, `2K` the migration and play gate.
+
+**The API exists as of `0823d49`; the eight call sites still read baseline directly.** They are:
+`Market/MarketOpportunityGenerator.cs:196,203` (category weighting),
+`Market/FindBuyerService.cs:244,293,404`, `Market/IntercolonyPricing.cs:132` (the "Local demand"
+factor), `Procurement/RfqService.cs:243` (supplier capability), and
+`UI/MainTabWindow_Intercolony.cs:1233-1234` — the last is the Stage 1 identity tooltip and should
+**stay** on baseline, because it answers what a settlement *is*, not what it is going through.
+
+**Two traps to carry into 2E specifically.** §2.10 forbids double counting: once `IntercolonyPricing`
+takes effective demand, it must not also multiply a separate pressure factor under another name —
+`EffectiveEconomyService.ExplainDemand` returns factors whose product *is* the effective value, so a
+caller uses one or the other. And the pricing site clamps demand to `[0.4, 2.0]`; that clamp is
+about price sanity and is separate from the condition bound, so it stays.
 
 **2C and 2D are coupled and the plan says which comes first.** §2.3 is explicit that the old
 `0.55–1.45` roll may only be deleted *once all consumers use the new effective-economy API* — two
 dynamic systems must not be left stacked, but neither may the market be left with no dynamics at
-all. So the effective-economy API (§2.2) has to exist and be adopted before the noise comes out,
-which in practice makes the order 2D-then-2C even though the numbering reads the other way.
-**Pressure currently moves and nothing reads it**, which is the safe state to be in between the two.
+all. That is why §2.2 got its own slice ahead of the letters. **Pressure currently moves and can now
+be read correctly, but nothing consumes it**, which is the safe state to be in between the two.
 
 **Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
 and the plan says so twice.
