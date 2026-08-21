@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2J — explainability, then 2K the migration and play gate
-Last completed:     2I — modest regional pressure diffusion (2026-08-21)
+Current slice:      2K — the play gate (its migration half is already proven)
+Last completed:     2J — price breakdowns name the current condition (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,75 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2J — price breakdowns name the current condition (2026-08-21)
+
+**Claim:** when a settlement's current circumstances move a price, the player can see that they
+did, as a named row in the breakdown they already read — and the price itself does not change.
+**Files:** `Market/IntercolonyPricing.cs`, `Procurement/RfqService.cs`,
+`Debug/IntercolonyDebugActions.cs`, `Debug/IntercolonyEconomySelfTest.cs`.
+**Commit:** `c31022e`. **Schema:** unchanged at 44 — nothing new is persisted.
+**Tests:** economy suite 111 → 130, **no skips**. Full suite green on **four consecutive fresh
+worlds** (968–969 passed, 0 failed, 13–14 skipped), world-pawn delta 0, both leak guards OK, log
+clean. Verified in both directions: the pre-2J single row turns exactly five assertions red.
+
+**One production site fixed four player-facing surfaces.** `UnitPrice` fused baseline appetite and
+current pressure into one "Local demand" row, so every price the player sees — market opportunity
+explanations, Find Buyer tooltips, the sell confirmation, the animal preview — hid the shortage
+inside the identity. All four read the same factor list, so the slice is genuinely the wiring §2.11
+said it was.
+
+**The first rule was wrong, and the first test run is what said so.** Collapsing the breakdown back
+to one row whenever the `[0.4, 2.0]` price-sanity clamp binds looked like the conservative choice.
+It is the opposite: the probe settlement's baseline demand for steel is **0.53**, so an ordinary
+glut drives effective demand under the floor immediately, and the explanation would disappear
+exactly where the price is most extreme — the one case §2.11 exists for. A low baseline demand is
+not a corner case. Now the two rows survive a binding clamp and the condition row carries the
+impact the condition actually had *after* the limit.
+
+**The one case that still collapses is the one that cannot be split without lying.** Clamping pulls
+the product back *toward* the base, so whenever the base row is itself inside the bound the adjusted
+ratio keeps the condition's direction — a shortage can never render as a reduction. A base already
+outside the bound makes no such promise: the ratio would point the opposite way from the condition
+and the row would contradict its own label. That case, and only that case, shows one row.
+
+**The procurement side could not be split, and pretending otherwise would have moved a price.**
+`RfqService`'s scarcity factor is `1.6 - supply * 0.5`, **affine in effective supply, not
+multiplicative**, so there is no base × condition decomposition of it. The symmetric-looking change
+was available and wrong. Its label names the current shortage or surplus instead; the arithmetic is
+untouched. Note the inversion the comment guards: `SupplyCondition` returns `1 / Bound(pressure)`,
+so **below** neutral is the shortage direction.
+
+**Six of the nineteen assertions cannot fail under the mutation, and that is correct.** Reverting to
+the fused row turns five red — the split, the true-condition check, and the three label checks —
+while every price-reconstruction assertion stays green, because the mutation does not change the
+price. They guard a different defect: §2.10 double counting, which arrives as a caller multiplying
+an effective value that already contains pressure by a factor list that contains it again. A test
+that goes red for the wrong reason is worth less than one that stays green for the right one.
+
+**One fixture was a hash coin-flip and was caught by reading rather than by failing.** The ceiling
+scenario first used a category weight of 1.8; with `ExactGoodAffinitySpread` at 0.15 the base row
+lands in `[1.53, 2.07]`, and above 2.0 the production code correctly takes the *collapse* branch and
+the assertion fails for a reason unrelated to the behaviour under test. Deterministic, but decided
+by a hash of the def rather than by the fixture — the same class of defect as the animal assertion
+that depended on which race the world happened to load. 1.7 holds at both ends across the whole
+affinity band and the comment shows the arithmetic.
+
+**Labels stay generic on purpose.** §2.11's example says "Food shortage", but there is no Food
+category, and in a breakdown for one known good naming the category repeats what the row above it
+already shows — `CLAUDE.md` rule 6. Propagation coefficients are not exposed anywhere: a shortage
+that arrived by chain or diffusion reads as a shortage.
+
+**Existing saves need no migration and get none.** An opportunity's `priceExplanation` is a string
+rendered once at creation, so offers already on the board keep the breakdown they were struck
+against. That is right rather than merely cheap: re-rendering them would describe a settlement's
+*current* condition on a price agreed under an older one.
+
+**The §2.12 diagnostic 2B deferred is now in**, as `Dump effective economy`: baseline, pressure and
+effective for both sides of every category on each disturbed settlement, plus refreshes elapsed. It
+reads every composed number through `EffectiveEconomyService` rather than recomputing the
+composition, so a later economy layer cannot make the debugging view stale while leaving it
+plausible. That closes Stage 2 acceptance criterion 12.
 
 ### 2I — modest regional pressure diffusion (2026-08-21)
 
@@ -898,80 +967,61 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2J — explainability** (plan §2.11), then `2K` the migration and play gate.
+**2K — the play gate.** Every code slice in Stage 2 is done; what is left cannot be settled by a
+self-test.
 
-**The mechanism already exists and 2J is mostly wiring.** `EffectiveEconomyService.ExplainDemand`
-and `ExplainSupply` already return `List<PriceFactor>` whose product *is* the effective value, and
-`IntercolonyPricing.Explain` already renders a factor list. §2.11 asks that an unusually high or low
-offer let the player see the major cause — "Local demand ×1.12, Food shortage ×1.18" — and
-explicitly says to use the existing explanation system rather than build a second one.
+**Its migration half is already proven and should not be re-litigated.** The 42 → 43 → 44 chain ran
+on the real 22.5 MB `Fenhana` colony with zero exceptions and the full suite then passed 944/0/9
+against the migrated save. `dev.ps1 bridge -Save <name>` makes it one command. Re-run it as a
+regression check if anything later touches persistence; do not treat it as open work.
 
-**The rule that constrains it: a factor list and an effective value must never both be applied.**
-`ExplainDemand`'s product equals the effective demand, so a surface that multiplies an effective
-value *and* shows the factors would double-count. Use one or the other. This is already asserted in
-the economy suite; keep it that way.
+**What genuinely remains is a judgement about feel**, which §20.4 says no self-test can settle:
+does the market read as alive rather than flat or chaotic? Every coefficient in Stage 2 was chosen
+conservatively and documented as retune-at-2K — `ReversionRetention` (0.82), `NudgeValueScale`, the
+chain table and `DiffusionCoefficient`. §18's rule was followed deliberately: establish direction
+and bounds in tests, use conservative values, tune at the play gate. Expect to move numbers here,
+not structure.
 
-**Do not expose propagation coefficients.** §2.11 says the player should see the major cause, not
-every chain and diffusion term. A shortage that arrived by propagation should read as a shortage,
-not as "IntermediateGoods ×0.05 from ManufacturedGoods".
+**Do Stage 1 criterion 7 in the same sitting** — whether a settlement's economy reads clearly from
+the Market listing and Relations tooltips. Both are questions about what the player can actually
+see, and 2J just added a second surface to look at: a price breakdown should now name a current
+shortage or surplus when one is moving the number, and the same circumstance should read the same
+way whether the player is buying or selling.
 
-**2K is now much cheaper than planned.** Its migration half is already proven: the 42 → 43 → 44
-chain ran on the real 22.5 MB colony save with zero exceptions, and `dev.ps1 bridge -Save <name>`
-makes it one command. What genuinely remains for 2K is the **play gate** — whether the market now
-feels alive rather than flat or chaotic, which §20.4 says no self-test can settle. Stage 1
-criterion 7 (whether a settlement's economy reads clearly from the tooltips) belongs in the same
-sitting, since both are judgements about what the player can see.
+**Three things to look at specifically, because they are where the conservatism might show:**
 
-**What §2.7 asks for.** Nearby settlements influence one another enough to create regions without
-homogenising the world: on the coarse refresh, sample a *bounded* set of nearby eligible
-settlements, blend a small amount of pressure, weight by distance, cap the effect, and never do
-all-pairs work. A settlement's own identity and own shocks must stay more important than its
-neighbours'. Tests must show nearby settlements correlate modestly after a shock, distant ones do
-not mirror it, and the world does not converge to one global pressure vector.
+- a shock decays over ~25 refreshes at the current retention; that may be too slow to notice or too
+  fast to trade on, and only play tells which;
+- diffusion moves one regional hop per refresh within 40 tiles — do regions actually *form*, or does
+  the world read as uniform;
+- `ContractService.ContractQuantity` still sizes standing-agreement offers from `Rand.Range(1500,
+  5000)` and reads no demand at all. That was left deliberately (see the 2C DECISION below) with
+  this gate named as the place to revisit it. The symptom to watch for is a contract offer whose
+  size feels disconnected from the settlement's visible economy.
 
-**Three traps, two of them already paid for in 2H.**
+**Known gap carried in from 2I**, worth closing only if diffusion looks wrong in play: no assertion
+separates diffusing the *difference* from diffusing the *level* with a symmetric transfer, because
+that variant is also conservative and so passes the conservation check. It would pump rather than
+average, and mean reversion would largely mask it.
 
-- **Snapshot again, and for a stronger reason.** Diffusion is settlement-to-settlement, so in-place
-  blending would let a shock travel several settlements in one refresh depending on world-object
-  iteration order. Same fix, same reasoning as the category chains.
-- **The stability budget is now shared.** 2H's guard bounds coupling *within* a settlement against
-  `(1/ReversionRetention) − 1` ≈ 0.2195. Diffusion adds coupling *between* settlements drawing on
-  the same budget, and unlike the category tables, diffusion is inherently **symmetric** — if A
-  pulls from B then B pulls from A — so it is cyclic by construction and cannot rely on 2H's
-  nilpotency argument. Its coefficient must be small enough that chains plus diffusion together
-  stay under the bound, and the existing assertion should be extended to account for both rather
-  than left measuring only half the system.
-- **Cost.** The baseline was captured on a **358-settlement world**. Nearest-neighbour work per
-  refresh must be bounded and must not recompute distances for every pair; look at how
-  `MarketOpportunityGenerator.DistanceToPlayer` and the opportunity generator already bound their
-  per-refresh work before inventing anything.
-
-**Sparseness holds the same way it does in 2H:** only settlements that already have a record can
-diffuse *from*. Whether a disturbed settlement may create a record in a previously neutral
-neighbour is a real decision — it is how a region forms, but it also means one shock can populate
-the save with records. Decide it explicitly and say which in the ledger.
-
-**Both halves of Stage 2's core now work.** Every consumer reads effective values, and completed
-trades write back into pressure. The only deliberate read holdout is
+**Both halves of Stage 2's core now work.** Every consumer reads effective values, completed trades
+write back into pressure, and a price that moved says why. The only deliberate read holdout is
 `UI/MainTabWindow_Intercolony.cs:1233-1234`, the Stage 1 identity tooltip, which answers what a
 settlement *is* rather than what it is going through.
 
-**What §2.6 asks for, and what it explicitly does not.** Small directional relationships between the
-six existing categories, centralised in one table or service — *not* a bill-of-materials
-simulation. The plan's initial links: manufactured-goods demand lifts intermediate-goods demand;
-furniture demand lifts commodities and intermediates; capital-equipment demand lifts intermediates;
-tight commodity supply tightens intermediates and then, more weakly, furniture and capital
-equipment. Coefficients deliberately small. The goal is "a steel shortage has consequences", not a
-500-node input-output matrix, and the tests must prove **direction and boundedness** rather than a
-supposedly correct coefficient.
+### Removed 2026-08-21: the §2.6 and §2.7 handoff briefs, and one false claim in them
 
-**The trap is feedback.** Propagation writes pressure that later propagation reads. Without a rule
-about ordering and iteration depth, a chain can amplify itself across refreshes — categories that
-lift each other in a cycle diverge to the bounds and stay there, which reads as a permanently broken
-economy rather than a bug. Decide propagation depth explicitly, apply it from a snapshot rather than
-in place so the order categories are visited in cannot change the result, and assert that repeated
-refreshes without a new shock still converge toward neutral. 2B's mean reversion is what keeps the
-system stable; propagation must not outrun it.
+This section carried multi-paragraph briefs for the category chains and regional diffusion — what
+the plan asked for, the traps, the cost bound. **Both slices shipped (2H `0c2722b`, 2I `5e63089`)
+and their reasoning now lives in their own slice-log entries, which record what was actually built
+rather than what was anticipated.** Left in place under "next slice" they read as outstanding work.
+
+One of them was **wrong**, which is the reason to delete rather than merely date them. The brief
+stated that diffusion "draws on the same stability budget" as the chains and so had to be squeezed
+under 2H's `(1/ReversionRetention) − 1` ≈ 0.2195 row-sum bound. It does not: that bound guards
+*additive* coupling, and the averaging form 2I chose is contractive whether or not the coupling is
+cyclic, so diffusion has its own condition (`DiffusionCoefficient × MaxNeighbours ≤ 0.5`). Choosing
+the right form removed the constraint instead of having to be budgeted around it. See 2I's entry.
 
 **Testing note carried forward.** A pressure *write* has no reproducible-seed seam the way the
 generator does, so drive the real path and read the record either side. And per 2G: verify any new

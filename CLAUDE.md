@@ -123,10 +123,28 @@ either, so it is reported on its own line.
 Test ids come from `tests.list`, not from the display names: `job-posting`, `combat-clause`,
 `employer-reputation`, `long-term`, and the plain ones (`economy`, `market`, `payroll`, …).
 
-**If the bridge does not answer**, in this order: is RimWorld running; was it built with
-`-p:EnableDevBridge=true`; was it launched with `INTERCOLONY_DEV_BRIDGE=1` in its environment;
-is something else already on port 34117 (the log says so by name). A normal build has no bridge
-in it at all, which is deliberate — see `docs/DEV_TEST_BRIDGE.md`.
+**If the bridge does not answer**, in this order: **is the Steam client running and logged in**
+(see below); is RimWorld running; was it built with `-p:EnableDevBridge=true`; was it launched with
+`INTERCOLONY_DEV_BRIDGE=1` in its environment; is something else already on port 34117 (the log says
+so by name). A normal build has no bridge in it at all, which is deliberate — see
+`docs/DEV_TEST_BRIDGE.md`.
+
+**A logged-out Steam client breaks the bridge, and it does not look like Steam's fault.** Cost about
+fifteen minutes on 2026-08-21. `SteamAPI.Init()` fails, so `Adding mods from Steam:` finds nothing
+and RimWorld **deactivates every Workshop mod including Harmony**, then rewrites `ModsConfig.xml`
+down to Core plus DLC. Intercolony still loads — it is a local mod — and dies at
+`TypeLoadException: Could not resolve type ... 'HarmonyLib.HarmonyPatch'`, so the bridge never opens
+and `dev.ps1` reports a plain connection timeout. Three things follow from that:
+
+- **The tell is in `Player.log`, not in the timeout.** Look for `SteamAPI.Init() failed` and
+  `Deactivating not-installed mods`. Check `HKCU:\Software\Valve\Steam\ActiveProcess\ActiveUser` —
+  **`0` means logged out**, and Steam merely *running* is not enough.
+- **Only Matteo can fix it** (password and 2FA). Ask; do not work around it. Copying the Workshop
+  Harmony into `Mods\` would create a duplicate `brrainz.harmony` that outlives the session — the
+  same leftover-state trap as `Autostart.rws`.
+- **Restore the mod list afterwards.** RimWorld has already overwritten it, so the previous list is
+  gone from disk; recover it from `Player-prev.log`, which prints every active mod in load order
+  under `Initializing new game with mods:`.
 
 **The bridge is a development tool and must never ship.** `package.ps1` reads the built assembly
 and refuses to package one containing it, so a release cannot accidentally carry a listener.
