@@ -107,6 +107,34 @@ MCP tools driven over stdio. These are the parts that were **not** exercised.
   root, but has only been loaded on one machine, with one Node version, one RimWorld install, and
   a `Mods\Intercolony` junction that had to be repointed by hand to test at all.
 
+### 1.0 program — Stage 2, the 2K play gate
+
+**Added 2026-08-21 when 2J closed the last Stage 2 code slice.** Every remaining Stage 2 question is
+a judgement about feel or text, which is what §20.4 says a self-test cannot settle. Do these in one
+sitting on a real colony, not a `-quicktest` world.
+
+1. **Does the market read as alive rather than flat or chaotic?** Every Stage 2 coefficient was
+   chosen conservatively and documented as retune-at-2K: `ReversionRetention` (0.82, a shock decays
+   over ~25 refreshes), `NudgeValueScale`, the chain table and `DiffusionCoefficient`. Expect to move
+   numbers, not structure.
+2. **Do regions actually form?** Diffusion moves one hop per refresh within 40 tiles. If the world
+   reads as uniform, or if nothing ever spreads, the coefficient is wrong in one direction or the
+   other. The 2I entry names a known gap worth closing only if this looks wrong.
+3. **Does a price breakdown explain itself?** New in 2J: a market opportunity, Find Buyer tooltip,
+   sell confirmation or animal preview should show `Current shortage` or `Current surplus` as its own
+   row when conditions are moving the number, and show nothing when they are not. Check both that it
+   appears under a shock (`Dev: Dump effective economy` names the disturbed settlements) and that an
+   undisturbed settlement shows no `x1.00` row.
+4. **Does a procurement quote read the same way?** Its scarcity row is labelled
+   `Local scarcity (shortage)` / `(surplus)`. The same circumstance should read the same way whether
+   the player is buying or selling — that symmetry is the point, and only reading both settles it.
+5. **Stage 1 criterion 7**, carried here from the Stage 1 gate: whether a settlement's economy is
+   legible from the Market listing and Relations tooltips without debug numbers. Same sitting, same
+   kind of question.
+
+**Not on this list, because it is proven:** the 42 → 43 → 44 migration ran on the real 22.5 MB
+`Fenhana` colony with zero exceptions and the full suite then passed 944/0/9 against it.
+
 ### 1.0 program — Stage 0
 
 #### ~~Capture the market baseline~~ — DONE 2026-08-20

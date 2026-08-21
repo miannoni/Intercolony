@@ -86,6 +86,94 @@ namespace Intercolony
             });
         }
 
+        /// <summary>
+        /// Click a settlement, then choose one predictable pressure step to apply. This uses
+        /// <see cref="WithState"/> deliberately: unlike a self-test, the action exists to leave a
+        /// real disturbance behind so the player can inspect the resulting market explanations.
+        /// </summary>
+        [DebugAction(Category, "Shock settlement economy", actionType = DebugActionType.ToolWorld,
+            allowedGameStates = AllowedGameStates.PlayingOnWorld, displayPriority = 69)]
+        private static void ShockSettlementEconomy()
+        {
+            WithState(state =>
+            {
+                PlanetTile tile = GenWorld.MouseTile();
+                Settlement settlement = Find.WorldObjects.SettlementAt(tile);
+                if (settlement == null)
+                {
+                    IntercolonyLog.Message($"No settlement at tile {tile}.");
+                    return;
+                }
+
+                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                if (profile == null)
+                {
+                    IntercolonyLog.Message(
+                        $"{settlement.Label} is not an economic participant " +
+                        $"(faction: {settlement.Faction?.Name ?? "none"}).");
+                    return;
+                }
+
+                List<DebugMenuOption> options = new List<DebugMenuOption>();
+                foreach (IntercolonyProductCategory category in
+                         IntercolonyProductCategoryUtility.All)
+                {
+                    IntercolonyProductCategory selectedCategory = category;
+                    string categoryLabel = selectedCategory.Label();
+
+                    // Both axes count upward toward shortage: demand becomes keener while supply
+                    // becomes scarcer. Keeping the same signed step makes repeated clicks legible.
+                    options.Add(new DebugMenuOption(
+                        $"{categoryLabel}: demand shortage", DebugMenuOptionMode.Action, () =>
+                        {
+                            MarketPressureService.ApplyDemandShock(
+                                state, settlement.ID, selectedCategory, +0.30f);
+                            float pressure = state.MarketStateFor(settlement.ID)?
+                                .DemandPressureFor(selectedCategory) ?? SettlementMarketState.Neutral;
+                            IntercolonyLog.Message(
+                                $"{settlement.Label}: {categoryLabel} demand shortage; " +
+                                $"resulting pressure {pressure:F3}.");
+                        }));
+                    options.Add(new DebugMenuOption(
+                        $"{categoryLabel}: demand glut", DebugMenuOptionMode.Action, () =>
+                        {
+                            MarketPressureService.ApplyDemandShock(
+                                state, settlement.ID, selectedCategory, -0.30f);
+                            float pressure = state.MarketStateFor(settlement.ID)?
+                                .DemandPressureFor(selectedCategory) ?? SettlementMarketState.Neutral;
+                            IntercolonyLog.Message(
+                                $"{settlement.Label}: {categoryLabel} demand glut; " +
+                                $"resulting pressure {pressure:F3}.");
+                        }));
+                    options.Add(new DebugMenuOption(
+                        $"{categoryLabel}: supply shortage", DebugMenuOptionMode.Action, () =>
+                        {
+                            MarketPressureService.ApplySupplyShock(
+                                state, settlement.ID, selectedCategory, +0.30f);
+                            float pressure = state.MarketStateFor(settlement.ID)?
+                                .SupplyPressureFor(selectedCategory) ?? SettlementMarketState.Neutral;
+                            IntercolonyLog.Message(
+                                $"{settlement.Label}: {categoryLabel} supply shortage; " +
+                                $"resulting pressure {pressure:F3}.");
+                        }));
+                    options.Add(new DebugMenuOption(
+                        $"{categoryLabel}: supply glut", DebugMenuOptionMode.Action, () =>
+                        {
+                            MarketPressureService.ApplySupplyShock(
+                                state, settlement.ID, selectedCategory, -0.30f);
+                            float pressure = state.MarketStateFor(settlement.ID)?
+                                .SupplyPressureFor(selectedCategory) ?? SettlementMarketState.Neutral;
+                            IntercolonyLog.Message(
+                                $"{settlement.Label}: {categoryLabel} supply glut; " +
+                                $"resulting pressure {pressure:F3}.");
+                        }));
+                }
+
+                Find.WindowStack.Add(new Dialog_DebugOptionListLister(
+                    options, $"Shock settlement economy: {settlement.Label}"));
+            });
+        }
+
         [DebugAction(Category, "Run profile self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 60)]
         private static void RunProfileSelfTest()
         {
