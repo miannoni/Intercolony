@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using Verse;
@@ -21,18 +22,142 @@ namespace Intercolony
     /// </summary>
     public static class IntercolonyAllSelfTests
     {
-        private sealed class SuiteResult
+        /// <summary>
+        /// One suite's outcome. Public because the dev test bridge reports these counts as data
+        /// rather than re-parsing the rendered table — a second parser over this class's own
+        /// output would be exactly the drift the single-registry rule exists to prevent.
+        /// </summary>
+        public sealed class SuiteResult
         {
+            /// <summary>Stable machine id, for callers that select a suite by name.</summary>
+            public string id;
+
+            /// <summary>Display name. This is what the table prints, so it must not change.</summary>
             public string name;
+
             public int passed;
             public int failed;
             public int skipped;
             public bool crashed;
             public string skipReason;
             public string output = "";
+            public long durationMs;
 
             public bool Ran => !crashed && skipReason == null;
             public bool Clean => Ran && failed == 0;
+        }
+
+        /// <summary>
+        /// One entry in the registry: what a suite is called by machine and by eye, whether it
+        /// needs a map, and how to invoke it.
+        ///
+        /// The two names are deliberately separate. The table has printed "job posting" since this
+        /// runner was written and changing it would change the output everyone reads, while a
+        /// caller selecting a suite over a wire wants "job-posting" — stable, kebab-case, and
+        /// independent of display text that may be reworded later.
+        /// </summary>
+        public sealed class SelfTestDefinition
+        {
+            public readonly string Id;
+            public readonly string Label;
+            public readonly bool RequiresMap;
+            internal readonly Func<IntercolonyWorldComponent, Map, string> Invoke;
+
+            internal SelfTestDefinition(
+                string id, string label, bool requiresMap,
+                Func<IntercolonyWorldComponent, Map, string> invoke)
+            {
+                Id = id;
+                Label = label;
+                RequiresMap = requiresMap;
+                Invoke = invoke;
+            }
+        }
+
+        /// <summary>
+        /// The one list. Both the "Run ALL self-tests" debug action and the dev test bridge read
+        /// it, so a suite added here appears in both without anyone remembering to update a second
+        /// place. Order is the order the table prints: world-only suites first, then the ones that
+        /// need a map.
+        /// </summary>
+        private static readonly SelfTestDefinition[] Definitions =
+        {
+            // World-only suites.
+            new SelfTestDefinition("economy", "economy", false,
+                (s, m) => IntercolonyEconomySelfTest.Run(s)),
+            new SelfTestDefinition("timeline", "timeline", false,
+                (s, m) => IntercolonyTimelineSelfTest.Run(s)),
+            new SelfTestDefinition("profile", "profile", false,
+                (s, m) => IntercolonyProfileSelfTest.Run()),
+            new SelfTestDefinition("market", "market", false,
+                (s, m) => IntercolonyMarketSelfTest.Run(s)),
+            new SelfTestDefinition("reputation", "reputation", false,
+                (s, m) => IntercolonyReputationSelfTest.Run(s)),
+            new SelfTestDefinition("contract", "contract", false,
+                (s, m) => IntercolonyContractSelfTest.Run(s)),
+            new SelfTestDefinition("rfq", "rfq", false,
+                (s, m) => IntercolonyRfqSelfTest.Run(s)),
+
+            // Suites that need a map. Skipped loudly rather than quietly when there is none —
+            // a suite that did not run is not a suite that passed.
+            new SelfTestDefinition("order", "order", true,
+                (s, m) => IntercolonyOrderSelfTest.Run(s, m)),
+            new SelfTestDefinition("animal", "animal", true,
+                (s, m) => IntercolonyAnimalSelfTest.Run(s, m)),
+            new SelfTestDefinition("ledger", "ledger", true,
+                (s, m) => IntercolonyLedgerSelfTest.Run(s, m)),
+            new SelfTestDefinition("labor", "labor", true,
+                (s, m) => IntercolonyLaborSelfTest.Run(s, m)),
+            new SelfTestDefinition("payroll", "payroll", true,
+                (s, m) => IntercolonyPayrollSelfTest.Run(s, m)),
+            new SelfTestDefinition("transition", "transition", true,
+                (s, m) => IntercolonyTransitionSelfTest.Run(s, m)),
+            new SelfTestDefinition("job-posting", "job posting", true,
+                (s, m) => IntercolonyJobPostingSelfTest.Run(s, m)),
+            new SelfTestDefinition("combat-clause", "combat clause", true,
+                (s, m) => IntercolonyCombatClauseSelfTest.Run(s, m)),
+            new SelfTestDefinition("employer-reputation", "employer reputation", true,
+                (s, m) => IntercolonyEmployerReputationSelfTest.Run(s, m)),
+            new SelfTestDefinition("long-term", "long term", true,
+                (s, m) => IntercolonyLongTermSelfTest.Run(s, m))
+        };
+
+        /// <summary>Every suite this runner knows about, in the order it runs them.</summary>
+        public static IReadOnlyList<SelfTestDefinition> List()
+        {
+            return Definitions;
+        }
+
+        /// <summary>
+        /// Runs exactly one suite, through the same guard the whole-suite run uses.
+        ///
+        /// The guard is not optional here. <see cref="IntercolonyDiagnosticGuard"/> is what stops a
+        /// suite's synthetic orders and its deliberate missed payrolls from being written into the
+        /// player's real history and employer standing. A caller that runs one suite repeatedly —
+        /// which is the entire point of automating this — would otherwise do that damage on every
+        /// invocation.
+        ///
+        /// Returns null for an unknown id so the caller can say so precisely rather than reporting
+        /// a suite that failed.
+        /// </summary>
+        public static SuiteResult RunOne(string id, IntercolonyWorldComponent state, Map map)
+        {
+            SelfTestDefinition definition = null;
+            foreach (SelfTestDefinition candidate in Definitions)
+            {
+                if (string.Equals(candidate.Id, id, StringComparison.OrdinalIgnoreCase))
+                {
+                    definition = candidate;
+                    break;
+                }
+            }
+
+            if (definition == null)
+            {
+                return null;
+            }
+
+            return RunDefinition(state, definition, map);
         }
 
         /// <summary>
@@ -66,29 +191,10 @@ namespace Intercolony
             int nextIdBefore = state.PeekNextId();
 
             List<SuiteResult> results = new List<SuiteResult>();
-
-            // World-only suites.
-            results.Add(RunSuite(state, "economy", () => IntercolonyEconomySelfTest.Run(state)));
-            results.Add(RunSuite(state, "timeline", () => IntercolonyTimelineSelfTest.Run(state)));
-            results.Add(RunSuite(state, "profile", IntercolonyProfileSelfTest.Run));
-            results.Add(RunSuite(state, "market", () => IntercolonyMarketSelfTest.Run(state)));
-            results.Add(RunSuite(state, "reputation", () => IntercolonyReputationSelfTest.Run(state)));
-            results.Add(RunSuite(state, "contract", () => IntercolonyContractSelfTest.Run(state)));
-            results.Add(RunSuite(state, "rfq", () => IntercolonyRfqSelfTest.Run(state)));
-
-            // Suites that need a map. Skipped loudly rather than quietly when there is none —
-            // a suite that did not run is not a suite that passed.
-            results.Add(RunMapSuite(state, "order", map, m => IntercolonyOrderSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "animal", map, m => IntercolonyAnimalSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "ledger", map, m => IntercolonyLedgerSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "labor", map, m => IntercolonyLaborSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "payroll", map, m => IntercolonyPayrollSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "transition", map, m => IntercolonyTransitionSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "job posting", map, m => IntercolonyJobPostingSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "combat clause", map, m => IntercolonyCombatClauseSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "employer reputation", map,
-                m => IntercolonyEmployerReputationSelfTest.Run(state, m)));
-            results.Add(RunMapSuite(state, "long term", map, m => IntercolonyLongTermSelfTest.Run(state, m)));
+            foreach (SelfTestDefinition definition in Definitions)
+            {
+                results.Add(RunDefinition(state, definition, map));
+            }
 
             AppendTable(sb, results);
             AppendLeakCheck(sb, state, timelineBefore, pressureBefore, nextIdBefore);
@@ -106,15 +212,26 @@ namespace Intercolony
         /// Per suite rather than once around the batch, so a suite that crashes mid-run still has
         /// its mess cleaned up before the next one starts from a known state.
         /// </summary>
-        private static SuiteResult RunSuite(
-            IntercolonyWorldComponent state, string name, Func<string> run)
+        private static SuiteResult RunDefinition(
+            IntercolonyWorldComponent state, SelfTestDefinition definition, Map map)
         {
-            SuiteResult result = new SuiteResult { name = name };
+            if (definition.RequiresMap && map == null)
+            {
+                return new SuiteResult
+                {
+                    id = definition.Id,
+                    name = definition.Label,
+                    skipReason = "no current map"
+                };
+            }
+
+            SuiteResult result = new SuiteResult { id = definition.Id, name = definition.Label };
+            Stopwatch stopwatch = Stopwatch.StartNew();
             try
             {
                 using (new IntercolonyDiagnosticGuard(state))
                 {
-                    result.output = run() ?? "";
+                    result.output = definition.Invoke(state, map) ?? "";
                 }
 
                 ParseCounts(result);
@@ -124,23 +241,13 @@ namespace Intercolony
                 result.crashed = true;
                 result.output = ex.ToString();
             }
-
-            return result;
-        }
-
-        private static SuiteResult RunMapSuite(
-            IntercolonyWorldComponent state, string name, Map map, Func<Map, string> run)
-        {
-            if (map == null)
+            finally
             {
-                return new SuiteResult
-                {
-                    name = name,
-                    skipReason = "no current map"
-                };
+                stopwatch.Stop();
+                result.durationMs = stopwatch.ElapsedMilliseconds;
             }
 
-            return RunSuite(state, name, () => run(map));
+            return result;
         }
 
         /// <summary>
