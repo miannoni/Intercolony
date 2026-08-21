@@ -279,6 +279,17 @@ reads every composed number through `EffectiveEconomyService` rather than recomp
 composition, so a later economy layer cannot make the debugging view stale while leaving it
 plausible. That closes Stage 2 acceptance criterion 12.
 
+**A follow-up commit `8b93698` adds the other half of §2.12, and it is a prerequisite rather than a
+nicety.** §2.12 also lists "force a category pressure shock", and no such action existed — pressure
+moved only through a completed trade or a self-test. Everything the 2K gate asks someone to judge
+begins with making a shortage happen, so the gate was not actually performable. `Shock settlement
+economy` is a `ToolWorld` action: click a settlement, pick one of four fixed steps per category.
+It uses `WithState` rather than `WithGuardedState` deliberately — the diagnostic guard exists to stop
+*self-tests* leaking into the player's world, and guarding this one would undo the shock as it was
+applied. It logs the pressure it reads back afterwards. Full suite 969/0/13 on a fresh world; the
+four-world stability standard was not repeated because it exists for new statistical assertions and
+this commit adds none. Exact play steps are in `docs/PENDING_PLAYTESTS.md`.
+
 ### 2I — modest regional pressure diffusion (2026-08-21)
 
 **Claim:** a shortage becomes regional — nearby settlements blend a little pressure each refresh —

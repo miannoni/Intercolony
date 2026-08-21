@@ -122,12 +122,33 @@ sitting on a real colony, not a `-quicktest` world.
    other. The 2I entry names a known gap worth closing only if this looks wrong.
 3. **Does a price breakdown explain itself?** New in 2J: a market opportunity, Find Buyer tooltip,
    sell confirmation or animal preview should show `Current shortage` or `Current surplus` as its own
-   row when conditions are moving the number, and show nothing when they are not. Check both that it
-   appears under a shock (`Dev: Dump effective economy` names the disturbed settlements) and that an
-   undisturbed settlement shows no `x1.00` row.
+   row when conditions are moving the number, and nothing at all when they are not.
 4. **Does a procurement quote read the same way?** Its scarcity row is labelled
    `Local scarcity (shortage)` / `(surplus)`. The same circumstance should read the same way whether
    the player is buying or selling — that symmetry is the point, and only reading both settles it.
+
+**Exact steps for 3 and 4**, since they need a shortage that will not occur on demand:
+
+1. Turn dev mode on: **Options → Development mode**.
+2. Open the world map (**the globe button**, bottom right), and press **`/`** — the debug actions
+   menu (`Dev_ToggleDebugActionsMenu`, bound to Slash on this machine; check
+   `Config/KeyPrefs.xml` if it does not open).
+3. Choose **Intercolony → Shock settlement economy**. The cursor becomes a world tool.
+4. **Click a settlement you already trade with.** A menu lists four steps per category; pick e.g.
+   `manufactured: demand shortage`. Click it **three or four times** — one step is 0.30 and the
+   effect is deliberately modest. The log names the resulting pressure after each click.
+5. Confirm it landed: **Intercolony → Dump effective economy** prints baseline, pressure and
+   effective for both sides of every category on each disturbed settlement.
+6. Now open the Intercolony tab and **hover the price on an offer from that settlement**. Under a
+   shortage the breakdown should carry a `Current shortage` row of its own, *beside* `Local demand`
+   rather than folded into it.
+7. **Then hover an offer from an untouched settlement.** It must show `Local demand` alone — no
+   `x1.00` condition row. A row that says nothing buries the row that matters, and its absence is
+   as much the design as its presence.
+8. For step 4, raise a purchase request (**Find seller**) against the shocked settlement and hover
+   the quoted price. Expect `Local scarcity (shortage)`. Note that this one is a *label* only: the
+   number was already moving with pressure before 2J, because that factor is affine in supply and
+   cannot be split without changing the quote.
 5. **Stage 1 criterion 7**, carried here from the Stage 1 gate: whether a settlement's economy is
    legible from the Market listing and Relations tooltips without debug numbers. Same sitting, same
    kind of question.
