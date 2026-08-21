@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2I — modest regional pressure diffusion
-Last completed:     2H — coarse economic chains between categories (2026-08-21)
+Current slice:      2J — explainability, then 2K the migration and play gate
+Last completed:     2I — modest regional pressure diffusion (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,51 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2I — modest regional pressure diffusion (2026-08-21)
+
+**Claim:** a shortage becomes regional — nearby settlements blend a little pressure each refresh —
+without the world homogenising or pressure being created out of nothing.
+**Files:** `Economy/MarketPressureService.cs`, `Core/IntercolonyWorldComponent.cs`,
+`Debug/IntercolonyEconomySelfTest.cs`.
+**Commit:** `5e63089`. **Schema:** unchanged at 44.
+**Tests:** green on **four consecutive fresh worlds** (949–950 passed, 0 failed, 13–14 skipped),
+world-pawn delta 0, both leak guards OK, log clean. Economy suite 103 → 111, and all eight new
+assertions **ran rather than skipped** on every world tried.
+
+**Diffusion moves the difference and transfers it, and each half fails differently.** Diffusing the
+neighbour's *level* rather than the *difference* creates pressure from nothing and drifts the whole
+world off neutral. Applying only the side `i` loses makes a shocked settlement decay faster while
+nothing ever spreads, so no region forms at all. What `i` loses, `j` gains.
+
+**CORRECTION to the 2H handoff note in this file.** It said diffusion "draws on the same stability
+budget" as the category chains and "cannot rely on 2H's nilpotency argument". The second half is
+true — diffusion is symmetric, so it is cyclic from day one. The conclusion was wrong, and only
+because it assumed the additive form. **The row-sum bound guards additive coupling; the averaging
+form is contractive regardless of cycles.** So diffusion does not share the chains' budget and has
+its own condition: `DiffusionCoefficient × MaxNeighbours ≤ 0.5`, the point at which averaging stops
+overshooting, asserted from the constants themselves. Choosing the right *form* removed the
+constraint rather than having to be budgeted around it.
+
+**One snapshot per refresh, same rule as the chains** — a shock moves exactly one regional hop and
+never follows world-object iteration order.
+
+**A neutral neighbour may gain a record, but only when the transfer leaves it outside
+`NeutralEpsilon`.** That was the open decision flagged in the 2H handoff. Regions have to be able to
+form, but a sub-epsilon transfer creating a record would let one shock fill the region — and
+eventually the save — with records that say nothing, against the sparseness 2A exists to protect.
+
+**Work per refresh is bounded three ways:** only existing sparse records are sources, capped at 24;
+at most three neighbours each; within 40 tiles. The baseline world has **358 settlements** and
+all-pairs work is never done.
+
+**Verified in both directions.** Dropping the side `i` loses made conservation fail at
+`before 0.200000, after 0.230417` — pressure created from nothing, precisely the failure mode.
+
+**Known gap, recorded rather than papered over.** No assertion distinguishes the difference form
+from a *level* form that keeps the symmetric transfer, because that variant is still conservative
+and so passes the conservation check. It would pump rather than average, and mean reversion would
+largely mask it. Worth closing if diffusion behaviour ever looks wrong in play.
 
 ### 2H — coarse economic chains between categories (2026-08-21)
 
@@ -853,8 +898,29 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2I — modest regional pressure diffusion** (plan §2.7), then `2J` explanations, `2K` the migration
-and play gate.
+**2J — explainability** (plan §2.11), then `2K` the migration and play gate.
+
+**The mechanism already exists and 2J is mostly wiring.** `EffectiveEconomyService.ExplainDemand`
+and `ExplainSupply` already return `List<PriceFactor>` whose product *is* the effective value, and
+`IntercolonyPricing.Explain` already renders a factor list. §2.11 asks that an unusually high or low
+offer let the player see the major cause — "Local demand ×1.12, Food shortage ×1.18" — and
+explicitly says to use the existing explanation system rather than build a second one.
+
+**The rule that constrains it: a factor list and an effective value must never both be applied.**
+`ExplainDemand`'s product equals the effective demand, so a surface that multiplies an effective
+value *and* shows the factors would double-count. Use one or the other. This is already asserted in
+the economy suite; keep it that way.
+
+**Do not expose propagation coefficients.** §2.11 says the player should see the major cause, not
+every chain and diffusion term. A shortage that arrived by propagation should read as a shortage,
+not as "IntermediateGoods ×0.05 from ManufacturedGoods".
+
+**2K is now much cheaper than planned.** Its migration half is already proven: the 42 → 43 → 44
+chain ran on the real 22.5 MB colony save with zero exceptions, and `dev.ps1 bridge -Save <name>`
+makes it one command. What genuinely remains for 2K is the **play gate** — whether the market now
+feels alive rather than flat or chaotic, which §20.4 says no self-test can settle. Stage 1
+criterion 7 (whether a settlement's economy reads clearly from the tooltips) belongs in the same
+sitting, since both are judgements about what the player can see.
 
 **What §2.7 asks for.** Nearby settlements influence one another enough to create regions without
 homogenising the world: on the coarse refresh, sample a *bounded* set of nearby eligible
