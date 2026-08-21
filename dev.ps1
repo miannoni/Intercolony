@@ -422,9 +422,25 @@ function Start-BridgeSession {
             return $false
         } finally {
             if ($createdAutostart) {
-                # A leftover silently hijacks later launches, including -Fresh, so this
-                # must run after success, timeout, or error.
-                Remove-Item -LiteralPath $autostartSave -Force
+                # A timeout can catch RimWorld while it still has the staged save open. Letting
+                # that cleanup error escape would replace the clean exit 2 with an unhandled error,
+                # while leaving a file that silently hijacks every later launch, including -Fresh.
+                $autostartRemoved = $false
+                $cleanupError = "unknown error"
+                for ($attempt = 1; $attempt -le 5; $attempt++) {
+                    try {
+                        Remove-Item -LiteralPath $autostartSave -Force -ErrorAction Stop
+                        $autostartRemoved = $true
+                        break
+                    } catch {
+                        $cleanupError = $_.Exception.Message
+                        if ($attempt -lt 5) { Start-Sleep -Milliseconds 500 }
+                    }
+                }
+                if (-not $autostartRemoved) {
+                    Write-Host "WARNING: COULD NOT DELETE $autostartSave" -ForegroundColor Red
+                    Write-Host "Delete it by hand or every later launch will load it instead of a fresh world, including -Fresh. Last error: $cleanupError" -ForegroundColor Red
+                }
             }
         }
     }

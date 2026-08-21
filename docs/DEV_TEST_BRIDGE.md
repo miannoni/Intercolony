@@ -45,6 +45,7 @@ Almost always through `dev.ps1`:
 
 ```powershell
 .\dev.ps1 bridge                    # build bridge-enabled, restart, wait until it answers
+.\dev.ps1 bridge -Save "Colony 1"   # boot directly into a copy of an existing save
 .\dev.ps1 test job-posting          # one suite, against the game that is already running
 .\dev.ps1 test job-posting -Fresh   # restart into a clean -quicktest world first
 .\dev.ps1 test all -Fresh           # the whole suite on a clean world
@@ -56,6 +57,34 @@ mod loaded, which is not the same as the world and map being ready.
 `-Fresh` verifies its own preconditions. If a supposedly fresh world does not have zero open
 postings it reports an environment setup failure and **does not run the test**, because a run that
 cannot prove its isolation must not claim it.
+
+### Existing saves and migrations
+
+`dev.ps1 bridge -Save <name>` boots a bridge-enabled game directly into an existing save, so it
+**does exercise the migration path**. This is stock RimWorld behavior, not a feature built by this
+project: with `Prefs.DevMode` on, a save named exactly `autostart` is loaded at boot by
+`Root_Entry.Start()` through the real `GameDataSaveLoader.LoadGame`
+(`reference/decompiled/Verse/Root_Entry.cs:18-23`, `SaveGameFilesUtility.cs:42-49`).
+
+**Never combine autostart with `-quicktest`.** `Root_Entry.Start()` and `Root_Play.Start()` both
+consume the same one-shot static `Root.checkedAutostartSaveFile`. With `-quicktest`, Entry takes it;
+Play's `else` branch then calls `InitNewGame()` on the already-loaded game and throws
+`NullReferenceException` at `Verse.Find.get_WorldObjects`.
+
+**Always autostart a copy, never the original, and delete the copy afterward.** A leftover
+`Autostart.rws` silently hijacks every later launch, including `-Fresh`, and loads that colony while
+the command still claims to be starting a fresh world. `dev.ps1 bridge -Save` stages and cleans up
+that copy automatically; if cleanup reports that the file is still locked, delete the named path
+by hand before launching again.
+
+On 2026-08-21 the 22.5 MB `Fenhana` save migrated 42 -> 43 -> 44 with zero exceptions. The full
+suite then passed 944/0/9 against the migrated colony. There were 9 skips rather than the 13 a
+`-quicktest` map produces because the real colony has the prisoner, caravan and bonded pair that a
+bare map does not.
+
+This proves that a migration runs cleanly; it does **not** prove that the resulting colony plays
+correctly. A plain `-quicktest` launch still cannot prove a migration: it generates a new world at
+the current schema and never enters the migration path at all.
 
 Exit codes:
 
@@ -75,8 +104,8 @@ Three signals come back and all three matter: the test result, the skip count, a
 run**, which is why it exits 2 rather than 0.
 
 A skipped assertion is a third thing. It is **not** a failure and does not turn the exit code red
-— a healthy full run skips thirteen in the animal suite alone — but it is not proof either, so it
-is reported on its own line and kept out of `success`.
+— a healthy `-quicktest` full run skips thirteen across the suite — but it is not proof either, so
+it is reported on its own line and kept out of `success`.
 
 ---
 
