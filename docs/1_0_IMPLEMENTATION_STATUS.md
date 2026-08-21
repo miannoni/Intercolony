@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2H — coarse economic chains between categories
-Last completed:     2G — completed trades nudge local pressure (2026-08-21)
+Current slice:      2I — modest regional pressure diffusion
+Last completed:     2H — coarse economic chains between categories (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,49 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2H — coarse economic chains between categories (2026-08-21)
+
+**Claim:** a shortage in one category has consequences in the categories that depend on it, bounded,
+one hop per market refresh, and it cannot sustain itself.
+**Files:** `Economy/MarketPressureService.cs`, `Core/IntercolonyWorldComponent.cs`,
+`Debug/IntercolonyEconomySelfTest.cs`.
+**Commit:** `0c2722b`. **Schema:** unchanged at 44.
+**Tests:** green on **four consecutive fresh worlds** (942–944 passed, 0 failed, 13–14 skipped),
+world-pawn delta 0, both leak guards OK, log clean. Economy suite 97 → 103.
+
+**The two tables run in opposite directions along the same production graph.** Demand pulls backward
+from finished goods toward their inputs; scarcity pushes forward from inputs into whatever needs
+them. A weapons boom raises steel demand, while a steel shortage raises weapon prices — same graph,
+opposite traversal. Encoding them as one shared table would have made one of those two backwards.
+
+**Propagation reads a snapshot and applies every increment together.** In-place propagation makes
+both the number of hops *and* the result depend on the order categories happen to be visited:
+Commodities before IntermediateGoods carries a shock two hops in one refresh, the reverse order
+carries it zero. That is a silent order dependency in the one system whose purpose is to be
+predictable.
+
+**The plan's second-order links are deliberately absent, and their absence is load-bearing.** §2.6
+lists tight commodity supply causing a "weaker secondary tightening of Furniture/CapitalEquipment".
+One hop per refresh already produces that: commodities reach intermediates this cycle and furniture
+the next, weakened because the first hop's value is itself small. A direct link would double-count
+it — the same class of error §2.10 names for prices, appearing again in propagation.
+
+**The stability assertion guards a future edit, not today's tables.** Per refresh the offset vector
+transforms as `v ← r(I + C)v`, so divergence needs a coupling row sum of about `(1/r) − 1` = 0.2195
+at `r = 0.82`. The initial links are acyclic — demand flows finished→inputs, supply flows
+inputs→finished, neither closes a loop — so `C` is nilpotent and the chain provably cannot
+self-amplify. The assertion computes the worst row sum from the table itself and compares it against
+a bound derived from `ReversionRetention`, so **the day someone adds a link that closes a cycle, the
+suite fails** instead of the economy quietly pinning at its bounds across refreshes. That failure
+would read as bad balance rather than as a bug, and would be hunted in the wrong place for a long
+time.
+
+**Verified in both directions, per the standard 2G established.** Adding the second-order
+Commodities → Furniture supply link at 0.30 made the stability assertion fail at maximum 0.35
+against bound 0.21951, and the one-hop assertion fail with furniture at 1.12 in the same
+propagation. All five chain assertions are deterministic — no world sampling — so they carry no
+flakiness risk.
 
 ### 2G — completed trades nudge local pressure (2026-08-21)
 
@@ -810,8 +853,37 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2H — coarse economic chains between categories** (plan §2.6), then `2I` regional diffusion,
-`2J` explanations, `2K` the migration and play gate.
+**2I — modest regional pressure diffusion** (plan §2.7), then `2J` explanations, `2K` the migration
+and play gate.
+
+**What §2.7 asks for.** Nearby settlements influence one another enough to create regions without
+homogenising the world: on the coarse refresh, sample a *bounded* set of nearby eligible
+settlements, blend a small amount of pressure, weight by distance, cap the effect, and never do
+all-pairs work. A settlement's own identity and own shocks must stay more important than its
+neighbours'. Tests must show nearby settlements correlate modestly after a shock, distant ones do
+not mirror it, and the world does not converge to one global pressure vector.
+
+**Three traps, two of them already paid for in 2H.**
+
+- **Snapshot again, and for a stronger reason.** Diffusion is settlement-to-settlement, so in-place
+  blending would let a shock travel several settlements in one refresh depending on world-object
+  iteration order. Same fix, same reasoning as the category chains.
+- **The stability budget is now shared.** 2H's guard bounds coupling *within* a settlement against
+  `(1/ReversionRetention) − 1` ≈ 0.2195. Diffusion adds coupling *between* settlements drawing on
+  the same budget, and unlike the category tables, diffusion is inherently **symmetric** — if A
+  pulls from B then B pulls from A — so it is cyclic by construction and cannot rely on 2H's
+  nilpotency argument. Its coefficient must be small enough that chains plus diffusion together
+  stay under the bound, and the existing assertion should be extended to account for both rather
+  than left measuring only half the system.
+- **Cost.** The baseline was captured on a **358-settlement world**. Nearest-neighbour work per
+  refresh must be bounded and must not recompute distances for every pair; look at how
+  `MarketOpportunityGenerator.DistanceToPlayer` and the opportunity generator already bound their
+  per-refresh work before inventing anything.
+
+**Sparseness holds the same way it does in 2H:** only settlements that already have a record can
+diffuse *from*. Whether a disturbed settlement may create a record in a previously neutral
+neighbour is a real decision — it is how a region forms, but it also means one shock can populate
+the save with records. Decide it explicitly and say which in the ledger.
 
 **Both halves of Stage 2's core now work.** Every consumer reads effective values, and completed
 trades write back into pressure. The only deliberate read holdout is
