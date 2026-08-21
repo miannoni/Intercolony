@@ -670,6 +670,58 @@ All of them hold:
 
 No correction to the plan is needed.
 
+## The bridge CAN prove a migration — 43 → 44 ran on a real save, unattended (2026-08-21)
+
+**This corrects a claim in `CLAUDE.md`, `docs/DEV_TEST_BRIDGE.md` and the session seed.** All three
+say the bridge cannot prove a migration because it launches `-quicktest`, which creates a new world
+that initializes at the current schema and never enters the migration path. That is true of
+`-quicktest` and **false in general**, and it had the standing 43 → 44 item blocked on a human for
+the whole program.
+
+RimWorld has a stock dev-mode feature: with `Prefs.DevMode` on, a save named exactly `autostart`
+is loaded automatically at boot by `Root_Entry.Start()` through the real `GameDataSaveLoader.LoadGame`
+(`reference/decompiled/Verse/Root_Entry.cs:18-23`, `SaveGameFilesUtility.cs:42-49`). A copy of the
+real 22.5 MB `Fenhana` colony save was placed as `Autostart.rws` and a bridge-enabled game launched:
+
+```
+[Intercolony] State loaded (schema 42, nextId 6826).
+[Intercolony] Migrating state from schema 42 to 44.
+[Intercolony]   schema 42 -> 43: commercial timeline record spine added; history starts recording at tick 6473557.
+[Intercolony]   schema 43 -> 44: market pressure added; every settlement starts undisturbed.
+```
+
+**Zero exceptions.** The bridge then answered `worldLoaded: true, mapIsPlayerHome: true,
+tick: 6474021, saveSchema: 44`. **The 43 → 44 step has now run in the real load order on a real
+colony**, which is the thing 2A left open.
+
+**The trap, which cost one crashed launch: autostart must not be combined with `-quicktest`.** Both
+`Root_Entry.Start()` and `Root_Play.Start()` consume the same one-shot static
+`Root.checkedAutostartSaveFile`. With `-quicktest`, Entry takes the autostart and sets the flag, then
+Play's `else` branch finds `Current.Game != null`, skips `SetupForQuickTestPlay()` and calls
+`InitNewGame()` on the already-loaded game — `NullReferenceException` at `Find.get_WorldObjects`. The
+autostart launch passes **no** arguments at all.
+
+**Only ever autostart a copy, and delete it afterward.** The source save is never opened for writing
+and nothing is saved, so the real colony is untouched — verified by size and mtime after the run. A
+leftover `Autostart.rws` silently hijacks every later launch **including `-Fresh`**, which would go
+on claiming an isolation it no longer has.
+
+### The full suite on a real colony — 944/0/9, and four skips converted
+
+Run against the migrated colony rather than a bare test map: **17/17 suites, 944 passed, 0 failed,
+9 skipped**, world-pawn delta 0 on a **74-pawn** world, both leak guards OK, log clean.
+
+Skips fell from 13 to 9 because a real colony has what a `-quicktest` map does not: `animal` 8
+rather than 11–12, `order` 1 rather than 2, and `combat clause` ran 54 assertions against 43.
+
+**The `job posting` pawn-count anomaly did not reproduce under its original condition.** It was
+recorded as "74-pawn world failed, 12-pawn world passes", and every non-reproduction so far had been
+on a 12-pawn world — which is why it stayed open. This run is a 74-pawn world and the suite passed
+25/0 with a world-pawn delta of **0**. That is the closest reproduction attempt yet and it came back
+clean. **Still not an explanation**: the world has moved on since the failure, so a changed condition
+is as good a hypothesis as a fixed defect. But it is no longer true that the failing condition has
+never been retried.
+
 ## Play evidence still required
 
 ~~**Run the timeline self-test.**~~ **DONE 2026-08-21** — 47 passed, 0 failed, through the bridge.
@@ -680,10 +732,11 @@ real load order on the 21.5 MB `Fenhana` save, zero exceptions, nothing dropped.
 launch `-quicktest`, which creates a new world that initializes at the current schema and never
 enters the migration at all.
 
-**Still required — the 43 → 44 step has never run on a real save.** 2A bumped the schema after the
-`Fenhana` load, so the migration that has been proven is not the current one. It writes nothing by
-design, which makes it low-risk but not zero-risk: the load-time padding in
-`SettlementMarketState.FromSaved` and the index rebuild both run on that path.
+~~**Still required — the 43 → 44 step has never run on a real save.**~~ **DONE 2026-08-21, and
+without a human at the keyboard** — see the autostart section above. The 22.5 MB `Fenhana` colony
+migrated 42 → 43 → 44 in the real load order with zero exceptions, and the load-time padding in
+`SettlementMarketState.FromSaved` and the index rebuild both ran on that path. The full suite then
+passed 944/0/9 against the migrated colony.
 
 **Still required — criterion 7, the Stage 1 UI read.** Whether a settlement's economy is legible
 from the Market listing and Relations tooltips, without debug numbers.

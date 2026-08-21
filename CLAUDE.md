@@ -268,14 +268,24 @@ supplier lead time through the real advance path) and `Explain unsold animals`. 
 "arrive buyers now"**, so every sell-side pickup test costs real travel time — worth building first
 if the sell side is being tested.
 
-**One migration has now run in the real load order, and it is the only one that has.** On
-2026-08-20 (`9a588a2`) the 42 → 43 step ran on a persistent 21.5 MB colony save with zero exceptions
-and nothing dropped. Every earlier migration has still only been exercised in isolated throwaway
-installs. `dev.ps1 -Fresh` and the MCP bridge cannot prove a migration either: both launch
-`-quicktest`, which creates a *new* world that initializes at the current schema and never enters
-the migration path at all, and the log reader can show a stale profile entirely. Use
-`dev.ps1 -MainMenu` and open a real save — that switch exists for this. `docs/PENDING_PLAYTESTS.md`
-has the remaining ones.
+**Migrations CAN be proven unattended, and the belief that they could not was wrong.** On
+2026-08-21 the 42 → 43 → 44 chain ran on the persistent 22.5 MB `Fenhana` colony save with zero
+exceptions and nothing dropped, with no human at the keyboard, and the full suite then passed
+944/0/9 against the migrated colony.
+
+The mechanism is a stock RimWorld dev feature, not something this project built: with dev mode on, a
+save named exactly `autostart` is loaded automatically at boot by `Root_Entry.Start()` through the
+real `GameDataSaveLoader.LoadGame` (`reference/decompiled/Verse/Root_Entry.cs:18-23`). **Autostart
+must not be combined with `-quicktest`** — both `Root_Entry` and `Root_Play` consume the same
+one-shot `Root.checkedAutostartSaveFile`, so with `-quicktest` the game calls `InitNewGame()` on the
+already-loaded save and throws at `Find.get_WorldObjects`. Launch with no arguments at all.
+**Autostart a copy, never the original, and delete it when done** — a leftover `Autostart.rws`
+hijacks every later launch including `-Fresh`, which then goes on claiming an isolation it lost.
+
+What remains true: a plain `-quicktest` launch cannot prove a migration, because it generates a new
+world that initializes at the current schema and never enters the migration path, and the log reader
+can show a stale profile entirely. `dev.ps1 -MainMenu` still exists for opening a save by hand.
+`docs/PENDING_PLAYTESTS.md` has the remaining ones.
 
 **A real 0.9.0 defect was found and fixed on 2026-08-09: buyer pickup collected from the wrong
 colony.** Mark Ready validated against `Find.CurrentMap` while collection used
