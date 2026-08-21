@@ -1472,6 +1472,7 @@ namespace Intercolony
             // cycle should stop costing space on this cycle. Reversed, every record would survive
             // one refresh past the point it stopped meaning anything.
             MarketPressureService.AdvanceAll(this);
+            MarketPressureService.PropagateEconomicChains(this);
             PruneNeutralMarketStates();
 
             int expired = ExpireStaleOpportunities();

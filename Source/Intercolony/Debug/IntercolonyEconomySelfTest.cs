@@ -66,6 +66,11 @@ namespace Intercolony
                 CheckShockBounds(r, state);
                 CheckCompletedTradeNudges(r, state);
                 CheckTradeNudgeFormula(r, state);
+                CheckEconomicChainStability(r);
+                CheckEconomicChainDirection(r, state);
+                CheckEconomicChainSupplyDirectionAndOneHop(r, state);
+                CheckEconomicChainConvergence(r, state);
+                CheckEconomicChainBounds(r, state);
                 CheckReversionSettlesAndPrunes(r, state);
                 CheckEffectiveEconomyIsBaselineWhenUndisturbed(r, state);
                 CheckEffectiveEconomyReadsAreFree(r, state);
@@ -211,6 +216,190 @@ namespace Intercolony
                 "an enormous trade cannot cross the pressure bound",
                 enormous.ToString("F6"));
             ClearProbe(state);
+        }
+
+        private static void CheckEconomicChainStability(Results r)
+        {
+            // Today's two graphs are acyclic, so they cannot self-amplify. This row-sum guard is
+            // for a future link that closes a cycle: even then coupling must remain weaker than
+            // mean reversion, or pressure can pin the economy at its bounds and look like balance.
+            float[] demandIncoming = new float[IntercolonyProductCategoryUtility.Count];
+            float[] supplyIncoming = new float[IntercolonyProductCategoryUtility.Count];
+            foreach (MarketPressureService.EconomicChainLink link in
+                     MarketPressureService.DemandLinks)
+            {
+                demandIncoming[(int)link.target] += link.coefficient;
+            }
+
+            foreach (MarketPressureService.EconomicChainLink link in
+                     MarketPressureService.SupplyLinks)
+            {
+                supplyIncoming[(int)link.target] += link.coefficient;
+            }
+
+            float maximumIncoming = 0f;
+            for (int i = 0; i < demandIncoming.Length; i++)
+            {
+                maximumIncoming = Mathf.Max(
+                    maximumIncoming, Mathf.Max(demandIncoming[i], supplyIncoming[i]));
+            }
+
+            float stabilityBound = (1f / MarketPressureService.ReversionRetention) - 1f;
+            r.Check(maximumIncoming < stabilityBound,
+                "economic-chain maximum incoming coefficient stays below the reversion stability bound",
+                $"maximum {maximumIncoming:F5}, bound {stabilityBound:F5}");
+        }
+
+        private static void CheckEconomicChainDirection(
+            Results r,
+            IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            try
+            {
+                MarketPressureService.ApplyDemandShock(
+                    state, ProbeSettlementId, IntercolonyProductCategory.ManufacturedGoods, 0.40f);
+                MarketPressureService.PropagateEconomicChains(state);
+                SettlementMarketState record = state.MarketStateFor(ProbeSettlementId);
+
+                r.Check(record != null &&
+                        record.DemandPressureFor(IntercolonyProductCategory.IntermediateGoods) >
+                        SettlementMarketState.Neutral,
+                    "manufactured-goods demand raises intermediate-goods demand on propagation",
+                    record == null
+                        ? "no record"
+                        : record.DemandPressureFor(IntercolonyProductCategory.IntermediateGoods)
+                            .ToString("F5"));
+
+                bool unlinkedUntouched = record != null;
+                IntercolonyProductCategory[] unlinked =
+                {
+                    IntercolonyProductCategory.ManufacturedGoods,
+                    IntercolonyProductCategory.Furniture,
+                    IntercolonyProductCategory.CapitalEquipment,
+                    IntercolonyProductCategory.ArtAndUnique
+                };
+                foreach (IntercolonyProductCategory category in unlinked)
+                {
+                    if (record != null)
+                    {
+                        unlinkedUntouched &= Mathf.Approximately(
+                            record.DemandPressureFor(category),
+                            category == IntercolonyProductCategory.ManufacturedGoods
+                                ? 1.40f
+                                : SettlementMarketState.Neutral);
+                    }
+                }
+
+                r.Check(unlinkedUntouched,
+                    "manufactured-goods demand leaves categories without its outgoing link untouched");
+            }
+            finally
+            {
+                ClearProbe(state);
+            }
+        }
+
+        private static void CheckEconomicChainSupplyDirectionAndOneHop(
+            Results r,
+            IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            try
+            {
+                MarketPressureService.ApplySupplyShock(
+                    state, ProbeSettlementId, IntercolonyProductCategory.Commodities, 0.40f);
+                MarketPressureService.PropagateEconomicChains(state);
+                SettlementMarketState record = state.MarketStateFor(ProbeSettlementId);
+                float intermediateAfterFirst = record.SupplyPressureFor(
+                    IntercolonyProductCategory.IntermediateGoods);
+                float furnitureAfterFirst = record.SupplyPressureFor(
+                    IntercolonyProductCategory.Furniture);
+
+                r.Check(intermediateAfterFirst > SettlementMarketState.Neutral,
+                    "commodity scarcity raises intermediate-goods scarcity",
+                    intermediateAfterFirst.ToString("F5"));
+                r.Check(Mathf.Approximately(
+                        furnitureAfterFirst, SettlementMarketState.Neutral),
+                    "commodity scarcity does not reach furniture in the same propagation",
+                    furnitureAfterFirst.ToString("F5"));
+
+                MarketPressureService.PropagateEconomicChains(state);
+                float furnitureAfterSecond = record.SupplyPressureFor(
+                    IntercolonyProductCategory.Furniture);
+                r.Check(furnitureAfterSecond > SettlementMarketState.Neutral,
+                    "commodity scarcity reaches furniture after a second propagation",
+                    furnitureAfterSecond.ToString("F5"));
+            }
+            finally
+            {
+                ClearProbe(state);
+            }
+        }
+
+        private static void CheckEconomicChainConvergence(
+            Results r,
+            IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            try
+            {
+                MarketPressureService.ApplySupplyShock(
+                    state, ProbeSettlementId, IntercolonyProductCategory.Commodities, 0.40f);
+                SettlementMarketState record = state.MarketStateFor(ProbeSettlementId);
+                record.lastAdvancedRefresh = 0;
+                for (int refresh = 1; refresh <= 200; refresh++)
+                {
+                    MarketPressureService.Advance(record, refresh);
+                    MarketPressureService.PropagateEconomicChains(state);
+                }
+
+                bool allNeutral = true;
+                foreach (IntercolonyProductCategory category in
+                         IntercolonyProductCategoryUtility.All)
+                {
+                    allNeutral &= Mathf.Abs(record.DemandPressureFor(category) -
+                                      SettlementMarketState.Neutral) <=
+                                  SettlementMarketState.NeutralEpsilon;
+                    allNeutral &= Mathf.Abs(record.SupplyPressureFor(category) -
+                                      SettlementMarketState.Neutral) <=
+                                  SettlementMarketState.NeutralEpsilon;
+                }
+
+                r.Check(allNeutral,
+                    "a single shock and its propagated chain converge back within neutral epsilon");
+            }
+            finally
+            {
+                ClearProbe(state);
+            }
+        }
+
+        private static void CheckEconomicChainBounds(
+            Results r,
+            IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            try
+            {
+                MarketPressureService.ApplyDemandShock(
+                    state, ProbeSettlementId, IntercolonyProductCategory.ManufacturedGoods,
+                    MarketPressureService.MaxPressure);
+                MarketPressureService.ApplyDemandShock(
+                    state, ProbeSettlementId, IntercolonyProductCategory.IntermediateGoods,
+                    MarketPressureService.MaxPressure);
+                MarketPressureService.PropagateEconomicChains(state);
+                float bounded = state.MarketStateFor(ProbeSettlementId).DemandPressureFor(
+                    IntercolonyProductCategory.IntermediateGoods);
+                r.Check(bounded <= MarketPressureService.MaxPressure &&
+                        bounded >= MarketPressureService.MinPressure,
+                    "chain propagation into an extreme category stays inside pressure bounds",
+                    bounded.ToString("F5"));
+            }
+            finally
+            {
+                ClearProbe(state);
+            }
         }
 
         private static void CheckSparseDefaults(Results r, IntercolonyWorldComponent state)

@@ -18,6 +18,57 @@ namespace Intercolony
     /// </summary>
     public static class MarketPressureService
     {
+        public readonly struct EconomicChainLink
+        {
+            public readonly IntercolonyProductCategory source;
+            public readonly IntercolonyProductCategory target;
+            public readonly float coefficient;
+
+            public EconomicChainLink(
+                IntercolonyProductCategory source,
+                IntercolonyProductCategory target,
+                float coefficient)
+            {
+                this.source = source;
+                this.target = target;
+                this.coefficient = coefficient;
+            }
+        }
+
+        /// <summary>
+        /// Coarse production-chain couplings. Demand pulls backward from finished goods toward
+        /// their inputs, while scarcity pushes forward from inputs into goods that need them, so
+        /// these tables deliberately run in opposite directions along the same production graph.
+        ///
+        /// The small coefficient is balance tuning, not an asserted economic truth; retune it at
+        /// the Stage 2K play gate. Do not add the plan's secondary commodity-to-furniture/capital
+        /// links here: one-hop snapshots already carry that effect through intermediate goods on
+        /// the next refresh, weakened by the first hop, and a direct link would double-count it.
+        /// </summary>
+        public static readonly EconomicChainLink[] DemandLinks =
+        {
+            new EconomicChainLink(IntercolonyProductCategory.ManufacturedGoods,
+                IntercolonyProductCategory.IntermediateGoods, 0.05f),
+            new EconomicChainLink(IntercolonyProductCategory.Furniture,
+                IntercolonyProductCategory.IntermediateGoods, 0.05f),
+            new EconomicChainLink(IntercolonyProductCategory.Furniture,
+                IntercolonyProductCategory.Commodities, 0.05f),
+            new EconomicChainLink(IntercolonyProductCategory.CapitalEquipment,
+                IntercolonyProductCategory.IntermediateGoods, 0.05f)
+        };
+
+        public static readonly EconomicChainLink[] SupplyLinks =
+        {
+            new EconomicChainLink(IntercolonyProductCategory.Commodities,
+                IntercolonyProductCategory.IntermediateGoods, 0.05f),
+            new EconomicChainLink(IntercolonyProductCategory.IntermediateGoods,
+                IntercolonyProductCategory.ManufacturedGoods, 0.05f),
+            new EconomicChainLink(IntercolonyProductCategory.IntermediateGoods,
+                IntercolonyProductCategory.Furniture, 0.05f),
+            new EconomicChainLink(IntercolonyProductCategory.IntermediateGoods,
+                IntercolonyProductCategory.CapitalEquipment, 0.05f)
+        };
+
         /// <summary>
         /// Fraction of the distance from neutral that survives one market refresh.
         ///
@@ -78,6 +129,74 @@ namespace Intercolony
             }
 
             return advanced;
+        }
+
+        /// <summary>
+        /// Propagates exactly one coarse production-chain hop for each already-disturbed
+        /// settlement. Every increment is computed from a pre-propagation snapshot, then all are
+        /// applied together; reading and writing the live arrays link-by-link would make both the
+        /// number of hops and the result depend silently on table/category iteration order.
+        /// Neutral settlements remain absent, preserving the sparse market-state representation.
+        /// </summary>
+        public static int PropagateEconomicChains(IntercolonyWorldComponent state)
+        {
+            if (state?.MarketStates == null)
+            {
+                return 0;
+            }
+
+            int propagated = 0;
+            foreach (SettlementMarketState record in state.MarketStates)
+            {
+                if (record == null)
+                {
+                    continue;
+                }
+
+                float[] demandSnapshot = (float[])record.demandPressure.Clone();
+                float[] supplySnapshot = (float[])record.supplyPressure.Clone();
+                float[] demandIncrements = new float[demandSnapshot.Length];
+                float[] supplyIncrements = new float[supplySnapshot.Length];
+
+                AccumulateChainIncrements(DemandLinks, demandSnapshot, demandIncrements);
+                AccumulateChainIncrements(SupplyLinks, supplySnapshot, supplyIncrements);
+
+                bool moved = false;
+                for (int i = 0; i < demandSnapshot.Length; i++)
+                {
+                    if (demandIncrements[i] != 0f)
+                    {
+                        record.demandPressure[i] = Clamp(demandSnapshot[i] + demandIncrements[i]);
+                        moved = true;
+                    }
+
+                    if (supplyIncrements[i] != 0f)
+                    {
+                        record.supplyPressure[i] = Clamp(supplySnapshot[i] + supplyIncrements[i]);
+                        moved = true;
+                    }
+                }
+
+                if (moved)
+                {
+                    propagated++;
+                }
+            }
+
+            return propagated;
+        }
+
+        private static void AccumulateChainIncrements(
+            EconomicChainLink[] links,
+            float[] snapshot,
+            float[] increments)
+        {
+            foreach (EconomicChainLink link in links)
+            {
+                increments[(int)link.target] +=
+                    (snapshot[(int)link.source] - SettlementMarketState.Neutral) *
+                    link.coefficient;
+            }
         }
 
         /// <summary>
