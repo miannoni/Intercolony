@@ -2216,3 +2216,55 @@ Manual test:
   and it stays in `docs/PENDING_PLAYTESTS.md`.
 - Shipped: Workshop item `3780094556` updated (menu confirmed reading **Update**, not Upload),
   `main` pushed, tag `v0.9.3` and GitHub pre-release created to the 0.9.0 standard.
+
+## Dev test bridge — running the self-tests without a human  (2026-08-21)
+
+Implemented:
+- A loopback request/response socket inside the running game (`Source/Intercolony/Debug/Bridge/`),
+  gated twice: compiled out unless built with `-p:EnableDevBridge=true`, and dormant unless the
+  process has `INTERCOLONY_DEV_BRIDGE=1`. Binds `IPAddress.Loopback` with no setting for the
+  address. Seven verbs: `status`, `tests.list`, `tests.run`, `tests.run_all`, `state.summary`,
+  `world_pawns.count`, `postings.count`.
+- The socket thread never touches Verse. Commands execute on the Unity main thread through a
+  dev-only `MonoBehaviour` pump running in `Update()` rather than a tick, so a paused or loading
+  game can still answer `status` — which is what an orchestrator polls for readiness.
+- `IntercolonyAllSelfTests` gained a registry: stable machine ids (`job-posting`) beside the
+  display names the table already printed (`job posting`), plus `List()`, `RunOne()` and
+  structured results. One list, read by both the debug action and the bridge. Rendered output is
+  byte-identical — order, labels and map requirements were diffed against the previous version.
+- `dev.ps1 bridge` and `dev.ps1 test <name> [-Fresh]`, with readiness by `status` poll rather than
+  a log substring or a sleep. `package.ps1` refuses to package an assembly containing the bridge.
+- A TypeScript CLI and stdio MCP server (`tools/intercolony-dev/`) over one shared orchestrator,
+  and a repo-relative `.mcp.json`.
+
+Not implemented:
+- No `tests.run` on a named save, and no save/load orchestration. Every run has been on a
+  `-quicktest` world.
+- No general-purpose verbs. `eval`, reflection and "run the debug action called X" are refused by
+  design and listed as such in `docs/DEV_TEST_BRIDGE.md`.
+
+Known limitations:
+- **The bridge has never run against a real save, a migration, or two colonies.** `tests.run`
+  resolves `Find.CurrentMap`, and this mod has a documented history of one-map assumptions being
+  wrong. Listed in `docs/PENDING_PLAYTESTS.md` along with the untriggered crash, port-in-use and
+  command-timeout paths.
+- `dist/` is gitignored, so a fresh clone must `npm install && npm run build` once before the MCP
+  server will start.
+- The Steam `Mods\Intercolony` junction points at the other checkout, so testing required
+  repointing it by hand and restoring it afterwards.
+
+Manual test:
+- Proven against a live game on 2026-08-21: both builds; the normal build contains no bridge
+  markers and `package.ps1` rejects a bridge build and accepts a normal one, checked on real DLLs;
+  `status` answers with world, map, tick and schema 44; malformed, unknown, oversized (70 KB and
+  2 MB), unescaped-control-character and bad-number requests all return structured errors with the
+  listener healthy afterwards; CLI exit codes 0/1/2 including a skipped-only run exiting 0; all
+  eight MCP tools driven over stdio from the repo root.
+- **The motivating scenario did not reproduce.** `job-posting` alone on a verified-fresh world
+  with zero open postings: 25 passed, 0 failed, world pawns 16 → 16 and 17 → 17, delta 0. The
+  suspected pawn leak is not present, and is now cheap to re-check.
+- **Two real defects found, both in the payroll suite, neither in production.** It hired before
+  funding the colony, so the hire was refused and everything after it was unreachable; fixing that
+  took the suite from 7 assertions to 39 and exposed a signing-fee assertion that had never once
+  executed and double-applied the daily premium. Payroll is now 40/0; the full suite is 847 passed,
+  0 failed, 14 skipped, clean log, no world-pawn drift.
