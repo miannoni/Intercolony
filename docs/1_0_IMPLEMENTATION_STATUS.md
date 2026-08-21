@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2F — point RFQs at the effective-economy API
-Last completed:     2D/2E — selling and pricing read effective demand (2026-08-21)
+Current slice:      2C — audit and remove what remains of cycle noise
+Last completed:     2F — RFQs quote against effective supply (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,46 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2F — RFQs quote against effective supply (2026-08-21)
+
+**Claim:** a settlement whose category is currently scarce answers fewer RFQs, and one with a
+surplus answers more, through the same authoritative API selling uses.
+**Files:** `Procurement/RfqService.cs`, `Debug/IntercolonyRfqSelfTest.cs`.
+**Commit:** `bfe9457`. **Schema:** unchanged at 44.
+**Tests:** full suite 927 passed / 0 failed / 13 skipped, world-pawn delta 0 (12 → 12), both leak
+guards OK, log clean. RFQ suite 75 → 82.
+
+**The production change is three lines and the direction is structural, not tuned.** Both gates
+`supply` feeds — the `0.35` response floor and `Clamp01(BaseResponseChance * supply - distancePenalty)`
+— are monotonic in it, so scarcity can only reduce answers. The call site inverts nothing itself;
+supply pressure counts toward *scarce* and a supply weight counts toward *able to sell*, and that
+reconciliation lives in `EffectiveSupply` alone.
+
+**Finite offer consumption is untouched, per §2.9.** Pressure is broad current scarcity;
+consumption is "you already bought 80 of the 100 units this supplier offered in this window". They
+answer different questions and folding either into the other loses one of them.
+
+**The first version of the test did not test the change, and this is the third time today.** All six
+of its assertions called `EffectiveEconomyService.EffectiveSupply` directly and none called
+`RfqService`, so the whole method would have passed with the production line reverted — the economy
+suite's assertions relocated into the rfq suite. §20.2 exists for exactly this. The added assertion
+goes through `GenerateResponses`, which is `internal` precisely so a diagnostic can quote a
+throwaway request and which pushes a fixed seed, so the same request in the same refresh window is
+deterministic and pressure is the only variable.
+
+**It was verified by mutation, not by watching it pass.** Reverting `RfqService.cs:244` to
+`BaseSupplyFor` turns the assertion red — `28 settlements, 6 -> 6 quotations` — and restoring it
+turns it green. A test that has never been seen failing is not known to test anything; this one has.
+
+**It skips rather than passes when the world is too small.** Below 8 accessible settlements the
+count legitimately might not move, and a pass there would be a pass for the wrong reason. The rfq
+suite already had a `SKIPPED` channel and it reuses it.
+
+**The pattern behind all three misses is in how the work was specified, not who did it.** Each
+prompt said *what to assert* without saying *what the assertion must be able to fail on*. A
+zero-baseline multiplication, and twice a formula asserted beside the production owner rather than
+through it. Specify the failure mode, not just the claim.
 
 ### 2D/2E — selling and pricing read effective demand (2026-08-21)
 
@@ -574,22 +614,14 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2F — point RFQs at `EffectiveEconomyService`**, then `2C` removes what remains of cycle noise,
-then `2G` player trades nudging pressure, `2H` chain propagation, `2I` regional diffusion, `2J`
-explanations, `2K` the migration and play gate.
+**2C — audit and remove what remains of cycle noise**, then `2G` player trades nudging pressure,
+`2H` chain propagation, `2I` regional diffusion, `2J` explanations, `2K` the migration and play gate.
 
-**Only one demand/supply call site is left unmigrated:** `Procurement/RfqService.cs:243`, where
-`TryQuote` reads `profile.BaseSupplyFor(category)`. It needs effective supply, so a settlement whose
-category is currently scarce answers fewer RFQs.
+**Every demand and supply call site is now on the API.** Selling, pricing and RFQs all read
+effective values; the only deliberate holdout is `UI/MainTabWindow_Intercolony.cs:1233-1234`, the
+Stage 1 identity tooltip, which answers what a settlement *is* rather than what it is going through.
 
-**The trap in 2F is the direction.** Supply pressure counts upward toward *scarce*; a supply weight
-counts upward toward *able to sell*. `EffectiveEconomyService.EffectiveSupply` already divides where
-demand multiplies, so the call site must not invert anything itself. And per §2.9 the existing
-finite offer consumption stays untouched — pressure is broad current scarcity, consumption is "you
-already bought 80 of the 100 units this supplier offered this window", and they answer different
-questions.
-
-**Then 2C, and the plan says why it comes last.** §2.3 is explicit that the old
+**2C comes last for a reason.** §2.3 is explicit that the old
 `0.55–1.45` roll may only be deleted *once all consumers use the new effective-economy API* — two
 dynamic systems must not be left stacked, but neither may the market be left with no dynamics at
 all. That is why §2.2 got its own slice ahead of the letters.
