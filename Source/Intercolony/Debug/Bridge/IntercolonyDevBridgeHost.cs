@@ -289,6 +289,14 @@ namespace Intercolony
 
                     if (buffer.Length >= MaxRequestBytes)
                     {
+                        // Drain the rest of the client's line before answering.
+                        //
+                        // Replying and closing here instead looks correct and is not: the client is
+                        // still writing, so closing makes the OS reset the connection, and the
+                        // structured "too large" error is discarded with it. The client sees a
+                        // connection reset - the one outcome the size cap exists to avoid. Draining
+                        // costs nothing on loopback and lets the answer actually arrive.
+                        DrainLine(stream);
                         line = null;
                         return false;
                     }
@@ -300,6 +308,48 @@ namespace Intercolony
                 string text = Encoding.UTF8.GetString(buffer.ToArray());
                 line = text.TrimEnd('\r');
                 return true;
+            }
+        }
+
+        /// <summary>
+        /// Reads and discards up to the end of the current line, so an over-long request can be
+        /// answered rather than reset.
+        ///
+        /// Bounded twice - by its own ceiling and by the socket's receive timeout - so a client that
+        /// never sends a newline cannot hold the accept loop open indefinitely. Exceeding either is
+        /// not an error worth reporting: the caller is already about to send a "too large" response,
+        /// which is the true and useful answer either way.
+        /// </summary>
+        private static void DrainLine(NetworkStream stream)
+        {
+            const int MaxDrainBytes = 4 * 1024 * 1024;
+
+            byte[] scratch = new byte[4096];
+            int drained = 0;
+            try
+            {
+                while (drained < MaxDrainBytes)
+                {
+                    int read = stream.Read(scratch, 0, scratch.Length);
+                    if (read <= 0)
+                    {
+                        return;
+                    }
+
+                    drained += read;
+                    for (int i = 0; i < read; i++)
+                    {
+                        if (scratch[i] == (byte)'\n')
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // The client gave up mid-send. Nothing to do; the response attempt that follows
+                // will fail harmlessly and the connection closes either way.
             }
         }
 

@@ -14,8 +14,7 @@ namespace Intercolony
     /// put a second assembly in Assemblies\ (CLAUDE.md). DataContractJsonSerializer would avoid
     /// writing a parser, but every command returns a differently shaped result, so it would want a
     /// DTO and a serializer instance per command and would still need help with the loosely typed
-    /// args. Two hundred lines of reader and writer, used by nothing else and covered by a
-    /// round-trip self-check, is the smaller thing to own.
+    /// args. A small reader and writer used by nothing else is the smaller thing to own.
     ///
     /// The reader is deliberately strict and total: it either returns a value or throws
     /// <see cref="JsonException"/>. It never returns a partially parsed object, because a
@@ -340,6 +339,12 @@ namespace Intercolony
 
                 if (c != '\\')
                 {
+                    if (c < ' ')
+                    {
+                        throw new JsonException(
+                            $"unescaped control character at position {i - 1}");
+                    }
+
                     sb.Append(c);
                     continue;
                 }
@@ -366,8 +371,15 @@ namespace Intercolony
                             throw new JsonException("truncated \\u escape");
                         }
 
-                        sb.Append((char)int.Parse(
-                            text.Substring(i, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+                        int codePoint;
+                        if (!int.TryParse(
+                                text.Substring(i, 4), NumberStyles.HexNumber,
+                                CultureInfo.InvariantCulture, out codePoint))
+                        {
+                            throw new JsonException($"invalid \\u escape at position {i - 2}");
+                        }
+
+                        sb.Append((char)codePoint);
                         i += 4;
                         break;
                     default:
@@ -379,27 +391,86 @@ namespace Intercolony
         private static double ParseNumber(string text, ref int i)
         {
             int start = i;
-            if (i < text.Length && (text[i] == '-' || text[i] == '+'))
+            if (i < text.Length && text[i] == '-')
             {
                 i++;
             }
 
-            while (i < text.Length &&
-                   (char.IsDigit(text[i]) || text[i] == '.' ||
-                    text[i] == 'e' || text[i] == 'E' || text[i] == '-' || text[i] == '+'))
+            if (i >= text.Length)
+            {
+                throw new JsonException($"expected a value at position {start}");
+            }
+
+            if (text[i] == '0')
             {
                 i++;
+                if (i < text.Length && IsDigit(text[i]))
+                {
+                    throw new JsonException($"leading zero in number at position {start}");
+                }
+            }
+            else if (text[i] >= '1' && text[i] <= '9')
+            {
+                while (i < text.Length && IsDigit(text[i]))
+                {
+                    i++;
+                }
+            }
+            else
+            {
+                throw new JsonException($"expected a value at position {start}");
+            }
+
+            if (i < text.Length && text[i] == '.')
+            {
+                i++;
+                int fractionStart = i;
+                while (i < text.Length && IsDigit(text[i]))
+                {
+                    i++;
+                }
+
+                if (i == fractionStart)
+                {
+                    throw new JsonException($"fraction has no digits at position {start}");
+                }
+            }
+
+            if (i < text.Length && (text[i] == 'e' || text[i] == 'E'))
+            {
+                i++;
+                if (i < text.Length && (text[i] == '-' || text[i] == '+'))
+                {
+                    i++;
+                }
+
+                int exponentStart = i;
+                while (i < text.Length && IsDigit(text[i]))
+                {
+                    i++;
+                }
+
+                if (i == exponentStart)
+                {
+                    throw new JsonException($"exponent has no digits at position {start}");
+                }
             }
 
             string slice = text.Substring(start, i - start);
             double parsed;
             if (!double.TryParse(
-                    slice, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed))
+                    slice, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed) ||
+                double.IsInfinity(parsed) || double.IsNaN(parsed))
             {
                 throw new JsonException($"'{slice}' is not a number");
             }
 
             return parsed;
+        }
+
+        private static bool IsDigit(char c)
+        {
+            return c >= '0' && c <= '9';
         }
 
         private static void Expect(string text, ref int i, string literal)
