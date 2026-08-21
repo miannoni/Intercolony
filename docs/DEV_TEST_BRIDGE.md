@@ -80,6 +80,45 @@ is reported on its own line and kept out of `success`.
 
 ---
 
+## From Claude Code, over MCP
+
+`.mcp.json` at the repo root registers a stdio MCP server exposing the same commands as
+`rimworld_status`, `rimworld_list_self_tests`, `rimworld_run_self_test`,
+`rimworld_run_all_self_tests`, `rimworld_state_summary`, `rimworld_world_pawn_count`,
+`rimworld_posting_count` and `rimworld_recent_log`.
+
+The path in it is repo-relative, so it works from any clone — but **`dist/` is gitignored, so a
+fresh clone must build the tool once first**, or the server will not start:
+
+```powershell
+npm --prefix tools/intercolony-dev install
+npm --prefix tools/intercolony-dev run build
+```
+
+Claude Code asks for approval the first time it sees a project MCP server. That one-time prompt
+is the whole cost; it replaces asking a human to run every self-test by hand.
+
+The MCP server is **stdio only and opens no port**. The single listener in this system is the one
+inside RimWorld, on loopback.
+
+MCP responses are budgeted — large fields are truncated with an explicit note naming the CLI
+command that prints the full text, so a state dump or a full suite run cannot flood an agent's
+context.
+
+### The same thing from a shell
+
+Everything the MCP server can do is reachable without Claude, which is how you tell a broken
+bridge from a broken agent:
+
+```powershell
+node tools/intercolony-dev/dist/cli.js status
+node tools/intercolony-dev/dist/cli.js tests list
+node tools/intercolony-dev/dist/cli.js tests run job-posting
+node tools/intercolony-dev/dist/cli.js tests all --json
+```
+
+---
+
 ## The protocol
 
 Newline-delimited UTF-8 JSON over TCP. **One request and one response per connection**, then the
