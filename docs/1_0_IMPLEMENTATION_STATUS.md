@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2B — advance and mean-revert pressure (UNBLOCKED 2026-08-21)
-Last completed:     2A — persisted market pressure, schema 44
+Current slice:      2C — remove what remains of cycle noise
+Last completed:     2B — advance and mean-revert pressure (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -209,6 +209,45 @@ clearly from the Market and Relations tooltips is a judgement about text, and it
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
 ## Slice log
+
+### 2B — advance and mean-revert pressure (2026-08-21)
+
+**Claim:** a shock to a settlement's economy decays back toward neutral over market cycles, bounded
+at both ends, driven by elapsed cycles rather than by how often something reads the record.
+**Files:** `Economy/MarketPressureService.cs` (new), `Debug/IntercolonyEconomySelfTest.cs`,
+`Core/IntercolonyWorldComponent.cs`.
+**Commit:** `1da331a`. **Schema:** unchanged at 44 — 2A already persisted `lastAdvancedRefresh`.
+**Tests:** economy suite 19 → 46 assertions, all passing. Full suite 874/0 afterwards, world-pawn
+delta 0, both leak guards OK, no exceptions.
+
+**Reversion is closed-form over elapsed refreshes, never stepped.** `lastAdvancedRefresh` was
+persisted in 2A for exactly this: a save reopened many cycles later must land where a running game
+would have put it. Stepping there would be a loop whose length is how long the save sat on disk.
+Asserted directly — five single-cycle advances land on the same float as one five-cycle advance
+(1.18537 both ways).
+
+**`NeverAdvanced` is compared exactly and never used as arithmetic — the fifth sentinel.**
+Subtracting from `-1` computes an elapsed span of `toRefresh + 1`, which would erase a fresh shock a
+cycle early and look like a balance problem. A never-advanced record is stamped and decays from
+there; `ApplyShock` stamps at shock time rather than leaving it to the next advance, so a shock does
+not get a free cycle at full strength.
+
+**The floor is the exact multiplicative inverse of the ceiling** (0.625 against 1.60), so a glut is
+precisely as strong as the equivalent shortage. As a literal it invited an asymmetry that nothing in
+the file would have explained. Asserted as `min × max == 1`.
+
+**`AdvanceAll` runs before the neutral prune in `DoRefresh`**, so a record that settles on a cycle is
+dropped on that cycle rather than surviving one refresh past the point it meant anything.
+
+**The coefficient is deliberately not asserted.** `ReversionRetention` is 0.82, matching the plan's
+illustrative 1.40 → 1.33 → 1.27 curve; the suite asserts direction, monotonicity, no overshoot from
+either side, and that the strongest possible shock reaches the prune epsilon (25 refreshes) without
+being over before the player can trade on it. The plan calls the coefficient balance tuning and it
+is expected to move in play.
+
+**Not in this slice, and deliberately:** the §2.12 diagnostic — force a shock, advance N refreshes,
+print baseline vs pressure vs effective — belongs with 2J. Nothing reads pressure yet; 2D–2F are
+what make it visible.
 
 ### 2A — persisted market pressure (2026-08-20)
 
@@ -439,10 +478,16 @@ from the Market listing and Relations tooltips, without debug numbers.
 
 ## Next executable slice
 
-**2B — advance and mean-revert pressure.** Then `2C` removing what remains of cycle noise,
-`2D`–`2F` pointing selling, pricing and RFQs at one effective-economy API, `2G` player trades
-nudging pressure, `2H` chain propagation, `2I` regional diffusion, `2J` explanations, `2K` the
-migration and play gate.
+**2C — remove what remains of cycle noise**, then `2D`–`2F` pointing selling, pricing and RFQs at
+one effective-economy API, `2G` player trades nudging pressure, `2H` chain propagation, `2I`
+regional diffusion, `2J` explanations, `2K` the migration and play gate.
+
+**2C and 2D are coupled and the plan says which comes first.** §2.3 is explicit that the old
+`0.55–1.45` roll may only be deleted *once all consumers use the new effective-economy API* — two
+dynamic systems must not be left stacked, but neither may the market be left with no dynamics at
+all. So the effective-economy API (§2.2) has to exist and be adopted before the noise comes out,
+which in practice makes the order 2D-then-2C even though the numbering reads the other way.
+**Pressure currently moves and nothing reads it**, which is the safe state to be in between the two.
 
 **Do not rush Stage 2 to reach procurement.** It is the stage everything after it reads from,
 and the plan says so twice.
