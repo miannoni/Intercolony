@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -40,7 +41,7 @@ namespace Intercolony
         public static string Run(IntercolonyWorldComponent state)
         {
             Results r = new Results();
-            r.sb.AppendLine("Market pressure self-test (the 1.0 program Stage 2A)");
+            r.sb.AppendLine("Market pressure and effective economy self-test (the 1.0 program Stage 2A/2B/2.2)");
 
             if (state == null)
             {
@@ -64,6 +65,12 @@ namespace Intercolony
                 CheckReversionIsDrivenByElapsedCycles(r);
                 CheckShockBounds(r, state);
                 CheckReversionSettlesAndPrunes(r, state);
+                CheckEffectiveEconomyIsBaselineWhenUndisturbed(r, state);
+                CheckEffectiveEconomyReadsAreFree(r, state);
+                CheckEffectiveDemandFollowsPressure(r, state);
+                CheckEffectiveSupplyInvertsScarcity(r, state);
+                CheckEffectiveEconomyBounds(r, state);
+                CheckEffectiveEconomyExplanations(r, state);
             }
             catch (Exception ex)
             {
@@ -431,6 +438,362 @@ namespace Intercolony
             state.PruneNeutralMarketStates();
             r.Check(state.MarketStateFor(ProbeSettlementId) == null,
                 "and the settled record is then pruned, keeping the save sparse");
+        }
+
+        /// <summary>
+        /// The profile used by the effective-economy checks. Its settlement ID is
+        /// <see cref="ProbeSettlementId"/> so pressure applied to that ID reaches it — the service
+        /// takes the ID off the profile rather than as a second argument precisely so the two
+        /// cannot be mismatched by a caller.
+        /// </summary>
+        private static SettlementEconomicProfile EffectiveProbeProfile()
+        {
+            return SettlementProfileGenerator.GenerateFrom(
+                71_009, ProbeSettlementId, 1, "EffectiveProbe", "Probes", TechLevel.Industrial);
+        }
+
+        private static void ClearProbe(IntercolonyWorldComponent state)
+        {
+            state.MarketStates.RemoveAll(s => s != null && s.settlementId == ProbeSettlementId);
+            state.RefreshMarketStateIndex();
+        }
+
+        /// <summary>
+        /// The base case, and the one that has to hold before any of the rest means anything: with
+        /// nothing happening, the effective economy is the settlement's identity, unchanged.
+        /// Absence of a record means neutral, so an undisturbed world behaves exactly as it did
+        /// before Stage 2 existed.
+        /// </summary>
+        private static void CheckEffectiveEconomyIsBaselineWhenUndisturbed(
+            Results r, IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            SettlementEconomicProfile profile = EffectiveProbeProfile();
+            const IntercolonyProductCategory Category = IntercolonyProductCategory.IntermediateGoods;
+
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.CurrentDemandPressure(state, ProbeSettlementId, Category),
+                    SettlementMarketState.Neutral),
+                "an undisturbed settlement reads neutral demand pressure");
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.CurrentSupplyPressure(state, ProbeSettlementId, Category),
+                    SettlementMarketState.Neutral),
+                "and neutral supply pressure");
+
+            float baselineDemand = profile.BaseDemandFor(Category);
+            float baselineSupply = profile.BaseSupplyFor(Category);
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.EffectiveDemand(state, profile, Category), baselineDemand),
+                "effective demand equals baseline demand when nothing is happening",
+                baselineDemand.ToString("F3"));
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.EffectiveSupply(state, profile, Category), baselineSupply),
+                "effective supply equals baseline supply when nothing is happening",
+                baselineSupply.ToString("F3"));
+
+            ThingDef def = ThingDefOf.Steel;
+            r.Check(def != null, "the probe good resolved");
+            r.Check(
+                def != null &&
+                Mathf.Approximately(
+                    EffectiveEconomyService.EffectiveDemand(state, profile, def, Category),
+                    profile.BaseDemandFor(def, Category)),
+                "and the same holds for one specific good");
+
+            r.Check(
+                Mathf.Approximately(EffectiveEconomyService.EffectiveDemand(null, profile, Category),
+                    baselineDemand),
+                "a null world state reads as an undisturbed one rather than throwing");
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.EffectiveDemand(state, null, Category), 0f),
+                "a settlement with no profile is not an economic participant and demands nothing");
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.EffectiveSupply(state, null, Category), 0f),
+                "and supplies nothing");
+        }
+
+        /// <summary>
+        /// Reading the effective economy must be free of consequence.
+        ///
+        /// Two distinct failures are guarded here. A read that created records would put one
+        /// neutral entry per settlement into the save on the first UI hover, undoing the whole
+        /// point of the sparse representation. A read that advanced reversion would make a
+        /// shortage decay faster the more often the player looked at it.
+        /// </summary>
+        private static void CheckEffectiveEconomyReadsAreFree(
+            Results r, IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            SettlementEconomicProfile profile = EffectiveProbeProfile();
+            const IntercolonyProductCategory Category = IntercolonyProductCategory.Commodities;
+
+            int before = state.MarketStates.Count;
+            for (int i = 0; i < 5; i++)
+            {
+                EffectiveEconomyService.EffectiveDemand(state, profile, ThingDefOf.Steel, Category);
+                EffectiveEconomyService.EffectiveSupply(state, profile, Category);
+                EffectiveEconomyService.ExplainDemand(state, profile, ThingDefOf.Steel, Category);
+            }
+
+            r.Check(state.MarketStates.Count == before,
+                "reading an undisturbed settlement creates no record",
+                $"{before} -> {state.MarketStates.Count}");
+            r.Check(state.MarketStateFor(ProbeSettlementId) == null,
+                "and it is still absent from the index");
+
+            MarketPressureService.ApplyDemandShock(state, ProbeSettlementId, Category, 0.30f);
+            SettlementMarketState record = state.MarketStateFor(ProbeSettlementId);
+            int stamped = record.lastAdvancedRefresh;
+            float shocked = record.DemandPressureFor(Category);
+
+            float first = EffectiveEconomyService.EffectiveDemand(state, profile, Category);
+            for (int i = 0; i < 10; i++)
+            {
+                EffectiveEconomyService.EffectiveDemand(state, profile, Category);
+            }
+
+            r.Check(Mathf.Approximately(record.DemandPressureFor(Category), shocked),
+                "ten reads do not decay a shock",
+                $"{shocked:F4} -> {record.DemandPressureFor(Category):F4}");
+            r.Check(record.lastAdvancedRefresh == stamped,
+                "and do not re-stamp the record, so reversion stays driven by market cycles");
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.EffectiveDemand(state, profile, Category), first),
+                "and the eleventh read returns what the first did");
+
+            ClearProbe(state);
+        }
+
+        /// <summary>
+        /// The claim the whole stage rests on: pressure reaches the number a market system will
+        /// actually consume, in the right direction, in that category and no other.
+        /// </summary>
+        private static void CheckEffectiveDemandFollowsPressure(
+            Results r, IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            SettlementEconomicProfile profile = EffectiveProbeProfile();
+            const IntercolonyProductCategory Shocked = IntercolonyProductCategory.ManufacturedGoods;
+            const IntercolonyProductCategory Quiet = IntercolonyProductCategory.Furniture;
+
+            float baselineShocked = profile.BaseDemandFor(Shocked);
+            float baselineQuiet = profile.BaseDemandFor(Quiet);
+
+            MarketPressureService.ApplyDemandShock(state, ProbeSettlementId, Shocked, 0.30f);
+            float raised = EffectiveEconomyService.EffectiveDemand(state, profile, Shocked);
+
+            r.Check(raised > baselineShocked,
+                "a demand shock raises effective demand above the settlement's baseline",
+                $"{baselineShocked:F3} -> {raised:F3}");
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.EffectiveDemand(state, profile, Quiet), baselineQuiet),
+                "and leaves every other category exactly at its baseline");
+
+            // The composed answer must be the baseline times the pressure and nothing else. A
+            // service that quietly rescaled would still pass a directional check.
+            float pressure = EffectiveEconomyService.CurrentDemandPressure(
+                state, ProbeSettlementId, Shocked);
+            r.Check(Mathf.Abs(raised - baselineShocked * pressure) < 0.0001f,
+                "effective demand is exactly baseline x pressure",
+                $"{raised:F5} vs {baselineShocked * pressure:F5}");
+
+            // Pressure is a category-wide circumstance, not a change of taste. Two goods in the
+            // same category must move by the same proportion, or a shortage would silently
+            // reorder which goods the settlement prefers - the identity Stage 1 made stable.
+            ThingDef a = ThingDefOf.Steel;
+            ThingDef b = ThingDefOf.WoodLog;
+            r.Check(a != null && b != null, "both probe goods resolved");
+            if (a != null && b != null)
+            {
+                float ratioA = EffectiveEconomyService.EffectiveDemand(state, profile, a, Shocked) /
+                               profile.BaseDemandFor(a, Shocked);
+                float ratioB = EffectiveEconomyService.EffectiveDemand(state, profile, b, Shocked) /
+                               profile.BaseDemandFor(b, Shocked);
+                r.Check(Mathf.Abs(ratioA - ratioB) < 0.0001f,
+                    "a shortage moves every good in the category by the same proportion",
+                    $"{ratioA:F5} vs {ratioB:F5}");
+            }
+
+            MarketPressureService.ApplyDemandShock(state, ProbeSettlementId, Shocked, -0.60f);
+            float lowered = EffectiveEconomyService.EffectiveDemand(state, profile, Shocked);
+            r.Check(lowered < baselineShocked,
+                "a settlement that has bought its fill demands less than its baseline",
+                $"{lowered:F3}");
+
+            ClearProbe(state);
+        }
+
+        /// <summary>
+        /// The inversion, which is most of the reason a single owner exists.
+        ///
+        /// Supply pressure counts upward toward *scarce*; a supply weight counts upward toward
+        /// *able to sell*. Multiplying them — the natural mistake, and one each consumer would
+        /// make independently — turns every shortage into a glut and inverts procurement without
+        /// anything looking wrong at the call site.
+        /// </summary>
+        private static void CheckEffectiveSupplyInvertsScarcity(
+            Results r, IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            SettlementEconomicProfile profile = EffectiveProbeProfile();
+            const IntercolonyProductCategory Category = IntercolonyProductCategory.IntermediateGoods;
+            float baseline = profile.BaseSupplyFor(Category);
+
+            MarketPressureService.ApplySupplyShock(state, ProbeSettlementId, Category, 0.35f);
+            float scarce = EffectiveEconomyService.EffectiveSupply(state, profile, Category);
+            r.Check(scarce < baseline,
+                "a settlement under supply pressure supplies LESS, not more",
+                $"baseline {baseline:F3} -> {scarce:F3}");
+
+            float scarcity = EffectiveEconomyService.CurrentSupplyPressure(
+                state, ProbeSettlementId, Category);
+            r.Check(scarcity > SettlementMarketState.Neutral,
+                "the stored pressure is above neutral, so the sign really was inverted on read",
+                scarcity.ToString("F3"));
+            r.Check(Mathf.Abs(scarce - baseline / scarcity) < 0.0001f,
+                "effective supply is exactly baseline / scarcity",
+                $"{scarce:F5} vs {baseline / scarcity:F5}");
+
+            ClearProbe(state);
+            MarketPressureService.ApplySupplyShock(state, ProbeSettlementId, Category, -0.25f);
+            float glut = EffectiveEconomyService.EffectiveSupply(state, profile, Category);
+            r.Check(glut > baseline,
+                "and a settlement with a surplus supplies more",
+                $"{glut:F3}");
+
+            ClearProbe(state);
+        }
+
+        /// <summary>
+        /// The bound exists so that Stage 3's event modifier cannot stack on top of pressure into
+        /// a price swing the plan rules out. Today it is headroom rather than a limit, and that
+        /// relationship is what is asserted — a bound tighter than pressure's own would clip
+        /// ordinary market movement and look like a balance problem.
+        /// </summary>
+        private static void CheckEffectiveEconomyBounds(Results r, IntercolonyWorldComponent state)
+        {
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.MinCondition * EffectiveEconomyService.MaxCondition, 1f),
+                "the condition floor and ceiling are exact inverses",
+                $"{EffectiveEconomyService.MinCondition:F4} x {EffectiveEconomyService.MaxCondition:F2}");
+            r.Check(EffectiveEconomyService.MaxCondition > MarketPressureService.MaxPressure,
+                "the bound leaves pressure alone rather than clipping ordinary market movement",
+                $"{MarketPressureService.MaxPressure:F2} < {EffectiveEconomyService.MaxCondition:F2}");
+            r.Check(EffectiveEconomyService.MinCondition < MarketPressureService.MinPressure,
+                "and the same from below");
+            r.Check(EffectiveEconomyService.MinCondition > 0f,
+                "the floor is above zero - a zero condition would erase the settlement, not depress it");
+
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.Bound(99f), EffectiveEconomyService.MaxCondition),
+                "an absurd condition clamps to the ceiling");
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.Bound(-99f), EffectiveEconomyService.MinCondition),
+                "and to the floor from below");
+            r.Check(
+                Mathf.Approximately(
+                    EffectiveEconomyService.Bound(SettlementMarketState.Neutral),
+                    SettlementMarketState.Neutral),
+                "and neutral passes through untouched");
+
+            // The strongest shock the pressure layer can produce must still arrive unclipped, or
+            // the two clamps are fighting each other.
+            ClearProbe(state);
+            SettlementEconomicProfile profile = EffectiveProbeProfile();
+            const IntercolonyProductCategory Category = IntercolonyProductCategory.Commodities;
+            MarketPressureService.ApplyDemandShock(state, ProbeSettlementId, Category, 99f);
+
+            float condition = EffectiveEconomyService.DemandCondition(state, profile, Category);
+            r.Check(Mathf.Approximately(condition, MarketPressureService.MaxPressure),
+                "the most extreme pressure reaches the effective layer unclipped",
+                condition.ToString("F3"));
+
+            ClearProbe(state);
+        }
+
+        /// <summary>
+        /// Explanations must multiply out to the number they explain. §2.10 forbids double
+        /// counting, and the way that defect arrives is a caller multiplying an effective value
+        /// that already contains pressure by a factor list that contains it again — which looks
+        /// correct at both sites.
+        /// </summary>
+        private static void CheckEffectiveEconomyExplanations(
+            Results r, IntercolonyWorldComponent state)
+        {
+            ClearProbe(state);
+            SettlementEconomicProfile profile = EffectiveProbeProfile();
+            const IntercolonyProductCategory Category = IntercolonyProductCategory.ManufacturedGoods;
+            ThingDef def = ThingDefOf.Steel;
+
+            List<PriceFactor> quiet =
+                EffectiveEconomyService.ExplainDemand(state, profile, def, Category);
+            r.Check(quiet.Count == 1,
+                "an undisturbed settlement explains its demand with one line, not a x1.00 row",
+                $"{quiet.Count} line(s)");
+            r.Check(Mathf.Abs(Product(quiet) -
+                    EffectiveEconomyService.EffectiveDemand(state, profile, def, Category)) < 0.0001f,
+                "and that line multiplies out to the effective demand");
+
+            MarketPressureService.ApplyDemandShock(state, ProbeSettlementId, Category, 0.30f);
+            List<PriceFactor> shocked =
+                EffectiveEconomyService.ExplainDemand(state, profile, def, Category);
+            r.Check(shocked.Count == 2, "a shortage adds exactly one named line",
+                $"{shocked.Count} line(s)");
+            r.Check(shocked.Count == 2 && shocked[1].label == EffectiveEconomyService.ShortageLabel,
+                "labelled as a shortage when the settlement wants more than usual",
+                shocked.Count == 2 ? shocked[1].label : "<missing>");
+            r.Check(Mathf.Abs(Product(shocked) -
+                    EffectiveEconomyService.EffectiveDemand(state, profile, def, Category)) < 0.0001f,
+                "and the factors multiply to exactly the effective demand, never to more",
+                $"{Product(shocked):F5}");
+
+            MarketPressureService.ApplyDemandShock(state, ProbeSettlementId, Category, -0.60f);
+            List<PriceFactor> surplus =
+                EffectiveEconomyService.ExplainDemand(state, profile, def, Category);
+            r.Check(surplus.Count == 2 && surplus[1].label == EffectiveEconomyService.SurplusLabel,
+                "a settlement that wants less than usual is labelled a surplus",
+                surplus.Count == 2 ? surplus[1].label : "<missing>");
+
+            ClearProbe(state);
+
+            // Supply reads from the settlement's own stock, so scarcity is labelled a shortage on
+            // this side too even though it makes the multiplier fall rather than rise.
+            MarketPressureService.ApplySupplyShock(state, ProbeSettlementId, Category, 0.35f);
+            List<PriceFactor> supply =
+                EffectiveEconomyService.ExplainSupply(state, profile, Category);
+            r.Check(supply.Count == 2 && supply[1].label == EffectiveEconomyService.ShortageLabel,
+                "a scarce supplier is labelled a shortage, not a surplus, despite the multiplier falling",
+                supply.Count == 2 ? $"{supply[1].label} x{supply[1].multiplier:F3}" : "<missing>");
+            r.Check(Mathf.Abs(Product(supply) -
+                    EffectiveEconomyService.EffectiveSupply(state, profile, Category)) < 0.0001f,
+                "and supply factors multiply to exactly the effective supply");
+
+            r.Check(EffectiveEconomyService.ExplainDemand(state, null, def, Category).Count == 0,
+                "a settlement with no profile explains nothing rather than throwing");
+
+            ClearProbe(state);
+        }
+
+        private static float Product(List<PriceFactor> factors)
+        {
+            float total = 1f;
+            foreach (PriceFactor factor in factors)
+            {
+                total *= factor.multiplier;
+            }
+
+            return total;
         }
 
         private static string Summarize(Results r)
