@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -22,6 +23,7 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -35,6 +37,12 @@ namespace Intercolony
                     failed++;
                     sb.AppendLine($"  FAIL  {label}{(detail == null ? "" : $"  ({detail})")}");
                 }
+            }
+
+            public void Skip(string label, string detail)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {label}  ({detail})");
             }
         }
 
@@ -71,6 +79,7 @@ namespace Intercolony
                 CheckEconomicChainSupplyDirectionAndOneHop(r, state);
                 CheckEconomicChainConvergence(r, state);
                 CheckEconomicChainBounds(r, state);
+                CheckRegionalDiffusion(r, state);
                 CheckReversionSettlesAndPrunes(r, state);
                 CheckEffectiveEconomyIsBaselineWhenUndisturbed(r, state);
                 CheckEffectiveEconomyReadsAreFree(r, state);
@@ -90,6 +99,7 @@ namespace Intercolony
                 state.MarketStates.Clear();
                 state.MarketStates.AddRange(saved);
                 state.PruneNeutralMarketStates();
+                state.RefreshMarketStateIndex();
                 r.sb.AppendLine($"        market states restored to {state.MarketStates.Count}.");
             }
 
@@ -400,6 +410,237 @@ namespace Intercolony
             {
                 ClearProbe(state);
             }
+        }
+
+        private static void CheckRegionalDiffusion(
+            Results r,
+            IntercolonyWorldComponent state)
+        {
+            float stabilityProduct = MarketPressureService.DiffusionCoefficient *
+                                     MarketPressureService.MaxNeighbours;
+            r.Check(stabilityProduct <= 0.5f,
+                "regional diffusion stays within the monotone stability bound",
+                $"coefficient {MarketPressureService.DiffusionCoefficient:F5} * " +
+                $"neighbours {MarketPressureService.MaxNeighbours} = {stabilityProduct:F5}");
+
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (!TryFindDiffusionPair(settlements, out Settlement source, out Settlement near))
+            {
+                const string Reason = "world has no two settlements within half the diffusion radius";
+                r.Skip("regional diffusion conserves the two-settlement pressure sum", Reason);
+                r.Skip("a sub-epsilon transfer creates no neutral-neighbour record", Reason);
+                r.Skip("regional pressure converges back within neutral epsilon", Reason);
+                r.Skip("diffusion into an extreme settlement stays inside pressure bounds", Reason);
+                r.Skip("near pressure spreads while pressure beyond the radius does not", Reason);
+                return;
+            }
+
+            List<Settlement> pair = new List<Settlement> { source, near };
+            const IntercolonyProductCategory Category =
+                IntercolonyProductCategory.Commodities;
+
+            ClearDiffusionProbes(state, pair);
+            try
+            {
+                MarketPressureService.ApplyDemandShock(state, source.ID, Category, 0.40f);
+                MarketPressureService.ApplyDemandShock(state, near.ID, Category, -0.20f);
+                float before = state.MarketStateFor(source.ID).DemandPressureFor(Category) +
+                               state.MarketStateFor(near.ID).DemandPressureFor(Category) -
+                               2f * SettlementMarketState.Neutral;
+                MarketPressureService.DiffuseRegionalPressure(state, pair);
+                float after = state.MarketStateFor(source.ID).DemandPressureFor(Category) +
+                              state.MarketStateFor(near.ID).DemandPressureFor(Category) -
+                              2f * SettlementMarketState.Neutral;
+                r.Check(Mathf.Abs(after - before) < 0.00001f,
+                    "regional diffusion conserves the two-settlement pressure sum",
+                    $"before {before:F6}, after {after:F6}");
+            }
+            finally
+            {
+                ClearDiffusionProbes(state, pair);
+            }
+
+            try
+            {
+                float distance = Find.WorldGrid.ApproxDistanceInTiles(source.Tile, near.Tile);
+                float weight = 1f - distance / MarketPressureService.MaxDiffusionRadius;
+                float tinyShock = SettlementMarketState.NeutralEpsilon /
+                                  (MarketPressureService.DiffusionCoefficient * weight) * 0.5f;
+                MarketPressureService.ApplyDemandShock(state, source.ID, Category, tinyShock);
+                MarketPressureService.DiffuseRegionalPressure(state, pair);
+                r.Check(state.MarketStateFor(near.ID) == null,
+                    "a sub-epsilon transfer creates no neutral-neighbour record",
+                    $"distance {distance:F2}, transfer " +
+                    $"{tinyShock * MarketPressureService.DiffusionCoefficient * weight:F6}");
+            }
+            finally
+            {
+                ClearDiffusionProbes(state, pair);
+            }
+
+            try
+            {
+                MarketPressureService.ApplySupplyShock(state, source.ID, Category, 0.40f);
+                MarketPressureService.DiffuseRegionalPressure(state, pair);
+                foreach (Settlement settlement in pair)
+                {
+                    state.MarketStateFor(settlement.ID).lastAdvancedRefresh = 0;
+                }
+                for (int refresh = 1; refresh <= 200; refresh++)
+                {
+                    List<SettlementMarketState> records =
+                        new List<SettlementMarketState>(state.MarketStates);
+                    foreach (SettlementMarketState record in records)
+                    {
+                        MarketPressureService.Advance(record, refresh);
+                    }
+                    MarketPressureService.PropagateEconomicChains(state);
+                    MarketPressureService.DiffuseRegionalPressure(state, pair);
+                }
+
+                bool neutral = true;
+                foreach (Settlement settlement in pair)
+                {
+                    SettlementMarketState record = state.MarketStateFor(settlement.ID);
+                    foreach (IntercolonyProductCategory category in
+                             IntercolonyProductCategoryUtility.All)
+                    {
+                        neutral &= Mathf.Abs(record.DemandPressureFor(category) -
+                                             SettlementMarketState.Neutral) <=
+                                   SettlementMarketState.NeutralEpsilon;
+                        neutral &= Mathf.Abs(record.SupplyPressureFor(category) -
+                                             SettlementMarketState.Neutral) <=
+                                   SettlementMarketState.NeutralEpsilon;
+                    }
+                }
+                r.Check(neutral,
+                    "regional pressure converges back within neutral epsilon");
+            }
+            finally
+            {
+                ClearDiffusionProbes(state, pair);
+            }
+
+            try
+            {
+                SettlementMarketState sourceRecord =
+                    state.MarketStateFor(source.ID, createIfMissing: true);
+                SettlementMarketState nearRecord =
+                    state.MarketStateFor(near.ID, createIfMissing: true);
+                sourceRecord.demandPressure[(int)Category] =
+                    MarketPressureService.MaxPressure + 1f;
+                nearRecord.demandPressure[(int)Category] = MarketPressureService.MaxPressure;
+                MarketPressureService.DiffuseRegionalPressure(state, pair);
+                float bounded = nearRecord.DemandPressureFor(Category);
+                r.Check(bounded <= MarketPressureService.MaxPressure &&
+                        bounded >= MarketPressureService.MinPressure,
+                    "diffusion into an extreme settlement stays inside pressure bounds",
+                    bounded.ToString("F5"));
+            }
+            finally
+            {
+                ClearDiffusionProbes(state, pair);
+            }
+
+            if (!TryFindDistantSettlement(settlements, source, out Settlement distant))
+            {
+                r.Skip("near pressure spreads while pressure beyond the radius does not",
+                    "no settlement lies beyond the diffusion radius from the selected source");
+                return;
+            }
+
+            List<Settlement> geometry = new List<Settlement> { source, near, distant };
+            ClearDiffusionProbes(state, geometry);
+            try
+            {
+                MarketPressureService.ApplyDemandShock(state, source.ID, Category, 0.40f);
+                MarketPressureService.DiffuseRegionalPressure(state, geometry);
+                SettlementMarketState nearRecord = state.MarketStateFor(near.ID);
+                SettlementMarketState distantRecord = state.MarketStateFor(distant.ID);
+                r.Check(nearRecord != null &&
+                        nearRecord.DemandPressureFor(Category) >
+                        SettlementMarketState.Neutral && distantRecord == null,
+                    "near pressure spreads while pressure beyond the radius does not",
+                    $"near {Find.WorldGrid.ApproxDistanceInTiles(source.Tile, near.Tile):F2}, " +
+                    $"distant {Find.WorldGrid.ApproxDistanceInTiles(source.Tile, distant.Tile):F2}");
+            }
+            finally
+            {
+                ClearDiffusionProbes(state, geometry);
+            }
+        }
+
+        private static bool TryFindDiffusionPair(
+            List<Settlement> settlements,
+            out Settlement source,
+            out Settlement near)
+        {
+            source = null;
+            near = null;
+            if (settlements == null || Find.WorldGrid == null)
+            {
+                return false;
+            }
+
+            List<Settlement> ordered = settlements.FindAll(s => s != null);
+            ordered.Sort((a, b) => a.ID.CompareTo(b.ID));
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                for (int j = i + 1; j < ordered.Count; j++)
+                {
+                    float distance = Find.WorldGrid.ApproxDistanceInTiles(
+                        ordered[i].Tile, ordered[j].Tile);
+                    if (distance <= MarketPressureService.MaxDiffusionRadius * 0.5f)
+                    {
+                        source = ordered[i];
+                        near = ordered[j];
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static bool TryFindDistantSettlement(
+            List<Settlement> settlements,
+            Settlement source,
+            out Settlement distant)
+        {
+            distant = null;
+            if (settlements == null || source == null || Find.WorldGrid == null)
+            {
+                return false;
+            }
+
+            foreach (Settlement candidate in settlements)
+            {
+                if (candidate != null && candidate.ID != source.ID &&
+                    Find.WorldGrid.ApproxDistanceInTiles(source.Tile, candidate.Tile) >
+                    MarketPressureService.MaxDiffusionRadius)
+                {
+                    if (distant == null || candidate.ID < distant.ID)
+                    {
+                        distant = candidate;
+                    }
+                }
+            }
+            return distant != null;
+        }
+
+        private static void ClearDiffusionProbes(
+            IntercolonyWorldComponent state,
+            List<Settlement> settlements)
+        {
+            HashSet<int> ids = new HashSet<int>();
+            foreach (Settlement settlement in settlements)
+            {
+                if (settlement != null)
+                {
+                    ids.Add(settlement.ID);
+                }
+            }
+            state.MarketStates.RemoveAll(s => s != null && ids.Contains(s.settlementId));
+            state.RefreshMarketStateIndex();
         }
 
         private static void CheckSparseDefaults(Results r, IntercolonyWorldComponent state)
@@ -1155,7 +1396,7 @@ namespace Intercolony
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed, {r.skipped} skipped.");
             return r.sb.ToString();
         }
     }

@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -106,6 +110,16 @@ namespace Intercolony
         public const float MinPressure = 1f / MaxPressure;
 
         /// <summary>
+        /// Regional diffusion is deliberately modest balance tuning for the Stage 2K play gate:
+        /// settlements should form regions without neighbours overwhelming their own identity or
+        /// shocks. The source and degree caps keep a refresh bounded on the baseline world.
+        /// </summary>
+        public const float DiffusionCoefficient = 0.08f;
+        public const int MaxDiffusionSources = 24;
+        public const int MaxNeighbours = 3;
+        public const float MaxDiffusionRadius = 40f;
+
+        /// <summary>
         /// Mean-reverts every disturbed settlement up to the world's current refresh, and reports
         /// how many records it moved.
         ///
@@ -184,6 +198,252 @@ namespace Intercolony
             }
 
             return propagated;
+        }
+
+        private readonly struct DiffusionCandidate
+        {
+            public readonly Settlement settlement;
+            public readonly float distance;
+
+            public DiffusionCandidate(Settlement settlement, float distance)
+            {
+                this.settlement = settlement;
+                this.distance = distance;
+            }
+        }
+
+        private readonly struct DiffusionEdge
+        {
+            public readonly int firstId;
+            public readonly int secondId;
+            public readonly float weight;
+
+            public DiffusionEdge(int firstId, int secondId, float weight)
+            {
+                this.firstId = firstId;
+                this.secondId = secondId;
+                this.weight = weight;
+            }
+        }
+
+        private sealed class PressureSnapshot
+        {
+            public readonly float[] demand;
+            public readonly float[] supply;
+
+            public PressureSnapshot(SettlementMarketState record)
+            {
+                demand = record == null
+                    ? NeutralPressureArray()
+                    : (float[])record.demandPressure.Clone();
+                supply = record == null
+                    ? NeutralPressureArray()
+                    : (float[])record.supplyPressure.Clone();
+            }
+        }
+
+        /// <summary>
+        /// Redistributes pressure over a sparse, bounded graph of nearby settlements. Existing
+        /// records are the only sources; neutral neighbours can become participants when a real
+        /// transfer reaches them. Every edge reads the same pre-diffusion snapshot, so a shock can
+        /// move only one regional hop per refresh and never follows world-object iteration order.
+        /// </summary>
+        public static int DiffuseRegionalPressure(IntercolonyWorldComponent state)
+        {
+            return DiffuseRegionalPressure(state, Find.WorldObjects?.Settlements);
+        }
+
+        internal static int DiffuseRegionalPressure(
+            IntercolonyWorldComponent state,
+            IList<Settlement> eligibleSettlements)
+        {
+            if (state?.MarketStates == null || eligibleSettlements == null ||
+                Find.WorldGrid == null)
+            {
+                return 0;
+            }
+
+            Dictionary<int, Settlement> settlementsById = new Dictionary<int, Settlement>();
+            for (int i = 0; i < eligibleSettlements.Count; i++)
+            {
+                Settlement settlement = eligibleSettlements[i];
+                if (settlement != null)
+                {
+                    settlementsById[settlement.ID] = settlement;
+                }
+            }
+
+            List<SettlementMarketState> sources = new List<SettlementMarketState>();
+            for (int i = 0; i < state.MarketStates.Count &&
+                 sources.Count < MaxDiffusionSources; i++)
+            {
+                SettlementMarketState record = state.MarketStates[i];
+                if (record != null && settlementsById.ContainsKey(record.settlementId))
+                {
+                    sources.Add(record);
+                }
+            }
+
+            Dictionary<int, PressureSnapshot> snapshots =
+                new Dictionary<int, PressureSnapshot>();
+            Dictionary<int, int> degrees = new Dictionary<int, int>();
+            HashSet<long> edgeKeys = new HashSet<long>();
+            List<DiffusionEdge> edges = new List<DiffusionEdge>();
+
+            foreach (SettlementMarketState sourceRecord in sources)
+            {
+                Settlement source = settlementsById[sourceRecord.settlementId];
+                snapshots[source.ID] = new PressureSnapshot(sourceRecord);
+                List<DiffusionCandidate> candidates = new List<DiffusionCandidate>();
+                for (int i = 0; i < eligibleSettlements.Count; i++)
+                {
+                    Settlement neighbour = eligibleSettlements[i];
+                    if (neighbour == null || neighbour.ID == source.ID)
+                    {
+                        continue;
+                    }
+
+                    float distance = Find.WorldGrid.ApproxDistanceInTiles(
+                        source.Tile, neighbour.Tile);
+                    if (distance <= MaxDiffusionRadius)
+                    {
+                        candidates.Add(new DiffusionCandidate(neighbour, distance));
+                    }
+                }
+
+                candidates.Sort((a, b) =>
+                {
+                    int byDistance = a.distance.CompareTo(b.distance);
+                    return byDistance != 0
+                        ? byDistance
+                        : a.settlement.ID.CompareTo(b.settlement.ID);
+                });
+
+                foreach (DiffusionCandidate candidate in candidates)
+                {
+                    int sourceDegree = degrees.TryGetValue(source.ID, out int sd) ? sd : 0;
+                    int neighbourDegree = degrees.TryGetValue(candidate.settlement.ID, out int nd)
+                        ? nd
+                        : 0;
+                    if (sourceDegree >= MaxNeighbours)
+                    {
+                        break;
+                    }
+                    if (neighbourDegree >= MaxNeighbours)
+                    {
+                        continue;
+                    }
+
+                    int low = Math.Min(source.ID, candidate.settlement.ID);
+                    int high = Math.Max(source.ID, candidate.settlement.ID);
+                    long edgeKey = ((long)low << 32) ^ (uint)high;
+                    if (!edgeKeys.Add(edgeKey))
+                    {
+                        continue;
+                    }
+
+                    degrees[source.ID] = sourceDegree + 1;
+                    degrees[candidate.settlement.ID] = neighbourDegree + 1;
+                    float weight = 1f - candidate.distance / MaxDiffusionRadius;
+                    edges.Add(new DiffusionEdge(source.ID, candidate.settlement.ID, weight));
+                    if (!snapshots.ContainsKey(candidate.settlement.ID))
+                    {
+                        snapshots[candidate.settlement.ID] = new PressureSnapshot(
+                            state.MarketStateFor(candidate.settlement.ID));
+                    }
+                }
+            }
+
+            Dictionary<int, float[]> demandTransfers = new Dictionary<int, float[]>();
+            Dictionary<int, float[]> supplyTransfers = new Dictionary<int, float[]>();
+            foreach (DiffusionEdge edge in edges)
+            {
+                EnsureTransferArrays(edge.firstId, demandTransfers, supplyTransfers);
+                EnsureTransferArrays(edge.secondId, demandTransfers, supplyTransfers);
+                PressureSnapshot first = snapshots[edge.firstId];
+                PressureSnapshot second = snapshots[edge.secondId];
+                for (int category = 0; category < first.demand.Length; category++)
+                {
+                    // Diffuse the difference so cycles average rather than create pressure; take
+                    // the same transfer from i that j gains, or shocks would decay without ever
+                    // spreading and no region could form.
+                    float demandTransfer = DiffusionCoefficient * edge.weight *
+                        (first.demand[category] - second.demand[category]);
+                    demandTransfers[edge.firstId][category] -= demandTransfer;
+                    demandTransfers[edge.secondId][category] += demandTransfer;
+                    float supplyTransfer = DiffusionCoefficient * edge.weight *
+                        (first.supply[category] - second.supply[category]);
+                    supplyTransfers[edge.firstId][category] -= supplyTransfer;
+                    supplyTransfers[edge.secondId][category] += supplyTransfer;
+                }
+            }
+
+            int moved = 0;
+            foreach (KeyValuePair<int, float[]> entry in demandTransfers)
+            {
+                int settlementId = entry.Key;
+                PressureSnapshot snapshot = snapshots[settlementId];
+                float[] demand = entry.Value;
+                float[] supply = supplyTransfers[settlementId];
+                bool material = false;
+                for (int category = 0; category < demand.Length; category++)
+                {
+                    material |= Mathf.Abs(snapshot.demand[category] + demand[category] -
+                                           SettlementMarketState.Neutral) >
+                                SettlementMarketState.NeutralEpsilon;
+                    material |= Mathf.Abs(snapshot.supply[category] + supply[category] -
+                                           SettlementMarketState.Neutral) >
+                                SettlementMarketState.NeutralEpsilon;
+                }
+
+                SettlementMarketState record = state.MarketStateFor(settlementId);
+                // Absence means neutral. Creating records for sub-epsilon transfers would let one
+                // shock fill the region, and eventually the save, with records that say nothing.
+                if (record == null && !material)
+                {
+                    continue;
+                }
+                record = record ?? PrepareForShock(state, settlementId);
+                if (record == null)
+                {
+                    continue;
+                }
+
+                for (int category = 0; category < demand.Length; category++)
+                {
+                    record.demandPressure[category] =
+                        Clamp(snapshot.demand[category] + demand[category]);
+                    record.supplyPressure[category] =
+                        Clamp(snapshot.supply[category] + supply[category]);
+                }
+                moved++;
+            }
+
+            return moved;
+        }
+
+        private static void EnsureTransferArrays(
+            int settlementId,
+            Dictionary<int, float[]> demandTransfers,
+            Dictionary<int, float[]> supplyTransfers)
+        {
+            if (!demandTransfers.ContainsKey(settlementId))
+            {
+                demandTransfers[settlementId] =
+                    new float[IntercolonyProductCategoryUtility.Count];
+                supplyTransfers[settlementId] =
+                    new float[IntercolonyProductCategoryUtility.Count];
+            }
+        }
+
+        private static float[] NeutralPressureArray()
+        {
+            float[] result = new float[IntercolonyProductCategoryUtility.Count];
+            for (int i = 0; i < result.Length; i++)
+            {
+                result[i] = SettlementMarketState.Neutral;
+            }
+            return result;
         }
 
         private static void AccumulateChainIncrements(

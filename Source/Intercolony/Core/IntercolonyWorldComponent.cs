@@ -1473,6 +1473,7 @@ namespace Intercolony
             // one refresh past the point it stopped meaning anything.
             MarketPressureService.AdvanceAll(this);
             MarketPressureService.PropagateEconomicChains(this);
+            MarketPressureService.DiffuseRegionalPressure(this);
             PruneNeutralMarketStates();
 
             int expired = ExpireStaleOpportunities();
