@@ -935,6 +935,44 @@ to the menu and reload.
 **Pass.** The log names each step through 39 in order, the second load reports the current schema, and
 no exception appears.
 
+### The world-map Economy tab has never been seen on screen
+
+**Added 2026-08-21 with `713408b`.** Raised by Matteo during the Stage 1 tooltip look: clicking a
+settlement on the world map offers **Planet** and **Terrain**, and should offer **Economy** too,
+because that is where a player plans a colony and they will otherwise never find the mod's own tab.
+
+**What is already proven, so do not re-check it.** The full suite ran 968/0/14 after the change with
+a clean log, and **both ways this could fail silently do log an error**: a non-matching xpath makes
+`PatchOperationAdd` fail with a logged error, and a `WITab` type that cannot be resolved logs a type
+error at def load. Neither fired and the session log has zero errors. It was also verified from
+`reference/decompiled/Verse/XmlInheritance.cs` that the patch *merges* — `ApplyPatches()` runs before
+`XmlInheritance.Resolve()`, and `RecursiveNodeCopyOverwriteElements` appends `li` nodes into the
+inherited list — so vanilla's tabs are not replaced.
+
+**What remains, and it needs eyes.** None of that is the same as the button being there and the pane
+reading well.
+
+**Steps.** Open the world map, click any settlement of a real faction, and look for a third button
+beside Planet and Terrain.
+
+**Pass.**
+1. **Economy** appears as a third button, and Planet and Terrain both still work — if either vanilla
+   tab is now missing, the def patch replaced the inherited list instead of merging into it, and
+   that is a serious regression rather than a cosmetic one.
+2. The pane shows four labelled rows: economy, usually supplies, usually demands, quality
+   preference. They must match what the same settlement's tooltip says in the Market tab — they come
+   from one shared helper now, so a disagreement means the refactor lost something.
+3. Click a settlement with **no faction**, or an ancient ruin. A ruin must **not** have an Economy
+   tab at all; a factionless settlement should say it is not an economic participant rather than
+   drawing an empty pane.
+4. Shock a settlement (`Intercolony → Shock settlement economy`) and reopen its Economy tab: a
+   **Right now:** row appears naming the category and whether it is a shortage or a surplus. Then
+   open an *undisturbed* settlement and confirm there is **no** Right now row at all — its absence is
+   as much the design as its presence.
+5. Nothing overdraws anything else, and long category lists wrap rather than painting over the rows
+   beneath. The rows are measured with `Text.CalcHeight`, but that has been got wrong before in this
+   mod and is the reason rule 7 exists.
+
 ### The buy-only setting itself has never been seen
 
 Added 2026-08-09. The code path is asserted by the self-test above; the **player-facing control has
