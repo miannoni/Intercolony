@@ -1693,7 +1693,8 @@ namespace Intercolony
                     ? FindBuyerService.FindAnimalBuyers(
                         state, selectedAnimalStock.race, selectedAnimalStock.spec, sellQuantity)
                     : FindBuyerService.FindBuyers(
-                        state, selectedStockDef, null, sellQuantity);
+                        state, Find.CurrentMap ?? Find.AnyPlayerHomeMap,
+                        selectedStockDef, null, sellQuantity);
                 SortBuyers(findBuyerCache);
             }
 
@@ -1906,7 +1907,8 @@ namespace Intercolony
                             offer.def, null, offer.animalSpec, offer.quantity,
                             offer.unitPrice, offer.factors)
                         : IntercolonyPricing.Explain(
-                            offer.def, offer.stuff, offer.quantity, offer.unitPrice, offer.factors)));
+                            offer.def, offer.stuff, offer.knownInventory, offer.quantity,
+                            offer.unitPrice, offer.factors)));
             }
 
             Rect sellRect = new Rect(rect.xMax - 84f, rect.y + 4f, 78f, 26f);
@@ -1989,8 +1991,9 @@ namespace Intercolony
                 (qty, fulfillment, discountFraction, markReadyNow) =>
                 {
                     BuyerOffer priced = offer;
-                    priced.unitPrice = FindBuyerService.SellRateFor(state, offer, qty, fulfillment);
                     Map fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+                    priced.unitPrice = FindBuyerService.SellRateFor(
+                        state, offer, qty, fulfillment, fulfillmentMap);
                     if (fulfillment == FulfillmentMode.BuyerPickup && markReadyNow)
                     {
                         SalesOrder pending = SalesOrderService.BuildOrderFromOffer(

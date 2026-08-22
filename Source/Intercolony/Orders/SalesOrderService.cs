@@ -172,6 +172,15 @@ namespace Intercolony
 
             SalesOrder order = BuildOrderFromOffer(
                 offer, quantity, deadlineDays, fulfillment, map);
+            if (!offer.IsAnimalOffer)
+            {
+                // The direct-sale boundary can still see the live stored item. Re-read its
+                // quality-aware value here so a stale UI quote cannot make a known Masterwork
+                // inventory item bind at a definition-only price.
+                order.unitPrice = FindBuyerService.SellRateFor(
+                    state, offer, quantity, fulfillment, map);
+                order.referenceUnitPrice = order.unitPrice;
+            }
             order.id = state.NextId();
 
             state.AddOrder(order);

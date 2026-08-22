@@ -47,6 +47,12 @@ namespace Intercolony
 
         /// <summary>Price factor breakdown, for the §47 tooltip.</summary>
         public List<PriceFactor> factors = new List<PriceFactor>();
+
+        /// <summary>
+        /// The live stored item used for an immediate direct-sale quote, when the caller supplied
+        /// a map. This is a transient read-model reference, never persisted with an order.
+        /// </summary>
+        public Thing knownInventory;
     }
 
     /// <summary>
@@ -111,6 +117,22 @@ namespace Intercolony
             int quantity,
             bool includeUninterested = true)
         {
+            return FindBuyers(state, null, def, stuff, quantity, includeUninterested);
+        }
+
+        /// <summary>
+        /// Map-aware direct-sale search. When current stored inventory is available, its live
+        /// RimWorld MarketValue is used for the immediate quote; the map-less overload retains
+        /// the definition-only quote used by read-only market probes.
+        /// </summary>
+        public static List<BuyerOffer> FindBuyers(
+            IntercolonyWorldComponent state,
+            Map knownInventoryMap,
+            ThingDef def,
+            ThingDef stuff,
+            int quantity,
+            bool includeUninterested = true)
+        {
             List<BuyerOffer> offers = new List<BuyerOffer>();
             if (state == null || def == null || quantity <= 0)
             {
@@ -143,7 +165,8 @@ namespace Intercolony
                 }
 
                 BuyerOffer offer = Evaluate(
-                    state, settlement, profile, def, stuff, category.Value, quantity);
+                    state, settlement, profile, def, stuff, category.Value, quantity,
+                    knownInventoryMap);
                 if (offer.Interested || includeUninterested)
                 {
                     offers.Add(offer);
@@ -246,7 +269,8 @@ namespace Intercolony
             ThingDef def,
             ThingDef stuff,
             IntercolonyProductCategory category,
-            int wantedQuantity)
+            int wantedQuantity,
+            Map knownInventoryMap)
         {
             BuyerOffer offer = new BuyerOffer
             {
@@ -254,6 +278,7 @@ namespace Intercolony
                 profile = profile,
                 def = def,
                 stuff = stuff,
+                knownInventory = FindKnownInventory(knownInventoryMap, def),
                 distanceTiles = MarketOpportunityGenerator.DistanceToPlayer(settlement)
             };
 
@@ -371,7 +396,20 @@ namespace Intercolony
             int quantity,
             FulfillmentMode fulfillment)
         {
-            return SellRateFor(state, offer, quantity, fulfillment, out _);
+            return SellRateFor(state, offer, quantity, fulfillment, null, out _);
+        }
+
+        /// <summary>Reprices a direct sale against the live inventory on a known map.</summary>
+        internal static float SellRateFor(
+            IntercolonyWorldComponent state,
+            BuyerOffer offer,
+            int quantity,
+            FulfillmentMode fulfillment,
+            Map knownInventoryMap)
+        {
+            Thing knownInventory = FindKnownInventory(knownInventoryMap, offer?.def);
+            return SellRateFor(
+                state, offer, quantity, fulfillment, knownInventory, out _);
         }
 
         private static float SellRateFor(
@@ -379,6 +417,17 @@ namespace Intercolony
             BuyerOffer offer,
             int quantity,
             FulfillmentMode fulfillment,
+            out List<PriceFactor> factors)
+        {
+            return SellRateFor(state, offer, quantity, fulfillment, null, out factors);
+        }
+
+        private static float SellRateFor(
+            IntercolonyWorldComponent state,
+            BuyerOffer offer,
+            int quantity,
+            FulfillmentMode fulfillment,
+            Thing knownInventory,
             out List<PriceFactor> factors)
         {
             float rate;
@@ -420,8 +469,10 @@ namespace Intercolony
                         offer.profile, IntercolonyProductCategory.Commodities,
                         offer.distanceTiles, null, out factors)
                     : IntercolonyPricing.UnitPrice(
-                        state, offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
-                        category, offer.distanceTiles, null, out factors);
+                        state, offer.def, offer.stuff,
+                        knownInventory ?? offer.knownInventory,
+                        Mathf.Max(1, quantity), offer.profile, category, offer.distanceTiles,
+                        null, out factors);
             }
 
             PriceFactor logistics = IntercolonyPricing.LogisticsFactor(fulfillment);
@@ -554,6 +605,30 @@ namespace Intercolony
                 case IntercolonyWealthTier.Comfortable: return 4500f;
                 default: return 9000f;
             }
+        }
+
+        private static Thing FindKnownInventory(Map map, ThingDef def)
+        {
+            if (map == null || def == null)
+            {
+                return null;
+            }
+
+            foreach (Thing thing in map.listerThings.AllThings)
+            {
+                if (!OrderValidator.IsAvailableColonyStock(thing))
+                {
+                    continue;
+                }
+
+                Thing inner = thing.GetInnerIfMinified();
+                if (inner?.def == def)
+                {
+                    return inner;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

@@ -106,7 +106,30 @@ namespace Intercolony
             out List<PriceFactor> factors)
         {
             return UnitPrice(
-                state, def, stuff, null, quantity, profile, category, distanceTiles, minQuality, out factors);
+                state, def, stuff, (AnimalSpec)null, quantity, profile, category,
+                distanceTiles, minQuality, out factors);
+        }
+
+        /// <summary>
+        /// Immediate known-inventory valuation. A live Thing carries RimWorld's material and
+        /// quality-aware MarketValue, so a direct sale can price the object the buyer is actually
+        /// being offered rather than pretending every item of the same ThingDef is identical.
+        /// </summary>
+        internal static float UnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            Thing actualThing,
+            int quantity,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float distanceTiles,
+            QualityCategory? minQuality,
+            out List<PriceFactor> factors)
+        {
+            return UnitPrice(
+                state, def, stuff, null, actualThing, quantity, profile, category,
+                distanceTiles, minQuality, out factors);
         }
 
         /// <summary>
@@ -119,6 +142,24 @@ namespace Intercolony
             ThingDef def,
             ThingDef stuff,
             AnimalSpec animalSpec,
+            int quantity,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float distanceTiles,
+            QualityCategory? minQuality,
+            out List<PriceFactor> factors)
+        {
+            return UnitPrice(
+                state, def, stuff, animalSpec, null, quantity, profile, category,
+                distanceTiles, minQuality, out factors);
+        }
+
+        private static float UnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            AnimalSpec animalSpec,
+            Thing actualThing,
             int quantity,
             SettlementEconomicProfile profile,
             IntercolonyProductCategory category,
@@ -147,7 +188,7 @@ namespace Intercolony
             }
             else
             {
-                baseValue = BaseValue(def, stuff);
+                baseValue = BaseValue(def, stuff, actualThing);
             }
 
             // Brand is a prospective expectation about a price being computed now. Read the
@@ -436,6 +477,22 @@ namespace Intercolony
             return def.BaseMarketValue;
         }
 
+        private static float BaseValue(ThingDef def, ThingDef stuff, Thing actualThing)
+        {
+            Thing valueThing = actualThing?.GetInnerIfMinified();
+            if (valueThing != null && !valueThing.Destroyed && valueThing.def == def)
+            {
+                float marketValue = valueThing.MarketValue;
+                if (marketValue > 0f && !float.IsNaN(marketValue) &&
+                    !float.IsInfinity(marketValue))
+                {
+                    return marketValue;
+                }
+            }
+
+            return BaseValue(def, stuff);
+        }
+
         /// <summary>
         /// Definition-only animal value: species base times the guaranteed specification
         /// multipliers. A null specification is exactly the existing goods path.
@@ -567,13 +624,38 @@ namespace Intercolony
         public static string Explain(
             ThingDef def, ThingDef stuff, int quantity, float unitPrice, List<PriceFactor> factors)
         {
-            return Explain(def, stuff, null, quantity, unitPrice, factors);
+            return Explain(
+                def, stuff, null, (AnimalSpec)null, quantity, unitPrice, factors);
+        }
+
+        /// <summary>Breakdown for a known live item, including its RimWorld market value.</summary>
+        public static string Explain(
+            ThingDef def,
+            ThingDef stuff,
+            Thing actualThing,
+            int quantity,
+            float unitPrice,
+            List<PriceFactor> factors)
+        {
+            return Explain(def, stuff, actualThing, null, quantity, unitPrice, factors);
         }
 
         /// <summary>Breakdown that identifies the animal species base before spec multipliers.</summary>
         public static string Explain(
             ThingDef def,
             ThingDef stuff,
+            AnimalSpec animalSpec,
+            int quantity,
+            float unitPrice,
+            List<PriceFactor> factors)
+        {
+            return Explain(def, stuff, null, animalSpec, quantity, unitPrice, factors);
+        }
+
+        private static string Explain(
+            ThingDef def,
+            ThingDef stuff,
+            Thing actualThing,
             AnimalSpec animalSpec,
             int quantity,
             float unitPrice,
@@ -586,7 +668,9 @@ namespace Intercolony
                 : stuff != null && def.MadeFromStuff
                     ? $"Base value ({stuff.label})"
                     : "Base value";
-            float displayedBase = isAnimalPrice ? def.BaseMarketValue : BaseValue(def, stuff);
+            float displayedBase = isAnimalPrice
+                ? def.BaseMarketValue
+                : BaseValue(def, stuff, actualThing);
             sb.AppendLine($"{baseLabel,-25} {displayedBase,10:F2}");
             foreach (PriceFactor factor in factors)
             {

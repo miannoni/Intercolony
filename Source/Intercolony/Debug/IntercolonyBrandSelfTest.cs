@@ -14,7 +14,8 @@ namespace Intercolony
     /// Stage 4E Parts One and Two: persistence, bounds, load pruning, neutral initialization,
     /// actual batch quality, gradual volume-weighted brand movement, def-driven carryover, direct
     /// evidence confidence, the bounded prospective price factor, bounded Find Buyer interest,
-    /// and Stage 4F Parts One and Two: commercial brand milestones and the compact brand UI.
+    /// and Stage 4F Parts One and Two: commercial brand milestones and the compact brand UI,
+    /// plus the Stage 4 acceptance gate's known-inventory valuation and binding-payment checks.
     /// </summary>
     public static class IntercolonyBrandSelfTest
     {
@@ -152,6 +153,8 @@ namespace Intercolony
                 RunBrandUiChecks(state, r);
                 RunBrandPricingChecks(state, r);
                 RunBrandInterestChecks(state, r);
+                RunKnownInventoryPricingChecks(state, r);
+                RunBindingQualityPaymentChecks(state, r);
             }
             catch (Exception ex)
             {
@@ -672,6 +675,36 @@ namespace Intercolony
                         record.quantity,
                         record.silverAmount,
                         record.compactDetail));
+            }
+
+            return snapshot;
+        }
+
+        private static List<SettlementMarketState> SnapshotMarketStates(
+            List<SettlementMarketState> states)
+        {
+            List<SettlementMarketState> snapshot =
+                new List<SettlementMarketState>(states.Count);
+            for (int i = 0; i < states.Count; i++)
+            {
+                SettlementMarketState state = states[i];
+                if (state == null)
+                {
+                    snapshot.Add(null);
+                    continue;
+                }
+
+                snapshot.Add(new SettlementMarketState
+                {
+                    settlementId = state.settlementId,
+                    demandPressure = state.demandPressure == null
+                        ? null
+                        : (float[])state.demandPressure.Clone(),
+                    supplyPressure = state.supplyPressure == null
+                        ? null
+                        : (float[])state.supplyPressure.Clone(),
+                    lastAdvancedRefresh = state.lastAdvancedRefresh
+                });
             }
 
             return snapshot;
@@ -1491,6 +1524,319 @@ namespace Intercolony
                     state.Reputations.Add(entry.Key, entry.Value);
                 }
             }
+        }
+
+        private static void RunKnownInventoryPricingChecks(
+            IntercolonyWorldComponent state, Results r)
+        {
+            ThingDef product = ThingDefOf.DiningChair;
+            if (product == null)
+            {
+                r.Skip(
+                    "known-inventory direct-sale pricing has the Core DiningChair ThingDef",
+                    "DiningChair is not loaded");
+                return;
+            }
+
+            if (!IntercolonyPricing.CanHaveQuality(product))
+            {
+                r.Skip(
+                    "known-inventory direct-sale pricing has a quality-capable Core ThingDef",
+                    "DiningChair is loaded but has no CompQuality");
+                return;
+            }
+
+            ThingDef stuff = ThingDefOf.WoodLog;
+            if (stuff == null || !product.MadeFromStuff)
+            {
+                r.Skip(
+                    "known-inventory direct-sale pricing has the same Core stuff on both Things",
+                    stuff == null
+                        ? "WoodLog is not loaded"
+                        : "DiningChair does not accept stuff");
+                return;
+            }
+
+            List<ProductBrandRecord> savedBrands = SnapshotBrandRecords(state.ProductBrandRecords);
+            List<Thing> temporaryThings = new List<Thing>();
+
+            try
+            {
+                // Keep prospective brand neutral so the comparison isolates the actual live
+                // Thing value. A regression here would let brand evidence obscure the quality
+                // signal instead of failing the direct-sale assertion cleanly.
+                state.ProductBrandRecords.Clear();
+
+                Thing masterwork = ThingMaker.MakeThing(product, stuff);
+                Thing awful = ThingMaker.MakeThing(product, stuff);
+                temporaryThings.Add(masterwork);
+                temporaryThings.Add(awful);
+
+                CompQuality masterworkComp = masterwork?.TryGetComp<CompQuality>();
+                CompQuality awfulComp = awful?.TryGetComp<CompQuality>();
+                if (masterworkComp == null || awfulComp == null)
+                {
+                    r.Skip(
+                        "known-inventory direct-sale pricing has two quality-bearing DiningChairs",
+                        "DiningChair did not instantiate CompQuality on both Things");
+                    return;
+                }
+
+                masterworkComp.SetQuality(
+                    QualityCategory.Masterwork, ArtGenerationContext.Outsider);
+                awfulComp.SetQuality(QualityCategory.Awful, ArtGenerationContext.Outsider);
+                QualityCategory masterworkQuality = default(QualityCategory);
+                QualityCategory awfulQuality = default(QualityCategory);
+                bool qualitiesApplied =
+                    masterwork.TryGetQuality(out masterworkQuality) &&
+                    awful.TryGetQuality(out awfulQuality);
+                if (!qualitiesApplied ||
+                    masterworkQuality != QualityCategory.Masterwork ||
+                    awfulQuality != QualityCategory.Awful)
+                {
+                    r.Skip(
+                        "known-inventory direct-sale pricing can distinguish DiningChair quality",
+                        $"applied qualities were {masterworkQuality}/{awfulQuality}");
+                    return;
+                }
+
+                SettlementEconomicProfile profile = new SettlementEconomicProfile
+                {
+                    seed = 0,
+                    wealthTier = IntercolonyWealthTier.Modest,
+                    qualityPreference = 0.5f
+                };
+                foreach (IntercolonyProductCategory categoryValue in
+                         IntercolonyProductCategoryUtility.All)
+                {
+                    profile.demandWeights[(int)categoryValue] = 1f;
+                }
+
+                IntercolonyProductCategory category =
+                    IntercolonyProductClassifier.Classify(product)
+                    ?? IntercolonyProductCategory.Commodities;
+                // This is the same internal known-Thing entry point used by Find Buyer direct-sale
+                // repricing. It keeps buyer interest out of this valuation-only criterion.
+                float masterworkPrice = IntercolonyPricing.UnitPrice(
+                    state, product, stuff, masterwork, 1, profile, category, -1f, null, out _);
+                float awfulPrice = IntercolonyPricing.UnitPrice(
+                    state, product, stuff, awful, 1, profile, category, -1f, null, out _);
+
+                // This fails if known-inventory pricing falls back to ThingDef/BaseMarketValue
+                // and ignores the live CompQuality carried by the actual Thing.
+                r.Check(
+                    masterworkPrice > awfulPrice,
+                    "a direct sale values known Masterwork inventory above equivalent Awful inventory",
+                    $"product={product.defName}, masterwork={masterworkPrice:0.####}, " +
+                    $"awful={awfulPrice:0.####}, " +
+                    $"liveValues={masterwork.MarketValue:0.####}/{awful.MarketValue:0.####}, " +
+                    $"stuff={stuff.defName}");
+            }
+            finally
+            {
+                foreach (Thing thing in temporaryThings)
+                {
+                    if (thing != null && !thing.Destroyed)
+                    {
+                        thing.Destroy(DestroyMode.Vanish);
+                    }
+                }
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedBrands);
+            }
+        }
+
+        private static void RunBindingQualityPaymentChecks(
+            IntercolonyWorldComponent state, Results r)
+        {
+            ThingDef product = ThingDefOf.DiningChair;
+            if (product == null || !IntercolonyPricing.CanHaveQuality(product))
+            {
+                r.Skip(
+                    "binding quality-payment checks have their quality-capable product ThingDef",
+                    "missing or non-quality ThingDef: DiningChair");
+                return;
+            }
+
+            // Complete() also records sale history, timeline events and (for a real settlement)
+            // economic/reputation effects. Use the invalid settlement sentinel so this focused
+            // fixture exercises only its intended product-brand side effect, while still
+            // snapshotting every mutable world collection that the completion boundary owns.
+            List<ProductBrandRecord> savedBrands = SnapshotBrandRecords(state.ProductBrandRecords);
+            List<CommercialHistoryEntry> savedCommercialHistory =
+                SnapshotCommercialHistory(state.CommercialHistory);
+            List<CommercialEventRecord> savedCommercialTimeline =
+                SnapshotCommercialTimeline(state.CommercialTimeline);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+            List<SettlementMarketState> savedMarketStates =
+                SnapshotMarketStates(state.MarketStates);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+
+            try
+            {
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, directScore: 0f, evidenceWeight: 100f, unitsDelivered: 100));
+                SalesOrder above = MakeQualityPaymentOrder(
+                    product, -4_801, QualityCategory.Awful, unitPrice: 37.25f,
+                    discountFraction: 0.15f);
+                float aboveUnitPrice = above.unitPrice;
+                float aboveReferencePrice = above.referenceUnitPrice;
+                float aboveDiscount = above.DiscountFraction;
+                int aboveTotalPayment = above.TotalPayment;
+                int aboveDiscountedPayment = above.DiscountedTotalPayment;
+                float aboveBrandAtAcceptance =
+                    FindBrandRecord(state.ProductBrandRecords, product).directScore;
+
+                // Move brand after acceptance, before the target order completes. The target's
+                // requested Awful quality is deliberately far below the delivered Masterwork.
+                MakeAndCompleteQualityPaymentMover(
+                    state, product, -4_802, DeliveredQualityCapture.AwfulQualityTarget);
+                float aboveBrandBeforeCompletion =
+                    FindBrandRecord(state.ProductBrandRecords, product).directScore;
+                SalesOrderService.Complete(
+                    state, above, completedTick: 0,
+                    outcomeNote: "binding quality-payment self-test: above",
+                    actualDeliveredQuality: new DeliveredQualityResult(
+                        DeliveredQualityCapture.MasterworkQualityTarget, 1));
+                float aboveBrandAfterCompletion =
+                    FindBrandRecord(state.ProductBrandRecords, product)?.directScore ?? float.NaN;
+
+                // This fails if the completion boundary recomputes payment from delivered
+                // quality or from the brand that changed after acceptance.
+                r.Check(
+                    above.status == SalesOrderStatus.Completed &&
+                    Mathf.Approximately(above.unitPrice, aboveUnitPrice) &&
+                    Mathf.Approximately(above.referenceUnitPrice, aboveReferencePrice) &&
+                    Mathf.Approximately(above.DiscountFraction, aboveDiscount) &&
+                    above.TotalPayment == aboveTotalPayment &&
+                    above.DiscountedTotalPayment == aboveDiscountedPayment,
+                    "a binding order keeps its stored payment when delivered quality is far above requested",
+                    $"unit={above.unitPrice:0.####}/{aboveUnitPrice:0.####}, " +
+                    $"payment={above.DiscountedTotalPayment}/{aboveDiscountedPayment}");
+
+                bool aboveBrandMoved =
+                    !Mathf.Approximately(aboveBrandBeforeCompletion, aboveBrandAtAcceptance) &&
+                    aboveBrandAfterCompletion > aboveBrandBeforeCompletion;
+                // This fails if payment is frozen by also dropping the delivered-quality brand
+                // update, which would make the payment check vacuous.
+                r.Check(
+                    aboveBrandMoved,
+                    "the same above-requested completion moves future brand after brand already moved",
+                    $"brand={aboveBrandAtAcceptance:0.###}->" +
+                    $"{aboveBrandBeforeCompletion:0.###}->" +
+                    $"{aboveBrandAfterCompletion:0.###}");
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, directScore: 0f, evidenceWeight: 100f, unitsDelivered: 100));
+                SalesOrder below = MakeQualityPaymentOrder(
+                    product, -4_803, QualityCategory.Masterwork, unitPrice: 61.75f,
+                    discountFraction: 0.20f);
+                float belowUnitPrice = below.unitPrice;
+                float belowReferencePrice = below.referenceUnitPrice;
+                float belowDiscount = below.DiscountFraction;
+                int belowTotalPayment = below.TotalPayment;
+                int belowDiscountedPayment = below.DiscountedTotalPayment;
+                float belowBrandAtAcceptance =
+                    FindBrandRecord(state.ProductBrandRecords, product).directScore;
+
+                // The accepted Masterwork order now receives an Awful item, the opposite
+                // delivered-quality extreme. Its payment must remain just as fixed.
+                MakeAndCompleteQualityPaymentMover(
+                    state, product, -4_804, DeliveredQualityCapture.MasterworkQualityTarget);
+                float belowBrandBeforeCompletion =
+                    FindBrandRecord(state.ProductBrandRecords, product).directScore;
+                SalesOrderService.Complete(
+                    state, below, completedTick: 1,
+                    outcomeNote: "binding quality-payment self-test: below",
+                    actualDeliveredQuality: new DeliveredQualityResult(
+                        DeliveredQualityCapture.AwfulQualityTarget, 1));
+                float belowBrandAfterCompletion =
+                    FindBrandRecord(state.ProductBrandRecords, product)?.directScore ?? float.NaN;
+
+                // This fails if the opposite quality extreme can rewrite the accepted amount,
+                // including the stored reference price or discount terms.
+                r.Check(
+                    below.status == SalesOrderStatus.Completed &&
+                    Mathf.Approximately(below.unitPrice, belowUnitPrice) &&
+                    Mathf.Approximately(below.referenceUnitPrice, belowReferencePrice) &&
+                    Mathf.Approximately(below.DiscountFraction, belowDiscount) &&
+                    below.TotalPayment == belowTotalPayment &&
+                    below.DiscountedTotalPayment == belowDiscountedPayment,
+                    "a binding order keeps its stored payment when delivered quality is far below requested",
+                    $"unit={below.unitPrice:0.####}/{belowUnitPrice:0.####}, " +
+                    $"payment={below.DiscountedTotalPayment}/{belowDiscountedPayment}");
+
+                bool belowBrandMoved =
+                    !Mathf.Approximately(belowBrandBeforeCompletion, belowBrandAtAcceptance) &&
+                    belowBrandAfterCompletion < belowBrandBeforeCompletion;
+                // This fails if poor delivered quality no longer changes future brand while the
+                // binding payment remains fixed.
+                r.Check(
+                    belowBrandMoved,
+                    "the same below-requested completion moves future brand after brand already moved",
+                    $"brand={belowBrandAtAcceptance:0.###}->" +
+                    $"{belowBrandBeforeCompletion:0.###}->" +
+                    $"{belowBrandAfterCompletion:0.###}");
+            }
+            finally
+            {
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedBrands);
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedCommercialHistory);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                state.MarketStates.Clear();
+                state.MarketStates.AddRange(savedMarketStates);
+                state.RefreshMarketStateIndex();
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations.Add(entry.Key, entry.Value);
+                }
+            }
+        }
+
+        private static SalesOrder MakeQualityPaymentOrder(
+            ThingDef product,
+            int id,
+            QualityCategory requestedQuality,
+            float unitPrice,
+            float discountFraction)
+        {
+            return new SalesOrder
+            {
+                id = id,
+                settlementId = -1,
+                settlementName = "",
+                line = new OrderLine(product, 1) { minQuality = requestedQuality },
+                unitPrice = unitPrice,
+                referenceUnitPrice = unitPrice,
+                DiscountFraction = discountFraction,
+                status = SalesOrderStatus.Accepted,
+                deadlineTick = int.MaxValue,
+                deliveredQuantity = 1,
+                paidSilver = 0
+            };
+        }
+
+        private static void MakeAndCompleteQualityPaymentMover(
+            IntercolonyWorldComponent state,
+            ThingDef product,
+            int id,
+            float qualityTarget)
+        {
+            SalesOrder mover = MakeQualityPaymentOrder(
+                product, id, QualityCategory.Awful, unitPrice: 1f, discountFraction: 0f);
+            SalesOrderService.Complete(
+                state, mover, completedTick: 0,
+                outcomeNote: "binding quality-payment self-test: brand mover",
+                actualDeliveredQuality: new DeliveredQualityResult(qualityTarget, 1));
         }
 
         private static bool TryFindPriceFactor(
