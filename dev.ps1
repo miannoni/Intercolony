@@ -704,7 +704,32 @@ function Invoke-OneSaveMigration($Record) {
     $exceptionPattern = '(?i)\bException\b'
     $migrationStarts = @($logLines | Where-Object { $_ -match $migrationStartPattern }).Count
     $migrationSteps = @($logLines | Where-Object { $_ -match $migrationStepPattern }).Count
-    $exceptions = @($logLines | Where-Object { $_ -match $exceptionPattern }).Count
+    $migrationBannerIndex = -1
+    $preLoadExceptionLines = @()
+    $migrationExceptionLines = @()
+    for ($lineIndex = 0; $lineIndex -lt $logLines.Count; $lineIndex++) {
+        if ($migrationBannerIndex -lt 0 -and $logLines[$lineIndex] -match $migrationStartPattern) {
+            $migrationBannerIndex = $lineIndex
+        }
+    }
+    # The banner is the blame boundary: an exception before it is evidence about the save
+    # file or another mod, while one at or after it is evidence about our migration code.
+    # Collapsing both conflates a corpus problem with a code problem. That misdiagnosed
+    # 'New Arrivals21' at schema 17: three duplicate thing-ID exceptions came from RimWorld's
+    # LoadedObjectDirectory.RegisterLoaded before the banner, then our migration correctly
+    # completed all 27 steps through schema 44.
+    for ($lineIndex = 0; $lineIndex -lt $logLines.Count; $lineIndex++) {
+        if ($logLines[$lineIndex] -notmatch $exceptionPattern) { continue }
+        $exceptionLine = $logLines[$lineIndex].Trim()
+        if ($migrationBannerIndex -ge 0 -and $lineIndex -ge $migrationBannerIndex) {
+            $migrationExceptionLines += $exceptionLine
+        } else {
+            # With no banner there was no migration to blame, so every exception is pre-load.
+            $preLoadExceptionLines += $exceptionLine
+        }
+    }
+    $preLoadExceptions = $preLoadExceptionLines.Count
+    $migrationExceptions = $migrationExceptionLines.Count
 
     $verdict = "PASS"
     if ($cleanupFailed) {
@@ -712,7 +737,7 @@ function Invoke-OneSaveMigration($Record) {
     } elseif ($infrastructureError) {
         $verdict = "INFRASTRUCTURE FAILED"
         Write-Host "MIGRATION INFRASTRUCTURE FAILED for '$($Record.Name)': $infrastructureError" -ForegroundColor Red
-    } elseif ($exceptions -gt 0) {
+    } elseif ($migrationExceptions -gt 0) {
         $verdict = "FAIL (exception)"
     } elseif ($migrationFailed) {
         $verdict = "FAIL (load/readiness)"
@@ -721,7 +746,13 @@ function Invoke-OneSaveMigration($Record) {
     } elseif ([int]$Record.Schema -ne [int]$currentSchema -and $migrationStarts -eq 0) {
         # Status is authoritative for the exit code, but a missing banner is still useful
         # evidence because it says the expected migration narrative vanished from this launch.
-        $verdict = "PASS (no migration banner)"
+        $verdict = $(if ($preLoadExceptions -gt 0) {
+            "PASS (no migration banner; pre-existing save damage)"
+        } else {
+            "PASS (no migration banner)"
+        })
+    } elseif ($preLoadExceptions -gt 0) {
+        $verdict = "PASS (pre-existing save damage)"
     }
 
     return [pscustomobject]@{
@@ -729,7 +760,10 @@ function Invoke-OneSaveMigration($Record) {
         Before             = $Record.Schema
         After              = $(if ($null -eq $schemaAfter) { "-" } else { $schemaAfter })
         Steps              = $migrationSteps
-        Exceptions         = $exceptions
+        PreLoad            = $preLoadExceptions
+        Migration          = $migrationExceptions
+        PreLoadLines       = $preLoadExceptionLines
+        MigrationLines     = $migrationExceptionLines
         Verdict            = $verdict
         InfrastructureFail = ($null -ne $infrastructureError -or $cleanupFailed)
         CleanupFailed      = $cleanupFailed
@@ -790,7 +824,8 @@ function Invoke-SaveMigrations($Target) {
                 Write-Host "$progress Skipping '$($record.Name)': no Intercolony state." -ForegroundColor Yellow
                 $results.Add([pscustomobject]@{
                     Name = $record.Name; Before = "-"; After = "-"; Steps = 0
-                    Exceptions = 0; Verdict = "SKIP (no Intercolony state)"
+                    PreLoad = 0; Migration = 0; PreLoadLines = @(); MigrationLines = @()
+                    Verdict = "SKIP (no Intercolony state)"
                     InfrastructureFail = $false; CleanupFailed = $false; SourceChanged = $false
                 })
                 continue
@@ -810,13 +845,27 @@ function Invoke-SaveMigrations($Target) {
         $script:LaunchArgs = $originalLaunchArgs
     }
 
-    $results | Select-Object Name, Before, After, Steps, Exceptions, Verdict |
+    $results | Select-Object Name, Before, After, Steps, PreLoad, Migration, Verdict |
         Format-Table -AutoSize | Out-Host
+    foreach ($result in @($results | Where-Object { $_.PreLoad -gt 0 -or $_.Migration -gt 0 })) {
+        Write-Host "Exception evidence for '$($result.Name)':"
+        foreach ($exceptionLine in @($result.PreLoadLines | Select-Object -First 5)) {
+            $displayLine = $exceptionLine
+            if ($displayLine.Length -gt 240) { $displayLine = $displayLine.Substring(0, 240) + "..." }
+            Write-Host "  PreLoad:  $displayLine" -ForegroundColor Yellow
+        }
+        foreach ($exceptionLine in @($result.MigrationLines | Select-Object -First 5)) {
+            $displayLine = $exceptionLine
+            if ($displayLine.Length -gt 240) { $displayLine = $displayLine.Substring(0, 240) + "..." }
+            Write-Host "  Migration: $displayLine" -ForegroundColor Red
+        }
+    }
     $passed = @($results | Where-Object { $_.Verdict -like "PASS*" }).Count
     $failed = @($results | Where-Object { $_.Verdict -like "FAIL*" }).Count
     $skipped = @($results | Where-Object { $_.Verdict -like "SKIP*" }).Count
     $infrastructureFailed = @($results | Where-Object { $_.InfrastructureFail }).Count
-    Write-Host "Migration summary: $passed passed, $failed failed, $skipped skipped, $infrastructureFailed infrastructure failure(s)."
+    $preExistingDamage = @($results | Where-Object { $_.PreLoad -gt 0 }).Count
+    Write-Host "Migration summary: $passed passed, $failed failed, $skipped skipped, $infrastructureFailed infrastructure failure(s), $preExistingDamage with pre-existing damage."
 
     if ($abortForCleanup -or $infrastructureFailed -gt 0) { return 2 }
     if ($failed -gt 0) { return 1 }
