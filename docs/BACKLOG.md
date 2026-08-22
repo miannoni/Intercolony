@@ -94,11 +94,45 @@ obligation. RimWorld tolerates the dangling reference, logs it, and loads with t
 null. The cost is log noise and a slightly degraded save, not corruption. It also predates
 Stage 2 entirely and has nothing to do with the market work in flight.
 
-## Suppliers quote ancient ruins scenery
+## ~~Suppliers quote ancient ruins scenery~~ — NOT REACHABLE IN PLAY, closed 2026-08-22
 
 **Raised:** 2026-08-20, from the Stage 0.2 market baseline.
-**Size:** small — probably one classifier rule.
-**Status:** open, not in the 1.0 program.
+**Closed:** 2026-08-22 by tracing the def chain and both production paths. **No code change was
+needed, and none should be made.**
+
+**The player cannot request or be offered an Ancient APC.** `TradableDefs` is built from
+`IsFungibleTradeItem`, which requires `HasSupportedPhysicalForm` — `category == Item`, or a
+`Building` that is **minifiable**. `ThingDef.Minifiable` is `minifiedDef != null`
+(`reference/decompiled/Verse/ThingDef.cs:541`), and **no def in the ancient chain sets
+`minifiedDef`**: `AncientAPC` → `NonDeconstructibleAncientBuildingBase` → `AncientBuildingBase` →
+`BuildingBase`, all four checked, and `Buildings_Ancient_Outdoors.xml` and
+`Buildings_Ancient_Indoors.xml` contain zero occurrences of it between them. So ancient scenery
+never enters `TradableDefs`.
+
+Both production paths are gated on that list, which was the other half worth checking rather than
+assuming:
+
+- **Demand:** `MarketOpportunityGenerator` picks from `DefsInCategory`, which iterates `TradableDefs`
+  (`IntercolonyProductClassifier.cs:289-301`). So the entry's worry that "the same classifier rule
+  presumably lets them be *demanded* too" is also unfounded.
+- **Procurement:** `Dialog_CreateRequest.cs:885` draws its candidate list from `TradableDefs`.
+
+**Where the 88 quotes actually came from — and this is the part worth keeping.** The baseline's
+original `PickProbeGoods` (`fe011b7`) iterated `DefDatabase<ThingDef>.AllDefsListForReading` and
+filtered **only** on `Classify(def).HasValue`. `Classify` maps a def to a category and says nothing
+about tradability, so the diagnostic quoted defs the market can never offer, then reported real
+quote counts for them. The numbers were true; the premise was not.
+
+**The lesson generalises past this item: a diagnostic that bypasses the production gate reports
+things the player can never see, and its output looks exactly as authoritative as a real finding.**
+This one cost a backlog entry and an afternoon's suspicion of a defect that does not exist. The
+probe basket was already changed to rank by observed demand from real opportunities, which fixed it
+by accident — the current `PickProbeGoods` cannot select an untradeable def because it starts from
+generated opportunities.
+
+**If this is ever reopened**, the question worth asking is a different one: whether
+`IntercolonyTradeBlacklistDef` should exclude ancient scenery *defensively*, in case a mod makes one
+minifiable. That is speculative and not worth doing now.
 
 The baseline's first probe basket took the alphabetically first classifiable def per category
 and landed on `AncientAPC`, `AncientBandNode` and `AncientCryptosleepCasket`. All three were
