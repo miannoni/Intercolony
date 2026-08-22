@@ -951,7 +951,20 @@ to the menu and reload.
 **Pass.** The log names each step through 39 in order, the second load reports the current schema, and
 no exception appears.
 
-### The world-map Economy tab has never been seen on screen
+### ~~The world-map Economy tab has never been seen on screen~~ — CONFIRMED IN PLAY 2026-08-22
+
+**Matteo confirmed it.** The Economy button appears on a settlement's world-map inspect pane and
+vanilla's Planet and Terrain tabs are both still present, which was the check that mattered: had the
+def patch replaced the inherited `inspectorTabs` list rather than merging into it, those two would
+have disappeared from every settlement in the game. The `XmlInheritance` reading was right.
+
+**This also closes Stage 1 acceptance criterion 7**, which had been open since the Stage 1 gate as
+"whether a settlement's economy reads clearly without debug numbers". The answer turned out to be
+that it read clearly but in the wrong place — the fix was placement, not wording.
+
+The steps below are kept as the regression check if the patch or the tab class is ever touched.
+
+### Original steps — kept as the regression check
 
 **Added 2026-08-21 with `713408b`.** Raised by Matteo during the Stage 1 tooltip look: clicking a
 settlement on the world map offers **Planet** and **Terrain**, and should offer **Economy** too,

@@ -251,11 +251,24 @@ that boundary. Evidence outside it is not implied.
   completing sales and purchases of ordinary items from at least Biotech and RT Fuse, then
   deliberately exercise a pawn-management mod with an active employee as requested in
   `docs/PENDING_PLAYTESTS.md:90-105`.
-- **DLC checks do not assume every expansion is installed.** Production classification is driven by
-  loaded defs through `IntercolonyProductClassifier`; no Royalty, Ideology, Anomaly or Biotech gate
-  is required by that path. Only Biotech was installed, so the absence cases have not been observed.
-  Prove this with a Core-only start and market/RFQ/save-load smoke test, then the same test with each
-  available DLC combination. Unowned expansions remain untested rather than unsupported.
+- ~~**DLC checks do not assume every expansion is installed.**~~ **PROVEN 2026-08-22 — moved to met
+  and proven.** Production classification is driven by loaded defs through
+  `IntercolonyProductClassifier`; no Royalty, Ideology, Anomaly or Biotech gate is required by that
+  path. The absence case has now been observed rather than argued: the active mod list was reduced to
+  **Harmony, Core and Intercolony only**, a fresh world generated, and the **full suite ran 990
+  passed / 0 failed / 13 skipped** with both leak guards `OK` and a clean log — the same result as
+  the full load order.
+
+  **The number that actually proves the criterion is the def count, not the pass.** The classifier
+  reported **348 tradable fungible defs** on Core-only against **419** with Biotech and the five
+  workshop mods loaded. It adapted to what was present instead of assuming anything, which is the
+  claim. A hardcoded expectation would have produced either the same count or an error.
+
+  The audit asked for "each available DLC combination". Only Biotech is owned, so Core-only and
+  Core+Biotech are the whole space, and both now pass. **Royalty, Ideology and Anomaly remain
+  untested rather than unsupported**, and cannot become otherwise on this machine.
+
+  The mod list was restored afterwards and re-verified at 990/0/13 with all nine entries present.
 
 ### UX
 
@@ -282,9 +295,17 @@ that boundary. Evidence outside it is not implied.
 
 ## Summary
 
-- **Met and proven:** 25
-- **Met but unproven:** 11
+- **Met and proven:** 26
+- **Met but unproven:** 10
 - **Not met:** 0
+
+**Updated 2026-08-22.** "DLC checks do not assume every expansion is installed" moved to proven by
+running the full suite on a Core-only load order; see that entry above. The ten that remain are
+**all subjective play judgements** — whether demand feels meaningful, whether scarcity changes a
+decision, whether distance changes a choice, whether obligations and deadlines read clearly — plus
+two long-run reliability tests. None of them can be closed by a self-test, and the audit says so
+individually. That is the honest shape of what is left: not missing code, and no longer missing
+automation either, but time in a chair.
 - **Total criteria audited:** 36
 
 ## Shortest path to 1.0
