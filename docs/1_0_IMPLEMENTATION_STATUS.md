@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 3 — Circumstance-driven economic events
-Current slice:      3D — event lifecycle and generation; 2K calibration deferred to end of 1.0
-Last completed:     3C — four event definitions (2026-08-22)
+Current slice:      3F — debug controls (last Stage 3 slice); calibration deferred to end of 1.0
+Last completed:     3E — events tell the player (2026-08-22)
 Current save schema: 45
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -250,6 +250,79 @@ that has migrated, and a single immediate `status` query can sample the pre-migr
 polls to a 30-second deadline and reports how long it waited.
 
 ## Slice log
+
+### 3E — events tell the player (2026-08-22)
+
+**Claim:** an event announces itself proportionately, and the player can see the cause rather than
+only the symptom.
+**Files:** `Economy/EconomicEventService.cs`, `UI/WITab_Economy.cs`,
+`Debug/IntercolonyEventSelfTest.cs`.
+**Commit:** `acadccb`. **Schema:** unchanged at 45.
+**Tests:** event suite 39 → 42 (+1 skip). Full suite green on **four fresh worlds** (1053–1056
+passed, 0 failed, 14–16 skipped), both leak guards OK, log clean.
+
+**Severity is proportional, never `Always`.** `Important` when the player has actually traded with a
+settlement the event affects, `Chatty` otherwise. §3.6 requires this in as many words — a drought on
+the far side of the world must not interrupt. Letters go through `IntercolonyLetters.Send` rather
+than `Find.LetterStack`, so the player's letter-volume setting still governs.
+
+**The decision is an `internal` method returning the importance**, so the suite drives the real
+choice instead of sending letters and inspecting them. That is the fix for the hollowness that bit
+3B and 3D, and the delegate did it without being asked.
+
+**Three surfaces that cannot disagree.** The letter, the Economy tab row, and the price breakdown all
+resolve scope through `EconomicEventService`. The tab already showed *"Right now: commodities
+shortage"* from pressure; it now names the event causing it and how long it has left, which is what
+makes §3.6's "understandable before the player notices the price table" true rather than
+aspirational.
+
+**Remaining days go through a labelled helper, never a raw tick subtraction.** Five sentinel bugs in
+this project, two of exactly that shape, one of which reappeared in a second method after the first
+fix.
+
+**Verified in both directions.** Forcing every event to `Always` reddens two assertions — the
+proportionality check, reporting `traded=Always, untraded=Always`, and the guard that no start letter
+ever shouts.
+
+**First slice built entirely through `codex exec` with `gpt-5.6-luna` at max effort**, per the
+delegation policy Matteo revised the same day. It cited `LetterDefOf.NeutralEvent` at
+`reference/decompiled/RimWorld/LetterDefOf.cs:14` rather than asserting it, which is the mod's
+hardest rule.
+
+### 3D — events begin, end and generate (2026-08-22)
+
+**Claim:** events start from the market refresh, disturb pressure, run their course, and leave a tail
+that Stage 2 decays on its own.
+**Files:** `Economy/EconomicEventService.cs`, `Core/IntercolonyWorldComponent.cs`,
+`Debug/IntercolonyEventSelfTest.cs`.
+**Commit:** `0cedf49`. **Schema:** unchanged at 45.
+**Tests:** event suite 30 → 39. Full suite green on **four fresh worlds** (1051–1052 passed, 0
+failed, 14–15 skipped), delta 0, both leak guards OK, log clean.
+
+**The ordering is the design.** `AdvanceLifecycle` sits immediately before `AdvanceAll`, so a start
+shock is picked up by the category chains and regional diffusion **in the same refresh**. Acceptance
+criterion 5 — "existing Stage 2 propagation carries part of the shock naturally" — is only
+satisfiable this way, because chains propagate *persisted pressure* and never see a live modifier.
+That is the consequence the 3C/3D decision predicted in advance.
+
+**`AdvanceAll` was deliberately not reordered to protect the fresh shock.** `ApplyShock` already
+stamps `lastAdvancedRefresh` at shock time so a new shock does not decay in the cycle it was born —
+2B recorded that. The obvious "fix" would have broken mean reversion's determinism for every
+settlement to solve a problem that was already solved.
+
+**Two test defects, both found by mutation and neither by reading.**
+
+*The start shock was not tested at all.* Disabling it entirely left **all 37 assertions green**,
+because they called `ApplyStartShock` directly rather than driving the path that calls it. That is
+§20.2 — the right function, not the real path — and the **fourth** appearance of that shape in this
+program. Two assertions now drive generation through its real entry point and read pressure back
+through `MarketPressureService`; both redden under the mutation.
+
+*The work-cap assertion was world-dependent.* It required a faction owning more settlements than the
+cap of 24 and simply **failed** when the world had none — which is how it went red on a world whose
+busiest faction owned 11. It now skips honestly, guarded on the same quantity it compares. That is
+the 2F rule again: a guard that measures a different quantity than the assertion never fires, and one
+that measures the right quantity but cannot skip fails for the wrong reason.
 
 ### 3C — four event definitions (2026-08-22)
 
