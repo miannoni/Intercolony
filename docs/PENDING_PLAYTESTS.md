@@ -41,6 +41,11 @@ test result.
 
 ## Outstanding
 
+Self-test items now run unattended through the dev test bridge and are closed as a class.
+They no longer need individual entries here, because every pass reports its own failures and skips.
+What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
+A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
+
 ### The whole suite, in one action
 
 **This no longer needs a human.** Since the dev test bridge landed, the whole suite runs from a
@@ -329,7 +334,11 @@ Market board structurally cannot show a shortage that arrives later. The tab is 
 two kept deliberately apart: *what this place is* (baseline identity, unchanging) and *what it is
 going through right now* (only shown when something actually is).
 
-#### The three suites that now touch the timeline — rerun to confirm no regression
+#### ~~The three suites that now touch the timeline — rerun to confirm no regression~~ -- CLOSED 2026-08-21
+
+The bridge run closed this with order **107/0/1**, RFQ **81/0/0** and combat clause **54/0/0**; its
+whole-run leak block also reported the commercial timeline unchanged at **12 records**, a stronger
+check than dumping the timeline and inspecting it by eye. The detailed run record below is retained.
 
 Stage 0 gate criterion 6. `IntercolonyOrderSelfTest`, `IntercolonyRfqSelfTest` and
 `IntercolonyCombatClauseSelfTest` all drive transitions that now record commercial events, and
@@ -392,7 +401,9 @@ answer "does this save have a supply agreement?". `Dump contracts` exists as a d
 not reachable over the bridge. **Fix the state summary first**; until then this check cannot be
 automated at all, which is why it stayed open rather than being quietly attempted.
 
-#### Schema 42 → 43 migration under a real save — never run
+#### ~~Schema 42 → 43 migration under a real save — never run~~ -- CLOSED 2026-08-21
+
+This was a duplicate of the already-closed **Schema 42 → 43 migration under a real save** entry above; listing the same closed item twice is part of why this file stopped being usable.
 
 **Full path.** Load an actual save made with 0.9.3 (schema 42) — not a new colony. Then read
 the log with `powershell -ExecutionPolicy Bypass -File dev.ps1 log`.
@@ -402,12 +413,20 @@ the log with `powershell -ExecutionPolicy Bypass -File dev.ps1 log`.
 with no red errors, and every existing order, contract, request and employment still present
 afterwards.
 
-**Why `dev.ps1` cannot prove this.** It launches `-quicktest`, which creates a *new* world
-that initializes at the current schema and therefore never enters the migration path at all.
-Only opening a real save exercises it. This is the same standing gap already recorded below
-for the three earlier migrations.
+**Why a plain `dev.ps1` run cannot prove this — and what can, which is newer than this entry.**
+A `-quicktest` launch creates a *new* world that initializes at the current schema and therefore
+never enters the migration path at all. That much is still true and always will be. What has
+changed since this was written is the conclusion drawn from it: `dev.ps1 bridge -Save <name>`
+stages a copy of a real save as RimWorld's stock `autostart` file and boots into it through the
+real `GameDataSaveLoader.LoadGame`, so a migration **can** now be proven unattended. The 42 → 43 → 44
+chain was run that way on the 22.5 MB `Fenhana` colony with zero exceptions. Do not repeat the old
+claim that only a human at the keyboard can exercise a migration.
 
-### Correction-batch self-tests
+### ~~Correction-batch self-tests~~ -- CLOSED 2026-08-21
+
+These were self-test items, and the bridge now runs them unattended on every pass, so they do not
+need re-listing here. The 2026-08-21 real-colony run reported order **107/0/1**, contract **39/0/0**
+and RFQ **81/0/0**.
 
 These are dev actions, not play-tests, but their procedures remain here so later changes can rerun
 them. All of them: **F12** → **orange bug icon** (top-right toolbar) → type the search term → click
@@ -419,7 +438,10 @@ regression; after the focused fix, the stated result is the rerun. The order sui
 skipped recorded-map collection versus `Find.AnyPlayerHomeMap` because the world had one home map,
 and skipped live-offer acceptance because no offer existed. Those limits remain manual work below.
 
-#### Find Buyer, availability and pickup timing — `Run order self-test`
+#### ~~Find Buyer, availability and pickup timing — `Run order self-test`~~ -- CLOSED 2026-08-21
+
+The unattended real-colony run reported **107 passed, 0 failed, 1 skipped** for the order suite, so
+this self-test item is closed; the skipped assertion remains subject to the file's no-proof rule.
 
 **Full path.** From RimWorld's main menu, open **Options** → **General** and enable
 **Development mode**. Load a colony with a home map. Press **F12**, click the **orange bug icon** in
@@ -436,7 +458,9 @@ route fallback; and the rule that an en-route buyer survives the old readiness d
 skip which prevents the new availability/pickup assertions from running is not evidence for those
 assertions and must not be marked as a pass.
 
-#### Contract liveness and completed-history offers — `Run contract self-test`
+#### ~~Contract liveness and completed-history offers — `Run contract self-test`~~ -- CLOSED 2026-08-21
+
+The unattended real-colony run reported **39 passed, 0 failed, 0 skipped** for the contract suite.
 
 **Full path.** From RimWorld's main menu, open **Options** → **General** and enable
 **Development mode**. Load a colony. Press **F12**, click the **orange bug icon** in the top-right
@@ -454,7 +478,9 @@ orders and reputation.
 accessible settlement/economic profile exists is a failure to verify this batch. Do not count
 "nothing visibly changed" as a pass.
 
-#### Procurement cancellation and concluded-order selection — `Run RFQ self-test`
+#### ~~Procurement cancellation and concluded-order selection — `Run RFQ self-test`~~ -- CLOSED 2026-08-21
+
+The unattended real-colony run reported **81 passed, 0 failed, 0 skipped** for the RFQ suite.
 
 **Full path.** From RimWorld's main menu, open **Options** → **General** and enable
 **Development mode**. Load a colony. Press **F12**, click the **orange bug icon** in the top-right
@@ -473,7 +499,10 @@ cancellation settlement prerequisite cannot be resolved, the test itself emits a
 initial `(no tradable defs or no settlements; skipped)` with no final count is also not a pass. Do
 not rerun until a quiet result and mark the first attempt passed.
 
-#### Buy-only unlock, including the obligation guard — `Run order self-test`
+#### ~~Buy-only unlock, including the obligation guard — `Run order self-test`~~ -- CLOSED 2026-08-21
+
+The unattended real-colony run reported **107 passed, 0 failed, 1 skipped** for the order suite; the
+buy-only assertions ran cleanly, while the separately named skipped assertion remains unproven.
 
 Added 2026-08-09 with the buy-only setting. Same action as the availability checks above, so one
 click covers both, but read the `Buy-only trade unlock:` block specifically.
@@ -683,7 +712,11 @@ with **You deliver**, load matching animals into a caravan and take them.
 **Not proven by any of this:** balance. Whether animal prices are sane against the rest of
 the economy needs play, not a test.
 
-#### Animal specification, matcher and eligibility — `Run animal spec self-test`
+#### ~~Animal specification, matcher and eligibility — `Run animal spec self-test`~~ -- CLOSED 2026-08-21
+
+The real-colony run reported **62 passed, 0 failed, 7 skipped**. This closes the suite item, but a
+skip is not proof: the real colony converted some old skips into assertions, not all of them, so
+those seven specific assertions remain unproven.
 
 Added 2026-08-09 with the `AnimalSpec` slice (schema 25). **F12** → **orange bug icon** → type
 `Run animal spec self-test` → click **Intercolony → Run animal spec self-test**.
@@ -718,7 +751,12 @@ equality, so a changed multiplier fails loudly instead of drifting. Two are wort
 The pricing group skips only if no positive-value live-bearing race using Core's `AnimalAdult` stage
 is loaded, which in practice means it runs almost always.
 
-#### Which colony a buyer collects from — `Run order self-test`
+#### ~~Which colony a buyer collects from — `Run order self-test`~~ -- CLOSED 2026-08-21
+
+This assertion had reported `SKIPPED` since 0.9.0 for want of a second colony. Matteo's first real
+two-colony run exposed two wrong-colony regressions, `9ca5062` fixed them, and the assertion now
+passes (`PROGRESS.md:2145-2152`). This closes only the self-test half: **The buyer-pickup colony fix
+needs two colonies** remains open as the manual reproduction (`PROGRESS.md:2214-2216`).
 
 Added 2026-08-09 with the fulfilment-colony fix (schema 26). Same action as the availability checks.
 
@@ -774,7 +812,12 @@ vanish from the *first* colony instead. Either result means the fix did not take
 **Do not reuse this as the abandoned-colony test.** Since `b6e868e`, collection must never substitute
 another colony after the fulfilment colony disappears; that refusal path is the separate test below.
 
-### Procurement delivery and refund use the paying colony
+### ~~Procurement delivery and refund use the paying colony~~ -- CLOSED 2026-08-21
+
+Matteo directly observed two-colony delivery and refund routing working on 2026-08-13
+(`docs/BACKLOG.md:229-234`). That observation closes the paying-colony paths, while the same record
+says the map-less and zero-placement paths still lack practical play reproduction; they remain open
+as the separate item below.
 
 Added 2026-08-13 with the purchase-order destination fix (schema 32). Neither path is verified in
 play.
@@ -801,6 +844,8 @@ at the first colony means the fix did not take.
 **Use the same world for the sales-side check above.** This is exactly the two-colony setup needed
 by the buyer-pickup assertion that `Run order self-test` keeps skipping, so one two-colony session
 can settle both the sales side and the procurement side.
+
+#### Map-less and zero-placement procurement paths remain unobserved
 
 **Not covered:** the no-home-map refund hold and the zero-placement refund hold have no coverage and
 are not practically reachable by hand. Do not treat this two-colony test as evidence for either.
