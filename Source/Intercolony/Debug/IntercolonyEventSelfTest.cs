@@ -9,11 +9,7 @@ using Verse;
 namespace Intercolony
 {
     /// <summary>
-    /// Self-test for the persisted economic-event model and its definition factory (Stages 3A/3C).
-    ///
-    /// Nothing generates or advances these records yet. The definition assertions therefore stop at
-    /// construction: adding a synthetic event to world state would smuggle the next slice's lifecycle
-    /// responsibility into a table/factory test and could leave player state changed after a failure.
+    /// Self-test for the persisted event model, definitions, and lifecycle (Stages 3A/3C/3D).
     /// </summary>
     public static class IntercolonyEventSelfTest
     {
@@ -54,6 +50,8 @@ namespace Intercolony
             // restoring by length could leave synthetic events in place of the player's real ones —
             // the same Stage 0.3 defect that left synthetic timeline records behind.
             List<EconomicEvent> saved = new List<EconomicEvent>(state.EconomicEvents);
+            List<SettlementMarketState> savedMarketStates =
+                CloneMarketStates(state.MarketStates);
 
             try
             {
@@ -121,6 +119,7 @@ namespace Intercolony
                     "load pruning drops null and ended events but keeps a live event");
 
                 CheckDefinitions(r, state);
+                CheckLifecycle(r, state);
             }
             catch (Exception ex)
             {
@@ -131,10 +130,281 @@ namespace Intercolony
             {
                 state.EconomicEvents.Clear();
                 state.EconomicEvents.AddRange(saved);
+                state.MarketStates.Clear();
+                state.MarketStates.AddRange(savedMarketStates);
+                state.RefreshMarketStateIndex();
                 r.sb.AppendLine($"        economic events restored to {state.EconomicEvents.Count}.");
+                r.sb.AppendLine($"        market states restored to {state.MarketStates.Count}.");
             }
 
             return Summarize(r);
+        }
+
+        private static void CheckLifecycle(Results r, IntercolonyWorldComponent state)
+        {
+            List<Settlement> accessible = new List<Settlement>();
+            List<Settlement> worldSettlements = Find.WorldObjects?.Settlements;
+            if (worldSettlements != null)
+            {
+                for (int i = 0; i < worldSettlements.Count; i++)
+                {
+                    if (IntercolonyMarketAccess.IsAccessible(worldSettlements[i]))
+                    {
+                        accessible.Add(worldSettlements[i]);
+                    }
+                }
+            }
+
+            accessible.Sort((left, right) => left.ID.CompareTo(right.ID));
+            CheckGeneratedLifecycleWiring(r, state, GenTicks.TicksGame);
+            if (accessible.Count < 2)
+            {
+                r.skipped += 7;
+                r.sb.AppendLine(
+                    "  SKIP  lifecycle assertions require two accessible settlements");
+                return;
+            }
+
+            Settlement anchor = accessible[0];
+            Settlement outside = accessible[1];
+            int now = GenTicks.TicksGame;
+            state.EconomicEvents.Clear();
+            state.MarketStates.Clear();
+            state.RefreshMarketStateIndex();
+
+            EconomicEvent expired = EventFor(anchor, now - 2, now);
+            EconomicEvent live = EventFor(anchor, now, now + 1);
+            state.EconomicEvents.Add(expired);
+            state.EconomicEvents.Add(live);
+            EconomicEventService.AdvanceLifecycle(state, now, allowGeneration: false);
+            r.Check(
+                state.EconomicEvents.Count == 1 && state.EconomicEvents[0] == live,
+                "lifecycle removes an event past its window and keeps a live event");
+
+            state.EconomicEvents.Clear();
+            state.MarketStates.Clear();
+            state.RefreshMarketStateIndex();
+            EconomicEvent scoped = EventFor(anchor, now, now + 1);
+            state.EconomicEvents.Add(scoped);
+            EconomicEventService.ApplyStartShock(state, scoped);
+            float insidePressure = state.MarketStateFor(anchor.ID)?.DemandPressureFor(
+                IntercolonyProductCategory.ManufacturedGoods) ?? SettlementMarketState.Neutral;
+            float outsidePressure = state.MarketStateFor(outside.ID)?.DemandPressureFor(
+                IntercolonyProductCategory.ManufacturedGoods) ?? SettlementMarketState.Neutral;
+            r.Check(
+                insidePressure > SettlementMarketState.Neutral &&
+                Mathf.Approximately(outsidePressure, SettlementMarketState.Neutral),
+                "start shock reaches an in-scope settlement and leaves an out-of-scope one neutral");
+
+            EconomicEventService.AdvanceLifecycle(state, scoped.endTick, allowGeneration: false);
+            float tail = state.MarketStateFor(anchor.ID)?.DemandPressureFor(
+                IntercolonyProductCategory.ManufacturedGoods) ?? SettlementMarketState.Neutral;
+            r.Check(
+                state.EconomicEvents.Count == 0 && tail > SettlementMarketState.Neutral,
+                "pressure tail remains after lifecycle removes the ended event");
+
+            float linkedBefore = state.MarketStateFor(anchor.ID).DemandPressureFor(
+                IntercolonyProductCategory.IntermediateGoods);
+            MarketPressureService.PropagateEconomicChains(state);
+            float linkedAfter = state.MarketStateFor(anchor.ID).DemandPressureFor(
+                IntercolonyProductCategory.IntermediateGoods);
+            r.Check(
+                linkedAfter > linkedBefore,
+                "real chain propagation carries a category linked from the start shock");
+
+            state.EconomicEvents.Clear();
+            state.MarketStates.Clear();
+            state.RefreshMarketStateIndex();
+            for (int i = 0; i < EconomicEventService.MaxConcurrentEvents + 4; i++)
+            {
+                EconomicEventService.TryGenerate(state, now, forceStart: true);
+            }
+            r.Check(
+                state.EconomicEvents.Count == EconomicEventService.MaxConcurrentEvents,
+                "forced generation never exceeds the concurrent-event cap");
+
+            EconomicEventService.GenerationDecision first =
+                EconomicEventService.DecideGeneration(state, accessible);
+            EconomicEventService.GenerationDecision second =
+                EconomicEventService.DecideGeneration(state, accessible);
+            r.Check(
+                first.roll == second.roll && first.Starts == second.Starts &&
+                first.type == second.type && first.anchor.ID == second.anchor.ID,
+                "economy seed and refresh count reproduce the same generation decision");
+
+            int busiestFaction = EconomicEvent.NoFaction;
+            int busiestCount = 0;
+            for (int i = 0; i < accessible.Count; i++)
+            {
+                int factionId = accessible[i].Faction.loadID;
+                int count = accessible.FindAll(s => s.Faction.loadID == factionId).Count;
+                if (count > busiestCount)
+                {
+                    busiestFaction = factionId;
+                    busiestCount = count;
+                }
+            }
+
+            EconomicEvent factionWide = new EconomicEvent
+            {
+                startTick = now,
+                endTick = now + 1,
+                factionLoadId = busiestFaction
+            };
+            factionWide.demandModifier[(int)IntercolonyProductCategory.ManufacturedGoods] = 1.25f;
+            state.MarketStates.Clear();
+            state.RefreshMarketStateIndex();
+            int shocked = EconomicEventService.ApplyStartShock(state, factionWide);
+            // A faction at or below the cap cannot exercise the capped path, so this world
+            // does not provide enough settlements to test the per-event settlement cap.
+            if (busiestCount <= EconomicEventService.MaxShockedSettlementsPerEvent)
+            {
+                r.skipped++;
+                r.sb.AppendLine(
+                    $"  SKIP  faction-wide start shock cap was not tested: busiest faction has {busiestCount} settlements, cap is {EconomicEventService.MaxShockedSettlementsPerEvent}");
+            }
+            else
+            {
+                r.Check(
+                    shocked == EconomicEventService.MaxShockedSettlementsPerEvent,
+                    "faction-wide start shock obeys the per-event settlement work cap",
+                    $"{shocked} of {busiestCount} in-scope settlements shocked");
+            }
+        }
+
+        private static void CheckGeneratedLifecycleWiring(
+            Results r, IntercolonyWorldComponent state, int now)
+        {
+            List<EconomicEvent> savedEvents = new List<EconomicEvent>(state.EconomicEvents);
+            List<SettlementMarketState> savedMarketStates =
+                CloneMarketStates(state.MarketStates);
+
+            try
+            {
+                state.EconomicEvents.Clear();
+                state.MarketStates.Clear();
+                state.RefreshMarketStateIndex();
+
+                EconomicEventService.GenerationDecision decision =
+                    EconomicEventService.DecideGeneration(state);
+                if (decision.anchor == null)
+                {
+                    r.skipped += 2;
+                    r.sb.AppendLine(
+                        "  SKIP  forced-generation lifecycle assertions require an eligible accessible anchor settlement");
+                    return;
+                }
+
+                EconomicEvent started =
+                    EconomicEventService.TryGenerate(state, now, forceStart: true);
+                Settlement pressuredSettlement = FirstEligibleSettlementInScope(started);
+                bool pressureAfterStart = pressuredSettlement != null &&
+                    HasNonNeutralPressure(state, pressuredSettlement.ID);
+                r.Check(
+                    started != null && state.EconomicEvents.Contains(started) && pressureAfterStart,
+                    "forced generation applies pressure through the real event-start path");
+
+                EconomicEventService.AdvanceLifecycle(
+                    state, started?.endTick ?? now, allowGeneration: false);
+                bool pressureAfterEnd = pressuredSettlement != null &&
+                    HasNonNeutralPressure(state, pressuredSettlement.ID);
+                r.Check(
+                    started != null && !state.EconomicEvents.Contains(started) && pressureAfterEnd,
+                    "pressure tail remains after a generated event ends through the lifecycle");
+            }
+            finally
+            {
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.AddRange(savedEvents);
+                state.MarketStates.Clear();
+                state.MarketStates.AddRange(savedMarketStates);
+                state.RefreshMarketStateIndex();
+            }
+        }
+
+        private static Settlement FirstEligibleSettlementInScope(EconomicEvent economicEvent)
+        {
+            if (economicEvent == null)
+            {
+                return null;
+            }
+
+            List<Settlement> eligible = new List<Settlement>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements != null)
+            {
+                for (int i = 0; i < settlements.Count; i++)
+                {
+                    if (SettlementProfileGenerator.IsEligible(settlements[i]))
+                    {
+                        eligible.Add(settlements[i]);
+                    }
+                }
+            }
+
+            eligible.Sort((left, right) => left.ID.CompareTo(right.ID));
+            return eligible.Find(candidate =>
+                EconomicEventService.IsInScope(economicEvent, candidate));
+        }
+
+        private static bool HasNonNeutralPressure(
+            IntercolonyWorldComponent state, int settlementId)
+        {
+            for (int categoryIndex = 0;
+                categoryIndex < IntercolonyProductCategoryUtility.Count;
+                categoryIndex++)
+            {
+                IntercolonyProductCategory category =
+                    (IntercolonyProductCategory)categoryIndex;
+                float demand = EffectiveEconomyService.CurrentDemandPressure(
+                    state, settlementId, category);
+                float supply = EffectiveEconomyService.CurrentSupplyPressure(
+                    state, settlementId, category);
+                if (!Mathf.Approximately(demand, SettlementMarketState.Neutral) ||
+                    !Mathf.Approximately(supply, SettlementMarketState.Neutral))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static EconomicEvent EventFor(Settlement anchor, int startTick, int endTick)
+        {
+            EconomicEvent economicEvent = new EconomicEvent
+            {
+                startTick = startTick,
+                endTick = endTick,
+                anchorSettlementId = anchor.ID,
+                radiusTiles = EconomicEventDefinitions.SingleSettlementRadiusTiles
+            };
+            economicEvent.demandModifier[(int)IntercolonyProductCategory.ManufacturedGoods] = 1.25f;
+            return economicEvent;
+        }
+
+        private static List<SettlementMarketState> CloneMarketStates(
+            List<SettlementMarketState> source)
+        {
+            List<SettlementMarketState> copy = new List<SettlementMarketState>(source.Count);
+            for (int i = 0; i < source.Count; i++)
+            {
+                SettlementMarketState original = source[i];
+                if (original == null)
+                {
+                    copy.Add(null);
+                    continue;
+                }
+
+                copy.Add(new SettlementMarketState(original.settlementId)
+                {
+                    demandPressure = (float[])original.demandPressure.Clone(),
+                    supplyPressure = (float[])original.supplyPressure.Clone(),
+                    lastAdvancedRefresh = original.lastAdvancedRefresh
+                });
+            }
+
+            return copy;
         }
 
         private static void CheckDefinitions(Results r, IntercolonyWorldComponent state)

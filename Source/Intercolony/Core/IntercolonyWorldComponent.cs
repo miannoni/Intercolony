@@ -1488,6 +1488,8 @@ namespace Intercolony
             OrderHistoryService.Prune(this);
             CommercialTimelineService.Prune(this);
 
+            EconomicEventService.AdvanceLifecycle(this, lastRefreshTick);
+
             // Mean-revert before pruning, not after: a settlement whose pressure settles on this
             // cycle should stop costing space on this cycle. Reversed, every record would survive
             // one refresh past the point it stopped meaning anything.
