@@ -862,6 +862,38 @@ what it saw, not how much it saw.**
 **Schema:** unchanged.
 **Tests:** none applicable.
 
+## PENDING — Stage 3 is held, and only Matteo can release it (2026-08-22)
+
+**Status: waiting on him, not on work.** He asked for this to be noted rather than decided.
+
+**All twelve of Stage 2's formal acceptance criteria are met.** Pressure survives save/load (2A);
+demand no longer depends on per-cycle random multipliers (1.2/2C); archetype still matters; a forced
+shortage moves selling prices *and* opportunity size (2C/2E) and RFQ behaviour (2F); pressure
+mean-reverts (2B); chain propagation is bounded (2H); regional influence is bounded (2I); accepted
+orders keep their stored economics; splitting a trade cannot multiply its effect (2G); the suites
+pass with skips reported; and debug output can explain why a market moved (2J plus the §2.12
+diagnostics).
+
+**What is not closed is the play gate**, which §20.4 says no self-test can settle: does the market
+*feel* alive rather than flat or chaotic? Matteo has said he can only judge that in a long play
+session and cannot do one at present.
+
+**The decision not to proceed anyway.** Stage 3's structure does not depend on Stage 2's
+coefficients — `MaxCondition` was deliberately left as headroom precisely so an event modifier could
+multiply a settlement already under pressure — so building Stage 3 would probably survive a later
+retune. That is an argument, not a licence. The plan says in as many words not to begin Stage 3 until
+the gate closes, and §17.3 reserves for Matteo any call that would change the program's shape.
+Starting the next stage on my own reading of "probably survives" is exactly that call.
+
+**What this does not block.** Everything reachable without him has been done: the migration chain is
+proven from schema 1 on 33 real saves, the DLC-independence criterion is proven on a Core-only load
+order, contract timeline coverage is closed, and the play-test file has been audited down to what
+genuinely needs a human. Work continues on `docs/BACKLOG.md` items, which are outside the numbered
+program by definition and so are not gated by it.
+
+**Release it by:** playing a long session, judging market feel, and either accepting the current
+coefficients or naming which to move. `docs/PENDING_PLAYTESTS.md` has the gate written as steps.
+
 ## Decisions / deviations
 
 ### 2026-08-21 — Stage 2C — CORRECTION

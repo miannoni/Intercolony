@@ -26,7 +26,7 @@ You are continuing a multi-session implementation program on branch `1.0` of
 Two of nine stages complete and **Stage 2 is code-complete** — every slice is
 built, and only its play gate remains. Save schema **44**. Mod version 0.9.3 on
 `main`; `main` stays releasable, all 1.0 work lands on branch `1.0` and merges
-at Stage 8. Last commit `cf2557f`.
+at Stage 8. Last commit: see `git log`; the program moved a lot on 2026-08-22.
 
 Stage 2 slices done, in the order they were actually built — **not** ledger
 letter order:
@@ -40,9 +40,43 @@ letter order:
 - **2I** modest regional pressure diffusion
 - **2J** price breakdowns name the current shortage or surplus
 
-The full suite runs **968–969 passed / 0 failed / 13–14 skipped** on a
-`-quicktest` world, and **944 / 0 / 9** on the real colony save (that figure
-predates 2J's 19 assertions).
+The full suite runs **988–991 passed / 0 failed / 13–14 skipped** on a
+`-quicktest` world. Compare failures and the leak guards across runs, never raw
+totals: several suites size themselves to whatever the loaded world contains.
+
+## Read this before planning anything — the shape of the project changed on 2026-08-22
+
+**Stage 3 is HELD, waiting on Matteo, not on work.** All twelve Stage 2 acceptance criteria are met;
+the open item is the play gate, a judgement about feel that §20.4 says no self-test settles, and he
+cannot do a long session at present. He asked for it to be noted as pending. **Do not start Stage 3
+on your own reading that its structure would survive a retune** — the plan says not to, and §17.3
+reserves that call for him. See the PENDING section in the status ledger.
+
+**Migration is proven from schema 1 on 33 real saves.** He authorised using any of his saves. Two
+new tasks exist: `dev.ps1 saves` (reads every `.rws` and prints its Intercolony schema, launches
+nothing) and `dev.ps1 migrate <name>|all` (loads a real save, reports schema before/after, step
+count and exceptions, copies only). 32 of 33 passed; every save emitted exactly `44 - N` steps, which
+is the assertion that matters — a lower count means a step was silently skipped. **Re-run
+`dev.ps1 migrate all` after any schema bump.** It is one command and needs no human.
+
+**The migration harness splits exceptions either side of the migration banner.** Before it is damage
+already in the save; at or after it indicts our code, and only the latter fails. One save carries
+pre-existing duplicate thing IDs and passes with a qualifier. Do not "fix" that save.
+
+**1.0 criteria now stand at 26 proven / 10 unproven / 0 unmet**, and **all ten remaining are
+subjective play judgements or long-run runs.** Nothing left is missing code, and nothing left is
+missing automation. Do not write more code to substitute for that evidence; `CLAUDE.md` names it as
+how a project grows features instead of confidence.
+
+**Two criteria closed without him and one with a five-second look:** DLC-independence was proven by
+running the full suite on a Core-only load order (990/0/13, and the classifier reported 348 tradable
+defs against 419 — it adapts to what is loaded); contract timeline write sites are covered; and he
+confirmed the world-map Economy tab with vanilla's Planet and Terrain still present, which also
+closed Stage 1 criterion 7.
+
+**`docs/PENDING_PLAYTESTS.md` was audited from 43 open items to 26.** Most were "run suite X", which
+the bridge now does unattended. What remains genuinely needs a human. Do not re-add automatable
+items to it.
 
 ## Your next slice — 2K, and it is not a coding task
 
@@ -50,18 +84,16 @@ predates 2J's 19 assertions).
 Do not write more code to substitute for it; `CLAUDE.md` names that as how a
 project grows features instead of confidence.
 
-**The migration half is already proven** — the 42 → 43 → 44 chain ran on the
-real 22.5 MB colony with zero exceptions and the suite then passed 944/0/9
-against it. `dev.ps1 bridge -Save <name>` makes it one command. Re-run it as a
-regression check if something later touches persistence; it is not open work.
+**The migration half is long closed** — and far more broadly than this section
+once claimed. See the 2026-08-22 section above: 33 real saves, schemas 1 to 44,
+one command. Not open work.
 
 **What remains is feel.** Does the market read as alive rather than flat or
 chaotic? Do regions form? Every Stage 2 coefficient — `ReversionRetention`
 (0.82), `NudgeValueScale`, the chain table, `DiffusionCoefficient` — was chosen
 conservatively and documented as retune-at-2K, per §18. Expect to move numbers,
-not structure. Fold in **Stage 1 criterion 7** (whether a settlement's economy
-reads from the Market and Relations tooltips), since it is the same kind of
-question.
+not structure. **Stage 1 criterion 7 is closed** — Matteo confirmed the
+world-map Economy tab on 2026-08-22 — so the gate is now market feel alone.
 
 **The gate is written as exact steps in `docs/PENDING_PLAYTESTS.md`** — dev
 mode, the world map, `/` for the debug menu, `Shock settlement economy`, and
@@ -227,7 +259,7 @@ grep with an exclusion in it is not an audit.
 |---|---|---|
 | 0 — Program spine | ✅ Complete | |
 | 1 — Settlement economies | ✅ Complete | |
-| 2 — Market fundamentals | 🔨 Code complete | Only the 2K play gate, which needs Matteo |
+| 2 — Market fundamentals | 🔨 Code complete | Play gate only; **Stage 3 HELD pending Matteo** |
 | 3 — Circumstance events | ⬜ Not started | |
 | 4 — Brand strength | ⬜ Not started | |
 | 5 — Relationships & negotiation | ⬜ Not started | |
