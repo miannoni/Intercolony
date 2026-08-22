@@ -14,6 +14,24 @@ namespace Intercolony
         AnimalDisease
     }
 
+    public static class EconomicEventTypeUtility
+    {
+        /// <summary>Short player-facing label for an economic disturbance.</summary>
+        public static string Label(this EconomicEventType type)
+        {
+            switch (type)
+            {
+                case EconomicEventType.Drought: return "Poor harvest";
+                case EconomicEventType.WarMobilization: return "War mobilization";
+                case EconomicEventType.Epidemic: return "Epidemic";
+                case EconomicEventType.ConstructionBoom: return "Construction boom";
+                case EconomicEventType.Migration: return "Refugee influx";
+                case EconomicEventType.AnimalDisease: return "Herd sickness";
+                default: return type.ToString();
+            }
+        }
+    }
+
     /// <summary>
     /// One persisted temporary disturbance to the world economy (the 1.0 program Stage 3A).
     ///

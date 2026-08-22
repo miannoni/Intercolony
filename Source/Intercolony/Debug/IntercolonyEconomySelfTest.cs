@@ -89,6 +89,7 @@ namespace Intercolony
                 CheckEffectiveEconomyExplanations(r, state);
                 CheckPricingExplainsEffectiveDemand(r, state);
                 CheckSyntheticProfilesIgnoreMarketPressure(r, state);
+                CheckEconomicEventsReachEffectiveEconomy(r, state);
             }
             catch (Exception ex)
             {
@@ -1618,6 +1619,461 @@ namespace Intercolony
                 $"{shockedBaseline:F5} vs {shockedEffective:F5}");
 
             ClearProbe(state);
+        }
+
+        /// <summary>
+        /// Events matter only if their time, faction and geography reach the settlement, and the
+        /// effective-economy API must preserve direction, composition, explanation and read-only
+        /// guarantees while applying them. These checks stay at that public boundary because
+        /// reproducing the event service's arithmetic here would remain green if composition were
+        /// accidentally removed from the values that market callers actually consume.
+        /// </summary>
+        private static void CheckEconomicEventsReachEffectiveEconomy(
+            Results r, IntercolonyWorldComponent state)
+        {
+            List<EconomicEvent> savedEvents = new List<EconomicEvent>(state.EconomicEvents);
+            ClearProbe(state);
+            try
+            {
+                List<Settlement> accessible = new List<Settlement>();
+                List<Settlement> settlements = Find.WorldObjects?.Settlements;
+                if (settlements != null)
+                {
+                    foreach (Settlement candidate in settlements)
+                    {
+                        if (candidate != null && SettlementProfileGenerator.IsEligible(candidate) &&
+                            IntercolonyMarketAccess.IsAccessible(candidate))
+                        {
+                            accessible.Add(candidate);
+                        }
+                    }
+                }
+
+                if (accessible.Count == 0)
+                {
+                    r.Skip("economic events reach the effective economy",
+                        "the world has no eligible accessible settlement");
+                    return;
+                }
+
+                Settlement subject = accessible[0];
+                SettlementEconomicProfile profile = state.GetProfile(subject);
+                if (profile == null)
+                {
+                    r.Skip("economic events reach the effective economy",
+                        "the eligible settlement has no economic profile");
+                    return;
+                }
+
+                // Existing pressure would make an event fixture depend on the player's current
+                // economy. The outer test guard restores these full records after the run.
+                state.MarketStates.RemoveAll(pressure =>
+                    pressure != null && accessible.Exists(
+                        settlement => settlement.ID == pressure.settlementId));
+                state.RefreshMarketStateIndex();
+
+                int now = GenTicks.TicksGame;
+                const IntercolonyProductCategory DemandCategory =
+                    IntercolonyProductCategory.ManufacturedGoods;
+                const IntercolonyProductCategory SupplyCategory =
+                    IntercolonyProductCategory.Commodities;
+
+                state.EconomicEvents.Clear();
+                float baselineDemand = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, DemandCategory);
+                EconomicEvent active = new EconomicEvent
+                {
+                    type = EconomicEventType.Migration,
+                    startTick = now - 10,
+                    endTick = now + 1000
+                };
+                active.demandModifier[(int)DemandCategory] = 1.25f;
+                state.EconomicEvents.Add(active);
+                float raisedDemand = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, DemandCategory);
+                state.EconomicEvents.Remove(active);
+                float restoredDemand = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, DemandCategory);
+
+                // This fails if Stage 3B is unwired, or if removing an event leaves cached
+                // influence behind instead of restoring the exact baseline.
+                r.Check(raisedDemand > baselineDemand && restoredDemand == baselineDemand,
+                    "an active in-scope event raises demand and removal restores the exact baseline",
+                    $"{baselineDemand:F5} -> {raisedDemand:F5} -> {restoredDemand:F5}");
+
+                state.EconomicEvents.Clear();
+                EconomicEvent ended = new EconomicEvent
+                {
+                    type = EconomicEventType.WarMobilization,
+                    startTick = now - 100,
+                    endTick = now - 10
+                };
+                ended.demandModifier[(int)DemandCategory] = 1.80f;
+                state.EconomicEvents.Add(ended);
+                float demandAfterEnded = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, DemandCategory);
+
+                // This fails if the effective path ignores IsActiveAt and treats historical
+                // disturbances as permanent current conditions.
+                r.Check(demandAfterEnded == baselineDemand,
+                    "an event whose entire window is in the past changes nothing",
+                    $"{baselineDemand:F5} vs {demandAfterEnded:F5}");
+
+                Settlement factionInside = null;
+                Settlement factionOutside = null;
+                for (int i = 0; i < accessible.Count && factionInside == null; i++)
+                {
+                    if (accessible[i].Faction == null)
+                    {
+                        continue;
+                    }
+
+                    for (int j = 0; j < accessible.Count; j++)
+                    {
+                        if (accessible[j].Faction != null &&
+                            accessible[j].Faction.loadID != accessible[i].Faction.loadID)
+                        {
+                            factionInside = accessible[i];
+                            factionOutside = accessible[j];
+                            break;
+                        }
+                    }
+                }
+
+                if (factionInside == null)
+                {
+                    r.Skip("a faction-scoped event excludes a different faction",
+                        "the world has fewer than two eligible accessible factions");
+                }
+                else
+                {
+                    SettlementEconomicProfile insideProfile = state.GetProfile(factionInside);
+                    SettlementEconomicProfile outsideProfile = state.GetProfile(factionOutside);
+                    state.EconomicEvents.Clear();
+                    float factionInsideBaseline = EffectiveEconomyService.EffectiveDemand(
+                        state, insideProfile, DemandCategory);
+                    float factionOutsideBaseline = EffectiveEconomyService.EffectiveDemand(
+                        state, outsideProfile, DemandCategory);
+                    EconomicEvent factionEvent = new EconomicEvent
+                    {
+                        type = EconomicEventType.WarMobilization,
+                        startTick = now - 10,
+                        endTick = now + 1000,
+                        factionLoadId = factionInside.Faction.loadID
+                    };
+                    factionEvent.demandModifier[(int)DemandCategory] = 1.40f;
+                    state.EconomicEvents.Add(factionEvent);
+                    float factionInsideDemand = EffectiveEconomyService.EffectiveDemand(
+                        state, insideProfile, DemandCategory);
+                    float factionOutsideDemand = EffectiveEconomyService.EffectiveDemand(
+                        state, outsideProfile, DemandCategory);
+
+                    // Checking both sides proves the fixture matches one real settlement while
+                    // this fails if the faction constraint is ignored and every event is global.
+                    r.Check(factionInsideDemand > factionInsideBaseline &&
+                            factionOutsideDemand == factionOutsideBaseline,
+                        "a faction event affects its faction but not a different faction",
+                        $"inside {factionInsideBaseline:F5} -> {factionInsideDemand:F5}; " +
+                        $"outside {factionOutsideBaseline:F5} -> {factionOutsideDemand:F5}");
+                }
+
+                Settlement radialNear = null;
+                Settlement radialFar = null;
+                float radialNearDistance = float.MaxValue;
+                float radialFarDistance = 0f;
+                if (Find.WorldGrid != null)
+                {
+                    for (int i = 1; i < accessible.Count; i++)
+                    {
+                        float distance = Find.WorldGrid.ApproxDistanceInTiles(
+                            subject.Tile, accessible[i].Tile);
+                        if (distance > 0f && distance < radialNearDistance)
+                        {
+                            radialNearDistance = distance;
+                            radialNear = accessible[i];
+                        }
+
+                        if (distance > radialFarDistance)
+                        {
+                            radialFarDistance = distance;
+                            radialFar = accessible[i];
+                        }
+                    }
+                }
+
+                if (Find.WorldGrid == null)
+                {
+                    r.Skip("a radius event includes one settlement and excludes another",
+                        "the world grid needed to measure settlement distances is unavailable");
+                }
+                else if (radialNear == null)
+                {
+                    r.Skip("a radius event includes one settlement and excludes another",
+                        "the world has no other eligible accessible settlement at a positive distance");
+                }
+                else if (radialFar == null || radialFarDistance <= radialNearDistance)
+                {
+                    r.Skip("a radius event includes one settlement and excludes another",
+                        "the world has no second eligible accessible settlement at a distinct " +
+                        "greater positive distance");
+                }
+                else
+                {
+                    SettlementEconomicProfile nearProfile = state.GetProfile(radialNear);
+                    SettlementEconomicProfile farProfile = state.GetProfile(radialFar);
+                    state.EconomicEvents.Clear();
+                    float radiusNearBaseline = EffectiveEconomyService.EffectiveDemand(
+                        state, nearProfile, DemandCategory);
+                    float radiusFarBaseline = EffectiveEconomyService.EffectiveDemand(
+                        state, farProfile, DemandCategory);
+                    float radius = radialNearDistance +
+                                   ((radialFarDistance - radialNearDistance) * 0.5f);
+                    EconomicEvent radialEvent = new EconomicEvent
+                    {
+                        type = EconomicEventType.ConstructionBoom,
+                        startTick = now - 10,
+                        endTick = now + 1000,
+                        anchorSettlementId = subject.ID,
+                        radiusTiles = radius
+                    };
+                    radialEvent.demandModifier[(int)DemandCategory] = 1.35f;
+                    state.EconomicEvents.Add(radialEvent);
+                    float radiusNearDemand = EffectiveEconomyService.EffectiveDemand(
+                        state, nearProfile, DemandCategory);
+                    float radiusFarDemand = EffectiveEconomyService.EffectiveDemand(
+                        state, farProfile, DemandCategory);
+
+                    // Distinct measured distances prevent the anchor's trivial self-match from
+                    // hiding a scope check that excludes every settlement beyond distance zero.
+                    r.Check(radialNearDistance < radius && radius < radialFarDistance &&
+                            radiusNearDemand > radiusNearBaseline &&
+                            radiusFarDemand == radiusFarBaseline,
+                        "a radius event affects the settlement inside it but not one beyond it",
+                        $"near distance {radialNearDistance:F2}, far distance " +
+                        $"{radialFarDistance:F2}, radius {radius:F2}; near " +
+                        $"{radiusNearBaseline:F5} -> {radiusNearDemand:F5}; far " +
+                        $"{radiusFarBaseline:F5} -> {radiusFarDemand:F5}");
+                }
+
+                state.EconomicEvents.Clear();
+                float baselineSupply = EffectiveEconomyService.EffectiveSupply(
+                    state, profile, SupplyCategory);
+                EconomicEvent drought = new EconomicEvent
+                {
+                    type = EconomicEventType.Drought,
+                    startTick = now - 10,
+                    endTick = now + 1000
+                };
+                drought.supplyScarcityModifier[(int)SupplyCategory] = 1.60f;
+                state.EconomicEvents.Add(drought);
+                float droughtSupply = EffectiveEconomyService.EffectiveSupply(
+                    state, profile, SupplyCategory);
+
+                // This direction check fails if scarcity is inverted at the event call site and
+                // a drought is consequently presented to callers as a glut.
+                r.Check(droughtSupply < baselineSupply,
+                    "a drought modifier above one lowers effective supply",
+                    $"{baselineSupply:F5} -> {droughtSupply:F5}");
+
+                state.EconomicEvents.Clear();
+                const IntercolonyProductCategory CompoundCategory =
+                    IntercolonyProductCategory.Furniture;
+                float compoundBaseline = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, CompoundCategory);
+                EconomicEvent firstEvent = new EconomicEvent
+                {
+                    type = EconomicEventType.Migration,
+                    startTick = now - 10,
+                    endTick = now + 1000
+                };
+                firstEvent.demandModifier[(int)CompoundCategory] = 1.20f;
+                EconomicEvent secondEvent = new EconomicEvent
+                {
+                    type = EconomicEventType.ConstructionBoom,
+                    startTick = now - 10,
+                    endTick = now + 1000
+                };
+                secondEvent.demandModifier[(int)CompoundCategory] = 1.30f;
+                state.EconomicEvents.Add(firstEvent);
+                float oneEventDemand = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, CompoundCategory);
+                state.EconomicEvents.Add(secondEvent);
+                float twoEventDemand = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, CompoundCategory);
+
+                // This fails if traversal stops after the first matching active event; it checks
+                // the public result without duplicating the service's multiplication formula.
+                r.Check(oneEventDemand > compoundBaseline && twoEventDemand > oneEventDemand,
+                    "two overlapping events compound instead of using only the first",
+                    $"{compoundBaseline:F5} -> {oneEventDemand:F5} -> {twoEventDemand:F5}");
+
+                firstEvent.demandModifier[(int)CompoundCategory] = 3f;
+                secondEvent.demandModifier[(int)CompoundCategory] = 0.80f;
+                float clampedDemand = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, CompoundCategory);
+                float maximumDemand = compoundBaseline * EffectiveEconomyService.MaxCondition;
+
+                // The second modifier pulls a separately bounded first modifier below the ceiling,
+                // so this fails if the bound is applied per event rather than once after composing.
+                r.Check(Mathf.Abs(clampedDemand - maximumDemand) < 0.0001f,
+                    "the final composed event condition is clamped once by MaxCondition",
+                    $"{clampedDemand:F5} vs {maximumDemand:F5}");
+
+                state.EconomicEvents.Clear();
+                EconomicEvent explained = new EconomicEvent
+                {
+                    type = EconomicEventType.Drought,
+                    startTick = now - 10,
+                    endTick = now + 1000
+                };
+                explained.demandModifier[(int)DemandCategory] = 1.14f;
+                explained.supplyScarcityModifier[(int)SupplyCategory] = 1.25f;
+                state.EconomicEvents.Add(explained);
+                List<PriceFactor> demandFactors = EffectiveEconomyService.ExplainDemand(
+                    state, profile, ThingDefOf.Steel, DemandCategory);
+                float explainedDemand = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, ThingDefOf.Steel, DemandCategory);
+                List<PriceFactor> supplyFactors = EffectiveEconomyService.ExplainSupply(
+                    state, profile, SupplyCategory);
+                float explainedSupply = EffectiveEconomyService.EffectiveSupply(
+                    state, profile, SupplyCategory);
+
+                // Requiring a non-baseline row as well as the product makes this fail when the
+                // demand event row is missing, duplicated, or counted twice by the explanation.
+                r.Check(demandFactors.Count > 1 &&
+                        Mathf.Abs(Product(demandFactors) - explainedDemand) < 0.0001f,
+                    "event demand explanation rows multiply to exactly effective demand",
+                    $"{Product(demandFactors):F5} vs {explainedDemand:F5}");
+
+                // The supply-side product is independent because its event row is inverted into
+                // ability-to-supply direction; this fails if that row is missing or counted twice.
+                r.Check(supplyFactors.Count > 1 &&
+                        Mathf.Abs(Product(supplyFactors) - explainedSupply) < 0.0001f,
+                    "event supply explanation rows multiply to exactly effective supply",
+                    $"{Product(supplyFactors):F5} vs {explainedSupply:F5}");
+
+                state.EconomicEvents.Clear();
+                SettlementEconomicProfile synthetic = EffectiveProbeProfile();
+                synthetic.settlementId = EconomicEvent.NoSettlement;
+                ClearProbe(state);
+                float realWithoutEvent = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, DemandCategory);
+                float syntheticWithoutEvent = EffectiveEconomyService.EffectiveDemand(
+                    state, synthetic, DemandCategory);
+                EconomicEvent sentinelEvent = new EconomicEvent
+                {
+                    type = EconomicEventType.Epidemic,
+                    startTick = now - 10,
+                    endTick = now + 1000
+                };
+                sentinelEvent.demandModifier[(int)DemandCategory] = 1.50f;
+                state.EconomicEvents.Add(sentinelEvent);
+                float realWithEvent = EffectiveEconomyService.EffectiveDemand(
+                    state, profile, DemandCategory);
+                float syntheticWithEvent = EffectiveEconomyService.EffectiveDemand(
+                    state, synthetic, DemandCategory);
+
+                // The real side proves the event is live at the same instant. This fails if the
+                // no-settlement sentinel is ever resolved as a real world-object identity.
+                r.Check(realWithEvent > realWithoutEvent &&
+                        syntheticWithEvent == syntheticWithoutEvent,
+                    "the no-settlement sentinel receives no event effect while a real settlement does",
+                    $"real {realWithoutEvent:F5} -> {realWithEvent:F5}; synthetic " +
+                    $"{syntheticWithoutEvent:F5} -> {syntheticWithEvent:F5}");
+
+                EconomicEvent secondReadEvent = new EconomicEvent
+                {
+                    id = 971109,
+                    type = EconomicEventType.AnimalDisease,
+                    startTick = now - 20,
+                    endTick = now + 2000,
+                    anchorSettlementId = subject.ID,
+                    radiusTiles = 17f,
+                    factionLoadId = subject.Faction?.loadID ?? EconomicEvent.NoFaction
+                };
+                secondReadEvent.demandModifier[(int)DemandCategory] = 1.07f;
+                secondReadEvent.supplyScarcityModifier[(int)SupplyCategory] = 1.11f;
+                state.EconomicEvents.Add(secondReadEvent);
+                List<EconomicEvent> beforeReads = new List<EconomicEvent>(state.EconomicEvents);
+                int[] savedIds = new int[beforeReads.Count];
+                EconomicEventType[] savedTypes = new EconomicEventType[beforeReads.Count];
+                int[] savedStarts = new int[beforeReads.Count];
+                int[] savedEnds = new int[beforeReads.Count];
+                int[] savedAnchors = new int[beforeReads.Count];
+                float[] savedRadii = new float[beforeReads.Count];
+                int[] savedFactions = new int[beforeReads.Count];
+                float[][] savedDemandModifiers = new float[beforeReads.Count][];
+                float[][] savedSupplyModifiers = new float[beforeReads.Count][];
+                for (int i = 0; i < beforeReads.Count; i++)
+                {
+                    EconomicEvent economicEvent = beforeReads[i];
+                    savedIds[i] = economicEvent.id;
+                    savedTypes[i] = economicEvent.type;
+                    savedStarts[i] = economicEvent.startTick;
+                    savedEnds[i] = economicEvent.endTick;
+                    savedAnchors[i] = economicEvent.anchorSettlementId;
+                    savedRadii[i] = economicEvent.radiusTiles;
+                    savedFactions[i] = economicEvent.factionLoadId;
+                    savedDemandModifiers[i] = (float[])economicEvent.demandModifier.Clone();
+                    savedSupplyModifiers[i] =
+                        (float[])economicEvent.supplyScarcityModifier.Clone();
+                }
+
+                for (int i = 0; i < 25; i++)
+                {
+                    EffectiveEconomyService.EffectiveDemand(
+                        state, profile, ThingDefOf.Steel, DemandCategory);
+                    EffectiveEconomyService.EffectiveSupply(state, profile, SupplyCategory);
+                    EffectiveEconomyService.ExplainDemand(
+                        state, profile, ThingDefOf.Steel, DemandCategory);
+                    EffectiveEconomyService.ExplainSupply(state, profile, SupplyCategory);
+                }
+
+                bool eventsUnchanged = state.EconomicEvents.Count == beforeReads.Count;
+                for (int i = 0; eventsUnchanged && i < beforeReads.Count; i++)
+                {
+                    EconomicEvent economicEvent = state.EconomicEvents[i];
+                    eventsUnchanged = ReferenceEquals(economicEvent, beforeReads[i]) &&
+                                      economicEvent.id == savedIds[i] &&
+                                      economicEvent.type == savedTypes[i] &&
+                                      economicEvent.startTick == savedStarts[i] &&
+                                      economicEvent.endTick == savedEnds[i] &&
+                                      economicEvent.anchorSettlementId == savedAnchors[i] &&
+                                      economicEvent.radiusTiles == savedRadii[i] &&
+                                      economicEvent.factionLoadId == savedFactions[i] &&
+                                      economicEvent.demandModifier.Length ==
+                                      savedDemandModifiers[i].Length &&
+                                      economicEvent.supplyScarcityModifier.Length ==
+                                      savedSupplyModifiers[i].Length;
+                    for (int category = 0; eventsUnchanged &&
+                         category < savedDemandModifiers[i].Length; category++)
+                    {
+                        eventsUnchanged = economicEvent.demandModifier[category] ==
+                                          savedDemandModifiers[i][category];
+                    }
+
+                    for (int category = 0; eventsUnchanged &&
+                         category < savedSupplyModifiers[i].Length; category++)
+                    {
+                        eventsUnchanged = economicEvent.supplyScarcityModifier[category] ==
+                                          savedSupplyModifiers[i][category];
+                    }
+                }
+
+                // This compares order, identities, every scalar and every category modifier, so
+                // it fails if any effective or explanation read has a consequence for saved events.
+                r.Check(eventsUnchanged,
+                    "many effective-economy reads leave event count and contents unchanged",
+                    $"{beforeReads.Count} event(s) across 25 read cycles");
+            }
+            finally
+            {
+                // Contents, not count. Re-adding the exact saved sequence prevents synthetic
+                // records from replacing real events, the Stage 0.3 restoration defect.
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.AddRange(savedEvents);
+                ClearProbe(state);
+            }
         }
 
         private static float Product(List<PriceFactor> factors)

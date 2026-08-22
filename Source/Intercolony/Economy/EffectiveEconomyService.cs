@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -42,10 +43,9 @@ namespace Intercolony
         /// move that identity, in either direction.
         ///
         /// Above <see cref="MarketPressureService.MaxPressure"/> on purpose: pressure alone is
-        /// already clamped tighter, so today this is headroom rather than a limit. It starts to
-        /// bind in Stage 3, where an event modifier multiplies a settlement that is *already*
-        /// under pressure, and stacking those two unbounded is exactly the 5x price swing the plan
-        /// rules out.
+        /// already clamped tighter, and this headroom now binds only when an event modifier
+        /// multiplies a settlement that is *already* under pressure. Bounding that composition is
+        /// what prevents the 5x price swing the plan rules out without clipping ordinary pressure.
         /// </summary>
         public const float MaxCondition = 2.0f;
 
@@ -62,6 +62,9 @@ namespace Intercolony
 
         /// <summary>Label for the other side of the same axis.</summary>
         public const string SurplusLabel = "Current surplus";
+
+        /// <summary>Label for the factor that reconciles explanation rows to the condition bound.</summary>
+        public const string ConditionLimitLabel = "Market condition limit";
 
         /// <summary>
         /// This settlement's current demand pressure for a category, or
@@ -175,11 +178,17 @@ namespace Intercolony
                 return SettlementMarketState.Neutral;
             }
 
-            // Stage 3's event modifier multiplies in here, before the bound, so that pressure and
-            // events are clamped as one condition rather than each separately inside its own
-            // range. Two layers each individually "restrained" still multiply to an unrestrained
-            // number.
-            return Bound(CurrentDemandPressure(state, profile.settlementId, category));
+            float condition = CurrentDemandPressure(state, profile.settlementId, category);
+            Settlement settlement = SettlementForEvents(profile);
+            if (settlement != null)
+            {
+                condition *= EconomicEventService.DemandMultiplier(state, settlement, category);
+            }
+
+            // Pressure and active events multiply before one shared bound. Two layers each
+            // individually "restrained" still multiply to an unrestrained number, while bounding
+            // them separately would make the answer depend on their order.
+            return Bound(condition);
         }
 
         /// <summary>
@@ -197,6 +206,15 @@ namespace Intercolony
             }
 
             float scarcity = CurrentSupplyPressure(state, profile.settlementId, category);
+            Settlement settlement = SettlementForEvents(profile);
+            if (settlement != null)
+            {
+                // Event data is stored in the scarcity direction on purpose. It therefore
+                // multiplies pressure directly here and is inverted exactly once below with the
+                // composed scarcity, never on its own at this call site.
+                scarcity *= EconomicEventService.SupplyScarcityMultiplier(
+                    state, settlement, category);
+            }
 
             // Bounded before inverting rather than after. Inverting first and bounding the result
             // gives the same interval only because the bounds are exact inverses of one another,
@@ -244,7 +262,15 @@ namespace Intercolony
             }
 
             factors.Add(new PriceFactor("Local demand", profile.BaseDemandFor(def, category)));
-            AddConditionFactor(factors, DemandCondition(state, profile, category));
+            float pressure = CurrentDemandPressure(state, profile.settlementId, category);
+            AddConditionFactor(factors, pressure);
+
+            Settlement settlement = SettlementForEvents(profile);
+            List<EconomicEvent> events = EconomicEventService.DemandEvents(
+                state, settlement, category);
+            float eventMultiplier = AddDemandEventFactors(factors, events, category);
+            AddBoundFactor(factors, pressure * eventMultiplier,
+                Bound(pressure * eventMultiplier), supplyDirection: false);
             return factors;
         }
 
@@ -270,15 +296,145 @@ namespace Intercolony
             // Reported as it applies to supply: a shortage is the multiplier below 1, because that
             // is the number that moved the answer. The label still names the shortage, not the
             // arithmetic.
-            float condition = SupplyCondition(state, profile, category);
-            if (!Mathf.Approximately(condition, SettlementMarketState.Neutral))
+            float pressure = CurrentSupplyPressure(state, profile.settlementId, category);
+            float pressureCondition = 1f / pressure;
+            if (!Mathf.Approximately(pressureCondition, SettlementMarketState.Neutral))
             {
                 factors.Add(new PriceFactor(
-                    condition < SettlementMarketState.Neutral ? ShortageLabel : SurplusLabel,
-                    condition));
+                    pressureCondition < SettlementMarketState.Neutral
+                        ? ShortageLabel
+                        : SurplusLabel,
+                    pressureCondition));
             }
 
+            Settlement settlement = SettlementForEvents(profile);
+            List<EconomicEvent> events = EconomicEventService.SupplyScarcityEvents(
+                state, settlement, category);
+            float eventScarcity = AddSupplyEventFactors(factors, events, category);
+            float rawScarcity = pressure * eventScarcity;
+            AddBoundFactor(factors, rawScarcity, Bound(rawScarcity), supplyDirection: true);
+
             return factors;
+        }
+
+        private static Settlement SettlementForEvents(SettlementEconomicProfile profile)
+        {
+            // -1 is the generic-estimate sentinel, not a world-object ID to look up. Keeping this
+            // guard explicit prevents an estimate from inheriting whichever real settlement an
+            // accessor might otherwise return for a malformed or future synthetic profile.
+            if (profile == null || profile.settlementId == EconomicEvent.NoSettlement)
+            {
+                return null;
+            }
+
+            return IntercolonyMarketAccess.FindSettlement(profile.settlementId);
+        }
+
+        private static float AddDemandEventFactors(
+            List<PriceFactor> factors,
+            List<EconomicEvent> events,
+            IntercolonyProductCategory category)
+        {
+            float total = EconomicEvent.Neutral;
+            for (int i = 0; i < events.Count; i++)
+            {
+                EconomicEvent economicEvent = events[i];
+                bool typeAlreadyAdded = false;
+                for (int earlier = 0; earlier < i; earlier++)
+                {
+                    if (events[earlier].type == economicEvent.type)
+                    {
+                        typeAlreadyAdded = true;
+                        break;
+                    }
+                }
+
+                if (typeAlreadyAdded)
+                {
+                    continue;
+                }
+
+                float typeMultiplier = EconomicEvent.Neutral;
+                for (int matching = i; matching < events.Count; matching++)
+                {
+                    if (events[matching].type == economicEvent.type)
+                    {
+                        typeMultiplier *= EconomicEventService.ModifierFor(
+                            events[matching].demandModifier, category);
+                    }
+                }
+
+                total *= typeMultiplier;
+                if (typeMultiplier != EconomicEvent.Neutral)
+                {
+                    factors.Add(new PriceFactor(economicEvent.type.Label(), typeMultiplier));
+                }
+            }
+
+            return total;
+        }
+
+        private static float AddSupplyEventFactors(
+            List<PriceFactor> factors,
+            List<EconomicEvent> events,
+            IntercolonyProductCategory category)
+        {
+            float totalScarcity = EconomicEvent.Neutral;
+            for (int i = 0; i < events.Count; i++)
+            {
+                EconomicEvent economicEvent = events[i];
+                bool typeAlreadyAdded = false;
+                for (int earlier = 0; earlier < i; earlier++)
+                {
+                    if (events[earlier].type == economicEvent.type)
+                    {
+                        typeAlreadyAdded = true;
+                        break;
+                    }
+                }
+
+                if (typeAlreadyAdded)
+                {
+                    continue;
+                }
+
+                float typeScarcity = EconomicEvent.Neutral;
+                for (int matching = i; matching < events.Count; matching++)
+                {
+                    if (events[matching].type == economicEvent.type)
+                    {
+                        typeScarcity *= EconomicEventService.ModifierFor(
+                            events[matching].supplyScarcityModifier, category);
+                    }
+                }
+
+                totalScarcity *= typeScarcity;
+                if (typeScarcity != EconomicEvent.Neutral)
+                {
+                    factors.Add(new PriceFactor(economicEvent.type.Label(), 1f / typeScarcity));
+                }
+            }
+
+            return totalScarcity;
+        }
+
+        private static void AddBoundFactor(
+            List<PriceFactor> factors,
+            float raw,
+            float bounded,
+            bool supplyDirection)
+        {
+            if (raw == bounded)
+            {
+                return;
+            }
+
+            // Event and pressure rows retain their own meanings. This final row records only the
+            // shared safety bound, so the displayed product still reconstructs the effective value
+            // instead of silently assigning clipping to whichever event happened to be listed last.
+            factors.Add(new PriceFactor(
+                ConditionLimitLabel,
+                supplyDirection ? raw / bounded : bounded / raw));
         }
 
         private static void AddConditionFactor(List<PriceFactor> factors, float condition)
