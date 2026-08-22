@@ -87,6 +87,36 @@ guards held. `LEAK` means stop: a diagnostic is writing into the player's real h
 
 The individual per-suite actions still exist for when one of them is being worked on.
 
+### OPEN — one full-suite assertion failed once in 18 runs, and its identity was lost
+
+**Observed 2026-08-22.** Across eighteen consecutive `dev.ps1 test all -Fresh` runs, **one** failed a
+single assertion. The other seventeen passed, at 1002–1003 passed / 0 failed / 13–14 skipped, with
+world-pawn delta 0, both leak guards `OK` and clean logs throughout.
+
+**Which assertion it was is not known**, and that is the part worth fixing rather than the rate.
+`dev.ps1` wrote the bridge's assertion output to a single fixed path that every later run
+overwrote, so seventeen passes destroyed the only record of the one failure between them. The
+harness now archives a timestamped copy whenever a run is not clean, so the next occurrence
+identifies itself.
+
+**Do not assume it was the retention work committed the same day.** Three separate mutations proved
+those thirteen assertions sensitive, and they are deterministic — they build their own fixtures and
+sample nothing from the world. The failure appeared in the first run after that change, which is
+suggestive and is exactly why it is written down, but one occurrence in eighteen is not attribution.
+Roughly a thousand assertions ran in each of those runs and several suites size themselves to
+whatever the loaded world contains.
+
+**This project has been here before and the rule came from it.** Two assertions were once shipped in
+a single day having been mutation-tested and gone red, and both were still flaky — same code, one
+fresh world green and the next red. **Mutation proves sensitivity; only repetition proves
+stability.** A one-in-eighteen failure is precisely what the four-fresh-worlds standard exists to
+surface, and precisely what a single run would have called clean.
+
+**How to close it:** run the suite repeatedly and read the archived output the next time one is not
+clean. If it recurs and names a statistical assertion, enlarge its sample rather than loosening its
+comparison — loosening is how a flaky test usually gets "fixed", and it makes the assertion pass with
+the feature deleted.
+
 ### The dev test bridge — what it has not shown
 
 The bridge was proven against a live game on 2026-08-21: both builds, the runtime gate, all seven
