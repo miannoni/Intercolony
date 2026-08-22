@@ -221,11 +221,29 @@ to that should shape which of the four get mirrored.
 
 ---
 
-## Empty-state paragraphs use hard-coded heights and can clip
+## ~~Empty-state paragraphs use hard-coded heights and can clip~~ — FIXED in 0.9.3 (`c1610af`)
 
 **Raised:** 2026-08-08, by Matteo, during the 0.9.0 Steam smoke test.
-**Size:** small — one focused pass across five call sites.
-**Status:** open. Non-blocking beta UX issue; deliberately not fixed on launch day.
+**Closed:** 2026-08-22 on audit. **It was fixed on 2026-08-18 and this entry was never struck** —
+the fix arrived as part of 0.9.3's measured-text pass rather than as work on this item, so nobody
+came back to the backlog to close it.
+
+**Verified rather than assumed.** Every `emptyMessage` site in the UI now binds the string to a local
+and sizes its rect with `Text.CalcHeight`, including the Relations paragraph that was the original
+report — the "No trading history yet… Reputation is held per settlement" text, now measured at
+`MainTabWindow_Intercolony.cs:3089`. Grepping for a `Widgets.Label` with any of the five recorded
+literal heights (`60f`, `70f`, `76f`, `44f`) returns nothing. The commit that did it is
+`c1610af`, *"measure dialog and empty-state text instead of boxing it"*.
+
+**The line numbers in the table below are all stale**, which is itself the lesson: an entry that
+pins a defect to `file.cs:1916` decays as soon as the file moves, and every one of those five now
+points at unrelated code. Anchoring on a searchable symbol — here `emptyMessage` — survives edits
+where a line number does not.
+
+**Why it stayed open for four days after being fixed.** The 0.9.3 batch was scoped from
+`docs/BACKLOG.md`'s Tier 2 UI list, and this defect was fixed *as an instance of the general rule*
+rather than as this item, so the closing pass missed it. Worth checking the backlog against the
+code after any batch that applies a rule broadly, not just after work aimed at a named entry.
 
 The explanatory paragraph on the **Relations** screen is vertically clipped at 1.75x UI scale: its
 second wrapped line is cut off.
