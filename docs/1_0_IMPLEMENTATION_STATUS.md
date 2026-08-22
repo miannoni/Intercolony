@@ -974,6 +974,39 @@ coefficients or naming which to move. `docs/PENDING_PLAYTESTS.md` has the gate w
 
 ## Decisions / deviations
 
+### 2026-08-22 — Stage 3C/3D — DECISION (made in advance, before the slices)
+
+**Question:** §3.2 describes each event with primary *and* secondary categories — war mobilization
+raises manufactured-goods demand "and intermediate demand up secondarily"; a construction boom raises
+commodities and intermediates and then "furniture demand follows". Should an event's modifier table
+list those secondary categories?
+
+**Evidence:** 2H already built the coarse chains that produce exactly those secondaries.
+`MarketPressureService.DemandLinks` carries ManufacturedGoods → IntermediateGoods, Furniture →
+Commodities and Intermediates, CapitalEquipment → Intermediates; `SupplyLinks` runs the other way.
+2H's own entry records refusing the plan's second-order links for the same reason and calls their
+absence load-bearing: one hop per refresh already produces the secondary, and a direct link would
+double-count it — §2.10's error reappearing in propagation rather than in pricing.
+
+**Choice:** **an event sets only its primary categories.** Secondary effects arrive through the
+existing chains and must not be written into the event table.
+
+**The consequence that makes this work, and it constrains 3D:** chains propagate *persisted
+pressure*, not live event modifiers. An event that only applies an active modifier while it runs will
+therefore produce **no** secondary effects at all, and Stage 3's acceptance criterion 5 — "existing
+Stage 2 propagation carries part of the shock naturally" — would be unmeetable. So the lifecycle
+slice **must** implement §3.4's preferred pattern in full: push pressure at event start *and* apply
+the live modifier while it runs. The start shock is what the chains, the regional diffusion and mean
+reversion all act on; the live modifier is what makes the event felt while it lasts.
+
+**Why it preserves this plan:** it is the plan's own layering — §3.4 says events disturb the Stage 2
+market rather than replacing it — and it keeps every secondary relationship defined in exactly one
+place, which is what §2.6 asked for.
+
+**Revisit if:** the play calibration shows secondaries arriving too weakly. The fix then is the chain
+coefficient, which is one table shared by every event, rather than editing six event definitions —
+which is precisely the "retune, not rewrite" property Matteo asked for.
+
 ### 2026-08-21 — Stage 2C — CORRECTION
 
 An earlier entry in this file claimed `SettlementEconomicProfile.volatility` was "written and
