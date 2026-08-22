@@ -637,6 +637,12 @@ namespace Intercolony
             WithGuardedState(state => IntercolonyLog.Message(IntercolonyEconomySelfTest.Run(state)));
         }
 
+        [DebugAction(Category, "Run economic event self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 54)]
+        private static void RunEconomicEventSelfTest()
+        {
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyEventSelfTest.Run(state)));
+        }
+
         [DebugAction(Category, "Dump effective economy", allowedGameStates = AllowedGameStates.Playing, displayPriority = 81)]
         private static void DumpMarketPressure()
         {

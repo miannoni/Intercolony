@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 44;
+        public const int CurrentSaveVersion = 45;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -154,6 +154,16 @@ namespace Intercolony
         private List<SettlementMarketState> marketStates = new List<SettlementMarketState>();
 
         public List<SettlementMarketState> MarketStates => marketStates;
+
+        /// <summary>
+        /// Temporary economic disturbances that are still live or scheduled (the 1.0 program
+        /// Stage 3A). Ended events are discarded on load because their lasting effect is already
+        /// carried by sparse market pressure; retaining both would grow the save without preserving
+        /// any additional economic information.
+        /// </summary>
+        private List<EconomicEvent> economicEvents = new List<EconomicEvent>();
+
+        public List<EconomicEvent> EconomicEvents => economicEvents;
 
         /// <summary>
         /// Index over <see cref="marketStates"/>. Not persisted and not authoritative — the list
@@ -1004,6 +1014,7 @@ namespace Intercolony
             Scribe_Collections.Look(
                 ref commercialTimeline, "commercialTimeline", LookMode.Deep);
             Scribe_Collections.Look(ref marketStates, "marketStates", LookMode.Deep);
+            Scribe_Collections.Look(ref economicEvents, "economicEvents", LookMode.Deep);
             Scribe_Values.Look(
                 ref commercialTimelineStartTick,
                 "commercialTimelineStartTick",
@@ -1140,6 +1151,15 @@ namespace Intercolony
                 }
 
                 marketStateIndex = null;
+
+                if (economicEvents == null)
+                {
+                    economicEvents = new List<EconomicEvent>();
+                }
+                else
+                {
+                    PruneLoadedEconomicEvents(economicEvents, GenTicks.TicksGame);
+                }
 
                 if (supplierOfferConsumption == null)
                 {
@@ -2202,7 +2222,26 @@ namespace Intercolony
                     "  schema 43 -> 44: market pressure added; every settlement starts undisturbed.");
             }
 
+            if (saveVersion < 45)
+            {
+                // 44 -> 45 added persisted economic events. Nothing to write: no events existed
+                // before this schema, so an empty list is exactly right. Backfilling one would
+                // fabricate a crisis the player never lived through.
+                IntercolonyLog.Message(
+                    "  schema 44 -> 45: economic events added; no historical events were created.");
+            }
+
             saveVersion = CurrentSaveVersion;
+        }
+
+        /// <summary>
+        /// Drops records that carry no information after load. A null child is corrupt, while an
+        /// ended event has already left any lasting mark in Stage 2's persisted pressure; retaining
+        /// either would make the sparse event list grow forever for nothing.
+        /// </summary>
+        internal static void PruneLoadedEconomicEvents(List<EconomicEvent> events, int currentTick)
+        {
+            events.RemoveAll(e => e == null || e.endTick <= currentTick);
         }
 
         /// <summary>

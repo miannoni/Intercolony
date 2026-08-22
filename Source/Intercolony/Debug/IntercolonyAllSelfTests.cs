@@ -127,6 +127,8 @@ namespace Intercolony
             // World-only suites.
             new SelfTestDefinition("economy", "economy", false,
                 (s, m) => IntercolonyEconomySelfTest.Run(s)),
+            new SelfTestDefinition("event", "event", false,
+                (s, m) => IntercolonyEventSelfTest.Run(s)),
             new SelfTestDefinition("timeline", "timeline", false,
                 (s, m) => IntercolonyTimelineSelfTest.Run(s)),
             new SelfTestDefinition("profile", "profile", false,
