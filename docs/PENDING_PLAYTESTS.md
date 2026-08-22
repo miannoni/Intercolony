@@ -375,7 +375,23 @@ candidate explanation for the long-standing `job posting` pawn-count anomaly, wh
 74 → 80 on a live colony and has never reproduced on a static one. Not proof, but it is the first
 mechanism proposed that fits every observation.
 
-#### Contract timeline events — no self-test coverage
+#### ~~Contract timeline events — no self-test coverage~~ — CLOSED 2026-08-21 (`05d7bb7`)
+
+**All seven write sites are now driven by the timeline suite**, which went 47 → 68 assertions. Three
+of them are separate `ContractStarted` paths — incoming offer, player proposal, renewal — and each is
+driven on its own, because covering one proves nothing about the others.
+
+**Verified in both directions rather than watched passing.** Deleting `AcceptRenewal`'s `Record` call
+turns exactly its two assertions red and leaves the other nineteen green, which is the result that
+matters: the other two `ContractStarted` sites do **not** mask a missing one. Green on four
+consecutive fresh worlds afterwards, all 21 running rather than skipping.
+
+**This closes the item without needing a live contract in play**, which is what it had been waiting
+for. The note below about needing the 0.9.3 save is superseded — and the reason it could never have
+worked is worth keeping: a contract accepted *before* the schema-43 upgrade tick correctly has no
+record, so an existing agreement could not have proved anything either way.
+
+#### Superseded: contract timeline events needed a live contract
 
 `ContractStarted`, `ContractCompleted`, `ContractFailed` and `ContractCancelled` are wired at
 six sites in `ContractService` but are **not** covered by the timeline self-test: driving them
