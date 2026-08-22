@@ -20,6 +20,11 @@ namespace Intercolony
     /// </summary>
     public static class IntercolonyReputationSelfTest
     {
+        private const int SampleRefreshes = 120;
+        private const int MinimumSampleSettlements = 12;
+        // More than the 240-opportunity maximum from one 120-refresh settlement.
+        private const int MinimumSampledOpportunitiesPerScore = 360;
+
         public static string Run(IntercolonyWorldComponent state)
         {
             StringBuilder sb = new StringBuilder();
@@ -111,30 +116,63 @@ namespace Intercolony
                 }
             }
 
-            if (eligible.Count == 0)
+            if (eligible.Count < MinimumSampleSettlements)
             {
-                sb.AppendLine("  (no accessible settlements; divergence check skipped)");
+                sb.AppendLine($"  (only {eligible.Count} eligible accessible settlements; " +
+                              $"need {MinimumSampleSettlements}; divergence check skipped)");
                 sb.AppendLine($"  {passed} passed, {failed} failed.");
                 return sb.ToString();
             }
 
-            Settlement subject = eligible[0];
-            SettlementEconomicProfile profile = state.GetProfile(subject);
-            CommercialReputation record = state.GetOrCreateReputation(subject);
-            float originalScore = record.Score;
+            List<ReputationSnapshot> savedReputations = new List<ReputationSnapshot>();
+            foreach (Settlement settlement in eligible)
+            {
+                CommercialReputation record = state.GetOrCreateReputation(settlement);
+                savedReputations.Add(new ReputationSnapshot
+                {
+                    record = record,
+                    originalScore = record.Score
+                });
+            }
 
-            // Same settlement, same seeds, only the trade history differs — so any difference
-            // in output is attributable to reputation and nothing else.
-            MarketSample trusted = SampleMarket(state, subject, profile, 100f, record);
-            MarketSample distrusted = SampleMarket(state, subject, profile, 5f, record);
+            MarketSample trusted = new MarketSample();
+            MarketSample distrusted = new MarketSample();
+            try
+            {
+                // Same settlements, same seeds, only the trade history differs — so any
+                // difference in output is attributable to reputation and not one settlement's
+                // random draw.
+                trusted = SampleMarket(state, eligible, 100f);
+                distrusted = SampleMarket(state, eligible, 5f);
+            }
+            finally
+            {
+                // Restore every touched settlement to its captured value, even if sampling
+                // throws part-way through.
+                foreach (ReputationSnapshot saved in savedReputations)
+                {
+                    saved.record.Adjust(saved.originalScore - saved.record.Score);
+                }
+            }
 
-            // Restore, so running the test does not rewrite the player's standing.
-            record.Adjust(originalScore - record.Score);
+            sb.AppendLine($"  (sampled {eligible.Count} settlements across {SampleRefreshes} refreshes per score)");
 
-            sb.AppendLine($"  (trusted: {trusted.count} offers, avg {trusted.AverageQuantity:F0} units, " +
+            sb.AppendLine($"  (trusted: {trusted.count} offers, {trusted.totalQuantity} total units, " +
+                          $"avg {trusted.AverageQuantity:F0} units, {trusted.totalDeadline} total deadline-days, " +
                           $"avg {trusted.AverageDeadline:F1}d deadline)");
-            sb.AppendLine($"  (distrusted: {distrusted.count} offers, avg {distrusted.AverageQuantity:F0} units, " +
+            sb.AppendLine($"  (distrusted: {distrusted.count} offers, {distrusted.totalQuantity} total units, " +
+                          $"avg {distrusted.AverageQuantity:F0} units, {distrusted.totalDeadline} total deadline-days, " +
                           $"avg {distrusted.AverageDeadline:F1}d deadline)");
+
+            if (trusted.count < MinimumSampledOpportunitiesPerScore ||
+                distrusted.count < MinimumSampledOpportunitiesPerScore)
+            {
+                sb.AppendLine($"  (sampled {trusted.count} trusted and {distrusted.count} distrusted " +
+                              $"opportunities; need {MinimumSampledOpportunitiesPerScore} per score; " +
+                              "divergence check skipped)");
+                sb.AppendLine($"  {passed} passed, {failed} failed.");
+                return sb.ToString();
+            }
 
             Check("a trusted partner posts at least as often", trusted.count >= distrusted.count,
                 $"{trusted.count} vs {distrusted.count}");
@@ -144,15 +182,15 @@ namespace Intercolony
                 Mathf.Abs(trusted.AverageDeadline - distrusted.AverageDeadline) > 0.5f,
                 "the two histories produced indistinguishable markets");
 
-            if (trusted.count > 0 && distrusted.count > 0)
-            {
-                Check("a trusted partner commits to larger lots",
-                    trusted.AverageQuantity > distrusted.AverageQuantity,
-                    $"{trusted.AverageQuantity:F1} vs {distrusted.AverageQuantity:F1}");
-                Check("a trusted partner allows more time",
-                    trusted.AverageDeadline >= distrusted.AverageDeadline,
-                    $"{trusted.AverageDeadline:F1}d vs {distrusted.AverageDeadline:F1}d");
-            }
+            Check("a trusted partner commits to larger lots",
+                trusted.AverageQuantity > distrusted.AverageQuantity,
+                $"{eligible.Count} settlements; trusted {trusted.totalQuantity} units across " +
+                $"{trusted.count} opportunities (avg {trusted.AverageQuantity:F1}) vs distrusted " +
+                $"{distrusted.totalQuantity} units across {distrusted.count} opportunities " +
+                $"(avg {distrusted.AverageQuantity:F1})");
+            Check("a trusted partner allows more time",
+                trusted.AverageDeadline >= distrusted.AverageDeadline,
+                $"{trusted.AverageDeadline:F1}d vs {distrusted.AverageDeadline:F1}d");
 
             sb.AppendLine($"  {passed} passed, {failed} failed.");
             return sb.ToString();
@@ -168,32 +206,44 @@ namespace Intercolony
             public float AverageDeadline => count == 0 ? 0f : totalDeadline / (float)count;
         }
 
+        private struct ReputationSnapshot
+        {
+            public CommercialReputation record;
+            public float originalScore;
+        }
+
         /// <summary>
-        /// Generates many refresh cycles at a fixed reputation and summarises the result.
-        /// Uses the same settlement and the same seed sequence for both scores, so reputation
-        /// is the only variable.
+        /// Generates many refresh cycles across the sampled settlements at a fixed reputation
+        /// and summarises the result. Uses the same settlements and seed sequence for both
+        /// scores, so reputation is the only variable.
         /// </summary>
         private static MarketSample SampleMarket(
             IntercolonyWorldComponent state,
-            Settlement settlement,
-            SettlementEconomicProfile profile,
-            float score,
-            CommercialReputation record)
+            List<Settlement> settlements,
+            float score)
         {
-            record.Adjust(score - record.Score);
+            foreach (Settlement settlement in settlements)
+            {
+                CommercialReputation record = state.GetOrCreateReputation(settlement);
+                record.Adjust(score - record.Score);
+            }
 
             MarketSample sample = new MarketSample();
             int idCounter = 900000;
-            for (int refresh = 0; refresh < 120; refresh++)
+            foreach (Settlement settlement in settlements)
             {
-                List<MarketOpportunity> batch = MarketOpportunityGenerator.GenerateFor(
-                    settlement, profile, state.EconomySeed, refresh, 0, () => idCounter++);
-
-                foreach (MarketOpportunity opportunity in batch)
+                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                for (int refresh = 0; refresh < SampleRefreshes; refresh++)
                 {
-                    sample.count++;
-                    sample.totalQuantity += opportunity.quantity;
-                    sample.totalDeadline += opportunity.deadlineDays;
+                    List<MarketOpportunity> batch = MarketOpportunityGenerator.GenerateFor(
+                        settlement, profile, state.EconomySeed, refresh, 0, () => idCounter++);
+
+                    foreach (MarketOpportunity opportunity in batch)
+                    {
+                        sample.count++;
+                        sample.totalQuantity += opportunity.quantity;
+                        sample.totalDeadline += opportunity.deadlineDays;
+                    }
                 }
             }
 
