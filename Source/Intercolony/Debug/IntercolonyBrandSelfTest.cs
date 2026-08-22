@@ -9,10 +9,11 @@ using Verse;
 namespace Intercolony
 {
     /// <summary>
-    /// Self-test for the Stage 4A product-brand record, Stage 4B similarity service and this
-    /// Stage 4C quality-capture seam: persistence, bounds, load pruning, neutral initialization,
-    /// actual batch quality and def-driven carryover. It does not update ProductBrandRecord from
-    /// the quality checks because this slice owns only the evidence capture.
+    /// Self-test for the Stage 4A product-brand record, Stage 4B similarity service, Stage 4C
+    /// quality-capture seam and Stage 4D effective-brand read model: persistence, bounds, load
+    /// pruning, neutral initialization, actual batch quality, def-driven carryover and direct
+    /// evidence confidence. It does not update ProductBrandRecord from the quality checks because
+    /// this slice owns only evidence capture and read-time derivation.
     /// </summary>
     public static class IntercolonyBrandSelfTest
     {
@@ -58,7 +59,7 @@ namespace Intercolony
         public static string Run(IntercolonyWorldComponent state)
         {
             Results r = new Results();
-            r.sb.AppendLine("Product brand record self-test (Stage 4A/4B)");
+            r.sb.AppendLine("Product brand record self-test (Stage 4A/4B/4C/4D)");
 
             if (state == null)
             {
@@ -134,6 +135,7 @@ namespace Intercolony
 
                 RunDeliveredQualityChecks(r);
                 RunProductSimilarityChecks(r);
+                RunEffectiveBrandChecks(state, r);
             }
             catch (Exception ex)
             {
@@ -478,6 +480,196 @@ namespace Intercolony
                     "a def lacking weapon/apparel/building metadata falls back safely",
                     failure ?? $"similarity={similarity:0.000}");
             }
+        }
+
+        private static void RunEffectiveBrandChecks(
+            IntercolonyWorldComponent state, Results r)
+        {
+            ThingDef target = ResolveThingDef("Gun_BoltActionRifle");
+            ThingDef revolver = ResolveThingDef("Gun_Revolver");
+            ThingDef autopistol = ResolveThingDef("Gun_Autopistol");
+            ThingDef assaultRifle = ResolveThingDef("Gun_AssaultRifle");
+            ThingDef chair = ResolveThingDef("DiningChair");
+
+            if (target == null || revolver == null || autopistol == null ||
+                assaultRifle == null || chair == null)
+            {
+                StringBuilder missing = new StringBuilder();
+                AppendMissing(missing, "Gun_BoltActionRifle", target);
+                AppendMissing(missing, "Gun_Revolver", revolver);
+                AppendMissing(missing, "Gun_Autopistol", autopistol);
+                AppendMissing(missing, "Gun_AssaultRifle", assaultRifle);
+                AppendMissing(missing, "DiningChair", chair);
+                r.Skip("effective brand checks have their required Core ThingDefs",
+                    $"missing loaded ThingDef(s): {missing}");
+                return;
+            }
+
+            // This method replaces the sparse list with synthetic fixtures. Snapshot the actual
+            // objects, not only the count: restoring by length can leave test records persisted if
+            // a future assertion adds or removes a different number of entries.
+            List<ProductBrandRecord> saved = new List<ProductBrandRecord>(state.ProductBrandRecords);
+
+            try
+            {
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    revolver, directScore: 70f, evidenceWeight: 20f, unitsDelivered: 20));
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    autopistol, directScore: 65f, evidenceWeight: 20f, unitsDelivered: 20));
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    assaultRifle, directScore: 60f, evidenceWeight: 20f, unitsDelivered: 20));
+
+                float revolverSignal = 70f * ProductSimilarityService.GetSimilarity(revolver, target);
+                float autopistolSignal = 65f * ProductSimilarityService.GetSimilarity(autopistol, target);
+                float assaultRifleSignal =
+                    60f * ProductSimilarityService.GetSimilarity(assaultRifle, target);
+                float strongestSignal = Mathf.Max(
+                    Mathf.Abs(revolverSignal),
+                    Mathf.Max(Mathf.Abs(autopistolSignal), Mathf.Abs(assaultRifleSignal)));
+                float inherited = EffectiveBrandService.GetEffectiveBrand(state, target);
+                r.Check(
+                    Mathf.Abs(inherited - strongestSignal) < 0.01f &&
+                    inherited <= ProductBrandRecord.MaxScore,
+                    "inherited brands choose one strongest related signal instead of stacking",
+                    $"effective={inherited:0.###}, strongest={strongestSignal:0.###}, " +
+                    $"bound={ProductBrandRecord.MaxScore:0.##}");
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    chair, directScore: 100f, evidenceWeight: 20f, unitsDelivered: 20));
+                float floorSimilarity = ProductSimilarityService.GetSimilarity(chair, target);
+                float nearFloorInherited = EffectiveBrandService.GetEffectiveBrand(state, target);
+                r.Check(
+                    floorSimilarity <= ProductSimilarityService.UnrelatedFloor + 0.001f &&
+                    Mathf.Abs(nearFloorInherited - 100f * floorSimilarity) < 0.01f &&
+                    nearFloorInherited < 10f,
+                    "an unrelated product contributes only its similarity-scaled floor",
+                    $"similarity={floorSimilarity:0.###}, effective={nearFloorInherited:0.###}");
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    revolver, directScore: 90f, evidenceWeight: 20f, unitsDelivered: 20));
+                float inheritedForDirectTest = EffectiveBrandService.GetEffectiveBrand(state, target);
+                ProductBrandRecord direct = new ProductBrandRecord(
+                    target, directScore: -70f, evidenceWeight: 1f, unitsDelivered: 1);
+                state.ProductBrandRecords.Add(direct);
+                float lowEvidence = EffectiveBrandService.GetEffectiveBrand(state, target);
+                direct.evidenceWeight = 100f;
+                direct.unitsDelivered = 100;
+                float highEvidence = EffectiveBrandService.GetEffectiveBrand(state, target);
+                r.Check(
+                    Mathf.Abs(lowEvidence - inheritedForDirectTest) <
+                        Mathf.Abs(lowEvidence - direct.directScore) &&
+                    Mathf.Abs(highEvidence - direct.directScore) <
+                        Mathf.Abs(highEvidence - inheritedForDirectTest) &&
+                    highEvidence < lowEvidence,
+                    "direct evidence pulls effective brand from inherited toward the direct score",
+                    $"inherited={inheritedForDirectTest:0.###}, low={lowEvidence:0.###}, " +
+                    $"high={highEvidence:0.###}, direct={direct.directScore:0.##}");
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    revolver, directScore: 90f, evidenceWeight: 20f, unitsDelivered: 20));
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    target, directScore: -90f, evidenceWeight: 20f, unitsDelivered: 20));
+                float badProduct = EffectiveBrandService.GetEffectiveBrand(state, target);
+                r.Check(
+                    badProduct < -50f,
+                    "meaningful negative direct evidence cannot be masked by a positive related brand",
+                    $"effective={badProduct:0.###}");
+
+                List<ProductBrandRecord> beforeReads =
+                    SnapshotBrandRecords(state.ProductBrandRecords);
+                for (int i = 0; i < 100; i++)
+                {
+                    EffectiveBrandService.GetEffectiveBrand(state, target);
+                    EffectiveBrandService.GetEffectiveBrand(state, chair);
+                }
+
+                r.Check(
+                    SameBrandRecordContents(beforeReads, state.ProductBrandRecords),
+                    "effective-brand reads leave sparse brand records unchanged",
+                    $"records={state.ProductBrandRecords.Count}, reads=200");
+
+                state.ProductBrandRecords.Clear();
+                float neutral = EffectiveBrandService.GetEffectiveBrand(state, target);
+                r.Check(
+                    Mathf.Approximately(neutral, ProductBrandRecord.Neutral),
+                    "a product with no brand records is neutral",
+                    $"effective={neutral:0.###}");
+            }
+            finally
+            {
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(saved);
+            }
+        }
+
+        private static void AppendMissing(StringBuilder missing, string name, ThingDef def)
+        {
+            if (def == null)
+            {
+                if (missing.Length > 0)
+                {
+                    missing.Append(", ");
+                }
+
+                missing.Append(name);
+            }
+        }
+
+        private static bool SameBrandRecordContents(
+            List<ProductBrandRecord> expected, List<ProductBrandRecord> actual)
+        {
+            if (expected == null || actual == null || expected.Count != actual.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < expected.Count; i++)
+            {
+                ProductBrandRecord expectedRecord = expected[i];
+                ProductBrandRecord actualRecord = actual[i];
+                if (expectedRecord == null || actualRecord == null)
+                {
+                    if (expectedRecord != actualRecord)
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (!ReferenceEquals(expectedRecord.thingDef, actualRecord.thingDef) ||
+                    expectedRecord.directScore != actualRecord.directScore ||
+                    expectedRecord.evidenceWeight != actualRecord.evidenceWeight ||
+                    expectedRecord.unitsDelivered != actualRecord.unitsDelivered)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static List<ProductBrandRecord> SnapshotBrandRecords(
+            List<ProductBrandRecord> records)
+        {
+            List<ProductBrandRecord> snapshot = new List<ProductBrandRecord>(records.Count);
+            for (int i = 0; i < records.Count; i++)
+            {
+                ProductBrandRecord record = records[i];
+                snapshot.Add(record == null
+                    ? null
+                    : new ProductBrandRecord(
+                        record.thingDef,
+                        record.directScore,
+                        record.evidenceWeight,
+                        record.unitsDelivered));
+            }
+
+            return snapshot;
         }
 
         private static ThingDef ResolveThingDef(string defName)
