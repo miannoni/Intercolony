@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 3 — Circumstance-driven economic events
-Current slice:      3B — events move the economy (3A done); 2K calibration deferred to end of 1.0
-Last completed:     3A — persisted economic events (2026-08-22)
+Current slice:      3D — event lifecycle and generation; 2K calibration deferred to end of 1.0
+Last completed:     3C — four event definitions (2026-08-22)
 Current save schema: 45
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -250,6 +250,82 @@ that has migrated, and a single immediate `status` query can sample the pre-migr
 polls to a 30-second deadline and reports how long it waited.
 
 ## Slice log
+
+### 3C — four event definitions (2026-08-22)
+
+**Claim:** four events exist with real, differing economic shapes, and none of them duplicates an
+effect the category chains already deliver.
+**Files:** `Economy/EconomicEventDefinitions.cs` (new), `Debug/IntercolonyEventSelfTest.cs`.
+**Commit:** `e39f863`. **Schema:** unchanged at 45.
+**Tests:** event suite 5 → 30 assertions, all running. Full suite green on **four fresh worlds**
+(1042–1043 passed, 0 failed, 13–14 skipped), both leak guards OK, log clean.
+
+**§3.2's prose had to be translated, and it inverts twice against the chain graph.** The plan
+describes war mobilization as manufactured goods up "and intermediate demand up secondarily" — but
+`DemandLinks` already carries ManufacturedGoods → IntermediateGoods, so the event sets **manufactured
+only** and the chain delivers the secondary. It describes a construction boom as commodities and
+intermediates up with "furniture demand follows" — but the demand graph runs finished → inputs, so
+the event sets **furniture and capital equipment** and the chain pulls commodities and intermediates.
+Writing the plan's literal words would have double-counted the secondary *and* never produced
+furniture demand at all.
+
+**The rule is enforced by machine, not by memory.** An assertion reads `DemandLinks` and `SupplyLinks`
+**at runtime** and fails if any event sets two categories joined by a link in the matching table.
+Adding a link to the chains therefore re-checks every event definition automatically, rather than
+encoding today's answer as a list of forbidden pairs. Verified by adding IntermediateGoods to war
+mobilization — the plan's literal wording — which fails naming the offending link:
+`ManufacturedGoods -> IntermediateGoods`.
+
+**Four events, not six, and §3.2 explicitly permits that.** `Migration` and `AnimalDisease` stay in
+the enum undefined, with the reason recorded: animal availability is not category-shaped, and §3.2
+itself makes that event conditional on "where animal trade already supports it".
+
+**An unrequested `csproj` change was reverted.** The delegate had suppressed `NU1900`, NuGet's
+"audit service unreachable" warning, which appears only in its sandbox — this environment builds 0
+warnings without it. Accepting it would have baked a subagent's network limitation into the project
+permanently and narrowed real vulnerability reporting later.
+
+### 3B — events move the market (2026-08-22)
+
+**Claim:** an active event changes what a settlement wants and can supply, only within its scope, and
+the price breakdown says which event did it.
+**Files:** `Economy/EconomicEventService.cs` (new), `Economy/EffectiveEconomyService.cs`,
+`Economy/EconomicEvent.cs`, `Debug/IntercolonyEconomySelfTest.cs`.
+**Commit:** `446d4b4`. **Schema:** unchanged at 45.
+**Tests:** economy suite 130 → 141. Full suite green on **four fresh worlds** (1018–1020 passed,
+0 failed, 13–14 skipped), delta 0, both leak guards OK, log clean.
+
+**Pressure and events multiply before one shared bound**, at the spot 2.2 reserved for it. Bounding
+them separately would make the answer depend on their order, and two layers each individually
+restrained still multiply to an unrestrained number. `MaxCondition`'s headroom over pressure's own
+1.60 cap is what it was always for, and it finally binds here.
+
+**Scope constraints are conjunctive** — every constraint that is *set* must hold — so a
+single-settlement event is anchor plus radius zero, and "this faction, within 30 tiles" can exist
+later without redesigning the model. Distance uses `Find.WorldGrid.ApproxDistanceInTiles`, the same
+call regional diffusion uses; two measures of "nearby settlement" would eventually disagree and
+nobody would notice until regions and events contradicted each other.
+
+**Explanation rows were not optional, and this is worth remembering as a coupling.** `ExplainDemand`'s
+factors must multiply to *exactly* the effective value — the economy suite asserts it and every 2J
+pricing assertion rests on it — so adding an event multiplier without its row would have turned
+existing assertions red rather than merely leaving the UI thin. 2J bought a real invariant: it caught
+a defect in a stage that did not exist when it shipped.
+
+**The production code arrived with no tests at all**, and was not committed in that state. The build
+was clean and the economy suite passed 130/0/0, so nothing looked wrong — which is exactly the shape
+of a hollow slice.
+
+**Then one of the eleven added assertions was proven hollow rather than trusted.** Its
+"inside the radius" case used the anchor settlement itself, at distance zero, which matches whatever
+the radius does. Replacing the radius comparison with `> 0f` — ignoring `radiusTiles` entirely — left
+**all 141 assertions passing**. It now picks a near settlement at a measured positive distance and a
+far one, sets the radius between them, and prints those distances in its own failure detail. The
+delegate flagged its own doubt about that test, which is what prompted the check.
+
+**Verified in both directions.** The reworked radius assertion fails under that mutation. Inverting
+the scarcity multiplier is caught **twice over** — by the drought assertion, supply rising to 3.16745
+instead of falling, and independently by the product invariant.
 
 ### 3A — persisted economic events (2026-08-22)
 
