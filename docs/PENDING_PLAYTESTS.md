@@ -150,6 +150,40 @@ MCP tools driven over stdio. These are the parts that were **not** exercised.
   root, but has only been loaded on one machine, with one Node version, one RimWorld install, and
   a `Mods\Intercolony` junction that had to be repointed by hand to test at all.
 
+### 1.0 program — Stage 3, the two event criteria (added 2026-08-22)
+
+**For the single calibration sitting at the end of 1.0**, alongside the Stage 2 gate below. Eight of
+Stage 3's ten acceptance criteria are closed by assertion; these two are judgements only a player can
+make.
+
+**You can now cause any of this on demand** — §3.8 exists so nobody waits on RNG. Dev mode, world
+map, press `/`, then under **Intercolony**:
+
+| Action | Use |
+|---|---|
+| `Force economic event` | Click a settlement, pick Poor harvest / War mobilization / Construction boom / Epidemic |
+| `Dump economic events` | Type, anchor, scope, days left, settlements affected, modifiers |
+| `End economic events now` | End them early to watch the pressure tail decay |
+| `Dump effective economy` | Baseline vs pressure vs effective, per category |
+| `Shock settlement economy` | Direct pressure shock, four steps per category |
+
+**Criterion 9 — does event frequency flood normal play?** Generation rolls roughly a 12% chance per
+market refresh, capped at 3 concurrent events. §3.5 wants long stretches of normality, sometimes one
+region affected, occasionally two overlapping, and never a world permanently in crisis. Play without
+forcing anything and judge whether that is what you get. **This is a retune, not a rewrite** — the
+chance and the cap are named constants.
+
+**Criterion 10 — does an event produce an obvious decision?** The test is whether a drought or war
+mobilization ever makes you *do something different*: change what you produce, hold stock back, pick
+a different buyer, delay a purchase. If events are only visible as slightly different numbers and
+never change a choice, the magnitudes are too small — also a retune.
+
+**Worth watching while you judge those two:** whether the *tail* reads correctly. When an event ends,
+its live modifier disappears but the pressure it caused remains and decays over roughly 25 refreshes.
+That is deliberate (§3.4) and is what makes an event feel like it had consequences rather than being
+switched off. If the aftermath instead feels like the event never ended, `StartShockFraction` is the
+constant to move.
+
 ### 1.0 program — Stage 2, the 2K play gate
 
 **Added 2026-08-21 when 2J closed the last Stage 2 code slice.** Every remaining Stage 2 question is

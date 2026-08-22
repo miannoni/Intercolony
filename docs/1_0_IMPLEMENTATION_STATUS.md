@@ -3,9 +3,9 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 3 — Circumstance-driven economic events
-Current slice:      3F — debug controls (last Stage 3 slice); calibration deferred to end of 1.0
-Last completed:     3E — events tell the player (2026-08-22)
+Current stage:      Stage 4 — Brand strength & colony specialization
+Current slice:      starting Stage 4; all play calibration deferred to one sitting at the end of 1.0
+Last completed:     Stage 3 complete — 3F debug controls + gate audit (2026-08-22)
 Current save schema: 45
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -15,7 +15,7 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [x] Stage 0 — Program spine (gate closed 2026-08-21)
 - [x] Stage 1 — Settlement economies (gate closed 2026-08-21; criterion 7 is a UI read, see below)
 - [x] Stage 2 — Market fundamentals overhaul (all 12 criteria met 2026-08-22; play calibration deferred to end of 1.0)
-- [ ] Stage 3 — Circumstance-driven economic events
+- [x] Stage 3 — Circumstance-driven economic events (8/10 criteria closed 2026-08-22; 9 and 10 join the calibration sitting)
 - [ ] Stage 4 — Brand strength & colony specialization
 - [ ] Stage 5 — Commercial relationships & negotiation
 - [ ] Stage 6 — Procurement parity
@@ -248,6 +248,31 @@ and zero exceptions; the next run of the same save passed. `saveVersion` is read
 only corrected in post-load init, so a bridge reporting world-and-map ready is **not** yet a bridge
 that has migrated, and a single immediate `status` query can sample the pre-migration value. It now
 polls to a 30-second deadline and reports how long it waited.
+
+## Stage 3 acceptance gate — 8 of 10 closed, 2 deferred to the calibration sitting (2026-08-22)
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Event survives save/load | **PASS** — Scribe round trip asserts every field; schema 45 migrated on real saves |
+| 2 | Event starts and ends cleanly | **PASS** — 3D lifecycle assertions, both directions |
+| 3 | Scope is geographically/faction appropriate | **PASS** — radius, faction and single-settlement asserted; radius proven by mutation |
+| 4 | Effective demand/supply moves in the right direction | **PASS** — including a drought *lowering* supply, caught twice under inversion |
+| 5 | Stage 2 propagation carries part of the shock | **PASS** — 3D drives the real chain path after a start shock |
+| 6 | Event end does not snap conditions to baseline | **PASS** — the pressure tail assertion, through the real lifecycle |
+| 7 | Accepted obligations do not mutate | **PASS** — `2ee8c5e`, seven assertions plus a before/after complement |
+| 8 | Event explanation appears in market/pricing context | **PASS** — factor rows multiply to exactly the effective value; Economy tab names the event |
+| 9 | Event frequency does not flood normal play | **DEFERRED — needs play** |
+| 10 | An event produces an obvious player decision | **DEFERRED — needs play** |
+
+**Criteria 9 and 10 are judgements no self-test can make**, and per Matteo's 2026-08-22 ruling they
+join the single calibration sitting at the end of 1.0 rather than blocking Stage 4. What *is* proven
+mechanically is the boundedness underneath them: concurrent events never exceed `MaxConcurrentEvents`,
+generation is deterministic on the economy seed and refresh count, and per-event work is capped at 24
+settlements. Frequency is a named constant, so 9 is a retune rather than a rewrite — exactly the
+property the ruling asked to preserve.
+
+**Criterion 7 had no test at all until `2ee8c5e`**, and it is the one that protects the player's
+agreed terms. It is now guarded, and its complement was itself hollow on arrival — see that commit.
 
 ## Slice log
 
