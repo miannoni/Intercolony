@@ -13,7 +13,8 @@ namespace Intercolony
     /// quality capture and completed-sale brand update, Stage 4D effective-brand read model, and
     /// Stage 4E Parts One and Two: persistence, bounds, load pruning, neutral initialization,
     /// actual batch quality, gradual volume-weighted brand movement, def-driven carryover, direct
-    /// evidence confidence, the bounded prospective price factor, and bounded Find Buyer interest.
+    /// evidence confidence, the bounded prospective price factor, bounded Find Buyer interest,
+    /// and Stage 4F Part One commercial brand milestones.
     /// </summary>
     public static class IntercolonyBrandSelfTest
     {
@@ -69,7 +70,7 @@ namespace Intercolony
         public static string Run(IntercolonyWorldComponent state)
         {
             Results r = new Results();
-            r.sb.AppendLine("Product brand record self-test (Stage 4A/4B/4C/4D/4E Part One)");
+            r.sb.AppendLine("Product brand record self-test (Stage 4A/4B/4C/4D/4E/4F Part One)");
 
             if (state == null)
             {
@@ -145,6 +146,7 @@ namespace Intercolony
 
                 RunDeliveredQualityChecks(r);
                 RunDeliveredBrandUpdateChecks(state, r);
+                RunBrandMilestoneTimelineChecks(state, r);
                 RunProductSimilarityChecks(r);
                 RunEffectiveBrandChecks(state, r);
                 RunBrandPricingChecks(state, r);
@@ -174,7 +176,7 @@ namespace Intercolony
             List<CommercialHistoryEntry> savedCommercialHistory =
                 SnapshotCommercialHistory(state.CommercialHistory);
             List<CommercialEventRecord> savedCommercialTimeline =
-                new List<CommercialEventRecord>(state.CommercialTimeline);
+                SnapshotCommercialTimeline(state.CommercialTimeline);
             int savedTimelineStartTick = state.CommercialTimelineStartTick;
 
             try
@@ -381,6 +383,231 @@ namespace Intercolony
             }
         }
 
+        private static void RunBrandMilestoneTimelineChecks(
+            IntercolonyWorldComponent state, Results r)
+        {
+            ThingDef product = ThingDefOf.DiningChair;
+            if (product == null)
+            {
+                r.Skip(
+                    "brand milestone timeline checks have their required product ThingDef",
+                    "missing loaded ThingDef: DiningChair");
+                return;
+            }
+
+            // These checks deliberately drive SalesOrderService.Complete. Snapshot the complete
+            // contents, not only the counts: every real completion also writes ordinary sale
+            // history, and a fixture must never leave synthetic brand or timeline records in the
+            // player's world when a later assertion changes the number of entries.
+            List<ProductBrandRecord> savedBrands = SnapshotBrandRecords(state.ProductBrandRecords);
+            List<CommercialHistoryEntry> savedCommercialHistory =
+                SnapshotCommercialHistory(state.CommercialHistory);
+            List<CommercialEventRecord> savedCommercialTimeline =
+                SnapshotCommercialTimeline(state.CommercialTimeline);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+
+            try
+            {
+                ResetBrandMilestoneFixture(
+                    state, product,
+                    ProductBrandService.EstablishedThreshold -
+                    ProductBrandService.BrandMilestoneHysteresis - 0.5f);
+                CompleteBrandMilestoneTestSale(
+                    state, product, 9101,
+                    DeliveredQualityCapture.MasterworkQualityTarget, 1);
+                List<CommercialEventRecord> upwardEvents =
+                    FindBrandMilestoneEvents(state.CommercialTimeline);
+                bool upwardNamesBand = upwardEvents.Count == 1 &&
+                    upwardEvents[0].thingDef == product &&
+                    upwardEvents[0].compactDetail.Contains(
+                        ProductBrandService.EstablishedBandLabel) &&
+                    upwardEvents[0].compactDetail.Contains("Reached");
+                r.Check(
+                    upwardEvents.Count == 1 && upwardNamesBand,
+                    "crossing upward writes exactly one Established brand milestone event",
+                    $"events={upwardEvents.Count}, detail={(upwardEvents.Count == 1
+                        ? upwardEvents[0].compactDetail : "<none>")}");
+
+                ResetBrandMilestoneFixture(
+                    state, product, ProductBrandService.EstablishedThreshold + 2f);
+                for (int i = 0; i < 6; i++)
+                {
+                    CompleteBrandMilestoneTestSale(
+                        state, product, 9200 + i,
+                        ProductBrandService.EstablishedThreshold + 5f, 1);
+                }
+
+                ProductBrandRecord withinBand = FindBrandRecord(
+                    state.ProductBrandRecords, product);
+                List<CommercialEventRecord> withinBandEvents =
+                    FindBrandMilestoneEvents(state.CommercialTimeline);
+                r.Check(
+                    withinBandEvents.Count == 0 &&
+                    withinBand != null &&
+                    withinBand.evidenceWeight == 6f &&
+                    withinBand.directScore > ProductBrandService.EstablishedThreshold &&
+                    withinBand.directScore < ProductBrandService.RespectedThreshold,
+                    "small movements that stay inside a brand band write no milestone event",
+                    $"events={withinBandEvents.Count}, score={withinBand?.directScore ?? float.NaN:0.###}, " +
+                    $"evidence={withinBand?.evidenceWeight ?? float.NaN:0.###}");
+
+                ResetBrandMilestoneFixture(
+                    state, product,
+                    ProductBrandService.EstablishedThreshold +
+                    ProductBrandService.BrandMilestoneHysteresis + 0.5f);
+                CompleteBrandMilestoneTestSale(
+                    state, product, 9301,
+                    DeliveredQualityCapture.AwfulQualityTarget, 1);
+                List<CommercialEventRecord> downwardEvents =
+                    FindBrandMilestoneEvents(state.CommercialTimeline);
+                bool downwardNamesBand = downwardEvents.Count == 1 &&
+                    downwardEvents[0].thingDef == product &&
+                    downwardEvents[0].compactDetail.Contains(
+                        ProductBrandService.EstablishedBandLabel) &&
+                    downwardEvents[0].compactDetail.Contains("Lost");
+                r.Check(
+                    downwardEvents.Count == 1 && downwardNamesBand,
+                    "crossing downward writes exactly one symmetric Established milestone event",
+                    $"events={downwardEvents.Count}, detail={(downwardEvents.Count == 1
+                        ? downwardEvents[0].compactDetail : "<none>")}");
+
+                ResetBrandMilestoneFixture(
+                    state, product, ProductBrandService.EstablishedThreshold - 0.1f);
+                const int oscillationSales = 6;
+                for (int i = 0; i < oscillationSales; i++)
+                {
+                    float target = i % 2 == 0
+                        ? ProductBrandService.EstablishedThreshold + 4f
+                        : ProductBrandService.EstablishedThreshold - 4f;
+                    CompleteBrandMilestoneTestSale(
+                        state, product, 9400 + i, target, 1);
+                }
+
+                ProductBrandRecord oscillating = FindBrandRecord(
+                    state.ProductBrandRecords, product);
+                List<CommercialEventRecord> oscillationEvents =
+                    FindBrandMilestoneEvents(state.CommercialTimeline);
+                r.Check(
+                    oscillationEvents.Count == 0 &&
+                    oscillating != null &&
+                    oscillating.directScore > ProductBrandService.EstablishedThreshold -
+                        ProductBrandService.BrandMilestoneHysteresis &&
+                    oscillating.directScore < ProductBrandService.EstablishedThreshold +
+                        ProductBrandService.BrandMilestoneHysteresis,
+                    "fractional oscillation around a threshold does not emit one event per sale",
+                    $"sales={oscillationSales}, events={oscillationEvents.Count}, " +
+                    $"finalScore={oscillating?.directScore ?? float.NaN:0.###}, " +
+                    $"deadband={ProductBrandService.BrandMilestoneHysteresis:0.###}");
+
+                ResetBrandMilestoneFixture(
+                    state, product,
+                    ProductBrandService.EstablishedThreshold -
+                    ProductBrandService.BrandMilestoneHysteresis - 0.5f);
+                ProductBrandRecord constructed = FindBrandRecord(
+                    state.ProductBrandRecords, product);
+                bool noEventFromConstruction =
+                    constructed != null && FindBrandMilestoneEvents(state.CommercialTimeline).Count == 0;
+
+                ProductBrandService.ApplyDeliveredQuality(
+                    state, product,
+                    new DeliveredQualityResult(
+                        DeliveredQualityCapture.MasterworkQualityTarget, 1));
+                bool noEventFromDirectScoreFixture =
+                    FindBrandMilestoneEvents(state.CommercialTimeline).Count == 0;
+
+                ResetBrandMilestoneFixture(
+                    state, product,
+                    ProductBrandService.EstablishedThreshold -
+                    ProductBrandService.BrandMilestoneHysteresis - 0.5f);
+                SalesOrder completed = CompleteBrandMilestoneTestSale(
+                    state, product, 9501,
+                    DeliveredQualityCapture.MasterworkQualityTarget, 1);
+                List<CommercialEventRecord> completionEvents =
+                    FindBrandMilestoneEvents(state.CommercialTimeline);
+                r.Check(
+                    noEventFromConstruction &&
+                    noEventFromDirectScoreFixture &&
+                    completed.status == SalesOrderStatus.Completed &&
+                    completionEvents.Count == 1,
+                    "brand milestone history is written only by real sale completion",
+                    $"construction={noEventFromConstruction}, directUpdate={noEventFromDirectScoreFixture}, " +
+                    $"status={completed.status}, events={completionEvents.Count}");
+            }
+            finally
+            {
+                // Restore the complete contents of both mutable histories. Restoring by count can
+                // leave synthetic records in the player's save when a test's fixture shape differs
+                // from the original list, which is exactly the defect this cleanup guards.
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedBrands);
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedCommercialHistory);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+            }
+        }
+
+        private static void ResetBrandMilestoneFixture(
+            IntercolonyWorldComponent state, ThingDef product, float directScore)
+        {
+            state.ProductBrandRecords.Clear();
+            state.ProductBrandRecords.Add(new ProductBrandRecord(
+                product, directScore, evidenceWeight: 0f, unitsDelivered: 0));
+            state.CommercialTimeline.Clear();
+            state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+        }
+
+        private static SalesOrder CompleteBrandMilestoneTestSale(
+            IntercolonyWorldComponent state,
+            ThingDef product,
+            int orderId,
+            float qualityTarget,
+            int qualityUnits)
+        {
+            SalesOrder order = new SalesOrder
+            {
+                id = orderId,
+                settlementId = -1,
+                settlementName = "",
+                line = new OrderLine(product, qualityUnits),
+                status = SalesOrderStatus.Accepted,
+                deadlineTick = int.MaxValue,
+                deliveredQuantity = qualityUnits,
+                paidSilver = 0
+            };
+
+            SalesOrderService.Complete(
+                state,
+                order,
+                completedTick: 0,
+                outcomeNote: "brand milestone self-test",
+                actualDeliveredQuality: new DeliveredQualityResult(
+                    qualityTarget, qualityUnits));
+            return order;
+        }
+
+        private static List<CommercialEventRecord> FindBrandMilestoneEvents(
+            List<CommercialEventRecord> timeline)
+        {
+            List<CommercialEventRecord> events = new List<CommercialEventRecord>();
+            if (timeline == null)
+            {
+                return events;
+            }
+
+            for (int i = 0; i < timeline.Count; i++)
+            {
+                CommercialEventRecord record = timeline[i];
+                if (record != null && record.type == CommercialEventType.BrandMilestone)
+                {
+                    events.Add(record);
+                }
+            }
+
+            return events;
+        }
+
         private static ProductBrandRecord FindBrandRecord(
             List<ProductBrandRecord> records, ThingDef product)
         {
@@ -418,6 +645,32 @@ namespace Intercolony
                         completedSaleCount = entry.completedSaleCount,
                         totalQuantitySupplied = entry.totalQuantitySupplied
                     });
+            }
+
+            return snapshot;
+        }
+
+        private static List<CommercialEventRecord> SnapshotCommercialTimeline(
+            List<CommercialEventRecord> records)
+        {
+            List<CommercialEventRecord> snapshot =
+                new List<CommercialEventRecord>(records.Count);
+            for (int i = 0; i < records.Count; i++)
+            {
+                CommercialEventRecord record = records[i];
+                snapshot.Add(record == null
+                    ? null
+                    : new CommercialEventRecord(
+                        record.id,
+                        record.tick,
+                        record.settlementId,
+                        record.type,
+                        record.settlementName,
+                        record.relatedEntityId,
+                        record.thingDef,
+                        record.quantity,
+                        record.silverAmount,
+                        record.compactDetail));
             }
 
             return snapshot;

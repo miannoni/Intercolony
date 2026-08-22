@@ -32,7 +32,8 @@ namespace Intercolony
         ContractStarted,
         ContractCompleted,
         ContractFailed,
-        ContractCancelled
+        ContractCancelled,
+        BrandMilestone
     }
 
     /// <summary>

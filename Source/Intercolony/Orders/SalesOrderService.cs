@@ -443,8 +443,30 @@ namespace Intercolony
             order.completedTick = completedTick;
             order.outcomeNote = outcomeNote;
             order.SetActualDeliveredQuality(actualDeliveredQuality);
+            string crossedBrandBand;
+            bool crossedBrandUpward;
             ProductBrandService.ApplyDeliveredQuality(
-                state, order.ThingDef, order.ActualDeliveredQuality);
+                state, order.ThingDef, order.ActualDeliveredQuality,
+                out crossedBrandBand, out crossedBrandUpward);
+
+            // ProductBrandService derives the crossing from the score immediately before and
+            // after this update, so no saved band state or migration is needed. Keep the write
+            // here, after the exactly-once guard and with the real order context: constructing a
+            // ProductBrandRecord or running a score fixture cannot invent a commercial event.
+            if (!string.IsNullOrEmpty(crossedBrandBand))
+            {
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.BrandMilestone,
+                    order.settlementId,
+                    order.settlementName,
+                    order.id,
+                    order.ThingDef,
+                    order.deliveredQuantity,
+                    order.paidSilver,
+                    (crossedBrandUpward ? "Reached " : "Lost ") +
+                    crossedBrandBand + " brand milestone");
+            }
 
             // The transition guard above is the exactly-once boundary. Both seller delivery
             // and buyer collection arrive here, and neither can record the same order twice. The

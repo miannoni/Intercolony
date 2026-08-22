@@ -10,6 +10,56 @@ namespace Intercolony
     public static class ProductBrandService
     {
         /// <summary>
+        /// The first positive milestone is deliberately at +25: it is far enough from neutral
+        /// that one ordinary delivery cannot call an unknown product Established by accident.
+        /// </summary>
+        public const float EstablishedThreshold = 25f;
+
+        /// <summary>
+        /// Respected is +50 so a product must accumulate a second, clearly stronger body of
+        /// evidence before it leaves the first positive band.
+        /// </summary>
+        public const float RespectedThreshold = 50f;
+
+        /// <summary>
+        /// Renowned is +75, reserving the top quarter of the bounded score for a product with a
+        /// durable exceptional record rather than a merely good run.
+        /// </summary>
+        public const float RenownedThreshold = 75f;
+
+        /// <summary>
+        /// The first negative milestone is -25: below that point the colony has more than a
+        /// neutral amount of poor evidence against this exact product.
+        /// </summary>
+        public const float QuestionableThreshold = -25f;
+
+        /// <summary>
+        /// Poor reputation is -50, mirroring the distance of Respected from neutral on the
+        /// positive side and keeping the milestone scale symmetric.
+        /// </summary>
+        public const float PoorReputationThreshold = -50f;
+
+        /// <summary>
+        /// Notorious is -75, reserving the bottom quarter of the bounded score for a product
+        /// whose negative delivery history is genuinely severe.
+        /// </summary>
+        public const float NotoriousThreshold = -75f;
+
+        /// <summary>
+        /// A crossing must clear one point on both sides of a boundary. This deadband filters the
+        /// fractional score noise produced by small deliveries without persisting another band
+        /// field into saves.
+        /// </summary>
+        public const float BrandMilestoneHysteresis = 1f;
+
+        internal const string EstablishedBandLabel = "Established";
+        internal const string RespectedBandLabel = "Respected";
+        internal const string RenownedBandLabel = "Renowned";
+        internal const string QuestionableBandLabel = "Questionable";
+        internal const string PoorReputationBandLabel = "Poor reputation";
+        internal const string NotoriousBandLabel = "Notorious";
+
+        /// <summary>
         /// Quality-bearing units over which a sale moves about 63.2% of the remaining distance to
         /// its batch target. This is conservative balance tuning: a small crafted sale should be
         /// visible without becoming instant proof, while a large shipment can still teach the
@@ -25,6 +75,28 @@ namespace Intercolony
             ThingDef product,
             DeliveredQualityResult deliveredQuality)
         {
+            string ignoredCrossedBand;
+            bool ignoredCrossedUpward;
+            return ApplyDeliveredQuality(
+                state, product, deliveredQuality,
+                out ignoredCrossedBand, out ignoredCrossedUpward);
+        }
+
+        /// <summary>
+        /// Applies delivered-quality evidence and reports a transient milestone crossing to the
+        /// exactly-once completion boundary. The caller owns the timeline write so it can attach
+        /// the real sale's settlement and order; this method never writes history by itself.
+        /// </summary>
+        internal static ProductBrandRecord ApplyDeliveredQuality(
+            IntercolonyWorldComponent state,
+            ThingDef product,
+            DeliveredQualityResult deliveredQuality,
+            out string crossedBand,
+            out bool crossedUpward)
+        {
+            crossedBand = null;
+            crossedUpward = false;
+
             if (state == null || product == null || !deliveredQuality.HasQualityEvidence)
             {
                 // Bulk goods and any other handoff without a quality component say nothing about
@@ -41,6 +113,7 @@ namespace Intercolony
                 state.ProductBrandRecords.Add(record);
             }
 
+            float previousScore = record.directScore;
             int deliveredUnits = deliveredQuality.QualityEvidenceUnits;
             float residual = Mathf.Exp(-deliveredUnits / DeliveredVolumeScale);
 
@@ -50,9 +123,123 @@ namespace Intercolony
             // shipment into many orders would move the brand farther than one shipment.
             record.directScore = deliveredQuality.QualityTarget +
                 (record.directScore - deliveredQuality.QualityTarget) * residual;
+
+            TryGetCrossedBand(
+                previousScore, record.directScore,
+                out crossedBand, out crossedUpward);
+
             record.evidenceWeight += deliveredUnits;
             record.unitsDelivered += deliveredUnits;
             return record;
+        }
+
+        private static void TryGetCrossedBand(
+            float previousScore, float updatedScore,
+            out string crossedBand, out bool crossedUpward)
+        {
+            crossedBand = null;
+            crossedUpward = false;
+
+            // The record does not persist its current band. Instead, a boundary is accepted only
+            // when the pre-update score is at least one deadband-width on the old side and the
+            // post-update score is at least one deadband-width on the new side. A brand hovering
+            // around a threshold therefore never satisfies alternating directions on successive
+            // fractional deliveries, which prevents one milestone from spamming the timeline.
+            if (updatedScore > previousScore)
+            {
+                if (CrossedUpward(previousScore, updatedScore, NotoriousThreshold))
+                {
+                    crossedBand = NotoriousBandLabel;
+                    crossedUpward = true;
+                    return;
+                }
+
+                if (CrossedUpward(previousScore, updatedScore, PoorReputationThreshold))
+                {
+                    crossedBand = PoorReputationBandLabel;
+                    crossedUpward = true;
+                    return;
+                }
+
+                if (CrossedUpward(previousScore, updatedScore, QuestionableThreshold))
+                {
+                    crossedBand = QuestionableBandLabel;
+                    crossedUpward = true;
+                    return;
+                }
+
+                if (CrossedUpward(previousScore, updatedScore, EstablishedThreshold))
+                {
+                    crossedBand = EstablishedBandLabel;
+                    crossedUpward = true;
+                    return;
+                }
+
+                if (CrossedUpward(previousScore, updatedScore, RespectedThreshold))
+                {
+                    crossedBand = RespectedBandLabel;
+                    crossedUpward = true;
+                    return;
+                }
+
+                if (CrossedUpward(previousScore, updatedScore, RenownedThreshold))
+                {
+                    crossedBand = RenownedBandLabel;
+                    crossedUpward = true;
+                    return;
+                }
+            }
+            else if (updatedScore < previousScore)
+            {
+                if (CrossedDownward(previousScore, updatedScore, RenownedThreshold))
+                {
+                    crossedBand = RenownedBandLabel;
+                    return;
+                }
+
+                if (CrossedDownward(previousScore, updatedScore, RespectedThreshold))
+                {
+                    crossedBand = RespectedBandLabel;
+                    return;
+                }
+
+                if (CrossedDownward(previousScore, updatedScore, EstablishedThreshold))
+                {
+                    crossedBand = EstablishedBandLabel;
+                    return;
+                }
+
+                if (CrossedDownward(previousScore, updatedScore, QuestionableThreshold))
+                {
+                    crossedBand = QuestionableBandLabel;
+                    return;
+                }
+
+                if (CrossedDownward(previousScore, updatedScore, PoorReputationThreshold))
+                {
+                    crossedBand = PoorReputationBandLabel;
+                    return;
+                }
+
+                if (CrossedDownward(previousScore, updatedScore, NotoriousThreshold))
+                {
+                    crossedBand = NotoriousBandLabel;
+                }
+            }
+        }
+
+        private static bool CrossedUpward(
+            float previousScore, float updatedScore, float threshold)
+        {
+            return previousScore <= threshold - BrandMilestoneHysteresis &&
+                   updatedScore >= threshold + BrandMilestoneHysteresis;
+        }
+
+        private static bool CrossedDownward(
+            float previousScore, float updatedScore, float threshold)
+        {
+            return previousScore >= threshold + BrandMilestoneHysteresis &&
+                   updatedScore <= threshold - BrandMilestoneHysteresis;
         }
 
         private static ProductBrandRecord FindRecord(
