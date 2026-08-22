@@ -11,7 +11,17 @@ namespace Intercolony
         public const int MaxClosedSalesOrders = 100;
         public const int MaxClosedPurchaseOrders = 100;
 
-        /// <summary>Prunes closed order detail beyond the two retention caps.</summary>
+        /// <summary>
+        /// Keeps concluded request detail at the same depth as the other two order histories.
+        /// Three different caps would each need a separate justification and would otherwise
+        /// give the player inconsistent history depth for no reason. The Orders page shows 25
+        /// rows at a time, so 100 entries already provide four screens of history. This cap is
+        /// for bounded save growth, not durable history depth; commercial totals live separately
+        /// on the world component, so pruning this detail loses no aggregate used to judge the player.
+        /// </summary>
+        public const int MaxConcludedPurchaseRequests = 100;
+
+        /// <summary>Prunes closed order detail beyond the three retention caps.</summary>
         public static int Prune(IntercolonyWorldComponent state)
         {
             if (state == null)
@@ -19,7 +29,9 @@ namespace Intercolony
                 return 0;
             }
 
-            return PruneSalesOrders(state) + PrunePurchaseOrders(state);
+            return PruneSalesOrders(state) +
+                   PrunePurchaseOrders(state) +
+                   PruneConcludedRequests(state);
         }
 
         public static int CountClearableSalesOrderHistory(IntercolonyWorldComponent state)
@@ -178,6 +190,41 @@ namespace Intercolony
                 !retained.Contains(order) && MayRemovePurchaseOrder(order));
         }
 
+        private static int PruneConcludedRequests(IntercolonyWorldComponent state)
+        {
+            List<PurchaseRequest> requests = state.Requests;
+            if (requests == null || requests.Count == 0)
+            {
+                return 0;
+            }
+
+            HashSet<int> purchaseOrderRequestIds = PurchaseOrderRequestIds(state.PurchaseOrders);
+            List<PurchaseRequest> concluded = new List<PurchaseRequest>();
+            foreach (PurchaseRequest request in requests)
+            {
+                if (MayRemovePurchaseRequest(request, purchaseOrderRequestIds))
+                {
+                    concluded.Add(request);
+                }
+            }
+
+            if (concluded.Count <= MaxConcludedPurchaseRequests)
+            {
+                return 0;
+            }
+
+            concluded.Sort(CompareRequestRecency);
+            HashSet<PurchaseRequest> retained = new HashSet<PurchaseRequest>();
+            for (int i = 0; i < MaxConcludedPurchaseRequests; i++)
+            {
+                retained.Add(concluded[i]);
+            }
+
+            return requests.RemoveAll(request =>
+                !retained.Contains(request) &&
+                MayRemovePurchaseRequest(request, purchaseOrderRequestIds));
+        }
+
         private static bool MayRemoveSalesOrder(
             SalesOrder order, int lastRefreshTick, HashSet<int> contractOrderIds)
         {
@@ -218,6 +265,18 @@ namespace Intercolony
         private static int ComparePurchaseRecency(PurchaseOrder left, PurchaseOrder right)
         {
             int byTick = right.orderedTick.CompareTo(left.orderedTick);
+            return byTick != 0 ? byTick : right.id.CompareTo(left.id);
+        }
+
+        /// <summary>
+        /// Purchase requests have no concluded tick, so creation order is a proxy for recency.
+        /// This can drop an old request that concluded recently before a newly created request,
+        /// and that imprecision is accepted rather than unnoticed: persisting a concluded-tick
+        /// field and bumping the save schema for a pruning nicety would be disproportionate.
+        /// </summary>
+        private static int CompareRequestRecency(PurchaseRequest left, PurchaseRequest right)
+        {
+            int byTick = right.createdTick.CompareTo(left.createdTick);
             return byTick != 0 ? byTick : right.id.CompareTo(left.id);
         }
 
