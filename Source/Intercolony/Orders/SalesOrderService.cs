@@ -423,9 +423,9 @@ namespace Intercolony
 
         /// <summary>
         /// Completes an order exactly once and carries the quality result captured by its
-        /// fulfillment path into the order for the next brand slice. This method does not update
-        /// ProductBrandRecord: its only new responsibility is preserving the evidence before the
-        /// consumed Things disappear.
+        /// fulfillment path into the order before consuming that evidence for direct product
+        /// brand. The transition guard is the completion boundary: an order that never concludes
+        /// cannot move the brand record.
         /// </summary>
         internal static void Complete(
             IntercolonyWorldComponent state,
@@ -443,9 +443,13 @@ namespace Intercolony
             order.completedTick = completedTick;
             order.outcomeNote = outcomeNote;
             order.SetActualDeliveredQuality(actualDeliveredQuality);
+            ProductBrandService.ApplyDeliveredQuality(
+                state, order.ThingDef, order.ActualDeliveredQuality);
 
             // The transition guard above is the exactly-once boundary. Both seller delivery
-            // and buyer collection arrive here, and neither can record the same order twice.
+            // and buyer collection arrive here, and neither can record the same order twice. The
+            // migration path records old completed sales separately and has no actual quality to
+            // apply, so brand evidence is not fabricated during load.
             state?.RecordCompletedSale(order);
 
             IntercolonyProductCategory? category = order.IsAnimalOrder

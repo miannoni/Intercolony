@@ -147,8 +147,8 @@ namespace Intercolony
 
         /// <summary>
         /// Quality evidence captured from the real Things at the exactly-once completion boundary.
-        /// This is intentionally transient: the next brand slice consumes it immediately, while
-        /// old completed orders cannot reconstruct actual quality from their saved requirements.
+        /// This is intentionally transient: the completion boundary consumes it immediately,
+        /// while old completed orders cannot reconstruct actual quality from saved requirements.
         /// </summary>
         public DeliveredQualityResult ActualDeliveredQuality => actualDeliveredQuality;
 

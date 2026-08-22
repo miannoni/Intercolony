@@ -9,9 +9,8 @@ namespace Intercolony
     /// The quality evidence captured from the real Things in one handoff. A zero target with
     /// zero evidence units means "nothing here could report quality", not a Normal-quality sale.
     ///
-    /// This remains a value rather than a brand record because this slice only preserves the
-    /// evidence at the fulfillment boundary. The next slice decides how direct brand evidence
-    /// should consume it.
+    /// This remains a value rather than a brand record because the completion boundary consumes
+    /// the evidence immediately, while the sparse product record owns only accumulated history.
     /// </summary>
     public readonly struct DeliveredQualityResult
     {

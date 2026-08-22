@@ -10,10 +10,9 @@ namespace Intercolony
 {
     /// <summary>
     /// Self-test for the Stage 4A product-brand record, Stage 4B similarity service, Stage 4C
-    /// quality-capture seam and Stage 4D effective-brand read model: persistence, bounds, load
-    /// pruning, neutral initialization, actual batch quality, def-driven carryover and direct
-    /// evidence confidence. It does not update ProductBrandRecord from the quality checks because
-    /// this slice owns only evidence capture and read-time derivation.
+    /// quality capture and completed-sale brand update, and Stage 4D effective-brand read model:
+    /// persistence, bounds, load pruning, neutral initialization, actual batch quality, gradual
+    /// volume-weighted brand movement, def-driven carryover and direct evidence confidence.
     /// </summary>
     public static class IntercolonyBrandSelfTest
     {
@@ -70,7 +69,7 @@ namespace Intercolony
             // Contents, not count. The load-pruning assertion replaces the list with synthetic
             // records; restoring only its old length could leave those records in the player's
             // world state if a future test removes or inserts a different number of entries.
-            List<ProductBrandRecord> saved = new List<ProductBrandRecord>(state.ProductBrandRecords);
+            List<ProductBrandRecord> saved = SnapshotBrandRecords(state.ProductBrandRecords);
 
             try
             {
@@ -134,6 +133,7 @@ namespace Intercolony
                     "neutral is exactly zero and a fresh record has zero evidence");
 
                 RunDeliveredQualityChecks(r);
+                RunDeliveredBrandUpdateChecks(state, r);
                 RunProductSimilarityChecks(r);
                 RunEffectiveBrandChecks(state, r);
             }
@@ -151,6 +151,263 @@ namespace Intercolony
             }
 
             return Summarize(r);
+        }
+
+        private static void RunDeliveredBrandUpdateChecks(
+            IntercolonyWorldComponent state, Results r)
+        {
+            ThingDef product = ThingDefOf.DiningChair;
+            List<ProductBrandRecord> saved = SnapshotBrandRecords(state.ProductBrandRecords);
+            List<CommercialHistoryEntry> savedCommercialHistory =
+                SnapshotCommercialHistory(state.CommercialHistory);
+            List<CommercialEventRecord> savedCommercialTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+
+            try
+            {
+                state.ProductBrandRecords.Clear();
+                ProductBrandRecord smallMasterwork =
+                    ProductBrandService.ApplyDeliveredQuality(
+                        state, product,
+                        new DeliveredQualityResult(
+                            DeliveredQualityCapture.MasterworkQualityTarget, 1));
+                r.Check(
+                    smallMasterwork != null &&
+                    smallMasterwork.directScore > ProductBrandRecord.Neutral &&
+                    smallMasterwork.directScore <
+                        DeliveredQualityCapture.MasterworkQualityTarget * 0.25f,
+                    "one small Masterwork delivery moves brand up without jumping to its target",
+                    $"score={smallMasterwork?.directScore ?? float.NaN:0.###}, " +
+                    $"target={DeliveredQualityCapture.MasterworkQualityTarget:0.##}");
+
+                const int splitTotalUnits = 100;
+                const int splitDeliveryUnits = 10;
+                const float startingScore = 37f;
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, startingScore, evidenceWeight: 0f, unitsDelivered: 0));
+                ProductBrandRecord oneDelivery =
+                    ProductBrandService.ApplyDeliveredQuality(
+                        state, product,
+                        new DeliveredQualityResult(
+                            DeliveredQualityCapture.ExcellentQualityTarget, splitTotalUnits));
+                float oneDeliveryScore = oneDelivery.directScore;
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, startingScore, evidenceWeight: 0f, unitsDelivered: 0));
+                for (int i = 0; i < splitTotalUnits / splitDeliveryUnits; i++)
+                {
+                    ProductBrandService.ApplyDeliveredQuality(
+                        state, product,
+                        new DeliveredQualityResult(
+                            DeliveredQualityCapture.ExcellentQualityTarget,
+                            splitDeliveryUnits));
+                }
+
+                ProductBrandRecord splitDeliveries = FindBrandRecord(
+                    state.ProductBrandRecords, product);
+                r.Check(
+                    splitDeliveries != null &&
+                    Mathf.Abs(oneDeliveryScore - splitDeliveries.directScore) < 0.001f &&
+                    splitDeliveries.unitsDelivered == splitTotalUnits,
+                    "one delivery and ten equal-quality split deliveries reach the same final score",
+                    $"one={oneDeliveryScore:0.######}, split={splitDeliveries?.directScore ?? float.NaN:0.######}, " +
+                    $"epsilon=0.001, units={splitDeliveries?.unitsDelivered ?? -1}");
+
+                state.ProductBrandRecords.Clear();
+                ProductBrandRecord positive = null;
+                float firstPositiveScore = float.NaN;
+                for (int i = 0; i < 20; i++)
+                {
+                    positive = ProductBrandService.ApplyDeliveredQuality(
+                        state, product,
+                        new DeliveredQualityResult(
+                            DeliveredQualityCapture.MasterworkQualityTarget, 10));
+                    if (i == 0)
+                    {
+                        firstPositiveScore = positive.directScore;
+                    }
+                }
+
+                r.Check(
+                    positive != null &&
+                    firstPositiveScore > ProductBrandRecord.Neutral &&
+                    positive.directScore > firstPositiveScore &&
+                    positive.directScore >
+                        DeliveredQualityCapture.MasterworkQualityTarget * 0.90f &&
+                    positive.directScore <= ProductBrandRecord.MaxScore &&
+                    Mathf.Approximately(positive.evidenceWeight, 200f) &&
+                    positive.unitsDelivered == 200,
+                    "repeated Masterwork deliveries build positive brand toward, not beyond, the bound",
+                    $"first={firstPositiveScore:0.###}, final={positive?.directScore ?? float.NaN:0.###}, " +
+                    $"evidence={positive?.evidenceWeight ?? float.NaN:0.###}, " +
+                    $"units={positive?.unitsDelivered ?? -1}");
+
+                state.ProductBrandRecords.Clear();
+                ProductBrandRecord negative = null;
+                float firstNegativeScore = float.NaN;
+                for (int i = 0; i < 20; i++)
+                {
+                    negative = ProductBrandService.ApplyDeliveredQuality(
+                        state, product,
+                        new DeliveredQualityResult(
+                            DeliveredQualityCapture.AwfulQualityTarget, 10));
+                    if (i == 0)
+                    {
+                        firstNegativeScore = negative.directScore;
+                    }
+                }
+
+                r.Check(
+                    negative != null &&
+                    firstNegativeScore < ProductBrandRecord.Neutral &&
+                    negative.directScore < firstNegativeScore &&
+                    negative.directScore <
+                        DeliveredQualityCapture.AwfulQualityTarget * 0.90f &&
+                    negative.directScore >= ProductBrandRecord.MinScore &&
+                    Mathf.Approximately(negative.evidenceWeight, 200f) &&
+                    negative.unitsDelivered == 200,
+                    "repeated Awful deliveries build negative brand symmetrically within the bound",
+                    $"first={firstNegativeScore:0.###}, final={negative?.directScore ?? float.NaN:0.###}, " +
+                    $"evidence={negative?.evidenceWeight ?? float.NaN:0.###}, " +
+                    $"units={negative?.unitsDelivered ?? -1}");
+
+                state.ProductBrandRecords.Clear();
+                ProductBrandRecord diluted = new ProductBrandRecord(
+                    product, directScore: 85f, evidenceWeight: 100f, unitsDelivered: 100);
+                state.ProductBrandRecords.Add(diluted);
+                ProductBrandService.ApplyDeliveredQuality(
+                    state, product,
+                    new DeliveredQualityResult(
+                        DeliveredQualityCapture.NormalQualityTarget, 200));
+                r.Check(
+                    diluted.directScore >= ProductBrandRecord.Neutral &&
+                    diluted.directScore < 10f &&
+                    diluted.directScore < 85f &&
+                    diluted.evidenceWeight == 300f &&
+                    diluted.unitsDelivered == 300,
+                    "a large Normal flood dilutes an established positive brand toward neutral",
+                    $"before=85, after={diluted.directScore:0.###}, " +
+                    $"evidence={diluted.evidenceWeight:0.###}, units={diluted.unitsDelivered}");
+
+                state.ProductBrandRecords.Clear();
+                ProductBrandRecord untouched = new ProductBrandRecord(
+                    product, directScore: 42f, evidenceWeight: 17.5f, unitsDelivered: 99);
+                state.ProductBrandRecords.Add(untouched);
+                ProductBrandRecord noEvidenceResult = ProductBrandService.ApplyDeliveredQuality(
+                    state, product, DeliveredQualityResult.NoEvidence);
+                bool existingWasUntouched =
+                    noEvidenceResult == null &&
+                    state.ProductBrandRecords.Count == 1 &&
+                    Mathf.Approximately(untouched.directScore, 42f) &&
+                    Mathf.Approximately(untouched.evidenceWeight, 17.5f) &&
+                    untouched.unitsDelivered == 99;
+                state.ProductBrandRecords.Clear();
+                ProductBrandService.ApplyDeliveredQuality(
+                    state, product, DeliveredQualityResult.NoEvidence);
+                r.Check(
+                    existingWasUntouched && state.ProductBrandRecords.Count == 0,
+                    "a delivery with no quality-carrying units changes neither evidence nor brand",
+                    $"existingUntouched={existingWasUntouched}, " +
+                    $"newRecordCount={state.ProductBrandRecords.Count}");
+
+                state.ProductBrandRecords.Clear();
+                SalesOrder constructed = new SalesOrder
+                {
+                    line = new OrderLine(product, 1),
+                    status = SalesOrderStatus.Accepted,
+                    deadlineTick = int.MaxValue,
+                    deliveredQuantity = 1
+                };
+                bool untouchedBeforeCompletion =
+                    state.ProductBrandRecords.Count == 0 &&
+                    !constructed.ActualDeliveredQuality.HasQualityEvidence;
+                SalesOrderService.Complete(
+                    state,
+                    constructed,
+                    completedTick: 0,
+                    outcomeNote: "brand update self-test",
+                    actualDeliveredQuality: new DeliveredQualityResult(
+                        DeliveredQualityCapture.GoodQualityTarget, 1));
+                ProductBrandRecord completedRecord = FindBrandRecord(
+                    state.ProductBrandRecords, product);
+                float completedScore = completedRecord?.directScore ?? float.NaN;
+                SalesOrderService.Complete(
+                    state,
+                    constructed,
+                    completedTick: 1,
+                    outcomeNote: "must not apply twice",
+                    actualDeliveredQuality: new DeliveredQualityResult(
+                        DeliveredQualityCapture.AwfulQualityTarget, 100));
+                r.Check(
+                    untouchedBeforeCompletion &&
+                    constructed.status == SalesOrderStatus.Completed &&
+                    completedRecord != null &&
+                    completedScore > ProductBrandRecord.Neutral &&
+                    Mathf.Approximately(completedRecord.directScore, completedScore) &&
+                    completedRecord.unitsDelivered == 1,
+                    "brand moves only when SalesOrderService reaches its real completion boundary",
+                    $"beforeRecords={(untouchedBeforeCompletion ? 0 : state.ProductBrandRecords.Count)}, " +
+                    $"status={constructed.status}, score={completedRecord?.directScore ?? float.NaN:0.###}, " +
+                    $"units={completedRecord?.unitsDelivered ?? -1}");
+            }
+            finally
+            {
+                // The real completion boundary also records ordinary sale history. Restore those
+                // incidental fixtures so this focused brand suite cannot write a synthetic trade
+                // into the player's world while it is proving the brand transition.
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedCommercialHistory);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(saved);
+            }
+        }
+
+        private static ProductBrandRecord FindBrandRecord(
+            List<ProductBrandRecord> records, ThingDef product)
+        {
+            if (records == null || product == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < records.Count; i++)
+            {
+                ProductBrandRecord record = records[i];
+                if (record != null && ReferenceEquals(record.thingDef, product))
+                {
+                    return record;
+                }
+            }
+
+            return null;
+        }
+
+        private static List<CommercialHistoryEntry> SnapshotCommercialHistory(
+            List<CommercialHistoryEntry> entries)
+        {
+            List<CommercialHistoryEntry> snapshot =
+                new List<CommercialHistoryEntry>(entries.Count);
+            for (int i = 0; i < entries.Count; i++)
+            {
+                CommercialHistoryEntry entry = entries[i];
+                snapshot.Add(entry == null
+                    ? null
+                    : new CommercialHistoryEntry
+                    {
+                        settlementId = entry.settlementId,
+                        thingDef = entry.thingDef,
+                        completedSaleCount = entry.completedSaleCount,
+                        totalQuantitySupplied = entry.totalQuantitySupplied
+                    });
+            }
+
+            return snapshot;
         }
 
         private static List<ProductBrandRecord> RoundTrip(
