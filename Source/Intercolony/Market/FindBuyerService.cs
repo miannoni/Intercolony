@@ -73,8 +73,10 @@ namespace Intercolony
     public static class FindBuyerService
     {
         /// <summary>
-        /// Below this category demand weight a settlement is simply not in the market for the
-        /// good, and is reported as uninterested rather than quoted a derisory price.
+        /// Below this effective demand weight a settlement is simply not in the market for the
+        /// good, and is reported as uninterested rather than quoted a derisory price. The small
+        /// brand adjustment is applied before this gate; the threshold itself remains the Stage 1
+        /// boundary that keeps "No current interest" from becoming dead code.
         ///
         /// Demand weights cluster around 1.0, so this has to sit close to that to bite at all.
         /// At 0.55 every settlement in a 31-settlement world was interested in everything,
@@ -82,6 +84,20 @@ namespace Intercolony
         /// if everyone buys everything, choosing a buyer stops being a decision.
         /// </summary>
         internal const float InterestThreshold = 0.9f;
+
+        /// <summary>
+        /// A +100 brand may move the interest input by only one tenth of a demand-weight point.
+        /// That is enough to rescue some near-threshold buyers without turning craftsmanship into
+        /// universal demand or stacking a second large price effect on top of §4.7 Part One.
+        /// </summary>
+        internal const float RenownedBrandInterestShiftAtMaximum = 0.10f;
+
+        /// <summary>
+        /// A -100 brand removes the same small tenth from the interest input. Keeping the shift
+        /// bounded and additive avoids the opposite trap: a notorious product must lose buyers,
+        /// but it must not become unsellable everywhere merely because its price is also lower.
+        /// </summary>
+        internal const float NotoriousBrandInterestShiftAtMinimum = 0.10f;
 
         /// <summary>
         /// Who would buy <paramref name="quantity"/> of this good, best offer first.
@@ -242,7 +258,9 @@ namespace Intercolony
             };
 
             float demand = EffectiveEconomyService.EffectiveDemand(state, profile, def, category);
-            if (demand < InterestThreshold)
+            float interestDemand = demand + BrandInterestShiftFor(
+                EffectiveBrandService.GetEffectiveBrand(state, def));
+            if (interestDemand < InterestThreshold)
             {
                 offer.noInterestReason = "no current interest";
                 return offer;
@@ -270,6 +288,29 @@ namespace Intercolony
             offer.factors = factors;
 
             return offer;
+        }
+
+        private static float BrandInterestShiftFor(float effectiveBrand)
+        {
+            if (float.IsNaN(effectiveBrand))
+            {
+                return 0f;
+            }
+
+            float clampedBrand = Mathf.Clamp(
+                effectiveBrand, ProductBrandRecord.MinScore, ProductBrandRecord.MaxScore);
+            if (clampedBrand >= ProductBrandRecord.Neutral)
+            {
+                return Mathf.Lerp(
+                    0f,
+                    RenownedBrandInterestShiftAtMaximum,
+                    clampedBrand / ProductBrandRecord.MaxScore);
+            }
+
+            return -Mathf.Lerp(
+                0f,
+                NotoriousBrandInterestShiftAtMinimum,
+                clampedBrand / ProductBrandRecord.MinScore);
         }
 
         private static BuyerOffer EvaluateAnimal(

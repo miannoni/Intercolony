@@ -11,9 +11,9 @@ namespace Intercolony
     /// <summary>
     /// Self-test for the Stage 4A product-brand record, Stage 4B similarity service, Stage 4C
     /// quality capture and completed-sale brand update, Stage 4D effective-brand read model, and
-    /// Stage 4E Part One pricing: persistence, bounds, load pruning, neutral initialization, actual
-    /// batch quality, gradual volume-weighted brand movement, def-driven carryover, direct evidence
-    /// confidence, and the bounded prospective price factor.
+    /// Stage 4E Parts One and Two: persistence, bounds, load pruning, neutral initialization,
+    /// actual batch quality, gradual volume-weighted brand movement, def-driven carryover, direct
+    /// evidence confidence, the bounded prospective price factor, and bounded Find Buyer interest.
     /// </summary>
     public static class IntercolonyBrandSelfTest
     {
@@ -27,6 +27,16 @@ namespace Intercolony
         private const float SameBroadCategoryAcceptanceMaximum = 0.50f;
         private const float UnrelatedAcceptanceMinimum = 0.03f;
         private const float UnrelatedAcceptanceMaximum = 0.07f;
+
+        // A single settlement can sit on either side of the gate by chance. These checks compare
+        // the full Find Buyer sample, and skip honestly when the loaded world cannot provide a
+        // large enough accessible sample to make an aggregate threshold result meaningful.
+        private const int MinimumBrandInterestSampleSettlements = 12;
+
+        // Keep this as an independent regression sentinel rather than an alias for the service's
+        // tunable shift. If the production shift is mutated to zero, the assertions must still
+        // run when the sampled neutral demand has genuine 0.10-point crossing headroom.
+        private const float ExpectedBrandInterestShiftDistance = 0.10f;
 
         private sealed class Results
         {
@@ -138,6 +148,7 @@ namespace Intercolony
                 RunProductSimilarityChecks(r);
                 RunEffectiveBrandChecks(state, r);
                 RunBrandPricingChecks(state, r);
+                RunBrandInterestChecks(state, r);
             }
             catch (Exception ex)
             {
@@ -973,6 +984,137 @@ namespace Intercolony
             }
         }
 
+        private static void RunBrandInterestChecks(
+            IntercolonyWorldComponent state, Results r)
+        {
+            ThingDef product = ThingDefOf.Steel;
+            if (product == null || !IntercolonyProductClassifier.Classify(product).HasValue)
+            {
+                r.Skip("brand interest checks have their required tradable Core ThingDef",
+                    "missing or unclassified ThingDef: Steel");
+                return;
+            }
+
+            // Each run replaces the sparse list with one strong direct record. Snapshot the
+            // records themselves, not only the count, because a fixture that changes shape must
+            // never leave synthetic brand evidence in the player's world after the assertion.
+            List<ProductBrandRecord> savedBrands = SnapshotBrandRecords(state.ProductBrandRecords);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            Dictionary<int, float> savedReputationScores =
+                SnapshotReputationScores(state.Reputations);
+
+            try
+            {
+                state.ProductBrandRecords.Clear();
+                List<BuyerOffer> neutralOffers = FindBuyerService.FindBuyers(
+                    state, product, null, quantity: 10, includeUninterested: true);
+                int sampledSettlements = neutralOffers.Count;
+                if (sampledSettlements < MinimumBrandInterestSampleSettlements)
+                {
+                    r.Skip(
+                        "brand interest checks have enough accessible Find Buyer settlements",
+                        $"FindBuyers returned {sampledSettlements}; need " +
+                        $"{MinimumBrandInterestSampleSettlements} to compare an aggregate sample");
+                    return;
+                }
+
+                int neutralInterested = CountInterestedOffers(neutralOffers);
+                IntercolonyProductCategory category =
+                    IntercolonyProductClassifier.Classify(product).Value;
+                int renownedCrossingHeadroom = CountBrandInterestCrossings(
+                    state, neutralOffers, product, category, upward: true);
+                int notoriousCrossingHeadroom = CountBrandInterestCrossings(
+                    state, neutralOffers, product, category, upward: false);
+
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, ProductBrandRecord.MaxScore, evidenceWeight: 1000f,
+                    unitsDelivered: 1000));
+                List<BuyerOffer> renownedOffers = FindBuyerService.FindBuyers(
+                    state, product, null, quantity: 10, includeUninterested: true);
+                int renownedInterested = CountInterestedOffers(renownedOffers);
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, ProductBrandRecord.MinScore, evidenceWeight: 1000f,
+                    unitsDelivered: 1000));
+                List<BuyerOffer> notoriousOffers = FindBuyerService.FindBuyers(
+                    state, product, null, quantity: 10, includeUninterested: true);
+                int notoriousInterested = CountInterestedOffers(notoriousOffers);
+
+                // The comparison must use the production entry point above. Calling a brand
+                // helper directly would prove only that the helper works, not that Find Buyer
+                // actually applies its result at the interest threshold.
+                if (renownedCrossingHeadroom == 0)
+                {
+                    r.Skip(
+                        "a +100 brand increases interested settlements through Find Buyer",
+                        $"sampled={sampledSettlements}, threshold={FindBuyerService.InterestThreshold:0.###}, " +
+                        $"shiftDistance={ExpectedBrandInterestShiftDistance:0.###}; " +
+                        "upward crossing headroom=0");
+                }
+                else
+                {
+                    r.Check(
+                        renownedOffers.Count == sampledSettlements &&
+                        renownedInterested > neutralInterested,
+                        "a +100 brand increases interested settlements through Find Buyer",
+                        $"neutral={neutralInterested}, renowned={renownedInterested}, " +
+                        $"sampled={sampledSettlements}");
+                }
+
+                if (notoriousCrossingHeadroom == 0)
+                {
+                    r.Skip(
+                        "a -100 brand decreases interested settlements through Find Buyer",
+                        $"sampled={sampledSettlements}, threshold={FindBuyerService.InterestThreshold:0.###}, " +
+                        $"shiftDistance={ExpectedBrandInterestShiftDistance:0.###}; " +
+                        "downward crossing headroom=0");
+                }
+                else
+                {
+                    r.Check(
+                        notoriousOffers.Count == sampledSettlements &&
+                        notoriousInterested < neutralInterested,
+                        "a -100 brand decreases interested settlements through Find Buyer",
+                        $"neutral={neutralInterested}, notorious={notoriousInterested}, " +
+                        $"sampled={sampledSettlements}");
+                }
+
+                r.Check(
+                    notoriousOffers.Count == sampledSettlements && notoriousInterested > 0,
+                    "a -100 brand still leaves some settlements interested",
+                    $"notorious={notoriousInterested} of {sampledSettlements}");
+
+                r.Check(
+                    renownedOffers.Count == sampledSettlements &&
+                    renownedInterested < renownedOffers.Count,
+                    "a +100 brand does not make every settlement interested",
+                    $"renowned={renownedInterested} of {renownedOffers.Count}");
+
+                r.Check(
+                    ReputationScoresUnchanged(savedReputationScores, state.Reputations),
+                    "brand-adjusted Find Buyer interest leaves CommercialReputation scores unchanged",
+                    $"tracked={savedReputationScores.Count}, current={state.Reputations.Count}");
+            }
+            finally
+            {
+                // Restore the complete sparse brand-list contents, not only its old length, so
+                // this threshold experiment cannot overwrite a player's real product history.
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedBrands);
+
+                // Find Buyer is intended to be read-only with respect to reputation. Restore the
+                // dictionary contents as a defensive cleanup if a future interest hook creates a
+                // record while this self-test is running.
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations.Add(entry.Key, entry.Value);
+                }
+            }
+        }
+
         private static bool TryFindPriceFactor(
             List<PriceFactor> factors, string label, out PriceFactor result)
         {
@@ -1050,6 +1192,101 @@ namespace Intercolony
                     expectedRecord.directScore != actualRecord.directScore ||
                     expectedRecord.evidenceWeight != actualRecord.evidenceWeight ||
                     expectedRecord.unitsDelivered != actualRecord.unitsDelivered)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static int CountBrandInterestCrossings(
+            IntercolonyWorldComponent state,
+            List<BuyerOffer> offers,
+            ThingDef product,
+            IntercolonyProductCategory category,
+            bool upward)
+        {
+            int crossings = 0;
+            float threshold = FindBuyerService.InterestThreshold;
+            foreach (BuyerOffer offer in offers)
+            {
+                if (offer == null || offer.profile == null)
+                {
+                    continue;
+                }
+
+                // Read the same unshifted interest input that Find Buyer reads. The directional
+                // bands below only identify a possible threshold crossing; they do not recreate
+                // the production gate or infer interest from BuyerOffer.Interested.
+                float demand = EffectiveEconomyService.EffectiveDemand(
+                    state, offer.profile, product, category);
+                bool canCross = upward
+                    ? demand >= threshold - ExpectedBrandInterestShiftDistance && demand < threshold
+                    : demand >= threshold &&
+                      demand < threshold + ExpectedBrandInterestShiftDistance;
+                if (canCross)
+                {
+                    crossings++;
+                }
+            }
+
+            return crossings;
+        }
+
+        private static int CountInterestedOffers(List<BuyerOffer> offers)
+        {
+            int interested = 0;
+            if (offers == null)
+            {
+                return interested;
+            }
+
+            foreach (BuyerOffer offer in offers)
+            {
+                if (offer != null && offer.Interested)
+                {
+                    interested++;
+                }
+            }
+
+            return interested;
+        }
+
+        private static Dictionary<int, float> SnapshotReputationScores(
+            Dictionary<int, CommercialReputation> reputations)
+        {
+            Dictionary<int, float> snapshot = new Dictionary<int, float>();
+            if (reputations == null)
+            {
+                return snapshot;
+            }
+
+            foreach (KeyValuePair<int, CommercialReputation> entry in reputations)
+            {
+                if (entry.Value != null)
+                {
+                    snapshot[entry.Key] = entry.Value.Score;
+                }
+            }
+
+            return snapshot;
+        }
+
+        private static bool ReputationScoresUnchanged(
+            Dictionary<int, float> expected,
+            Dictionary<int, CommercialReputation> actual)
+        {
+            if (expected == null || actual == null || expected.Count != actual.Count)
+            {
+                return false;
+            }
+
+            foreach (KeyValuePair<int, float> entry in expected)
+            {
+                if (!actual.TryGetValue(entry.Key, out CommercialReputation reputation) ||
+                    reputation == null ||
+                    !Mathf.Approximately(reputation.Score, entry.Value))
                 {
                     return false;
                 }
