@@ -187,6 +187,37 @@ So what he saw is consistent and correct: the shortage row appeared where prices
 **live** (Find Buyer, and the sell confirmation via `RepriceForQuantity`), and nothing changed on
 the Market board, which is frozen by design.
 
+**A second candidate explanation, derived from the constants rather than observed, and it is
+testable.** If he was looking at a **live-priced** surface (Find Buyer, or the sell confirmation)
+rather than the Market board, then the board explanation above does not apply and something else
+did. The arithmetic says the price-sanity clamp is the likely culprit, and that it bites hardest
+exactly where a shortage should matter most.
+
+Let `d` be the settlement's baseline demand for the good (`BaseDemandFor(def, category)` — the
+category weight times the good's affinity). Pressure maxes at `MarketPressureService.MaxPressure`
+= 1.60, and `EffectiveEconomyService.MaxCondition` is 2.0, so the strongest possible demand
+condition is 1.60. Pricing then clamps the composed value to `[0.4, 2.0]`, so the most a maximum
+shortage can multiply the price by is:
+
+```
+min(2.0, d * 1.60) / d
+```
+
+- `d ≤ 1.25` → the full **×1.60**. The shock arrives unclipped.
+- `d = 1.60` → only **×1.25**.
+- `d ≥ 2.0` → **×1.00 — a maximum shortage changes the price by nothing at all**, because the
+  settlement's standing appetite had already reached the ceiling on its own.
+
+So the harder a settlement already wants a category, the less a shortage in it can move the price —
+which is backwards from what a player would expect, and commodities is a category some archetypes
+weight heavily. The `[0.4, 2.0]` bound is a *price sanity* clamp that predates market pressure
+entirely; it was never chosen with a second multiplicative layer underneath it in mind.
+
+**How to settle which explanation it was, in one look:** the new world-map Economy tab shows the
+settlement's baseline demand beside its current condition. If `d` for that category is near or above
+2.0, this is the clamp and the fix is the bound, not the pressure. If `d` is well under 1.25 and the
+price still barely moved, neither explanation holds and it needs a fresh look.
+
 **The 2K conclusion this points to: the lever is visibility, not `ReversionRetention`.** A shortage
 at full strength decays below the prune epsilon in about 19 refreshes — which is exactly what
 happened here, and why market pressure read `0 settlement(s)` by the time the suites were run
