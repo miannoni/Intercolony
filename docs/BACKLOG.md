@@ -16,11 +16,39 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
-## A sold animal may leave dangling pawn relations in the save
+## ~~A sold animal may leave dangling pawn relations in the save~~ — HYPOTHESIS DISPROVEN
 
 **Raised:** 2026-08-21, from reading the log of Matteo's play session.
-**Size:** small — probably one call before the discard.
-**Status:** open, strong hypothesis, **not proven**. Not in the 1.0 program.
+**Disproven:** 2026-08-21, the same day, by reading the discard path properly.
+**Status:** the *observation* stands and is unexplained; the *accusation against our code* was wrong.
+
+**The blaming of `SalesOrderService` below is incorrect, and it is left here rather than deleted
+because a wrong theory that looks this plausible is worth being able to recognise again.**
+`PassToWorld(pawn, Discard)` routes to `WorldPawns.DiscardPawn`, which calls `Pawn.Discard`, which
+calls `relations.ClearAllRelations()` (`reference/decompiled/Verse/Pawn.cs:2442-2456`). That method
+does **both** halves of the cleanup: it removes the pawn's own direct relations, and then walks
+`pawnsWithDirectRelationsWithMe` removing every relation on *other* pawns whose `otherPawn` points
+back at it (`reference/decompiled/RimWorld/Pawn_RelationsTracker.cs:844-855`). So the exact dangling
+reference described below is cleaned up by the discard itself, and the parent/child relations that
+`Notify_PawnSold` leaves behind are removed a moment later regardless.
+
+**What the reasoning got wrong.** It correctly established that vanilla keeps a sold pawn while we
+discard it, correctly established that `Notify_PawnSold` clears only `Bond`, and then stopped one
+call short — at the difference, instead of following our own path to its end. The two verified facts
+made the conclusion feel measured. **Every fact in it was true and the conclusion was still false**,
+which is precisely the failure mode this project warns about when reading a delegate's output; it
+turns out to be just as available first-hand.
+
+**What is still unexplained, and is now the whole of the item.** Matteo's log really does carry 143
+`Trying to save reference to a discarded thing Chicken66024 … label=otherPawn` warnings. Something
+holds a `DirectPawnRelation` to a discarded pawn, and the clean-up above says it should not be
+reachable through a sale. Candidates not yet examined: a chicken that died rather than being sold, a
+stale `pawnsWithDirectRelationsWithMe` reverse index, or a mod. **Do not start from the sale path** —
+it has been read and it is clean.
+
+**Size:** unknown until the cause is found.
+**Not in the 1.0 program**, and not RED: RimWorld tolerates the reference, logs it, and loads with it
+null.
 
 His `Player.log` carries **143 warnings**, all naming one pawn and one field:
 
