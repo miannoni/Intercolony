@@ -893,23 +893,60 @@ function Get-OpenPostingCount {
 }
 
 function Invoke-DevTest($Name) {
+    $archiveFailure = {
+        param($TestId, $Output, $LogLines)
+
+        try {
+            $failureDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "Intercolony-dev-test-failures"
+            if (-not (Test-Path $failureDirectory)) {
+                New-Item -ItemType Directory -Path $failureDirectory | Out-Null
+            }
+
+            $safeTestId = [string]$TestId -replace '[^A-Za-z0-9._-]', '-'
+            if ([string]::IsNullOrWhiteSpace($safeTestId)) { $safeTestId = "unnamed" }
+            $failureName = "$(Get-Date -Format 'yyyy-MM-dd-HHmmss')-$safeTestId"
+            $failurePath = Join-Path $failureDirectory "$failureName.txt"
+            $copyNumber = 2
+            while (Test-Path $failurePath) {
+                $failurePath = Join-Path $failureDirectory "$failureName-$copyNumber.txt"
+                $copyNumber++
+            }
+            # Seventeen passing runs destroyed the evidence of the one failure between them;
+            # an intermittent failure is worth more than the disk space its log occupies.
+            Set-Content -Path $failurePath -Value $Output -Encoding UTF8
+            if ($null -ne $LogLines -and @($LogLines).Count -gt 0) {
+                Add-Content -Path $failurePath -Value "`r`n--- new Player.log lines ---" -Encoding UTF8
+                Add-Content -Path $failurePath -Value $LogLines -Encoding UTF8
+            }
+            Write-Host "Failure archive: $failurePath" -ForegroundColor Red
+        } catch {
+            Write-Host "TEST FAILURE ARCHIVE FAILED: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
     if ([string]::IsNullOrWhiteSpace($Name)) {
         Write-Host "TEST SETUP FAILED: name a test, for example '.\dev.ps1 test job-posting'." -ForegroundColor Red
+        & $archiveFailure "unnamed" "TEST SETUP FAILED: name a test, for example '.\dev.ps1 test job-posting'." $null
         return 2
     }
 
-    if ($Fresh -and -not (Start-BridgeSession)) { return 2 }
+    if ($Fresh -and -not (Start-BridgeSession)) {
+        & $archiveFailure $Name "TEST INFRASTRUCTURE FAILED: bridge session did not start." $null
+        return 2
+    }
 
     try {
         $pawnsBefore = Get-WorldPawnCount
         $postingsBefore = Get-OpenPostingCount
     } catch {
         Write-Host "TEST INFRASTRUCTURE FAILED: $($_.Exception.Message)" -ForegroundColor Red
+        & $archiveFailure $Name "TEST INFRASTRUCTURE FAILED: $($_.Exception.Message)" $null
         return 2
     }
 
     if ($Fresh -and $Name -eq "job-posting" -and $postingsBefore -ne 0) {
         Write-Host "ENVIRONMENT SETUP FAILURE: fresh world has $postingsBefore open postings; expected 0. Test not run." -ForegroundColor Red
+        & $archiveFailure $Name "ENVIRONMENT SETUP FAILURE: fresh world has $postingsBefore open postings; expected 0. Test not run." $null
         return 2
     }
 
@@ -953,6 +990,14 @@ function Invoke-DevTest($Name) {
         Write-Host "TEST INFRASTRUCTURE FAILED: $infrastructureError" -ForegroundColor Red
         Write-Host "World pawns: $pawnsBefore -> $pawnsAfter (delta $($pawnsAfter - $pawnsBefore))" -ForegroundColor Yellow
         Write-Host "Postings: $postingsBefore -> $postingsAfter" -ForegroundColor Yellow
+        $failureOutput = "TEST INFRASTRUCTURE FAILED: $infrastructureError"
+        if ($null -ne $response) {
+            $bridgeOutput = [string](Get-BridgeField $response.result @("output", "rawOutput") "")
+            if (-not [string]::IsNullOrWhiteSpace($bridgeOutput)) {
+                $failureOutput = "$bridgeOutput`r`n`r`n--- infrastructure failure ---`r`n$failureOutput"
+            }
+        }
+        & $archiveFailure $Name $failureOutput $logInterval
         return 2
     }
 
@@ -996,9 +1041,13 @@ function Invoke-DevTest($Name) {
     }
     Write-Host "Full test output: $TestOutput"
 
-    if ($failed -gt 0 -or -not $success) { return 1 }
+    if ($failed -gt 0 -or -not $success) {
+        & $archiveFailure $Name $rawOutput $logInterval
+        return 1
+    }
     if ($logHasExceptions) {
         Write-Host "Assertions passed, but new log exceptions mean this was NOT a clean run." -ForegroundColor Red
+        & $archiveFailure $Name $rawOutput $logInterval
         return 2
     }
     return 0
