@@ -89,9 +89,17 @@ The individual per-suite actions still exist for when one of them is being worke
 
 ### OPEN — one full-suite assertion failed once in 18 runs, and its identity was lost
 
-**Observed 2026-08-22.** Across eighteen consecutive `dev.ps1 test all -Fresh` runs, **one** failed a
-single assertion. The other seventeen passed, at 1002–1003 passed / 0 failed / 13–14 skipped, with
-world-pawn delta 0, both leak guards `OK` and clean logs throughout.
+**Observed 2026-08-22. NOT REPRODUCED in 37 further runs — §18's outcome, not a clean bill.**
+One `dev.ps1 test all -Fresh` run failed a single assertion. **Thirty-seven subsequent runs all
+passed**, at 1002–1003 passed / 0 failed / 13–14 skipped, world-pawn delta 0, both leak guards `OK`
+and clean logs throughout. Twenty of those were run specifically to catch it, after the failure
+archiving below was in place, and it did not recur.
+
+§18 says to trace the path, force the condition, instrument the boundary, and if it still will not
+reproduce, record `NOT REPRODUCED`, prove what can be proven, and continue rather than writing a
+speculative fix for a defect the roadmap expected. That is what this is. **It is not evidence that
+nothing is wrong** — one occurrence at ≤1-in-38 is entirely consistent with a rare race or a
+world-shape edge that these worlds did not produce.
 
 **Which assertion it was is not known**, and that is the part worth fixing rather than the rate.
 `dev.ps1` wrote the bridge's assertion output to a single fixed path that every later run
