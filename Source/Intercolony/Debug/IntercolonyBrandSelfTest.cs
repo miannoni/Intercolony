@@ -14,7 +14,7 @@ namespace Intercolony
     /// Stage 4E Parts One and Two: persistence, bounds, load pruning, neutral initialization,
     /// actual batch quality, gradual volume-weighted brand movement, def-driven carryover, direct
     /// evidence confidence, the bounded prospective price factor, bounded Find Buyer interest,
-    /// and Stage 4F Part One commercial brand milestones.
+    /// and Stage 4F Parts One and Two: commercial brand milestones and the compact brand UI.
     /// </summary>
     public static class IntercolonyBrandSelfTest
     {
@@ -149,6 +149,7 @@ namespace Intercolony
                 RunBrandMilestoneTimelineChecks(state, r);
                 RunProductSimilarityChecks(r);
                 RunEffectiveBrandChecks(state, r);
+                RunBrandUiChecks(state, r);
                 RunBrandPricingChecks(state, r);
                 RunBrandInterestChecks(state, r);
             }
@@ -1127,6 +1128,130 @@ namespace Intercolony
                 state.ProductBrandRecords.Clear();
                 state.ProductBrandRecords.AddRange(saved);
             }
+        }
+
+        /// <summary>
+        /// Verifies the production read model that feeds both the Business summary and the
+        /// selected-good rows. These assertions inspect returned UI data; they do not reconstruct
+        /// the grouping or effective-brand calculation in the test itself.
+        /// </summary>
+        private static void RunBrandUiChecks(
+            IntercolonyWorldComponent state, Results r)
+        {
+            ThingDef positiveProduct = ResolveThingDef("Gun_Revolver");
+            ThingDef negativeProduct = ResolveThingDef("DiningChair");
+            ThingDef targetProduct = ResolveThingDef("Gun_BoltActionRifle");
+
+            if (positiveProduct == null || negativeProduct == null || targetProduct == null)
+            {
+                StringBuilder missing = new StringBuilder();
+                AppendMissing(missing, "Gun_Revolver", positiveProduct);
+                AppendMissing(missing, "DiningChair", negativeProduct);
+                AppendMissing(missing, "Gun_BoltActionRifle", targetProduct);
+                r.Skip(
+                    "brand UI checks have their required Core ThingDefs",
+                    $"missing loaded ThingDef(s): {missing}");
+                return;
+            }
+
+            List<ProductBrandRecord> saved = SnapshotBrandRecords(state.ProductBrandRecords);
+            try
+            {
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    positiveProduct,
+                    // Fixed sentinels keep this assertion meaningful if production thresholds
+                    // move: the UI must still recognise the documented +50 boundary as Respected.
+                    directScore: 50f,
+                    evidenceWeight: 20f,
+                    unitsDelivered: 20));
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    negativeProduct,
+                    directScore: -25f,
+                    evidenceWeight: 20f,
+                    unitsDelivered: 20));
+
+                ProductBrandUiService.BrandSummary summary =
+                    ProductBrandUiService.BuildSummary(state);
+                r.Check(
+                    HasSummaryRow(
+                        summary.knownFor,
+                        IntercolonyProductCategory.ManufacturedGoods,
+                        "Respected") &&
+                    HasSummaryRow(
+                        summary.weakReputation,
+                        IntercolonyProductCategory.Furniture,
+                        "Questionable"),
+                    "brand UI groups exact milestone boundaries with their positive and weak bands",
+                    $"known={summary.knownFor.Count}, weak={summary.weakReputation.Count}");
+
+                ThingDef inheritedSource = positiveProduct;
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    inheritedSource, directScore: 80f, evidenceWeight: 1f, unitsDelivered: 1));
+                ProductBrandUiService.SpecificGoodDetails inheritedDetails =
+                    ProductBrandUiService.BuildSpecificGoodDetails(state, targetProduct);
+                float expectedEffective =
+                    EffectiveBrandService.GetEffectiveBrand(state, targetProduct);
+                int expectedRounded = Mathf.RoundToInt(expectedEffective);
+                string expectedLabel = expectedRounded > 0
+                    ? $"+{expectedRounded}"
+                    : expectedRounded.ToString();
+                r.Check(
+                    Mathf.Abs(inheritedDetails.effectiveBrand - expectedEffective) < 0.001f &&
+                    inheritedDetails.strengthLabel == expectedLabel,
+                    "specific-good brand UI reports EffectiveBrandService's value",
+                    $"display={inheritedDetails.strengthLabel}, effective={expectedEffective:0.###}");
+
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    targetProduct, directScore: -70f, evidenceWeight: 100f, unitsDelivered: 100));
+                ProductBrandUiService.SpecificGoodDetails directDetails =
+                    ProductBrandUiService.BuildSpecificGoodDetails(state, targetProduct);
+                r.Check(
+                    inheritedDetails.attribution.IndexOf(
+                        "inherited", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    inheritedDetails.attribution.IndexOf(
+                        inheritedSource.LabelCap.ToString(), StringComparison.OrdinalIgnoreCase) >= 0 &&
+                    directDetails.attribution.IndexOf(
+                        "inherited", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    directDetails.attribution.IndexOf(
+                        "direct", StringComparison.OrdinalIgnoreCase) >= 0,
+                    "brand UI attribution changes from inherited to direct evidence",
+                    $"inherited='{inheritedDetails.attribution}', direct='{directDetails.attribution}'");
+
+                state.ProductBrandRecords.Clear();
+                ProductBrandUiService.BrandSummary empty =
+                    ProductBrandUiService.BuildSummary(state);
+                r.Check(
+                    empty.IsEmpty &&
+                    empty.knownFor.Count == 0 &&
+                    empty.weakReputation.Count == 0 &&
+                    empty.emptyState == ProductBrandUiService.NoBrandEvidenceMessage,
+                    "brand UI returns the plain empty state when no brand records exist",
+                    empty.emptyState);
+            }
+            finally
+            {
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(saved);
+            }
+        }
+
+        private static bool HasSummaryRow(
+            List<ProductBrandUiService.BrandSummaryRow> rows,
+            IntercolonyProductCategory category,
+            string bandName)
+        {
+            for (int i = 0; i < rows.Count; i++)
+            {
+                ProductBrandUiService.BrandSummaryRow row = rows[i];
+                if (row.category == category && row.bandName == bandName)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void RunBrandPricingChecks(

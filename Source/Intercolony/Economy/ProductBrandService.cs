@@ -60,6 +60,51 @@ namespace Intercolony
         internal const string NotoriousBandLabel = "Notorious";
 
         /// <summary>
+        /// Returns the player-facing band for a bounded direct score. The neutral middle is not a
+        /// band: showing a row for it would turn the sparse reputation summary into a list of
+        /// products that have not yet earned a reputation worth naming.
+        /// </summary>
+        internal static string BandNameFor(float directScore)
+        {
+            if (float.IsNaN(directScore))
+            {
+                return null;
+            }
+
+            if (directScore >= RenownedThreshold)
+            {
+                return RenownedBandLabel;
+            }
+
+            if (directScore >= RespectedThreshold)
+            {
+                return RespectedBandLabel;
+            }
+
+            if (directScore >= EstablishedThreshold)
+            {
+                return EstablishedBandLabel;
+            }
+
+            if (directScore <= NotoriousThreshold)
+            {
+                return NotoriousBandLabel;
+            }
+
+            if (directScore <= PoorReputationThreshold)
+            {
+                return PoorReputationBandLabel;
+            }
+
+            if (directScore <= QuestionableThreshold)
+            {
+                return QuestionableBandLabel;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Quality-bearing units over which a sale moves about 63.2% of the remaining distance to
         /// its batch target. This is conservative balance tuning: a small crafted sale should be
         /// visible without becoming instant proof, while a large shipment can still teach the

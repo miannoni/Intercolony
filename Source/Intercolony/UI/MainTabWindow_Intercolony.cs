@@ -1678,6 +1678,13 @@ namespace Intercolony
                     : $"Buyers for {selectedStockCount}x {selectedStockDef.LabelCap}");
             y += 28f;
 
+            if (!findBuyerAnimalMode && selectedStockDef != null)
+            {
+                ProductBrandUiService.SpecificGoodDetails brand =
+                    ProductBrandUiService.BuildSpecificGoodDetails(state, selectedStockDef);
+                y = DrawSpecificGoodBrandDetails(rect, y, brand);
+            }
+
             // Searching walks every accessible settlement and prices each one. Cached, and
             // invalidated when the selection, quantity, or availability snapshot changes (§84).
             if (findBuyerCache == null)
@@ -1707,6 +1714,35 @@ namespace Intercolony
             }
 
             EndPageScrollView();
+        }
+
+        private static float DrawSpecificGoodBrandDetails(
+            Rect inRect, float y, ProductBrandUiService.SpecificGoodDetails details)
+        {
+            float contentWidth = Mathf.Max(1f, inRect.width - 12f);
+            float labelWidth = Mathf.Min(190f, contentWidth * 0.42f);
+            float valueWidth = Mathf.Max(1f, contentWidth - labelWidth - 12f);
+            float valueX = inRect.x + labelWidth + 12f;
+
+            string strengthLabel = "Relevant brand strength";
+            float strengthLabelHeight = Text.CalcHeight(strengthLabel, labelWidth);
+            float strengthValueHeight = Text.CalcHeight(details.strengthLabel, valueWidth);
+            float strengthHeight = Mathf.Max(strengthLabelHeight, strengthValueHeight);
+            Widgets.Label(new Rect(inRect.x, y, labelWidth, strengthLabelHeight), strengthLabel);
+            Widgets.Label(new Rect(valueX, y, valueWidth, strengthValueHeight), details.strengthLabel);
+            y += strengthHeight + 3f;
+
+            string basisLabel = "Brand basis";
+            float basisLabelHeight = Text.CalcHeight(basisLabel, labelWidth);
+            float basisValueHeight = Text.CalcHeight(details.attribution, valueWidth);
+            float basisHeight = Mathf.Max(basisLabelHeight, basisValueHeight);
+            Rect basisRect = new Rect(inRect.x, y, contentWidth, basisHeight);
+            Widgets.Label(new Rect(inRect.x, y, labelWidth, basisLabelHeight), basisLabel);
+            Widgets.Label(new Rect(valueX, y, valueWidth, basisValueHeight), details.attribution);
+            TooltipHandler.TipRegion(basisRect, details.tooltip);
+            Widgets.DrawHighlightIfMouseover(basisRect);
+
+            return y + basisHeight + 7f;
         }
 
         private static readonly float[] BuyerColumnWidths = { 0.28f, 0.16f, 0.14f, 0.16f, 0.12f, 0.14f };
@@ -1908,10 +1944,14 @@ namespace Intercolony
                         (qty < offer.quantity
                             ? " A smaller lot earns a better rate per unit."
                             : "");
+                    ProductBrandUiService.SpecificGoodDetails brand =
+                        ProductBrandUiService.BuildSpecificGoodDetails(state, offer.def);
                     List<TermRow> rows = new List<TermRow>
                     {
                         new TermRow(null,
                             $"Sell {qty}x {offer.def.LabelCap} to {offer.settlement?.Label}"),
+                        new TermRow("Relevant brand strength", brand.strengthLabel),
+                        new TermRow("Brand basis", brand.attribution, brand.tooltip),
                         new TermRow("Payment", $"{preview.DiscountedTotalPayment} silver", paymentTip),
                         new TermRow("Distance",
                             offer.distanceTiles < 0f ? "unknown" : $"{tiles} tiles")

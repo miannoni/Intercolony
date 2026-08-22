@@ -60,6 +60,8 @@ namespace Intercolony
             float y = 0f;
             y = DrawCashPosition(viewRect, y, state);
             y += 12f;
+            y = DrawBrandSummary(viewRect, y, state);
+            y += 12f;
             y = DrawPeriodReport(viewRect, y, state);
             y += 12f;
             y = DrawContractEstimates(viewRect, y, state);
@@ -118,6 +120,92 @@ namespace Intercolony
 
             GUI.color = Color.white;
             return y + LineHeight;
+        }
+
+        /// <summary>
+        /// §4.9's summary lives here because Business is already the mod's compact answer to
+        /// "how is the colony doing?". The rows are category-level reputation milestones, not a
+        /// ThingDef ledger, so a mature colony still gets a short readable page.
+        /// </summary>
+        private float DrawBrandSummary(Rect inRect, float y, IntercolonyWorldComponent state)
+        {
+            Text.Font = GameFont.Medium;
+            string title = "Brand reputation";
+            float titleWidth = Mathf.Max(1f, inRect.width - 12f);
+            float titleHeight = Text.CalcHeight(title, titleWidth);
+            Widgets.Label(new Rect(0f, y, titleWidth, titleHeight), title);
+            Text.Font = GameFont.Small;
+            y += titleHeight + 4f;
+
+            ProductBrandUiService.BrandSummary summary =
+                ProductBrandUiService.BuildSummary(state);
+            if (summary.IsEmpty)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.6f);
+                float emptyWidth = Mathf.Max(1f, inRect.width - 12f);
+                float emptyHeight = Text.CalcHeight(summary.emptyState, emptyWidth);
+                Widgets.Label(new Rect(6f, y, emptyWidth, emptyHeight), summary.emptyState);
+                GUI.color = Color.white;
+                return y + emptyHeight;
+            }
+
+            if (summary.knownFor.Count > 0)
+            {
+                y = DrawBrandSummaryGroup(inRect, y, "Known for", summary.knownFor, positive: true);
+            }
+
+            if (summary.weakReputation.Count > 0)
+            {
+                if (summary.knownFor.Count > 0)
+                {
+                    y += 8f;
+                }
+
+                y = DrawBrandSummaryGroup(
+                    inRect, y, "Weak reputation", summary.weakReputation, positive: false);
+            }
+
+            return y;
+        }
+
+        private static float DrawBrandSummaryGroup(
+            Rect inRect,
+            float y,
+            string heading,
+            List<ProductBrandUiService.BrandSummaryRow> rows,
+            bool positive)
+        {
+            float headingWidth = Mathf.Max(1f, inRect.width - 12f);
+            Text.Font = GameFont.Medium;
+            float headingHeight = Text.CalcHeight(heading, headingWidth);
+            Widgets.Label(new Rect(0f, y, headingWidth, headingHeight), heading);
+            Text.Font = GameFont.Small;
+            y += headingHeight + 4f;
+
+            float contentWidth = Mathf.Max(1f, inRect.width - 40f);
+            float keyWidth = Mathf.Min(220f, contentWidth * 0.6f);
+            float valueWidth = Mathf.Max(1f, contentWidth - keyWidth - 12f);
+            float valueX = 20f + keyWidth + 12f;
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                ProductBrandUiService.BrandSummaryRow row = rows[i];
+                string key = row.category.Label();
+                float keyHeight = Text.CalcHeight(key, keyWidth);
+                float valueHeight = Text.CalcHeight(row.bandName, valueWidth);
+                float rowHeight = Mathf.Max(keyHeight, valueHeight);
+
+                Widgets.Label(new Rect(20f, y, keyWidth, keyHeight), key);
+                GUI.color = positive
+                    ? new Color(0.6f, 0.9f, 0.6f)
+                    : new Color(1f, 0.75f, 0.75f);
+                Widgets.Label(new Rect(valueX, y, valueWidth, valueHeight), row.bandName);
+                GUI.color = Color.white;
+
+                y += rowHeight + 4f;
+            }
+
+            return y;
         }
 
         /// <summary>§117's report, verbatim in shape: revenue, the costs, and the bottom line.</summary>

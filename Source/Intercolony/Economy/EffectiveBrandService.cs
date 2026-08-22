@@ -14,6 +14,31 @@ namespace Intercolony
     public static class EffectiveBrandService
     {
         /// <summary>
+        /// The effective score and the evidence source used by player-facing brand explanations.
+        /// The UI reads this result instead of reproducing the blending calculation, so a label
+        /// cannot drift away from the value that prices and buyer interest already use.
+        /// </summary>
+        internal readonly struct EffectiveBrandDetails
+        {
+            internal readonly float effectiveBrand;
+            internal readonly ThingDef inheritedFrom;
+            internal readonly bool hasDirectRecord;
+            internal readonly bool mostlyInherited;
+
+            internal EffectiveBrandDetails(
+                float effectiveBrand,
+                ThingDef inheritedFrom,
+                bool hasDirectRecord,
+                bool mostlyInherited)
+            {
+                this.effectiveBrand = effectiveBrand;
+                this.inheritedFrom = inheritedFrom;
+                this.hasDirectRecord = hasDirectRecord;
+                this.mostlyInherited = mostlyInherited;
+            }
+        }
+
+        /// <summary>
         /// Evidence-weight units at which direct confidence reaches 63.2% (1 - e^-1). Three such
         /// scales reach about 95%, so one delivery is not proof while a hundredth contributes very
         /// little. An exponential is used because residual uncertainty composes multiplicatively:
@@ -30,20 +55,33 @@ namespace Intercolony
         public static float GetEffectiveBrand(
             IntercolonyWorldComponent state, ThingDef targetProduct)
         {
-            return GetEffectiveBrand(state?.ProductBrandRecords, targetProduct);
+            return GetEffectiveBrandDetails(state, targetProduct).effectiveBrand;
         }
 
-        private static float GetEffectiveBrand(
+        /// <summary>
+        /// Returns the same effective value as <see cref="GetEffectiveBrand"/> together with the
+        /// source facts needed for a concise UI attribution. This remains a read-only derived view;
+        /// it does not create a persisted record merely because a target product was inspected.
+        /// </summary>
+        internal static EffectiveBrandDetails GetEffectiveBrandDetails(
+            IntercolonyWorldComponent state, ThingDef targetProduct)
+        {
+            return GetEffectiveBrandDetails(state?.ProductBrandRecords, targetProduct);
+        }
+
+        private static EffectiveBrandDetails GetEffectiveBrandDetails(
             List<ProductBrandRecord> records, ThingDef targetProduct)
         {
             if (records == null || targetProduct == null)
             {
-                return ProductBrandRecord.Neutral;
+                return new EffectiveBrandDetails(
+                    ProductBrandRecord.Neutral, null, false, false);
             }
 
             ProductBrandRecord directRecord = null;
             float inheritedBrand = ProductBrandRecord.Neutral;
             float strongestInheritedMagnitude = 0f;
+            ThingDef inheritedFrom = null;
 
             for (int i = 0; i < records.Count; i++)
             {
@@ -75,23 +113,42 @@ namespace Intercolony
                 {
                     strongestInheritedMagnitude = inheritedMagnitude;
                     inheritedBrand = inheritedCandidate;
+                    inheritedFrom = record.thingDef;
                 }
             }
 
+            float effectiveBrand;
+            bool mostlyInherited = false;
             if (directRecord == null)
             {
-                return inheritedBrand;
+                effectiveBrand = inheritedBrand;
+                mostlyInherited = inheritedFrom != null;
+            }
+            else
+            {
+                float confidence = DirectEvidenceConfidence(directRecord.evidenceWeight);
+
+                // Lerp is signed, so negative direct evidence receives exactly the same authority
+                // as positive evidence. As confidence approaches one, the direct score takes
+                // control; therefore a terrible product cannot remain hidden behind a positive
+                // related brand.
+                effectiveBrand = Mathf.Clamp(
+                    Mathf.Lerp(inheritedBrand, directRecord.directScore, confidence),
+                    ProductBrandRecord.MinScore,
+                    ProductBrandRecord.MaxScore);
+
+                // Compare the two weighted contributions, rather than the final signed result.
+                // That keeps a cancellation between good direct evidence and bad inherited
+                // evidence from being misreported as a neutral direct reputation.
+                float inheritedContribution = Mathf.Abs(inheritedBrand * (1f - confidence));
+                float directContribution = Mathf.Abs(directRecord.directScore * confidence);
+                mostlyInherited = inheritedFrom != null &&
+                                  inheritedContribution >= directContribution &&
+                                  inheritedContribution > 0f;
             }
 
-            float confidence = DirectEvidenceConfidence(directRecord.evidenceWeight);
-
-            // Lerp is signed, so negative direct evidence receives exactly the same authority as
-            // positive evidence. As confidence approaches one, the direct score takes control;
-            // therefore a terrible product cannot remain hidden behind a positive related brand.
-            return Mathf.Clamp(
-                Mathf.Lerp(inheritedBrand, directRecord.directScore, confidence),
-                ProductBrandRecord.MinScore,
-                ProductBrandRecord.MaxScore);
+            return new EffectiveBrandDetails(
+                effectiveBrand, inheritedFrom, directRecord != null, mostlyInherited);
         }
 
         private static float DirectEvidenceConfidence(float evidenceWeight)
