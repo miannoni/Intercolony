@@ -208,6 +208,47 @@ rather than argued.
 clearly from the Market and Relations tooltips is a judgement about text, and it needs eyes on it in
 play. It is not a code gap and it does not block Stage 2 — logged in `docs/PENDING_PLAYTESTS.md`.
 
+## The migration chain is proven from schema 1 — 32 of 33 real saves (2026-08-22)
+
+**Every migration step from 1 to 44 has now run against real save data.** Matteo authorised using any
+of his saves for development, `dev.ps1 saves` / `dev.ps1 migrate` were built to exploit that
+(`2dc6691`), and the batch ran unattended across his whole save folder.
+
+**33 saves carry Intercolony state, spanning schemas 1 through 44. 32 passed, 1 flagged, 0
+infrastructure failures.** Before this, the chain had only ever been exercised from schema 22 up; the
+comment at `IntercolonyWorldComponent.cs:1731` claiming "a schema-0 save walks the whole chain" was an
+assertion about code nobody had run.
+
+**The step count is the assertion that matters, not the pass.** A save at schema N must emit exactly
+`44 - N` step lines; fewer means a step was silently skipped, which is the failure mode that would
+surface much later as state that was never reshaped. **Every one of the 33 matched exactly** — 1→43,
+2→42, 3→41, 4→40, 7→37, 9→35, 14→30, 15→29, 17→27, 20→24, 21→23, 22→22, 24→20, 33→11, 37→7, 39→5,
+42→2, 44→0.
+
+**The one flagged save is not a migration defect, and the ordering proves it.** `New Arrivals21`
+(schema 17) reported three exceptions, reproducibly. All three are RimWorld's own
+`LoadedObjectDirectory.RegisterLoaded` refusing duplicate thing IDs — a pawn and two pieces of that
+pawn's apparel — and **all three land before the `Migrating state from schema 17 to 44` banner**. The
+duplicates were already written into that save; the migration then ran all 27 of its steps and
+reached 44. The harness now splits its exception count either side of that banner, because a single
+count conflates a corpus problem with a code problem and points the next investigation at the wrong
+file.
+
+**What that save is evidence of is left deliberately open.** `CLAUDE.md` records that
+`LaborCandidateService`'s static pool leaked pawns and `Faction` objects between games for four
+phases and that **duplicate thing IDs were one of its symptoms**, and this save dates from
+2026-07-30, inside that window. That fits. But the save reports `nextId 2`, meaning Intercolony had
+created at most one entity in it, so attributing the duplicates to this mod would be a conclusion the
+evidence does not carry — a pawn with a parka and a war mask is equally the shape of a guest or
+trader from another mod. **What is certain is only that the damage predates the migration.**
+
+**A race in the harness was found by running it, and is worth remembering because it looked like a
+product defect.** The first run of the schema-1 save reported `FAIL (schema mismatch)` with 43 steps
+and zero exceptions; the next run of the same save passed. `saveVersion` is read by `ExposeData` and
+only corrected in post-load init, so a bridge reporting world-and-map ready is **not** yet a bridge
+that has migrated, and a single immediate `status` query can sample the pre-migration value. It now
+polls to a 30-second deadline and reports how long it waited.
+
 ## Slice log
 
 ### 2J — price breakdowns name the current condition (2026-08-21)
@@ -970,6 +1011,12 @@ without a human at the keyboard** — see the autostart section above. The 22.5 
 migrated 42 → 43 → 44 in the real load order with zero exceptions, and the load-time padding in
 `SettlementMarketState.FromSaved` and the index rebuild both ran on that path. The full suite then
 passed 944/0/9 against the migrated colony.
+
+~~**Migration is only proven from schema 22 upward.**~~ **CLOSED 2026-08-22 — proven from schema 1.**
+32 of 33 real saves migrated cleanly and every one emitted exactly `44 - N` steps. See the section
+above. This was the largest untested risk standing between the program and Stage 8, and it is now the
+best-evidenced part of it. Re-run `dev.ps1 migrate all` after any future schema bump: it is one
+command, it needs no human, and it now covers every step in the chain rather than the last two.
 
 **Still required — criterion 7, the Stage 1 UI read.** Whether a settlement's economy is legible
 from the Market listing and Relations tooltips, without debug numbers.
