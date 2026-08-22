@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
 using Verse;
@@ -9,7 +10,8 @@ using Verse;
 namespace Intercolony
 {
     /// <summary>
-    /// Self-test for the persisted event model, definitions, and lifecycle (Stages 3A/3C/3D).
+    /// Self-test for the persisted event model, definitions, lifecycle, and player messaging
+    /// (Stages 3A/3C/3D/3E).
     /// </summary>
     public static class IntercolonyEventSelfTest
     {
@@ -38,7 +40,9 @@ namespace Intercolony
         public static string Run(IntercolonyWorldComponent state)
         {
             Results r = new Results();
-            r.sb.AppendLine("Economic event persistence and definition self-test (Stages 3A/3C)");
+            r.sb.AppendLine(
+                "Economic event persistence, lifecycle, and player messaging self-test " +
+                "(Stages 3A/3C/3D/3E)");
 
             if (state == null)
             {
@@ -120,6 +124,7 @@ namespace Intercolony
 
                 CheckDefinitions(r, state);
                 CheckLifecycle(r, state);
+                CheckPlayerMessaging(r, state);
             }
             catch (Exception ex)
             {
@@ -270,6 +275,150 @@ namespace Intercolony
                     "faction-wide start shock obeys the per-event settlement work cap",
                     $"{shocked} of {busiestCount} in-scope settlements shocked");
             }
+        }
+
+        private static void CheckPlayerMessaging(Results r, IntercolonyWorldComponent state)
+        {
+            List<Settlement> eligible = EligibleSettlements();
+            if (eligible.Count < 2)
+            {
+                r.skipped += 4;
+                r.sb.AppendLine(
+                    "  SKIP  player-messaging assertions require two eligible settlements");
+                return;
+            }
+
+            List<EconomicEvent> savedEvents = new List<EconomicEvent>(state.EconomicEvents);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<CommercialHistoryEntry> savedCommercialHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
+
+            try
+            {
+                Settlement traded = eligible[0];
+                Settlement untraded = eligible[1];
+                int now = GenTicks.TicksGame;
+                state.EconomicEvents.Clear();
+                state.Reputations.Clear();
+                state.CommercialHistory.Clear();
+                state.Reputations[traded.ID] = new CommercialReputation(
+                    traded.ID, traded.Label ?? "traded settlement", traded.Faction?.Name ?? "");
+
+                EconomicEvent tradedEvent = EventFor(
+                    traded, now, now + 3 * GenDate.TicksPerDay);
+                EconomicEvent untradedEvent = EventFor(
+                    untraded, now, now + 3 * GenDate.TicksPerDay);
+                IntercolonyLetterImportance tradedImportance =
+                    EconomicEventService.ImportanceForStartLetter(state, tradedEvent);
+                IntercolonyLetterImportance untradedImportance =
+                    EconomicEventService.ImportanceForStartLetter(state, untradedEvent);
+                r.Check(
+                    tradedImportance == IntercolonyLetterImportance.Important &&
+                    untradedImportance == IntercolonyLetterImportance.Chatty,
+                    "event severity is Important for a traded settlement and Chatty otherwise",
+                    $"traded={tradedImportance}, untraded={untradedImportance}");
+
+                bool noAlways = true;
+                EconomicEventType[] types = EconomicEventDefinitions.DefinedTypes;
+                for (int i = 0; i < types.Length; i++)
+                {
+                    EconomicEvent probe = EventFor(
+                        untraded, now, now + GenDate.TicksPerDay);
+                    probe.type = types[i];
+                    if (EconomicEventService.ImportanceForStartLetter(state, probe) ==
+                        IntercolonyLetterImportance.Always)
+                    {
+                        noAlways = false;
+                        break;
+                    }
+                }
+
+                r.Check(
+                    noAlways,
+                    "no economic event start letter ever uses Always severity");
+
+                EconomicEvent durationEvent = new EconomicEvent
+                {
+                    startTick = now,
+                    endTick = now + 3 * GenDate.TicksPerDay
+                };
+                string startLabel = EconomicEventService.RemainingDurationLabel(
+                    durationEvent, now);
+                string nearEndLabel = EconomicEventService.RemainingDurationLabel(
+                    durationEvent, durationEvent.endTick - 1);
+                string afterEndLabel = EconomicEventService.RemainingDurationLabel(
+                    durationEvent, durationEvent.endTick + GenDate.TicksPerDay);
+                r.Check(
+                    startLabel == "3 days left" &&
+                    nearEndLabel == "1 day left" &&
+                    afterEndLabel == "0 days left",
+                    "remaining event duration is correct at start, near end, and never negative",
+                    $"start={startLabel}, near end={nearEndLabel}, after end={afterEndLabel}");
+
+                state.EconomicEvents.Add(tradedEvent);
+                List<WITab_Economy.DisplayRow> inScopeRows = WITab_Economy.BuildRows(
+                    state, traded);
+                List<WITab_Economy.DisplayRow> outOfScopeRows = WITab_Economy.BuildRows(
+                    state, untraded);
+                string expectedEventRow = $"{tradedEvent.type.Label()}, " +
+                                          EconomicEventService.RemainingDurationLabel(
+                                              tradedEvent, now);
+                bool namedInScope = ContainsValue(inScopeRows, expectedEventRow);
+                bool namedOutOfScope = ContainsValue(outOfScopeRows, expectedEventRow);
+                r.Check(
+                    namedInScope && !namedOutOfScope,
+                    "economy rows name an active in-scope event and omit it out of scope",
+                    $"in-scope={namedInScope}, out-of-scope={namedOutOfScope}");
+            }
+            finally
+            {
+                // Contents, not count. The messaging fixtures replace the player's live events,
+                // and restoring only the length could preserve a synthetic event at one index.
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.AddRange(savedEvents);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations.Add(entry.Key, entry.Value);
+                }
+
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedCommercialHistory);
+            }
+        }
+
+        private static List<Settlement> EligibleSettlements()
+        {
+            List<Settlement> eligible = new List<Settlement>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements != null)
+            {
+                for (int i = 0; i < settlements.Count; i++)
+                {
+                    if (SettlementProfileGenerator.IsEligible(settlements[i]))
+                    {
+                        eligible.Add(settlements[i]);
+                    }
+                }
+            }
+
+            eligible.Sort((left, right) => left.ID.CompareTo(right.ID));
+            return eligible;
+        }
+
+        private static bool ContainsValue(
+            List<WITab_Economy.DisplayRow> rows, string expectedValue)
+        {
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (rows[i].value == expectedValue)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void CheckGeneratedLifecycleWiring(

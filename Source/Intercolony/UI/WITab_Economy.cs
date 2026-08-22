@@ -14,7 +14,7 @@ namespace Intercolony
         private const float SectionGap = 12f;
         private const float MinimumHeight = 48f;
 
-        private readonly struct DisplayRow
+        internal readonly struct DisplayRow
         {
             internal readonly string key;
             internal readonly string value;
@@ -53,7 +53,7 @@ namespace Intercolony
                 return;
             }
 
-            List<DisplayRow> rows = BuildRows(settlement);
+            List<DisplayRow> rows = BuildRows(IntercolonyWorldComponent.Current, settlement);
             Text.Font = GameFont.Small;
             float y = Margin;
             float valueWidth = TabWidth - Margin * 2f - KeyWidth;
@@ -77,10 +77,16 @@ namespace Intercolony
 
         private List<DisplayRow> BuildRows()
         {
-            return BuildRows(SelObject as Settlement);
+            return BuildRows(IntercolonyWorldComponent.Current, SelObject as Settlement);
         }
 
-        private static List<DisplayRow> BuildRows(Settlement settlement)
+        /// <summary>
+        /// Builds the same measured rows used by the tab. This is internal so the self-test can
+        /// inspect the production row builder; rebuilding the event filter in a test would allow
+        /// the tab to lose its explanation while the test continued to pass.
+        /// </summary>
+        internal static List<DisplayRow> BuildRows(
+            IntercolonyWorldComponent state, Settlement settlement)
         {
             List<DisplayRow> rows = new List<DisplayRow>();
             if (settlement == null)
@@ -88,7 +94,6 @@ namespace Intercolony
                 return rows;
             }
 
-            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
             SettlementEconomicProfile profile = state?.GetProfile(settlement);
             if (profile == null)
             {
@@ -110,6 +115,20 @@ namespace Intercolony
                 SettlementEconomyDisplay.QualityPreferenceLabel(profile.qualityPreference)));
 
             bool firstCondition = true;
+            List<EconomicEvent> activeEvents = EconomicEventService.ActiveEventsAffecting(
+                state, settlement);
+            for (int i = 0; i < activeEvents.Count; i++)
+            {
+                EconomicEvent economicEvent = activeEvents[i];
+                rows.Add(new DisplayRow(
+                    "Right now:",
+                    $"{economicEvent.type.Label()}, " +
+                    EconomicEventService.RemainingDurationLabel(
+                        economicEvent, GenTicks.TicksGame),
+                    firstCondition));
+                firstCondition = false;
+            }
+
             foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
             {
                 float demand = EffectiveEconomyService.CurrentDemandPressure(

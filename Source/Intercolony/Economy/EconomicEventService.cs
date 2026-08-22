@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using RimWorld;
 using RimWorld.Planet;
+using UnityEngine;
 using Verse;
 
 namespace Intercolony
@@ -111,6 +113,7 @@ namespace Intercolony
                 state, decision.type, decision.anchor, currentTick);
             state.EconomicEvents.Add(started);
             ApplyStartShock(state, started);
+            SendStartLetter(state, started);
             return started;
         }
 
@@ -193,6 +196,201 @@ namespace Intercolony
             }
 
             return shocked;
+        }
+
+        /// <summary>
+        /// Returns the active events that reach one settlement. The tab needs event identity even
+        /// when an event has no visible pressure row yet, so this deliberately does not filter by
+        /// modifier or category; repeating the radius/faction rules in the UI would let the two
+        /// explanations disagree about what the economy is experiencing.
+        /// </summary>
+        internal static List<EconomicEvent> ActiveEventsAffecting(
+            IntercolonyWorldComponent state, Settlement settlement)
+        {
+            List<EconomicEvent> active = new List<EconomicEvent>();
+            if (state == null || settlement == null)
+            {
+                return active;
+            }
+
+            int currentTick = GenTicks.TicksGame;
+            for (int i = 0; i < state.EconomicEvents.Count; i++)
+            {
+                EconomicEvent economicEvent = state.EconomicEvents[i];
+                if (economicEvent != null && economicEvent.IsActiveAt(currentTick) &&
+                    IsInScope(economicEvent, settlement))
+                {
+                    active.Add(economicEvent);
+                }
+            }
+
+            return active;
+        }
+
+        /// <summary>
+        /// Selects the volume-aware severity for an event-start report. A relationship with any
+        /// affected settlement makes the event relevant; using Always here would turn a distant
+        /// drought into an interruption and bypass the player's letter-volume choice.
+        /// </summary>
+        internal static IntercolonyLetterImportance ImportanceForStartLetter(
+            IntercolonyWorldComponent state, EconomicEvent economicEvent)
+        {
+            List<Settlement> affected = SettlementsInScope(economicEvent);
+            for (int i = 0; i < affected.Count; i++)
+            {
+                if (HasCommercialRelationship(state, affected[i].ID))
+                {
+                    return IntercolonyLetterImportance.Important;
+                }
+            }
+
+            return IntercolonyLetterImportance.Chatty;
+        }
+
+        /// <summary>
+        /// Converts a finite event window into player-facing days. Keeping the tick subtraction at
+        /// this naming boundary avoids the recurring bug where a value chosen to mean an end point
+        /// is printed as though it were already a duration, including the earlier open-contract
+        /// DaysRemaining defects.
+        /// </summary>
+        internal static int DaysRemaining(EconomicEvent economicEvent, int currentTick)
+        {
+            if (economicEvent == null)
+            {
+                return 0;
+            }
+
+            int remainingTicks = economicEvent.endTick - currentTick;
+            if (remainingTicks <= 0)
+            {
+                return 0;
+            }
+
+            return Mathf.CeilToInt(remainingTicks / (float)GenDate.TicksPerDay);
+        }
+
+        /// <summary>Builds the measured duration phrase used by the economy tab.</summary>
+        internal static string RemainingDurationLabel(
+            EconomicEvent economicEvent, int currentTick)
+        {
+            int days = DaysRemaining(economicEvent, currentTick);
+            return $"{days} {(days == 1 ? "day" : "days")} left";
+        }
+
+        /// <summary>Builds the approximate duration phrase used by an event-start letter.</summary>
+        private static string ApproximateDurationLabel(
+            EconomicEvent economicEvent, int currentTick)
+        {
+            return $"roughly {DaysRemaining(economicEvent, currentTick)} days";
+        }
+
+        private static List<Settlement> SettlementsInScope(EconomicEvent economicEvent)
+        {
+            List<Settlement> affected = new List<Settlement>();
+            if (economicEvent == null)
+            {
+                return affected;
+            }
+
+            List<Settlement> settlements = EligibleSettlements(accessibleOnly: false);
+            for (int i = 0; i < settlements.Count; i++)
+            {
+                if (IsInScope(economicEvent, settlements[i]))
+                {
+                    affected.Add(settlements[i]);
+                }
+            }
+
+            return affected;
+        }
+
+        private static bool HasCommercialRelationship(
+            IntercolonyWorldComponent state, int settlementId)
+        {
+            if (state == null)
+            {
+                return false;
+            }
+
+            if (state.Reputations != null &&
+                state.Reputations.TryGetValue(settlementId, out CommercialReputation reputation) &&
+                reputation != null)
+            {
+                return true;
+            }
+
+            if (state.CommercialHistory == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < state.CommercialHistory.Count; i++)
+            {
+                CommercialHistoryEntry entry = state.CommercialHistory[i];
+                if (entry != null && entry.settlementId == settlementId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void SendStartLetter(
+            IntercolonyWorldComponent state, EconomicEvent economicEvent)
+        {
+            List<Settlement> affected = SettlementsInScope(economicEvent);
+            if (affected.Count == 0)
+            {
+                return;
+            }
+
+            Settlement place = affected[0];
+            string placeName = place.Label ?? "the region";
+            string label = $"{economicEvent.type.Label()} near {placeName}";
+            string text = EventReport(economicEvent.type) + "\n" +
+                          EventOutlook(economicEvent.type, economicEvent);
+            IntercolonyLetters.Send(
+                ImportanceForStartLetter(state, economicEvent),
+                label,
+                text,
+                LetterDefOf.NeutralEvent);
+        }
+
+        private static string EventReport(EconomicEventType type)
+        {
+            switch (type)
+            {
+                case EconomicEventType.Drought:
+                    return "Several settlements in the region are reporting weak harvests.";
+                case EconomicEventType.WarMobilization:
+                    return "Settlements in the region are redirecting resources toward war mobilization.";
+                case EconomicEventType.ConstructionBoom:
+                    return "The settlement is undertaking a construction boom.";
+                case EconomicEventType.Epidemic:
+                    return "An epidemic is disrupting trade in the settlement.";
+                default:
+                    return $"Reports indicate {type.Label().ToLowerInvariant()} near the settlement.";
+            }
+        }
+
+        private static string EventOutlook(
+            EconomicEventType type, EconomicEvent economicEvent)
+        {
+            string duration = ApproximateDurationLabel(economicEvent, economicEvent.startTick);
+            switch (type)
+            {
+                case EconomicEventType.Drought:
+                    return $"Food supply is expected to remain tight for {duration}.";
+                case EconomicEventType.WarMobilization:
+                    return $"Demand for supplies is expected to remain elevated for {duration}.";
+                case EconomicEventType.ConstructionBoom:
+                    return $"Demand for building goods is expected to remain elevated for {duration}.";
+                case EconomicEventType.Epidemic:
+                    return $"Demand for medical supplies is expected to remain elevated for {duration}.";
+                default:
+                    return $"The disruption is expected to last for {duration}.";
+            }
         }
 
         private static List<Settlement> EligibleSettlements(bool accessibleOnly)
