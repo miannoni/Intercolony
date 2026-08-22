@@ -3,8 +3,8 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 2 — Market fundamentals overhaul
-Current slice:      2K — the play gate (its migration half is already proven)
+Current stage:      Stage 3 — Circumstance-driven economic events
+Current slice:      starting; 2K calibration deferred to the end of 1.0 by Matteo
 Last completed:     2J — price breakdowns name the current condition (2026-08-21)
 Current save schema: 44
 Current mod version: 0.9.3
@@ -14,7 +14,7 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 
 - [x] Stage 0 — Program spine (gate closed 2026-08-21)
 - [x] Stage 1 — Settlement economies (gate closed 2026-08-21; criterion 7 is a UI read, see below)
-- [ ] Stage 2 — Market fundamentals overhaul
+- [x] Stage 2 — Market fundamentals overhaul (all 12 criteria met 2026-08-22; play calibration deferred to end of 1.0)
 - [ ] Stage 3 — Circumstance-driven economic events
 - [ ] Stage 4 — Brand strength & colony specialization
 - [ ] Stage 5 — Commercial relationships & negotiation
@@ -862,9 +862,42 @@ what it saw, not how much it saw.**
 **Schema:** unchanged.
 **Tests:** none applicable.
 
-## PENDING — Stage 3 is held, and only Matteo can release it (2026-08-22)
+## RELEASED — Stage 3 proceeds; calibration is deferred to the end of 1.0 (2026-08-22)
 
-**Status: waiting on him, not on work.** He asked for this to be noted rather than decided.
+**Matteo's ruling, and it changes how every remaining stage should be built.** Recorded in his own
+terms because the distinction he drew is not the one the plan assumed:
+
+> *"retune is not the problem - the problem is a major rewrite of code (i want to avoid large
+> rewrites but retunes are obviously going to happen)"*
+
+> *"if we're talking calibration of systems, keep working, sometimes its even better to calibrate the
+> whole rather than the parts, because then we will see the interactions of the systems"*
+
+**Three consequences, and they bind on Stages 3 through 7.**
+
+1. **The Stage 2 play gate (2K) is deferred, not skipped.** It is done once all 1.0 functionality
+   exists, together with the remaining play criteria. His argument is that calibrating the whole
+   reveals interactions between systems that calibrating each part in isolation cannot — and that is
+   a better argument than the plan's original sequencing, which assumed each stage's feel could be
+   judged before the next existed. Stage 3 layers an event modifier onto Stage 2's pressure; judging
+   pressure's feel *before* events exist would be judging a system the player will never meet.
+2. **The risk to manage is structural, not numeric.** A wrong coefficient is expected and cheap. A
+   design that cannot absorb a changed coefficient without restructuring is the actual danger.
+   **So: every balance value stays a named constant with its reasoning attached, no coefficient gets
+   baked into control flow or a data shape, and no stage may depend on another stage's *specific
+   number* rather than its direction.** The Stage 2 slices already work this way —
+   `ReversionRetention`, `NudgeValueScale`, `DiffusionCoefficient`, the chain table — and that is now
+   a requirement rather than a habit.
+3. **The nine remaining unproven 1.0 criteria are deferred on the same reasoning.** They are
+   judgements formed while playing, and a single late session covers them together. See
+   `docs/ROAD_TO_1_0.md`.
+
+**What this does not license.** Deferring calibration is not deferring *evidence*. Direction and
+boundedness are still proven per slice by self-test, in both directions, on four fresh worlds. §18's
+rule is unchanged: establish direction and bounds in tests, use conservative values, expose debug
+summaries, continue — only the *timing of the tuning* moved.
+
+### Superseded: the hold this replaces
 
 **All twelve of Stage 2's formal acceptance criteria are met.** Pressure survives save/load (2A);
 demand no longer depends on per-cycle random multipliers (1.2/2C); archetype still matters; a forced
