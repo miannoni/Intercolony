@@ -10,9 +10,10 @@ namespace Intercolony
 {
     /// <summary>
     /// Self-test for the Stage 4A product-brand record, Stage 4B similarity service, Stage 4C
-    /// quality capture and completed-sale brand update, and Stage 4D effective-brand read model:
-    /// persistence, bounds, load pruning, neutral initialization, actual batch quality, gradual
-    /// volume-weighted brand movement, def-driven carryover and direct evidence confidence.
+    /// quality capture and completed-sale brand update, Stage 4D effective-brand read model, and
+    /// Stage 4E Part One pricing: persistence, bounds, load pruning, neutral initialization, actual
+    /// batch quality, gradual volume-weighted brand movement, def-driven carryover, direct evidence
+    /// confidence, and the bounded prospective price factor.
     /// </summary>
     public static class IntercolonyBrandSelfTest
     {
@@ -58,7 +59,7 @@ namespace Intercolony
         public static string Run(IntercolonyWorldComponent state)
         {
             Results r = new Results();
-            r.sb.AppendLine("Product brand record self-test (Stage 4A/4B/4C/4D)");
+            r.sb.AppendLine("Product brand record self-test (Stage 4A/4B/4C/4D/4E Part One)");
 
             if (state == null)
             {
@@ -136,6 +137,7 @@ namespace Intercolony
                 RunDeliveredBrandUpdateChecks(state, r);
                 RunProductSimilarityChecks(r);
                 RunEffectiveBrandChecks(state, r);
+                RunBrandPricingChecks(state, r);
             }
             catch (Exception ex)
             {
@@ -861,6 +863,152 @@ namespace Intercolony
                 state.ProductBrandRecords.Clear();
                 state.ProductBrandRecords.AddRange(saved);
             }
+        }
+
+        private static void RunBrandPricingChecks(
+            IntercolonyWorldComponent state, Results r)
+        {
+            ThingDef product = ThingDefOf.DiningChair;
+            if (product == null)
+            {
+                r.Skip("brand pricing checks have their required Core ThingDef",
+                    "missing loaded ThingDef: DiningChair");
+                return;
+            }
+
+            List<ProductBrandRecord> saved = SnapshotBrandRecords(state.ProductBrandRecords);
+            const IntercolonyProductCategory category = IntercolonyProductCategory.Furniture;
+            SettlementEconomicProfile profile = new SettlementEconomicProfile
+            {
+                settlementId = -1,
+                wealthTier = IntercolonyWealthTier.Comfortable,
+                qualityPreference = 0.5f,
+                seed = 4_500_001
+            };
+            profile.demandWeights[(int)category] = 1f;
+
+            try
+            {
+                state.ProductBrandRecords.Clear();
+                float neutralPrice = IntercolonyPricing.UnitPrice(
+                    state, product, quantity: 10, profile, category, distanceTiles: 25f,
+                    minQuality: null, out List<PriceFactor> neutralFactors);
+
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, ProductBrandRecord.MaxScore, evidenceWeight: 1000f,
+                    unitsDelivered: 1000));
+                float positivePrice = IntercolonyPricing.UnitPrice(
+                    state, product, quantity: 10, profile, category, distanceTiles: 25f,
+                    minQuality: null, out List<PriceFactor> positiveFactors);
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, ProductBrandRecord.MinScore, evidenceWeight: 1000f,
+                    unitsDelivered: 1000));
+                float negativePrice = IntercolonyPricing.UnitPrice(
+                    state, product, quantity: 10, profile, category, distanceTiles: 25f,
+                    minQuality: null, out List<PriceFactor> negativeFactors);
+
+                bool positiveRowFound = TryFindPriceFactor(
+                    positiveFactors, IntercolonyPricing.BrandFactorLabel,
+                    out PriceFactor positiveBrand);
+                bool negativeRowFound = TryFindPriceFactor(
+                    negativeFactors, IntercolonyPricing.BrandFactorLabel,
+                    out PriceFactor negativeBrand);
+
+                r.Check(
+                    positivePrice > neutralPrice && negativePrice < neutralPrice,
+                    "strong brand changes a newly computed unit price in the expected direction",
+                    $"neutral={neutralPrice:0.####}, positive={positivePrice:0.####}, " +
+                    $"negative={negativePrice:0.####}");
+
+                float reconstructed = IntercolonyPricing.BaseValue(product, null);
+                foreach (PriceFactor factor in positiveFactors)
+                {
+                    reconstructed *= factor.multiplier;
+                }
+
+                r.Check(
+                    reconstructed == positivePrice,
+                    "base value and active factor rows multiply exactly to the returned unit price",
+                    $"reconstructed={reconstructed:R}, returned={positivePrice:R}");
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, ProductBrandRecord.Neutral, evidenceWeight: 1000f,
+                    unitsDelivered: 1000));
+                IntercolonyPricing.UnitPrice(
+                    state, product, quantity: 10, profile, category, distanceTiles: 25f,
+                    minQuality: null, out List<PriceFactor> neutralAgainFactors);
+                r.Check(
+                    CountPriceFactorRows(neutralAgainFactors, IntercolonyPricing.BrandFactorLabel) == 0,
+                    "a neutral brand contributes no brand row",
+                    $"brandRows={CountPriceFactorRows(
+                        neutralAgainFactors, IntercolonyPricing.BrandFactorLabel)}");
+
+                r.Check(
+                    positiveRowFound && negativeRowFound &&
+                    positiveBrand.multiplier >= IntercolonyPricing.BrandMinimumMultiplier &&
+                    positiveBrand.multiplier <= IntercolonyPricing.BrandMaximumMultiplier &&
+                    negativeBrand.multiplier >= IntercolonyPricing.BrandMinimumMultiplier &&
+                    negativeBrand.multiplier <= IntercolonyPricing.BrandMaximumMultiplier,
+                    "the plus and minus 100 brand multipliers stay within their named bounds",
+                    $"positive={positiveBrand.multiplier:0.###}, " +
+                    $"negative={negativeBrand.multiplier:0.###}, bounds=[" +
+                    $"{IntercolonyPricing.BrandMinimumMultiplier:0.###}," +
+                    $"{IntercolonyPricing.BrandMaximumMultiplier:0.###}]");
+
+                r.Check(
+                    negativePrice > 0f,
+                    "a -100 brand leaves the product sellable at a positive price",
+                    $"negativePrice={negativePrice:0.####}");
+            }
+            finally
+            {
+                // Pricing fixtures replace the sparse list with synthetic direct evidence. Restore
+                // its contents, not only its count, so this test cannot overwrite the player's
+                // actual brand records when a later assertion changes the fixture shape.
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(saved);
+            }
+        }
+
+        private static bool TryFindPriceFactor(
+            List<PriceFactor> factors, string label, out PriceFactor result)
+        {
+            if (factors != null)
+            {
+                for (int i = 0; i < factors.Count; i++)
+                {
+                    if (factors[i].label == label)
+                    {
+                        result = factors[i];
+                        return true;
+                    }
+                }
+            }
+
+            result = default(PriceFactor);
+            return false;
+        }
+
+        private static int CountPriceFactorRows(List<PriceFactor> factors, string label)
+        {
+            int count = 0;
+            if (factors == null)
+            {
+                return count;
+            }
+
+            for (int i = 0; i < factors.Count; i++)
+            {
+                if (factors[i].label == label)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private static void AppendMissing(StringBuilder missing, string name, ThingDef def)

@@ -40,6 +40,26 @@ namespace Intercolony
         /// <summary>Multiplier once demand is thoroughly saturated.</summary>
         private const float SaturationWorst = 0.96f;
 
+        /// <summary>
+        /// The lowest multiplier a -100 brand may apply to a newly computed price. A 25% discount
+        /// makes a bad reputation matter while keeping the product sellable; the positive floor is
+        /// also a guard against the trap where a sufficiently bad reputation turns payment into a
+        /// negative number. This is deliberately named so the late balance pass can retune it
+        /// without rewriting the brand calculation.
+        /// </summary>
+        public const float BrandMinimumMultiplier = 0.75f;
+
+        /// <summary>
+        /// The highest multiplier a +100 brand may apply to a newly computed price. A 30% premium
+        /// is economically exciting, but the bound keeps a respected product from becoming an
+        /// infinite-profit arbitrage route. This is deliberately named so the late balance pass
+        /// can retune it without changing the pricing owner or its factor-row contract.
+        /// </summary>
+        public const float BrandMaximumMultiplier = 1.30f;
+
+        /// <summary>Label for the prospective brand premium or discount in a price breakdown.</summary>
+        public const string BrandFactorLabel = "Brand strength";
+
         // A specification promises only its stated constraints. When a term is unspecified,
         // the seller may fulfil it with the cheapest eligible animal, so the buyer pays only
         // for the value guaranteed by the promise. These are owner-tunable balance values.
@@ -130,6 +150,15 @@ namespace Intercolony
                 baseValue = BaseValue(def, stuff);
             }
 
+            // Brand is a prospective expectation about a price being computed now. Read the
+            // effective view once and add its named row here so UI and order code cannot multiply
+            // the same premium separately, and so an accepted order's stored price is untouched.
+            float effectiveBrand = EffectiveBrandService.GetEffectiveBrand(state, def);
+            if (!Mathf.Approximately(effectiveBrand, ProductBrandRecord.Neutral))
+            {
+                factors.Add(BrandFactorFor(effectiveBrand));
+            }
+
             // The category supplies the settlement's broad economic character; the good-specific
             // perturbation keeps that character from making every item in the category rank alike.
             List<PriceFactor> demandRows =
@@ -209,6 +238,32 @@ namespace Intercolony
 
             // Never offer less than a token amount, or the lot reads as insulting.
             return Mathf.Max(0.01f, total);
+        }
+
+        /// <summary>
+        /// Converts effective brand strength into the bounded price factor used by
+        /// <see cref="UnitPrice(IntercolonyWorldComponent, ThingDef, ThingDef, AnimalSpec, int,
+        /// SettlementEconomicProfile, IntercolonyProductCategory, float, QualityCategory?, out
+        /// List{PriceFactor})"/>. The two sides are interpolated separately so zero remains exactly
+        /// x1.00 instead of drifting toward the midpoint of asymmetric bounds.
+        /// </summary>
+        public static PriceFactor BrandFactorFor(float effectiveBrand)
+        {
+            if (float.IsNaN(effectiveBrand))
+            {
+                effectiveBrand = ProductBrandRecord.Neutral;
+            }
+
+            float clampedBrand = Mathf.Clamp(
+                effectiveBrand, ProductBrandRecord.MinScore, ProductBrandRecord.MaxScore);
+            float multiplier = clampedBrand >= ProductBrandRecord.Neutral
+                ? Mathf.Lerp(
+                    1f, BrandMaximumMultiplier,
+                    clampedBrand / ProductBrandRecord.MaxScore)
+                : Mathf.Lerp(
+                    1f, BrandMinimumMultiplier,
+                    clampedBrand / ProductBrandRecord.MinScore);
+            return new PriceFactor(BrandFactorLabel, multiplier);
         }
 
         /// <summary>
