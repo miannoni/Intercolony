@@ -1004,6 +1004,12 @@ namespace Intercolony
             WithGuardedState(state => IntercolonyLog.Message(IntercolonyEventSelfTest.Run(state)));
         }
 
+        [DebugAction(Category, "Run product brand self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 57)]
+        private static void RunProductBrandSelfTest()
+        {
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyBrandSelfTest.Run(state)));
+        }
+
         [DebugAction(Category, "Dump effective economy", allowedGameStates = AllowedGameStates.Playing, displayPriority = 81)]
         private static void DumpMarketPressure()
         {

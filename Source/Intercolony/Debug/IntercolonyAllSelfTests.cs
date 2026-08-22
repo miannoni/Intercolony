@@ -129,6 +129,8 @@ namespace Intercolony
                 (s, m) => IntercolonyEconomySelfTest.Run(s)),
             new SelfTestDefinition("event", "event", false,
                 (s, m) => IntercolonyEventSelfTest.Run(s)),
+            new SelfTestDefinition("brand", "product brand", false,
+                (s, m) => IntercolonyBrandSelfTest.Run(s)),
             new SelfTestDefinition("timeline", "timeline", false,
                 (s, m) => IntercolonyTimelineSelfTest.Run(s)),
             new SelfTestDefinition("profile", "profile", false,

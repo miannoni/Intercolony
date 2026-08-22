@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 45;
+        public const int CurrentSaveVersion = 46;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -120,6 +120,17 @@ namespace Intercolony
             new List<CommercialHistoryEntry>();
 
         public List<CommercialHistoryEntry> CommercialHistory => commercialHistory;
+
+        /// <summary>
+        /// Sparse direct product-brand evidence for the colony (the 1.0 program Stage 4A/4B,
+        /// docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md §§4.1-4.2). A record exists only after
+        /// that exact product has actually been delivered. Brand inherited from a similar product
+        /// is derived on read later; persisting every possible target would put hundreds of empty
+        /// records in each save merely to say that no direct experience exists.
+        /// </summary>
+        private List<ProductBrandRecord> productBrandRecords = new List<ProductBrandRecord>();
+
+        public List<ProductBrandRecord> ProductBrandRecords => productBrandRecords;
 
         /// <summary>
         /// Detailed commercial timeline records (the 1.0 program Stage 0.3, docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 7).
@@ -1011,6 +1022,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
             Scribe_Collections.Look(ref commercialHistory, "commercialHistory", LookMode.Deep);
+            Scribe_Collections.Look(ref productBrandRecords, "productBrandRecords", LookMode.Deep);
             Scribe_Collections.Look(
                 ref commercialTimeline, "commercialTimeline", LookMode.Deep);
             Scribe_Collections.Look(ref marketStates, "marketStates", LookMode.Deep);
@@ -1116,6 +1128,26 @@ namespace Intercolony
                             $"Dropped {nullEntries} null and {unresolvableEntries} unresolvable " +
                             "commercial-history entries while loading. Unresolvable usually means " +
                             "a mod supplying the item was removed.");
+                    }
+                }
+
+                if (productBrandRecords == null)
+                {
+                    productBrandRecords = new List<ProductBrandRecord>();
+                }
+                else
+                {
+                    // Brand is keyed by exact ThingDef, so a child whose def no longer resolves
+                    // cannot be retained as a null-keyed record. Keep valid neighbours: removing
+                    // the whole sparse list would erase trustworthy direct evidence for products
+                    // whose supplying mods are still present.
+                    int brokenBrandRecords = PruneLoadedProductBrandRecords(productBrandRecords);
+                    if (brokenBrandRecords > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {brokenBrandRecords} null or unresolvable product-brand " +
+                            "record(s) while loading. Unresolvable usually means a mod that " +
+                            "supplied the item was removed.");
                     }
                 }
 
@@ -2233,7 +2265,27 @@ namespace Intercolony
                     "  schema 44 -> 45: economic events added; no historical events were created.");
             }
 
+            if (saveVersion < 46)
+            {
+                // 45 -> 46 added sparse direct product-brand records. Nothing to write: old
+                // saves do not prove the quality that was actually delivered. Do not fabricate
+                // brand from minQuality — it records what the buyer asked for, not what arrived,
+                // so doing so would credit or blame craftsmanship nobody recorded.
+                IntercolonyLog.Message(
+                    "  schema 45 -> 46: product brand records added; no historical brand was fabricated.");
+            }
+
             saveVersion = CurrentSaveVersion;
+        }
+
+        /// <summary>
+        /// Drops brand records that cannot name the exact product they describe. A null child is
+        /// corrupt, while a null ThingDef is the expected shape when a supplying mod was removed
+        /// between sessions. Valid direct evidence must survive beside either one.
+        /// </summary>
+        internal static int PruneLoadedProductBrandRecords(List<ProductBrandRecord> records)
+        {
+            return records?.RemoveAll(record => record == null || record.thingDef == null) ?? 0;
         }
 
         /// <summary>
