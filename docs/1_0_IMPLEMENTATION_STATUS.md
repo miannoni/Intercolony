@@ -4,9 +4,9 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 3 — Circumstance-driven economic events
-Current slice:      starting; 2K calibration deferred to the end of 1.0 by Matteo
-Last completed:     2J — price breakdowns name the current condition (2026-08-21)
-Current save schema: 44
+Current slice:      3B — events move the economy (3A done); 2K calibration deferred to end of 1.0
+Last completed:     3A — persisted economic events (2026-08-22)
+Current save schema: 45
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
 
@@ -250,6 +250,51 @@ that has migrated, and a single immediate `status` query can sample the pre-migr
 polls to a 30-second deadline and reports how long it waited.
 
 ## Slice log
+
+### 3A — persisted economic events (2026-08-22)
+
+**Claim:** the world can hold a temporary economic disturbance that survives save and load, and an
+undisturbed world persists nothing.
+**Files:** `Economy/EconomicEvent.cs` (new), `Debug/IntercolonyEventSelfTest.cs` (new),
+`Core/IntercolonyWorldComponent.cs`, `Debug/IntercolonyDebugActions.cs`,
+`Debug/IntercolonyAllSelfTests.cs`.
+**Commit:** `500a55b`. **Schema:** 44 → 45, migration writes nothing.
+**Tests:** new `event` suite, 5 assertions. Full suite green on **four fresh worlds** (1006–1008
+passed, 0 failed, 13–14 skipped), world-pawn delta 0, both leak guards OK, log clean.
+
+**Nothing reads it, and that is the slice.** Same shape as 2A, which persisted market pressure a
+full slice before anything consumed it. The reason is the same: 3B is what makes events *move* the
+economy, and every later slice would inherit whatever this got wrong about persistence — a wrong
+prune rule or load-time padding would surface as events that silently vanish or accumulate forever,
+both of which read as balance problems and get hunted in the wrong place.
+
+**The supply field was renamed in review, before anything depended on it.** It arrived as
+`supplyModifier` and is now `supplyScarcityModifier`, **above 1.0 meaning scarcer**. Supply pressure
+in this codebase counts upward toward *scarce* — the inversion `EffectiveEconomyService` exists to
+hold in one place — while every event in §3.2 is described in fiction as supply going *down*
+("drought: food supply down"). A field named for "ability to supply" invites a drought to be written
+as `0.7` and silently produce a **glut**. The name now carries the direction so the fiction cannot be
+typed in backwards. Free to fix here; expensive once six event types have been written against it.
+
+**Three sentinels in one model, which is three chances to repeat a bug this project has made five
+times.** No anchor settlement, no radius, no faction — each a named constant, compared exactly, never
+printed, never arithmetic. The anchor one matters most: a `WorldObject.ID` of **zero is a plausible
+real settlement**, which is exactly the live defect 2D/2E had to fix in
+`SettlementEconomicProfile.settlementId`.
+
+**Ended events are pruned on load.** §3.4 is explicit that an ended event leaves its mark as
+*pressure*, which Stage 2 already persists and decays on its own. Retaining the record would grow
+the save forever to say something the economy already remembers.
+
+**Verified in both directions.** Padding `FromSaved` with zeros instead of neutral, and making
+`IsActiveAt` inclusive at `endTick`, each reddened its own assertion and nothing else. The zero
+padding is the more dangerous of the two: a zeroed modifier means "this event annihilates demand in
+that category" rather than "this event does not touch it".
+
+**The schema bump was proven on real saves in two commands**, which is what this morning's migration
+harness was built for. The schema-1 save migrated **1 → 45 in 44 steps**, the real `Fenhana` colony
+**42 → 45 in 3**, both zero exceptions. The `45 - N` step rule held at the new schema — the check
+that a step was not silently skipped.
 
 ### 2J — price breakdowns name the current condition (2026-08-21)
 
