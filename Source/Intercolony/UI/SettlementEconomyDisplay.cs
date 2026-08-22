@@ -15,6 +15,9 @@ namespace Intercolony
         /// actually chosen, and on a Relations row. The Relations tab alone would not have been
         /// enough — it only lists settlements already traded with, and the question "what is this
         /// place good for?" is one the player asks *before* the first trade.
+        /// The same content is also shown by <see cref="WITab_Economy"/> on the world map, because a
+        /// player choosing where to settle looks there and would never find the mod's own inspect
+        /// tab otherwise.
         ///
         /// Returns an empty string when no profile resolves, so callers can append unconditionally.
         /// </summary>

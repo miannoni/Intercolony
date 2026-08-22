@@ -2336,6 +2336,21 @@ namespace Intercolony
                 sb.AppendLine($"    {order}  {(order.IsOpen ? $"{order.DaysRemaining:F1}d left" : order.outcomeNote)}");
             }
 
+            sb.AppendLine($"  contracts    : {contracts.Count} ({ActiveContractCount} active)");
+            // Only plain values are printed here. RecurringContract has no equivalent of
+            // EmploymentContract's TermLabel/RemainingLabel, so every tick and duration field —
+            // cadenceTicks, nextCycleTick, offerExpiryTick, decisionDueTick, suspendedTick,
+            // renewalExpiryTick — plus referenceUnitPrice, proposalAppeal and activeOrderId stay
+            // out. Formatting one of those would be the sentinel mistake this project has now made
+            // five times: a value chosen to mean "none" printed as though it were a quantity.
+            int contractLimit = Mathf.Min(contracts.Count, 20);
+            for (int i = 0; i < contractLimit; i++)
+            {
+                RecurringContract contract = contracts[i];
+                sb.AppendLine($"    #{contract.id} {contract.settlementName}: " +
+                              $"{contract.quantityPerCycle}x {contract.ItemLabel()} [{contract.status}]");
+            }
+
             sb.AppendLine($"  employments  : {employments.Count} ({ActiveEmployeeCount} open)");
             foreach (EmploymentContract employment in employments)
             {

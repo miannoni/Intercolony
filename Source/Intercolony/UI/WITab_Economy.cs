@@ -116,8 +116,8 @@ namespace Intercolony
                     state, settlement.ID, category);
                 float supply = EffectiveEconomyService.CurrentSupplyPressure(
                     state, settlement.ID, category);
-                bool demandDisturbed = !Mathf.Approximately(demand, 1f);
-                bool supplyDisturbed = !Mathf.Approximately(supply, 1f);
+                bool demandDisturbed = !Mathf.Approximately(demand, SettlementMarketState.Neutral);
+                bool supplyDisturbed = !Mathf.Approximately(supply, SettlementMarketState.Neutral);
                 if (!demandDisturbed && !supplyDisturbed)
                 {
                     continue;
@@ -142,8 +142,8 @@ namespace Intercolony
             string categoryLabel = category.Label();
             if (demandDisturbed && supplyDisturbed)
             {
-                string demandLabel = demand > 1f ? "shortage" : "surplus";
-                string supplyLabel = supply > 1f ? "shortage" : "surplus";
+                string demandLabel = demand > SettlementMarketState.Neutral ? "shortage" : "surplus";
+                string supplyLabel = supply > SettlementMarketState.Neutral ? "shortage" : "surplus";
                 return demandLabel == supplyLabel
                     ? $"{categoryLabel} {demandLabel}"
                     : $"{categoryLabel} demand {demandLabel} / supply {supplyLabel}";
