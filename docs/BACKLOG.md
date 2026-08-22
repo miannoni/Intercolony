@@ -16,6 +16,56 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## A sold animal may leave dangling pawn relations in the save
+
+**Raised:** 2026-08-21, from reading the log of Matteo's play session.
+**Size:** small — probably one call before the discard.
+**Status:** open, strong hypothesis, **not proven**. Not in the 1.0 program.
+
+His `Player.log` carries **143 warnings**, all naming one pawn and one field:
+
+```
+Trying to save reference to a discarded thing Chicken66024 with saveDestroyedThings=true.
+This means that it's not deep-saved anywhere and is no longer managed by anything in the
+code, so saving its reference will always fail. , label=otherPawn
+```
+
+`otherPawn` is `DirectPawnRelation.otherPawn` (`reference/decompiled/RimWorld/DirectPawnRelation.cs:9`,
+saved with `saveDestroyedThings: true` at line 28). So some surviving pawn still holds a direct
+relation to a pawn that has been discarded. Earlier in the same session,
+`Chess Township collected 1x Chicken (male, Adult, not pregnant) and paid 95 silver` — an
+Intercolony buyer-pickup animal sale.
+
+**Why this is plausibly ours, and it is a real difference from vanilla.** Our handoff is
+`SalesOrderService.cs:1022-1024`: `DeSpawn` → `PreTraded(PlayerSells, …)` → `PassToWorld(…,
+Discard)`. Vanilla's equivalent, `Pawn_TraderTracker.GiveSoldThingToTrader`
+(`reference/decompiled/RimWorld/Pawn_TraderTracker.cs:156-160`), calls `PreTraded` and then
+**`AddPawnToStock(pawn)`** — the sold pawn stays a live, managed pawn in the trader's stock, so
+every relation pointing at it still resolves. We discard instead, and nothing else in the game
+does that to a pawn that other pawns are related to.
+
+**`PreTraded` does not clear enough to make discarding safe.** It ends at
+`relations.Notify_PawnSold(playerNegotiator)`, which
+(`reference/decompiled/RimWorld/Pawn_RelationsTracker.cs:940-963`) removes **only**
+`PawnRelationDefOf.Bond`, and only for related pawns that are alive *and* have a mood need —
+it `continue`s past everything else. Animals that breed acquire `Parent`/`Child` relations to
+one another, and chickens breed constantly. Those relations are never removed, so after the
+discard they dangle.
+
+This is consistent with `CLAUDE.md`'s existing rule that handoffs must go through `PreTraded` —
+that rule is about the *bond and the thought*, and it is correct as far as it goes. What it does
+not cover is that vanilla never discards the pawn afterwards.
+
+**The decisive test, which has not been run:** sell an animal that has a living parent or
+offspring in the colony, then save, and watch for a warning naming that animal by id. If it
+appears, the fix is to strip the remaining direct relations before discarding — or to stop
+discarding.
+
+**Why it is not RED and not being fixed mid-slice (§19).** No crash, no lost silver, no lost
+obligation. RimWorld tolerates the dangling reference, logs it, and loads with the reference
+null. The cost is log noise and a slightly degraded save, not corruption. It also predates
+Stage 2 entirely and has nothing to do with the market work in flight.
+
 ## Suppliers quote ancient ruins scenery
 
 **Raised:** 2026-08-20, from the Stage 0.2 market baseline.
