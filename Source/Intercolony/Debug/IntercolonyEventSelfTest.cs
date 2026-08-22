@@ -125,6 +125,7 @@ namespace Intercolony
                 CheckDefinitions(r, state);
                 CheckLifecycle(r, state);
                 CheckPlayerMessaging(r, state);
+                CheckAcceptedObligationTerms(r, state);
             }
             catch (Exception ex)
             {
@@ -385,6 +386,183 @@ namespace Intercolony
 
                 state.CommercialHistory.Clear();
                 state.CommercialHistory.AddRange(savedCommercialHistory);
+            }
+        }
+
+        private static void CheckAcceptedObligationTerms(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const int AssertionCount = 7;
+            List<Settlement> eligible = EligibleSettlements();
+            if (eligible.Count == 0)
+            {
+                r.skipped += AssertionCount;
+                r.sb.AppendLine(
+                    "  SKIP  accepted-obligation assertions require an eligible settlement");
+                return;
+            }
+
+            Settlement settlement = eligible[0];
+            SettlementEconomicProfile profile = state.GetProfile(settlement);
+            List<ThingDef> commodityDefs = new List<ThingDef>();
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate != null && candidate.category == ThingCategory.Item &&
+                    candidate.stackLimit >= 10 && !candidate.MadeFromStuff &&
+                    IntercolonyProductClassifier.Classify(candidate) ==
+                    IntercolonyProductCategory.Commodities)
+                {
+                    commodityDefs.Add(candidate);
+                }
+            }
+
+            commodityDefs.Sort((left, right) => string.Compare(
+                left.defName, right.defName, StringComparison.OrdinalIgnoreCase));
+            ThingDef good = commodityDefs.Count == 0 ? null : commodityDefs[0];
+            if (profile == null || good == null)
+            {
+                r.skipped += AssertionCount;
+                r.sb.AppendLine(
+                    profile == null
+                        ? "  SKIP  accepted-obligation assertions require a profile for the eligible settlement"
+                        : "  SKIP  accepted-obligation assertions require a tradable stackable commodity good");
+                return;
+            }
+
+            // Contents, not count. This test replaces every obligation and market collection with
+            // synthetic records; restoring only lengths could discard the player's real orders or
+            // leave a synthetic event or pressure record behind.
+            List<EconomicEvent> savedEvents = new List<EconomicEvent>(state.EconomicEvents);
+            List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<SettlementMarketState> savedMarketStates =
+                CloneMarketStates(state.MarketStates);
+
+            try
+            {
+                const int quantity = 10;
+                int now = GenTicks.TicksGame;
+                int deadline = now + 10 * GenDate.TicksPerDay;
+                IntercolonyProductCategory category =
+                    IntercolonyProductCategory.Commodities;
+
+                state.EconomicEvents.Clear();
+                state.MarketStates.Clear();
+                state.RefreshMarketStateIndex();
+
+                float struckPrice = IntercolonyPricing.UnitPrice(
+                    state, good, quantity, profile, category, -1f, null, out _);
+                SalesOrder sale = new SalesOrder
+                {
+                    id = -3_700_001,
+                    settlementId = settlement.ID,
+                    settlementName = settlement.Label ?? "unnamed",
+                    factionName = settlement.Faction?.Name ?? "",
+                    line = new OrderLine(good, quantity),
+                    unitPrice = struckPrice,
+                    acceptedTick = now,
+                    deadlineTick = deadline,
+                    status = SalesOrderStatus.Accepted
+                };
+                PurchaseOrder purchase = new PurchaseOrder
+                {
+                    id = -3_700_002,
+                    settlementId = settlement.ID,
+                    settlementName = settlement.Label ?? "unnamed",
+                    factionName = settlement.Faction?.Name ?? "",
+                    thingDef = good,
+                    quantity = quantity,
+                    unitPrice = struckPrice,
+                    supplierDelivers = false,
+                    orderedTick = now,
+                    readyTick = now + GenDate.TicksPerDay,
+                    pickupExpiryTick = deadline,
+                    status = PurchaseOrderStatus.Confirmed
+                };
+                state.Orders.Add(sale);
+                state.PurchaseOrders.Add(purchase);
+
+                float savedSalePrice = sale.unitPrice;
+                int savedSaleQuantity = sale.Quantity;
+                int savedSaleDeadline = sale.deadlineTick;
+                float savedPurchasePrice = purchase.unitPrice;
+                int savedPurchaseQuantity = purchase.quantity;
+                int savedPurchaseDeadline = purchase.pickupExpiryTick;
+
+                // Use the same production boundary as the force action. Hand-building an event
+                // and appending it would let this test pass with an inert record, skipping the
+                // Build, registration, start shock, and active-pricing path this test must cover.
+                EconomicEvent started = EconomicEventService.StartEvent(
+                    state,
+                    EconomicEventType.Drought,
+                    settlement,
+                    now,
+                    out int shockedSettlements);
+                bool eventAffectedSettlement = started != null &&
+                    state.EconomicEvents.Contains(started) &&
+                    started.IsActiveAt(now) &&
+                    EconomicEventService.IsInScope(started, settlement) &&
+                    shockedSettlements > 0;
+
+                // The price is captured before the event because it is the rate at which both
+                // obligations were struck. Re-reading current conditions for the expected value
+                // would erase the binding-term boundary this test is meant to guard.
+                float currentPrice = IntercolonyPricing.UnitPrice(
+                    state, good, quantity, profile, category, -1f, null, out _);
+
+                r.Check(
+                    eventAffectedSettlement && Mathf.Approximately(
+                        sale.unitPrice, savedSalePrice),
+                    "a drought leaves an accepted sales order's stored unit price unchanged",
+                    $"stored {savedSalePrice:F4}, after {sale.unitPrice:F4}");
+                r.Check(
+                    eventAffectedSettlement && sale.Quantity == savedSaleQuantity,
+                    "a drought leaves an accepted sales order's quantity unchanged",
+                    $"stored {savedSaleQuantity}, after {sale.Quantity}");
+                r.Check(
+                    eventAffectedSettlement && sale.deadlineTick == savedSaleDeadline,
+                    "a drought leaves an accepted sales order's deadline unchanged",
+                    $"stored {savedSaleDeadline}, after {sale.deadlineTick}");
+                r.Check(
+                    eventAffectedSettlement && Mathf.Approximately(
+                        purchase.unitPrice, savedPurchasePrice),
+                    "a drought leaves an accepted purchase order's stored unit price unchanged",
+                    $"stored {savedPurchasePrice:F4}, after {purchase.unitPrice:F4}");
+                r.Check(
+                    eventAffectedSettlement && purchase.quantity == savedPurchaseQuantity,
+                    "a drought leaves an accepted purchase order's quantity unchanged",
+                    $"stored {savedPurchaseQuantity}, after {purchase.quantity}");
+                r.Check(
+                    eventAffectedSettlement && purchase.pickupExpiryTick == savedPurchaseDeadline,
+                    "a drought leaves an accepted purchase order's deadline unchanged",
+                    $"stored {savedPurchaseDeadline}, after {purchase.pickupExpiryTick}");
+
+                // This complement is essential: if the event system were deleted, all six frozen
+                // term checks would still pass. Comparing prices computed before and after the
+                // event, with a non-neutral demand multiplier, proves the event reaches pricing
+                // while accepted terms remain frozen.
+                r.Check(
+                    eventAffectedSettlement &&
+                    EconomicEventService.DemandMultiplier(state, settlement, category) >
+                        EconomicEvent.Neutral &&
+                    Mathf.Abs(currentPrice - struckPrice) > 0.0001f,
+                    "a drought changes a newly computed price without repricing the accepted deal",
+                    $"before {struckPrice:F4}, current {currentPrice:F4}");
+            }
+            finally
+            {
+                // Restore the player's actual records, not merely the old counts. A count-based
+                // cleanup can leave synthetic obligations or pressure in place of save data.
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.AddRange(savedEvents);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedOrders);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.MarketStates.Clear();
+                state.MarketStates.AddRange(savedMarketStates);
+                state.RefreshMarketStateIndex();
             }
         }
 
