@@ -622,10 +622,10 @@ namespace Intercolony
                 droughtEvent.factionLoadId == EconomicEvent.NoFaction,
                 "drought is radial and leaves faction scope at its sentinel");
             r.Check(
-                warEvent.anchorSettlementId == EconomicEvent.NoSettlement &&
+                warEvent.anchorSettlementId == anchor.ID &&
                 warEvent.radiusTiles == EconomicEvent.NoRadius &&
                 warEvent.factionLoadId == anchor.Faction.loadID,
-                "war mobilization is faction-wide and leaves radial scope at its sentinels");
+                "war mobilization retains its anchor while leaving radial scope at its sentinel");
             r.Check(
                 constructionEvent.anchorSettlementId == anchor.ID &&
                 constructionEvent.radiusTiles == 0f &&

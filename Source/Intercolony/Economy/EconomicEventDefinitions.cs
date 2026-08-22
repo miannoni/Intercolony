@@ -265,6 +265,10 @@ namespace Intercolony
                     economicEvent.radiusTiles = definition.radiusTiles;
                     break;
                 case Scope.Faction:
+                    // Faction scope ignores the anchor when radius is NoRadius, but retaining the
+                    // selected origin lets diagnostics name the settlement that started the event
+                    // after a save/load instead of inventing a representative faction member.
+                    economicEvent.anchorSettlementId = anchor.ID;
                     economicEvent.factionLoadId = anchor.Faction.loadID;
                     break;
                 case Scope.Settlement:

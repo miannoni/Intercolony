@@ -174,6 +174,367 @@ namespace Intercolony
             });
         }
 
+        /// <summary>
+        /// Click a settlement, then choose one of the event definitions the market can really
+        /// generate. This stays on <see cref="WithState"/> because the selected event, its start
+        /// shock and its letter are deliberate changes to the player's world; a diagnostic guard
+        /// would erase the very pressure tail this action exists to make observable.
+        /// </summary>
+        [DebugAction(Category, "Force economic event", actionType = DebugActionType.ToolWorld,
+            allowedGameStates = AllowedGameStates.PlayingOnWorld, displayPriority = 68)]
+        private static void ForceEconomicEvent()
+        {
+            WithState(state =>
+            {
+                PlanetTile tile = GenWorld.MouseTile();
+                Settlement settlement = Find.WorldObjects.SettlementAt(tile);
+                if (settlement == null)
+                {
+                    IntercolonyLog.Message($"No settlement at tile {tile}.");
+                    return;
+                }
+
+                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                if (profile == null)
+                {
+                    IntercolonyLog.Message(
+                        $"{settlement.Label} is not an economic participant " +
+                        $"(faction: {settlement.Faction?.Name ?? "none"}).");
+                    return;
+                }
+
+                List<DebugMenuOption> options = new List<DebugMenuOption>();
+                foreach (EconomicEventType type in EconomicEventDefinitions.DefinedTypes)
+                {
+                    EconomicEventType selectedType = type;
+                    options.Add(new DebugMenuOption(
+                        selectedType.Label(), DebugMenuOptionMode.Action, () =>
+                        {
+                            int shockedSettlements;
+                            EconomicEvent started = EconomicEventService.StartEvent(
+                                state,
+                                selectedType,
+                                settlement,
+                                GenTicks.TicksGame,
+                                out shockedSettlements);
+                            if (started == null)
+                            {
+                                IntercolonyLog.Warning(
+                                    $"Could not force {selectedType.Label()} at {settlement.Label}: " +
+                                    $"the active-event cap is {EconomicEventService.MaxConcurrentEvents}.");
+                                return;
+                            }
+
+                            List<Settlement> affected =
+                                EconomicEventService.SettlementsInScope(started);
+                            StringBuilder sb = new StringBuilder();
+                            sb.AppendLine(
+                                $"Forced {started.type.Label()} at anchor settlement " +
+                                $"{settlement.Label} (event #{started.id}).");
+                            sb.AppendLine(
+                                $"  scope: {ScopeLabel(started, affected)}; " +
+                                $"{affected.Count} settlement(s) affected " +
+                                $"({shockedSettlements} received the start shock).");
+                            sb.AppendLine(
+                                $"  remaining: {EconomicEventService.RemainingDurationLabel(
+                                    started, GenTicks.TicksGame)}");
+                            AppendSettlementNames(sb, affected);
+                            AppendPressure(sb, state, affected, "  resulting pressure");
+                            IntercolonyLog.Message(sb.ToString());
+                        }));
+                }
+
+                Find.WindowStack.Add(new Dialog_DebugOptionListLister(
+                    options, $"Force economic event at: {settlement.Label}"));
+            });
+        }
+
+        /// <summary>
+        /// Prints live event records and the exact settlements returned by the event service's
+        /// scope query. Repeating the radius/faction predicate here would let this diagnostic name
+        /// a different economy from the one pricing and the Economy tab actually use.
+        /// </summary>
+        [DebugAction(Category, "Dump economic events", allowedGameStates = AllowedGameStates.Playing,
+            displayPriority = 87)]
+        private static void DumpEconomicEvents()
+        {
+            WithState(state =>
+            {
+                int currentTick = GenTicks.TicksGame;
+                StringBuilder sb = new StringBuilder();
+                int activeCount = 0;
+                sb.AppendLine("Active economic events");
+
+                for (int i = 0; i < state.EconomicEvents.Count; i++)
+                {
+                    EconomicEvent economicEvent = state.EconomicEvents[i];
+                    if (economicEvent == null || !economicEvent.IsActiveAt(currentTick))
+                    {
+                        continue;
+                    }
+
+                    activeCount++;
+                    List<Settlement> affected =
+                        EconomicEventService.SettlementsInScope(economicEvent);
+                    sb.AppendLine();
+                    sb.AppendLine(
+                        $"{economicEvent.type.Label()} (event #{economicEvent.id})");
+                    sb.AppendLine(
+                        $"  anchor settlement: {AnchorSettlementLabel(economicEvent, affected)}");
+                    sb.AppendLine($"  scope: {ScopeLabel(economicEvent, affected)}");
+                    sb.AppendLine(
+                        $"  remaining: {EconomicEventService.RemainingDurationLabel(
+                            economicEvent, currentTick)}");
+                    sb.AppendLine($"  affected settlements: {affected.Count}");
+                    AppendSettlementNames(sb, affected);
+                    AppendModifiers(sb, economicEvent);
+                }
+
+                if (activeCount == 0)
+                {
+                    sb.AppendLine("  none.");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
+        /// <summary>
+        /// Ends live events through the lifecycle remover so their start shocks remain in the
+        /// persisted Stage 2 pressure records. Calling a private list clear would hide the tail
+        /// this action exists to inspect and would make the debug result unlike a natural expiry.
+        /// </summary>
+        [DebugAction(Category, "End economic events now", allowedGameStates = AllowedGameStates.Playing,
+            displayPriority = 86)]
+        private static void EndEconomicEventsNow()
+        {
+            WithState(state =>
+            {
+                int currentTick = GenTicks.TicksGame;
+                List<EconomicEvent> endedEvents = new List<EconomicEvent>();
+                List<List<Settlement>> affectedByEvent = new List<List<Settlement>>();
+
+                for (int i = 0; i < state.EconomicEvents.Count; i++)
+                {
+                    EconomicEvent economicEvent = state.EconomicEvents[i];
+                    if (economicEvent == null || !economicEvent.IsActiveAt(currentTick))
+                    {
+                        continue;
+                    }
+
+                    endedEvents.Add(economicEvent);
+                    affectedByEvent.Add(
+                        EconomicEventService.SettlementsInScope(economicEvent));
+                    economicEvent.endTick = currentTick;
+                }
+
+                EconomicEventService.AdvanceLifecycle(
+                    state, currentTick, allowGeneration: false);
+
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"Ended {endedEvents.Count} active economic event(s) now.");
+                for (int i = 0; i < endedEvents.Count; i++)
+                {
+                    EconomicEvent economicEvent = endedEvents[i];
+                    List<Settlement> affected = affectedByEvent[i];
+                    sb.AppendLine(
+                        $"  {economicEvent.type.Label()} at " +
+                        $"{AnchorSettlementLabel(economicEvent, affected)}; " +
+                        $"{affected.Count} settlement(s) affected before ending.");
+                    AppendPressure(sb, state, affected, "    pressure tail");
+                }
+
+                IntercolonyLog.Message(sb.ToString());
+            });
+        }
+
+        private static string AnchorSettlementLabel(
+            EconomicEvent economicEvent, List<Settlement> affected)
+        {
+            if (economicEvent.anchorSettlementId != EconomicEvent.NoSettlement)
+            {
+                Settlement anchor = IntercolonyMarketAccess.FindSettlement(
+                    economicEvent.anchorSettlementId);
+                return anchor?.Label ??
+                       $"missing settlement #{economicEvent.anchorSettlementId}";
+            }
+
+            if (economicEvent.factionLoadId != EconomicEvent.NoFaction)
+            {
+                // Faction-scoped events intentionally persist no radial anchor: the faction is
+                // the scope. Showing a representative member keeps the dump useful while saying
+                // plainly what the saved record can and cannot identify after a reload.
+                Settlement representative = affected != null && affected.Count > 0
+                    ? affected[0]
+                    : null;
+                return representative == null
+                    ? $"faction load ID {economicEvent.factionLoadId} (no radial anchor)"
+                    : $"{representative.Label} (representative; faction-wide scope)";
+            }
+
+            return "none";
+        }
+
+        private static string ScopeLabel(
+            EconomicEvent economicEvent, List<Settlement> affected)
+        {
+            if (economicEvent.factionLoadId != EconomicEvent.NoFaction)
+            {
+                string factionName = null;
+                if (affected != null)
+                {
+                    for (int i = 0; i < affected.Count; i++)
+                    {
+                        if (affected[i]?.Faction != null)
+                        {
+                            factionName = affected[i].Faction.Name;
+                            break;
+                        }
+                    }
+                }
+
+                return factionName == null
+                    ? $"faction load ID {economicEvent.factionLoadId}"
+                    : $"faction {factionName}";
+            }
+
+            if (economicEvent.anchorSettlementId != EconomicEvent.NoSettlement &&
+                Mathf.Approximately(economicEvent.radiusTiles, 0f))
+            {
+                return "single settlement";
+            }
+
+            if (economicEvent.anchorSettlementId != EconomicEvent.NoSettlement &&
+                economicEvent.radiusTiles != EconomicEvent.NoRadius)
+            {
+                return $"radius {economicEvent.radiusTiles:0.##} tiles";
+            }
+
+            return "no scope";
+        }
+
+        private static void AppendSettlementNames(
+            StringBuilder sb, List<Settlement> affected)
+        {
+            if (affected == null || affected.Count == 0)
+            {
+                sb.AppendLine("  affected: none");
+                return;
+            }
+
+            sb.AppendLine("  affected:");
+            for (int i = 0; i < affected.Count; i++)
+            {
+                sb.AppendLine($"    {affected[i].Label}");
+            }
+        }
+
+        private static void AppendModifiers(
+            StringBuilder sb, EconomicEvent economicEvent)
+        {
+            bool any = false;
+            for (int i = 0; i < IntercolonyProductCategoryUtility.All.Length; i++)
+            {
+                IntercolonyProductCategory category = IntercolonyProductCategoryUtility.All[i];
+                float demand = EconomicEventService.ModifierFor(
+                    economicEvent.demandModifier, category);
+                float scarcity = EconomicEventService.ModifierFor(
+                    economicEvent.supplyScarcityModifier, category);
+                List<string> changes = new List<string>();
+                if (!Mathf.Approximately(demand, EconomicEvent.Neutral))
+                {
+                    changes.Add($"demand x{demand:F2}");
+                }
+
+                if (!Mathf.Approximately(scarcity, EconomicEvent.Neutral))
+                {
+                    changes.Add($"supply scarcity x{scarcity:F2}");
+                }
+
+                if (changes.Count == 0)
+                {
+                    continue;
+                }
+
+                if (!any)
+                {
+                    sb.AppendLine("  non-neutral modifiers:");
+                    any = true;
+                }
+
+                sb.AppendLine(
+                    $"    {category.Label()}: {string.Join(", ", changes)}");
+            }
+
+            if (!any)
+            {
+                sb.AppendLine("  non-neutral modifiers: none");
+            }
+        }
+
+        private static void AppendPressure(
+            StringBuilder sb,
+            IntercolonyWorldComponent state,
+            List<Settlement> settlements,
+            string header)
+        {
+            sb.AppendLine($"{header}:");
+            int nonNeutralSettlements = 0;
+            if (settlements != null)
+            {
+                for (int i = 0; i < settlements.Count; i++)
+                {
+                    string summary = PressureSummary(state, settlements[i]);
+                    if (summary == "neutral")
+                    {
+                        continue;
+                    }
+
+                    nonNeutralSettlements++;
+                    sb.AppendLine($"    {settlements[i].Label}: {summary}");
+                }
+            }
+
+            if (nonNeutralSettlements == 0)
+            {
+                sb.AppendLine("    none (all affected settlements are neutral)");
+            }
+        }
+
+        private static string PressureSummary(
+            IntercolonyWorldComponent state, Settlement settlement)
+        {
+            SettlementMarketState marketState = state.MarketStateFor(settlement.ID);
+            List<string> axes = new List<string>();
+            foreach (IntercolonyProductCategory category in
+                     IntercolonyProductCategoryUtility.All)
+            {
+                float demand = marketState?.DemandPressureFor(category) ??
+                               SettlementMarketState.Neutral;
+                float supply = marketState?.SupplyPressureFor(category) ??
+                               SettlementMarketState.Neutral;
+                if (Mathf.Approximately(demand, SettlementMarketState.Neutral) &&
+                    Mathf.Approximately(supply, SettlementMarketState.Neutral))
+                {
+                    continue;
+                }
+
+                string value = !Mathf.Approximately(demand, SettlementMarketState.Neutral)
+                    ? $"demand {demand:F3}"
+                    : null;
+                if (!Mathf.Approximately(supply, SettlementMarketState.Neutral))
+                {
+                    value = value == null
+                        ? $"supply {supply:F3}"
+                        : $"{value}, supply {supply:F3}";
+                }
+
+                axes.Add($"{category.Label()} {value}");
+            }
+
+            return axes.Count == 0 ? "neutral" : string.Join("; ", axes);
+        }
+
         [DebugAction(Category, "Run profile self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 60)]
         private static void RunProfileSelfTest()
         {

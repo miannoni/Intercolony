@@ -44,9 +44,9 @@ namespace Intercolony
         public const float Neutral = 1f;
 
         /// <summary>
-        /// No settlement scope. Compared exactly, never used in arithmetic and never printed: the
-        /// project has repeatedly been bitten by a value chosen to mean "none" being read as a
-        /// quantity, and a WorldObject ID of zero is a plausible real settlement.
+        /// No settlement anchor. Compared exactly and never used in scope arithmetic: the project
+        /// has repeatedly been bitten by a value chosen to mean "none" being read as a quantity,
+        /// and a WorldObject ID of zero is a plausible real settlement.
         /// </summary>
         public const int NoSettlement = -1;
 

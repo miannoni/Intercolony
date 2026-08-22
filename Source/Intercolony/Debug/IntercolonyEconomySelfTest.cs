@@ -1777,6 +1777,77 @@ namespace Intercolony
                         $"outside {factionOutsideBaseline:F5} -> {factionOutsideDemand:F5}");
                 }
 
+                Settlement factionAnchor = null;
+                Settlement factionDistant = null;
+                float factionDistance = 0f;
+                if (Find.WorldGrid != null)
+                {
+                    for (int i = 0; i < accessible.Count && factionAnchor == null; i++)
+                    {
+                        Settlement candidateAnchor = accessible[i];
+                        if (candidateAnchor.Faction == null)
+                        {
+                            continue;
+                        }
+
+                        for (int j = 0; j < accessible.Count; j++)
+                        {
+                            Settlement candidateDistant = accessible[j];
+                            if (candidateDistant.Faction == null ||
+                                candidateDistant.Faction.loadID != candidateAnchor.Faction.loadID)
+                            {
+                                continue;
+                            }
+
+                            float distance = Find.WorldGrid.ApproxDistanceInTiles(
+                                candidateAnchor.Tile, candidateDistant.Tile);
+                            if (distance > 0f)
+                            {
+                                factionAnchor = candidateAnchor;
+                                factionDistant = candidateDistant;
+                                factionDistance = distance;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (Find.WorldGrid == null)
+                {
+                    r.Skip("a factory-built faction event reaches a distant in-faction settlement",
+                        "the world grid needed to measure the faction settlement distance is unavailable");
+                }
+                else if (factionAnchor == null)
+                {
+                    r.Skip("a factory-built faction event reaches a distant in-faction settlement",
+                        "the world has no faction with two eligible accessible settlements at a " +
+                        "strictly positive measured distance");
+                }
+                else
+                {
+                    SettlementEconomicProfile distantProfile = state.GetProfile(factionDistant);
+                    state.EconomicEvents.Clear();
+                    float distantBaseline = EffectiveEconomyService.EffectiveDemand(
+                        state, distantProfile, DemandCategory);
+                    EconomicEvent factoryFactionEvent = EconomicEventDefinitions.Build(
+                        state, EconomicEventType.WarMobilization, factionAnchor, now - 10);
+                    state.EconomicEvents.Add(factoryFactionEvent);
+                    float distantDemand = EffectiveEconomyService.EffectiveDemand(
+                        state, distantProfile, DemandCategory);
+
+                    // The real factory retains the anchor for diagnostics, so this catches the
+                    // trap where a NoRadius faction event starts treating that anchor as a radial
+                    // filter and silently stops reaching the rest of its faction.
+                    r.Check(factoryFactionEvent.factionLoadId == factionAnchor.Faction.loadID &&
+                            factoryFactionEvent.anchorSettlementId == factionAnchor.ID &&
+                            factoryFactionEvent.radiusTiles == EconomicEvent.NoRadius &&
+                            factionDistance > 0f && distantDemand > distantBaseline,
+                        "a factory-built faction event reaches a distant in-faction settlement",
+                        $"measured distance {factionDistance:F2}; anchor {factionAnchor.ID}, " +
+                        $"other {factionDistant.ID}, radius {factoryFactionEvent.radiusTiles:F2}; " +
+                        $"{distantBaseline:F5} -> {distantDemand:F5}");
+                }
+
                 Settlement radialNear = null;
                 Settlement radialFar = null;
                 float radialNearDistance = float.MaxValue;

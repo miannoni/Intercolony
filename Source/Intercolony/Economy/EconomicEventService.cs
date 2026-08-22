@@ -109,10 +109,33 @@ namespace Intercolony
                 return null;
             }
 
+            return StartEvent(
+                state, decision.type, decision.anchor, currentTick, out _);
+        }
+
+        /// <summary>
+        /// Starts a chosen event through the same production sequence as a generated event.
+        /// Keeping build, registration, the start shock and the letter together avoids the debug
+        /// trap where a hand-built record looks active but never exercises the real event path.
+        /// </summary>
+        internal static EconomicEvent StartEvent(
+            IntercolonyWorldComponent state,
+            EconomicEventType type,
+            Settlement anchor,
+            int startTick,
+            out int shockedSettlements)
+        {
+            shockedSettlements = 0;
+            if (state == null || anchor == null ||
+                state.EconomicEvents.Count >= MaxConcurrentEvents)
+            {
+                return null;
+            }
+
             EconomicEvent started = EconomicEventDefinitions.Build(
-                state, decision.type, decision.anchor, currentTick);
+                state, type, anchor, startTick);
             state.EconomicEvents.Add(started);
-            ApplyStartShock(state, started);
+            shockedSettlements = ApplyStartShock(state, started);
             SendStartLetter(state, started);
             return started;
         }
@@ -284,7 +307,7 @@ namespace Intercolony
             return $"roughly {DaysRemaining(economicEvent, currentTick)} days";
         }
 
-        private static List<Settlement> SettlementsInScope(EconomicEvent economicEvent)
+        internal static List<Settlement> SettlementsInScope(EconomicEvent economicEvent)
         {
             List<Settlement> affected = new List<Settlement>();
             if (economicEvent == null)
