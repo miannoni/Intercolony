@@ -21,6 +21,9 @@
         .\dev.ps1 bridge -Fresh              # same, stated explicitly
         .\dev.ps1 bridge -Save "Colony 1"     # bridge build + autoload an existing
                                               # save (also accepts Colony 1.rws)
+        .\dev.ps1 saves        # list every save and its Intercolony schema; launches nothing
+        .\dev.ps1 migrate "Colony 1"          # load a copied save and report its migration
+        .\dev.ps1 migrate all                 # prove every save, oldest schema first
         .\dev.ps1 test job-posting           # test the currently running game
         .\dev.ps1 test job-posting -Fresh    # test a clean -quicktest world
         .\dev.ps1 test all -Fresh            # full suite on a clean world
@@ -35,10 +38,11 @@ param(
     # the lowest declared position. Without this attribute "dev.ps1 new" bound "new" to
     # $Note and silently ran the default 'cycle' task instead, restarting the game.
     [Parameter(Position = 0)]
-    [ValidateSet("cycle", "build", "run", "log", "new", "mark", "stop", "reset", "bridge", "test")]
+    [ValidateSet("cycle", "build", "run", "log", "new", "mark", "stop", "reset", "bridge", "saves", "migrate", "test")]
     [string]$Task = "cycle",
 
-    # The second positional value is a note for 'mark' and a test name for 'test'.
+    # The second positional value is a note for 'mark', a test name for 'test', or
+    # a save name (or 'all') for 'migrate'.
     # Reusing Position 1 avoids adding another positional parameter that could make
     # command binding ambiguous again. All new options below are named parameters.
     [Parameter(Position = 1)]
@@ -199,6 +203,82 @@ function Add-Mark($text) {
     Write-Host "marked: $text" -ForegroundColor Magenta
 }
 
+function Get-IntercolonySaveSchema($Path) {
+    # Reading the first saveVersion in the document is a tempting shortcut, but another
+    # mod may own it. Stream until Intercolony's component and inspect only its next line,
+    # which also avoids pulling a 28 MB save into the PowerShell process just to read one int.
+    $componentPattern = '^\s*<li\s+Class="Intercolony\.IntercolonyWorldComponent">\s*$'
+    $schemaPattern = '^\s*<saveVersion>(\d+)</saveVersion>\s*$'
+    $reader = New-Object System.IO.StreamReader($Path)
+    try {
+        while (-not $reader.EndOfStream) {
+            $line = $reader.ReadLine()
+            if ($line -match $componentPattern) {
+                $schemaLine = $reader.ReadLine()
+                if ($null -ne $schemaLine -and $schemaLine -match $schemaPattern) {
+                    return [int]$matches[1]
+                }
+                return $null
+            }
+        }
+    } finally {
+        $reader.Dispose()
+    }
+    return $null
+}
+
+function Get-SaveRecords {
+    if (-not (Test-Path -LiteralPath $Saves -PathType Container)) {
+        throw "RimWorld saves folder not found at $Saves"
+    }
+
+    $records = @()
+    foreach ($file in Get-ChildItem -LiteralPath $Saves -Filter "*.rws" -File) {
+        $schema = Get-IntercolonySaveSchema $file.FullName
+        $hasIntercolony = $null -ne $schema
+        $records += [pscustomobject]@{
+            Name             = $file.BaseName
+            FileName         = $file.Name
+            FullName         = $file.FullName
+            Length           = $file.Length
+            LastWriteTime    = $file.LastWriteTime
+            LastWriteTimeUtc = $file.LastWriteTimeUtc
+            HasIntercolony   = $hasIntercolony
+            Schema           = $schema
+            # Saves without Intercolony state sort last because '-' has no numeric place
+            # in an ascending schema order; their names still remain deterministic.
+            SortSchema       = $(if ($hasIntercolony) { $schema } else { [int]::MaxValue })
+        }
+    }
+    return @($records | Sort-Object SortSchema, Name)
+}
+
+function Show-Saves {
+    try {
+        $records = @(Get-SaveRecords)
+    } catch {
+        Write-Host "SAVE LIST FAILED: $($_.Exception.Message)" -ForegroundColor Red
+        return 2
+    }
+
+    $records | Select-Object `
+        @{ Name = "Schema"; Expression = { if ($_.HasIntercolony) { $_.Schema } else { "-" } } }, `
+        @{ Name = "Name"; Expression = { $_.Name } }, `
+        @{ Name = "Size MB"; Expression = { "{0:N1}" -f ($_.Length / 1MB) } }, `
+        @{ Name = "Last modified"; Expression = { $_.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") } } |
+        Format-Table -AutoSize | Out-Host
+
+    $withState = @($records | Where-Object { $_.HasIntercolony })
+    if ($withState.Count -eq 0) {
+        Write-Host "0 saves carry Intercolony state; no schema range is present."
+    } else {
+        $lowest = ($withState | Measure-Object Schema -Minimum).Minimum
+        $highest = ($withState | Measure-Object Schema -Maximum).Maximum
+        Write-Host "$($withState.Count) saves carry Intercolony state; schemas $lowest through $highest."
+    }
+    return 0
+}
+
 function Stop-RimWorld {
     $proc = Get-Process -Name "RimWorldWin64" -ErrorAction SilentlyContinue
     if ($proc) {
@@ -214,10 +294,12 @@ function Invoke-Build([switch]$Bridge) {
         Write-Host "No csproj yet - XML-only change, nothing to build." -ForegroundColor Yellow
         return $true
     }
+    # Compiler output belongs on the console, not in this function's return stream. If it
+    # leaked beside the Boolean, callers could mistake a failed build's non-empty array for true.
     if ($Bridge) {
-        & dotnet build $Proj -p:EnableDevBridge=true -v minimal
+        & dotnet build $Proj -p:EnableDevBridge=true -v minimal | Out-Host
     } else {
-        & dotnet build $Proj -v minimal
+        & dotnet build $Proj -v minimal | Out-Host
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "BUILD FAILED - not launching." -ForegroundColor Red
@@ -345,6 +427,7 @@ function Wait-ForBridge([switch]$RequireMap, [int]$ReadinessTimeoutSec = $Bridge
     Write-Host "Waiting for bridge $need readiness (timeout ${ReadinessTimeoutSec}s)..." -ForegroundColor Cyan
     $deadline = (Get-Date).AddSeconds($ReadinessTimeoutSec)
     $answered = $false
+    $script:LastBridgeAnswered = $false
     $worldLoaded = $false
     $mapLoaded = $false
     $lastError = $null
@@ -353,6 +436,7 @@ function Wait-ForBridge([switch]$RequireMap, [int]$ReadinessTimeoutSec = $Bridge
         try {
             $status = Invoke-Bridge "status" @{} 5
             $answered = $true
+            $script:LastBridgeAnswered = $true
             $worldLoaded = $status.result.worldLoaded -eq $true
             $mapLoaded = $status.result.mapLoaded -eq $true
             if ($worldLoaded -and ((-not $RequireMap) -or $mapLoaded)) {
@@ -380,7 +464,36 @@ function Wait-ForBridge([switch]$RequireMap, [int]$ReadinessTimeoutSec = $Bridge
     return $false
 }
 
-function Start-BridgeSession {
+function Remove-StagedAutostart($AutostartSave) {
+    try {
+        if (-not (Test-Path -LiteralPath $AutostartSave)) { return $true }
+    } catch {
+        Write-Host "AUTOSTART CLEANUP FAILED: COULD NOT INSPECT $AutostartSave" -ForegroundColor Red
+        Write-Host "Delete it by hand before launching again. Last error: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+
+    $cleanupError = "unknown error"
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $AutostartSave -Force -ErrorAction Stop
+            return $true
+        } catch {
+            $cleanupError = $_.Exception.Message
+            if ($attempt -lt 5) { Start-Sleep -Milliseconds 500 }
+        }
+    }
+
+    # This is an abort condition, not cosmetic cleanup. A leftover autostart silently
+    # hijacks every later launch, including -Fresh, and makes its isolation claim false.
+    Write-Host "AUTOSTART CLEANUP FAILED: COULD NOT DELETE $AutostartSave" -ForegroundColor Red
+    Write-Host "Delete it by hand before launching again. Last error: $cleanupError" -ForegroundColor Red
+    return $false
+}
+
+function Start-BridgeSession([switch]$SkipBuild, [switch]$LeaveAutostartForCaller) {
+    $script:BridgeAutostartOwnedBySession = $false
+    $script:BridgeSessionLaunched = $false
     $sourceSave = $null
     $autostartSave = Join-Path $Saves "Autostart.rws"
     if (-not [string]::IsNullOrWhiteSpace($Save)) {
@@ -403,46 +516,35 @@ function Start-BridgeSession {
         }
     }
 
-    if (-not (Invoke-Build -Bridge)) { return $false }
+    if (-not $SkipBuild -and -not (Invoke-Build -Bridge)) { return $false }
     Stop-RimWorld
 
     if ($null -ne $sourceSave) {
         $createdAutostart = $false
+        $sessionReady = $false
         try {
             # Claim the destination without clobbering a save that appeared after preflight.
             New-Item -Path $autostartSave -ItemType File -ErrorAction Stop | Out-Null
             $createdAutostart = $true
+            $script:BridgeAutostartOwnedBySession = $true
             Copy-Item -LiteralPath $sourceSave -Destination $autostartSave -Force
             Start-RimWorld -Bridge
+            $script:BridgeSessionLaunched = $true
             # Large real saves (22 MB and above) can take well over the normal 180s.
             $saveTimeoutSec = [Math]::Max($BridgeTimeoutSec, 600)
-            return (Wait-ForBridge -RequireMap -ReadinessTimeoutSec $saveTimeoutSec)
+            $sessionReady = Wait-ForBridge -RequireMap -ReadinessTimeoutSec $saveTimeoutSec
         } catch {
             Write-Host "BRIDGE SAVE LAUNCH FAILED: $($_.Exception.Message)" -ForegroundColor Red
-            return $false
         } finally {
-            if ($createdAutostart) {
-                # A timeout can catch RimWorld while it still has the staged save open. Letting
-                # that cleanup error escape would replace the clean exit 2 with an unhandled error,
-                # while leaving a file that silently hijacks every later launch, including -Fresh.
-                $autostartRemoved = $false
-                $cleanupError = "unknown error"
-                for ($attempt = 1; $attempt -le 5; $attempt++) {
-                    try {
-                        Remove-Item -LiteralPath $autostartSave -Force -ErrorAction Stop
-                        $autostartRemoved = $true
-                        break
-                    } catch {
-                        $cleanupError = $_.Exception.Message
-                        if ($attempt -lt 5) { Start-Sleep -Milliseconds 500 }
-                    }
-                }
-                if (-not $autostartRemoved) {
-                    Write-Host "WARNING: COULD NOT DELETE $autostartSave" -ForegroundColor Red
-                    Write-Host "Delete it by hand or every later launch will load it instead of a fresh world, including -Fresh. Last error: $cleanupError" -ForegroundColor Red
+            if ($createdAutostart -and -not $LeaveAutostartForCaller) {
+                if (Remove-StagedAutostart $autostartSave) {
+                    $script:BridgeAutostartOwnedBySession = $false
+                } else {
+                    $sessionReady = $false
                 }
             }
         }
+        return $sessionReady
     }
 
     try {
@@ -452,6 +554,273 @@ function Start-BridgeSession {
         return $false
     }
     return (Wait-ForBridge -RequireMap)
+}
+
+function Get-LaunchLogLines {
+    $script:LastLaunchLogReadSucceeded = $false
+    $lines = Get-AllLines
+    if ($null -eq $lines) { return @() }
+    $script:LastLaunchLogReadSucceeded = $true
+
+    $offset = Get-Offset
+    # RimWorld recreates Player.log on launch. Treat an offset beyond the new file as
+    # zero or a previous session would hide the very migration lines this task proves.
+    if ($offset -gt $lines.Count) { $offset = 0 }
+    $interval = @()
+    if ($offset -lt $lines.Count) {
+        $interval = @($lines[$offset..($lines.Count - 1)])
+    }
+    Set-Offset $lines.Count
+    return $interval
+}
+
+function Invoke-OneSaveMigration($Record) {
+    $autostartSave = Join-Path $Saves "Autostart.rws"
+    $schemaAfter = $null
+    $currentSchema = $null
+    $infrastructureError = $null
+    $cleanupFailed = $false
+    $sourceChanged = $false
+    $migrationFailed = $false
+    $logLines = @()
+
+    # The source metadata is captured before staging and checked only after shutdown and
+    # cleanup. That catches accidental writes across the whole launch, not merely the copy.
+    $sourceBefore = Get-Item -LiteralPath $Record.FullName
+    $beforeLength = $sourceBefore.Length
+    $beforeWriteTimeUtc = $sourceBefore.LastWriteTimeUtc
+
+    try {
+        $script:Save = $Record.FileName
+        # Root_Entry and Root_Play consume the same one-shot flag. An explicit empty list
+        # keeps migration launches argument-free even if caller-facing defaults change later.
+        $script:LaunchArgs = @()
+        Set-Offset 0
+
+        if (Start-BridgeSession -SkipBuild -LeaveAutostartForCaller) {
+            $statusPollStopwatch = $null
+            try {
+                $status = Invoke-Bridge "status" @{} 15
+                $schemaAfter = $status.result.saveSchema
+                $currentSchema = $status.result.currentSaveSchema
+                if ($null -eq $schemaAfter -or $null -eq $currentSchema) {
+                    $infrastructureError = "Bridge status omitted saveSchema or currentSaveSchema."
+                } elseif ([int]$schemaAfter -ne [int]$currentSchema) {
+                    # ExposeData reads saveVersion before post-load init corrects it. A bridge
+                    # reporting ready is therefore not necessarily a bridge that has migrated.
+                    $statusPollStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                    $statusPollDeadline = [DateTime]::UtcNow.AddSeconds(30)
+                    while ([int]$schemaAfter -ne [int]$currentSchema) {
+                        $remainingMs = [int][Math]::Max(0,
+                            ($statusPollDeadline - [DateTime]::UtcNow).TotalMilliseconds)
+                        if ($remainingMs -le 0) { break }
+                        Start-Sleep -Milliseconds ([Math]::Min(1000, $remainingMs))
+
+                        $remainingSeconds = ($statusPollDeadline - [DateTime]::UtcNow).TotalSeconds
+                        if ($remainingSeconds -le 0) { break }
+                        $queryTimeoutSec = [int][Math]::Max(1,
+                            [Math]::Min(15, [Math]::Ceiling($remainingSeconds)))
+                        $status = Invoke-Bridge "status" @{} $queryTimeoutSec
+                        $schemaAfter = $status.result.saveSchema
+                        $currentSchema = $status.result.currentSaveSchema
+                        if ($null -eq $schemaAfter -or $null -eq $currentSchema) {
+                            $infrastructureError = "Bridge status omitted saveSchema or currentSaveSchema."
+                            break
+                        }
+                    }
+                }
+            } catch {
+                $infrastructureError = $_.Exception.Message
+            } finally {
+                if ($null -ne $statusPollStopwatch) {
+                    $statusPollStopwatch.Stop()
+                    $statusPollWaitSeconds = [Math]::Round(
+                        $statusPollStopwatch.Elapsed.TotalSeconds, 1)
+                    Write-Host "Migration status poll for '$($Record.Name)' waited $statusPollWaitSeconds second(s)."
+                }
+            }
+        } else {
+            if ($script:LastBridgeAnswered) {
+                # A responding bridge proves the transport and build worked. Failure to
+                # finish this particular world is evidence about the save, not infrastructure.
+                $migrationFailed = $true
+            } else {
+                $infrastructureError = "Bridge never answered."
+            }
+        }
+        if ($script:BridgeSessionLaunched) {
+            $logLines = @(Get-LaunchLogLines)
+            if (-not $script:LastLaunchLogReadSucceeded -and -not $infrastructureError) {
+                $infrastructureError = "Player.log could not be read for this launch."
+            }
+        }
+    } catch {
+        $infrastructureError = $_.Exception.Message
+        if ($script:BridgeSessionLaunched) {
+            $logLines = @(Get-LaunchLogLines)
+            if (-not $script:LastLaunchLogReadSucceeded) {
+                $infrastructureError = "Player.log could not be read for this launch."
+            }
+        }
+    } finally {
+        if ($script:BridgeAutostartOwnedBySession) {
+            # Stop first so RimWorld cannot keep the staged copy open. Cleanup remains in
+            # finally because a leftover Autostart.rws poisons every later batch entry.
+            try {
+                Stop-RimWorld
+            } catch {
+                if (-not $infrastructureError) {
+                    $infrastructureError = "Could not stop RimWorld before cleanup: $($_.Exception.Message)"
+                }
+            } finally {
+                try {
+                    if (Remove-StagedAutostart $autostartSave) {
+                        $script:BridgeAutostartOwnedBySession = $false
+                    } else {
+                        $cleanupFailed = $true
+                    }
+                } catch {
+                    $cleanupFailed = $true
+                    Write-Host "AUTOSTART CLEANUP FAILED: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+        }
+    }
+
+    try {
+        $sourceAfter = Get-Item -LiteralPath $Record.FullName
+        $sourceChanged = ($sourceAfter.Length -ne $beforeLength -or
+            $sourceAfter.LastWriteTimeUtc -ne $beforeWriteTimeUtc)
+    } catch {
+        $sourceChanged = $true
+    }
+    if ($sourceChanged) {
+        Write-Host "SOURCE SAVE CHANGED: $($Record.FullName) no longer has its original size and last-modified time." -ForegroundColor Red
+        if (-not $infrastructureError) { $infrastructureError = "Source save integrity check failed." }
+    }
+
+    $migrationStartPattern = 'Migrating state from schema (\d+) to (\d+)'
+    $migrationStepPattern = 'schema\s+(\d+)\s+->\s+(\d+):'
+    $exceptionPattern = '(?i)\bException\b'
+    $migrationStarts = @($logLines | Where-Object { $_ -match $migrationStartPattern }).Count
+    $migrationSteps = @($logLines | Where-Object { $_ -match $migrationStepPattern }).Count
+    $exceptions = @($logLines | Where-Object { $_ -match $exceptionPattern }).Count
+
+    $verdict = "PASS"
+    if ($cleanupFailed) {
+        $verdict = "INFRASTRUCTURE FAILED (cleanup)"
+    } elseif ($infrastructureError) {
+        $verdict = "INFRASTRUCTURE FAILED"
+        Write-Host "MIGRATION INFRASTRUCTURE FAILED for '$($Record.Name)': $infrastructureError" -ForegroundColor Red
+    } elseif ($exceptions -gt 0) {
+        $verdict = "FAIL (exception)"
+    } elseif ($migrationFailed) {
+        $verdict = "FAIL (load/readiness)"
+    } elseif ([int]$schemaAfter -ne [int]$currentSchema) {
+        $verdict = "FAIL (schema mismatch)"
+    } elseif ([int]$Record.Schema -ne [int]$currentSchema -and $migrationStarts -eq 0) {
+        # Status is authoritative for the exit code, but a missing banner is still useful
+        # evidence because it says the expected migration narrative vanished from this launch.
+        $verdict = "PASS (no migration banner)"
+    }
+
+    return [pscustomobject]@{
+        Name               = $Record.Name
+        Before             = $Record.Schema
+        After              = $(if ($null -eq $schemaAfter) { "-" } else { $schemaAfter })
+        Steps              = $migrationSteps
+        Exceptions         = $exceptions
+        Verdict            = $verdict
+        InfrastructureFail = ($null -ne $infrastructureError -or $cleanupFailed)
+        CleanupFailed      = $cleanupFailed
+        SourceChanged      = $sourceChanged
+    }
+}
+
+function Invoke-SaveMigrations($Target) {
+    if ([string]::IsNullOrWhiteSpace($Target)) {
+        Write-Host "MIGRATION SETUP FAILED: name a save or use '.\dev.ps1 migrate all'." -ForegroundColor Red
+        return 2
+    }
+
+    try {
+        $allRecords = @(Get-SaveRecords)
+    } catch {
+        Write-Host "MIGRATION SETUP FAILED: $($_.Exception.Message)" -ForegroundColor Red
+        return 2
+    }
+
+    if ($Target -eq "all") {
+        $selected = @($allRecords | Where-Object {
+            $_.FileName -ne "Autostart.rws"
+        })
+    } else {
+        $saveFileName = $Target.Trim()
+        if (-not $saveFileName.EndsWith(".rws", [System.StringComparison]::OrdinalIgnoreCase)) {
+            $saveFileName += ".rws"
+        }
+        if ([System.IO.Path]::GetFileName($saveFileName) -ne $saveFileName) {
+            Write-Host "MIGRATION SETUP FAILED: save names cannot contain a path." -ForegroundColor Red
+            return 2
+        }
+        $selected = @($allRecords | Where-Object {
+            $_.FileName.Equals($saveFileName, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($selected.Count -eq 0) {
+            Write-Host "MIGRATION SETUP FAILED: save not found at $(Join-Path $Saves $saveFileName)" -ForegroundColor Red
+            return 2
+        }
+    }
+
+    $results = New-Object System.Collections.Generic.List[object]
+    $withState = @($selected | Where-Object { $_.HasIntercolony })
+    if ($withState.Count -gt 0 -and -not (Invoke-Build -Bridge)) {
+        Write-Host "MIGRATION INFRASTRUCTURE FAILED: bridge build failed before any save was launched." -ForegroundColor Red
+        return 2
+    }
+
+    $originalSave = $Save
+    $originalLaunchArgs = $LaunchArgs
+    $abortForCleanup = $false
+    try {
+        for ($index = 0; $index -lt $selected.Count; $index++) {
+            $record = $selected[$index]
+            $progress = "[$($index + 1)/$($selected.Count)]"
+            if (-not $record.HasIntercolony) {
+                Write-Host "$progress Skipping '$($record.Name)': no Intercolony state." -ForegroundColor Yellow
+                $results.Add([pscustomobject]@{
+                    Name = $record.Name; Before = "-"; After = "-"; Steps = 0
+                    Exceptions = 0; Verdict = "SKIP (no Intercolony state)"
+                    InfrastructureFail = $false; CleanupFailed = $false; SourceChanged = $false
+                })
+                continue
+            }
+
+            Write-Host "$progress Migrating '$($record.Name)' from schema $($record.Schema)..." -ForegroundColor Cyan
+            $result = Invoke-OneSaveMigration $record
+            $results.Add($result)
+            if ($result.CleanupFailed) {
+                # Continuing would let the leftover staged save masquerade as the next source.
+                $abortForCleanup = $true
+                break
+            }
+        }
+    } finally {
+        $script:Save = $originalSave
+        $script:LaunchArgs = $originalLaunchArgs
+    }
+
+    $results | Select-Object Name, Before, After, Steps, Exceptions, Verdict |
+        Format-Table -AutoSize | Out-Host
+    $passed = @($results | Where-Object { $_.Verdict -like "PASS*" }).Count
+    $failed = @($results | Where-Object { $_.Verdict -like "FAIL*" }).Count
+    $skipped = @($results | Where-Object { $_.Verdict -like "SKIP*" }).Count
+    $infrastructureFailed = @($results | Where-Object { $_.InfrastructureFail }).Count
+    Write-Host "Migration summary: $passed passed, $failed failed, $skipped skipped, $infrastructureFailed infrastructure failure(s)."
+
+    if ($abortForCleanup -or $infrastructureFailed -gt 0) { return 2 }
+    if ($failed -gt 0) { return 1 }
+    return 0
 }
 
 function Get-BridgeField($Object, [string[]]$Names, $Default) {
@@ -619,6 +988,14 @@ switch ($Task) {
         # failure, and 1 is reserved for "the assertions ran and some failed". A caller that
         # cannot tell those apart will report a broken launch as a broken build of the mod.
         if (-not (Start-BridgeSession)) { exit 2 }
+    }
+
+    "saves" {
+        exit (Show-Saves)
+    }
+
+    "migrate" {
+        exit (Invoke-SaveMigrations $Note)
     }
 
     "test" {
