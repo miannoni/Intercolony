@@ -9,10 +9,10 @@ using Verse;
 namespace Intercolony
 {
     /// <summary>
-    /// Self-test for the Stage 4A product-brand record and Stage 4B similarity service:
-    /// persistence, bounds, load pruning, neutral initialization and def-driven carryover. It
-    /// does not read ProductBrandRecord from the similarity checks because this slice owns only
-    /// the similarity function.
+    /// Self-test for the Stage 4A product-brand record, Stage 4B similarity service and this
+    /// Stage 4C quality-capture seam: persistence, bounds, load pruning, neutral initialization,
+    /// actual batch quality and def-driven carryover. It does not update ProductBrandRecord from
+    /// the quality checks because this slice owns only the evidence capture.
     /// </summary>
     public static class IntercolonyBrandSelfTest
     {
@@ -132,6 +132,7 @@ namespace Intercolony
                     fresh.unitsDelivered == 0,
                     "neutral is exactly zero and a fresh record has zero evidence");
 
+                RunDeliveredQualityChecks(r);
                 RunProductSimilarityChecks(r);
             }
             catch (Exception ex)
@@ -191,6 +192,125 @@ namespace Intercolony
                 $"  {r.passed} passed, {r.failed} failed" +
                 (r.skipped == 0 ? "." : $", {r.skipped} skipped."));
             return r.sb.ToString();
+        }
+
+        private static void RunDeliveredQualityChecks(Results r)
+        {
+            List<Thing> cleanup = new List<Thing>();
+
+            try
+            {
+                Thing awful = MakeQualityThing(QualityCategory.Awful);
+                Thing normal = MakeQualityThing(QualityCategory.Normal);
+                Thing masterwork = MakeQualityThing(QualityCategory.Masterwork);
+                cleanup.Add(awful);
+                cleanup.Add(normal);
+                cleanup.Add(masterwork);
+
+                DeliveredQualityResult awfulResult = DeliveredQualityCapture.FromThings(
+                    new[] { awful });
+                DeliveredQualityResult normalResult = DeliveredQualityCapture.FromThings(
+                    new[] { normal });
+                DeliveredQualityResult masterworkResult = DeliveredQualityCapture.FromThings(
+                    new[] { masterwork });
+                r.Check(
+                    Mathf.Approximately(
+                        awfulResult.QualityTarget, DeliveredQualityCapture.AwfulQualityTarget) &&
+                    Mathf.Approximately(
+                        normalResult.QualityTarget, DeliveredQualityCapture.NormalQualityTarget) &&
+                    Mathf.Approximately(
+                        masterworkResult.QualityTarget,
+                        DeliveredQualityCapture.MasterworkQualityTarget) &&
+                    awfulResult.QualityTarget < 0f &&
+                    Mathf.Approximately(normalResult.QualityTarget, 0f) &&
+                    masterworkResult.QualityTarget > 50f &&
+                    awfulResult.QualityEvidenceUnits == 1 &&
+                    normalResult.QualityEvidenceUnits == 1 &&
+                    masterworkResult.QualityEvidenceUnits == 1,
+                    "quality targets preserve negative, neutral and strongly positive tiers",
+                    $"awful={awfulResult.QualityTarget:0.##}, " +
+                    $"normal={normalResult.QualityTarget:0.##}, " +
+                    $"masterwork={masterworkResult.QualityTarget:0.##}");
+
+                DeliveredQualityBatch mixedBatch = DeliveredQualityCapture.BeginBatch();
+                mixedBatch.Add(normal, 20);
+                mixedBatch.Add(masterwork, 1);
+                DeliveredQualityResult mixedResult = mixedBatch.Result;
+                float expectedMixedTarget = (
+                    20f * DeliveredQualityCapture.NormalQualityTarget +
+                    DeliveredQualityCapture.MasterworkQualityTarget) / 21f;
+                r.Check(
+                    mixedResult.QualityEvidenceUnits == 21 &&
+                    Mathf.Abs(mixedResult.QualityTarget - expectedMixedTarget) < 0.001f &&
+                    !Mathf.Approximately(
+                        mixedResult.QualityTarget,
+                        (DeliveredQualityCapture.NormalQualityTarget +
+                         DeliveredQualityCapture.MasterworkQualityTarget) / 2f),
+                    "a mixed batch is weighted by delivered unit count",
+                    $"captured={mixedResult.QualityTarget:0.###}, " +
+                    $"expected={expectedMixedTarget:0.###}");
+
+                Thing steel = ThingMaker.MakeThing(ThingDefOf.Steel);
+                cleanup.Add(steel);
+                steel.stackCount = 12;
+                DeliveredQualityResult noQualityResult = DeliveredQualityCapture.FromThings(
+                    new[] { steel });
+                r.Check(
+                    noQualityResult.QualityEvidenceUnits == 0 &&
+                    Mathf.Approximately(noQualityResult.QualityTarget, 0f) &&
+                    !noQualityResult.HasQualityEvidence,
+                    "goods without a quality component contribute no quality evidence",
+                    $"target={noQualityResult.QualityTarget:0.##}, " +
+                    $"evidenceUnits={noQualityResult.QualityEvidenceUnits}");
+
+                Thing deliveredGood = MakeQualityThing(QualityCategory.Good);
+                cleanup.Add(deliveredGood);
+                OrderLine requested = new OrderLine(ThingDefOf.DiningChair, 1)
+                {
+                    minQuality = QualityCategory.Masterwork
+                };
+                DeliveredQualityResult captured = DeliveredQualityCapture.FromThings(
+                    new[] { deliveredGood });
+                SalesOrder completed = new SalesOrder
+                {
+                    line = requested,
+                    status = SalesOrderStatus.Accepted,
+                    deadlineTick = int.MaxValue,
+                    deliveredQuantity = 1
+                };
+                SalesOrderService.Complete(
+                    null, completed, 0, "quality capture self-test", captured);
+                r.Check(
+                    captured.QualityEvidenceUnits == 1 &&
+                    Mathf.Approximately(
+                        captured.QualityTarget, DeliveredQualityCapture.GoodQualityTarget) &&
+                    Mathf.Approximately(
+                        completed.ActualDeliveredQuality.QualityTarget,
+                        captured.QualityTarget) &&
+                    completed.ActualDeliveredQuality.QualityEvidenceUnits ==
+                        captured.QualityEvidenceUnits &&
+                    !Mathf.Approximately(
+                        captured.QualityTarget,
+                        DeliveredQualityCapture.QualityTargetFor(requested.minQuality.Value)),
+                    "completion captures actual delivered quality instead of the requested minimum",
+                    $"requested={requested.minQuality.Value}, " +
+                    $"delivered={captured.QualityTarget:0.##}");
+            }
+            finally
+            {
+                foreach (Thing thing in cleanup)
+                {
+                    thing?.Destroy(DestroyMode.Vanish);
+                }
+            }
+        }
+
+        private static Thing MakeQualityThing(QualityCategory quality)
+        {
+            Thing thing = ThingMaker.MakeThing(ThingDefOf.DiningChair, ThingDefOf.WoodLog);
+            thing.TryGetComp<CompQuality>()?.SetQuality(
+                quality, ArtGenerationContext.Outsider);
+            return thing;
         }
 
         private static void RunProductSimilarityChecks(Results r)

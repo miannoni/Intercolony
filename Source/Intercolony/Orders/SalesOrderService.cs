@@ -250,9 +250,11 @@ namespace Intercolony
 
             // Branch before the item remover. A live pawn must never reach SplitOff/Destroy,
             // even though Pawn inherits Thing.
+            DeliveredQualityBatch qualityBatch = DeliveredQualityCapture.BeginBatch();
             int handedOver = order.IsAnimalOrder
                 ? RemoveAnimalsFromCaravan(order, caravan, result.matchedQuantity)
-                : RemoveFromCaravan(order, caravan, result.matchedQuantity);
+                : RemoveFromCaravan(
+                    order, caravan, result.matchedQuantity, qualityBatch);
             if (handedOver <= 0)
             {
                 result.failures.Add(order.IsAnimalOrder
@@ -286,7 +288,8 @@ namespace Intercolony
                     state,
                     order,
                     GenTicks.TicksGame,
-                    $"Delivered {order.deliveredQuantity} units for {order.paidSilver} silver.");
+                    $"Delivered {order.deliveredQuantity} units for {order.paidSilver} silver.",
+                    qualityBatch.Result);
                 IntercolonyLog.Message($"Order {order.id} completed. {order.outcomeNote}");
                 Messages.Message(
                     $"Order complete: {order.settlementName} paid {order.paidSilver} silver.",
@@ -413,6 +416,24 @@ namespace Intercolony
         internal static void Complete(
             IntercolonyWorldComponent state, SalesOrder order, int completedTick, string outcomeNote)
         {
+            Complete(
+                state, order, completedTick, outcomeNote,
+                DeliveredQualityResult.NoEvidence);
+        }
+
+        /// <summary>
+        /// Completes an order exactly once and carries the quality result captured by its
+        /// fulfillment path into the order for the next brand slice. This method does not update
+        /// ProductBrandRecord: its only new responsibility is preserving the evidence before the
+        /// consumed Things disappear.
+        /// </summary>
+        internal static void Complete(
+            IntercolonyWorldComponent state,
+            SalesOrder order,
+            int completedTick,
+            string outcomeNote,
+            DeliveredQualityResult actualDeliveredQuality)
+        {
             if (order == null || order.status == SalesOrderStatus.Completed)
             {
                 return;
@@ -421,6 +442,7 @@ namespace Intercolony
             order.status = SalesOrderStatus.Completed;
             order.completedTick = completedTick;
             order.outcomeNote = outcomeNote;
+            order.SetActualDeliveredQuality(actualDeliveredQuality);
 
             // The transition guard above is the exactly-once boundary. Both seller delivery
             // and buyer collection arrive here, and neither can record the same order twice.
@@ -787,9 +809,10 @@ namespace Intercolony
 
                 // A live pawn must never reach TakeFromColony, which splits and destroys
                 // stacks. Collect the designated animals through the dedicated handoff.
+                DeliveredQualityBatch qualityBatch = DeliveredQualityCapture.BeginBatch();
                 int taken = order.IsAnimalOrder
                     ? CollectDesignatedAnimals(order, map, owed)
-                    : OrderValidator.TakeFromColony(order, map, owed);
+                    : OrderValidator.TakeFromColony(order, map, owed, qualityBatch.Add);
 
                 if (taken <= 0)
                 {
@@ -820,7 +843,8 @@ namespace Intercolony
                         order,
                         now,
                         $"Collected by the buyer. {order.deliveredQuantity} units for " +
-                        $"{order.paidSilver} silver.");
+                        $"{order.paidSilver} silver.",
+                        qualityBatch.Result);
                     IntercolonyLog.Message($"Order {order.id} completed by buyer pickup. {order.outcomeNote}");
                     IntercolonyLetters.Send(
                         IntercolonyLetterImportance.Chatty,
@@ -947,7 +971,11 @@ namespace Intercolony
         /// Takes units out of caravan pawn inventories. Returns how many were actually taken,
         /// which can be less than requested if the caravan changed between validation and here.
         /// </summary>
-        private static int RemoveFromCaravan(SalesOrder order, Caravan caravan, int wanted)
+        private static int RemoveFromCaravan(
+            SalesOrder order,
+            Caravan caravan,
+            int wanted,
+            DeliveredQualityBatch qualityBatch)
         {
             int remaining = wanted;
             List<Thing> items = CaravanInventoryUtility.AllInventoryItems(caravan);
@@ -971,6 +999,10 @@ namespace Intercolony
 
                 int take = Mathf.Min(remaining, thing.stackCount);
                 Thing split = thing.SplitOff(take);
+                // SplitOff preserves CompQuality on the handed-over piece. Capture it before
+                // Destroy(Vanish), because after this line the fulfillment path has no evidence
+                // left from which a later brand update could honestly read quality.
+                qualityBatch?.Add(split);
                 split.Destroy(DestroyMode.Vanish);
                 remaining -= take;
             }

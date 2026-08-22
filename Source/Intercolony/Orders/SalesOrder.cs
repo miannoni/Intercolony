@@ -142,6 +142,16 @@ namespace Intercolony
         /// <summary>Set when the order ends, for the orders list and any later dispute handling.</summary>
         public string outcomeNote = "";
 
+        private DeliveredQualityResult actualDeliveredQuality =
+            DeliveredQualityResult.NoEvidence;
+
+        /// <summary>
+        /// Quality evidence captured from the real Things at the exactly-once completion boundary.
+        /// This is intentionally transient: the next brand slice consumes it immediately, while
+        /// old completed orders cannot reconstruct actual quality from their saved requirements.
+        /// </summary>
+        public DeliveredQualityResult ActualDeliveredQuality => actualDeliveredQuality;
+
         public SalesOrder()
         {
         }
@@ -199,6 +209,11 @@ namespace Intercolony
 
         public bool IsOverdue(int nowTick) => nowTick >= deadlineTick;
 
+        internal void SetActualDeliveredQuality(DeliveredQualityResult result)
+        {
+            actualDeliveredQuality = result;
+        }
+
         /// <summary>
         /// Payment for a partial hand-over, rounded down so the colony is never overpaid by
         /// rounding across several deliveries.
@@ -251,6 +266,12 @@ namespace Intercolony
                 if (settlementName == null) settlementName = "";
                 if (factionName == null) factionName = "";
                 if (outcomeNote == null) outcomeNote = "";
+
+                // Actual quality is captured from live Things during fulfillment and is not
+                // recoverable from a saved minimum-quality requirement. A loaded order therefore
+                // starts with no quality evidence instead of pretending its requested quality was
+                // delivered.
+                actualDeliveredQuality = DeliveredQualityResult.NoEvidence;
 
                 if (line == null || line.thingDef == null)
                 {
