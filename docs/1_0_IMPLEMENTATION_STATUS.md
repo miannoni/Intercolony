@@ -3,10 +3,10 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 4 — Brand strength & colony specialization
-Current slice:      starting Stage 4; all play calibration deferred to one sitting at the end of 1.0
-Last completed:     Stage 3 complete — 3F debug controls + gate audit (2026-08-22)
-Current save schema: 45
+Current stage:      Stage 5 — Commercial relationships & negotiation
+Current slice:      starting Stage 5; all play calibration deferred to one sitting at the end of 1.0
+Last completed:     Stage 4 complete — brand strength, all 13 criteria (2026-08-22)
+Current save schema: 46
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
 
@@ -16,7 +16,7 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [x] Stage 1 — Settlement economies (gate closed 2026-08-21; criterion 7 is a UI read, see below)
 - [x] Stage 2 — Market fundamentals overhaul (all 12 criteria met 2026-08-22; play calibration deferred to end of 1.0)
 - [x] Stage 3 — Circumstance-driven economic events (8/10 criteria closed 2026-08-22; 9 and 10 join the calibration sitting)
-- [ ] Stage 4 — Brand strength & colony specialization
+- [x] Stage 4 — Brand strength & colony specialization (13/13 criteria closed 2026-08-22)
 - [ ] Stage 5 — Commercial relationships & negotiation
 - [ ] Stage 6 — Procurement parity
 - [ ] Stage 7 — Commercial history
