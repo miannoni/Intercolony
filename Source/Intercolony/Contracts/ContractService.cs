@@ -848,7 +848,7 @@ namespace Intercolony
         }
 
         /// <summary>Lets a settlement answer a player proposal once its deliberation ends.</summary>
-        private static void ResolvePlayerProposal(
+        internal static void ResolvePlayerProposal(
             IntercolonyWorldComponent state, RecurringContract contract)
         {
             float acceptanceChance = Mathf.Lerp(
@@ -1110,7 +1110,7 @@ namespace Intercolony
                 MessageTypeDefOf.NeutralEvent, historical: false);
         }
 
-        private static void ResolveCycle(
+        internal static void ResolveCycle(
             IntercolonyWorldComponent state, RecurringContract contract, SalesOrder order)
         {
             if (order.status == SalesOrderStatus.Completed)
@@ -1170,7 +1170,7 @@ namespace Intercolony
         }
 
         /// <summary>Creates the sales order for this cycle.</summary>
-        private static void RaiseCycleOrder(IntercolonyWorldComponent state, RecurringContract contract)
+        internal static void RaiseCycleOrder(IntercolonyWorldComponent state, RecurringContract contract)
         {
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(contract.settlementId);
             if (settlement == null || !IntercolonyMarketAccess.IsAccessible(settlement))

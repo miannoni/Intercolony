@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -22,6 +23,7 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -40,6 +42,12 @@ namespace Intercolony
             public void Info(string line)
             {
                 sb.AppendLine($"        {line}");
+            }
+
+            public void Skip(string label, string detail)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {label} — {detail}");
             }
         }
 
@@ -65,6 +73,7 @@ namespace Intercolony
             {
                 CheckRecording(r, state);
                 CheckWriteSites(r, state);
+                CheckContractWriteSites(r, state);
                 CheckQuerying(r, state);
                 CheckRetentionAndPruning(r, state);
                 CheckScribeRoundTrip(r);
@@ -217,6 +226,197 @@ namespace Intercolony
                 "an order lost to war is not recorded as a player cancellation");
         }
 
+        /// <summary>
+        /// Drives every contract transition that owns a timeline write. In particular, the three
+        /// starts remain separate because covering only the easiest caller would let player-made
+        /// proposals or renewals silently stop recording while incoming offers still passed.
+        /// </summary>
+        private static void CheckContractWriteSites(Results r, IntercolonyWorldComponent state)
+        {
+            Settlement subject = FirstAccessibleSettlement();
+            if (subject == null || IntercolonyProductClassifier.TradableDefs.Count == 0)
+            {
+                const string reason = "no accessible live settlement or tradable contract item";
+                SkipContractWrite(r, "incoming-offer transition", CommercialEventType.ContractStarted, reason);
+                SkipContractWrite(r, "player-proposal transition", CommercialEventType.ContractStarted, reason);
+                SkipContractWrite(r, "renewal transition", CommercialEventType.ContractStarted, reason);
+                SkipContractWrite(r, "completion transition", CommercialEventType.ContractCompleted, reason);
+                SkipContractWrite(r, "breach transition", CommercialEventType.ContractFailed, reason);
+                SkipContractWrite(r, "unreachable-counterparty transition", CommercialEventType.ContractCancelled, reason);
+                SkipContractWrite(r, "player-withdrawal transition", CommercialEventType.ContractCancelled, reason);
+                return;
+            }
+
+            // Snapshot the exact contents rather than restoring by count. Contract transitions can
+            // remove or replace objects, so trimming a tail could leave synthetic contracts behind
+            // while silently discarding the player's real agreements.
+            List<RecurringContract> savedContracts = new List<RecurringContract>(state.Contracts);
+            List<CommercialHistoryEntry> savedCommercialHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
+            bool hadSubjectReputation = state.Reputations.TryGetValue(
+                subject.ID, out CommercialReputation savedSubjectReputation);
+            state.Contracts.Clear();
+            state.CommercialHistory.Clear();
+            state.Reputations.Remove(subject.ID);
+
+            try
+            {
+                RecurringContract incoming = MakeContract(state, subject, 3);
+                bool incomingAccepted = ContractService.AcceptOffer(state, incoming);
+                CheckContractWrite(r, state, incoming, CommercialEventType.ContractStarted,
+                    incomingAccepted && incoming.status == ContractStatus.Active,
+                    "AcceptOffer activates an incoming contract");
+
+                // Proposal decisions are seeded production behavior rather than a test override.
+                // Fresh IDs give the real resolver independent decisions; a deleted write still
+                // cannot be hidden because only an actually accepted contract is examined below.
+                RecurringContract acceptedProposal = null;
+                for (int attempt = 0; attempt < 64 && acceptedProposal == null; attempt++)
+                {
+                    RecurringContract proposal = MakeContract(state, subject, 3);
+                    proposal.decisionDueTick = GenTicks.TicksGame;
+                    proposal.proposalAppeal = 1f;
+                    ContractService.ResolvePlayerProposal(state, proposal);
+                    if (proposal.status == ContractStatus.Active)
+                    {
+                        acceptedProposal = proposal;
+                    }
+                }
+
+                CheckContractWrite(r, state, acceptedProposal, CommercialEventType.ContractStarted,
+                    acceptedProposal != null && acceptedProposal.status == ContractStatus.Active,
+                    "ResolvePlayerProposal activates an accepted player proposal");
+
+                RecurringContract renewal = MakeContract(state, subject, 3);
+                renewal.status = ContractStatus.Completed;
+                renewal.renewalOffered = true;
+                renewal.renewalExpiryTick = GenTicks.TicksGame + GenDate.TicksPerDay;
+                bool renewalAccepted = ContractService.AcceptRenewal(state, renewal);
+                CheckContractWrite(r, state, renewal, CommercialEventType.ContractStarted,
+                    renewalAccepted && renewal.status == ContractStatus.Active,
+                    "AcceptRenewal starts a fresh contract run");
+
+                RecurringContract completed = MakeContract(state, subject, 3);
+                completed.TryAccept();
+                ContractService.Complete(state, completed);
+                CheckContractWrite(r, state, completed, CommercialEventType.ContractCompleted,
+                    completed.status == ContractStatus.Completed,
+                    "Complete ends the contract as completed");
+
+                RecurringContract breached = MakeContract(state, subject, 3);
+                breached.TryAccept();
+                breached.consecutiveFailures = RecurringContract.BreachThreshold - 1;
+                SalesOrder missed = NewSalesOrder(state, subject.ID, breached.thingDef);
+                missed.status = SalesOrderStatus.Failed;
+                ContractService.ResolveCycle(state, breached, missed);
+                CheckContractWrite(r, state, breached, CommercialEventType.ContractFailed,
+                    breached.status == ContractStatus.Breached,
+                    "ResolveCycle breaches the contract at the failure threshold");
+
+                RecurringContract unreachable = MakeContract(state, subject, 3);
+                unreachable.TryAccept();
+                // World-object IDs are positive. A negative ID exercises the real missing-counterparty
+                // branch without fabricating a Settlement merely to make the self-test convenient.
+                unreachable.settlementId = -unreachable.id;
+                ContractService.RaiseCycleOrder(state, unreachable);
+                CheckContractWrite(r, state, unreachable, CommercialEventType.ContractCancelled,
+                    unreachable.status == ContractStatus.Cancelled,
+                    "RaiseCycleOrder cancels an unreachable contract");
+
+                RecurringContract withdrawn = MakeContract(state, subject, 3);
+                withdrawn.TryAccept();
+                bool cancelled = ContractService.CancelContract(state, withdrawn);
+                CheckContractWrite(r, state, withdrawn, CommercialEventType.ContractCancelled,
+                    cancelled && withdrawn.status == ContractStatus.Cancelled,
+                    "CancelContract withdraws an active contract");
+            }
+            finally
+            {
+                // Reputation and history are restored with the contract objects because completion,
+                // breach, and withdrawal deliberately mutate all three production stores.
+                state.Reputations.Remove(subject.ID);
+                if (hadSubjectReputation)
+                {
+                    state.Reputations.Add(subject.ID, savedSubjectReputation);
+                }
+
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedContracts);
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedCommercialHistory);
+            }
+        }
+
+        private static void CheckContractWrite(
+            Results r,
+            IntercolonyWorldComponent state,
+            RecurringContract contract,
+            CommercialEventType type,
+            bool transitioned,
+            string transitionLabel)
+        {
+            r.Check(transitioned, transitionLabel, contract?.status.ToString() ?? "no accepted contract");
+            r.Check(contract != null && FindRecordFor(state, contract.id, type) != null,
+                $"{transitionLabel} writes {type}");
+            int count = contract == null ? 0 : CountRecordsFor(state, contract.id, type);
+            r.Check(count == 1, $"{transitionLabel} writes exactly one {type}", $"count={count}");
+        }
+
+        private static void SkipContractWrite(
+            Results r, string transitionLabel, CommercialEventType type, string reason)
+        {
+            // Report all three missing proofs. Counting one skipped transition would hide that its
+            // status, existence, and duplicate protections were all unavailable on this world.
+            r.Skip($"{transitionLabel} reaches its terminal status", reason);
+            r.Skip($"{transitionLabel} writes {type}", reason);
+            r.Skip($"{transitionLabel} writes exactly one {type}", reason);
+        }
+
+        /// <summary>
+        /// Deliberately mirrors <c>IntercolonyContractSelfTest.MakeContract</c>. Each self-test owns
+        /// its fixtures, so changing one suite cannot accidentally weaken another suite's setup.
+        /// </summary>
+        private static RecurringContract MakeContract(
+            IntercolonyWorldComponent state, Settlement settlement, int cycles)
+        {
+            ThingDef def = ThingDefOf.Steel != null &&
+                           IntercolonyProductClassifier.IsFungibleTradeItem(ThingDefOf.Steel)
+                ? ThingDefOf.Steel
+                : IntercolonyProductClassifier.TradableDefs[0];
+
+            RecurringContract contract = new RecurringContract
+            {
+                id = state.NextId(),
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "unnamed",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = def,
+                quantityPerCycle = 100,
+                cadenceTicks = GenDate.TicksPerQuadrum,
+                totalCycles = cycles,
+                unitPrice = Mathf.Max(0.5f, IntercolonyPricing.BaseValue(def, null) * 1.15f),
+                status = ContractStatus.Offered,
+                offerExpiryTick = GenTicks.TicksGame + GenDate.TicksPerDay * 8
+            };
+
+            state.AddContract(contract);
+            return contract;
+        }
+
+        private static Settlement FirstAccessibleSettlement()
+        {
+            foreach (Settlement settlement in Find.WorldObjects.Settlements)
+            {
+                if (SettlementProfileGenerator.IsEligible(settlement) &&
+                    IntercolonyMarketAccess.IsAccessible(settlement))
+                {
+                    return settlement;
+                }
+            }
+
+            return null;
+        }
+
         private static SalesOrder NewSalesOrder(
             IntercolonyWorldComponent state, int settlementId, ThingDef def)
         {
@@ -251,6 +451,13 @@ namespace Intercolony
         {
             return state.CommercialTimeline.Find(
                 e => e != null && e.relatedEntityId == relatedEntityId && e.type == type);
+        }
+
+        private static int CountRecordsFor(
+            IntercolonyWorldComponent state, int relatedEntityId, CommercialEventType type)
+        {
+            return state.CommercialTimeline.FindAll(
+                e => e != null && e.relatedEntityId == relatedEntityId && e.type == type).Count;
         }
 
         // --- Querying ----------------------------------------------------------------------
@@ -443,7 +650,9 @@ namespace Intercolony
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine(r.skipped == 0
+                ? $"  {r.passed} passed, {r.failed} failed, 0 skipped."
+                : $"  {r.passed} passed, {r.failed} failed, {r.skipped} SKIPPED — not a clean run.");
             return r.sb.ToString();
         }
     }
