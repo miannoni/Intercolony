@@ -988,8 +988,30 @@ Commodities and Intermediates, CapitalEquipment → Intermediates; `SupplyLinks`
 absence load-bearing: one hop per refresh already produces the secondary, and a direct link would
 double-count it — §2.10's error reappearing in propagation rather than in pricing.
 
-**Choice:** **an event sets only its primary categories.** Secondary effects arrive through the
-existing chains and must not be written into the event table.
+**Choice:** **an event must not set a category that the chains would produce from another category
+that same event sets.** Secondary effects the chains deliver must not also be written into the event
+table.
+
+**REFINED 2026-08-22 while writing 3C.** This was first stated as "an event sets only its primary
+categories", which is too strong and would have produced weaker events than intended. The chains are
+*directional*, so whether a category is a forbidden duplicate depends on which way the link runs:
+
+- **Demand** pulls finished → inputs: ManufacturedGoods→IntermediateGoods, Furniture→IntermediateGoods,
+  Furniture→Commodities, CapitalEquipment→IntermediateGoods.
+- **Supply** pushes inputs → finished: Commodities→IntermediateGoods, IntermediateGoods→ManufacturedGoods,
+  IntermediateGoods→Furniture, IntermediateGoods→CapitalEquipment.
+
+So §3.2's prose has to be *translated* rather than copied, and twice it inverts:
+
+- War mobilization "manufactured up, intermediate up secondarily" → **set manufactured only**; the
+  chain delivers intermediates. Setting both is the double-count.
+- Construction boom "commodities/intermediate up, furniture follows" → the graph runs the other way,
+  so **set furniture and capital equipment** and let the chain pull commodities and intermediates.
+  Setting commodities directly would duplicate what Furniture→Commodities already gives.
+
+The operational test is therefore chain *reachability* between an event's own non-neutral categories,
+not a notion of "primary". 3C asserts exactly that, reading the link tables at runtime so the check
+survives a change to them.
 
 **The consequence that makes this work, and it constrains 3D:** chains propagate *persisted
 pressure*, not live event modifiers. An event that only applies an active modifier while it runs will
