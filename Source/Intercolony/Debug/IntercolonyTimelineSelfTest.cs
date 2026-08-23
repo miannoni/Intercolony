@@ -612,11 +612,12 @@ namespace Intercolony
                     $"unexpectedId={w1UnexpectedId}; retainedCount={state.CommercialTimeline.Count}; " +
                     $"bound={bound}");
 
-                // W2: the precondition is an exactly bounded, known-order fixture. The second
-                // prune must remove zero records and preserve object identity and order.
+                // W2: build an over-bound, known-order fixture directly. Record() prunes on every
+                // append, so using it here would never exercise the guarded pruning path.
                 ResetRetentionFixtures(state);
                 List<CommercialEventRecord> w2Written = new List<CommercialEventRecord>();
-                for (int i = 0; i < bound; i++)
+                int w2Total = bound + 1;
+                for (int i = 0; i < w2Total; i++)
                 {
                     CommercialEventRecord record = new CommercialEventRecord(
                         id: 7320000 + i,
@@ -628,28 +629,42 @@ namespace Intercolony
                     w2Written.Add(record);
                 }
 
-                List<CommercialEventRecord> w2Before =
-                    new List<CommercialEventRecord>(state.CommercialTimeline);
+                int w2StartingCount = state.CommercialTimeline.Count;
+                int w2FirstRemoved = CommercialTimelineService.Prune(state);
+                bool w2FirstRetainedKnown = state.CommercialTimeline.Count == bound &&
+                    ReferenceEquals(
+                        state.CommercialTimeline[0], w2Written[w2Written.Count - bound]) &&
+                    ReferenceEquals(
+                        state.CommercialTimeline[state.CommercialTimeline.Count - 1],
+                        w2Written[w2Written.Count - 1]);
                 r.Check(
-                    w2Before.Count == bound && ReferenceEquals(w2Before[0], w2Written[0]) &&
-                    ReferenceEquals(w2Before[w2Before.Count - 1], w2Written[w2Written.Count - 1]),
-                    "W2 idempotence fixture is already bounded and anchored",
-                    $"count={w2Before.Count}; bound={bound}; firstId={w2Before[0].id}; " +
-                    $"lastId={w2Before[w2Before.Count - 1].id}");
-                int w2Removed = CommercialTimelineService.Prune(state);
-                bool w2Same = state.CommercialTimeline.Count == w2Before.Count;
-                for (int i = 0; i < w2Before.Count && w2Same; i++)
+                    w2StartingCount == w2Total && w2StartingCount > bound &&
+                    state.CommercialTimeline.Count == bound && w2FirstRetainedKnown,
+                    "W2 first prune reaches and enforces the retention bound",
+                    $"before={w2StartingCount}; expectedBefore={w2Total}; after=" +
+                    $"{state.CommercialTimeline.Count}; bound={bound}; removed={w2FirstRemoved}; " +
+                    $"expectedFirstId={w2Written[w2Written.Count - bound].id}; actualFirstId=" +
+                    $"{state.CommercialTimeline[0].id}; expectedLastId=" +
+                    $"{w2Written[w2Written.Count - 1].id}; actualLastId=" +
+                    $"{state.CommercialTimeline[state.CommercialTimeline.Count - 1].id}");
+
+                List<CommercialEventRecord> w2AfterFirst =
+                    new List<CommercialEventRecord>(state.CommercialTimeline);
+                int w2SecondRemoved = CommercialTimelineService.Prune(state);
+                bool w2Same = state.CommercialTimeline.Count == w2AfterFirst.Count;
+                for (int i = 0; i < w2AfterFirst.Count && w2Same; i++)
                 {
-                    w2Same = ReferenceEquals(state.CommercialTimeline[i], w2Before[i]);
+                    w2Same = ReferenceEquals(state.CommercialTimeline[i], w2AfterFirst[i]);
                 }
 
                 r.Check(
-                    w2Before.Count == bound && w2Removed == 0 && w2Same,
+                    w2AfterFirst.Count == bound && w2SecondRemoved == 0 && w2Same,
                     "W2 pruning is idempotent",
-                    $"before={w2Before.Count}; after={state.CommercialTimeline.Count}; " +
-                    $"bound={bound}; removed={w2Removed}; beforeFirstId={w2Before[0].id}; " +
-                    $"afterFirstId={state.CommercialTimeline[0].id}; beforeLastId=" +
-                    $"{w2Before[w2Before.Count - 1].id}; afterLastId=" +
+                    $"afterFirstCount={w2AfterFirst.Count}; afterSecondCount=" +
+                    $"{state.CommercialTimeline.Count}; bound={bound}; removed={w2SecondRemoved}; " +
+                    $"firstId={w2AfterFirst[0].id}; secondFirstId=" +
+                    $"{state.CommercialTimeline[0].id}; lastId=" +
+                    $"{w2AfterFirst[w2AfterFirst.Count - 1].id}; secondLastId=" +
                     $"{state.CommercialTimeline[state.CommercialTimeline.Count - 1].id}");
 
                 // W3: all values below are established independently of the detailed timeline.
