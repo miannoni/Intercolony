@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 51;
+        public const int CurrentSaveVersion = 52;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -515,6 +515,22 @@ namespace Intercolony
                 }
 
                 return count;
+            }
+        }
+
+        /// <summary>Player-proposed standing procurement agreements (§6.6, §6.8).</summary>
+        private List<ProcurementContract> procurementContracts =
+            new List<ProcurementContract>();
+
+        /// <summary>Live and persisted standing procurement agreements.</summary>
+        public List<ProcurementContract> ProcurementContracts => procurementContracts;
+
+        /// <summary>Adds a non-null procurement agreement to this world's authoritative state.</summary>
+        public void AddProcurementContract(ProcurementContract contract)
+        {
+            if (contract != null)
+            {
+                procurementContracts.Add(contract);
             }
         }
 
@@ -1048,6 +1064,8 @@ namespace Intercolony
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
             Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
+            Scribe_Collections.Look(
+                ref procurementContracts, "procurementContracts", LookMode.Deep);
             Scribe_Collections.Look(ref employments, "employments", LookMode.Deep);
             Scribe_Collections.Look(ref postings, "postings", LookMode.Deep);
             Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
@@ -1342,6 +1360,25 @@ namespace Intercolony
                         IntercolonyLog.Error(
                             $"Dropped {nullContracts} null and {brokenContracts} unresolvable contract(s) " +
                             "while loading.");
+                    }
+                }
+
+                if (procurementContracts == null)
+                {
+                    procurementContracts = new List<ProcurementContract>();
+                }
+                else
+                {
+                    int nullProcurementContracts = procurementContracts.RemoveAll(c => c == null);
+                    int brokenProcurementContracts = procurementContracts.RemoveAll(
+                        c => !c.IsValidAfterLoad);
+                    if (nullProcurementContracts > 0 || brokenProcurementContracts > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullProcurementContracts} null and " +
+                            $"{brokenProcurementContracts} unresolvable procurement " +
+                            "contract(s) while loading. Unresolvable usually means a mod " +
+                            "that supplied the item was removed.");
                     }
                 }
 
@@ -2377,6 +2414,21 @@ namespace Intercolony
                     "existing orders remain RFQ-origin or unlinked.");
             }
 
+            if (saveVersion < 52)
+            {
+                // 51 -> 52 added standing procurement agreements. Older saves contain no such
+                // agreements, so the correct migration is an empty collection rather than
+                // fabricating contracts from historical purchases or existing RFQs.
+                if (procurementContracts == null)
+                {
+                    procurementContracts = new List<ProcurementContract>();
+                }
+
+                IntercolonyLog.Message(
+                    "  schema 51 -> 52: procurement contracts added; existing saves start with " +
+                    "no procurement contracts.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -2436,6 +2488,14 @@ namespace Intercolony
             foreach (RecurringContract contract in contracts)
             {
                 if (contract.id > highest)
+                {
+                    highest = contract.id;
+                }
+            }
+
+            foreach (ProcurementContract contract in procurementContracts)
+            {
+                if (contract != null && contract.id > highest)
                 {
                     highest = contract.id;
                 }

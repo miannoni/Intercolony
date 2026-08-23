@@ -75,6 +75,7 @@ namespace Intercolony
             sb.AppendLine("RFQ self-test");
 
             CheckSupplierListings(Check, Skip, state);
+            CheckProcurementContracts(Check, Skip, state);
 
             List<ThingDef> tradable = IntercolonyProductClassifier.TradableDefs;
             if (tradable.Count == 0 || state.AllProfiles().Count == 0)
@@ -3015,6 +3016,535 @@ namespace Intercolony
                 $"count={listings.Count}; repeats={!noRepeats}; collision={!noCollision}; " +
                 $"shared sequence={sharedSequence}; " +
                 $"failure={failure ?? "none"}");
+        }
+
+        private static void CheckProcurementContracts(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            List<ProcurementContract> savedContracts = state == null
+                ? null
+                : new List<ProcurementContract>(state.ProcurementContracts);
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            int savedSaveVersion = state?.SaveVersion ?? -1;
+            int savedNextId = state?.PeekNextId() ?? -1;
+
+            try
+            {
+                CheckProcurementContractSentinels(check);
+                CheckProcurementContractStatuses(check);
+                CheckProcurementContractValidity(check, skip);
+                CheckProcurementContractCollection(check, skip);
+                CheckProcurementContractMigration(check, skip, state, saveVersionField);
+                CheckProcurementContractIds(check, skip, state, nextIdField, savedNextId);
+            }
+            finally
+            {
+                if (state != null && savedContracts != null)
+                {
+                    state.ProcurementContracts.Clear();
+                    state.ProcurementContracts.AddRange(savedContracts);
+                }
+
+                if (state != null && saveVersionField != null)
+                {
+                    saveVersionField.SetValue(state, savedSaveVersion);
+                }
+
+                if (state != null && nextIdField != null)
+                {
+                    nextIdField.SetValue(state, savedNextId);
+                }
+            }
+        }
+
+        private static void CheckProcurementContractSentinels(
+            Action<string, bool, string> check)
+        {
+            const int ExpectedActiveOrderId = -1;
+            const int ExpectedOfferExpiryTick = -1;
+            ProcurementContract saved = new ProcurementContract
+            {
+                id = 6_010,
+                thingDef = ThingDefOf.Steel,
+                quantityPerCycle = 3,
+                totalCycles = 2,
+                activeOrderId = ExpectedActiveOrderId,
+                offerExpiryTick = ExpectedOfferExpiryTick
+            };
+            List<ProcurementContract> savedList = new List<ProcurementContract> { saved };
+            List<ProcurementContract> loadedList = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProcurementContract-C1-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "procurementContractSentinelTest");
+                Scribe_Collections.Look(ref savedList, "procurementContracts", LookMode.Deep);
+                Scribe.saver.FinalizeSaving();
+
+                // Force the omitted-node path even if a future Scribe implementation writes
+                // values equal to their defaults explicitly.
+                XmlDocument document = new XmlDocument();
+                document.Load(path);
+                XmlNode activeOrderNode = document.SelectSingleNode("//activeOrderId");
+                if (activeOrderNode != null)
+                {
+                    activeOrderNode.ParentNode.RemoveChild(activeOrderNode);
+                }
+
+                XmlNode offerExpiryNode = document.SelectSingleNode("//offerExpiryTick");
+                if (offerExpiryNode != null)
+                {
+                    offerExpiryNode.ParentNode.RemoveChild(offerExpiryNode);
+                }
+
+                document.Save(path);
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Collections.Look(ref loadedList, "procurementContracts", LookMode.Deep);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            ProcurementContract loaded = loadedList != null && loadedList.Count == 1
+                ? loadedList[0]
+                : null;
+            check(
+                "C1 activeOrderId sentinel survives an omitted-node save/load",
+                failure == null && loaded != null &&
+                loaded.activeOrderId == ExpectedActiveOrderId,
+                $"activeOrderId expected {ExpectedActiveOrderId}, loaded " +
+                $"{(loaded == null ? "null" : loaded.activeOrderId.ToString())}; " +
+                $"count {savedList.Count}->{loadedList?.Count ?? -1}; failure={failure ?? "none"}");
+            check(
+                "C1 offerExpiryTick sentinel survives an omitted-node save/load",
+                failure == null && loaded != null &&
+                loaded.offerExpiryTick == ExpectedOfferExpiryTick,
+                $"offerExpiryTick expected {ExpectedOfferExpiryTick}, loaded " +
+                $"{(loaded == null ? "null" : loaded.offerExpiryTick.ToString())}; " +
+                $"count {savedList.Count}->{loadedList?.Count ?? -1}; failure={failure ?? "none"}");
+        }
+
+        private static void CheckProcurementContractStatuses(
+            Action<string, bool, string> check)
+        {
+            ProcurementContractStatus[] expectedStatuses =
+            {
+                ProcurementContractStatus.Active,
+                ProcurementContractStatus.Completed,
+                ProcurementContractStatus.Cancelled,
+                ProcurementContractStatus.SupplierDefault
+            };
+            List<ProcurementContract> savedList = new List<ProcurementContract>();
+            foreach (ProcurementContractStatus status in expectedStatuses)
+            {
+                savedList.Add(new ProcurementContract
+                {
+                    id = 6_020 + savedList.Count,
+                    thingDef = ThingDefOf.Steel,
+                    quantityPerCycle = 2,
+                    totalCycles = 3,
+                    status = status
+                });
+            }
+
+            List<ProcurementContract> loadedList = null;
+            int savedStatusNodes = -1;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProcurementContract-C2-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "procurementContractStatusTest");
+                Scribe_Collections.Look(ref savedList, "procurementContracts", LookMode.Deep);
+                Scribe.saver.FinalizeSaving();
+
+                XmlDocument document = new XmlDocument();
+                document.Load(path);
+                savedStatusNodes = document.SelectNodes("//status")?.Count ?? 0;
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Collections.Look(ref loadedList, "procurementContracts", LookMode.Deep);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            for (int i = 0; i < expectedStatuses.Length; i++)
+            {
+                ProcurementContract loaded = loadedList != null && loadedList.Count > i
+                    ? loadedList[i]
+                    : null;
+                ProcurementContractStatus? loadedStatus = loaded?.status;
+                check(
+                    $"C2 {expectedStatuses[i]} status round-trips off its Scribe default",
+                    failure == null && savedStatusNodes == expectedStatuses.Length &&
+                    loaded != null && loaded.status == expectedStatuses[i],
+                    $"status expected {expectedStatuses[i]}, loaded " +
+                    $"{(loaded == null ? "null" : loadedStatus.ToString())}; " +
+                    $"saved status nodes={savedStatusNodes}/{expectedStatuses.Length}; " +
+                    $"loaded count={loadedList?.Count ?? -1}; failure={failure ?? "none"}");
+            }
+        }
+
+        private static void CheckProcurementContractValidity(
+            Action<string, bool, string> check,
+            Action<string, string> skip)
+        {
+            ThingDef validDef = ThingDefOf.Steel;
+            if (validDef == null)
+            {
+                skip("C3 null thingDef is invalid after load",
+                    "Steel definition is unavailable in this install");
+                skip("C3 non-positive quantityPerCycle is invalid after load",
+                    "Steel definition is unavailable in this install");
+                skip("C3 non-positive totalCycles is invalid after load",
+                    "Steel definition is unavailable in this install");
+                skip("C3 well-formed procurement contract is valid after load",
+                    "Steel definition is unavailable in this install");
+                return;
+            }
+
+            ProcurementContract nullDef = new ProcurementContract
+            {
+                thingDef = null,
+                quantityPerCycle = 1,
+                totalCycles = 1
+            };
+            ProcurementContract zeroQuantity = new ProcurementContract
+            {
+                thingDef = validDef,
+                quantityPerCycle = 0,
+                totalCycles = 1
+            };
+            ProcurementContract zeroCycles = new ProcurementContract
+            {
+                thingDef = validDef,
+                quantityPerCycle = 1,
+                totalCycles = 0
+            };
+            ProcurementContract valid = new ProcurementContract
+            {
+                thingDef = validDef,
+                quantityPerCycle = 1,
+                totalCycles = 1
+            };
+
+            check(
+                "C3 null thingDef is invalid after load",
+                !nullDef.IsValidAfterLoad,
+                $"thingDef=null; quantityPerCycle={nullDef.quantityPerCycle}; " +
+                $"totalCycles={nullDef.totalCycles}; valid={nullDef.IsValidAfterLoad}");
+            check(
+                "C3 non-positive quantityPerCycle is invalid after load",
+                !zeroQuantity.IsValidAfterLoad,
+                $"thingDef={zeroQuantity.thingDef?.defName ?? "null"}; " +
+                $"quantityPerCycle={zeroQuantity.quantityPerCycle}; " +
+                $"totalCycles={zeroQuantity.totalCycles}; valid={zeroQuantity.IsValidAfterLoad}");
+            check(
+                "C3 non-positive totalCycles is invalid after load",
+                !zeroCycles.IsValidAfterLoad,
+                $"thingDef={zeroCycles.thingDef?.defName ?? "null"}; " +
+                $"quantityPerCycle={zeroCycles.quantityPerCycle}; " +
+                $"totalCycles={zeroCycles.totalCycles}; valid={zeroCycles.IsValidAfterLoad}");
+            check(
+                "C3 well-formed procurement contract is valid after load",
+                valid.IsValidAfterLoad,
+                $"thingDef={valid.thingDef?.defName ?? "null"}; " +
+                $"quantityPerCycle={valid.quantityPerCycle}; totalCycles={valid.totalCycles}; " +
+                $"valid={valid.IsValidAfterLoad}");
+        }
+
+        private static void CheckProcurementContractCollection(
+            Action<string, bool, string> check,
+            Action<string, string> skip)
+        {
+            ThingDef validDef = ThingDefOf.Steel;
+            if (validDef == null)
+            {
+                skip("C4 null procurement contract is pruned and valid contract survives",
+                    "Steel definition is unavailable in this install");
+                skip("C4 invalid procurement contract is pruned during world load",
+                    "Steel definition is unavailable in this install");
+                return;
+            }
+
+            const int InvalidId = 6_031;
+            const int ValidId = 6_032;
+            IntercolonyWorldComponent savedState = new IntercolonyWorldComponent(null);
+            savedState.ProcurementContracts.Add(null);
+            savedState.ProcurementContracts.Add(new ProcurementContract
+            {
+                id = InvalidId,
+                thingDef = null,
+                quantityPerCycle = 1,
+                totalCycles = 1
+            });
+            savedState.ProcurementContracts.Add(new ProcurementContract
+            {
+                id = ValidId,
+                thingDef = validDef,
+                quantityPerCycle = 2,
+                totalCycles = 3
+            });
+            IntercolonyWorldComponent loadedState = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProcurementContract-C4-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "procurementContractWorldTest");
+                Scribe_Deep.Look(ref savedState, "state");
+                Scribe.saver.FinalizeSaving();
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedState, "state", (object)null);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            List<ProcurementContract> loadedContracts = loadedState?.ProcurementContracts;
+            bool validSurvived = ContainsProcurementContractId(loadedContracts, ValidId);
+            bool nullPruned = loadedContracts != null &&
+                              !ContainsNullProcurementContract(loadedContracts);
+            check(
+                "C4 null procurement contract is pruned and valid contract survives",
+                failure == null && nullPruned && validSurvived,
+                $"count {savedState.ProcurementContracts.Count}->{loadedContracts?.Count ?? -1}; " +
+                $"valid id={ValidId}; loaded ids={ProcurementContractIds(loadedContracts)}; " +
+                $"null pruned={nullPruned}; failure={failure ?? "none"}");
+            check(
+                "C4 invalid procurement contract is pruned during world load",
+                failure == null && !ContainsProcurementContractId(loadedContracts, InvalidId) &&
+                validSurvived,
+                $"count {savedState.ProcurementContracts.Count}->{loadedContracts?.Count ?? -1}; " +
+                $"invalid id={InvalidId}; loaded ids={ProcurementContractIds(loadedContracts)}; " +
+                $"valid id={ValidId} retained={validSurvived}; failure={failure ?? "none"}");
+        }
+
+        private static void CheckProcurementContractMigration(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            FieldInfo saveVersionField)
+        {
+            if (state == null || saveVersionField == null)
+            {
+                skip("C5 schema 51-to-52 migration preserves non-empty contract count",
+                    "live state or persisted saveVersion field is not accessible");
+                skip("C5 schema 51-to-52 migration preserves empty contract count",
+                    "live state or persisted saveVersion field is not accessible");
+                return;
+            }
+
+            List<ProcurementContract> beforeContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            int beforeSaveVersion = state.SaveVersion;
+            int nonEmptyBefore = -1;
+            int nonEmptyAfter = -1;
+            int emptyBefore = -1;
+            int emptyAfter = -1;
+            int migrationSaveVersion = -1;
+            string failure = null;
+
+            try
+            {
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.Add(new ProcurementContract
+                {
+                    id = 6_040,
+                    thingDef = ThingDefOf.Steel,
+                    quantityPerCycle = 1,
+                    totalCycles = 1
+                });
+                saveVersionField.SetValue(state, 51);
+                nonEmptyBefore = state.ProcurementContracts.Count;
+                state.MigrateIfNeeded();
+                nonEmptyAfter = state.ProcurementContracts.Count;
+
+                state.ProcurementContracts.Clear();
+                saveVersionField.SetValue(state, 51);
+                emptyBefore = state.ProcurementContracts.Count;
+                state.MigrateIfNeeded();
+                emptyAfter = state.ProcurementContracts.Count;
+                migrationSaveVersion = state.SaveVersion;
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(beforeContracts);
+                saveVersionField.SetValue(state, beforeSaveVersion);
+            }
+
+            check(
+                "C5 schema 51-to-52 migration preserves non-empty contract count",
+                failure == null && nonEmptyBefore == nonEmptyAfter,
+                $"non-empty count {nonEmptyBefore}->{nonEmptyAfter}; " +
+                $"migration saveVersion={migrationSaveVersion}; " +
+                $"restored saveVersion={state.SaveVersion}; failure={failure ?? "none"}");
+            check(
+                "C5 schema 51-to-52 migration preserves empty contract count",
+                failure == null && emptyBefore == emptyAfter && emptyBefore == 0 &&
+                migrationSaveVersion == IntercolonyWorldComponent.CurrentSaveVersion,
+                $"empty count {emptyBefore}->{emptyAfter}; non-empty count " +
+                $"{nonEmptyBefore}->{nonEmptyAfter}; migration saveVersion={migrationSaveVersion}; " +
+                $"restored saveVersion={state.SaveVersion}; failure={failure ?? "none"}");
+        }
+
+        private static void CheckProcurementContractIds(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            FieldInfo nextIdField,
+            int savedNextId)
+        {
+            if (state == null || nextIdField == null)
+            {
+                skip("C6 procurement contract ids are unique and use the shared counter",
+                    "live state or persisted nextId field is not accessible");
+                return;
+            }
+
+            int otherRecordId = -1;
+            List<ProcurementContract> contracts = new List<ProcurementContract>();
+            string failure = null;
+            try
+            {
+                MarketOpportunity otherRecord = new MarketOpportunity { id = state.NextId() };
+                otherRecordId = otherRecord.id;
+                for (int i = 0; i < 4; i++)
+                {
+                    contracts.Add(new ProcurementContract
+                    {
+                        id = state.NextId(),
+                        thingDef = ThingDefOf.Steel,
+                        quantityPerCycle = i + 1,
+                        totalCycles = 2
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                nextIdField.SetValue(state, savedNextId);
+            }
+
+            bool noRepeats = true;
+            bool noCollision = otherRecordId >= 0;
+            bool sharedSequence = contracts.Count == 4;
+            HashSet<int> ids = new HashSet<int>();
+            for (int i = 0; i < contracts.Count; i++)
+            {
+                ProcurementContract contract = contracts[i];
+                noRepeats &= ids.Add(contract.id);
+                noCollision &= contract.id != otherRecordId;
+                sharedSequence &= contract.id == otherRecordId + i + 1;
+            }
+
+            check(
+                "C6 procurement contract ids are unique and use the shared counter",
+                failure == null && contracts.Count == 4 && noRepeats && noCollision &&
+                sharedSequence,
+                $"other record id={otherRecordId}; contract ids={ProcurementContractIds(contracts)}; " +
+                $"count={contracts.Count}; repeats={!noRepeats}; collision={!noCollision}; " +
+                $"shared sequence={sharedSequence}; failure={failure ?? "none"}");
+        }
+
+        private static bool ContainsProcurementContractId(
+            List<ProcurementContract> contracts,
+            int id)
+        {
+            if (contracts == null)
+            {
+                return false;
+            }
+
+            foreach (ProcurementContract contract in contracts)
+            {
+                if (contract != null && contract.id == id)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ContainsNullProcurementContract(
+            List<ProcurementContract> contracts)
+        {
+            foreach (ProcurementContract contract in contracts)
+            {
+                if (contract == null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string ProcurementContractIds(List<ProcurementContract> contracts)
+        {
+            if (contracts == null)
+            {
+                return "null";
+            }
+
+            List<string> ids = new List<string>();
+            foreach (ProcurementContract contract in contracts)
+            {
+                ids.Add(contract == null ? "null" : contract.id.ToString());
+            }
+
+            return string.Join(",", ids.ToArray());
         }
 
         private static SupplierListing NewSupplierListing(int id, int quantity, int expiry)
