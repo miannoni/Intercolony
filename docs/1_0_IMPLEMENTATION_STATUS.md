@@ -4,8 +4,8 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 8 — 1.0 integration, balance and release gate
-Current slice:      8A — not started
-Last completed:     Stage 7 — commercial history, gate closed (`fbfb6fe`, 2026-08-23)
+Current slice:      8E — awaiting the play sitting; 8A-8D complete
+Last completed:     8D — §8.9 documentation, all nine documents (`6b1f3d0`, 2026-08-23)
 Current save schema: 56
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -21,6 +21,53 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [x] Stage 6 — Procurement parity (gate closed 2026-08-23; 12/12 criteria)
 - [x] Stage 7 — Commercial history (gate closed 2026-08-23; 9/9 criteria)
 - [ ] Stage 8 — 1.0 integration and release gate
+
+## Stage 8 — what is done and what needs Matteo
+
+### Done, autonomously
+
+- **8A** `e4e9f7f` the full save/load matrix: all twelve persistent kinds from §8.1 constructed
+  simultaneously, round-tripped, advanced, completed, and round-tripped again. Payroll was the
+  one kind no assertion in the whole program had touched.
+- **8B** `bc98804` the migration matrix: schema 42 to 56, every start version from 42 to 55
+  driven individually, obligations asserted identical in price and quantity. Thirteen of the
+  fourteen steps are purely additive; exactly one changes existing values.
+- **8C** `0b90755` the performance profile: seven paths, all far inside budget. Coarse refresh
+  8.809 ms, Supplier Market generation 5.449 ms, regional diffusion 0.903 ms, history rendering
+  with a full thousand-record timeline 0.239 ms, pressure propagation 0.056 ms, brand lookup
+  0.020 ms, event application effectively zero. Nothing needed optimising.
+- **8D** `74de6a2`, `8450dc2`, `d8e8842`, `ece9148`, `6b1f3d0` — §8.9's nine documents.
+
+Branch state at handoff: 141 commits ahead of `main`, save schema 56, full suite 1347-1350
+passing with 14-16 world-condition skips and a clean log across four fresh worlds.
+
+### Needs Matteo — the play sitting
+
+§8.3 economic sanity, §8.4 brand sanity, §8.5 negotiation sanity, §8.6 procurement parity loops,
+§8.7 the UX pass at 1.0x/1.25x/1.5x/1.75x. **The agenda is written out in
+`docs/PENDING_PLAYTESTS.md`** — point at it, do not restate it here.
+
+Also folded into that sitting: Stage 2's play calibration and Stage 3's criteria 9 and 10, both
+deferred there when those stages closed.
+
+### Needs Matteo — the release
+
+The merge of `1.0` into `main`, and then the Workshop update. **`docs/RELEASE_PROCEDURE.md` must
+be read before either.** Two facts decide whether it goes well: the Workshop upload must never
+point at the repo folder, because RimWorld uploads RootDir wholesale and would publish
+`reference/`, and the menu must read "Update on Steam Workshop" rather than "Upload" or a second
+Workshop item is created.
+
+`docs/RELEASE_NOTES_1_0.md` is written and carries an UNRELEASED banner line designed to be
+deleted in one edit.
+
+### Known gaps, carried openly
+
+- Stage 7B's W2 idempotence claim is unproven — three mutations failed to isolate it.
+- Two vacuous-pass assertions are parked in `docs/BACKLOG.md`: the Stage 3 drought one and the
+  market-shortage one that reported 27 -> 27.
+- The sales-side contract cancellation penalty is still an inline literal where the procurement
+  one is now a named constant.
 
 ## Second full-suite run — 2026-08-21, and 2B is unblocked
 
