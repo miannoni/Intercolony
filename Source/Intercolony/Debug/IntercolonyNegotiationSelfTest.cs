@@ -295,6 +295,343 @@ namespace Intercolony
 
             RunStage5FBrandAssertions(state, profile, product, category.Value, r);
             RunStage5FUrgencyAssertion(state, profile, product, category.Value, r);
+            RunStage5FPartTwoAssertions(state, profile, product, category.Value, r);
+        }
+
+        private static void RunStage5FPartTwoAssertions(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            ThingDef product,
+            IntercolonyProductCategory category,
+            Results r)
+        {
+            List<MarketOpportunity> savedOpportunities =
+                new List<MarketOpportunity>(state.Opportunities);
+            List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<CommercialEventRecord> savedCommercialTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+
+            try
+            {
+                SetReputation(state, profile, UntrustedScore);
+
+                // Search once for the evaluator's real final-counter band. The returned package
+                // is only an input to the fixture; G11 compares the read model to the package
+                // consumed by the acceptance path, as observed through the resulting order.
+                MarketOpportunity searchOpportunity = TestOpportunity(profile, product, 5101);
+                searchOpportunity.fulfillment = FulfillmentMode.BuyerPickup;
+                IntercolonyNegotiationTerms counterProposal = FindCounteredTerms(
+                    state, profile, product, category, searchOpportunity,
+                    out IntercolonyNegotiationResult searchEvaluation,
+                    out int searchProposalsTried);
+                if (counterProposal == null)
+                {
+                    string reason =
+                        $"no Countered result after {searchProposalsTried} evaluator proposal(s); " +
+                        $"last={searchEvaluation?.Decision.ToString() ?? "none"}; " +
+                        $"state={searchOpportunity.NegotiationState}";
+                    r.Skip("G11a persisted final-counter terms reach the binding order", reason);
+                    r.Skip("G11b displayed total payment equals the binding order charge", reason);
+                    r.Skip("G12a every non-initial negotiation state refuses another counter", reason);
+                    r.Skip("G12b one negotiation records at most one final counter", reason);
+                    return;
+                }
+
+                MarketOpportunity finalCounterOpportunity =
+                    TestOpportunity(profile, product, 5102);
+                finalCounterOpportunity.fulfillment = FulfillmentMode.BuyerPickup;
+                state.Opportunities.Add(finalCounterOpportunity);
+                bool counterProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state, finalCounterOpportunity, counterProposal.Clone(),
+                    out IntercolonyNegotiationResult counterEvaluation,
+                    out SalesOrder counterOrder,
+                    out string counterFailure);
+                bool hasStoredFinalCounter = finalCounterOpportunity.TryGetFinalCounterTerms(
+                    out IntercolonyNegotiationTerms storedFinalCounter);
+                CounterofferAnswerView persistedFinalCounterView =
+                    CounterofferUiService.BuildPersistedFinalCounterView(
+                        finalCounterOpportunity, storedFinalCounter);
+                MarketOpportunityNegotiationState finalCounterStateBeforeAccept =
+                    finalCounterOpportunity.NegotiationState;
+                SalesOrder acceptedFinalCounterOrder =
+                    MarketOpportunityNegotiationService.AcceptFinalCounter(
+                        state, finalCounterOpportunity);
+
+                int orderDeadlineDays = acceptedFinalCounterOrder == null
+                    ? -1
+                    : (acceptedFinalCounterOrder.deadlineTick -
+                       acceptedFinalCounterOrder.acceptedTick) / GenDate.TicksPerDay;
+                bool orderDeadlineIsWholeDays = acceptedFinalCounterOrder != null &&
+                    acceptedFinalCounterOrder.deadlineTick - acceptedFinalCounterOrder.acceptedTick ==
+                    orderDeadlineDays * GenDate.TicksPerDay;
+                CounterofferComparisonRow priceRow = default(CounterofferComparisonRow);
+                CounterofferComparisonRow quantityRow = default(CounterofferComparisonRow);
+                CounterofferComparisonRow deadlineRow = default(CounterofferComparisonRow);
+                CounterofferComparisonRow fulfillmentRow = default(CounterofferComparisonRow);
+                bool rowsFound =
+                    TryGetComparisonRow(
+                        persistedFinalCounterView?.rows, CounterofferTerm.Price, out priceRow) &&
+                    TryGetComparisonRow(
+                        persistedFinalCounterView?.rows, CounterofferTerm.Quantity, out quantityRow) &&
+                    TryGetComparisonRow(
+                        persistedFinalCounterView?.rows, CounterofferTerm.Deadline, out deadlineRow) &&
+                    TryGetComparisonRow(
+                        persistedFinalCounterView?.rows, CounterofferTerm.Fulfillment,
+                        out fulfillmentRow);
+                bool viewTermsMatchAcceptedOrder =
+                    hasStoredFinalCounter && counterProcessed &&
+                    counterEvaluation?.Decision == IntercolonyNegotiationDecision.Countered &&
+                    counterOrder == null && acceptedFinalCounterOrder != null &&
+                    persistedFinalCounterView?.comparisonTerms != null &&
+                    persistedFinalCounterView.comparisonTerms.quantity ==
+                        acceptedFinalCounterOrder.Quantity &&
+                    Mathf.Approximately(
+                        persistedFinalCounterView.comparisonTerms.unitPrice,
+                        acceptedFinalCounterOrder.unitPrice) &&
+                    persistedFinalCounterView.comparisonTerms.deadlineDays == orderDeadlineDays &&
+                    orderDeadlineIsWholeDays &&
+                    persistedFinalCounterView.comparisonTerms.fulfillment ==
+                        acceptedFinalCounterOrder.fulfillment;
+                bool comparisonRowsMatchAcceptedOrder =
+                    rowsFound && acceptedFinalCounterOrder != null &&
+                    priceRow.proposed == $"{acceptedFinalCounterOrder.unitPrice:F2} silver/unit" &&
+                    quantityRow.proposed == $"{acceptedFinalCounterOrder.Quantity} units" &&
+                    deadlineRow.proposed == $"{orderDeadlineDays} days" &&
+                    fulfillmentRow.proposed ==
+                        (acceptedFinalCounterOrder.fulfillment == FulfillmentMode.BuyerPickup
+                            ? "Buyer collects"
+                            : "You deliver");
+                string orderPriceDisplay = acceptedFinalCounterOrder == null
+                    ? "none"
+                    : $"{acceptedFinalCounterOrder.unitPrice:F2} silver/unit";
+                string orderQuantityDisplay = acceptedFinalCounterOrder == null
+                    ? "none"
+                    : $"{acceptedFinalCounterOrder.Quantity} units";
+                string orderDeadlineDisplay = acceptedFinalCounterOrder == null
+                    ? "none"
+                    : $"{orderDeadlineDays} days";
+                string orderFulfillmentDisplay = acceptedFinalCounterOrder == null
+                    ? "none"
+                    : (acceptedFinalCounterOrder.fulfillment == FulfillmentMode.BuyerPickup
+                        ? "Buyer collects"
+                        : "You deliver");
+                r.Check(
+                    viewTermsMatchAcceptedOrder && comparisonRowsMatchAcceptedOrder,
+                    "G11a the persisted final-counter view and rows equal accepted order terms",
+                    $"stateBefore={finalCounterStateBeforeAccept}; " +
+                    $"stateAfter={finalCounterOpportunity.NegotiationState}; " +
+                    $"counterProcessed={counterProcessed}; decision={counterEvaluation?.Decision}; " +
+                    $"counterFailure={counterFailure ?? "none"}; " +
+                    $"viewTerms={DescribeTerms(persistedFinalCounterView?.comparisonTerms)}; " +
+                    $"order={DescribeOrder(acceptedFinalCounterOrder)}; " +
+                    $"viewQuantity={persistedFinalCounterView?.comparisonTerms?.quantity.ToString() ?? "none"} " +
+                    $"vs orderQuantity={acceptedFinalCounterOrder?.Quantity.ToString() ?? "none"}; " +
+                    $"viewUnitPrice={persistedFinalCounterView?.comparisonTerms?.unitPrice.ToString("F3") ?? "none"} " +
+                    $"vs orderUnitPrice={acceptedFinalCounterOrder?.unitPrice.ToString("F3") ?? "none"}; " +
+                    $"viewDeadlineDays={persistedFinalCounterView?.comparisonTerms?.deadlineDays.ToString() ?? "none"} " +
+                    $"vs orderDeadlineDays={orderDeadlineDays}; " +
+                    $"viewFulfillment={persistedFinalCounterView?.comparisonTerms?.fulfillment.ToString() ?? "none"} " +
+                    $"vs orderFulfillment={acceptedFinalCounterOrder?.fulfillment.ToString() ?? "none"}; " +
+                    $"rowsFound={rowsFound}; priceRow={priceRow.proposed ?? "none"} " +
+                    $"vs orderPriceDisplay={orderPriceDisplay}; " +
+                    $"quantityRow={quantityRow.proposed ?? "none"} " +
+                    $"vs orderQuantityDisplay={orderQuantityDisplay}; " +
+                    $"deadlineRow={deadlineRow.proposed ?? "none"} " +
+                    $"vs orderDeadlineDisplay={orderDeadlineDisplay}; " +
+                    $"fulfillmentRow={fulfillmentRow.proposed ?? "none"} " +
+                    $"vs orderFulfillmentDisplay={orderFulfillmentDisplay}");
+
+                CounterofferComparisonRow totalPaymentRow = default(CounterofferComparisonRow);
+                bool totalPaymentRowFound = TryGetComparisonRow(
+                    persistedFinalCounterView?.rows, CounterofferTerm.None,
+                    out totalPaymentRow);
+                bool displayedTotalMatchesOrder =
+                    totalPaymentRowFound && acceptedFinalCounterOrder != null &&
+                    totalPaymentRow.proposed ==
+                        $"{acceptedFinalCounterOrder.TotalPayment:N0} silver";
+                string orderTotalDisplay = acceptedFinalCounterOrder == null
+                    ? "none"
+                    : $"{acceptedFinalCounterOrder.TotalPayment:N0} silver";
+                r.Check(
+                    displayedTotalMatchesOrder,
+                    "G11b the displayed total payment equals the binding order charge",
+                    $"stateBefore={finalCounterStateBeforeAccept}; " +
+                    $"stateAfter={finalCounterOpportunity.NegotiationState}; " +
+                    $"displayedTotal={totalPaymentRow.proposed ?? "none"}; " +
+                    $"orderTotalPayment={acceptedFinalCounterOrder?.TotalPayment.ToString() ?? "none"}; " +
+                    $"orderTotalDisplay={orderTotalDisplay}; " +
+                    $"rowFound={totalPaymentRowFound}; counterFailure={counterFailure ?? "none"}; " +
+                    $"order={DescribeOrder(acceptedFinalCounterOrder)}");
+
+                bool statesFixtureAvailable = true;
+                List<string> stateDetails = new List<string>();
+                int stateFixtureId = 5200;
+                foreach (MarketOpportunityNegotiationState requestedState in
+                         Enum.GetValues(typeof(MarketOpportunityNegotiationState)))
+                {
+                    MarketOpportunity stateOpportunity =
+                        TestOpportunity(profile, product, stateFixtureId++);
+                    stateOpportunity.fulfillment = FulfillmentMode.BuyerPickup;
+                    state.Opportunities.Add(stateOpportunity);
+                    MarketOpportunityNegotiationState stateBefore =
+                        stateOpportunity.NegotiationState;
+                    bool statePass;
+                    bool responseProcessed = false;
+                    string responseFailure = null;
+                    IntercolonyNegotiationResult responseEvaluation = null;
+                    if (requestedState == MarketOpportunityNegotiationState.None)
+                    {
+                        responseProcessed = MarketOpportunityNegotiationService.TryCounter(
+                            state, stateOpportunity, counterProposal.Clone(),
+                            out responseEvaluation, out SalesOrder responseOrder,
+                            out responseFailure);
+                        statePass = stateBefore == MarketOpportunityNegotiationState.None &&
+                            responseProcessed && string.IsNullOrWhiteSpace(responseFailure);
+                        stateDetails.Add(
+                            $"state={requestedState}; before={stateBefore}; processed={responseProcessed}; " +
+                            $"decision={responseEvaluation?.Decision}; failure={responseFailure ?? "none"}");
+                    }
+                    else if (requestedState ==
+                             MarketOpportunityNegotiationState.CounterpartyCountered)
+                    {
+                        responseProcessed = MarketOpportunityNegotiationService.TryCounter(
+                            state, stateOpportunity, counterProposal.Clone(),
+                            out responseEvaluation, out SalesOrder responseOrder,
+                            out responseFailure);
+                        bool furtherProcessed = MarketOpportunityNegotiationService.TryCounter(
+                            state, stateOpportunity, counterProposal.Clone(),
+                            out IntercolonyNegotiationResult furtherEvaluation,
+                            out SalesOrder furtherOrder, out string furtherFailure);
+                        statePass = responseProcessed &&
+                            responseEvaluation?.Decision ==
+                                IntercolonyNegotiationDecision.Countered &&
+                            stateOpportunity.NegotiationState == requestedState &&
+                            !furtherProcessed && furtherEvaluation == null &&
+                            furtherOrder == null && !string.IsNullOrWhiteSpace(furtherFailure);
+                        stateDetails.Add(
+                            $"state={requestedState}; before={stateBefore}; after={stateOpportunity.NegotiationState}; " +
+                            $"processed={responseProcessed}; decision={responseEvaluation?.Decision}; " +
+                            $"failure={responseFailure ?? "none"}; furtherProcessed={furtherProcessed}; " +
+                            $"furtherFailure={furtherFailure ?? "none"}");
+                    }
+                    else if (requestedState == MarketOpportunityNegotiationState.CounterpartyRefused)
+                    {
+                        IntercolonyNegotiationTerms refusalProposal =
+                            new IntercolonyNegotiationTerms(
+                                OriginalQuantity, OriginalPrice * ExtremeIncrease,
+                                OriginalDeadlineDays, FulfillmentMode.BuyerPickup);
+                        responseProcessed = MarketOpportunityNegotiationService.TryCounter(
+                            state, stateOpportunity, refusalProposal,
+                            out responseEvaluation, out SalesOrder responseOrder,
+                            out responseFailure);
+                        bool furtherProcessed = MarketOpportunityNegotiationService.TryCounter(
+                            state, stateOpportunity, counterProposal.Clone(),
+                            out IntercolonyNegotiationResult furtherEvaluation,
+                            out SalesOrder furtherOrder, out string furtherFailure);
+                        statePass = responseProcessed &&
+                            responseEvaluation?.Decision ==
+                                IntercolonyNegotiationDecision.Refused &&
+                            stateOpportunity.NegotiationState == requestedState &&
+                            !furtherProcessed && furtherEvaluation == null &&
+                            furtherOrder == null && !string.IsNullOrWhiteSpace(furtherFailure);
+                        stateDetails.Add(
+                            $"state={requestedState}; before={stateBefore}; after={stateOpportunity.NegotiationState}; " +
+                            $"processed={responseProcessed}; decision={responseEvaluation?.Decision}; " +
+                            $"failure={responseFailure ?? "none"}; furtherProcessed={furtherProcessed}; " +
+                            $"furtherFailure={furtherFailure ?? "none"}");
+                    }
+                    else
+                    {
+                        statesFixtureAvailable = false;
+                        statePass = false;
+                        stateDetails.Add(
+                            $"state={requestedState}; before={stateBefore}; " +
+                            "no fixture transition exists for this enum value");
+                    }
+
+                    if (!statePass)
+                    {
+                        statesFixtureAvailable = false;
+                    }
+                }
+
+                r.Check(
+                    statesFixtureAvailable,
+                    "G12a every non-initial negotiation state refuses another counter",
+                    $"states enumerated from {typeof(MarketOpportunityNegotiationState).Name}: " +
+                    string.Join(" | ", stateDetails));
+
+                MarketOpportunity oneCounterOpportunity =
+                    TestOpportunity(profile, product, 5301);
+                oneCounterOpportunity.fulfillment = FulfillmentMode.BuyerPickup;
+                state.Opportunities.Add(oneCounterOpportunity);
+                bool oneCounterProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state, oneCounterOpportunity, counterProposal.Clone(),
+                    out IntercolonyNegotiationResult oneCounterEvaluation,
+                    out SalesOrder oneCounterOrder,
+                    out string oneCounterFailure);
+                bool hadStoredCounter = oneCounterOpportunity.TryGetFinalCounterTerms(
+                    out IntercolonyNegotiationTerms firstStoredCounter);
+                IntercolonyNegotiationTerms attemptedReplacement =
+                    new IntercolonyNegotiationTerms(
+                        1, 777f, 3, FulfillmentMode.SellerDelivery);
+                bool secondRecordAccepted = oneCounterOpportunity.TryRecordFinalCounter(
+                    attemptedReplacement);
+                bool storedCounterUnchanged = oneCounterOpportunity.TryGetFinalCounterTerms(
+                        out IntercolonyNegotiationTerms afterSecondRecord) &&
+                    SameTerms(firstStoredCounter, afterSecondRecord);
+                bool secondCounterProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state, oneCounterOpportunity, counterProposal.Clone(),
+                    out IntercolonyNegotiationResult secondCounterEvaluation,
+                    out SalesOrder secondCounterOrder,
+                    out string secondCounterFailure);
+                int exchangeEvaluatorInvocations = oneCounterEvaluation == null ? 0 : 1;
+                if (secondCounterEvaluation != null)
+                {
+                    exchangeEvaluatorInvocations++;
+                }
+                bool evaluatorInvocationBounded =
+                    exchangeEvaluatorInvocations <= 1 && secondCounterEvaluation == null;
+                r.Check(
+                    oneCounterProcessed &&
+                    oneCounterEvaluation?.Decision == IntercolonyNegotiationDecision.Countered &&
+                    oneCounterOrder == null && hadStoredCounter && !secondRecordAccepted &&
+                    storedCounterUnchanged && !secondCounterProcessed &&
+                    secondCounterEvaluation == null && secondCounterOrder == null &&
+                    !string.IsNullOrWhiteSpace(secondCounterFailure) &&
+                    evaluatorInvocationBounded,
+                    "G12b one negotiation admits at most one final counter",
+                    $"state={oneCounterOpportunity.NegotiationState}; firstProcessed={oneCounterProcessed}; " +
+                    $"firstDecision={oneCounterEvaluation?.Decision}; firstFailure={oneCounterFailure ?? "none"}; " +
+                    $"firstStored={DescribeTerms(firstStoredCounter)}; " +
+                    $"replacement={DescribeTerms(attemptedReplacement)}; " +
+                    $"secondRecordAccepted={secondRecordAccepted}; " +
+                    $"afterSecondRecord={DescribeTerms(afterSecondRecord)}; " +
+                    $"storedUnchanged={storedCounterUnchanged}; secondProcessed={secondCounterProcessed}; " +
+                    $"secondEvaluation={secondCounterEvaluation?.Decision.ToString() ?? "none"}; " +
+                    $"secondOrder={DescribeOrder(secondCounterOrder)}; " +
+                    $"secondFailure={secondCounterFailure ?? "none"}; " +
+                    $"exchangeEvaluatorInvocations={exchangeEvaluatorInvocations}; " +
+                    $"fixtureSearchEvaluatorInvocations={searchProposalsTried}");
+            }
+            finally
+            {
+                state.Opportunities.Clear();
+                state.Opportunities.AddRange(savedOpportunities);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedOrders);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+            }
         }
 
         private static void RunStage5FBrandAssertions(
@@ -2011,6 +2348,27 @@ namespace Intercolony
                 default:
                     return -1;
             }
+        }
+
+        private static bool TryGetComparisonRow(
+            List<CounterofferComparisonRow> rows,
+            CounterofferTerm term,
+            out CounterofferComparisonRow row)
+        {
+            if (rows != null)
+            {
+                foreach (CounterofferComparisonRow candidate in rows)
+                {
+                    if (candidate.term == term)
+                    {
+                        row = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            row = default(CounterofferComparisonRow);
+            return false;
         }
 
         private static bool SameResult(
