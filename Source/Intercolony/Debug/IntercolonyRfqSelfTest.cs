@@ -24,6 +24,7 @@ namespace Intercolony
     public static class IntercolonyRfqSelfTest
     {
         private const int SupplyProbeSettlementId = 971_102;
+        private const int PurchaseFixtureSilver = 4;
 
         public static string Run(IntercolonyWorldComponent state)
         {
@@ -549,6 +550,7 @@ namespace Intercolony
                     check, skip, state, settlement, window);
                 CheckSupplierListingPublishedRate(
                     check, skip, settlement, profile, window);
+                CheckSupplierListingPurchasePath(check, skip, state, settlement);
             }
             finally
             {
@@ -574,6 +576,513 @@ namespace Intercolony
             skip("T7 listing count respects the per-settlement cap", reason);
             skip("T8 refresh prunes stale-window listings", reason);
             skip("T9 published listing rate does not move with purchase size", reason);
+            SkipSupplierListingPurchasePath(skip, reason);
+        }
+
+        private static void CheckSupplierListingPurchasePath(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            Settlement settlement)
+        {
+            FieldInfo consumptionField = typeof(IntercolonyWorldComponent).GetField(
+                "supplierOfferConsumption", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo refreshCountField = typeof(IntercolonyWorldComponent).GetField(
+                "refreshCount", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+
+            if (state == null || settlement == null || consumptionField == null ||
+                refreshCountField == null || nextIdField == null)
+            {
+                SkipSupplierListingPurchasePath(
+                    skip, "the live fixture fields needed for restoration are inaccessible");
+                return;
+            }
+
+            if (paymentMap == null)
+            {
+                SkipSupplierListingPurchasePath(skip, "no player map is available for payment");
+                return;
+            }
+
+            List<SupplierOfferConsumption> liveConsumption =
+                consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
+            if (liveConsumption == null)
+            {
+                SkipSupplierListingPurchasePath(
+                    skip, "the live supplier-consumption list is inaccessible");
+                return;
+            }
+
+            if (!IntercolonyMarketAccess.IsAccessible(settlement, out string accessReason))
+            {
+                SkipSupplierListingPurchasePath(
+                    skip, $"the fixture settlement is not accessible: {accessReason}");
+                return;
+            }
+
+            Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
+            Thing fixtureSilver = null;
+            Zone_Stockpile fixtureSilverZone = null;
+            int availableSilver = PurchaseOrderService.CountColonySilver(paymentMap);
+            if (availableSilver < PurchaseFixtureSilver)
+            {
+                int neededSilver = PurchaseFixtureSilver - availableSilver;
+                Thing topUp = null;
+                foreach (Thing silver in savedSilver.Keys)
+                {
+                    if (silver != null && !silver.Destroyed &&
+                        silver.stackCount + neededSilver <= ThingDefOf.Silver.stackLimit)
+                    {
+                        topUp = silver;
+                        break;
+                    }
+                }
+
+                if (topUp != null)
+                {
+                    topUp.stackCount += neededSilver;
+                }
+                else if (!TryCreateStoredSilver(
+                    paymentMap, neededSilver, out fixtureSilver, out fixtureSilverZone))
+                {
+                    SkipSupplierListingPurchasePath(
+                        skip,
+                        "the payment map had too little stored silver and the fixture could not " +
+                        "create a temporary stored-silver stack");
+                    return;
+                }
+
+                if (fixtureSilver != null)
+                {
+                    savedSilver[fixtureSilver] = fixtureSilver.stackCount;
+                }
+            }
+
+            List<SupplierListing> savedListings =
+                new List<SupplierListing>(state.SupplierListings);
+            List<SupplierOfferConsumption> savedConsumption = CloneConsumptions(
+                consumptionField.GetValue(state) as List<SupplierOfferConsumption>);
+            List<PurchaseOrder> savedOrders = new List<PurchaseOrder>(state.PurchaseOrders);
+            List<LedgerEntry> savedLedger = new List<LedgerEntry>(state.Ledger);
+            int savedLedgerStartTick = state.LedgerStartTick;
+            int savedRefreshCount = (int)refreshCountField.GetValue(state);
+            int savedNextId = (int)nextIdField.GetValue(state);
+
+            void ResetFixture(SupplierListing listing)
+            {
+                state.SupplierListings.Clear();
+                if (listing != null)
+                {
+                    state.SupplierListings.Add(listing);
+                }
+
+                liveConsumption.Clear();
+                state.PurchaseOrders.Clear();
+                RestoreStoredSilver(paymentMap, savedSilver);
+                foreach (Thing silver in savedSilver.Keys)
+                {
+                    if (silver != null && !silver.Destroyed &&
+                        silver.stackCount < ThingDefOf.Silver.stackLimit)
+                    {
+                        // Keep every fixture stack alive when TryTakeSilver splits it; the exact
+                        // player's purse is restored in the finally.
+                        silver.stackCount = Mathf.Min(
+                            ThingDefOf.Silver.stackLimit,
+                            Mathf.Max(silver.stackCount + 1, PurchaseFixtureSilver + 1));
+                    }
+                }
+            }
+
+            int window = state.RefreshCount;
+            const float PublishedRate = 0.51f;
+
+            try
+            {
+                SupplierListing rateListing = NewPurchasePathListing(
+                    910_101, 2, settlement.ID, window, PublishedRate);
+                ResetFixture(rateListing);
+                int partialQuantity = 1;
+                bool rateCreated = SupplierListingService.TryPurchase(
+                    state, rateListing, partialQuantity,
+                    out PurchaseOrder rateOrder, out string rateFailure);
+
+                check(
+                    "V1 listing purchase charges the published unit price",
+                    rateCreated && rateOrder != null &&
+                    rateOrder.unitPrice == rateListing.unitPrice,
+                    $"listing={rateListing.id}; quantity={partialQuantity}; " +
+                    $"published={rateListing.unitPrice:F2}; " +
+                    $"charged={(rateOrder == null ? "null" : rateOrder.unitPrice.ToString("F2"))}; " +
+                    $"failure={rateFailure ?? "none"}");
+
+                SupplierListing totalListing = NewPurchasePathListing(
+                    910_108, 2, settlement.ID, window, PublishedRate);
+                ResetFixture(totalListing);
+                int totalQuantity = totalListing.quantityAvailable;
+                bool totalCreated = SupplierListingService.TryPurchase(
+                    state, totalListing, totalQuantity,
+                    out PurchaseOrder totalOrder, out string totalFailure);
+
+                check(
+                    "V8 listing total uses IntercolonyPricing.TotalPayment",
+                    totalCreated && totalOrder != null &&
+                    totalOrder.TotalPrice ==
+                    IntercolonyPricing.TotalPayment(totalListing.unitPrice, totalQuantity),
+                    $"listing={totalListing.id}; rate={totalListing.unitPrice:F2}; " +
+                    $"quantity={totalQuantity}; " +
+                    $"order total={(totalOrder == null ? "null" : totalOrder.TotalPrice.ToString())}; " +
+                    $"shared total={IntercolonyPricing.TotalPayment(totalListing.unitPrice, totalQuantity)}; " +
+                    $"failure={totalFailure ?? "none"}");
+
+                SupplierListing boundsListing = NewPurchasePathListing(
+                    910_102, 2, settlement.ID, window, PublishedRate);
+                ResetFixture(boundsListing);
+                int maximum = boundsListing.quantityAvailable;
+                bool zeroCreated = SupplierListingService.TryPurchase(
+                    state, boundsListing, 0,
+                    out PurchaseOrder zeroOrder, out string zeroFailure);
+                bool negativeCreated = SupplierListingService.TryPurchase(
+                    state, boundsListing, -1,
+                    out PurchaseOrder negativeOrder, out string negativeFailure);
+                bool overCreated = SupplierListingService.TryPurchase(
+                    state, boundsListing, maximum + 1,
+                    out PurchaseOrder overOrder, out string overFailure);
+                bool exactCreated = SupplierListingService.TryPurchase(
+                    state, boundsListing, maximum,
+                    out PurchaseOrder exactOrder, out string exactFailure);
+                string boundsReason = $"between 1 and {maximum}";
+
+                check(
+                    "V2 listing purchase enforces quantity bounds",
+                    !zeroCreated && !string.IsNullOrEmpty(zeroFailure) &&
+                    zeroFailure.Contains(boundsReason) &&
+                    !negativeCreated && !string.IsNullOrEmpty(negativeFailure) &&
+                    negativeFailure.Contains(boundsReason) &&
+                    !overCreated && !string.IsNullOrEmpty(overFailure) &&
+                    overFailure.Contains(boundsReason) &&
+                    exactCreated && exactOrder != null,
+                    $"listing={boundsListing.id}; bounds=1..{maximum}; " +
+                    $"published={PublishedRate:F2}; " +
+                    $"attempted 0 -> created={zeroCreated}, reason={zeroFailure ?? "none"}; " +
+                    $"attempted -1 -> created={negativeCreated}, reason={negativeFailure ?? "none"}; " +
+                    $"attempted {maximum + 1} -> created={overCreated}, reason={overFailure ?? "none"}; " +
+                    $"attempted {maximum} -> created={exactCreated}, reason={exactFailure ?? "none"}");
+
+                SupplierListing decrementListing = NewPurchasePathListing(
+                    910_103, 2, settlement.ID, window, PublishedRate);
+                ResetFixture(decrementListing);
+                int decrementBefore = decrementListing.quantityAvailable;
+                int decrementBought = 1;
+                bool decrementCreated = SupplierListingService.TryPurchase(
+                    state, decrementListing, decrementBought,
+                    out PurchaseOrder decrementOrder, out string decrementFailure);
+                int decrementAfter = decrementListing.quantityAvailable;
+
+                check(
+                    "V3 listing purchase decrements exactly the bought quantity",
+                    decrementCreated && decrementOrder != null &&
+                    decrementAfter == decrementBefore - decrementBought,
+                    $"listing={decrementListing.id}; bought={decrementBought}; " +
+                    $"published={PublishedRate:F2}; quantity {decrementBefore}->{decrementAfter}; " +
+                    $"silver={(decrementOrder == null ? "null" : decrementOrder.paidSilver.ToString())}; " +
+                    $"failure={decrementFailure ?? "none"}");
+
+                SupplierListing consumptionListing = NewPurchasePathListing(
+                    910_104, 2, settlement.ID, window, PublishedRate);
+                ResetFixture(consumptionListing);
+                int consumptionBefore = state.SupplierOfferConsumptionFor(
+                    window, consumptionListing.thingDef, settlement.ID);
+                int consumptionBought = 1;
+                bool consumptionCreated = SupplierListingService.TryPurchase(
+                    state, consumptionListing, consumptionBought,
+                    out PurchaseOrder consumptionOrder, out string consumptionFailure);
+                int consumptionAfter = state.SupplierOfferConsumptionFor(
+                    window, consumptionListing.thingDef, settlement.ID);
+
+                check(
+                    "V4 listing purchase records supplier-offer consumption",
+                    consumptionCreated && consumptionOrder != null &&
+                    consumptionAfter == consumptionBefore + consumptionBought,
+                    $"listing={consumptionListing.id}; settlement={settlement.ID}; " +
+                    $"item={consumptionListing.thingDef.defName}; window={window}; " +
+                    $"bought={consumptionBought}; published={PublishedRate:F2}; " +
+                    $"consumption {consumptionBefore}->{consumptionAfter}; " +
+                    $"silver={(consumptionOrder == null ? "null" : consumptionOrder.paidSilver.ToString())}; " +
+                    $"failure={consumptionFailure ?? "none"}");
+
+                SupplierListing depletedListing = NewPurchasePathListing(
+                    910_105, 2, settlement.ID, window, PublishedRate);
+                ResetFixture(depletedListing);
+                int depletedBefore = depletedListing.quantityAvailable;
+                SupplierListing derivedProbe = NewPurchasePathListing(
+                    910_110, 1, settlement.ID, window, PublishedRate);
+                derivedProbe.quantityAvailable = 0;
+                bool zeroQuantityAvailable = derivedProbe.IsAvailable;
+                derivedProbe.quantityAvailable = 1;
+                bool positiveQuantityAvailable = derivedProbe.IsAvailable;
+                bool depletedCreated = SupplierListingService.TryPurchase(
+                    state, depletedListing, depletedBefore,
+                    out PurchaseOrder depletedOrder, out string depletedFailure);
+
+                check(
+                    "V5 depleted listing is unavailable through IsAvailable",
+                    depletedCreated && depletedOrder != null &&
+                    depletedListing.quantityAvailable == 0 && !depletedListing.IsAvailable &&
+                    !zeroQuantityAvailable && positiveQuantityAvailable,
+                    $"listing={depletedListing.id}; quantity {depletedBefore}->" +
+                    $"{depletedListing.quantityAvailable}; published={PublishedRate:F2}; " +
+                    $"silver={(depletedOrder == null ? "null" : depletedOrder.paidSilver.ToString())}; " +
+                    $"available={depletedListing.IsAvailable}; " +
+                    $"derived probe quantity=0 available={zeroQuantityAvailable}, " +
+                    $"quantity=1 available={positiveQuantityAvailable}; " +
+                    $"failure={depletedFailure ?? "none"}");
+
+                SupplierListing failedListing = NewPurchasePathListing(
+                    910_106, 2, settlement.ID, window, PublishedRate);
+                ResetFixture(failedListing);
+                int failedQuantityBefore = failedListing.quantityAvailable;
+                int failedConsumptionBefore = state.SupplierOfferConsumptionFor(
+                    window, failedListing.thingDef, settlement.ID);
+                int failedOrdersBefore = state.PurchaseOrders.Count;
+                int failedSilverBefore = PurchaseOrderService.CountColonySilver(paymentMap);
+                int failedAttempt = failedQuantityBefore + 1;
+                bool failedCreated = SupplierListingService.TryPurchase(
+                    state, failedListing, failedAttempt,
+                    out PurchaseOrder failedOrder, out string failedReason);
+                int failedQuantityAfter = failedListing.quantityAvailable;
+                int failedConsumptionAfter = state.SupplierOfferConsumptionFor(
+                    window, failedListing.thingDef, settlement.ID);
+                int failedOrdersAfter = state.PurchaseOrders.Count;
+                int failedSilverAfter = PurchaseOrderService.CountColonySilver(paymentMap);
+
+                check(
+                    "V6 failed listing purchase changes nothing",
+                    !failedCreated && failedOrder == null && !string.IsNullOrEmpty(failedReason) &&
+                    failedQuantityAfter == failedQuantityBefore &&
+                    failedConsumptionAfter == failedConsumptionBefore &&
+                    failedOrdersAfter == failedOrdersBefore &&
+                    failedSilverAfter == failedSilverBefore,
+                    $"listing={failedListing.id}; attempted={failedAttempt}; bounds=1..{failedQuantityBefore}; " +
+                    $"published={PublishedRate:F2}; " +
+                    $"listing quantity {failedQuantityBefore}->{failedQuantityAfter}; " +
+                    $"consumption {failedConsumptionBefore}->{failedConsumptionAfter}; " +
+                    $"orders {failedOrdersBefore}->{failedOrdersAfter}; " +
+                    $"silver {failedSilverBefore}->{failedSilverAfter}; " +
+                    $"reason={failedReason ?? "none"}");
+
+                SupplierListing originListing = NewPurchasePathListing(
+                    910_107, 2, settlement.ID, window, PublishedRate);
+                ResetFixture(originListing);
+                bool originListingCreated = SupplierListingService.TryPurchase(
+                    state, originListing, 1,
+                    out PurchaseOrder listingOrder, out string listingFailure);
+
+                ResetFixture(null);
+                PurchaseRequest rfqRequest = new PurchaseRequest
+                {
+                    id = 910_111,
+                    thingDef = ThingDefOf.Steel,
+                    quantityRequested = 1,
+                    desiredDays = 1
+                };
+                Quotation rfqQuote = new Quotation
+                {
+                    id = 910_112,
+                    settlementId = settlement.ID,
+                    settlementName = settlement.Label ?? "unnamed",
+                    factionName = settlement.Faction?.Name ?? "",
+                    refreshWindow = window,
+                    quantityOffered = 1,
+                    unitPrice = PublishedRate,
+                    leadTimeDays = 0,
+                    supplierDelivers = true
+                };
+                rfqRequest.quotes.Add(rfqQuote);
+                PurchaseOrder rfqOrder = PurchaseOrderService.AcceptQuote(
+                    state, rfqRequest, rfqQuote, paymentMap, 1);
+
+                check(
+                    "V7 purchase origins remain traceable",
+                    originListingCreated && listingOrder != null &&
+                    listingOrder.supplierListingId == originListing.id &&
+                    rfqOrder != null &&
+                    rfqOrder.supplierListingId == PurchaseOrder.NoSupplierListing,
+                    $"listing id={originListing.id}; listing order id=" +
+                    $"{(listingOrder == null ? "null" : listingOrder.id.ToString())}; " +
+                    $"listing origin matches listing id=" +
+                    $"{(listingOrder != null && listingOrder.supplierListingId == originListing.id)}; " +
+                    $"RFQ order id={(rfqOrder == null ? "null" : rfqOrder.id.ToString())}; " +
+                    "RFQ origin=NoSupplierListing; " +
+                    $"published={PublishedRate:F2}; " +
+                    $"listing failure={listingFailure ?? "none"}");
+            }
+            finally
+            {
+                state.SupplierListings.Clear();
+                state.SupplierListings.AddRange(savedListings);
+                liveConsumption.Clear();
+                liveConsumption.AddRange(savedConsumption);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedOrders);
+                state.Ledger.Clear();
+                state.Ledger.AddRange(savedLedger);
+                state.LedgerStartTick = savedLedgerStartTick;
+                refreshCountField.SetValue(state, savedRefreshCount);
+                nextIdField.SetValue(state, savedNextId);
+                RestoreStoredSilver(paymentMap, savedSilver);
+                if (fixtureSilver != null && !fixtureSilver.Destroyed)
+                {
+                    fixtureSilver.Destroy(DestroyMode.Vanish);
+                }
+
+                fixtureSilverZone?.Delete(playSound: false);
+            }
+        }
+
+        private static void SkipSupplierListingPurchasePath(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("V1 listing purchase charges the published unit price", reason);
+            skip("V2 listing purchase enforces quantity bounds", reason);
+            skip("V3 listing purchase decrements exactly the bought quantity", reason);
+            skip("V4 listing purchase records supplier-offer consumption", reason);
+            skip("V5 depleted listing is unavailable through IsAvailable", reason);
+            skip("V6 failed listing purchase changes nothing", reason);
+            skip("V7 purchase origins remain traceable", reason);
+            skip("V8 listing total uses IntercolonyPricing.TotalPayment", reason);
+        }
+
+        private static SupplierListing NewPurchasePathListing(
+            int id,
+            int quantity,
+            int settlementId,
+            int refreshWindow,
+            float unitPrice)
+        {
+            return new SupplierListing
+            {
+                id = id,
+                settlementId = settlementId,
+                thingDef = ThingDefOf.Steel,
+                quantityAvailable = quantity,
+                unitPrice = unitPrice,
+                fulfillment = FulfillmentMode.SellerDelivery,
+                leadTimeDays = 0,
+                createdTick = GenTicks.TicksGame,
+                expiryTick = SupplierListing.NoExpiryTick,
+                refreshWindow = refreshWindow
+            };
+        }
+
+        private static Dictionary<Thing, int> SnapshotStoredSilver(Map map)
+        {
+            Dictionary<Thing, int> result = new Dictionary<Thing, int>();
+            if (map == null)
+            {
+                return result;
+            }
+
+            foreach (Thing thing in map.listerThings.ThingsOfDef(ThingDefOf.Silver))
+            {
+                if (thing != null && thing.IsInAnyStorage())
+                {
+                    result[thing] = thing.stackCount;
+                }
+            }
+
+            return result;
+        }
+
+        private static bool TryCreateStoredSilver(
+            Map map,
+            int amount,
+            out Thing silver,
+            out Zone_Stockpile zone)
+        {
+            silver = null;
+            zone = null;
+            if (map == null || map.zoneManager == null || amount <= 0)
+            {
+                return false;
+            }
+
+            IntVec3 storageCell = IntVec3.Invalid;
+            IntVec3 root = DropCellFinder.TradeDropSpot(map);
+            foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+            {
+                if (candidate.InBounds(map) && candidate.Standable(map) &&
+                    candidate.GetFirstItem(map) == null && map.zoneManager.ZoneAt(candidate) == null)
+                {
+                    storageCell = candidate;
+                    break;
+                }
+            }
+
+            if (!storageCell.IsValid)
+            {
+                return false;
+            }
+
+            zone = new Zone_Stockpile(StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+            map.zoneManager.RegisterZone(zone);
+            zone.AddCell(storageCell);
+
+            silver = ThingMaker.MakeThing(ThingDefOf.Silver);
+            silver.stackCount = Mathf.Min(amount, ThingDefOf.Silver.stackLimit);
+            silver = GenSpawn.Spawn(silver, storageCell, map);
+            if (silver == null || silver.Destroyed || !silver.IsInAnyStorage())
+            {
+                if (silver != null && !silver.Destroyed)
+                {
+                    silver.Destroy(DestroyMode.Vanish);
+                }
+
+                zone.Delete(playSound: false);
+                silver = null;
+                zone = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        private static void RestoreStoredSilver(
+            Map map,
+            Dictionary<Thing, int> savedSilver)
+        {
+            if (map == null || savedSilver == null)
+            {
+                return;
+            }
+
+            List<Thing> current = new List<Thing>(
+                map.listerThings.ThingsOfDef(ThingDefOf.Silver));
+            foreach (Thing thing in current)
+            {
+                if (savedSilver.TryGetValue(thing, out int originalCount))
+                {
+                    if (!thing.Destroyed)
+                    {
+                        thing.stackCount = originalCount;
+                    }
+                }
+                else if (!thing.Destroyed && thing.IsInAnyStorage())
+                {
+                    thing.Destroy(DestroyMode.Vanish);
+                }
+            }
+
+            foreach (KeyValuePair<Thing, int> saved in savedSilver)
+            {
+                if (saved.Key != null && !saved.Key.Destroyed)
+                {
+                    saved.Key.stackCount = saved.Value;
+                }
+            }
         }
 
         private static List<Settlement> FindAccessibleSupplierSettlements(
@@ -595,6 +1104,8 @@ namespace Intercolony
                     result.Add(settlement);
                 }
             }
+
+            result.Sort((left, right) => left.ID.CompareTo(right.ID));
 
             return result;
         }

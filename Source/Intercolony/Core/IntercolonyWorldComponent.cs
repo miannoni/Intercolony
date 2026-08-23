@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 50;
+        public const int CurrentSaveVersion = 51;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -2365,6 +2365,16 @@ namespace Intercolony
 
                 IntercolonyLog.Message(
                     "  schema 49 -> 50: supplier listings added; existing saves start with no listings.");
+            }
+
+            if (saveVersion < 51)
+            {
+                // 50 -> 51 added the persisted supplier-listing origin on PurchaseOrder. The
+                // missing value loads as zero, which correctly identifies every existing order
+                // as an RFQ-origin order rather than inventing a listing relationship.
+                IntercolonyLog.Message(
+                    "  schema 50 -> 51: purchase-order supplier listing origins added; " +
+                    "existing orders remain RFQ-origin or unlinked.");
             }
 
             saveVersion = CurrentSaveVersion;

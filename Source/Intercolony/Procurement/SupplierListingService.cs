@@ -21,6 +21,132 @@ namespace Intercolony
         private const int GenerationSalt = 0x5A71;
 
         /// <summary>
+        /// Accepts part or all of a live supplier listing as an ordinary paid purchase order.
+        /// Listing-specific availability is checked here; payment, order registration and
+        /// finite supplier consumption remain owned by <see cref="PurchaseOrderService"/>.
+        /// </summary>
+        public static bool TryPurchase(
+            IntercolonyWorldComponent state,
+            SupplierListing listing,
+            int quantity,
+            out PurchaseOrder order,
+            out string failureReason)
+        {
+            order = null;
+            failureReason = null;
+
+            if (state == null)
+            {
+                failureReason = "No procurement state is loaded.";
+                return false;
+            }
+
+            if (listing == null)
+            {
+                failureReason = "That supplier listing no longer exists.";
+                return false;
+            }
+
+            int maximum = listing.quantityAvailable;
+            if (quantity < 1 || quantity > maximum)
+            {
+                failureReason = $"Quantity must be between 1 and {maximum}.";
+                return false;
+            }
+
+            if (!listing.IsAvailable)
+            {
+                failureReason = "That supplier listing is no longer available.";
+                return false;
+            }
+
+            if (listing.thingDef == null)
+            {
+                failureReason = "The listed item is no longer available.";
+                return false;
+            }
+
+            if (listing.unitPrice <= 0f || float.IsNaN(listing.unitPrice) ||
+                float.IsInfinity(listing.unitPrice))
+            {
+                failureReason = "The supplier's published price is invalid.";
+                return false;
+            }
+
+            if (listing.leadTimeDays < 0)
+            {
+                failureReason = "The supplier's lead time is invalid.";
+                return false;
+            }
+
+            if (listing.fulfillment != FulfillmentMode.SellerDelivery &&
+                listing.fulfillment != FulfillmentMode.BuyerPickup)
+            {
+                failureReason = "The supplier's fulfillment mode is invalid.";
+                return false;
+            }
+
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(listing.settlementId);
+            if (settlement == null)
+            {
+                failureReason = "The supplying settlement no longer exists.";
+                return false;
+            }
+
+            if (!IntercolonyMarketAccess.IsAccessible(settlement, out string accessReason))
+            {
+                failureReason = $"The supplying settlement is no longer accessible: {accessReason}.";
+                return false;
+            }
+
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            if (paymentMap == null)
+            {
+                failureReason = "No colony to pay from.";
+                return false;
+            }
+
+            bool created = PurchaseOrderService.TryCreatePaidOrder(
+                state,
+                paymentMap,
+                listing.refreshWindow,
+                0,
+                0,
+                listing.id,
+                listing.settlementId,
+                settlement.Label ?? "unnamed",
+                settlement.Faction?.Name ?? "",
+                listing.thingDef,
+                listing.stuffDef,
+                listing.quality,
+                quantity,
+                null,
+                listing.unitPrice,
+                listing.fulfillment == FulfillmentMode.SellerDelivery,
+                listing.leadTimeDays,
+                out order,
+                out failureReason);
+            if (!created)
+            {
+                return false;
+            }
+
+            // The order and its durable consumption record now exist. Keep the listing as the
+            // public face of the remaining quantity; refresh pruning will remove it later.
+            listing.quantityAvailable -= quantity;
+            IntercolonyLog.Message(
+                $"Purchase {order.id}: {order.quantity}x {order.ItemLabel()} from " +
+                $"{order.settlementName} for {order.paidSilver} silver, " +
+                $"{(order.supplierDelivers ? "delivered" : "pickup")} in {listing.leadTimeDays}d.");
+            Messages.Message(
+                order.supplierDelivers
+                    ? $"Ordered {order.quantity}x {order.thingDef.label}. Arriving in {listing.leadTimeDays} days."
+                    : $"Ordered {order.quantity}x {order.thingDef.label}. Ready to collect in {listing.leadTimeDays} days.",
+                MessageTypeDefOf.PositiveEvent, historical: false);
+            return true;
+        }
+
+        /// <summary>
         /// Generates a bounded, deterministic batch for one supplier in a refresh window. The
         /// caller owns insertion into world state so a direct generation remains side-effect free.
         /// </summary>

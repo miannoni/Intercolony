@@ -94,54 +94,32 @@ namespace Intercolony
                 return null;
             }
 
-            int price = Mathf.RoundToInt(quote.unitPrice * quantity);
-            int available = CountColonySilver(paymentMap);
-            if (available < price)
+            if (!TryCreatePaidOrder(
+                    state,
+                    paymentMap,
+                    quote.refreshWindow,
+                    request.id,
+                    quote.id,
+                    PurchaseOrder.NoSupplierListing,
+                    quote.settlementId,
+                    quote.settlementName,
+                    quote.factionName,
+                    request.thingDef,
+                    quote.offeredStuff ?? request.stuffDef,
+                    quote.offeredQuality,
+                    quantity,
+                    quote.animalSpec,
+                    quote.unitPrice,
+                    quote.supplierDelivers,
+                    quote.leadTimeDays,
+                    out PurchaseOrder order,
+                    out string failureReason))
             {
                 Messages.Message(
-                    $"Not enough silver in storage: {available} of {price} needed.",
+                    failureReason ?? "Could not create the purchase order.",
                     MessageTypeDefOf.RejectInput, historical: false);
                 return null;
             }
-
-            LedgerService.Record(state, LedgerKind.PurchasePayment, -price, quote.settlementName,
-                $"{quantity}x {request?.thingDef?.label ?? "goods"}");
-
-            if (!TryTakeSilver(paymentMap, price))
-            {
-                Messages.Message("Could not collect the silver.", MessageTypeDefOf.RejectInput, historical: false);
-                return null;
-            }
-
-            int readyTick = GenTicks.TicksGame + quote.leadTimeDays * GenDate.TicksPerDay;
-
-            PurchaseOrder order = new PurchaseOrder
-            {
-                id = state.NextId(),
-                requestId = request.id,
-                quotationId = quote.id,
-                settlementId = quote.settlementId,
-                settlementName = quote.settlementName,
-                factionName = quote.factionName,
-                destinationMap = paymentMap,
-                thingDef = request.thingDef,
-                stuffDef = quote.offeredStuff ?? request.stuffDef,
-                quality = quote.offeredQuality,
-                quantity = quantity,
-                animalSpec = quote.animalSpec?.Copy(),
-                unitPrice = quote.unitPrice,
-                paidSilver = price,
-                supplierDelivers = quote.supplierDelivers,
-                orderedTick = GenTicks.TicksGame,
-                readyTick = readyTick,
-                pickupExpiryTick = readyTick + PickupGraceDays * GenDate.TicksPerDay,
-                status = PurchaseOrderStatus.Confirmed
-            };
-
-            state.AddPurchaseOrder(order);
-
-            state.ConsumeSupplierOffer(
-                quote.refreshWindow, request.thingDef, quote.settlementId, quantity);
 
             request.quantityOrdered += quantity;
             if (request.QuantityOutstanding == 0)
@@ -151,7 +129,8 @@ namespace Intercolony
 
             IntercolonyLog.Message(
                 $"Purchase {order.id}: {order.quantity}x {order.ItemLabel()} from {order.settlementName} " +
-                $"for {price} silver, {(order.supplierDelivers ? "delivered" : "pickup")} in {quote.leadTimeDays}d.");
+                $"for {order.paidSilver} silver, " +
+                $"{(order.supplierDelivers ? "delivered" : "pickup")} in {quote.leadTimeDays}d.");
             Messages.Message(
                 order.supplierDelivers
                     ? $"Ordered {order.quantity}x {order.thingDef.label}. Arriving in {quote.leadTimeDays} days."
@@ -159,6 +138,178 @@ namespace Intercolony
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             return order;
+        }
+
+        /// <summary>
+        /// Constructs the common persisted order from already validated transaction terms. The
+        /// caller supplies the next ID so this seam has no world-state side effects when a later
+        /// payment check refuses the transaction.
+        /// </summary>
+        internal static PurchaseOrder CreateOrder(
+            int orderId,
+            int requestId,
+            int quotationId,
+            int supplierListingId,
+            int settlementId,
+            string settlementName,
+            string factionName,
+            Map destinationMap,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            int quantity,
+            AnimalSpec animalSpec,
+            float unitPrice,
+            int paidSilver,
+            bool supplierDelivers,
+            int leadTimeDays)
+        {
+            if (thingDef == null || quantity <= 0 || unitPrice <= 0f ||
+                float.IsNaN(unitPrice) || float.IsInfinity(unitPrice) || paidSilver < 0 ||
+                leadTimeDays < 0)
+            {
+                return null;
+            }
+
+            int readyTick = GenTicks.TicksGame + leadTimeDays * GenDate.TicksPerDay;
+            return new PurchaseOrder
+            {
+                id = orderId,
+                requestId = requestId,
+                quotationId = quotationId,
+                supplierListingId = supplierListingId,
+                settlementId = settlementId,
+                settlementName = settlementName ?? "",
+                factionName = factionName ?? "",
+                destinationMap = destinationMap,
+                thingDef = thingDef,
+                stuffDef = stuffDef,
+                quality = quality,
+                quantity = quantity,
+                animalSpec = animalSpec?.Copy(),
+                unitPrice = unitPrice,
+                paidSilver = paidSilver,
+                supplierDelivers = supplierDelivers,
+                orderedTick = GenTicks.TicksGame,
+                readyTick = readyTick,
+                pickupExpiryTick = readyTick + PickupGraceDays * GenDate.TicksPerDay,
+                status = PurchaseOrderStatus.Confirmed
+            };
+        }
+
+        /// <summary>
+        /// Pays for and registers one ordinary purchase order. RFQ and supplier-listing origins
+        /// use this same boundary so payment and finite supplier consumption cannot diverge.
+        /// </summary>
+        internal static bool TryCreatePaidOrder(
+            IntercolonyWorldComponent state,
+            Map paymentMap,
+            int refreshWindow,
+            int requestId,
+            int quotationId,
+            int supplierListingId,
+            int settlementId,
+            string settlementName,
+            string factionName,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            int quantity,
+            AnimalSpec animalSpec,
+            float unitPrice,
+            bool supplierDelivers,
+            int leadTimeDays,
+            out PurchaseOrder order,
+            out string failureReason)
+        {
+            order = null;
+            failureReason = null;
+
+            if (state == null)
+            {
+                failureReason = "No procurement state is loaded.";
+                return false;
+            }
+
+            if (paymentMap == null)
+            {
+                failureReason = "No colony to pay from.";
+                return false;
+            }
+
+            if (thingDef == null)
+            {
+                failureReason = "The purchased item is no longer available.";
+                return false;
+            }
+
+            if (quantity <= 0)
+            {
+                failureReason = "Purchase quantity must be positive.";
+                return false;
+            }
+
+            if (unitPrice <= 0f || float.IsNaN(unitPrice) || float.IsInfinity(unitPrice))
+            {
+                failureReason = "The supplier's published price is invalid.";
+                return false;
+            }
+
+            if (leadTimeDays < 0)
+            {
+                failureReason = "The supplier's lead time is invalid.";
+                return false;
+            }
+
+            int price = IntercolonyPricing.TotalPayment(unitPrice, quantity);
+            int available = CountColonySilver(paymentMap);
+            if (available < price)
+            {
+                failureReason = $"Not enough silver in storage: {available} of {price} needed.";
+                return false;
+            }
+
+            // Peek while building the local order. The stable ID is committed only after the
+            // payment succeeds, so a refused purchase does not consume an ID either.
+            order = CreateOrder(
+                state.PeekNextId(),
+                requestId,
+                quotationId,
+                supplierListingId,
+                settlementId,
+                settlementName,
+                factionName,
+                paymentMap,
+                thingDef,
+                stuffDef,
+                quality,
+                quantity,
+                animalSpec,
+                unitPrice,
+                price,
+                supplierDelivers,
+                leadTimeDays);
+            if (order == null)
+            {
+                failureReason = "The purchase terms could not be recorded.";
+                return false;
+            }
+
+            if (!TryTakeSilver(paymentMap, price))
+            {
+                order = null;
+                failureReason = "Could not collect the silver.";
+                return false;
+            }
+
+            // No operation below this point refuses: the order exists, payment is collected,
+            // and these are the shared durable registration steps for every purchase origin.
+            state.NextId();
+            LedgerService.Record(state, LedgerKind.PurchasePayment, -price, settlementName,
+                $"{quantity}x {thingDef.label ?? "goods"}");
+            state.AddPurchaseOrder(order);
+            state.ConsumeSupplierOffer(refreshWindow, thingDef, settlementId, quantity);
+            return true;
         }
 
         /// <summary>
@@ -550,7 +701,8 @@ namespace Intercolony
             }
 
             return order.IsAnimalOrder
-                ? Mathf.Min(order.paidSilver, Mathf.RoundToInt(order.unitPrice * order.quantity))
+                ? Mathf.Min(order.paidSilver,
+                    IntercolonyPricing.TotalPayment(order.unitPrice, order.quantity))
                 : order.paidSilver;
         }
 
@@ -669,6 +821,14 @@ namespace Intercolony
             if (map == null || amount <= 0)
             {
                 return amount <= 0;
+            }
+
+            // Keep this operation atomic for callers that must leave payment untouched when a
+            // transaction refuses. The snapshot below can otherwise consume a prefix and then
+            // discover that the requested total was not actually present.
+            if (CountColonySilver(map) < amount)
+            {
+                return false;
             }
 
             // Snapshot first: destroying stacks mutates the lister mid-iteration.

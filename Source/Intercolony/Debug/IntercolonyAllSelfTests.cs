@@ -481,15 +481,43 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Only failing suites get printed in full. Twenty complete outputs would bury the
-        /// verdict, and the whole point of this action is that the verdict is readable.
+        /// Failing suites get printed in full. Skipped assertions get their terse name/reason
+        /// lines as well, because a skipped suite is otherwise indistinguishable from a clean
+        /// one in the bridge report.
         /// </summary>
         private static void AppendFailureDetail(StringBuilder sb, List<SuiteResult> results)
         {
             foreach (SuiteResult result in results)
             {
-                if (result.Clean || result.skipReason != null)
+                if (result.skipReason != null)
                 {
+                    continue;
+                }
+
+                if (!result.crashed && result.failed == 0 && result.skipped > 0)
+                {
+                    string[] lines = result.output.Split(
+                        new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                    bool headingWritten = false;
+                    foreach (string line in lines)
+                    {
+                        string trimmed = line.Trim();
+                        if (!trimmed.StartsWith("SKIPPED ", StringComparison.Ordinal) ||
+                            (!trimmed.Contains(" — ") && !trimmed.Contains(" - ")))
+                        {
+                            continue;
+                        }
+
+                        if (!headingWritten)
+                        {
+                            sb.AppendLine();
+                            sb.AppendLine($"  --- {result.name} skipped assertions ---");
+                            headingWritten = true;
+                        }
+
+                        sb.AppendLine($"  {trimmed}");
+                    }
+
                     continue;
                 }
 
