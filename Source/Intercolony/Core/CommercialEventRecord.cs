@@ -33,7 +33,19 @@ namespace Intercolony
         ContractCompleted,
         ContractFailed,
         ContractCancelled,
-        BrandMilestone
+        BrandMilestone,
+
+        /// <summary>A negotiated counteroffer became binding.</summary>
+        CounterofferAccepted,
+
+        /// <summary>A counterparty accepted a later deadline.</summary>
+        DeadlineExtended,
+
+        /// <summary>A counterparty accepted a smaller bound quantity.</summary>
+        QuantityReduced,
+
+        /// <summary>A sale ended by agreement with the counterparty.</summary>
+        SaleCancelledByAgreement
     }
 
     /// <summary>

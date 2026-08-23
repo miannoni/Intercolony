@@ -279,6 +279,11 @@ namespace Intercolony
             List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
             Dictionary<int, CommercialReputation> savedReputations =
                 new Dictionary<int, CommercialReputation>(state.Reputations);
+            // Contents, not count. Timeline pruning removes from the front, so trimming the tail
+            // after a fixture would destroy real history and leave synthetic records behind.
+            List<CommercialEventRecord> savedCommercialTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
 
             try
             {
@@ -312,6 +317,24 @@ namespace Intercolony
                     "an accepted counter creates an order from the agreed terms",
                     $"decision={acceptedEvaluation?.Decision}, " +
                     $"order={DescribeOrder(acceptedOrder)}, failure={acceptedFailure}");
+
+                CommercialEventRecord acceptedCounterRecord = acceptedOrder == null
+                    ? null
+                    : FindRecordFor(
+                        state, acceptedOrder.id, CommercialEventType.CounterofferAccepted);
+                int acceptedCounterRecordCount = acceptedOrder == null
+                    ? 0
+                    : CountRecordsFor(
+                        state, acceptedOrder.id, CommercialEventType.CounterofferAccepted);
+                r.Check(
+                    acceptedCounterProcessed &&
+                    acceptedEvaluation?.Decision == IntercolonyNegotiationDecision.Accepted &&
+                    acceptedOrder != null && acceptedCounterRecord != null &&
+                    acceptedCounterRecordCount == 1,
+                    "T1 an accepted counteroffer records exactly one CounterofferAccepted",
+                    $"orderId={acceptedOrder?.id.ToString() ?? "none"}; " +
+                    $"{DescribeTimelineRecords(state, acceptedOrder?.id ?? 0)}; " +
+                    $"detail='{acceptedCounterRecord?.compactDetail ?? "none"}'");
 
                 SetReputation(state, profile, UntrustedScore);
                 MarketOpportunity boundedOpportunity = TestOpportunity(profile, product, 2);
@@ -619,6 +642,111 @@ namespace Intercolony
                         "accepting the final counter creates an order with its agreed terms",
                         "the bounded answer fixture did not produce a final counter to accept");
                 }
+
+                if (firstEvaluation?.Decision == IntercolonyNegotiationDecision.Countered)
+                {
+                    CommercialEventRecord finalCounterRecord = acceptedFinalCounterOrder == null
+                        ? null
+                        : FindRecordFor(
+                            state,
+                            acceptedFinalCounterOrder.id,
+                            CommercialEventType.CounterofferAccepted);
+                    int finalCounterRecordCount = acceptedFinalCounterOrder == null
+                        ? 0
+                        : CountRecordsFor(
+                            state,
+                            acceptedFinalCounterOrder.id,
+                            CommercialEventType.CounterofferAccepted);
+                    r.Check(
+                        acceptedFinalCounterOrder != null && finalCounterRecord != null &&
+                        finalCounterRecordCount == 1 && acceptedCounterRecord != null &&
+                        finalCounterRecord.compactDetail != acceptedCounterRecord.compactDetail,
+                        "T2 accepting a persisted final counter records its distinct CounterofferAccepted",
+                        $"T1 detail='{acceptedCounterRecord?.compactDetail ?? "none"}'; " +
+                        $"T2 orderId={acceptedFinalCounterOrder?.id.ToString() ?? "none"}; " +
+                        $"{DescribeTimelineRecords(state, acceptedFinalCounterOrder?.id ?? 0)}; " +
+                        $"T2 detail='{finalCounterRecord?.compactDetail ?? "none"}'");
+                }
+                else
+                {
+                    r.Skip(
+                        "T2 accepting a persisted final counter records its distinct CounterofferAccepted",
+                        "the bounded answer fixture did not produce a final counter to accept");
+                }
+
+                int timelineBeforeNoWritePaths = state.CommercialTimeline.Count;
+                SetReputation(state, profile, UntrustedScore);
+                MarketOpportunity t6RefusedOpportunity = TestOpportunity(profile, product, 8);
+                state.Opportunities.Add(t6RefusedOpportunity);
+                bool t6RefusalProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state,
+                    t6RefusedOpportunity,
+                    extremeTerms,
+                    out IntercolonyNegotiationResult t6RefusalEvaluation,
+                    out SalesOrder t6RefusalOrder,
+                    out string t6RefusalFailure);
+
+                MarketOpportunity t6DeclinedOpportunity = TestOpportunity(profile, product, 9);
+                state.Opportunities.Add(t6DeclinedOpportunity);
+                IntercolonyNegotiationTerms t6CounterTerms = FindCounteredTerms(
+                    state,
+                    profile,
+                    product,
+                    category,
+                    t6DeclinedOpportunity,
+                    out IntercolonyNegotiationResult t6SearchEvaluation,
+                    out int t6CounterProposalsTried);
+                bool t6CounterProcessed = false;
+                IntercolonyNegotiationResult t6CounterEvaluation = null;
+                SalesOrder t6CounterOrder = null;
+                string t6CounterFailure = null;
+                bool t6DeclineProcessed = false;
+                if (t6CounterTerms != null)
+                {
+                    t6CounterProcessed = MarketOpportunityNegotiationService.TryCounter(
+                        state,
+                        t6DeclinedOpportunity,
+                        t6CounterTerms,
+                        out t6CounterEvaluation,
+                        out t6CounterOrder,
+                        out t6CounterFailure);
+                    if (t6CounterEvaluation?.Decision ==
+                        IntercolonyNegotiationDecision.Countered)
+                    {
+                        t6DeclineProcessed = MarketOpportunityNegotiationService.TryDecline(
+                            state, t6DeclinedOpportunity);
+                    }
+                }
+
+                int timelineAfterNoWritePaths = state.CommercialTimeline.Count;
+                if (t6CounterTerms == null)
+                {
+                    r.Skip(
+                        "T6 refusal and declined final counter write nothing",
+                        $"no Countered result after {t6CounterProposalsTried} proposal(s); " +
+                        $"refusal={t6RefusalEvaluation?.Decision.ToString() ?? "none"}; " +
+                        $"{DescribeTimelineTotals(state)}");
+                }
+                else
+                {
+                    r.Check(
+                        t6RefusalProcessed &&
+                        t6RefusalEvaluation?.Decision == IntercolonyNegotiationDecision.Refused &&
+                        t6RefusalOrder == null &&
+                        t6CounterProcessed &&
+                        t6CounterEvaluation?.Decision ==
+                            IntercolonyNegotiationDecision.Countered &&
+                        t6CounterOrder == null && t6DeclineProcessed &&
+                        timelineBeforeNoWritePaths == timelineAfterNoWritePaths,
+                        "T6 a refused or declined negotiation writes nothing",
+                        $"timeline before={timelineBeforeNoWritePaths} after={timelineAfterNoWritePaths}; " +
+                        $"refused={t6RefusalEvaluation?.Decision.ToString() ?? "none"}; " +
+                        $"declined={t6CounterEvaluation?.Decision.ToString() ?? "none"}; " +
+                        $"counterTried={t6CounterProposalsTried}; " +
+                        $"refusalFailure={t6RefusalFailure ?? "none"}; " +
+                        $"counterFailure={t6CounterFailure ?? "none"}; " +
+                        $"{DescribeTimelineTotals(state)}");
+                }
             }
             catch (Exception ex)
             {
@@ -631,6 +759,9 @@ namespace Intercolony
                 state.Opportunities.AddRange(savedOpportunities);
                 state.Orders.Clear();
                 state.Orders.AddRange(savedOrders);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
                 state.Reputations.Clear();
                 foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
                 {
@@ -640,7 +771,8 @@ namespace Intercolony
                 r.sb.AppendLine(
                     $"        Stage 5B world contents restored: " +
                     $"{state.Opportunities.Count} opportunit{(state.Opportunities.Count == 1 ? "y" : "ies")}, " +
-                    $"{state.Orders.Count} sales order(s), {state.Reputations.Count} reputation record(s).");
+                    $"{state.Orders.Count} sales order(s), {state.Reputations.Count} reputation record(s), " +
+                    $"{state.CommercialTimeline.Count} timeline record(s).");
             }
         }
 
@@ -653,6 +785,11 @@ namespace Intercolony
             List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
             Dictionary<int, CommercialReputation> savedReputations =
                 new Dictionary<int, CommercialReputation>(state.Reputations);
+            // Contents, not count. Prune removes oldest records from the front, so tail trimming
+            // would discard real history and retain synthetic negotiation records.
+            List<CommercialEventRecord> savedCommercialTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
 
             try
             {
@@ -862,6 +999,34 @@ namespace Intercolony
                         $"SaleFailedRecords before={failedRecordsBefore} after={failedRecordsAfter}; " +
                         $"decision={cancellationEvaluation?.Decision}, failure={cancellationFailure ?? "none"}; " +
                         $"last evaluation:\n{cancellationExplanation}");
+
+                    int agreementCancellationRecordCount = CountRecordsFor(
+                        state,
+                        cancellationOrder.id,
+                        CommercialEventType.SaleCancelledByAgreement);
+                    int playerCancellationRecordCount = CountRecordsFor(
+                        state, cancellationOrder.id, CommercialEventType.SaleCancelled);
+                    r.Check(
+                        cancellationProcessed &&
+                        cancellationEvaluation?.Decision ==
+                            IntercolonyNegotiationDecision.Accepted &&
+                        cancellationOrder.status == SalesOrderStatus.Cancelled &&
+                        agreementCancellationRecordCount == 1 &&
+                        playerCancellationRecordCount == 0,
+                        "T5 mutual cancellation records SaleCancelledByAgreement, never SaleCancelled",
+                        $"orderId={cancellationOrder.id}; " +
+                        $"{DescribeTimelineRecords(state, cancellationOrder.id)}; " +
+                        $"decision={cancellationEvaluation?.Decision}; " +
+                        $"failure={cancellationFailure ?? "none"}");
+                }
+
+                if (cancellationOrder == null)
+                {
+                    r.Skip(
+                        "T5 mutual cancellation records SaleCancelledByAgreement, never SaleCancelled",
+                        $"no accepting counterparty after {candidatesTried} candidate(s); " +
+                        $"SaleCancelledByAgreement=0, SaleCancelled=0; " +
+                        cancellationSearchDetail);
                 }
 
                 r.Check(
@@ -918,6 +1083,56 @@ namespace Intercolony
                     $"deliveredQuantity before={refusedDeliveredBefore} after={refusedOrder.deliveredQuantity}; " +
                     $"decision={refusedEvaluation?.Decision}, failure={refusedFailure ?? "none"}");
 
+                bool refusedDeadlineProcessed = PostAcceptanceRenegotiationService.TryRequest(
+                    state,
+                    refusedOrder,
+                    RenegotiationRequest.DeadlineExtension(
+                        PostAcceptanceRenegotiationService.MaxExtensionDays),
+                    out IntercolonyNegotiationResult refusedDeadlineEvaluation,
+                    out string refusedDeadlineFailure);
+                int acceptedDeadlineRecordCount = CountRecordsFor(
+                    state, deadlineOrder.id, CommercialEventType.DeadlineExtended);
+                int refusedDeadlineRecordCount = CountRecordsFor(
+                    state, refusedOrder.id, CommercialEventType.DeadlineExtended);
+                r.Check(
+                    deadlineProcessed &&
+                    deadlineEvaluation?.Decision == IntercolonyNegotiationDecision.Accepted &&
+                    acceptedDeadlineRecordCount == 1 &&
+                    refusedDeadlineProcessed &&
+                    refusedDeadlineEvaluation?.Decision ==
+                        IntercolonyNegotiationDecision.Refused &&
+                    refusedDeadlineRecordCount == 0,
+                    "T3 an accepted deadline extension records once and a refused one records zero",
+                    $"accepted orderId={deadlineOrder.id}; " +
+                    $"{DescribeTimelineRecords(state, deadlineOrder.id)}; " +
+                    $"refused orderId={refusedOrder.id}; " +
+                    $"{DescribeTimelineRecords(state, refusedOrder.id)}; " +
+                    $"acceptedDecision={deadlineEvaluation?.Decision}; " +
+                    $"refusedDecision={refusedDeadlineEvaluation?.Decision}; " +
+                    $"acceptedFailure={deadlineFailure ?? "none"}; " +
+                    $"refusedFailure={refusedDeadlineFailure ?? "none"}");
+
+                int acceptedQuantityRecordCount = CountRecordsFor(
+                    state, quantityOrder.id, CommercialEventType.QuantityReduced);
+                int refusedQuantityRecordCount = CountRecordsFor(
+                    state, refusedOrder.id, CommercialEventType.QuantityReduced);
+                r.Check(
+                    quantityProcessed &&
+                    quantityEvaluation?.Decision == IntercolonyNegotiationDecision.Accepted &&
+                    acceptedQuantityRecordCount == 1 &&
+                    refusedProcessed &&
+                    refusedEvaluation?.Decision == IntercolonyNegotiationDecision.Refused &&
+                    refusedQuantityRecordCount == 0,
+                    "T4 an accepted quantity reduction records once and a refusal records zero",
+                    $"accepted orderId={quantityOrder.id}; " +
+                    $"{DescribeTimelineRecords(state, quantityOrder.id)}; " +
+                    $"refused orderId={refusedOrder.id}; " +
+                    $"{DescribeTimelineRecords(state, refusedOrder.id)}; " +
+                    $"acceptedDecision={quantityEvaluation?.Decision}; " +
+                    $"refusedDecision={refusedEvaluation?.Decision}; " +
+                    $"acceptedFailure={quantityFailure ?? "none"}; " +
+                    $"refusedFailure={refusedFailure ?? "none"}");
+
                 RunPostAcceptanceRenegotiationAssertionsPartTwo(
                     state, profile, product, r);
             }
@@ -930,6 +1145,9 @@ namespace Intercolony
             {
                 state.Orders.Clear();
                 state.Orders.AddRange(savedOrders);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
                 state.Reputations.Clear();
                 foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
                 {
@@ -939,7 +1157,8 @@ namespace Intercolony
                 r.sb.AppendLine(
                     $"        Stage 5C world contents restored: " +
                     $"{state.Orders.Count} sales order(s), " +
-                    $"{state.Reputations.Count} reputation record(s).");
+                    $"{state.Reputations.Count} reputation record(s), " +
+                    $"{state.CommercialTimeline.Count} timeline record(s).");
             }
         }
 
@@ -1131,6 +1350,83 @@ namespace Intercolony
             return count;
         }
 
+        private static CommercialEventRecord FindRecordFor(
+            IntercolonyWorldComponent state, int relatedEntityId, CommercialEventType type)
+        {
+            foreach (CommercialEventRecord record in state.CommercialTimeline)
+            {
+                if (record != null && record.relatedEntityId == relatedEntityId &&
+                    record.type == type)
+                {
+                    return record;
+                }
+            }
+
+            return null;
+        }
+
+        private static int CountRecordsFor(
+            IntercolonyWorldComponent state, int relatedEntityId, CommercialEventType type)
+        {
+            int count = 0;
+            foreach (CommercialEventRecord record in state.CommercialTimeline)
+            {
+                if (record != null && record.relatedEntityId == relatedEntityId &&
+                    record.type == type)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static int CountRecordsOfType(
+            IntercolonyWorldComponent state, CommercialEventType type)
+        {
+            int count = 0;
+            foreach (CommercialEventRecord record in state.CommercialTimeline)
+            {
+                if (record != null && record.type == type)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static string DescribeTimelineRecords(
+            IntercolonyWorldComponent state, int relatedEntityId)
+        {
+            return
+                $"CounterofferAccepted={CountRecordsFor(
+                    state, relatedEntityId, CommercialEventType.CounterofferAccepted)}; " +
+                $"DeadlineExtended={CountRecordsFor(
+                    state, relatedEntityId, CommercialEventType.DeadlineExtended)}; " +
+                $"QuantityReduced={CountRecordsFor(
+                    state, relatedEntityId, CommercialEventType.QuantityReduced)}; " +
+                $"SaleCancelledByAgreement={CountRecordsFor(
+                    state, relatedEntityId, CommercialEventType.SaleCancelledByAgreement)}; " +
+                $"SaleCancelled={CountRecordsFor(
+                    state, relatedEntityId, CommercialEventType.SaleCancelled)}";
+        }
+
+        private static string DescribeTimelineTotals(IntercolonyWorldComponent state)
+        {
+            return
+                $"CounterofferAccepted={CountRecordsOfType(
+                    state, CommercialEventType.CounterofferAccepted)}; " +
+                $"DeadlineExtended={CountRecordsOfType(
+                    state, CommercialEventType.DeadlineExtended)}; " +
+                $"QuantityReduced={CountRecordsOfType(
+                    state, CommercialEventType.QuantityReduced)}; " +
+                $"SaleCancelledByAgreement={CountRecordsOfType(
+                    state, CommercialEventType.SaleCancelledByAgreement)}; " +
+                $"SaleCancelled={CountRecordsOfType(
+                    state, CommercialEventType.SaleCancelled)}";
+        }
+
         private static MarketOpportunity TestOpportunity(
             SettlementEconomicProfile profile,
             ThingDef product,
@@ -1162,7 +1458,22 @@ namespace Intercolony
             MarketOpportunity opportunity,
             out IntercolonyNegotiationResult lastEvaluation)
         {
+            return FindCounteredTerms(
+                state, profile, product, category, opportunity,
+                out lastEvaluation, out _);
+        }
+
+        private static IntercolonyNegotiationTerms FindCounteredTerms(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            ThingDef product,
+            IntercolonyProductCategory category,
+            MarketOpportunity opportunity,
+            out IntercolonyNegotiationResult lastEvaluation,
+            out int proposalsTried)
+        {
             lastEvaluation = null;
+            proposalsTried = 0;
             // Search the evaluator's actual result band rather than duplicating its score
             // thresholds. The broad bounded grid keeps this fixture useful across settlement
             // identities, while the fallback callers still have a hard refusal case.
@@ -1177,6 +1488,7 @@ namespace Intercolony
                 {
                     foreach (int deadline in deadlineOptions)
                     {
+                        proposalsTried++;
                         IntercolonyNegotiationTerms proposed = new IntercolonyNegotiationTerms(
                             quantity,
                             OriginalPrice * priceMultiplier,

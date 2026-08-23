@@ -169,6 +169,21 @@ namespace Intercolony
             // The offer is consumed: it must not remain available for a second acceptance.
             state.RemoveOpportunity(opportunity);
 
+            if (negotiated)
+            {
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.CounterofferAccepted,
+                    order.settlementId,
+                    order.settlementName,
+                    order.id,
+                    order.ThingDef,
+                    order.Quantity,
+                    compactDetail: acceptingFinalCounter
+                        ? $"Accepted final counter: {order.Quantity} units at {order.unitPrice:F2}"
+                        : $"Counterparty accepted {order.Quantity} units at {order.unitPrice:F2}");
+            }
+
             int pickupTravelDays = EstimateBuyerPickupTravelDays(opportunity.distanceTiles);
             string deadlineAction = fulfillment == FulfillmentMode.BuyerPickup
                 ? $"{deadlineDays}d to mark ready, then ~{pickupTravelDays}d pickup"
@@ -1051,6 +1066,15 @@ namespace Intercolony
             }
             else
             {
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.SaleCancelledByAgreement,
+                    order.settlementId,
+                    order.settlementName,
+                    order.id,
+                    order.ThingDef,
+                    order.Quantity,
+                    compactDetail: "Cancelled by mutual agreement");
                 IntercolonyLog.Message($"Order {order.id} cancelled by mutual agreement.");
             }
 

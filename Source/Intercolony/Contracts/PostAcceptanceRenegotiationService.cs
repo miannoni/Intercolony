@@ -104,6 +104,8 @@ namespace Intercolony
                     out IntercolonyNegotiationProposal proposal,
                     out failureReason))
             {
+                // Structurally invalid requests are deliberately not recorded: no negotiation
+                // response or durable commercial term was reached.
                 return false;
             }
 
@@ -112,6 +114,7 @@ namespace Intercolony
 
             if (evaluation.Decision != IntercolonyNegotiationDecision.Accepted)
             {
+                // A refused renegotiation is deliberately not recorded: no bound term changed.
                 return true;
             }
 
@@ -119,10 +122,29 @@ namespace Intercolony
             {
                 case RenegotiationRequestKind.DeadlineExtension:
                     order.deadlineTick += request.extensionDays * GenDate.TicksPerDay;
+                    CommercialTimelineService.Record(
+                        state,
+                        CommercialEventType.DeadlineExtended,
+                        order.settlementId,
+                        order.settlementName,
+                        order.id,
+                        order.ThingDef,
+                        order.Quantity,
+                        compactDetail: $"Deadline extended by {request.extensionDays} days");
                     return true;
 
                 case RenegotiationRequestKind.QuantityReduction:
+                    int previousQuantity = order.Quantity;
                     order.line.quantity = request.newQuantity;
+                    CommercialTimelineService.Record(
+                        state,
+                        CommercialEventType.QuantityReduced,
+                        order.settlementId,
+                        order.settlementName,
+                        order.id,
+                        order.ThingDef,
+                        order.Quantity,
+                        compactDetail: $"Quantity reduced {previousQuantity} -> {order.Quantity}");
                     return true;
 
                 case RenegotiationRequestKind.MutualCancellation:

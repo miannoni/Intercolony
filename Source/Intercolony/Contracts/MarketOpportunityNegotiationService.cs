@@ -51,6 +51,8 @@ namespace Intercolony
                     state, opportunity, proposedTerms, out IntercolonyNegotiationProposal proposal,
                     out failureReason))
             {
+                // Structurally invalid counteroffers are deliberately not recorded: no
+                // negotiation response or durable commercial term was reached.
                 return false;
             }
 
@@ -102,6 +104,7 @@ namespace Intercolony
                     // Refusal is deliberately non-destructive: the advertised original terms
                     // remain available for a normal accept, but the refusal state closes the
                     // counter edge so repeated bargaining cannot become an exploit.
+                    // It is not recorded because no durable agreement changed.
                     return true;
 
                 default:
@@ -141,6 +144,7 @@ namespace Intercolony
                 return false;
             }
 
+            // A declined final counter is deliberately not recorded: it was never binding.
             state.RemoveOpportunity(opportunity);
             return true;
         }
