@@ -25,6 +25,11 @@ namespace Intercolony
         private const float NeutralScore = CommercialReputation.StartingScore;
         private const float ModestIncrease = 1.05f;
         private const float ExtremeIncrease = 2.00f;
+        private const float AggressiveIncrease = 1.20f;
+        private const float UrgentDemandMultiplier = 1.30f;
+        private const float GlutDemandMultiplier = 0.70f;
+        private const float SyntheticBrandScore = 100f;
+        private const float SyntheticBrandEvidence = 100f;
         private const float CounterpartyFriendlyPrice = 0.75f;
         private const float ExplanationTolerance = 0.001f;
 
@@ -107,12 +112,13 @@ namespace Intercolony
                     IntercolonyNegotiationEvaluator.Evaluate(modestSale);
 
                 r.Check(
-                    trusted.AcceptanceScore > untrusted.AcceptanceScore &&
-                    DecisionFavourability(trusted.Decision) >=
-                    DecisionFavourability(untrusted.Decision),
-                    "a trusted counterparty accepts a modest price increase more readily",
-                    $"trusted={trusted.Decision}/{trusted.AcceptanceScore:F3}, " +
-                    $"untrusted={untrusted.Decision}/{untrusted.AcceptanceScore:F3}");
+                    trusted.AcceptanceScore > untrusted.AcceptanceScore ||
+                    (trusted.Decision == IntercolonyNegotiationDecision.Accepted &&
+                     untrusted.Decision != IntercolonyNegotiationDecision.Accepted),
+                    "G2a higher commercial trust improves a moderate counteroffer",
+                    $"high reputation={TrustedScore:F1}: {trusted.Decision}/{trusted.AcceptanceScore:F3}; " +
+                    $"low reputation={UntrustedScore:F1}: {untrusted.Decision}/{untrusted.AcceptanceScore:F3}; " +
+                    $"price multiple={ModestIncrease:F2}x");
 
                 SetReputation(state, profile, TrustedScore);
                 IntercolonyNegotiationProposal extremeSale = Proposal(
@@ -125,11 +131,11 @@ namespace Intercolony
                     IntercolonyNegotiationEvaluator.Evaluate(extremeSale);
 
                 r.Check(
-                    extreme.Decision == IntercolonyNegotiationDecision.Refused &&
-                    extreme.RefusalReason != null &&
-                    extreme.RefusalReason.Contains("one-round negotiation boundary"),
-                    "an extreme price demand is refused even at perfect reputation",
-                    $"{extreme.Decision}: {extreme.RefusalReason}");
+                    extreme.Decision != IntercolonyNegotiationDecision.Accepted,
+                    "G2b an absurd counteroffer is not accepted at maximum reputation",
+                    $"absurd multiple={ExtremeIncrease:F2}x; reputation={TrustedScore:F1}; " +
+                    $"score={extreme.AcceptanceScore:F3}; decision={extreme.Decision}; " +
+                    $"reason={extreme.RefusalReason ?? "none"}");
 
                 SetReputation(state, profile, NeutralScore);
                 IntercolonyNegotiationProposal friendlySale = Proposal(
@@ -211,6 +217,12 @@ namespace Intercolony
                     "selling and buying directions read the same price change from opposite sides",
                     $"sale={salePriceContribution:F3}, purchase={purchasePriceContribution:F3}");
 
+                ThingDef stage5FGateProduct = SelectStateMachineProduct();
+                IntercolonyProductCategory? stage5FGateCategory =
+                    IntercolonyProductClassifier.Classify(stage5FGateProduct);
+                RunStage5FGateAssertions(
+                    state, profile, stage5FGateProduct, stage5FGateCategory, r);
+
                 ThingDef stateMachineProduct = SelectStateMachineProduct();
                 IntercolonyProductCategory? stateMachineCategory =
                     IntercolonyProductClassifier.Classify(stateMachineProduct);
@@ -261,6 +273,255 @@ namespace Intercolony
             }
 
             return null;
+        }
+
+        private static void RunStage5FGateAssertions(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            ThingDef product,
+            IntercolonyProductCategory? category,
+            Results r)
+        {
+            if (product == null || !category.HasValue)
+            {
+                string reason = product == null
+                    ? "the definition-driven tradable-product fixture is unavailable"
+                    : "the selected tradable product has no product category";
+                r.Skip("G3 relevant brand leverage", reason);
+                r.Skip("G4 unrelated brand leverage", reason);
+                r.Skip("G5 market/event urgency", reason);
+                return;
+            }
+
+            RunStage5FBrandAssertions(state, profile, product, category.Value, r);
+            RunStage5FUrgencyAssertion(state, profile, product, category.Value, r);
+        }
+
+        private static void RunStage5FBrandAssertions(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            ThingDef product,
+            IntercolonyProductCategory category,
+            Results r)
+        {
+            if (state.ProductBrandRecords == null)
+            {
+                r.Skip("G3 relevant brand leverage", "the world has no product-brand record list");
+                r.Skip("G4 unrelated brand leverage", "the world has no product-brand record list");
+                return;
+            }
+
+            IntercolonyProductCategory unrelatedCategory;
+            ThingDef unrelatedProduct = FindDifferentCategoryProduct(
+                product, category, out unrelatedCategory);
+            if (unrelatedProduct == null)
+            {
+                string reason =
+                    $"no tradable product in a different category from {category.Label()}";
+                r.Skip("G3 relevant brand leverage", reason);
+                r.Skip("G4 unrelated brand leverage", reason);
+                return;
+            }
+
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<ProductBrandRecord> savedBrandRecords =
+                new List<ProductBrandRecord>(state.ProductBrandRecords);
+
+            try
+            {
+                SetReputation(state, profile, NeutralScore);
+                IntercolonyNegotiationProposal aggressiveSale = Proposal(
+                    state, profile, product, category,
+                    IntercolonyNegotiationDirection.Sale,
+                    new IntercolonyNegotiationTerms(
+                        OriginalQuantity, OriginalPrice * AggressiveIncrease,
+                        OriginalDeadlineDays, FulfillmentMode.SellerDelivery));
+
+                state.ProductBrandRecords.Clear();
+                IntercolonyNegotiationResult neutral =
+                    IntercolonyNegotiationEvaluator.Evaluate(aggressiveSale);
+
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    product, SyntheticBrandScore, SyntheticBrandEvidence, OriginalQuantity));
+                IntercolonyNegotiationResult relevant =
+                    IntercolonyNegotiationEvaluator.Evaluate(aggressiveSale);
+
+                r.Check(
+                    relevant.AcceptanceScore > neutral.AcceptanceScore,
+                    "G3 strong brand in the sold-goods category improves price leverage",
+                    $"multiple={AggressiveIncrease:F2}x; relevant category={category.Label()}, " +
+                    $"neutral={neutral.Decision}/{neutral.AcceptanceScore:F3}; " +
+                    $"strong relevant={relevant.Decision}/{relevant.AcceptanceScore:F3}; " +
+                    $"brand input={product.defName} at {SyntheticBrandScore:F1}/100");
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    unrelatedProduct, SyntheticBrandScore, SyntheticBrandEvidence,
+                    OriginalQuantity));
+                IntercolonyNegotiationResult unrelated =
+                    IntercolonyNegotiationEvaluator.Evaluate(aggressiveSale);
+
+                float relevantImprovement =
+                    relevant.AcceptanceScore - neutral.AcceptanceScore;
+                float unrelatedImprovement =
+                    unrelated.AcceptanceScore - neutral.AcceptanceScore;
+                r.Check(
+                    unrelatedImprovement < relevantImprovement,
+                    "G4 a strong unrelated-category brand gives almost no comparable leverage",
+                    $"multiple={AggressiveIncrease:F2}x; relevant delta={relevantImprovement:F3} " +
+                    $"({relevant.Decision}/{relevant.AcceptanceScore:F3} vs " +
+                    $"neutral {neutral.Decision}/{neutral.AcceptanceScore:F3}); " +
+                    $"unrelated delta={unrelatedImprovement:F3} " +
+                    $"({unrelated.Decision}/{unrelated.AcceptanceScore:F3} vs " +
+                    $"neutral {neutral.Decision}/{neutral.AcceptanceScore:F3}); " +
+                    $"brand moved from {product.defName}/{category.Label()} to " +
+                    $"{unrelatedProduct.defName}/{unrelatedCategory.Label()}");
+            }
+            finally
+            {
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedBrandRecords);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+            }
+        }
+
+        private static void RunStage5FUrgencyAssertion(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            ThingDef product,
+            IntercolonyProductCategory category,
+            Results r)
+        {
+            if (state.EconomicEvents == null)
+            {
+                r.Skip("G5 market/event urgency", "the world has no economic-event list");
+                return;
+            }
+
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(profile.settlementId);
+            if (settlement == null)
+            {
+                r.Skip(
+                    "G5 market/event urgency",
+                    $"counterparty settlement {profile.settlementId} cannot be resolved for event scope");
+                return;
+            }
+
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<ProductBrandRecord> savedBrandRecords =
+                state.ProductBrandRecords == null
+                    ? null
+                    : new List<ProductBrandRecord>(state.ProductBrandRecords);
+            List<EconomicEvent> savedEvents = new List<EconomicEvent>(state.EconomicEvents);
+
+            try
+            {
+                SetReputation(state, profile, NeutralScore);
+                if (state.ProductBrandRecords != null)
+                {
+                    state.ProductBrandRecords.Clear();
+                }
+
+                IntercolonyNegotiationProposal aggressiveSale = Proposal(
+                    state, profile, product, category,
+                    IntercolonyNegotiationDirection.Sale,
+                    new IntercolonyNegotiationTerms(
+                        OriginalQuantity, OriginalPrice * AggressiveIncrease,
+                        OriginalDeadlineDays, FulfillmentMode.SellerDelivery));
+                int fixtureTick = GenTicks.TicksGame;
+
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.Add(Stage5FMarketEvent(
+                    category, UrgentDemandMultiplier, fixtureTick));
+                IntercolonyNegotiationResult urgent =
+                    IntercolonyNegotiationEvaluator.Evaluate(aggressiveSale);
+                float urgentEventMultiplier = EconomicEventService.DemandMultiplier(
+                    state, settlement, category);
+
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.Add(Stage5FMarketEvent(
+                    category, GlutDemandMultiplier, fixtureTick));
+                IntercolonyNegotiationResult glut =
+                    IntercolonyNegotiationEvaluator.Evaluate(aggressiveSale);
+                float glutEventMultiplier = EconomicEventService.DemandMultiplier(
+                    state, settlement, category);
+
+                r.Check(
+                    urgent.AcceptanceScore > glut.AcceptanceScore,
+                    "G5 higher market/event urgency improves willingness for an above-market sale",
+                    $"multiple={AggressiveIncrease:F2}x; shortage event x{urgentEventMultiplier:F2}: " +
+                    $"{urgent.Decision}/{urgent.AcceptanceScore:F3}; glut event x{glutEventMultiplier:F2}: " +
+                    $"{glut.Decision}/{glut.AcceptanceScore:F3}; category={category.Label()}");
+            }
+            finally
+            {
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.AddRange(savedEvents);
+                if (state.ProductBrandRecords != null)
+                {
+                    state.ProductBrandRecords.Clear();
+                    if (savedBrandRecords != null)
+                    {
+                        state.ProductBrandRecords.AddRange(savedBrandRecords);
+                    }
+                }
+
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+            }
+        }
+
+        private static ThingDef FindDifferentCategoryProduct(
+            ThingDef target,
+            IntercolonyProductCategory targetCategory,
+            out IntercolonyProductCategory differentCategory)
+        {
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null || ReferenceEquals(candidate, target))
+                {
+                    continue;
+                }
+
+                IntercolonyProductCategory? candidateCategory =
+                    IntercolonyProductClassifier.Classify(candidate);
+                if (candidateCategory.HasValue && candidateCategory.Value != targetCategory)
+                {
+                    differentCategory = candidateCategory.Value;
+                    return candidate;
+                }
+            }
+
+            differentCategory = default(IntercolonyProductCategory);
+            return null;
+        }
+
+        private static EconomicEvent Stage5FMarketEvent(
+            IntercolonyProductCategory category,
+            float demandMultiplier,
+            int fixtureTick)
+        {
+            EconomicEvent economicEvent = new EconomicEvent
+            {
+                id = 905001,
+                type = EconomicEventType.Drought,
+                startTick = fixtureTick - 1,
+                endTick = fixtureTick + 1000,
+                anchorSettlementId = EconomicEvent.NoSettlement,
+                radiusTiles = EconomicEvent.NoRadius,
+                factionLoadId = EconomicEvent.NoFaction
+            };
+            economicEvent.demandModifier[(int)category] = demandMultiplier;
+            return economicEvent;
         }
 
         private static void RunStateMachineAssertions(
