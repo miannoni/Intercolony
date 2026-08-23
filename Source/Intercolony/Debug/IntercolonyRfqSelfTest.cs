@@ -3046,6 +3046,7 @@ namespace Intercolony
                 CheckProcurementContractCollection(check, skip);
                 CheckProcurementContractMigration(check, skip, state, saveVersionField);
                 CheckProcurementContractIds(check, skip, state, nextIdField, savedNextId);
+                CheckProcurementNegotiation(check, skip, state);
                 CheckProcurementProposalPath(check, skip, state);
             }
             finally
@@ -3558,6 +3559,778 @@ namespace Intercolony
             skip("E8 supplier price appeal increases with purchase price", reason);
         }
 
+        private static void CheckProcurementNegotiation(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            if (state == null)
+            {
+                SkipProcurementNegotiation(skip, "live world state is unavailable");
+                return;
+            }
+
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
+            List<ProcurementContract> savedContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            List<PurchaseOrder> savedOrders = new List<PurchaseOrder>(state.PurchaseOrders);
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            int savedSaveVersion = state.SaveVersion;
+            int savedNextId = state.PeekNextId();
+            ThingDef product = ThingDefOf.Steel;
+
+            try
+            {
+                state.ProcurementContracts.Clear();
+
+                if (!TryFindRealProcurementCounter(
+                        state, out ProcurementContractProposalResult realProposal,
+                        out int realSearchAttempts, out string realReason))
+                {
+                    skip(
+                        "M1 countered procurement answer is not a refusal",
+                        realReason);
+                }
+                else
+                {
+                    ProcurementContract realContract = realProposal.Contract;
+                    ProcurementContractStatus beforeStatus = realContract.status;
+                    ProcurementContractAnswer realAnswer =
+                        ProcurementContractService.AnswerProposal(state, realContract);
+                    check(
+                        "M1 countered procurement answer is not a refusal",
+                        realProposal.Evaluation != null &&
+                        realProposal.Evaluation.Decision ==
+                            IntercolonyNegotiationDecision.Countered &&
+                        realAnswer.Applied &&
+                        realAnswer.Decision == IntercolonyNegotiationDecision.Countered &&
+                        realContract.status == ProcurementContractStatus.CounterpartyCountered &&
+                        realContract.status != ProcurementContractStatus.CounterpartyRefused &&
+                        realContract.proposalDecision ==
+                            (int)IntercolonyNegotiationDecision.Countered,
+                        $"before={beforeStatus}; after={realContract.status}; " +
+                        $"answer={realAnswer.Decision}; persistedDecision=" +
+                        $"{(IntercolonyNegotiationDecision)realContract.proposalDecision}; " +
+                        $"evaluation={realProposal.Evaluation.Decision}; " +
+                        $"original={DescribeProcurementTerms(realContract, false)}; " +
+                        $"counter={DescribeProcurementTerms(realContract, true)}; " +
+                        $"searchAttempts={realSearchAttempts}; reason={realAnswer.Reason ?? "none"}");
+
+                    // M2 deliberately uses a separate save/load of the real service-produced
+                    // counter, so the persisted package is not merely a test-only record.
+                    CheckProcurementCounterSaveLoad(check, state, realContract);
+                    state.ProcurementContracts.Clear();
+                }
+
+                if (product == null)
+                {
+                    SkipProcurementNegotiationFixtures(
+                        skip, "Steel definition is unavailable for deterministic counter fixtures");
+                }
+                else
+                {
+                    if (realProposal == null)
+                    {
+                        state.ProcurementContracts.Clear();
+                        ProcurementContract handMadeCounter = HandMadeProcurementCounter(
+                            product, 6_800, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5);
+                        state.ProcurementContracts.Add(handMadeCounter);
+                        CheckProcurementCounterSaveLoad(check, state, handMadeCounter);
+                    }
+
+                    CheckProcurementCounterAcceptance(check, state, product);
+                    CheckProcurementCounterDecline(check, skip, state, product, paymentMap);
+                    CheckProcurementTransitionReplay(check, state, product);
+                    CheckProcurementPlayerActionsByStatus(check, state, product);
+                }
+
+                if (saveVersionField == null)
+                {
+                    skip(
+                        "M8 schema 55 migration does not rewrite procurement contracts",
+                        "persisted saveVersion field is not accessible");
+                }
+                else
+                {
+                    CheckProcurementSchema55Migration(
+                        check, state, product ?? ThingDefOf.Silver, saveVersionField);
+                }
+
+                state.ProcurementContracts.Clear();
+                if (!TryFindRealProcurementCounter(
+                        state, out ProcurementContractProposalResult searchedExchange,
+                        out int exchangeSearchAttempts, out string exchangeReason))
+                {
+                    skip(
+                        "M6 procurement proposal-counter-accept exchange evaluates once",
+                        exchangeReason);
+                }
+                else
+                {
+                    ProcurementContract searchedContract = searchedExchange.Contract;
+                    Settlement exchangeSettlement = searchedContract == null
+                        ? null
+                        : IntercolonyMarketAccess.FindSettlement(searchedContract.settlementId);
+                    MethodInfo evaluatorMethod = typeof(IntercolonyNegotiationEvaluator).GetMethod(
+                        "Evaluate", BindingFlags.Public | BindingFlags.Static);
+                    MethodInfo evaluatorPostfix = typeof(IntercolonyRfqSelfTest).GetMethod(
+                        nameof(CountProcurementEvaluatorInvocation),
+                        BindingFlags.NonPublic | BindingFlags.Static);
+                    if (searchedContract == null || exchangeSettlement == null ||
+                        evaluatorMethod == null || evaluatorPostfix == null)
+                    {
+                        skip(
+                            "M6 procurement proposal-counter-accept exchange evaluates once",
+                            "real counter settlement or evaluator instrumentation method was unavailable");
+                    }
+                    else
+                    {
+                        state.ProcurementContracts.Remove(searchedContract);
+                        procurementEvaluatorInvocationCount = 0;
+                        HarmonyLib.Harmony harmony = new HarmonyLib.Harmony(
+                            "miannoni.intercolony.stage6h.selftest");
+                        ProcurementContractProposalResult exchangeProposal = null;
+                        ProcurementContract exchangeContract = null;
+                        ProcurementContractAnswer counterAnswer = null;
+                        ProcurementContractAnswer acceptedAnswer = null;
+                        try
+                        {
+                            harmony.Patch(
+                                evaluatorMethod,
+                                postfix: new HarmonyLib.HarmonyMethod(evaluatorPostfix));
+                            exchangeProposal = ProcurementContractService.ProposeContract(
+                                state,
+                                exchangeSettlement,
+                                searchedContract.thingDef,
+                                searchedContract.quantityPerCycle,
+                                searchedContract.cadenceDays,
+                                searchedContract.totalCycles,
+                                searchedContract.unitPrice,
+                                searchedContract.fulfillment);
+                            exchangeContract = exchangeProposal.Contract;
+                            if (exchangeContract != null)
+                            {
+                                counterAnswer = ProcurementContractService.AnswerProposal(
+                                    state, exchangeContract);
+                                acceptedAnswer = ProcurementContractService.AcceptFinalCounter(
+                                    state, exchangeContract);
+                            }
+
+                            check(
+                                "M6 procurement proposal-counter-accept exchange evaluates once",
+                                procurementEvaluatorInvocationCount == 1 &&
+                                exchangeProposal != null &&
+                                exchangeProposal.Evaluation != null &&
+                                exchangeProposal.Evaluation.Decision ==
+                                    IntercolonyNegotiationDecision.Countered &&
+                                counterAnswer != null && counterAnswer.Applied &&
+                                counterAnswer.Decision == IntercolonyNegotiationDecision.Countered &&
+                                acceptedAnswer != null && acceptedAnswer.Applied &&
+                                acceptedAnswer.Decision == IntercolonyNegotiationDecision.Countered &&
+                                exchangeContract.status == ProcurementContractStatus.Active,
+                                $"proposalDecision={exchangeProposal.Evaluation?.Decision.ToString() ?? "none"}; " +
+                                $"counterAnswer={counterAnswer?.Decision.ToString() ?? "none"}; " +
+                                $"acceptedAnswer={acceptedAnswer?.Decision.ToString() ?? "none"}; " +
+                                $"finalState={exchangeContract?.status.ToString() ?? "none"}; " +
+                                $"exchangeEvaluatorInvocations={procurementEvaluatorInvocationCount}; " +
+                                $"searchAttempts={exchangeSearchAttempts}; " +
+                                $"reason={exchangeReason ?? "none"}");
+                        }
+                        finally
+                        {
+                            harmony.Unpatch(
+                                evaluatorMethod,
+                                HarmonyLib.HarmonyPatchType.Postfix,
+                                harmony.Id);
+                            procurementEvaluatorInvocationCount = 0;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedContracts);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedOrders);
+                RestoreStoredSilver(paymentMap, savedSilver);
+                if (saveVersionField != null)
+                {
+                    saveVersionField.SetValue(state, savedSaveVersion);
+                }
+
+                if (nextIdField != null)
+                {
+                    nextIdField.SetValue(state, savedNextId);
+                }
+            }
+        }
+
+        private static void SkipProcurementNegotiation(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("M1 countered procurement answer is not a refusal", reason);
+            skip("M2a counter quantity survives save/load", reason);
+            skip("M2b counter unit price survives save/load", reason);
+            skip("M2c counter cadence survives save/load", reason);
+            skip("M2d counter total cycles survives save/load", reason);
+            skip("M3 accepted procurement counter binds persisted terms", reason);
+            skip("M4 declining a procurement counter is terminal and non-destructive", reason);
+            skip("M5 procurement negotiation transitions apply exactly once", reason);
+            skip("M6 procurement proposal-counter-accept exchange evaluates once", reason);
+            skip("M7 player actions are refused outside the countered state", reason);
+            skip("M8 schema 55 migration does not rewrite procurement contracts", reason);
+        }
+
+        private static void SkipProcurementNegotiationFixtures(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("M2a counter quantity survives save/load", reason);
+            skip("M2b counter unit price survives save/load", reason);
+            skip("M2c counter cadence survives save/load", reason);
+            skip("M2d counter total cycles survives save/load", reason);
+            skip("M3 accepted procurement counter binds persisted terms", reason);
+            skip("M4 declining a procurement counter is terminal and non-destructive", reason);
+            skip("M5 procurement negotiation transitions apply exactly once", reason);
+            skip("M7 player actions are refused outside the countered state", reason);
+        }
+
+        private static bool TryFindRealProcurementCounter(
+            IntercolonyWorldComponent state,
+            out ProcurementContractProposalResult found,
+            out int proposalsTried,
+            out string reason)
+        {
+            found = null;
+            proposalsTried = 0;
+            reason = null;
+            if (state == null)
+            {
+                reason = "live world state is unavailable";
+                return false;
+            }
+
+            if (!TryFindProcurementProposalFixture(
+                    state, out Settlement settlement, out ThingDef product,
+                    out _, out _, out string fixtureReason))
+            {
+                reason = fixtureReason;
+                return false;
+            }
+
+            float[] priceMultipliers =
+            {
+                0.50f, 0.55f, 0.60f, 0.65f, 0.70f, 0.75f, 0.80f, 0.85f,
+                0.90f, 0.95f, 1.00f, 1.05f, 1.10f, 1.20f, 1.30f, 1.50f
+            };
+            int[] quantities = { 8, 10, 12, 15, 20 };
+            int[] cadences = { 1, 2, 4, 7 };
+            FulfillmentMode[] fulfillmentModes =
+            {
+                FulfillmentMode.SellerDelivery,
+                FulfillmentMode.BuyerPickup
+            };
+            IntercolonyNegotiationDecision? lastDecision = null;
+
+            foreach (int quantity in quantities)
+            {
+                foreach (int cadence in cadences)
+                {
+                    foreach (FulfillmentMode fulfillment in fulfillmentModes)
+                    {
+                        ProcurementContractProposalResult baseline =
+                            ProcurementContractService.ProposeContract(
+                                state, settlement, product, quantity, cadence, 2,
+                                null, fulfillment);
+                        if (baseline.Contract == null)
+                        {
+                            continue;
+                        }
+
+                        float referencePrice = baseline.Contract.unitPrice;
+                        lastDecision = baseline.Evaluation?.Decision;
+                        if (baseline.Evaluation?.Decision ==
+                            IntercolonyNegotiationDecision.Countered)
+                        {
+                            return KeepRealCounter(state, baseline, ref found);
+                        }
+
+                        state.ProcurementContracts.Remove(baseline.Contract);
+                        foreach (float multiplier in priceMultipliers)
+                        {
+                            proposalsTried++;
+                            ProcurementContractProposalResult candidate =
+                                ProcurementContractService.ProposeContract(
+                                    state, settlement, product, quantity, cadence, 2,
+                                    referencePrice * multiplier, fulfillment);
+                            lastDecision = candidate.Evaluation?.Decision;
+                            if (candidate.Contract != null &&
+                                candidate.Evaluation?.Decision ==
+                                    IntercolonyNegotiationDecision.Countered)
+                            {
+                                return KeepRealCounter(state, candidate, ref found);
+                            }
+
+                            if (candidate.Contract != null)
+                            {
+                                state.ProcurementContracts.Remove(candidate.Contract);
+                            }
+                        }
+                    }
+                }
+            }
+
+            reason = $"no Countered result after {proposalsTried} price proposal(s); " +
+                     $"lastDecision={lastDecision?.ToString() ?? "none"}; " +
+                     $"settlement={settlement.ID}; product={product.defName}";
+            return false;
+        }
+
+        private static bool KeepRealCounter(
+            IntercolonyWorldComponent state,
+            ProcurementContractProposalResult candidate,
+            ref ProcurementContractProposalResult found)
+        {
+            found = candidate;
+            return true;
+        }
+
+        private static void CheckProcurementCounterSaveLoad(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            ProcurementContract source)
+        {
+            ProcurementContractCounterTerms expected = null;
+            bool hasExpected = source != null &&
+                               source.TryGetFinalCounterTerms(
+                                   out expected);
+            List<ProcurementContract> savedList = hasExpected
+                ? new List<ProcurementContract> { source }
+                : new List<ProcurementContract>();
+            List<ProcurementContract> loadedList = null;
+            ProcurementContract loaded = null;
+            ProcurementContractCounterTerms actual = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProcurementCounter-M2-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "procurementCounterTermsTest");
+                Scribe_Collections.Look(ref savedList, "procurementContracts", LookMode.Deep);
+                Scribe.saver.FinalizeSaving();
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Collections.Look(ref loadedList, "procurementContracts", LookMode.Deep);
+                Scribe.loader.FinalizeLoading();
+                loaded = loadedList != null && loadedList.Count == 1 ? loadedList[0] : null;
+                if (loaded != null)
+                {
+                    loaded.TryGetFinalCounterTerms(out actual);
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            check(
+                "M2a counter quantity survives save/load",
+                failure == null && hasExpected && loaded != null && actual != null &&
+                loaded.status == ProcurementContractStatus.CounterpartyCountered &&
+                actual.quantityPerCycle == expected.quantityPerCycle,
+                $"state={source?.status.ToString() ?? "null"}->{loaded?.status.ToString() ?? "null"}; " +
+                $"quantity={expected?.quantityPerCycle.ToString() ?? "none"}->" +
+                $"{actual?.quantityPerCycle.ToString() ?? "none"}; " +
+                $"counter={DescribeCounterTerms(expected)}; loaded={DescribeCounterTerms(actual)}; " +
+                $"failure={failure ?? "none"}");
+            check(
+                "M2b counter unit price survives save/load",
+                failure == null && hasExpected && loaded != null && actual != null &&
+                actual.unitPrice == expected.unitPrice,
+                $"unitPrice={expected?.unitPrice.ToString("F4") ?? "none"}->" +
+                $"{actual?.unitPrice.ToString("F4") ?? "none"}; " +
+                $"counter={DescribeCounterTerms(expected)}; loaded={DescribeCounterTerms(actual)}; " +
+                $"failure={failure ?? "none"}");
+            check(
+                "M2c counter cadence survives save/load",
+                failure == null && hasExpected && loaded != null && actual != null &&
+                actual.cadenceDays == expected.cadenceDays,
+                $"cadenceDays={expected?.cadenceDays.ToString() ?? "none"}->" +
+                $"{actual?.cadenceDays.ToString() ?? "none"}; " +
+                $"counter={DescribeCounterTerms(expected)}; loaded={DescribeCounterTerms(actual)}; " +
+                $"failure={failure ?? "none"}");
+            check(
+                "M2d counter total cycles survives save/load",
+                failure == null && hasExpected && loaded != null && actual != null &&
+                actual.totalCycles == expected.totalCycles,
+                $"totalCycles={expected?.totalCycles.ToString() ?? "none"}->" +
+                $"{actual?.totalCycles.ToString() ?? "none"}; " +
+                $"counter={DescribeCounterTerms(expected)}; loaded={DescribeCounterTerms(actual)}; " +
+                $"failure={failure ?? "none"}");
+        }
+
+        private static void CheckProcurementCounterAcceptance(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            ThingDef product)
+        {
+            state.ProcurementContracts.Clear();
+            ProcurementContract contract = HandMadeProcurementCounter(
+                product, 6_801, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5);
+            state.ProcurementContracts.Add(contract);
+            contract.TryGetFinalCounterTerms(out ProcurementContractCounterTerms expected);
+            ProcurementContractAnswer answer =
+                ProcurementContractService.AcceptFinalCounter(state, contract);
+            check(
+                "M3 accepted procurement counter binds persisted terms",
+                answer.Applied && answer.Decision == IntercolonyNegotiationDecision.Countered &&
+                contract.status == ProcurementContractStatus.Active && expected != null &&
+                contract.quantityPerCycle == expected.quantityPerCycle &&
+                contract.unitPrice == expected.unitPrice &&
+                contract.cadenceDays == expected.cadenceDays &&
+                contract.totalCycles == expected.totalCycles,
+                $"before={ProcurementContractStatus.CounterpartyCountered}; " +
+                $"after={contract.status}; answer={answer.Decision}; " +
+                $"original=7x/1.25/{3}d/x1; persisted={DescribeCounterTerms(expected)}; " +
+                $"active={DescribeProcurementTerms(contract, false)}; " +
+                $"orderCount={state.PurchaseOrders.Count}");
+            state.ProcurementContracts.Clear();
+        }
+
+        private static void CheckProcurementCounterDecline(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            ThingDef product,
+            Map paymentMap)
+        {
+            if (paymentMap == null)
+            {
+                skip("M4 declining a procurement counter is terminal and non-destructive",
+                    "no player map is available to count silver");
+                return;
+            }
+
+            state.ProcurementContracts.Clear();
+            state.PurchaseOrders.Clear();
+            ProcurementContract contract = HandMadeProcurementCounter(
+                product, 6_802, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5);
+            state.ProcurementContracts.Add(contract);
+            int ordersBefore = state.PurchaseOrders.Count;
+            int silverBefore = PurchaseOrderService.CountColonySilver(paymentMap);
+            string originalTerms = DescribeProcurementTerms(contract, false);
+            bool declined = ProcurementContractService.TryDeclineFinalCounter(state, contract);
+            ProcurementContractStatus statusAfterDecline = contract.status;
+            int ordersAfterDecline = state.PurchaseOrders.Count;
+            int silverAfterDecline = PurchaseOrderService.CountColonySilver(paymentMap);
+            bool acceptedAfterDecline =
+                ProcurementContractService.AcceptFinalCounter(state, contract).Applied;
+            bool declinedAgain = ProcurementContractService.TryDeclineFinalCounter(state, contract);
+            check(
+                "M4 declining a procurement counter is terminal and non-destructive",
+                declined && !acceptedAfterDecline && !declinedAgain &&
+                statusAfterDecline == ProcurementContractStatus.Cancelled &&
+                contract.status != ProcurementContractStatus.Active &&
+                ordersAfterDecline == ordersBefore && silverAfterDecline == silverBefore &&
+                DescribeProcurementTerms(contract, false) == originalTerms,
+                $"before={ProcurementContractStatus.CounterpartyCountered}; " +
+                $"after={statusAfterDecline}; acceptedAfterDecline={acceptedAfterDecline}; " +
+                $"declinedAgain={declinedAgain}; orders={ordersBefore}->{ordersAfterDecline}; " +
+                $"silver={silverBefore}->{silverAfterDecline}; " +
+                $"originalTerms={originalTerms}; finalTerms={DescribeProcurementTerms(contract, false)}");
+            state.ProcurementContracts.Clear();
+            state.PurchaseOrders.Clear();
+        }
+
+        private static void CheckProcurementTransitionReplay(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            ThingDef product)
+        {
+            state.ProcurementContracts.Clear();
+            ProcurementContract answerContract = HandMadeProcurementCounter(
+                product, 6_803, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5,
+                ProcurementContractStatus.Offered);
+            answerContract.decisionDueTick = GenTicks.TicksGame;
+            answerContract.proposalAppeal = 0.25f;
+            state.ProcurementContracts.Add(answerContract);
+            ProcurementContractStatus answerInitialStatus = answerContract.status;
+            ProcurementContractAnswer firstAnswer =
+                ProcurementContractService.AnswerProposal(state, answerContract);
+            ProcurementContractStatus answerStatus = answerContract.status;
+            string answerNote = answerContract.outcomeNote;
+            ProcurementContractAnswer secondAnswer =
+                ProcurementContractService.AnswerProposal(state, answerContract);
+
+            ProcurementContract acceptContract = HandMadeProcurementCounter(
+                product, 6_804, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5);
+            state.ProcurementContracts.Clear();
+            state.ProcurementContracts.Add(acceptContract);
+            ProcurementContractStatus acceptInitialStatus = acceptContract.status;
+            ProcurementContractAnswer firstAccept =
+                ProcurementContractService.AcceptFinalCounter(state, acceptContract);
+            ProcurementContractStatus acceptStatus = acceptContract.status;
+            string acceptTerms = DescribeProcurementTerms(acceptContract, false);
+            ProcurementContractAnswer secondAccept =
+                ProcurementContractService.AcceptFinalCounter(state, acceptContract);
+
+            ProcurementContract declineContract = HandMadeProcurementCounter(
+                product, 6_805, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5);
+            state.ProcurementContracts.Clear();
+            state.ProcurementContracts.Add(declineContract);
+            ProcurementContractStatus declineInitialStatus = declineContract.status;
+            bool firstDecline = ProcurementContractService.TryDeclineFinalCounter(
+                state, declineContract);
+            ProcurementContractStatus declineStatus = declineContract.status;
+            string declineNote = declineContract.outcomeNote;
+            bool secondDecline = ProcurementContractService.TryDeclineFinalCounter(
+                state, declineContract);
+
+            check(
+                "M5 procurement negotiation transitions apply exactly once",
+                firstAnswer.Applied && answerStatus != answerInitialStatus &&
+                !secondAnswer.Applied && answerContract.status == answerStatus &&
+                answerContract.outcomeNote == answerNote && firstAccept.Applied &&
+                acceptStatus != acceptInitialStatus && !secondAccept.Applied &&
+                acceptContract.status == acceptStatus &&
+                DescribeProcurementTerms(acceptContract, false) == acceptTerms &&
+                firstDecline && declineStatus != declineInitialStatus && !secondDecline &&
+                declineContract.status == declineStatus &&
+                declineContract.outcomeNote == declineNote,
+                $"answer={firstAnswer.Applied}/{secondAnswer.Applied}; " +
+                $"answerStates={answerInitialStatus}->{answerStatus}->{answerContract.status}; " +
+                $"accept={firstAccept.Applied}/{secondAccept.Applied}; " +
+                $"acceptStates={acceptInitialStatus}->{acceptStatus}->{acceptContract.status}; " +
+                $"acceptTerms={acceptTerms}/{DescribeProcurementTerms(acceptContract, false)}; " +
+                $"decline={firstDecline}/{secondDecline}; " +
+                $"declineStates={declineInitialStatus}->{declineStatus}->" +
+                $"{declineContract.status}");
+            state.ProcurementContracts.Clear();
+        }
+
+        private static void CheckProcurementPlayerActionsByStatus(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            ThingDef product)
+        {
+            state.ProcurementContracts.Clear();
+            List<string> details = new List<string>();
+            bool allStatesPass = true;
+            int id = 6_820;
+            foreach (ProcurementContractStatus requestedStatus in
+                     Enum.GetValues(typeof(ProcurementContractStatus)))
+            {
+                ProcurementContract acceptFixture = HandMadeProcurementCounter(
+                    product, id++, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5, requestedStatus);
+                ProcurementContract declineFixture = HandMadeProcurementCounter(
+                    product, id++, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5, requestedStatus);
+                state.ProcurementContracts.Add(acceptFixture);
+                ProcurementContractAnswer acceptAnswer =
+                    ProcurementContractService.AcceptFinalCounter(state, acceptFixture);
+                state.ProcurementContracts.Remove(acceptFixture);
+                state.ProcurementContracts.Add(declineFixture);
+                bool declineApplied = ProcurementContractService.TryDeclineFinalCounter(
+                    state, declineFixture);
+                state.ProcurementContracts.Remove(declineFixture);
+                bool expectedPlayerResponse =
+                    requestedStatus == ProcurementContractStatus.CounterpartyCountered;
+                bool statePass = expectedPlayerResponse
+                    ? acceptAnswer.Applied && declineApplied
+                    : !acceptAnswer.Applied && !declineApplied;
+                allStatesPass &= statePass;
+                details.Add(
+                    $"{requestedStatus}: accept={acceptAnswer.Applied}; " +
+                    $"decline={declineApplied}; expectedResponse={expectedPlayerResponse}; " +
+                    $"acceptState={acceptFixture.status}; declineState={declineFixture.status}");
+            }
+
+            check(
+                "M7 player actions are refused outside the countered state",
+                allStatesPass,
+                $"statuses enumerated from {typeof(ProcurementContractStatus).Name}: " +
+                string.Join(" | ", details.ToArray()));
+            state.ProcurementContracts.Clear();
+        }
+
+        private static void CheckProcurementSchema55Migration(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            ThingDef product,
+            FieldInfo saveVersionField)
+        {
+            List<ProcurementContract> savedContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            int savedSaveVersion = state.SaveVersion;
+            string failure = null;
+            int beforeCount = -1;
+            int afterCount = -1;
+            List<ProcurementContractStatus> beforeStates =
+                new List<ProcurementContractStatus>();
+            List<ProcurementContractStatus> afterStates =
+                new List<ProcurementContractStatus>();
+            int migratedVersion = -1;
+
+            try
+            {
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.Add(
+                    HandMadeProcurementCounter(
+                        product, 6_850, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5,
+                        ProcurementContractStatus.Offered));
+                state.ProcurementContracts.Add(
+                    HandMadeProcurementCounter(
+                        product, 6_851, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5,
+                        ProcurementContractStatus.Active));
+                state.ProcurementContracts.Add(
+                    HandMadeProcurementCounter(
+                        product, 6_852, 7, 1.25f, 3, 1, 13, 4.75f, 17, 5,
+                        ProcurementContractStatus.Cancelled));
+                beforeCount = state.ProcurementContracts.Count;
+                foreach (ProcurementContract contract in state.ProcurementContracts)
+                {
+                    beforeStates.Add(contract.status);
+                }
+
+                saveVersionField.SetValue(state, 54);
+                state.MigrateIfNeeded();
+                migratedVersion = state.SaveVersion;
+                afterCount = state.ProcurementContracts.Count;
+                foreach (ProcurementContract contract in state.ProcurementContracts)
+                {
+                    afterStates.Add(contract.status);
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedContracts);
+                saveVersionField.SetValue(state, savedSaveVersion);
+            }
+
+            bool statesUnchanged = beforeStates.Count == afterStates.Count;
+            for (int i = 0; i < beforeStates.Count && i < afterStates.Count; i++)
+            {
+                statesUnchanged &= beforeStates[i] == afterStates[i];
+            }
+
+            check(
+                "M8 schema 55 migration does not rewrite procurement contracts",
+                failure == null && beforeCount == afterCount && statesUnchanged,
+                $"saveVersion=54->{migratedVersion}; restored={state.SaveVersion}; " +
+                $"count={beforeCount}->{afterCount}; " +
+                $"states={string.Join(",", beforeStates)}->{string.Join(",", afterStates)}; " +
+                $"failure={failure ?? "none"}");
+        }
+
+        private static ProcurementContract HandMadeProcurementCounter(
+            ThingDef product,
+            int id,
+            int originalQuantity,
+            float originalUnitPrice,
+            int originalCadence,
+            int originalTotalCycles,
+            int counterQuantity,
+            float counterUnitPrice,
+            int counterCadence,
+            int counterTotalCycles,
+            ProcurementContractStatus status = ProcurementContractStatus.CounterpartyCountered)
+        {
+            ProcurementContract contract = new ProcurementContract
+            {
+                id = id,
+                settlementId = id,
+                settlementName = "Stage 6H counter fixture",
+                thingDef = product,
+                quantityPerCycle = originalQuantity,
+                unitPrice = originalUnitPrice,
+                cadenceDays = originalCadence,
+                totalCycles = originalTotalCycles,
+                fulfillment = FulfillmentMode.SellerDelivery,
+                status = status,
+                proposalAppeal = 0.25f,
+                proposalDecision = (int)IntercolonyNegotiationDecision.Countered,
+                decisionDueTick = GenTicks.TicksGame,
+                nextCycleTick = 0,
+                activeOrderId = ProcurementContract.NoActiveOrderId
+            };
+            SetPrivateCounterValue(contract, "finalCounterQuantityPerCycle", counterQuantity);
+            SetPrivateCounterValue(contract, "finalCounterUnitPrice", counterUnitPrice);
+            SetPrivateCounterValue(contract, "finalCounterCadenceDays", counterCadence);
+            SetPrivateCounterValue(contract, "finalCounterTotalCycles", counterTotalCycles);
+            SetPrivateCounterValue(
+                contract, "finalCounterFulfillment", FulfillmentMode.BuyerPickup);
+            return contract;
+        }
+
+        private static int procurementEvaluatorInvocationCount;
+
+        private static void CountProcurementEvaluatorInvocation()
+        {
+            procurementEvaluatorInvocationCount++;
+        }
+
+        private static void SetPrivateCounterValue<T>(
+            ProcurementContract contract,
+            string fieldName,
+            T value)
+        {
+            FieldInfo field = typeof(ProcurementContract).GetField(
+                fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field == null)
+            {
+                throw new InvalidOperationException(
+                    $"Procurement counter fixture field '{fieldName}' is unavailable.");
+            }
+
+            field.SetValue(contract, value);
+        }
+
+        private static string DescribeCounterTerms(ProcurementContractCounterTerms terms)
+        {
+            return terms == null
+                ? "none"
+                : $"{terms.quantityPerCycle}x/{terms.unitPrice:F4}/" +
+                  $"{terms.cadenceDays}d/x{terms.totalCycles}/{terms.fulfillment}";
+        }
+
+        private static string DescribeProcurementTerms(
+            ProcurementContract contract,
+            bool counter)
+        {
+            if (contract == null)
+            {
+                return "none";
+            }
+
+            if (counter && contract.TryGetFinalCounterTerms(
+                    out ProcurementContractCounterTerms counterTerms))
+            {
+                return DescribeCounterTerms(counterTerms);
+            }
+
+            return $"{contract.quantityPerCycle}x/{contract.unitPrice:F4}/" +
+                   $"{contract.cadenceDays}d/x{contract.totalCycles}/{contract.fulfillment}";
+        }
+
         private static bool TryFindProcurementProposalFixture(
             IntercolonyWorldComponent state,
             out Settlement settlement,
@@ -3791,10 +4564,22 @@ namespace Intercolony
 
             IntercolonyNegotiationDecision decision =
                 (IntercolonyNegotiationDecision)capturedDecision;
-            ProcurementContractStatus expectedStatus =
-                decision == IntercolonyNegotiationDecision.Accepted
-                    ? ProcurementContractStatus.Active
-                    : ProcurementContractStatus.Cancelled;
+            ProcurementContractStatus expectedStatus;
+            switch (decision)
+            {
+                case IntercolonyNegotiationDecision.Accepted:
+                    expectedStatus = ProcurementContractStatus.Active;
+                    break;
+                case IntercolonyNegotiationDecision.Refused:
+                    expectedStatus = ProcurementContractStatus.CounterpartyRefused;
+                    break;
+                case IntercolonyNegotiationDecision.Countered:
+                    expectedStatus = ProcurementContractStatus.CounterpartyCountered;
+                    break;
+                default:
+                    throw new InvalidOperationException(
+                        $"Unhandled procurement proposal decision: {decision}");
+            }
             check(
                 "E3 persisted procurement decision survives save/load",
                 failure == null && result.Success && original != null &&
@@ -4200,7 +4985,7 @@ namespace Intercolony
             skip("J5 suspended procurement agreement runs no cycles", reason);
             skip("J6 resumption shifts the outage and cycles resume", reason);
             skip("J7 repeated supplier defaults keep the agreement active", reason);
-            skip("J8 schema 54 migration preserves procurement agreements", reason);
+            skip("J8 older-save migration preserves procurement agreements", reason);
         }
 
         private static void CheckProcurementContractCycles(
@@ -4876,12 +5661,11 @@ namespace Intercolony
 
                 if (saveVersionField == null)
                 {
-                    skip("J8 schema 54 migration preserves procurement agreements",
+                    skip("J8 older-save migration preserves procurement agreements",
                         "persisted saveVersion field is not accessible");
                 }
                 else
                 {
-                    const int ExpectedSchemaAfterMigration = 54;
                     int j8ContractCountBefore = state.ProcurementContracts.Count;
                     ProcurementContractStatus j8StatusBefore = acceptedContract.status;
                     int j8CompletedBefore = acceptedContract.cyclesCompleted;
@@ -4905,13 +5689,13 @@ namespace Intercolony
                     }
 
                     check(
-                        "J8 schema 54 migration preserves procurement agreements",
+                        "J8 older-save migration preserves procurement agreements",
                         j8Failure == null && j8ContractCountBefore == state.ProcurementContracts.Count &&
                         acceptedContract.status == j8StatusBefore &&
                         acceptedContract.status != ProcurementContractStatus.Suspended &&
                         acceptedContract.cyclesCompleted == j8CompletedBefore &&
                         acceptedContract.cyclesFailed == j8FailedBefore &&
-                        j8SaveVersionAfter == ExpectedSchemaAfterMigration &&
+                        j8SaveVersionAfter == IntercolonyWorldComponent.CurrentSaveVersion &&
                         state.SaveVersion == j8SaveVersionBefore,
                         $"saveVersion 53->{j8SaveVersionAfter}, restored={state.SaveVersion}; " +
                         $"contracts {j8ContractCountBefore}->{state.ProcurementContracts.Count}; " +

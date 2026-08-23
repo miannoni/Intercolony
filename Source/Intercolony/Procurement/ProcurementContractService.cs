@@ -349,6 +349,19 @@ namespace Intercolony
                 proposalDecision = (int)evaluation.Decision
             };
 
+            // The evaluator answers once at proposal time. A counter's exact package is copied
+            // into durable fields now, before the delayed answer transition, so resolution never
+            // needs to ask the evaluator for a different answer.
+            if (evaluation.Decision == IntercolonyNegotiationDecision.Countered &&
+                (!evaluation.HasFinalCounter ||
+                 !contract.TryRecordFinalCounterTerms(
+                     evaluation.FinalCounterTerms, totalCycles)))
+            {
+                return ProcurementContractProposalResult.Refused(
+                    ProcurementContractProposalFailure.InvalidState,
+                    "The supplier returned an invalid final counter package.");
+            }
+
             state.AddProcurementContract(contract);
             IntercolonyLog.Message(
                 $"Procurement proposal {contract.id} sent to {contract.settlementName}: " +
@@ -379,45 +392,174 @@ namespace Intercolony
 
             IntercolonyNegotiationDecision decision =
                 (IntercolonyNegotiationDecision)contract.proposalDecision;
-            string reason = decision == IntercolonyNegotiationDecision.Countered
-                ? "The supplier returned a counterproposal; no agreement was formed."
-                : "The supplier declined the proposed procurement terms.";
 
             if (decision == IntercolonyNegotiationDecision.Accepted)
             {
-                contract.status = ProcurementContractStatus.Active;
-                contract.nextCycleTick = GenTicks.TicksGame +
-                    contract.cadenceDays * GenDate.TicksPerDay;
-                contract.outcomeNote = "Supplier accepted; first procurement cycle scheduled.";
-                ClearPendingAnswer(contract);
-
-                IntercolonyLetters.Send(
-                    IntercolonyLetterImportance.Always,
-                    "Procurement agreement accepted",
-                    $"{contract.settlementName} accepted your standing procurement agreement.\n\n" +
-                    $"They will provide {contract.quantityPerCycle}x {contract.thingDef.label} " +
-                    $"every {contract.cadenceDays} days for {contract.totalCycles} cycles at " +
-                    $"{contract.unitPrice:F2} silver per unit.\n\n" +
-                    $"The first cycle is scheduled in {contract.cadenceDays} days. No order or " +
-                    "silver has been created yet; each cycle settles separately.",
-                    LetterDefOf.PositiveEvent);
-                IntercolonyLog.Message($"Supplier accepted procurement proposal {contract.id}.");
-                return ProcurementContractAnswer.AppliedAnswer(contract, decision, null);
+                ProcurementContractCounterTerms acceptedTerms = new ProcurementContractCounterTerms(
+                    contract.quantityPerCycle,
+                    contract.unitPrice,
+                    contract.cadenceDays,
+                    contract.totalCycles,
+                    contract.fulfillment);
+                return ApplyAcceptedTerms(
+                    state, contract, acceptedTerms, acceptingFinalCounter: false);
             }
 
-            contract.status = ProcurementContractStatus.Cancelled;
-            contract.outcomeNote = reason;
+            if (decision == IntercolonyNegotiationDecision.Countered)
+            {
+                if (!contract.TryRecordCounterpartyCounter() ||
+                    !contract.TryGetFinalCounterTerms(
+                        out ProcurementContractCounterTerms counterTerms))
+                {
+                    return ProcurementContractAnswer.NotApplied(
+                        contract, "The supplier's final counter terms were not persisted.");
+                }
+
+                const string reason =
+                    "The supplier returned one final counterproposal; accept or decline it. " +
+                    "No further counter is available.";
+                contract.outcomeNote = reason;
+                ClearPendingAnswer(contract);
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Important,
+                    "Procurement agreement countered",
+                    $"{contract.settlementName} returned a final counterproposal for your " +
+                    $"standing procurement agreement for {contract.thingDef.label}.\n\n" +
+                    $"They offer {counterTerms.quantityPerCycle}x {contract.thingDef.label} " +
+                    $"every {counterTerms.cadenceDays} days for {counterTerms.totalCycles} cycles " +
+                    $"at {counterTerms.unitPrice:F2} silver per unit " +
+                    $"({counterTerms.paymentPerCycle} silver per cycle).\n\n" +
+                    "You may accept these exact terms or decline them; no second counter is allowed.",
+                    LetterDefOf.NeutralEvent);
+                IntercolonyLog.Message(
+                    $"Supplier returned final counter for procurement proposal {contract.id}.");
+                return ProcurementContractAnswer.AppliedAnswer(contract, decision, reason);
+            }
+
+            if (decision != IntercolonyNegotiationDecision.Refused ||
+                !contract.TryRecordCounterpartyRefusal())
+            {
+                return ProcurementContractAnswer.NotApplied(
+                    contract, "The stored supplier decision could not enter the contract state.");
+            }
+
+            const string refusalReason = "The supplier declined the proposed procurement terms.";
+            contract.outcomeNote = refusalReason;
             ClearPendingAnswer(contract);
             IntercolonyLetters.Send(
                 IntercolonyLetterImportance.Important,
-                decision == IntercolonyNegotiationDecision.Countered
-                    ? "Procurement agreement countered"
-                    : "Procurement agreement declined",
-                $"{contract.settlementName} did not accept your proposed standing procurement " +
-                $"agreement for {contract.thingDef.label}.\n\n{reason}",
+                "Procurement agreement declined",
+                $"{contract.settlementName} declined your proposed standing procurement " +
+                $"agreement for {contract.thingDef.label}.\n\n{refusalReason}",
                 LetterDefOf.NeutralEvent);
             IntercolonyLog.Message($"Supplier declined procurement proposal {contract.id}.");
-            return ProcurementContractAnswer.AppliedAnswer(contract, decision, reason);
+            return ProcurementContractAnswer.AppliedAnswer(contract, decision, refusalReason);
+        }
+
+        /// <summary>
+        /// Accepts the exact final counter already persisted on the contract. It enters the same
+        /// activation path as an ordinary accepted proposal and never evaluates a second time.
+        /// </summary>
+        public static ProcurementContractAnswer AcceptFinalCounter(
+            IntercolonyWorldComponent state, ProcurementContract contract)
+        {
+            if (state == null || contract == null ||
+                !contract.TryGetFinalCounterTerms(
+                    out ProcurementContractCounterTerms finalCounterTerms))
+            {
+                return ProcurementContractAnswer.NotApplied(
+                    contract, "No pending final procurement counter is available.");
+            }
+
+            return ApplyAcceptedTerms(
+                state, contract, finalCounterTerms, acceptingFinalCounter: true);
+        }
+
+        /// <summary>Boolean convenience wrapper for callers that only need the transition result.</summary>
+        public static bool TryAcceptFinalCounter(
+            IntercolonyWorldComponent state, ProcurementContract contract)
+        {
+            return AcceptFinalCounter(state, contract).Applied;
+        }
+
+        /// <summary>
+        /// Declines the pending final counter once. The original proposal terms remain untouched,
+        /// no payment or cycle is created, and the cancelled record cannot be reopened.
+        /// </summary>
+        public static bool TryDeclineFinalCounter(
+            IntercolonyWorldComponent state, ProcurementContract contract)
+        {
+            if (state == null || contract == null || !contract.TryDeclineFinalCounter())
+            {
+                return false;
+            }
+
+            contract.outcomeNote =
+                "The player declined the supplier's final counter; no agreement was formed.";
+            ClearPendingAnswer(contract);
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
+                "Procurement counter declined",
+                $"You declined {contract.settlementName}'s final counter for " +
+                $"{contract.thingDef.label}. No agreement was formed and no silver was paid.",
+                LetterDefOf.NeutralEvent);
+            IntercolonyLog.Message(
+                $"Player declined final counter for procurement proposal {contract.id}.");
+            return true;
+        }
+
+        /// <summary>Stage 5-shaped alias for declining a pending procurement final counter.</summary>
+        public static bool TryDecline(
+            IntercolonyWorldComponent state, ProcurementContract contract)
+        {
+            return TryDeclineFinalCounter(state, contract);
+        }
+
+        private static ProcurementContractAnswer ApplyAcceptedTerms(
+            IntercolonyWorldComponent state,
+            ProcurementContract contract,
+            ProcurementContractCounterTerms acceptedTerms,
+            bool acceptingFinalCounter)
+        {
+            if (state == null || contract == null ||
+                !contract.TryActivateAcceptedTerms(acceptedTerms, acceptingFinalCounter))
+            {
+                return ProcurementContractAnswer.NotApplied(
+                    contract,
+                    acceptingFinalCounter
+                        ? "The final procurement counter is no longer available."
+                        : "The procurement proposal is no longer pending.");
+            }
+
+            contract.outcomeNote = acceptingFinalCounter
+                ? "Player accepted the supplier's final counter; first procurement cycle scheduled."
+                : "Supplier accepted; first procurement cycle scheduled.";
+            ClearPendingAnswer(contract);
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
+                acceptingFinalCounter
+                    ? "Procurement counter accepted"
+                    : "Procurement agreement accepted",
+                $"{contract.settlementName} accepted the standing procurement agreement for " +
+                $"{contract.thingDef.label}.\n\n" +
+                $"They will provide {contract.quantityPerCycle}x {contract.thingDef.label} " +
+                $"every {contract.cadenceDays} days for {contract.totalCycles} cycles at " +
+                $"{contract.unitPrice:F2} silver per unit " +
+                $"({IntercolonyPricing.TotalPayment(contract.unitPrice, contract.quantityPerCycle)} " +
+                "silver per cycle).\n\n" +
+                $"The first cycle is scheduled in {contract.cadenceDays} days. No order or " +
+                "silver has been created yet; each cycle settles separately.",
+                LetterDefOf.PositiveEvent);
+            IntercolonyLog.Message(
+                acceptingFinalCounter
+                    ? $"Player accepted final counter for procurement proposal {contract.id}."
+                    : $"Supplier accepted procurement proposal {contract.id}.");
+            return ProcurementContractAnswer.AppliedAnswer(
+                contract,
+                acceptingFinalCounter
+                    ? IntercolonyNegotiationDecision.Countered
+                    : IntercolonyNegotiationDecision.Accepted,
+                null);
         }
 
         /// <summary>Answers every due procurement proposal on the same coarse tick used by sales.</summary>

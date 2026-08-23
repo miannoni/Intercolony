@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 54;
+        public const int CurrentSaveVersion = 55;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -548,6 +548,7 @@ namespace Intercolony
                 if (contract != null && contract.settlementId == settlementId &&
                     contract.thingDef == thingDef &&
                     (contract.status == ProcurementContractStatus.Offered ||
+                     contract.status == ProcurementContractStatus.CounterpartyCountered ||
                      contract.status == ProcurementContractStatus.Active ||
                      contract.status == ProcurementContractStatus.Suspended))
                 {
@@ -2507,6 +2508,17 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     "  schema 53 -> 54: procurement suspension fields added; " +
                     "existing agreements remain unsuspended.");
+            }
+
+            if (saveVersion < 55)
+            {
+                // 54 -> 55 added persisted procurement final-counter terms and two additive
+                // negotiation states. Existing contracts are in none of those states; missing
+                // counter fields therefore retain their safe zero/default values and require no
+                // backfill or status rewrite.
+                IntercolonyLog.Message(
+                    "  schema 54 -> 55: procurement final-counter terms and bounded negotiation " +
+                    "states added; existing contracts require no migration.");
             }
 
             saveVersion = CurrentSaveVersion;
