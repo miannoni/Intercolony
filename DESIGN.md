@@ -584,6 +584,8 @@ Settlement-level data can provide:
 
 # 9. Settlement economic profiles
 
+> **1.0 supersession annotation:** The 1.0 program supersedes this profile sketch as the authority for live settlement economics. Stable settlement identity remains, but the implemented model also carries persistent market pressure, regional diffusion, and circumstance-driven events. Use `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md` and `docs/1_0_IMPLEMENTATION_STATUS.md` for the 1.0 behavior.
+
 A settlement does not need a simulated company ledger.
 
 A lightweight profile is sufficient.
@@ -758,6 +760,8 @@ Possible value factors:
 
 # 11. Demand generation
 
+> **1.0 supersession annotation:** The 1.0 market overhaul supersedes the cycle-to-cycle/randomness-led demand behavior implied by this formula. Effective demand and supply now come from persistent pressure, regional diffusion, and event conditions; brand and relationship systems affect the later price and deal-term paths where specified. The examples below remain historical illustrations.
+
 Demand opportunities are the main sales-side engine.
 
 A lightweight formula is preferable.
@@ -872,6 +876,8 @@ Purpose:
 ---
 
 # 14. Sales Order lifecycle
+
+> **1.0 supersession annotation:** The explicit-state-transition principle remains, but the 1.0 program supersedes this as the complete sales-order lifecycle by adding a bounded post-acceptance renegotiation path. Use the 1.0 plan and status ledger for the conditions and limits on that path.
 
 Suggested high-level state machine:
 
@@ -1054,6 +1060,8 @@ Order incomplete:
 
 # 19. Purchase Requests / RFQs
 
+> **1.0 supersession annotation:** The 1.0 program supersedes this RFQ-only sketch as the complete purchase-side scope. RFQs remain, but buying now also includes a supplier market, quotations, ordinary purchase orders, and standing procurement agreements.
+
 The purchase side is deliberately not a store catalog.
 
 The player states a need.
@@ -1093,6 +1101,8 @@ The player compares and chooses.
 
 # 20. RFQ scarcity model
 
+> **1.0 supersession annotation:** Where this section describes the old RFQ scarcity behavior, the 1.0 procurement implementation is authoritative: quotations consume the effective economy and share finite supplier availability with the Supplier Market. The listed contextual factors remain historical guidance where they do not conflict with that rule.
+
 Supplier response probability and terms may depend on:
 
 - item category;
@@ -1120,6 +1130,8 @@ This is the core anti-vending-machine design.
 ---
 
 # 21. Purchase Order lifecycle
+
+> **1.0 supersession annotation:** The 1.0 program supersedes the MVP qualification that the first implementation may use fewer states. RFQs and Supplier Market purchases now enter the normal PurchaseOrder lifecycle, including physical delivery or pickup, failure handling, persistence, and the standing-agreement paths recorded in the 1.0 documents.
 
 Suggested states:
 
@@ -1356,6 +1368,8 @@ This leaves room for:
 
 # 27. Commercial Reputation
 
+> **1.0 supersession annotation:** The 1.0 program supersedes this reputation sketch as the complete relationship authority. Commercial reputation is settlement-level and tiered, and established relationships participate in bounded negotiation; the 1.0 plan and status ledger govern the actual effects rather than this illustrative scorecard.
+
 Commercial reputation is separate from ordinary goodwill.
 
 Illustrative UI:
@@ -1394,6 +1408,8 @@ Possible negative inputs:
 
 # 28. Commercial reputation effects
 
+> **1.0 supersession annotation:** This potential-effects list is superseded as a promise of behavior. In 1.0, trust, product brand, market conditions, and event urgency feed the bounded negotiation rules and the implemented commerce surfaces; no unimplemented runaway advantage is implied by the list below.
+
 Potential effects:
 
 - larger orders;
@@ -1410,6 +1426,8 @@ Avoid runaway positive feedback that turns high reputation into guaranteed infin
 ---
 
 # 29. Recurring contracts
+
+> **1.0 supersession annotation:** The 1.0 program supersedes this seller-only recurring-contract example as the complete scope. Recurring sales agreements remain, and 1.0 also provides standing procurement agreements with explicit cycles, supplier failure handling, and bounded negotiation.
 
 Recurring contracts are one of the main progression systems.
 
@@ -1433,6 +1451,8 @@ The design objective is strategic:
 ---
 
 # 30. Contract mechanics
+
+> **1.0 supersession annotation:** The 1.0 program supersedes the instruction that the first recurring-contract version should be only a simple fixed formula. Sale and procurement agreements have their own implemented paths, and the 1.0 negotiation rules govern constrained changes and explicit renegotiation.
 
 Potential contract fields:
 
@@ -1938,6 +1958,8 @@ This is the heart of the finished product.
 
 # 46. Pricing philosophy
 
+> **1.0 supersession annotation:** The 1.0 program supersedes this formula's random-variation/factor list as the pricing authority. Persistent effective economy, regional conditions, circumstance events, product brand, relationship leverage, and the binding-term rules in the 1.0 documents now govern the implemented price paths.
+
 Use RimWorld's existing value concepts where possible, then apply economic context.
 
 Conceptual formula:
@@ -1962,6 +1984,8 @@ Do not scatter pricing formulas across UI and transaction state code.
 ---
 
 # 47. Price transparency
+
+> **1.0 supersession annotation:** The 1.0 program supersedes this sample tooltip as the specification of the explanation rows. The implemented price breakdown is the authority and explains the effective market condition and event context used by the current price, while preserving the principle that the result must not feel arbitrary.
 
 Players should understand why an offer is attractive.
 
@@ -2125,6 +2149,8 @@ Order detail should show:
 
 # 55. Procurement tab
 
+> **1.0 supersession annotation:** The 1.0 program supersedes this RFQ-only flow as the complete procurement surface. The Supplier Market, quotations, dedicated Purchase Orders surface, and standing procurement agreements are now first-class; the old note about later expansion is historical.
+
 Flow:
 
 1. choose item;
@@ -2176,6 +2202,8 @@ Status
 ---
 
 # 57. Relationship view
+
+> **1.0 supersession annotation:** The 1.0 program supersedes this summary-only relationship view as the complete settlement view. Per-settlement commercial history, including the readable timeline and the implemented relationship and brand context, is now part of the authority described in the 1.0 documents.
 
 Example:
 
@@ -2614,6 +2642,8 @@ ValidationResult
 
 # 75. Transaction history
 
+> **1.0 supersession annotation:** The 1.0 program supersedes the statement that transaction history is not required for the MVP. Stage 7 makes per-settlement commercial history, durable summary data, and a bounded timeline part of the built program.
+
 A lightweight transaction log is useful.
 
 Possible entries:
@@ -2774,6 +2804,8 @@ Do not build these before deterministic core systems are stable.
 ---
 
 # 81. World-event demand shocks
+
+> **1.0 supersession annotation:** The 1.0 program supersedes the statement that these events are not required for the first complete release. Circumstance-driven economic events now persist, disturb market pressure, and provide player-readable context for trading; the examples below are historical starting points, not the whole authority.
 
 Future optional integration:
 
@@ -3373,6 +3405,8 @@ Player can turn a large existing surplus into deliberate sales without manually 
 
 # 103. Phase 10 — Procurement / RFQ MVP
 
+> **1.0 supersession annotation:** The 1.0 program supersedes this RFQ MVP phase as the complete procurement scope. Full procurement parity adds the Supplier Market, shared finite availability, normal Purchase Orders, and standing procurement agreements; this phase remains the historical first slice.
+
 ## Goal
 
 Allow targeted purchasing without universal availability.
@@ -3396,6 +3430,8 @@ Allow targeted purchasing without universal availability.
 ---
 
 # 104. Phase 11 — Purchase Order fulfillment
+
+> **1.0 supersession annotation:** The 1.0 program supersedes this MVP phase as the complete buy-side endpoint. The request-to-receipt loop remains, but 1.0 also covers Supplier Market origin, dedicated order visibility, recurring procurement, negotiation, supplier failure, and migration-safe persistence.
 
 ## Goal
 
@@ -3451,6 +3487,8 @@ At least two fulfillment modes produce a real trade-off.
 
 # 106. Phase 13 — Commercial reputation
 
+> **1.0 supersession annotation:** The 1.0 program supersedes this reputation-only phase as the complete relationship behavior. Stage 5 adds tier milestones, bounded pre-acceptance negotiation, and post-acceptance renegotiation, with product brand and current market circumstances contributing where the 1.0 rules specify.
+
 ## Goal
 
 Make repeated commerce matter.
@@ -3470,6 +3508,8 @@ Two colonies with different trade histories receive observably different future 
 ---
 
 # 107. Phase 14 — Recurring contracts
+
+> **1.0 supersession annotation:** The 1.0 program supersedes this seller-only fixed recurring-contract phase as the complete contract behavior. Standing procurement agreements and the shared constrained negotiation model are now part of the implemented scope; do not treat the simple example below as a universal 1.0 rule.
 
 ## Goal
 
@@ -4166,3 +4206,25 @@ Not a trading terminal.
 Not a spreadsheet detached from RimWorld.
 
 A civilian economic layer that gives the world map and the colony's productive capacity a new purpose.
+
+---
+
+# 128. 1.0 program authority and outcome
+
+The nine-stage Intercolony 1.0 program is the authority for the systems it built. Where its
+implementation conflicts with an earlier numbered phase above, the 1.0 rule wins; the earlier
+design remains in this document as history and is marked by an annotation rather than deleted.
+
+The 1.0 systems are:
+
+- settlement economies with market pressure and regional diffusion;
+- circumstance-driven economic events;
+- product brand and colony specialization;
+- commercial relationships with bounded negotiation and post-acceptance renegotiation;
+- full procurement parity;
+- per-settlement commercial history.
+
+The specification for this program is `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`. The record of
+what was actually built and proven is `docs/1_0_IMPLEMENTATION_STATUS.md`. Those documents are the
+source of truth for 1.0 scope, behavior, migration and evidence; this section records the outcome
+without declaring that the 1.0 branch has already been released.
