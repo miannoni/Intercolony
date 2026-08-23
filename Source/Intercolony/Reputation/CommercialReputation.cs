@@ -46,6 +46,12 @@ namespace Intercolony
 
         private float score = StartingScore;
 
+        /// <summary>
+        /// Last tier for which a relationship milestone was recorded. Neutral creation starts in
+        /// Known so first contact does not create a history entry.
+        /// </summary>
+        public ReputationTier lastRecordedTier = ReputationTier.Known;
+
         // §27's counters, shown in the relationship view.
         public int ordersCompleted;
         public int ordersLate;
@@ -83,7 +89,13 @@ namespace Intercolony
 
         public string TierLabel()
         {
-            switch (Tier)
+            return TierLabel(Tier);
+        }
+
+        /// <summary>Returns the player-facing label for a specified commercial reputation tier.</summary>
+        public string TierLabel(ReputationTier tier)
+        {
+            switch (tier)
             {
                 case ReputationTier.Untrusted: return "Untrusted";
                 case ReputationTier.Unproven: return "Unproven";
@@ -123,6 +135,7 @@ namespace Intercolony
             Scribe_Values.Look(ref settlementName, "settlementName", "");
             Scribe_Values.Look(ref factionName, "factionName", "");
             Scribe_Values.Look(ref score, "score", StartingScore);
+            Scribe_Values.Look(ref lastRecordedTier, "lastRecordedTier", ReputationTier.Known);
             Scribe_Values.Look(ref ordersCompleted, "ordersCompleted", 0);
             Scribe_Values.Look(ref ordersLate, "ordersLate", 0);
             Scribe_Values.Look(ref ordersFailed, "ordersFailed", 0);

@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 48;
+        public const int CurrentSaveVersion = 49;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -1764,7 +1764,7 @@ namespace Intercolony
         /// Brings loaded state up to <see cref="CurrentSaveVersion"/>. Migrations must
         /// use safe defaults and must never silently drop active obligations (DESIGN.md §62).
         /// </summary>
-        private void MigrateIfNeeded()
+        internal void MigrateIfNeeded()
         {
             if (saveVersion == CurrentSaveVersion)
             {
@@ -2295,6 +2295,30 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     "  schema 47 -> 48: post-acceptance renegotiation attempts added; " +
                     "existing orders start with no request attempted.");
+            }
+
+            if (saveVersion < 49)
+            {
+                // 48 -> 49 added the last tier that actually produced a relationship milestone.
+                // Seed it from each reputation's current score tier: the old save proves the
+                // score, but not a milestone that happened before this history existed, so the
+                // upgrade must not invent one on the first later nudge.
+                int seededReputations = 0;
+                foreach (CommercialReputation reputation in reputations.Values)
+                {
+                    if (reputation == null)
+                    {
+                        continue;
+                    }
+
+                    reputation.lastRecordedTier = reputation.Tier;
+                    seededReputations++;
+                }
+
+                IntercolonyLog.Message(
+                    $"  schema 48 -> 49: relationship milestone state added; seeded " +
+                    $"last-recorded tier from the current tier for {seededReputations} existing " +
+                    "reputation record(s).");
             }
 
             saveVersion = CurrentSaveVersion;

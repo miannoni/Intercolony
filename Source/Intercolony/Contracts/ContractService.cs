@@ -963,8 +963,8 @@ namespace Intercolony
 
             // §27 lists repeated business as a positive; seeing an agreement through
             // is the strongest version of that.
-            CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-            rep?.Adjust(8f);
+            ReputationService.ApplyAdjustment(
+                state, ReputationService.ForSettlement(state, contract.settlementId), 8f);
 
             CommercialTimelineService.Record(
                 state,
@@ -1064,8 +1064,8 @@ namespace Intercolony
             contract.renewalExpiryTick = 0;
             contract.renewals++;
 
-            CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-            rep?.Adjust(4f);
+            ReputationService.ApplyAdjustment(
+                state, ReputationService.ForSettlement(state, contract.settlementId), 4f);
 
             // A renewal starts a fresh run of the same agreement, so it is a start rather than a
             // separate event type. The detail is what distinguishes it in the timeline.
@@ -1136,8 +1136,8 @@ namespace Intercolony
                 contract.outcomeNote =
                     $"Breached after {contract.consecutiveFailures} consecutive missed deliveries.";
 
-                CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-                rep?.Adjust(-20f);
+                ReputationService.ApplyAdjustment(
+                    state, ReputationService.ForSettlement(state, contract.settlementId), -20f);
 
                 CommercialTimelineService.Record(
                     state,
@@ -1374,8 +1374,8 @@ namespace Intercolony
             // charging them for ending it would take that back.
             if (!suspended)
             {
-                CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-                rep?.Adjust(-10f);
+                ReputationService.ApplyAdjustment(
+                    state, ReputationService.ForSettlement(state, contract.settlementId), -10f);
             }
 
             CommercialTimelineService.Record(

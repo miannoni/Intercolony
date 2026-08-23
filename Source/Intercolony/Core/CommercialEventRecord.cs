@@ -45,7 +45,10 @@ namespace Intercolony
         QuantityReduced,
 
         /// <summary>A sale ended by agreement with the counterparty.</summary>
-        SaleCancelledByAgreement
+        SaleCancelledByAgreement,
+
+        /// <summary>A settlement's commercial reputation changed tier.</summary>
+        RelationshipMilestone
     }
 
     /// <summary>

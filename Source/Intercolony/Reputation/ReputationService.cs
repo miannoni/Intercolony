@@ -25,6 +25,13 @@ namespace Intercolony
         private const float PurchaseCancelled = -4f;
 
         /// <summary>
+        /// Reuses the brand milestone deadband so small score noise cannot alternate relationship
+        /// history at a tier boundary.
+        /// </summary>
+        public const float RelationshipMilestoneHysteresis =
+            ProductBrandService.BrandMilestoneHysteresis;
+
+        /// <summary>
         /// Bonus for a large contract, capped. §27 lists "large contract completion" as a
         /// positive, but scaling without a ceiling would make one enormous order worth more
         /// than years of steady trade.
@@ -49,6 +56,67 @@ namespace Intercolony
             return For(state, IntercolonyMarketAccess.FindSettlement(settlementId));
         }
 
+        /// <summary>
+        /// Applies a commercial score change and records a durable tier transition. Production
+        /// commercial reputation writes use this funnel so the history cannot miss a source.
+        /// </summary>
+        internal static void ApplyAdjustment(
+            IntercolonyWorldComponent state, CommercialReputation rep, float delta)
+        {
+            if (rep == null)
+            {
+                return;
+            }
+
+            ReputationTier previousRecordedTier = rep.lastRecordedTier;
+            rep.Adjust(delta);
+            ReputationTier currentTier = rep.Tier;
+
+            if (currentTier == previousRecordedTier ||
+                !ClearedMilestoneHysteresis(rep, previousRecordedTier, currentTier))
+            {
+                return;
+            }
+
+            CommercialEventRecord record = CommercialTimelineService.Record(
+                state,
+                CommercialEventType.RelationshipMilestone,
+                rep.settlementId,
+                rep.settlementName,
+                compactDetail: $"{rep.TierLabel(previousRecordedTier)} -> {rep.TierLabel(currentTier)}");
+
+            if (record != null)
+            {
+                rep.lastRecordedTier = currentTier;
+            }
+        }
+
+        private static bool ClearedMilestoneHysteresis(
+            CommercialReputation rep,
+            ReputationTier previousRecordedTier,
+            ReputationTier currentTier)
+        {
+            float boundary = (int)currentTier > (int)previousRecordedTier
+                ? TierLowerBound(currentTier)
+                : TierLowerBound(previousRecordedTier);
+
+            return (int)currentTier > (int)previousRecordedTier
+                ? rep.Score >= boundary + RelationshipMilestoneHysteresis
+                : rep.Score <= boundary - RelationshipMilestoneHysteresis;
+        }
+
+        private static float TierLowerBound(ReputationTier tier)
+        {
+            switch (tier)
+            {
+                case ReputationTier.Untrusted: return CommercialReputation.MinScore;
+                case ReputationTier.Unproven: return 20f;
+                case ReputationTier.Known: return 45f;
+                case ReputationTier.Reliable: return 60f;
+                default: return 80f;
+            }
+        }
+
         // --- Event hooks -----------------------------------------------------------------
 
         public static void NoteOrderCompleted(
@@ -63,13 +131,13 @@ namespace Intercolony
             if (onTime)
             {
                 rep.ordersCompleted++;
-                rep.Adjust(CompletedOnTime + SizeBonus(order.TotalPayment));
+                ApplyAdjustment(state, rep, CompletedOnTime + SizeBonus(order.TotalPayment));
             }
             else
             {
                 // Late but delivered still counts as delivered — barely.
                 rep.ordersLate++;
-                rep.Adjust(CompletedLate);
+                ApplyAdjustment(state, rep, CompletedLate);
             }
 
             IntercolonyLog.Verbose($"Reputation {rep.settlementName}: {rep.ScoreDisplay} ({rep.TierLabel()})");
@@ -84,7 +152,7 @@ namespace Intercolony
             }
 
             rep.ordersFailed++;
-            rep.Adjust(OrderFailed);
+            ApplyAdjustment(state, rep, OrderFailed);
             IntercolonyLog.Message(
                 $"{rep.settlementName} noted a failed order. Commercial reputation now " +
                 $"{rep.ScoreDisplay}/100 ({rep.TierLabel()}).");
@@ -99,7 +167,7 @@ namespace Intercolony
             }
 
             rep.ordersCancelled++;
-            rep.Adjust(OrderCancelled);
+            ApplyAdjustment(state, rep, OrderCancelled);
         }
 
         public static void NotePurchaseCompleted(IntercolonyWorldComponent state, PurchaseOrder order)
@@ -112,7 +180,7 @@ namespace Intercolony
 
             // §27 lists "prompt payment" as a positive, and payment is taken up front.
             rep.purchasesCompleted++;
-            rep.Adjust(PurchaseCompleted);
+            ApplyAdjustment(state, rep, PurchaseCompleted);
         }
 
         public static void NotePurchaseCancelled(IntercolonyWorldComponent state, PurchaseOrder order)
@@ -124,7 +192,7 @@ namespace Intercolony
             }
 
             rep.purchaseCancellations++;
-            rep.Adjust(PurchaseCancelled);
+            ApplyAdjustment(state, rep, PurchaseCancelled);
         }
 
         // --- Effects (§28) ---------------------------------------------------------------
