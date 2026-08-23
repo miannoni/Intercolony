@@ -6,6 +6,18 @@ RimWorld mod. Hobby project. See `DESIGN.md` for the product spec.
 **Root namespace:** `Intercolony`
 **Target RimWorld version:** 1.6 (confirm against `Version.txt` — do not assume)
 
+## After a context compaction, read this first
+
+If the conversation has just been compacted or summarized, **invoke the `resume-1-0` skill via the Skill tool before doing anything else.** Do not reconstruct the working method from the summary.
+
+The skill restores the dispatch/review rhythm, the delegation command, the verification discipline, and the report shape in one read; re-deriving those from a summary is both slower and less accurate.
+
+This applies to an **automatic** compaction just as much as a manual `/compact`: an auto-compact gives no warning, so this file is the only thing guaranteed to still be in context afterwards. **That is the whole reason this instruction lives here** rather than only in a hook.
+
+A `SessionStart` hook in `.claude/settings.local.json` also nudges this, but a hook can fail silently and `.claude/` is gitignored, so **this line is the reliable one and must not be deleted**.
+
+The skill reads current state itself, so it works from a cold context; it does not depend on anything surviving the compaction.
+
 ---
 
 ## Local paths
@@ -165,62 +177,22 @@ Target framework is `net472`.
 
 ## Current state
 
-**Phase:** 26 complete. **0.9.3 is live and public** (2026-08-18) — Workshop item `3780094556`
-updated, `main` pushed, tag `v0.9.3` and a GitHub pre-release with `Intercolony-0.9.3.zip` attached.
-0.9.2 shipped 2026-08-17, 0.9.1 on 2026-08-15 and 0.9.0 on 2026-08-08, all to the same standard.
+**Branch:** `1.0`. **Stage:** 8 — 1.0 integration, balance and release gate. Stages 0–7 are
+closed, and Stage 8 slices 8A–8C are complete. The current save schema is 56; the in-game suite
+contains around 1,350 assertions.
 
-**Work on 1.0 happens on branch `1.0`, not `main`, and it is a nine-stage program with its own
-documents.** Read `docs/1_0_IMPLEMENTATION_STATUS.md` **first** — it is the continuity record and
-says where in the program the work actually is; `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md` is the
-spec and is ~2,000 lines, so read it by stage, not whole. `main` stays at 0.9.3 and directly
-releasable as a point release, which is why the branch exists: Stage 0 bumped the save schema and
-`main` will not be shippable again until Stage 8 merges. Stages 0 and 1 are closed; Stage 2 (market
-fundamentals) is in progress and is the stage every later one reads from.
+`main` stays at 0.9.3 and is not touched until Stage 8 merges. The 1.0 branch is not released: the
+§8.3–§8.7 play sitting still needs a human, and the remaining documentation and release-gate work
+are recorded in `docs/PENDING_PLAYTESTS.md` and `docs/1_0_IMPLEMENTATION_STATUS.md`.
 
-0.9.3 is the Tier 2 UI batch from `docs/BACKLOG.md` plus a labor-UI polish pass: dialog and
-empty-state text is measured rather than boxed (a live defect — the sell dialog drew over its own
-controls), the sell and market-acceptance dialogs state their terms as labelled rows, sales orders
-became a sortable table showing each order's value, Find Buyer can mark a sale ready as it is
-created, and Post a job was rebuilt on a grid. **The only behaviour change is that a job posting has
-no position count and never expires** — `JobPosting.positions` was deleted, field and Scribe line
-both. **Save schema stayed at 42 and no migration was added, because none was needed.**
+---
 
-**Two things changed under existing saves, and the pre-flight that cleared them is worth reusing.**
-An old save carries a `<positions>` node with nothing to read it into, and a posting made before
-`f594594` keeps its finite `expiryTick` and still expires. The first could not be tested by any real
-save: every posting ever made used 1 position, which is the Scribe default, and RimWorld **omits a
-value equal to its default**, so no `<positions>` node exists on disk anywhere. The test was a copy
-of a real save with `<positions>3</positions>` injected and one posting reopened on its original
-finite expiry; it loaded at schema 42 with zero exceptions and nothing dropped. **When a field is
-deleted, check whether its old value was the Scribe default before assuming a real save exercises
-the removal.**
+## Operational rules and pointers
 
-0.9.2 is a bug-fix release closing six defects from the first real play of 0.9.1. **Animal trade did
-not work at all** until it; see below. The others: the employee signing fee was disclosed only when a
-hire was refused; procurement quotes could be re-rolled by withdrawing and re-requesting; a
-supplier's stock reset on re-request; accepting one quotation closed the whole request; and orders
-resolved colonies through `Find.AnyPlayerHomeMap`.
-**Save schema is 44**, bumped twice on branch `1.0` after 0.9.3 shipped at 42. Schema 40 records the
-distance behind a buyer-pickup promise; 41 records how much of a purchase request has been ordered;
-42 records how much of a supplier's offer the player has already bought within a market refresh
-window; 43 adds the commercial timeline record spine (`04be001`), starting the history at upgrade
-tick rather than inventing a past; 44 adds per-settlement market pressure (`d49fd86`), which writes
-nothing on migration because absence means neutral and inferring shortages from old random rolls
-would fabricate an economy the player never traded through.
+For 1.0 work, read `docs/1_0_IMPLEMENTATION_STATUS.md` first; it is the continuity record. Read
+`docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md` by stage rather than loading the whole plan.
 
-0.9.1 fixed what the first beta players hit and added the other half of the agreement system: the
-player can now propose a standing supply agreement rather than only receiving offers. A proposal is
-*sent* and answered later, and can be refused. The response is fastest at both extremes of how
-attractive it is and slowest in the middle, because a middling offer is the only one genuinely in
-doubt. Price is one lever from zero to twice the going rate — below it earns faction goodwill on a
-completed delivery, above it costs goodwill, and a penalty is clamped against RimWorld's own hostile
-threshold so a price control can never start a war. Incoming proposals are now **off by default**,
-including in migrated saves. Order history is bounded at a hundred closed records each, clearable by
-hand, which is only safe because contract eligibility moved onto a durable commercial-history
-aggregate first.
-
-**A real schema 22 save migrated cleanly to 39**, which closed the last release risk. Read
-`docs/RELEASE_0.9.1_PREP.md` for the full record and `PROGRESS.md` for the milestone entry.
+### General invariants
 
 **Three rules this batch established, and a future change must not break:**
 
@@ -233,29 +205,129 @@ aggregate first.
 - **A UI cache must reset at its own lifecycle boundary.** Main-tab windows survive being closed;
   `44c6509` was an eligibility list that outlived the window and stayed empty for a session.
 
-**A real defect from that play was fixed the same day.** Accepting a quotation marked the purchase
-request `Cancelled` — a status that means "withdrawn by the player" — so every successful purchase
-left behind a record claiming the player had abandoned it, and Find seller filled with them. There is
-now an `Ordered` status, Find seller shows only live requests, concluded ones sit under Orders, and
-**schema 30 repairs existing saves** by matching `PurchaseOrder.requestId` back to its request rather
-than guessing. It is the first migration step that changes existing values rather than adding a
-field.
+**When a field is deleted, check whether its old value was the Scribe default before assuming a real
+save exercises the removal.**
 
-D2/D3 — animal trade — are now **built in full** (see below). **Save schema is now 44**; the whole
-chain from 24 is documented as one consolidated test in `docs/SCHEMA_24_TO_CURRENT.md`, which is the
-file to read rather than reconstructing the steps. Next: continue beta corrections in point releases;
-there is no Phase 27 plan yet.
+### Sentinel values
 
-**Animal trade is COMPLETE, and was first played on 2026-08-16 — it did not work.**
-E1 `c0a0f91` representation, E2 `4f199fc` pricing, E3a `b0d8f9a` generation and delivery,
-E3b `574d5d1` the request UI, E4 `75b87d2` sell by caravan, E5 `ab0dc0e` sell by buyer pickup.
+**Sentinels have bitten five times now. Compare them exactly, and never format them.**
+`arrivedTick < 0`, `ledgerStartTick < 0` and printing `DaysRemaining` for an open-ended contract were
+all the same mistake: a value chosen to mean "none" being read as a quantity. A tick is only
+non-negative because the game has been running a while, and `float.MaxValue` renders as
+34028230000000000000000000000000000000. Two of the three were silent.
 
-Mark Ready was a silent no-op for every animal order, fixed in `b50b2e2`: validation treated *any*
-same-species animal that failed the specification as a fatal failure, so one rooster blocked a hen
-order permanently, and RimWorld draws an inactive `Widgets.ButtonText` identically to a live one so
-the refusal was invisible. **E5 sell-by-pickup is now proven end to end** — a chicken and a bonded
-labrador both sold, the bond warning naming the right colonist. **E3a animal procurement and E4
-sell-by-caravan are still unplayed.** Do not treat the whole system as proven because half of it is.
+Phase 25's tooltip pass found two more, which is why the count keeps rising: the employee tooltip
+printed `termDays` raw, so an open-ended contract read "0 days"; and the dismissal confirmation could
+still format `DaysRemaining` for an open-ended worker serving notice — the *same* bug as the third,
+resurfacing in a different method after the first fix. `EmploymentContract` has `TermLabel` and
+`RemainingLabel` precisely so the raw fields are never formatted. **Use them. Grep for `termDays` and
+`DaysRemaining` before adding any new display of a contract's duration.**
+
+The count reached six during Stage 6; the rule is unchanged.
+
+### Release procedure
+
+**Read `docs/RELEASE_PROCEDURE.md` before any future release.** Every claim in it was verified
+against `reference/decompiled/`. The three that matter:
+
+1. **RimWorld uploads the mod's `RootDir` wholesale** — no filtering, no exclude list, no junction
+   handling — and only accepts a mod whose `Source` is the Mods folder. Uploading through the
+   `Mods\Intercolony` junction would publish this entire repo, including `reference/vanilla-defs`
+   (a junction to RimWorld's whole `Data` directory) and `reference/mods` (other authors' work).
+   **Never point a Workshop upload at the repo folder.** `package.ps1` exists for this reason.
+2. **`About/PublishedFileId.txt` binds a folder to one Workshop item.** `package.ps1` deliberately
+   does not copy it and `dist/` is rebuilt on every run, so an update must restore it from
+   `.workshop/` by hand. **The check is that the menu reads "Update on Steam Workshop", not
+   "Upload"** — if it says Upload, stop, or you create a second item.
+3. **The description is create-only** (`SetItemDescription` is inside `if (creating)`), so the
+   Workshop copy in `docs/WORKSHOP_DESCRIPTION.bbcode` survives re-uploads. The title is re-sent
+   every time from `About.xml`'s `<name>`.
+
+Also verified the hard way: **Steam caps the preview image at 1 MB and RimWorld enforces nothing**,
+only checking `File.Exists`. A 1.81 MB preview would have failed silently at Steam's end.
+`About/Preview.png` is currently 933,975 bytes — keep it under the cap.
+
+### Labor
+
+**Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
+control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation
+depends on: an employment quest must have a non-null `root`, departure must go through
+`QuestPart_Leave` rather than being hand-rolled, and a travelling worker must be pinned in
+`WorldPawns` as `KeepForever`.
+
+### Autostart migration technique
+
+A save named exactly `autostart` is loaded automatically at boot by `Root_Entry.Start()` through the
+real `GameDataSaveLoader.LoadGame` (`reference/decompiled/Verse/Root_Entry.cs:18-23`). **Autostart
+must not be combined with `-quicktest`** — both
+`Root_Entry` and `Root_Play` consume the same one-shot `Root.checkedAutostartSaveFile`, so with
+`-quicktest` the game calls `InitNewGame()` on the already-loaded save and throws at
+`Find.get_WorldObjects`. Launch with no arguments at all.
+
+**Autostart a copy, never the original, and delete it when done** — a leftover `Autostart.rws`
+hijacks every later launch including `-Fresh`, which then goes on claiming an isolation it lost.
+
+What remains true: a plain `-quicktest` launch cannot prove a migration, because it generates a new
+world that initializes at the current schema and never enters the migration path, and the log reader
+can show a stale profile entirely. `dev.ps1 -MainMenu` still exists for opening a save by hand.
+`docs/PENDING_PLAYTESTS.md` has the remaining ones.
+
+### 1.0 evidence policy
+
+**`docs/ROAD_TO_1_0.md` audits §120's 36 criteria: 25 met and proven, 11 met but unproven, 0 not
+met.** Read it before planning anything — it is the honest picture of how far 1.0 actually is.
+
+### The 11 unproven criteria are beta targets, not release blockers
+
+This is the standing policy and it should not be re-litigated each session. "Met but unproven" means
+the code path exists and looks right but nobody has *seen* it work. That is exactly what a beta is
+for. **Do not treat an unproven criterion as a blocker to shipping 0.9.0, and do not build more code
+to substitute for missing evidence** — that is how a project grows features instead of confidence.
+
+Only an actual serious defect blocks the release: save corruption, a crash on a normal path, silent
+loss of the player's silver or obligations, or anything that destroys the player's things. Ordinary
+bugs found in beta get fixed in a point release; that is what a pre-release flag is for.
+
+§119's focus — balance, exploits, compatibility, UX, unexpected pawn interactions — needs *other
+people playing it*, which no amount of coding substitutes for. The remaining work is play-testing
+and distribution, not development.
+
+### Known map-resolution follow-up
+
+**A real 0.9.0 defect was found and fixed on 2026-08-09: buyer pickup collected from the wrong
+colony.** Mark Ready validated against `Find.CurrentMap` while collection used
+`Find.AnyPlayerHomeMap` — the *first* player home map, not the relevant one — and `SalesOrder`
+persisted no map at all. With two or more colonies the order either failed with "the goods were not
+there" while they sat where the player left them, or took stock from the wrong base. `SalesOrder`
+now persists its fulfilment colony, following the `EmploymentContract.destinationMap` idiom.
+**`PurchaseOrderService` has the identical latent flaw at its delivery and refund sites and was
+deliberately left alone** — it is its own fix, and it is in `docs/BACKLOG.md`.
+
+### Play-testing handoff
+
+**Play-testing is done by a Dispatch computer-use session, not by Matteo at the keyboard.** The
+handoff runs through `DISPATCH_NOTES.md` — append-only, timestamped, game output verbatim. Claude
+Code does not read it automatically; Matteo nudges with "read DISPATCH_NOTES.md and continue". Write
+requests there with exact steps, and reply in the same file.
+
+### Documentation pointers and animal-trade invariants
+
+`docs/PENDING_PLAYTESTS.md` lists what has shipped but has never been seen working — the things a
+self-test cannot settle. **Add to it when a phase completes, and check it before claiming a system
+is proven.** Asking Matteo to play something and then losing the request when the conversation
+moves on is how a system ends up believed-working and untested.
+
+`docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
+Read it before touching anything that moves an individual object.
+
+**Animal trade (D2/D3) is decided, and buyer pickup is in scope** — Matteo confirmed on 2026-08-09,
+so animals are sold both by seller delivery and by buyer collection, with the player designating
+animals at Mark Ready. Trade is by *specification* (species, sex, life stage, pregnancy — each
+independently selectable and separately priced), not by individual identity. Planned as five
+slices: representation + schema 24→25, pricing, procurement, sell-by-delivery, sell-by-pickup.
+Read `docs/ANIMAL_TRADE_SPIKE.md` **including both addenda** — the second one corrects two claims in
+the first that would each have produced a defect, most importantly that a post-generation gender
+check is a no-op because `PawnGenerator` forces `FixedGender` before consulting the race at all.
 
 The rules that hold it together, and that a future change must not break:
 
@@ -285,145 +357,6 @@ The rules that hold it together, and that a future change must not break:
 supplier lead time through the real advance path) and `Explain unsold animals`. **There is still no
 "arrive buyers now"**, so every sell-side pickup test costs real travel time — worth building first
 if the sell side is being tested.
-
-**Migrations CAN be proven unattended, and the belief that they could not was wrong.** On
-2026-08-21 the 42 → 43 → 44 chain ran on the persistent 22.5 MB `Fenhana` colony save with zero
-exceptions and nothing dropped, with no human at the keyboard, and the full suite then passed
-944/0/9 against the migrated colony.
-
-The mechanism is a stock RimWorld dev feature, not something this project built: with dev mode on, a
-save named exactly `autostart` is loaded automatically at boot by `Root_Entry.Start()` through the
-real `GameDataSaveLoader.LoadGame` (`reference/decompiled/Verse/Root_Entry.cs:18-23`). **Autostart
-must not be combined with `-quicktest`** — both `Root_Entry` and `Root_Play` consume the same
-one-shot `Root.checkedAutostartSaveFile`, so with `-quicktest` the game calls `InitNewGame()` on the
-already-loaded save and throws at `Find.get_WorldObjects`. Launch with no arguments at all.
-**Autostart a copy, never the original, and delete it when done** — a leftover `Autostart.rws`
-hijacks every later launch including `-Fresh`, which then goes on claiming an isolation it lost.
-
-What remains true: a plain `-quicktest` launch cannot prove a migration, because it generates a new
-world that initializes at the current schema and never enters the migration path, and the log reader
-can show a stale profile entirely. `dev.ps1 -MainMenu` still exists for opening a save by hand.
-`docs/PENDING_PLAYTESTS.md` has the remaining ones.
-
-**A real 0.9.0 defect was found and fixed on 2026-08-09: buyer pickup collected from the wrong
-colony.** Mark Ready validated against `Find.CurrentMap` while collection used
-`Find.AnyPlayerHomeMap` — the *first* player home map, not the relevant one — and `SalesOrder`
-persisted no map at all. With two or more colonies the order either failed with "the goods were not
-there" while they sat where the player left them, or took stock from the wrong base. `SalesOrder`
-now persists its fulfilment colony, following the `EmploymentContract.destinationMap` idiom.
-**`PurchaseOrderService` has the identical latent flaw at its delivery and refund sites and was
-deliberately left alone** — it is its own fix, and it is in `docs/BACKLOG.md`.
-
-**The correction batch is self-tested but not yet proven in play.** On 2026-08-13 the order,
-contract and RFQ suites passed 93/0, 38/0 and 69/0. The first order run exposed a real regression:
-disabling a buy-only category stranded an already accepted pickup order at Mark Ready. The fix now
-uses physically matching stock minus other commitments for existing obligations, and the rerun
-passed. The one-home-map run explicitly skipped the assertion that distinguishes the recorded map
-from `Find.AnyPlayerHomeMap`, so the two-colony reproduction is still required.
-`docs/PENDING_PLAYTESTS.md` has the remaining manual paths.
-
-**Animal trade (D2/D3) is decided, and buyer pickup is in scope** — Matteo confirmed on 2026-08-09,
-so animals are sold both by seller delivery and by buyer collection, with the player designating
-animals at Mark Ready. Trade is by *specification* (species, sex, life stage, pregnancy — each
-independently selectable and separately priced), not by individual identity. Planned as five
-slices: representation + schema 24→25, pricing, procurement, sell-by-delivery, sell-by-pickup.
-Read `docs/ANIMAL_TRADE_SPIKE.md` **including both addenda** — the second one corrects two claims in
-the first that would each have produced a defect, most importantly that a post-generation gender
-check is a no-op because `PawnGenerator` forces `FixedGender` before consulting the race at all.
-
-**`docs/ROAD_TO_1_0.md` audits §120's 36 criteria: 25 met and proven, 11 met but unproven, 0 not
-met.** Read it before planning anything — it is the honest picture of how far 1.0 actually is.
-
-**There is no known missing implementation for 1.0.** The three criteria that were once "not met"
-were one cluster — downed employees, capture, beds left claimed on departure — and all three were
-implemented and confirmed in play on 2026-08-08. **Do not reopen them.** The one branch still
-unproven is narrow and named in `ROAD_TO_1_0.md`: a worker whose term expired while downed
-recovering and then actually walking off. The hold was observed; the completion was not.
-
-### The 11 unproven criteria are beta targets, not release blockers
-
-This is the standing policy and it should not be re-litigated each session. "Met but unproven" means
-the code path exists and looks right but nobody has *seen* it work. That is exactly what a beta is
-for. **Do not treat an unproven criterion as a blocker to shipping 0.9.0, and do not build more code
-to substitute for missing evidence** — that is how a project grows features instead of confidence.
-
-Only an actual serious defect blocks the release: save corruption, a crash on a normal path, silent
-loss of the player's silver or obligations, or anything that destroys the player's things. Ordinary
-bugs found in beta get fixed in a point release; that is what a pre-release flag is for.
-
-§119's focus — balance, exploits, compatibility, UX, unexpected pawn interactions — needs *other
-people playing it*, which no amount of coding substitutes for. The remaining work is play-testing
-and distribution, not development.
-
-### 0.9.0 is released — where everything lives
-
-**Shipped 2026-08-08, both channels the same day** (the earlier "GitHub first, Steam a week later"
-plan was dropped):
-
-- **GitHub:** pre-release `v0.9.0` on `b8744e4`, asset `Intercolony-0.9.0.zip` (1,135,903 bytes).
-  Repository is **public**.
-- **Steam Workshop:** item **`3780094556`**, public. Harmony is set as a Required Item.
-- **Workshop ID is saved at `.workshop/PublishedFileId.txt`** (gitignored). **The next Workshop
-  update depends on it** — see below.
-
-**Read `docs/RELEASE_PROCEDURE.md` before any future release.** Every claim in it was verified
-against `reference/decompiled/`. The three that matter:
-
-1. **RimWorld uploads the mod's `RootDir` wholesale** — no filtering, no exclude list, no junction
-   handling — and only accepts a mod whose `Source` is the Mods folder. Uploading through the
-   `Mods\Intercolony` junction would publish this entire repo, including `reference/vanilla-defs`
-   (a junction to RimWorld's whole `Data` directory) and `reference/mods` (other authors' work).
-   **Never point a Workshop upload at the repo folder.** `package.ps1` exists for this reason.
-2. **`About/PublishedFileId.txt` binds a folder to one Workshop item.** `package.ps1` deliberately
-   does not copy it and `dist/` is rebuilt on every run, so an update must restore it from
-   `.workshop/` by hand. **The check is that the menu reads "Update on Steam Workshop", not
-   "Upload"** — if it says Upload, stop, or you create a second item.
-3. **The description is create-only** (`SetItemDescription` is inside `if (creating)`), so the
-   Workshop copy in `docs/WORKSHOP_DESCRIPTION.bbcode` survives re-uploads. The **title** is re-sent
-   every time from `About.xml`'s `<name>`.
-
-Also verified the hard way: **Steam caps the preview image at 1 MB and RimWorld enforces nothing**,
-only checking `File.Exists`. A 1.81 MB preview would have failed silently at Steam's end.
-`About/Preview.png` is currently 933,975 bytes — keep it under the cap.
-
-`docs/RELEASE_NOTES_0.9.0.md` holds the published release body; `docs/BETA_QUESTIONS.md` holds the
-feedback set. Beta findings go to `docs/BACKLOG.md` and get fixed in point releases, not on the day.
-
-**Localization was dropped, not deferred: the mod is English-only** and §118 is amended to say so.
-
-**Sentinels have bitten five times now. Compare them exactly, and never format them.**
-`arrivedTick < 0`, `ledgerStartTick < 0` and printing `DaysRemaining` for an open-ended contract were
-all the same mistake: a value chosen to mean "none" being read as a quantity. A tick is only
-non-negative because the game has been running a while, and `float.MaxValue` renders as
-34028230000000000000000000000000000000. Two of the three were silent.
-
-Phase 25's tooltip pass found two more, which is why the count keeps rising: the employee tooltip
-printed `termDays` raw, so an open-ended contract read "0 days"; and the dismissal confirmation could
-still format `DaysRemaining` for an open-ended worker serving notice — the *same* bug as the third,
-resurfacing in a different method after the first fix. `EmploymentContract` has `TermLabel` and
-`RemainingLabel` precisely so the raw fields are never formatted. **Use them. Grep for `termDays` and
-`DaysRemaining` before adding any new display of a contract's duration.**
-
-**Play-testing is done by a Dispatch computer-use session, not by Matteo at the keyboard.** The
-handoff runs through `DISPATCH_NOTES.md` — append-only, timestamped, game output verbatim. Claude
-Code does not read it automatically; Matteo nudges with "read DISPATCH_NOTES.md and continue". Write
-requests there with exact steps, and reply in the same file.
-
-**Read `docs/LABOR_TECHNICAL_NOTES.md` before touching any labor code.** It records the chosen
-control strategy (faction transfer + quest lodger) and the non-obvious rules the implementation
-depends on: an employment quest must have a non-null `root`, departure must go through
-`QuestPart_Leave` rather than being hand-rolled, and a travelling worker must be pinned in
-`WorldPawns` as `KeepForever`.
-
-`docs/PENDING_PLAYTESTS.md` lists what has shipped but has never been seen working — the things a
-self-test cannot settle. **Add to it when a phase completes, and check it before claiming a system
-is proven.** Asking Matteo to play something and then losing the request when the conversation
-moves on is how a system ends up believed-working and untested.
-
-`docs/unique-goods-spike.md` holds the unique-item representation decision from Phase 7.
-Read it before touching anything that moves an individual object.
-
-Update this line when a phase completes.
 
 ---
 
