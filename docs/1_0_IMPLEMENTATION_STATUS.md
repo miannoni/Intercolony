@@ -4,9 +4,9 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 5 — Commercial relationships & negotiation
-Current slice:      5E — relationship-tier milestones; all play calibration deferred to one sitting at the end of 1.0
-Last completed:     5D part 1 — negotiation outcomes reach the commercial timeline (`e6d39c2`, 2026-08-23)
-Current save schema: 48
+Current slice:      5F — Stage 5 acceptance gate closure; all play calibration deferred to one sitting at the end of 1.0
+Last completed:     5E — relationship-tier milestones (`bd308cf`, 2026-08-23)
+Current save schema: 49
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
 
@@ -1206,6 +1206,61 @@ nothing, because none of them changed anything binding.
 must leave the timeline length unchanged — and was verified by mutating
 `MarketOpportunityNegotiationService.TryDecline` until it went red at
 `timeline before=3 after=4`.
+
+### 5E — relationship-tier milestones (2026-08-23)
+
+**Claim:** a settlement's commercial reputation crossing into a new tier leaves one durable
+`RelationshipMilestone` record in the commercial timeline, in BOTH directions, labelled with
+`TierLabel` at both ends ("Known trader -> Reliable supplier") rather than a raw enum name or a
+raw score.
+
+**Files:**
+- `Source/Intercolony/Contracts/ContractService.cs`
+- `Source/Intercolony/Core/CommercialEventRecord.cs`
+- `Source/Intercolony/Core/IntercolonyWorldComponent.cs`
+- `Source/Intercolony/Debug/IntercolonyReputationSelfTest.cs`
+- `Source/Intercolony/Reputation/CommercialReputation.cs`
+- `Source/Intercolony/Reputation/ReputationService.cs`
+
+**Schema:** bumped from 48 to 49, additively; each reputation persists its last recorded tier.
+
+**Commit:** `bd308cf`.
+
+**Tests:** verified to the project standard before commit: the reputation suite was green at
+25/0/0, eight mutations each drove exactly its own assertion red, and four fresh-world
+full-suite runs were green at 1162-1164 passed, 14-15 skipped, with a clean log.
+
+**The check lives at ONE funnel, `ReputationService.ApplyAdjustment`.** All ten production
+score-write sites were routed through it: both branches of `NoteOrderCompleted`,
+`NoteOrderFailed`, `NoteOrderCancelled`, `NotePurchaseCompleted`, `NotePurchaseCancelled`, and
+`ContractService`'s `Complete`, `AcceptRenewal`, `ResolveCycle` and `CancelContract`. Wiring only
+the first caller found is how `RecurringContract.TryAccept` nearly lost half its cases.
+
+**Hysteresis reuses `ProductBrandService.BrandMilestoneHysteresis`.** The last RECORDED tier is
+persisted rather than recomputed, so the deadband survives a save/load.
+
+**Schema 49 seeds that field from each reputation's CURRENT tier.** An old save proves the score
+but not a milestone that predates this history, and seeding the enum default would fire a
+spurious milestone on the first later nudge — the same class of mistake as inferring an economy
+from old random rolls at schema 44.
+
+**`MigrateIfNeeded` widened from `private` to `internal` so a self-test can drive a migration
+directly.** This is the first time any migration step has been executable by the suite, and it is
+the mechanism that closed the R5 gap below.
+
+**R1 needed BOTH suppressing gates removed at once.** The tier-equality check and the hysteresis
+deadband are mutually redundant for an in-tier move — when the tiers are equal the deadband
+condition is unsatisfiable — so neither alone can drive R1 red. Removing only the equality check
+left the suite green at 24/0/0. This was the EIGHTH hollow-assertion catch on this project, and
+again it was found by mutation, not by reading.
+
+**R5 asserted on the migration's output state while nothing executed the migration.** Replacing
+the seeding line with the enum default left the suite green. R8 now drives the real 48 -> 49 step.
+R8 uses two fixtures in DIFFERENT tiers, because a single Untrusted fixture passes against a seed
+hardcoded to the enum default.
+
+**R7 drives `NoteOrderFailed` (`-12f`) rather than the funnel directly, so reverting any hook to
+`rep.Adjust` reds it.**
 
 ## RELEASED — Stage 3 proceeds; calibration is deferred to the end of 1.0 (2026-08-22)
 

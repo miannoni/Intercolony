@@ -16,6 +16,27 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## The Stage 3 drought pricing assertion can pass vacuously.
+
+**Raised:** 2026-08-23, during four fresh-world full-suite runs.
+**Size:** small — test-fixture fix.
+**Status:** open.
+
+The assertion `a drought changes a newly computed price without repricing the accepted deal`
+failed once in four fresh-world full-suite runs on 2026-08-23 with `before 0.3763, current
+0.3763` — the two values were identical.
+
+**Cause:** it was the fixture, not the production code: nothing guaranteed that the drought it
+triggered actually moved the price of the category the test then sampled, so in some worlds the
+assertion compared a number to itself.
+
+**Fix:** make the fixture assert its own precondition — that the drought moved the sampled
+category's price at all — and SKIP with a reason when it did not, rather than comparing two
+identical numbers and calling it a pass.
+
+**Defect class:** a vacuous pass here is the same defect class as the hollow assertions caught by
+mutation elsewhere in this program: green without the ability to go red.
+
 ## ~~A sold animal may leave dangling pawn relations in the save~~ — HYPOTHESIS DISPROVEN
 
 **Raised:** 2026-08-21, from reading the log of Matteo's play session.
