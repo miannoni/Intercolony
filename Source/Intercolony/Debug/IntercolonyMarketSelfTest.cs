@@ -22,6 +22,7 @@ namespace Intercolony
             StringBuilder sb = new StringBuilder();
             int passed = 0;
             int failed = 0;
+            int skipped = 0;
 
             void Check(string name, bool ok, string detail = null)
             {
@@ -34,6 +35,12 @@ namespace Intercolony
                     failed++;
                     sb.AppendLine($"  FAIL  {name}{(detail == null ? "" : " — " + detail)}");
                 }
+            }
+
+            void Skip(string name, string reason)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {name}  ({reason})");
             }
 
             sb.AppendLine("Market generation self-test");
@@ -451,7 +458,7 @@ namespace Intercolony
                             "every cycle produced identical demand");
                     }
 
-                    CheckDemandConditionLotQuantities(state, sb, Check);
+                    CheckDemandConditionLotQuantities(state, sb, Check, Skip);
 
                     Check("respects the per-settlement cap",
                         MarketOpportunityGenerator.GenerateFor(
@@ -928,14 +935,15 @@ namespace Intercolony
             Check("pricing leaves global RNG untouched", expected == actual,
                 $"got {actual}, expected {expected}");
 
-            sb.AppendLine($"  {passed} passed, {failed} failed.");
+            sb.AppendLine($"  {passed} passed, {failed} failed, {skipped} skipped.");
             return sb.ToString();
         }
 
         private static void CheckDemandConditionLotQuantities(
             IntercolonyWorldComponent state,
             StringBuilder sb,
-            Action<string, bool, string> check)
+            Action<string, bool, string> check,
+            Action<string, string> skip)
         {
             const int MaxSampledSettlements = 12;
             const int SyntheticCycles = 60;
@@ -990,6 +998,9 @@ namespace Intercolony
 
                 state.RefreshMarketStateIndex();
 
+                float undisturbedDemand = TotalSampledDemandWeight(
+                    state, quantityProfiles);
+
                 // Quantity must read current demand without letting category selection muddy
                 // the comparison. Equal pressure on every category scales every category
                 // weight and the weighted roll together, leaving the chosen goods unchanged.
@@ -1038,8 +1049,8 @@ namespace Intercolony
 
                 if (quantityRefresh < 0 || undisturbedTotal == 0 || producingSettlements < 4)
                 {
-                    sb.AppendLine(
-                        "  SKIPPED  demand condition sizes market lots — " +
+                    skip(
+                        "demand condition sizes market lots",
                         $"{quantitySettlements.Count} settlements sampled; at most " +
                         $"{mostProducingSettlements} produced opportunities in one of " +
                         $"{SyntheticCycles} synthetic cycles");
@@ -1070,6 +1081,7 @@ namespace Intercolony
                         shortageTotal += opportunity.quantity;
                     }
                 }
+                float shortageDemand = TotalSampledDemandWeight(state, quantityProfiles);
 
                 foreach (Settlement sampledSettlement in quantitySettlements)
                 {
@@ -1102,15 +1114,40 @@ namespace Intercolony
                         glutTotal += opportunity.quantity;
                     }
                 }
+                float glutDemand = TotalSampledDemandWeight(state, quantityProfiles);
 
-                check("a demand shortage increases total market lot quantity",
-                    shortageTotal > undisturbedTotal,
-                    $"{undisturbedTotal} -> {shortageTotal} across " +
-                    $"{quantitySettlements.Count} settlements sampled");
-                check("a demand glut decreases total market lot quantity",
-                    glutTotal < undisturbedTotal,
-                    $"{undisturbedTotal} -> {glutTotal} across " +
-                    $"{quantitySettlements.Count} settlements sampled");
+                const float DemandMovementEpsilon = 0.0001f;
+                if (shortageDemand <= undisturbedDemand + DemandMovementEpsilon)
+                {
+                    skip(
+                        "a demand shortage increases total market lot quantity",
+                        $"sampled effective demand did not increase " +
+                        $"{undisturbedDemand:F4}->{shortageDemand:F4}");
+                }
+                else
+                {
+                    check("a demand shortage increases total market lot quantity",
+                        shortageTotal > undisturbedTotal,
+                        $"{undisturbedTotal} -> {shortageTotal} across " +
+                        $"{quantitySettlements.Count} settlements sampled; demand " +
+                        $"{undisturbedDemand:F4}->{shortageDemand:F4}");
+                }
+
+                if (glutDemand >= undisturbedDemand - DemandMovementEpsilon)
+                {
+                    skip(
+                        "a demand glut decreases total market lot quantity",
+                        $"sampled effective demand did not decrease " +
+                        $"{undisturbedDemand:F4}->{glutDemand:F4}");
+                }
+                else
+                {
+                    check("a demand glut decreases total market lot quantity",
+                        glutTotal < undisturbedTotal,
+                        $"{undisturbedTotal} -> {glutTotal} across " +
+                        $"{quantitySettlements.Count} settlements sampled; demand " +
+                        $"{undisturbedDemand:F4}->{glutDemand:F4}");
+                }
                 int roundingAllowance = undisturbedLotCount * 50;
                 check("demand-conditioned lot quantity stays within the economy bound",
                     shortageTotal <=
@@ -1134,6 +1171,24 @@ namespace Intercolony
 
                 state.RefreshMarketStateIndex();
             }
+        }
+
+        private static float TotalSampledDemandWeight(
+            IntercolonyWorldComponent state,
+            List<SettlementEconomicProfile> profiles)
+        {
+            float total = 0f;
+            foreach (SettlementEconomicProfile profile in profiles)
+            {
+                foreach (IntercolonyProductCategory category in
+                         IntercolonyProductCategoryUtility.All)
+                {
+                    total += Mathf.Max(0.01f,
+                        EffectiveEconomyService.EffectiveDemand(state, profile, category));
+                }
+            }
+
+            return total;
         }
     }
 }

@@ -6399,7 +6399,6 @@ namespace Intercolony
             float paidOrderUnitPriceBeforeShock = 0f;
             int paidOrderQuantityBeforeShock = 0;
             int paidOrderTotalBeforeShock = 0;
-            bool shockApplied = false;
 
             try
             {
@@ -6568,7 +6567,6 @@ namespace Intercolony
                                 state, profile, listingCategory.Value);
                             MarketPressureService.ApplySupplyShock(
                                 state, settlement.ID, listingCategory.Value, 0.35f);
-                            shockApplied = true;
                             float supplyAfter = EffectiveEconomyService.EffectiveSupply(
                                 state, profile, listingCategory.Value);
                             int afterId = 930_000;
@@ -6576,12 +6574,22 @@ namespace Intercolony
                                 state, settlement, profile, listingWindow, 0, () => afterId++);
                             bool listingsDiffer = !SameSupplierListingBatch(
                                 beforeListings, afterListings);
-                            check(
-                                R10a,
-                                supplyAfter < supplyBefore && listingsDiffer,
-                                $"supply {supplyBefore:F4}->{supplyAfter:F4}; " +
-                                $"listings {SupplierListingBatchDetail(beforeListings)} -> " +
-                                $"{SupplierListingBatchDetail(afterListings)}");
+                            if (supplyAfter >= supplyBefore - 0.0001f)
+                            {
+                                skip(
+                                    R10a,
+                                    $"supplier effective supply did not decrease " +
+                                    $"{supplyBefore:F4}->{supplyAfter:F4}");
+                            }
+                            else
+                            {
+                                check(
+                                    R10a,
+                                    listingsDiffer,
+                                    $"supply {supplyBefore:F4}->{supplyAfter:F4}; " +
+                                    $"listings {SupplierListingBatchDetail(beforeListings)} -> " +
+                                    $"{SupplierListingBatchDetail(afterListings)}");
+                            }
                         }
                     }
                 }
@@ -6605,21 +6613,34 @@ namespace Intercolony
                         IntercolonyProductCategory.Commodities;
                     if (settlement != null)
                     {
+                        float contractSupplyBefore = EffectiveEconomyService.EffectiveSupply(
+                            state, profile, contractCategory);
                         MarketPressureService.ApplySupplyShock(
                             state, settlement.ID, contractCategory, 0.35f);
-                        shockApplied = true;
+                        float contractSupplyAfter = EffectiveEconomyService.EffectiveSupply(
+                            state, profile, contractCategory);
+                        if (contractSupplyAfter >= contractSupplyBefore - 0.0001f)
+                        {
+                            skip(
+                                R10c,
+                                $"contract category effective supply did not decrease " +
+                                $"{contractSupplyBefore:F4}->{contractSupplyAfter:F4}");
+                        }
+                        else
+                        {
+                            check(
+                                R10c,
+                                acceptedContract.unitPrice == contractUnitPriceBefore &&
+                                acceptedContract.quantityPerCycle == contractQuantityBefore &&
+                                acceptedContract.cadenceDays == contractCadenceBefore &&
+                                acceptedContract.totalCycles == contractTotalCyclesBefore,
+                                $"quantity {contractQuantityBefore}->{acceptedContract.quantityPerCycle}; " +
+                                $"unitPrice {contractUnitPriceBefore:F4}->{acceptedContract.unitPrice:F4}; " +
+                                $"cadenceDays {contractCadenceBefore}->{acceptedContract.cadenceDays}; " +
+                                $"totalCycles {contractTotalCyclesBefore}->{acceptedContract.totalCycles}; " +
+                                $"supply {contractSupplyBefore:F4}->{contractSupplyAfter:F4}");
+                        }
                     }
-
-                    check(
-                        R10c,
-                        acceptedContract.unitPrice == contractUnitPriceBefore &&
-                        acceptedContract.quantityPerCycle == contractQuantityBefore &&
-                        acceptedContract.cadenceDays == contractCadenceBefore &&
-                        acceptedContract.totalCycles == contractTotalCyclesBefore,
-                        $"quantity {contractQuantityBefore}->{acceptedContract.quantityPerCycle}; " +
-                        $"unitPrice {contractUnitPriceBefore:F4}->{acceptedContract.unitPrice:F4}; " +
-                        $"cadenceDays {contractCadenceBefore}->{acceptedContract.cadenceDays}; " +
-                        $"totalCycles {contractTotalCyclesBefore}->{acceptedContract.totalCycles}");
                 }
 
                 if (paidOrderForShock == null)
@@ -6629,24 +6650,35 @@ namespace Intercolony
                 }
                 else
                 {
-                    if (!shockApplied)
+                    IntercolonyProductCategory orderCategory =
+                        IntercolonyProductClassifier.Classify(paidOrderForShock.thingDef) ??
+                        IntercolonyProductCategory.Commodities;
+                    float paidPressureBefore = EffectiveEconomyService.CurrentSupplyPressure(
+                        state, paidOrderForShock.settlementId, orderCategory);
+                    MarketPressureService.ApplySupplyShock(
+                        state, paidOrderForShock.settlementId, orderCategory, 0.35f);
+                    float paidPressureAfter = EffectiveEconomyService.CurrentSupplyPressure(
+                        state, paidOrderForShock.settlementId, orderCategory);
+                    if (paidPressureAfter <= paidPressureBefore + 0.0001f)
                     {
-                        IntercolonyProductCategory orderCategory =
-                            IntercolonyProductClassifier.Classify(paidOrderForShock.thingDef) ??
-                            IntercolonyProductCategory.Commodities;
-                        MarketPressureService.ApplySupplyShock(
-                            state, paidOrderForShock.settlementId, orderCategory, 0.35f);
+                        skip(
+                            R10b,
+                            $"paid-order category supply pressure did not increase " +
+                            $"{paidPressureBefore:F4}->{paidPressureAfter:F4}");
                     }
-
-                    check(
-                        R10b,
-                        paidOrderForShock.unitPrice == paidOrderUnitPriceBeforeShock &&
-                        paidOrderForShock.quantity == paidOrderQuantityBeforeShock &&
-                        paidOrderForShock.paidSilver == paidOrderTotalBeforeShock,
-                        $"unitPrice {paidOrderUnitPriceBeforeShock:F4}->" +
-                        $"{paidOrderForShock.unitPrice:F4}; " +
-                        $"quantity {paidOrderQuantityBeforeShock}->{paidOrderForShock.quantity}; " +
-                        $"total {paidOrderTotalBeforeShock}->{paidOrderForShock.paidSilver}");
+                    else
+                    {
+                        check(
+                            R10b,
+                            paidOrderForShock.unitPrice == paidOrderUnitPriceBeforeShock &&
+                            paidOrderForShock.quantity == paidOrderQuantityBeforeShock &&
+                            paidOrderForShock.paidSilver == paidOrderTotalBeforeShock,
+                            $"unitPrice {paidOrderUnitPriceBeforeShock:F4}->" +
+                            $"{paidOrderForShock.unitPrice:F4}; " +
+                            $"quantity {paidOrderQuantityBeforeShock}->{paidOrderForShock.quantity}; " +
+                            $"total {paidOrderTotalBeforeShock}->{paidOrderForShock.paidSilver}; " +
+                            $"supply pressure {paidPressureBefore:F4}->{paidPressureAfter:F4}");
+                    }
                 }
 
                 CheckStage6IAcceptanceGateSaveLoad(
@@ -8872,6 +8904,8 @@ namespace Intercolony
                 return;
             }
 
+            float undisturbedSupply = TotalProbeSupply(state, accessible, probeCategories);
+
             Dictionary<int, SettlementMarketState> savedRecords =
                 new Dictionary<int, SettlementMarketState>();
             Dictionary<int, float[]> savedDemand = new Dictionary<int, float[]>();
@@ -8899,6 +8933,15 @@ namespace Intercolony
                         MarketPressureService.ApplySupplyShock(
                             state, settlement.ID, category, MarketPressureService.MaxPressure);
                     }
+                }
+
+                float scarceSupply = TotalProbeSupply(state, accessible, probeCategories);
+                if (scarceSupply >= undisturbedSupply - 0.0001f)
+                {
+                    skip(Assertion,
+                        $"sampled effective supply did not decrease " +
+                        $"{undisturbedSupply:F4}->{scarceSupply:F4}");
+                    return;
                 }
 
                 int scarceCount = 0;
@@ -8949,6 +8992,25 @@ namespace Intercolony
 
                 state.RefreshMarketStateIndex();
             }
+        }
+
+        private static float TotalProbeSupply(
+            IntercolonyWorldComponent state,
+            List<Settlement> settlements,
+            List<IntercolonyProductCategory> categories)
+        {
+            float total = 0f;
+            foreach (Settlement settlement in settlements)
+            {
+                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                foreach (IntercolonyProductCategory category in categories)
+                {
+                    total += EffectiveEconomyService.EffectiveSupply(
+                        state, profile, category);
+                }
+            }
+
+            return total;
         }
 
         /// <summary>

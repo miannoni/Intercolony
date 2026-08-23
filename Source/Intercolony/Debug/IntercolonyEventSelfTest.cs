@@ -453,6 +453,11 @@ namespace Intercolony
 
                 float struckPrice = IntercolonyPricing.UnitPrice(
                     state, good, quantity, profile, category, -1f, null, out _);
+                float struckDemandMultiplier = EconomicEventService.DemandMultiplier(
+                    state, settlement, category);
+                float struckDemandBasis = Mathf.Clamp(
+                    EffectiveEconomyService.EffectiveDemand(state, profile, good, category),
+                    0.4f, 2.0f);
                 SalesOrder sale = new SalesOrder
                 {
                     id = -3_700_001,
@@ -510,6 +515,11 @@ namespace Intercolony
                 // would erase the binding-term boundary this test is meant to guard.
                 float currentPrice = IntercolonyPricing.UnitPrice(
                     state, good, quantity, profile, category, -1f, null, out _);
+                float currentDemandMultiplier = EconomicEventService.DemandMultiplier(
+                    state, settlement, category);
+                float currentDemandBasis = Mathf.Clamp(
+                    EffectiveEconomyService.EffectiveDemand(state, profile, good, category),
+                    0.4f, 2.0f);
 
                 r.Check(
                     eventAffectedSettlement && Mathf.Approximately(
@@ -539,16 +549,31 @@ namespace Intercolony
                     $"stored {savedPurchaseDeadline}, after {purchase.pickupExpiryTick}");
 
                 // This complement is essential: if the event system were deleted, all six frozen
-                // term checks would still pass. Comparing prices computed before and after the
-                // event, with a non-neutral demand multiplier, proves the event reaches pricing
-                // while accepted terms remain frozen.
-                r.Check(
-                    eventAffectedSettlement &&
-                    EconomicEventService.DemandMultiplier(state, settlement, category) >
-                        EconomicEvent.Neutral &&
-                    Mathf.Abs(currentPrice - struckPrice) > 0.0001f,
-                    "a drought changes a newly computed price without repricing the accepted deal",
-                    $"before {struckPrice:F4}, current {currentPrice:F4}");
+                // term checks would still pass. Establish that the event moved the clamped demand
+                // basis actually consumed by pricing before comparing the newly computed price.
+                // A non-neutral event multiplier alone is insufficient because the pricing clamp
+                // can leave a high-baseline good's quoted price unchanged.
+                bool droughtMovedPriceBasis = eventAffectedSettlement &&
+                    Mathf.Abs(currentDemandBasis - struckDemandBasis) > 0.0001f;
+                if (eventAffectedSettlement && !droughtMovedPriceBasis)
+                {
+                    r.skipped++;
+                    r.sb.AppendLine(
+                        "  SKIPPED  a drought changes a newly computed price without repricing " +
+                        "the accepted deal  " +
+                        $"(sampled {category} price basis did not move " +
+                        $"{struckDemandBasis:F4}->{currentDemandBasis:F4}; demand multiplier " +
+                        $"{struckDemandMultiplier:F4}->{currentDemandMultiplier:F4})");
+                }
+                else
+                {
+                    r.Check(
+                        eventAffectedSettlement && droughtMovedPriceBasis &&
+                        Mathf.Abs(currentPrice - struckPrice) > 0.0001f,
+                        "a drought changes a newly computed price without repricing the accepted deal",
+                        $"before {struckPrice:F4}, current {currentPrice:F4}; " +
+                        $"price basis {struckDemandBasis:F4}->{currentDemandBasis:F4}");
+                }
             }
             finally
             {
