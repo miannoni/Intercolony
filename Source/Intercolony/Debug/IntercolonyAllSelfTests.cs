@@ -10,8 +10,8 @@ namespace Intercolony
     /// <summary>
     /// Runs every self-test in one go and reports one verdict.
     ///
-    /// **Why this exists.** Seventeen suites behind seventeen menu entries means the honest answer
-    /// to "is the mod still sound?" costs seventeen clicks, so in practice it does not get asked —
+    /// **Why this exists.** Twenty suites behind twenty menu entries means the honest answer
+    /// to "is the mod still sound?" costs twenty clicks, so in practice it does not get asked —
     /// which is how a project ends up with six suites changed and none of them executed.
     ///
     /// It also checks something no individual suite can. Suites deliberately drive real
@@ -131,6 +131,8 @@ namespace Intercolony
                 (s, m) => IntercolonyEventSelfTest.Run(s)),
             new SelfTestDefinition("brand", "product brand", false,
                 (s, m) => IntercolonyBrandSelfTest.Run(s)),
+            new SelfTestDefinition("negotiation", "negotiation", false,
+                (s, m) => IntercolonyNegotiationSelfTest.Run(s)),
             new SelfTestDefinition("timeline", "timeline", false,
                 (s, m) => IntercolonyTimelineSelfTest.Run(s)),
             new SelfTestDefinition("profile", "profile", false,
@@ -225,7 +227,7 @@ namespace Intercolony
         /// <summary>
         /// Matches the summary every suite ends with. They agree on
         /// "N passed, M failed" and some add ", K skipped"; nothing else in the output looks
-        /// like that, so one pattern reads all seventeen.
+        /// like that, so one pattern reads all twenty.
         ///
         /// **Case-insensitive, and that is not cosmetic.** The animal suite writes its skip count
         /// as "8 SKIPPED — not a clean run", so a case-sensitive pattern matched the first two
@@ -479,7 +481,7 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Only failing suites get printed in full. Seventeen complete outputs would bury the
+        /// Only failing suites get printed in full. Twenty complete outputs would bury the
         /// verdict, and the whole point of this action is that the verdict is readable.
         /// </summary>
         private static void AppendFailureDetail(StringBuilder sb, List<SuiteResult> results)

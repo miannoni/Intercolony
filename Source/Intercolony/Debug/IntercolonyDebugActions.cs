@@ -979,8 +979,8 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// The one entry point worth having. Seventeen suites behind seventeen menu entries means
-        /// "is the mod still sound?" costs seventeen clicks, so in practice it stops being asked.
+        /// The one entry point worth having. Twenty suites behind twenty menu entries means
+        /// "is the mod still sound?" costs twenty clicks, so in practice it stops being asked.
         /// </summary>
         [DebugAction(Category, "Run ALL self-tests", allowedGameStates = AllowedGameStates.Playing, displayPriority = 100)]
         private static void RunAllSelfTests()
@@ -1008,6 +1008,12 @@ namespace Intercolony
         private static void RunProductBrandSelfTest()
         {
             WithGuardedState(state => IntercolonyLog.Message(IntercolonyBrandSelfTest.Run(state)));
+        }
+
+        [DebugAction(Category, "Run negotiation self-test", allowedGameStates = AllowedGameStates.Playing, displayPriority = 58)]
+        private static void RunNegotiationSelfTest()
+        {
+            WithGuardedState(state => IntercolonyLog.Message(IntercolonyNegotiationSelfTest.Run(state)));
         }
 
         [DebugAction(Category, "Dump effective economy", allowedGameStates = AllowedGameStates.Playing, displayPriority = 81)]
