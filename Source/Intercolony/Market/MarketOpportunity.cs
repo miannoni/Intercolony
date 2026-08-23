@@ -6,9 +6,8 @@ using Verse;
 namespace Intercolony
 {
     /// <summary>
-    /// Lifecycle of an opportunity (DESIGN.md §73). Phase 4 has no acceptance step — turning
-    /// an opportunity into a binding Sales Order is Phase 5 (§98) — so the only transition is
-    /// Available -> Expired.
+    /// Lifecycle of an opportunity (DESIGN.md §73). An offer is live while Available, and its
+    /// authoritative terminal transitions are expiry, acceptance, or player decline.
     /// </summary>
     public enum MarketOpportunityState
     {
@@ -19,7 +18,32 @@ namespace Intercolony
         /// Converted into a binding Sales Order. Terminal: an offer is consumed by acceptance
         /// and can never be taken again (§14 Available -> Accepted, §76.1 exploit resistance).
         /// </summary>
-        Accepted
+        Accepted,
+
+        /// <summary>
+        /// Declined by the player. Terminal: a declined offer is removed from the live market
+        /// rather than being left as an apparently actionable stale row.
+        /// </summary>
+        Declined
+    }
+
+    /// <summary>
+    /// The finite pre-acceptance negotiation states for an opportunity. There is deliberately no
+    /// state that permits another player counter after a counterparty response: the absence of that
+    /// state is the construction that prevents an infinite back-and-forth loop.
+    /// </summary>
+    public enum MarketOpportunityNegotiationState
+    {
+        None,
+
+        /// <summary>One final counter is waiting for the player's accept or decline.</summary>
+        CounterpartyCountered,
+
+        /// <summary>
+        /// The counterparty refused the one player counter. The original offer remains available,
+        /// but this opportunity cannot be countered again.
+        /// </summary>
+        CounterpartyRefused
     }
 
     /// <summary>
@@ -81,6 +105,24 @@ namespace Intercolony
 
         public MarketOpportunityState state = MarketOpportunityState.Available;
 
+        /// <summary>
+        /// The only persisted negotiation state needed after the evaluator answers. The player's
+        /// proposed terms do not need to survive separately: a final counter is either stored below
+        /// or the opportunity has a terminal response, while the original terms remain above.
+        /// </summary>
+        private MarketOpportunityNegotiationState negotiationState =
+            MarketOpportunityNegotiationState.None;
+
+        /// <summary>
+        /// The counterparty's one final counter, present only while negotiationState is
+        /// CounterpartyCountered. These are separate persisted values because the evaluator terms
+        /// model is intentionally an ephemeral input model, not a saved entity.
+        /// </summary>
+        private int finalCounterQuantity;
+        private float finalCounterUnitPrice;
+        private int finalCounterDeadlineDays;
+        private FulfillmentMode finalCounterFulfillment = FulfillmentMode.SellerDelivery;
+
         /// <summary>Human-readable price factor breakdown, built once at creation (§47).</summary>
         public string priceExplanation = "";
 
@@ -96,6 +138,35 @@ namespace Intercolony
         public float DaysRemaining => TicksRemaining / (float)GenDate.TicksPerDay;
 
         public bool IsAvailable => state == MarketOpportunityState.Available;
+
+        public MarketOpportunityNegotiationState NegotiationState => negotiationState;
+
+        public bool HasPendingCounterpartyCounter =>
+            IsAvailable && negotiationState == MarketOpportunityNegotiationState.CounterpartyCountered;
+
+        /// <summary>
+        /// The original offer can be countered only before the counterparty has answered. This
+        /// finite gate is the state-machine boundary, rather than a convention callers must obey.
+        /// </summary>
+        public bool CanSubmitCounter =>
+            IsAvailable && negotiationState == MarketOpportunityNegotiationState.None;
+
+        /// <summary>
+        /// A refused counter leaves the advertised terms intact, so the player may still accept
+        /// those original terms but cannot reopen negotiation on the same listing.
+        /// </summary>
+        public bool CanAcceptOriginalTerms =>
+            IsAvailable &&
+            (negotiationState == MarketOpportunityNegotiationState.None ||
+             negotiationState == MarketOpportunityNegotiationState.CounterpartyRefused);
+
+        /// <summary>
+        /// Current sale opportunities are fungible goods with both existing sale-side logistics
+        /// paths. Deriving this from the same eligibility gate avoids persisting a duplicate mode
+        /// capability flag, while an unsupported future opportunity naturally cannot change mode.
+        /// </summary>
+        public bool SupportsBothFulfillmentModes =>
+            thingDef != null && IntercolonyProductClassifier.IsFungibleTradeItem(thingDef);
 
         public bool HasConditionConstraint => minHitPointsPercent != 0f;
 
@@ -114,14 +185,131 @@ namespace Intercolony
         /// </summary>
         public bool TryAccept()
         {
-            if (state != MarketOpportunityState.Available)
+            if (!CanAcceptOriginalTerms)
             {
-                IntercolonyLog.Warning($"Opportunity {id} is already {state}; refusing to accept again.");
+                IntercolonyLog.Warning(
+                    $"Opportunity {id} is {state}/{negotiationState}; refusing to accept original terms.");
                 return false;
             }
 
             state = MarketOpportunityState.Accepted;
+            ClearNegotiation();
             return true;
+        }
+
+        /// <summary>
+        /// Claims the opportunity for terms returned by the evaluator. It is separate from
+        /// TryAccept so a caller cannot use an ordinary accept to bypass a pending final counter.
+        /// </summary>
+        internal bool TryAcceptNegotiated(
+            IntercolonyNegotiationTerms agreedTerms, bool acceptingFinalCounter)
+        {
+            if (!IsAvailable)
+            {
+                IntercolonyLog.Warning(
+                    $"Opportunity {id} is already {state}; refusing negotiated acceptance.");
+                return false;
+            }
+
+            if (acceptingFinalCounter)
+            {
+                if (!HasPendingCounterpartyCounter || !MatchesFinalCounter(agreedTerms))
+                {
+                    IntercolonyLog.Warning(
+                        $"Opportunity {id} has no matching final counter to accept.");
+                    return false;
+                }
+            }
+            else if (!CanSubmitCounter)
+            {
+                IntercolonyLog.Warning(
+                    $"Opportunity {id} is {negotiationState}; refusing negotiated acceptance.");
+                return false;
+            }
+
+            state = MarketOpportunityState.Accepted;
+            ClearNegotiation();
+            return true;
+        }
+
+        /// <summary>Declines any still-available branch, including a pending final counter.</summary>
+        public bool TryDecline()
+        {
+            if (!IsAvailable)
+            {
+                IntercolonyLog.Warning($"Opportunity {id} is {state}; refusing to decline again.");
+                return false;
+            }
+
+            state = MarketOpportunityState.Declined;
+            ClearNegotiation();
+            return true;
+        }
+
+        /// <summary>
+        /// Stores the evaluator's single final counter. The state transition has no outgoing
+        /// player-counter edge, so calling the counter action again cannot create another round.
+        /// </summary>
+        internal bool TryRecordFinalCounter(IntercolonyNegotiationTerms terms)
+        {
+            if (!CanSubmitCounter || terms == null)
+            {
+                return false;
+            }
+
+            finalCounterQuantity = terms.quantity;
+            finalCounterUnitPrice = terms.unitPrice;
+            finalCounterDeadlineDays = terms.deadlineDays;
+            finalCounterFulfillment = terms.fulfillment;
+            negotiationState = MarketOpportunityNegotiationState.CounterpartyCountered;
+            return true;
+        }
+
+        /// <summary>Records a refusal while retaining the untouched original offer.</summary>
+        internal bool TryRecordCounterpartyRefusal()
+        {
+            if (!CanSubmitCounter)
+            {
+                return false;
+            }
+
+            negotiationState = MarketOpportunityNegotiationState.CounterpartyRefused;
+            return true;
+        }
+
+        public bool TryGetFinalCounterTerms(out IntercolonyNegotiationTerms terms)
+        {
+            if (!HasPendingCounterpartyCounter)
+            {
+                terms = null;
+                return false;
+            }
+
+            terms = new IntercolonyNegotiationTerms(
+                finalCounterQuantity,
+                finalCounterUnitPrice,
+                finalCounterDeadlineDays,
+                finalCounterFulfillment);
+            return true;
+        }
+
+        internal bool MatchesFinalCounter(IntercolonyNegotiationTerms terms)
+        {
+            return terms != null &&
+                   HasPendingCounterpartyCounter &&
+                   terms.quantity == finalCounterQuantity &&
+                   Mathf.Approximately(terms.unitPrice, finalCounterUnitPrice) &&
+                   terms.deadlineDays == finalCounterDeadlineDays &&
+                   terms.fulfillment == finalCounterFulfillment;
+        }
+
+        private void ClearNegotiation()
+        {
+            negotiationState = MarketOpportunityNegotiationState.None;
+            finalCounterQuantity = 0;
+            finalCounterUnitPrice = 0f;
+            finalCounterDeadlineDays = 0;
+            finalCounterFulfillment = FulfillmentMode.SellerDelivery;
         }
 
         /// <summary>
@@ -157,6 +345,17 @@ namespace Intercolony
             Scribe_Values.Look(ref minHitPointsPercent, "minHitPointsPercent", 0f);
             Scribe_Values.Look(ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(ref state, "state", MarketOpportunityState.Available);
+            Scribe_Values.Look(
+                ref negotiationState,
+                "negotiationState",
+                MarketOpportunityNegotiationState.None);
+            Scribe_Values.Look(ref finalCounterQuantity, "finalCounterQuantity", 0);
+            Scribe_Values.Look(ref finalCounterUnitPrice, "finalCounterUnitPrice", 0f);
+            Scribe_Values.Look(ref finalCounterDeadlineDays, "finalCounterDeadlineDays", 0);
+            Scribe_Values.Look(
+                ref finalCounterFulfillment,
+                "finalCounterFulfillment",
+                FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(ref priceExplanation, "priceExplanation", "");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
@@ -169,6 +368,22 @@ namespace Intercolony
                 if (priceExplanation == null)
                 {
                     priceExplanation = "";
+                }
+
+                if (negotiationState == MarketOpportunityNegotiationState.CounterpartyCountered &&
+                    (finalCounterQuantity <= 0 ||
+                     finalCounterUnitPrice <= 0f ||
+                     float.IsNaN(finalCounterUnitPrice) ||
+                     float.IsInfinity(finalCounterUnitPrice) ||
+                     finalCounterDeadlineDays < 0))
+                {
+                    // A partial or corrupt final counter cannot be safely reconstructed. Returning
+                    // to the untouched original offer is safer than presenting terms the player
+                    // never actually received, and does not fabricate a new negotiation.
+                    IntercolonyLog.Warning(
+                        $"Opportunity {id} had invalid persisted final counter terms; " +
+                        "clearing its negotiation state.");
+                    ClearNegotiation();
                 }
             }
         }

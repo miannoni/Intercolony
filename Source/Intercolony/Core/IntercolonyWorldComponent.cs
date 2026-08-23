@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 46;
+        public const int CurrentSaveVersion = 47;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -2273,6 +2273,18 @@ namespace Intercolony
                 // so doing so would credit or blame craftsmanship nobody recorded.
                 IntercolonyLog.Message(
                     "  schema 45 -> 46: product brand records added; no historical brand was fabricated.");
+            }
+
+            if (saveVersion < 47)
+            {
+                // 46 -> 47 added the bounded pre-acceptance negotiation state and one persisted
+                // final counter to MarketOpportunity. Missing nodes already load as None and
+                // empty terms, which is the only correct migration: older saves contain no fact
+                // that a player countered, so inventing an in-progress negotiation would present
+                // a response the player never made.
+                IntercolonyLog.Message(
+                    "  schema 46 -> 47: bounded opportunity negotiation added; " +
+                    "existing opportunities start with no negotiation in progress.");
             }
 
             saveVersion = CurrentSaveVersion;

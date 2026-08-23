@@ -1,16 +1,19 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
 namespace Intercolony
 {
     /// <summary>
-    /// Self-test for the Stage 5A negotiation evaluator. The six assertions are deliberately
-    /// behavioural: reputation must change willingness, hard boundaries must survive reputation,
-    /// counterparty-favouring terms must be accepted, identical reads must be deterministic,
-    /// explanations must contain real contributions, and Sale/Purchase must invert perspective.
+    /// Self-test for the Stage 5A evaluator and Stage 5B counteroffer state machine. The evaluator
+    /// assertions are deliberately behavioural, while the five state-machine assertions cover
+    /// agreed terms, the finite round boundary, refusal retention, persistence, and the invariant
+    /// that negotiation never edits a binding order.
     /// </summary>
     public static class IntercolonyNegotiationSelfTest
     {
@@ -56,7 +59,7 @@ namespace Intercolony
         public static string Run(IntercolonyWorldComponent state)
         {
             Results r = new Results();
-            r.sb.AppendLine("Negotiation evaluator self-test (Stage 5A)");
+            r.sb.AppendLine("Negotiation evaluator/state-machine self-test (Stage 5A/5B Part One)");
 
             if (state == null)
             {
@@ -68,12 +71,15 @@ namespace Intercolony
             IntercolonyProductCategory category =
                 IntercolonyProductClassifier.Classify(product) ??
                 IntercolonyProductCategory.Commodities;
-            SettlementEconomicProfile profile = SelectProfile(state, product, category);
+            SettlementEconomicProfile profile = SelectProfile(
+                state, product, category, out string profileSelectionFailure);
             if (profile == null || state.Reputations == null)
             {
                 r.Skip(
-                    "six evaluator assertions",
-                    "the loaded world has no eligible settlement profile or reputation dictionary");
+                    "eleven evaluator/state-machine assertions",
+                    profile == null
+                        ? profileSelectionFailure
+                        : "the loaded world has no reputation dictionary");
                 return Summarize(r);
             }
 
@@ -204,6 +210,21 @@ namespace Intercolony
                     salePriceContribution < 0f && purchasePriceContribution > 0f,
                     "selling and buying directions read the same price change from opposite sides",
                     $"sale={salePriceContribution:F3}, purchase={purchasePriceContribution:F3}");
+
+                ThingDef stateMachineProduct = SelectStateMachineProduct();
+                IntercolonyProductCategory? stateMachineCategory =
+                    IntercolonyProductClassifier.Classify(stateMachineProduct);
+                if (!stateMachineCategory.HasValue)
+                {
+                    r.Skip(
+                        "five Stage 5B state-machine assertions",
+                        "the loaded world has no definition-driven fungible market product");
+                }
+                else
+                {
+                    RunStateMachineAssertions(
+                        state, profile, stateMachineProduct, stateMachineCategory.Value, r);
+                }
             }
             catch (System.Exception ex)
             {
@@ -224,6 +245,413 @@ namespace Intercolony
             }
 
             return Summarize(r);
+        }
+
+        private static ThingDef SelectStateMachineProduct()
+        {
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate != null)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static void RunStateMachineAssertions(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            ThingDef product,
+            IntercolonyProductCategory category,
+            Results r)
+        {
+            // Contents, not counts. These assertions add opportunities and orders, and replace
+            // one reputation record with synthetic trust levels. Restoring only old counts could
+            // leave a new order, opportunity or reputation object attached to the player's world
+            // if a later assertion takes a different branch.
+            List<MarketOpportunity> savedOpportunities =
+                new List<MarketOpportunity>(state.Opportunities);
+            List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+
+            try
+            {
+                SetReputation(state, profile, NeutralScore);
+                MarketOpportunity acceptedOpportunity = TestOpportunity(profile, product, 1);
+                state.Opportunities.Add(acceptedOpportunity);
+                IntercolonyNegotiationTerms agreedTerms = new IntercolonyNegotiationTerms(
+                    OriginalQuantity,
+                    OriginalPrice * CounterpartyFriendlyPrice,
+                    OriginalDeadlineDays,
+                    FulfillmentMode.SellerDelivery);
+                bool acceptedCounterProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state, acceptedOpportunity, agreedTerms,
+                    out IntercolonyNegotiationResult acceptedEvaluation,
+                    out SalesOrder acceptedOrder,
+                    out string acceptedFailure);
+
+                bool agreedTermsBound = acceptedOrder != null &&
+                    acceptedOrder.Quantity == agreedTerms.quantity &&
+                    Mathf.Approximately(acceptedOrder.unitPrice, agreedTerms.unitPrice) &&
+                    acceptedOrder.fulfillment == agreedTerms.fulfillment &&
+                    acceptedOrder.deadlineTick ==
+                    acceptedOrder.acceptedTick + agreedTerms.deadlineDays * GenDate.TicksPerDay &&
+                    Mathf.Approximately(acceptedOpportunity.unitPrice, OriginalPrice) &&
+                    acceptedOpportunity.quantity == OriginalQuantity &&
+                    acceptedOpportunity.deadlineDays == OriginalDeadlineDays;
+                r.Check(
+                    acceptedCounterProcessed &&
+                    acceptedEvaluation?.Decision == IntercolonyNegotiationDecision.Accepted &&
+                    agreedTermsBound,
+                    "an accepted counter creates an order from the agreed terms",
+                    $"decision={acceptedEvaluation?.Decision}, " +
+                    $"order={DescribeOrder(acceptedOrder)}, failure={acceptedFailure}");
+
+                SetReputation(state, profile, UntrustedScore);
+                MarketOpportunity boundedOpportunity = TestOpportunity(profile, product, 2);
+                state.Opportunities.Add(boundedOpportunity);
+                IntercolonyNegotiationTerms firstCounter = FindCounteredTerms(
+                    state, profile, product, category, boundedOpportunity, out _);
+                if (firstCounter == null)
+                {
+                    // The hard evaluator boundary supplies a deterministic terminal response if
+                    // this particular loaded world's context has no ordinary counter band.
+                    firstCounter = new IntercolonyNegotiationTerms(
+                        OriginalQuantity,
+                        OriginalPrice * ExtremeIncrease,
+                        OriginalDeadlineDays,
+                        FulfillmentMode.SellerDelivery);
+                }
+
+                bool firstCounterProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state, boundedOpportunity, firstCounter,
+                    out IntercolonyNegotiationResult firstEvaluation,
+                    out SalesOrder firstOrder,
+                    out string firstFailure);
+                bool furtherCounterProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state, boundedOpportunity, agreedTerms,
+                    out IntercolonyNegotiationResult furtherEvaluation,
+                    out SalesOrder furtherOrder,
+                    out string furtherFailure);
+                bool terminalResponse = firstEvaluation != null &&
+                    (firstEvaluation.Decision == IntercolonyNegotiationDecision.Countered ||
+                     firstEvaluation.Decision == IntercolonyNegotiationDecision.Refused) &&
+                    firstOrder == null && !furtherCounterProcessed &&
+                    furtherEvaluation == null && furtherOrder == null &&
+                    boundedOpportunity.NegotiationState !=
+                    MarketOpportunityNegotiationState.None;
+                r.Check(
+                    firstCounterProcessed && terminalResponse,
+                    "the counterparty response closes the player counter edge",
+                    $"first={firstEvaluation?.Decision}, state={boundedOpportunity.NegotiationState}, " +
+                    $"failure={firstFailure ?? furtherFailure}, secondFailure={furtherFailure}");
+
+                SetReputation(state, profile, NeutralScore);
+                MarketOpportunity refusedOpportunity = TestOpportunity(profile, product, 3);
+                state.Opportunities.Add(refusedOpportunity);
+                int orderCountBeforeRefusal = state.Orders.Count;
+                IntercolonyNegotiationTerms extremeTerms = new IntercolonyNegotiationTerms(
+                    OriginalQuantity,
+                    OriginalPrice * ExtremeIncrease,
+                    OriginalDeadlineDays,
+                    FulfillmentMode.SellerDelivery);
+                bool refusalProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state, refusedOpportunity, extremeTerms,
+                    out IntercolonyNegotiationResult refusalEvaluation,
+                    out SalesOrder refusalOrder,
+                    out string refusalFailure);
+                bool refusalRetainsOffer = refusalProcessed &&
+                    refusalEvaluation?.Decision == IntercolonyNegotiationDecision.Refused &&
+                    refusalOrder == null && refusedOpportunity.IsAvailable &&
+                    refusedOpportunity.NegotiationState ==
+                    MarketOpportunityNegotiationState.CounterpartyRefused &&
+                    state.Orders.Count == orderCountBeforeRefusal &&
+                    Mathf.Approximately(refusedOpportunity.unitPrice, OriginalPrice) &&
+                    refusedOpportunity.quantity == OriginalQuantity &&
+                    refusedOpportunity.deadlineDays == OriginalDeadlineDays;
+                r.Check(
+                    refusalRetainsOffer,
+                    "a refused negotiation retains the original opportunity without an order",
+                    $"state={refusedOpportunity.NegotiationState}, available={refusedOpportunity.IsAvailable}, " +
+                    $"orders={state.Orders.Count - orderCountBeforeRefusal}, failure={refusalFailure}");
+
+                SetReputation(state, profile, UntrustedScore);
+                MarketOpportunity persistedOpportunity = TestOpportunity(profile, product, 4);
+                // Use a non-default fulfillment mode so this round-trip also detects a missing
+                // finalCounterFulfillment Scribe field rather than comparing equal defaults.
+                persistedOpportunity.fulfillment = FulfillmentMode.BuyerPickup;
+                state.Opportunities.Add(persistedOpportunity);
+                IntercolonyNegotiationResult persistedSearchResult;
+                IntercolonyNegotiationTerms persistedProposedTerms = FindCounteredTerms(
+                    state, profile, product, category, persistedOpportunity,
+                    out persistedSearchResult);
+                if (persistedProposedTerms == null)
+                {
+                    r.Skip(
+                        "a pending final counter survives a Scribe round trip",
+                        $"the evaluator returned " +
+                        $"{persistedSearchResult?.Decision.ToString() ?? "no result"} " +
+                        "for every bounded proposal in this world; no pending counter existed");
+                }
+                else
+                {
+                    IntercolonyNegotiationResult persistedEvaluation = null;
+                    SalesOrder persistedOrder = null;
+                    string persistedFailure = null;
+                    bool persistedCounterProcessed =
+                        MarketOpportunityNegotiationService.TryCounter(
+                            state, persistedOpportunity, persistedProposedTerms,
+                            out persistedEvaluation,
+                            out persistedOrder,
+                            out persistedFailure);
+                    bool processedNonCounter = persistedCounterProcessed &&
+                        persistedEvaluation != null &&
+                        persistedEvaluation.Decision != IntercolonyNegotiationDecision.Countered;
+                    if (processedNonCounter)
+                    {
+                        r.Skip(
+                            "a pending final counter survives a Scribe round trip",
+                            $"the evaluator returned {persistedEvaluation.Decision} " +
+                            $"instead of Countered; counterProcessed={persistedCounterProcessed}, " +
+                            $"orderCreated={persistedOrder != null}, " +
+                            $"processingFailure={persistedFailure ?? "none"}");
+                    }
+                    else
+                    {
+                        // A candidate was already found by evaluating these exact inputs. An
+                        // unprocessed or unknown result stays a failure, not a world skip.
+                        List<MarketOpportunity> loadedOpportunities = RoundTripOpportunities(
+                            new List<MarketOpportunity> { persistedOpportunity },
+                            out string roundTripFailure);
+                        MarketOpportunity loadedOpportunity = loadedOpportunities != null &&
+                            loadedOpportunities.Count == 1 ? loadedOpportunities[0] : null;
+                        IntercolonyNegotiationTerms loadedCounter = null;
+                        bool loadedCounterMatches = loadedOpportunity != null &&
+                            loadedOpportunity.TryGetFinalCounterTerms(
+                                out loadedCounter) &&
+                            SameTerms(persistedEvaluation?.FinalCounterTerms, loadedCounter);
+                        r.Check(
+                            persistedCounterProcessed &&
+                            persistedEvaluation?.Decision ==
+                            IntercolonyNegotiationDecision.Countered &&
+                            persistedOrder == null && loadedCounterMatches &&
+                            loadedOpportunity.NegotiationState ==
+                            MarketOpportunityNegotiationState.CounterpartyCountered,
+                            "a pending final counter survives a Scribe round trip",
+                            $"counterProcessed={persistedCounterProcessed}, " +
+                            $"decision={persistedEvaluation?.Decision.ToString() ?? "none"}, " +
+                            $"orderCreated={persistedOrder != null}, " +
+                            $"loadedTermsMatch={loadedCounterMatches}, " +
+                            $"state={loadedOpportunity?.NegotiationState}, " +
+                            $"expectedFinal={DescribeTerms(persistedEvaluation?.FinalCounterTerms)}, " +
+                            $"loadedFinal={DescribeTerms(loadedCounter)}, " +
+                            $"roundTripFailure={roundTripFailure ?? "none"}, " +
+                            $"processingFailure={persistedFailure ?? "none"}");
+                    }
+                }
+
+                SetReputation(state, profile, UntrustedScore);
+                SalesOrder existingOrder = new SalesOrder
+                {
+                    id = state.PeekNextId() + 5000,
+                    opportunityId = 0,
+                    settlementId = profile.settlementId,
+                    settlementName = profile.settlementName,
+                    line = new OrderLine(product, 7),
+                    unitPrice = 321f,
+                    acceptedTick = GenTicks.TicksGame,
+                    deadlineTick = GenTicks.TicksGame + 17 * GenDate.TicksPerDay,
+                    status = SalesOrderStatus.Accepted,
+                    fulfillment = FulfillmentMode.SellerDelivery
+                };
+                state.Orders.Add(existingOrder);
+                int existingQuantity = existingOrder.Quantity;
+                float existingPrice = existingOrder.unitPrice;
+                int existingDeadline = existingOrder.deadlineTick;
+                MarketOpportunity bindingBoundaryOpportunity =
+                    TestOpportunity(profile, product, 5);
+                state.Opportunities.Add(bindingBoundaryOpportunity);
+                IntercolonyNegotiationTerms bindingCounter = FindCounteredTerms(
+                    state, profile, product, category, bindingBoundaryOpportunity, out _) ??
+                    extremeTerms;
+                bool bindingCounterProcessed = MarketOpportunityNegotiationService.TryCounter(
+                    state, bindingBoundaryOpportunity, bindingCounter,
+                    out IntercolonyNegotiationResult bindingEvaluation,
+                    out SalesOrder bindingOrder,
+                    out string bindingFailure);
+                bool existingTermsAfterResponse = bindingCounterProcessed &&
+                    existingOrder.status == SalesOrderStatus.Accepted &&
+                    existingOrder.Quantity == existingQuantity &&
+                    Mathf.Approximately(existingOrder.unitPrice, existingPrice) &&
+                    existingOrder.deadlineTick == existingDeadline;
+                SalesOrder finalCounterOrder = bindingEvaluation?.Decision ==
+                    IntercolonyNegotiationDecision.Countered
+                    ? MarketOpportunityNegotiationService.AcceptFinalCounter(
+                        state, bindingBoundaryOpportunity)
+                    : null;
+                bool existingTermsUnchanged = existingTermsAfterResponse &&
+                    existingOrder.status == SalesOrderStatus.Accepted &&
+                    existingOrder.Quantity == existingQuantity &&
+                    Mathf.Approximately(existingOrder.unitPrice, existingPrice) &&
+                    existingOrder.deadlineTick == existingDeadline;
+                r.Check(
+                    existingTermsUnchanged,
+                    "negotiation never changes an existing accepted order's terms",
+                    $"existing={DescribeOrder(existingOrder)}, " +
+                    $"response={bindingEvaluation?.Decision}, " +
+                    $"newOrder={DescribeOrder(bindingOrder ?? finalCounterOrder)}, " +
+                    $"failure={bindingFailure}");
+            }
+            catch (Exception ex)
+            {
+                r.failed++;
+                r.sb.AppendLine($"  EXCEPTION in Stage 5B assertions: {ex}");
+            }
+            finally
+            {
+                state.Opportunities.Clear();
+                state.Opportunities.AddRange(savedOpportunities);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedOrders);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+
+                r.sb.AppendLine(
+                    $"        Stage 5B world contents restored: " +
+                    $"{state.Opportunities.Count} opportunit{(state.Opportunities.Count == 1 ? "y" : "ies")}, " +
+                    $"{state.Orders.Count} sales order(s), {state.Reputations.Count} reputation record(s).");
+            }
+        }
+
+        private static MarketOpportunity TestOpportunity(
+            SettlementEconomicProfile profile,
+            ThingDef product,
+            int idSuffix)
+        {
+            return new MarketOpportunity
+            {
+                id = 900000 + idSuffix,
+                settlementId = profile.settlementId,
+                settlementName = profile.settlementName,
+                thingDef = product,
+                quantity = OriginalQuantity,
+                unitPrice = OriginalPrice,
+                fulfillment = FulfillmentMode.SellerDelivery,
+                createdTick = GenTicks.TicksGame,
+                expiryTick = GenTicks.TicksGame + 100 * GenDate.TicksPerDay,
+                deadlineDays = OriginalDeadlineDays,
+                distanceTiles = 10f,
+                state = MarketOpportunityState.Available,
+                priceExplanation = "Stage 5B self-test fixture"
+            };
+        }
+
+        private static IntercolonyNegotiationTerms FindCounteredTerms(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            ThingDef product,
+            IntercolonyProductCategory category,
+            MarketOpportunity opportunity,
+            out IntercolonyNegotiationResult lastEvaluation)
+        {
+            lastEvaluation = null;
+            // Search the evaluator's actual result band rather than duplicating its score
+            // thresholds. The broad bounded grid keeps this fixture useful across settlement
+            // identities, while the fallback callers still have a hard refusal case.
+            float[] priceMultipliers =
+                { 0.50f, 0.60f, 0.70f, 0.80f, 0.90f, 0.95f, 1.00f, 1.05f, 1.10f,
+                  1.15f, 1.20f, 1.25f, 1.30f, 1.40f, 1.50f, 1.60f, 1.70f };
+            int[] quantityOptions = { OriginalQuantity, 98, 95, 90, 85 };
+            int[] deadlineOptions = { 0, 2, 4, 6, 8, 10, 12, 14, 18, 22, 24, 28 };
+            foreach (float priceMultiplier in priceMultipliers)
+            {
+                foreach (int quantity in quantityOptions)
+                {
+                    foreach (int deadline in deadlineOptions)
+                    {
+                        IntercolonyNegotiationTerms proposed = new IntercolonyNegotiationTerms(
+                            quantity,
+                            OriginalPrice * priceMultiplier,
+                            deadline,
+                            opportunity.fulfillment);
+                        IntercolonyNegotiationResult result =
+                            IntercolonyNegotiationEvaluator.Evaluate(new IntercolonyNegotiationProposal
+                            {
+                                state = state,
+                                profile = profile,
+                                thingDef = product,
+                                category = category,
+                                direction = IntercolonyNegotiationDirection.Sale,
+                                originalTerms = new IntercolonyNegotiationTerms(
+                                    opportunity.quantity,
+                                    opportunity.unitPrice,
+                                    opportunity.deadlineDays,
+                                    opportunity.fulfillment),
+                                proposedTerms = proposed,
+                                fulfillmentModeChangeAllowed = opportunity.SupportsBothFulfillmentModes
+                            });
+                        lastEvaluation = result;
+                        if (result.Decision == IntercolonyNegotiationDecision.Countered)
+                        {
+                            return proposed;
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static string DescribeTerms(IntercolonyNegotiationTerms terms)
+        {
+            return terms == null ? "none" : terms.ToString();
+        }
+
+        private static string DescribeOrder(SalesOrder order)
+        {
+            return order == null
+                ? "none"
+                : $"{order.Quantity}x/{order.unitPrice:F2}/{order.deadlineTick}";
+        }
+
+        private static List<MarketOpportunity> RoundTripOpportunities(
+            List<MarketOpportunity> savedList, out string failure)
+        {
+            List<MarketOpportunity> loadedList = null;
+            failure = null;
+            string tempPath = Path.Combine(
+                Path.GetTempPath(), $"intercolony-negotiation-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(tempPath, "intercolonyNegotiationTest");
+                Scribe_Collections.Look(ref savedList, "opportunities", LookMode.Deep);
+                Scribe.saver.FinalizeSaving();
+
+                Scribe.loader.InitLoading(tempPath);
+                Scribe_Collections.Look(ref loadedList, "opportunities", LookMode.Deep);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+
+            return loadedList;
         }
 
         private static IntercolonyNegotiationProposal Proposal(
@@ -262,13 +690,49 @@ namespace Intercolony
         private static SettlementEconomicProfile SelectProfile(
             IntercolonyWorldComponent state,
             ThingDef product,
-            IntercolonyProductCategory category)
+            IntercolonyProductCategory category,
+            out string failureReason)
         {
-            List<SettlementEconomicProfile> profiles = state.AllProfiles();
+            failureReason =
+                "no eligible, accessible and non-hostile settlement with an economic profile";
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null || settlements.Count == 0)
+            {
+                failureReason =
+                    "the loaded world has no settlements; needed an eligible, accessible and " +
+                    "non-hostile settlement";
+                return null;
+            }
+
             SettlementEconomicProfile selected = null;
             float bestDemand = float.MinValue;
-            foreach (SettlementEconomicProfile candidate in profiles)
+            bool foundEligible = false;
+            bool foundAccessible = false;
+            string lastAccessFailure = null;
+            foreach (Settlement settlement in settlements)
             {
+                // Mirrors the existing FirstAccessibleSettlement helpers: eligibility is the
+                // structural economic-participant gate, while IsAccessible is the production
+                // access gate and therefore uses HostilityPolicy.IsAtWar for hostility.
+                if (settlement == null || !SettlementProfileGenerator.IsEligible(settlement))
+                {
+                    continue;
+                }
+
+                foundEligible = true;
+                if (!IntercolonyMarketAccess.IsAccessible(settlement, out string accessFailure))
+                {
+                    lastAccessFailure = accessFailure;
+                    continue;
+                }
+
+                foundAccessible = true;
+                SettlementEconomicProfile candidate = state.GetProfile(settlement);
+                if (candidate == null)
+                {
+                    continue;
+                }
+
                 float demand = candidate.BaseDemandFor(product, category);
                 if (selected == null ||
                     demand > bestDemand ||
@@ -278,6 +742,30 @@ namespace Intercolony
                     bestDemand = demand;
                     selected = candidate;
                 }
+            }
+
+            if (selected != null)
+            {
+                failureReason = null;
+            }
+            else if (!foundEligible)
+            {
+                failureReason =
+                    "the loaded world has no eligible economic participant; needed an eligible, " +
+                    "accessible and non-hostile settlement";
+            }
+            else if (!foundAccessible)
+            {
+                failureReason =
+                    "no eligible settlement is accessible and non-hostile to the player" +
+                    (lastAccessFailure == null
+                        ? "."
+                        : $"; last access rejection: {lastAccessFailure}.");
+            }
+            else
+            {
+                failureReason =
+                    "eligible, accessible and non-hostile settlement(s) had no economic profile";
             }
 
             return selected;

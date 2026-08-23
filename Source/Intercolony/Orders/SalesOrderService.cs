@@ -35,16 +35,65 @@ namespace Intercolony
         public static SalesOrder Accept(
             IntercolonyWorldComponent state, MarketOpportunity opportunity, int quantity)
         {
+            return AcceptInternal(
+                state, opportunity, quantity, null, acceptingFinalCounter: false);
+        }
+
+        /// <summary>
+        /// Creates a binding order from terms already accepted by the negotiation state machine.
+        /// The caller supplies a distinct term package; this method never rewrites the original
+        /// opportunity, and the final-counter flag prevents a stale caller from accepting an
+        /// arbitrary package after the one response has been recorded.
+        /// </summary>
+        internal static SalesOrder AcceptNegotiatedTerms(
+            IntercolonyWorldComponent state,
+            MarketOpportunity opportunity,
+            IntercolonyNegotiationTerms agreedTerms,
+            bool acceptingFinalCounter)
+        {
+            return AcceptInternal(
+                state, opportunity, 0, agreedTerms, acceptingFinalCounter);
+        }
+
+        private static SalesOrder AcceptInternal(
+            IntercolonyWorldComponent state,
+            MarketOpportunity opportunity,
+            int requestedQuantity,
+            IntercolonyNegotiationTerms agreedTerms,
+            bool acceptingFinalCounter)
+        {
+            bool negotiated = agreedTerms != null;
             if (state == null || opportunity == null)
             {
                 return null;
             }
 
-            quantity = Mathf.Clamp(quantity, 1, opportunity.quantity);
-
-            if (!opportunity.IsAvailable)
+            int quantity = negotiated
+                ? agreedTerms.quantity
+                : Mathf.Clamp(requestedQuantity, 1, opportunity.quantity);
+            if (quantity < 1 || quantity > opportunity.quantity)
             {
-                IntercolonyLog.Warning($"Opportunity {opportunity.id} is {opportunity.state}; cannot accept.");
+                IntercolonyLog.Warning(
+                    $"Cannot accept opportunity {opportunity.id}: quantity {quantity} is invalid.");
+                return null;
+            }
+
+            if (negotiated &&
+                (agreedTerms.unitPrice <= 0f || float.IsNaN(agreedTerms.unitPrice) ||
+                 float.IsInfinity(agreedTerms.unitPrice) || agreedTerms.deadlineDays < 0 ||
+                 (agreedTerms.fulfillment != FulfillmentMode.SellerDelivery &&
+                  agreedTerms.fulfillment != FulfillmentMode.BuyerPickup)))
+            {
+                IntercolonyLog.Warning(
+                    $"Cannot accept opportunity {opportunity.id}: negotiated terms are invalid.");
+                return null;
+            }
+
+            if (!negotiated && !opportunity.CanAcceptOriginalTerms)
+            {
+                IntercolonyLog.Warning(
+                    $"Opportunity {opportunity.id} is {opportunity.state}/" +
+                    $"{opportunity.NegotiationState}; cannot accept original terms.");
                 return null;
             }
 
@@ -62,13 +111,26 @@ namespace Intercolony
                 return null;
             }
 
+            float unitPrice = negotiated
+                ? agreedTerms.unitPrice
+                : IntercolonyPricing.RepriceForQuantity(
+                    state, opportunity, state.GetProfile(settlement), quantity, out _);
+            int deadlineDays = negotiated ? agreedTerms.deadlineDays : opportunity.deadlineDays;
+            FulfillmentMode fulfillment = negotiated
+                ? agreedTerms.fulfillment
+                : opportunity.fulfillment;
+
             // Claim the offer only once everything else has passed, so a transient refusal
             // (buyer gone, relations soured) leaves the listing intact instead of silently
             // consuming it. Nothing below this line can fail, and the claim itself is what
             // stops a second caller holding the same reference from producing a duplicate
             // order (§76.1) — removal from the world's list cannot, since the caller already
-            // has the object.
-            if (!opportunity.TryAccept())
+            // has the object. Negotiated acceptance uses its separate transition so a pending
+            // final counter cannot be bypassed by an ordinary accept.
+            bool claimed = negotiated
+                ? opportunity.TryAcceptNegotiated(agreedTerms, acceptingFinalCounter)
+                : opportunity.TryAccept();
+            if (!claimed)
             {
                 return null;
             }
@@ -88,18 +150,17 @@ namespace Intercolony
                     allowedStuff = opportunity.stuffDef,
                     minHitPointsPercent = opportunity.minHitPointsPercent
                 },
-                // Re-priced for the quantity actually accepted, so the order matches what the
-                // confirmation showed. A smaller lot earns a better rate (§13).
-                unitPrice = IntercolonyPricing.RepriceForQuantity(
-                    state, opportunity, state.GetProfile(settlement), quantity, out _),
+                // Normal acceptance reprices for a partial lot. Negotiated acceptance instead
+                // freezes the evaluator-approved price as the binding term.
+                unitPrice = unitPrice,
                 acceptedTick = GenTicks.TicksGame,
-                fulfillment = opportunity.fulfillment,
+                fulfillment = fulfillment,
                 buyerPickupDistanceTiles = opportunity.distanceTiles,
                 fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap,
 
                 // The deadline starts counting at acceptance, which is what the market tab
                 // advertised as "Nd after accepting" (§17).
-                deadlineTick = GenTicks.TicksGame + opportunity.deadlineDays * GenDate.TicksPerDay,
+                deadlineTick = GenTicks.TicksGame + deadlineDays * GenDate.TicksPerDay,
                 status = SalesOrderStatus.Accepted
             };
 
@@ -109,19 +170,19 @@ namespace Intercolony
             state.RemoveOpportunity(opportunity);
 
             int pickupTravelDays = EstimateBuyerPickupTravelDays(opportunity.distanceTiles);
-            string deadlineAction = opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                ? $"{opportunity.deadlineDays}d to mark ready, then ~{pickupTravelDays}d pickup"
-                : $"{opportunity.deadlineDays}d to deliver";
+            string deadlineAction = fulfillment == FulfillmentMode.BuyerPickup
+                ? $"{deadlineDays}d to mark ready, then ~{pickupTravelDays}d pickup"
+                : $"{deadlineDays}d to deliver";
             IntercolonyLog.Message(
                 $"Accepted order {order.id}: {order.Quantity} of {opportunity.quantity}x " +
                 $"{order.ThingDef.label} for " +
                 $"{order.settlementName}, {order.TotalPayment} silver, " +
                 $"{deadlineAction}.");
 
-            string nextStep = opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                ? $"Mark the goods ready within {opportunity.deadlineDays} days. " +
+            string nextStep = fulfillment == FulfillmentMode.BuyerPickup
+                ? $"Mark the goods ready within {deadlineDays} days. " +
                   $"Pickup is expected about {pickupTravelDays} days after that."
-                : $"Deliver within {opportunity.deadlineDays} days.";
+                : $"Deliver within {deadlineDays} days.";
             Messages.Message(
                 $"Order accepted: {order.Quantity}x {order.ThingDef.label} for {order.settlementName}. " +
                 nextStep,
