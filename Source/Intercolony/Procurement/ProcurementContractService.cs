@@ -144,6 +144,13 @@ namespace Intercolony
         private const int DecisionSeedSalt = 0x6F21;
 
         /// <summary>
+        /// Commercial reputation cost of voluntarily cancelling an active procurement agreement.
+        /// Cancelling costs standing because walking away from a live commitment damages the
+        /// supplier relationship; an agreement suspended by war remains exempt in the path below.
+        /// </summary>
+        private const float ContractCancellationReputationPenalty = -10f;
+
+        /// <summary>
         /// Sends a standing purchase proposal using the supplier's reference price when the
         /// player does not specify a rate.
         /// </summary>
@@ -535,6 +542,34 @@ namespace Intercolony
                 ? "Player accepted the supplier's final counter; first procurement cycle scheduled."
                 : "Supplier accepted; first procurement cycle scheduled.";
             ClearPendingAnswer(contract);
+
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.ContractStarted,
+                contract.settlementId,
+                contract.settlementName,
+                contract.id,
+                contract.thingDef,
+                contract.quantityPerCycle,
+                IntercolonyPricing.TotalPayment(contract.unitPrice, contract.quantityPerCycle),
+                $"{contract.quantityPerCycle}x every {contract.cadenceDays}d " +
+                $"x{contract.totalCycles} at {contract.unitPrice:F2} silver per unit");
+
+            if (acceptingFinalCounter)
+            {
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.CounterofferAccepted,
+                    contract.settlementId,
+                    contract.settlementName,
+                    contract.id,
+                    contract.thingDef,
+                    contract.quantityPerCycle,
+                    IntercolonyPricing.TotalPayment(contract.unitPrice, contract.quantityPerCycle),
+                    $"Accepted final counter: {contract.quantityPerCycle} units at " +
+                    $"{contract.unitPrice:F2} silver per unit");
+            }
+
             IntercolonyLetters.Send(
                 IntercolonyLetterImportance.Always,
                 acceptingFinalCounter
@@ -855,6 +890,18 @@ namespace Intercolony
                 $"All {contract.totalCycles} procurement cycles resolved: " +
                 $"{contract.cyclesCompleted} completed and {contract.cyclesFailed} failed.";
 
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.ContractCompleted,
+                contract.settlementId,
+                contract.settlementName,
+                contract.id,
+                contract.thingDef,
+                contract.quantityPerCycle * contract.totalCycles,
+                IntercolonyPricing.TotalPayment(contract.unitPrice, contract.quantityPerCycle) *
+                contract.cyclesCompleted,
+                contract.outcomeNote);
+
             IntercolonyLetters.Send(
                 IntercolonyLetterImportance.Always,
                 "Procurement agreement completed",
@@ -879,6 +926,55 @@ namespace Intercolony
             contract.outcomeNote = "The player withdrew the supplier proposal.";
             ClearPendingAnswer(contract);
             IntercolonyLog.Message($"Player cancelled procurement proposal {contract.id}.");
+            return true;
+        }
+
+        /// <summary>
+        /// Player withdraws from a live procurement agreement. This ends future cycles while
+        /// leaving any already-paid order in flight for the purchase-order lifecycle to resolve.
+        /// </summary>
+        public static bool CancelContract(
+            IntercolonyWorldComponent state, ProcurementContract contract)
+        {
+            bool suspended = contract != null &&
+                             contract.status == ProcurementContractStatus.Suspended;
+
+            if (contract == null ||
+                (contract.status != ProcurementContractStatus.Active && !suspended))
+            {
+                return false;
+            }
+
+            int remainingCycles = contract.totalCycles -
+                                  contract.cyclesCompleted - contract.cyclesFailed;
+            contract.status = ProcurementContractStatus.Cancelled;
+            contract.outcomeNote = suspended
+                ? "Withdrawn by the player while suspended by war."
+                : "Withdrawn by the player.";
+
+            // Match the sales-side cancellation policy: a voluntary withdrawal costs standing,
+            // but ending an agreement already frozen by war does not charge the player for it.
+            if (!suspended)
+            {
+                ReputationService.ApplyAdjustment(
+                    state,
+                    ReputationService.ForSettlement(state, contract.settlementId),
+                    ContractCancellationReputationPenalty);
+            }
+
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.ContractCancelled,
+                contract.settlementId,
+                contract.settlementName,
+                contract.id,
+                contract.thingDef,
+                contract.quantityPerCycle,
+                compactDetail:
+                    $"{contract.outcomeNote} {contract.cyclesCompleted} cycles completed; " +
+                    $"{remainingCycles} cycles remained.");
+
+            IntercolonyLog.Message($"Procurement contract {contract.id} cancelled by the player.");
             return true;
         }
 

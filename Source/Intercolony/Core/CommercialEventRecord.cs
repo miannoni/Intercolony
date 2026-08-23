@@ -48,7 +48,10 @@ namespace Intercolony
         SaleCancelledByAgreement,
 
         /// <summary>A settlement's commercial reputation changed tier.</summary>
-        RelationshipMilestone
+        RelationshipMilestone,
+
+        /// <summary>A recurring procurement cycle completed through its purchase order.</summary>
+        ProcurementCycleCompleted
     }
 
     /// <summary>

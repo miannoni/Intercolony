@@ -3029,6 +3029,13 @@ namespace Intercolony
             List<PurchaseOrder> savedOrders = state == null
                 ? null
                 : new List<PurchaseOrder>(state.PurchaseOrders);
+            List<CommercialEventRecord> savedCommercialTimeline = state == null
+                ? null
+                : new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedCommercialTimelineStartTick = state?.CommercialTimelineStartTick ?? -1;
+            Dictionary<int, CommercialReputation> savedReputations = state == null
+                ? null
+                : new Dictionary<int, CommercialReputation>(state.Reputations);
             Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
             Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
             FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
@@ -3061,6 +3068,22 @@ namespace Intercolony
                 {
                     state.PurchaseOrders.Clear();
                     state.PurchaseOrders.AddRange(savedOrders);
+                }
+
+                if (state != null && savedCommercialTimeline != null)
+                {
+                    state.CommercialTimeline.Clear();
+                    state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                    state.CommercialTimelineStartTick = savedCommercialTimelineStartTick;
+                }
+
+                if (state != null && savedReputations != null)
+                {
+                    state.Reputations.Clear();
+                    foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                    {
+                        state.Reputations[entry.Key] = entry.Value;
+                    }
                 }
 
                 RestoreStoredSilver(paymentMap, savedSilver);
@@ -4986,6 +5009,18 @@ namespace Intercolony
             skip("J6 resumption shifts the outage and cycles resume", reason);
             skip("J7 repeated supplier defaults keep the agreement active", reason);
             skip("J8 older-save migration preserves procurement agreements", reason);
+            skip("P1 started procurement agreement records exactly once", reason);
+            skip("P2 accepted procurement counter has a distinct timeline record", reason);
+            skip("P3 procurement cycle records only when goods arrive", reason);
+            skip("P3 creating a procurement cycle order records nothing", reason);
+            skip("P4 supplier default records one reasoned failure event", reason);
+            skip("P5a sending a procurement proposal leaves the timeline unchanged", reason);
+            skip("P5b receiving a procurement counter leaves the timeline unchanged", reason);
+            skip("P5c declining a procurement counter leaves the timeline unchanged", reason);
+            skip("P6 cancelling an active agreement records counts and stops cycles", reason);
+            skip("P7 cancelled agreement is terminal and idempotent", reason);
+            skip("P8 active cancellation costs standing but suspended cancellation does not", reason);
+            skip("P9 cancellation preserves an in-flight procurement order", reason);
         }
 
         private static void CheckProcurementContractCycles(
@@ -5014,6 +5049,11 @@ namespace Intercolony
             List<PurchaseOrder> savedOrders =
                 new List<PurchaseOrder>(state.PurchaseOrders);
             List<LedgerEntry> savedLedger = new List<LedgerEntry>(state.Ledger);
+            List<CommercialEventRecord> savedCommercialTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedCommercialTimelineStartTick = state.CommercialTimelineStartTick;
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
             List<SupplierOfferConsumption> savedConsumption = CloneConsumptions(
                 consumptionField.GetValue(state) as List<SupplierOfferConsumption>);
             Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
@@ -5704,6 +5744,405 @@ namespace Intercolony
                         $"failed {j8FailedBefore}->{acceptedContract.cyclesFailed}; " +
                         $"failure={j8Failure ?? "none"}");
                 }
+
+                // --- Stage 6I part 3: procurement timeline and cancellation ----------------
+                int p1Started = CountProcurementTimelineRecords(
+                    state, acceptedContract.settlementId, acceptedContract.id,
+                    CommercialEventType.ContractStarted);
+                check(
+                    "P1 started procurement agreement records exactly once",
+                    p1Started == 1,
+                    $"settlement={acceptedContract.settlementId}; contract={acceptedContract.id}; " +
+                    $"ContractStarted records={p1Started}; timeline count={state.CommercialTimeline.Count}");
+
+                int p2OrdinaryCounterRecords = CountProcurementTimelineRecords(
+                    state, acceptedContract.settlementId, acceptedContract.id,
+                    CommercialEventType.CounterofferAccepted);
+                int p2CounterId = state.PeekNextId() + 100;
+                ProcurementContract p2Counter = HandMadeProcurementCounter(
+                    acceptedContract.thingDef, p2CounterId, 7, 1.25f, 3, 1,
+                    13, 4.75f, 17, 5);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.Add(p2Counter);
+                ProcurementContractAnswer p2Answer =
+                    ProcurementContractService.AcceptFinalCounter(state, p2Counter);
+                int p2CounterRecords = CountProcurementTimelineRecords(
+                    state, p2Counter.settlementId, p2Counter.id,
+                    CommercialEventType.CounterofferAccepted);
+                int p2CounterStartedRecords = CountProcurementTimelineRecords(
+                    state, p2Counter.settlementId, p2Counter.id,
+                    CommercialEventType.ContractStarted);
+                check(
+                    "P2 accepted procurement counter has a distinct timeline record",
+                    p2Answer.Applied && p2Counter.status == ProcurementContractStatus.Active &&
+                    p2CounterRecords == 1 && p2CounterStartedRecords == 1 &&
+                    p2OrdinaryCounterRecords == 0,
+                    $"ordinary contract={acceptedContract.id}; ordinary CounterofferAccepted=" +
+                    $"{p2OrdinaryCounterRecords}; counter contract={p2Counter.id}; " +
+                    $"answer={p2Answer.Applied}/{p2Answer.Decision}; counter status={p2Counter.status}; " +
+                    $"counter records={p2CounterRecords}; counter ContractStarted=" +
+                    $"{p2CounterStartedRecords}");
+
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.Add(acceptedContract);
+
+                // Proposal, counter receipt, and counter refusal are state transitions, not
+                // commercial outcomes. Each gets its own before/after count so one accidental
+                // write cannot be hidden by another non-event.
+                state.CommercialTimeline.Clear();
+                state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+                if (cycleSettlement == null || acceptedContract.thingDef == null)
+                {
+                    string p5Reason =
+                        $"settlement={cycleSettlement?.ID.ToString() ?? "none"}; " +
+                        $"product={acceptedContract.thingDef?.defName ?? "none"}";
+                    skip("P5a sending a procurement proposal leaves the timeline unchanged",
+                        p5Reason);
+                    skip("P5b receiving a procurement counter leaves the timeline unchanged",
+                        "real procurement settlement/product fixture unavailable");
+                    skip("P5c declining a procurement counter leaves the timeline unchanged",
+                        "real procurement settlement/product fixture unavailable");
+                }
+                else
+                {
+                    state.ProcurementContracts.Clear();
+                    int p5aBefore = state.CommercialTimeline.Count;
+                    ProcurementContractProposalResult p5aProposal =
+                        ProposeProcurementFixture(state, cycleSettlement, acceptedContract.thingDef);
+                    int p5aAfter = state.CommercialTimeline.Count;
+                    if (p5aProposal.Contract == null)
+                    {
+                        skip(
+                            "P5a sending a procurement proposal leaves the timeline unchanged",
+                            $"proposal was not constructed for settlement={cycleSettlement.ID}, " +
+                            $"product={acceptedContract.thingDef.defName}; " +
+                            $"success={p5aProposal.Success}; reason={p5aProposal.Reason ?? "none"}");
+                    }
+                    else
+                    {
+                        check(
+                            "P5a sending a procurement proposal leaves the timeline unchanged",
+                            p5aAfter == p5aBefore,
+                            $"timeline {p5aBefore}->{p5aAfter}; proposal id={p5aProposal.Contract.id}; " +
+                            $"decision={p5aProposal.Evaluation?.Decision.ToString() ?? "none"}; " +
+                            $"record types={CommercialTimelineTypes(state)}");
+                    }
+
+                    state.ProcurementContracts.Clear();
+                    ProcurementContract p5bCounter = HandMadeProcurementCounter(
+                        acceptedContract.thingDef, state.PeekNextId() + 101,
+                        7, 1.25f, 3, 1, 13, 4.75f, 17, 5,
+                        ProcurementContractStatus.Offered);
+                    state.ProcurementContracts.Add(p5bCounter);
+                    int p5bBefore = state.CommercialTimeline.Count;
+                    ProcurementContractAnswer p5bAnswer =
+                        ProcurementContractService.AnswerProposal(state, p5bCounter);
+                    int p5bAfter = state.CommercialTimeline.Count;
+                    check(
+                        "P5b receiving a procurement counter leaves the timeline unchanged",
+                        p5bAnswer.Applied &&
+                        p5bAnswer.Decision == IntercolonyNegotiationDecision.Countered &&
+                        p5bCounter.status == ProcurementContractStatus.CounterpartyCountered &&
+                        p5bAfter == p5bBefore,
+                        $"timeline {p5bBefore}->{p5bAfter}; counter id={p5bCounter.id}; " +
+                        $"answer={p5bAnswer.Applied}/{p5bAnswer.Decision}; " +
+                        $"status={p5bCounter.status}; record types={CommercialTimelineTypes(state)}");
+
+                    state.ProcurementContracts.Clear();
+                    ProcurementContract p5cCounter = HandMadeProcurementCounter(
+                        acceptedContract.thingDef, state.PeekNextId() + 102,
+                        7, 1.25f, 3, 1, 13, 4.75f, 17, 5);
+                    state.ProcurementContracts.Add(p5cCounter);
+                    int p5cBefore = state.CommercialTimeline.Count;
+                    bool p5cDeclined =
+                        ProcurementContractService.TryDeclineFinalCounter(state, p5cCounter);
+                    int p5cAfter = state.CommercialTimeline.Count;
+                    check(
+                        "P5c declining a procurement counter leaves the timeline unchanged",
+                        p5cDeclined && p5cCounter.status == ProcurementContractStatus.Cancelled &&
+                        p5cAfter == p5cBefore,
+                        $"timeline {p5cBefore}->{p5cAfter}; counter id={p5cCounter.id}; " +
+                        $"declined={p5cDeclined}; status={p5cCounter.status}; " +
+                        $"record types={CommercialTimelineTypes(state)}");
+                }
+
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.Add(acceptedContract);
+                CommercialReputation pReputation = null;
+                if (cycleSettlement != null)
+                {
+                    pReputation = new CommercialReputation(
+                        cycleSettlement.ID, cycleSettlement.Label ?? "Self-test",
+                        cycleSettlement.Faction?.Name ?? "");
+                    // Keep the active cancellation away from a reputation-tier boundary, so
+                    // P6/P7/P8 count only their contract event and not a milestone side effect.
+                    pReputation.Adjust(20f);
+                    state.Reputations[cycleSettlement.ID] = pReputation;
+                }
+
+                bool pCycleFixtureReady = supplyFixtureAvailable &&
+                    ordinaryCapacity >= acceptedContract.quantityPerCycle &&
+                    fixtureSilverBaseline != null;
+                string pCycleFixtureReason = pCycleFixtureReady
+                    ? null
+                    : $"supplier={acceptedContract.settlementId}; " +
+                      $"profile={(cycleProfile == null ? "none" : "available")}; " +
+                      $"category={cycleCategory?.ToString() ?? "none"}; " +
+                      $"ordinary capacity={ordinaryCapacity}; " +
+                      $"promised={acceptedContract.quantityPerCycle}; " +
+                      $"silver baseline={(fixtureSilverBaseline == null ? "none" : "available")}";
+
+                if (!pCycleFixtureReady)
+                {
+                    skip("P3 procurement cycle records only when goods arrive", pCycleFixtureReason);
+                    skip("P3 creating a procurement cycle order records nothing", pCycleFixtureReason);
+                    skip("P4 supplier default records one reasoned failure event", pCycleFixtureReason);
+                    skip("P9 cancellation preserves an in-flight procurement order",
+                        pCycleFixtureReason);
+                }
+                else
+                {
+                    RestoreCycleProfile();
+                    ResetCycleFixture();
+                    state.CommercialTimeline.Clear();
+                    state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+                    int p3CreateBefore = state.CommercialTimeline.Count;
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    int p3CreateAdvanced = ProcurementContractService.AdvanceCycles(state);
+                    PurchaseOrder p3Order = FindFixtureOrder(acceptedContract.activeOrderId);
+                    int p3CreateAfter = state.CommercialTimeline.Count;
+                    int p3CycleRecordsAtCreate = CountProcurementTimelineRecords(
+                        state, acceptedContract.settlementId,
+                        p3Order?.id ?? ProcurementContract.NoActiveOrderId,
+                        CommercialEventType.ProcurementCycleCompleted);
+                    check(
+                        "P3 creating a procurement cycle order records nothing",
+                        p3CreateAdvanced == 1 && p3Order != null && p3Order.IsOpen &&
+                        p3CreateAfter == p3CreateBefore && p3CycleRecordsAtCreate == 0,
+                        $"timeline {p3CreateBefore}->{p3CreateAfter}; advanced={p3CreateAdvanced}; " +
+                        $"order id={p3Order?.id.ToString() ?? "none"}; " +
+                        $"order state={p3Order?.status.ToString() ?? "none"}; " +
+                        $"ProcurementCycleCompleted={p3CycleRecordsAtCreate}");
+
+                    if (p3Order == null)
+                    {
+                        skip(
+                            "P3 procurement cycle records only when goods arrive",
+                            $"cycle order was not constructed; advanced={p3CreateAdvanced}; " +
+                            $"orders={state.PurchaseOrders.Count}; " +
+                            $"activeOrderId={acceptedContract.activeOrderId}");
+                    }
+                    else
+                    {
+                        int p3CompletionBefore = CountProcurementTimelineRecords(
+                            state, acceptedContract.settlementId, p3Order.id,
+                            CommercialEventType.ProcurementCycleCompleted);
+                        PurchaseOrderService.Complete(p3Order, "P3 goods arrived");
+                        int p3CompletionAfter = CountProcurementTimelineRecords(
+                            state, acceptedContract.settlementId, p3Order.id,
+                            CommercialEventType.ProcurementCycleCompleted);
+                        CommercialEventRecord p3Record = FindProcurementTimelineRecord(
+                            state, acceptedContract.settlementId, p3Order.id,
+                            CommercialEventType.ProcurementCycleCompleted);
+                        check(
+                            "P3 procurement cycle records only when goods arrive",
+                            p3Order.status == PurchaseOrderStatus.Completed &&
+                            p3CompletionBefore == 0 && p3CompletionAfter == 1 &&
+                            p3Record != null && p3Record.tick >= p3Order.orderedTick,
+                            $"order id={p3Order.id}; order state={p3Order.status}; " +
+                            $"cycle records {p3CompletionBefore}->{p3CompletionAfter}; " +
+                            $"record tick={p3Record?.tick.ToString() ?? "none"}; " +
+                            $"ordered tick={p3Order.orderedTick}; types={CommercialTimelineTypes(state)}");
+                    }
+
+                    RestoreCycleProfile();
+                    ResetCycleFixture();
+                    MakeSupplyInsufficient();
+                    state.CommercialTimeline.Clear();
+                    state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+                    int p4Before = state.CommercialTimeline.Count;
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    int p4Advanced = ProcurementContractService.AdvanceCycles(state);
+                    PurchaseOrder p4Order = state.PurchaseOrders.Count == 0
+                        ? null
+                        : state.PurchaseOrders[state.PurchaseOrders.Count - 1];
+                    int p4After = state.CommercialTimeline.Count;
+                    int p4FailedRecords = p4Order == null
+                        ? 0
+                        : CountProcurementTimelineRecords(
+                            state, acceptedContract.settlementId, p4Order.id,
+                            CommercialEventType.PurchaseFailed);
+                    CommercialEventRecord p4Record = p4Order == null
+                        ? null
+                        : FindProcurementTimelineRecord(
+                            state, acceptedContract.settlementId, p4Order.id,
+                            CommercialEventType.PurchaseFailed);
+                    bool p4Reasoned = p4Record != null && !string.IsNullOrEmpty(
+                        p4Record.compactDetail) && p4Record.compactDetail.Contains("Supplier default") &&
+                        !string.IsNullOrEmpty(p4Order?.outcomeNote) &&
+                        p4Order.outcomeNote.StartsWith(p4Record.compactDetail);
+                    check(
+                        "P4 supplier default records one reasoned failure event",
+                        p4Advanced == 1 && p4Order != null &&
+                        p4Order.status == PurchaseOrderStatus.SupplierDefault &&
+                        p4After == p4Before + 1 && p4FailedRecords == 1 && p4Reasoned,
+                        $"timeline {p4Before}->{p4After}; advanced={p4Advanced}; " +
+                        $"order id={p4Order?.id.ToString() ?? "none"}; " +
+                        $"order state={p4Order?.status.ToString() ?? "none"}; " +
+                        $"PurchaseFailed records={p4FailedRecords}; " +
+                        $"record detail={p4Record?.compactDetail ?? "none"}; " +
+                        $"order outcome={p4Order?.outcomeNote ?? "none"}; " +
+                        $"record types={CommercialTimelineTypes(state)}");
+
+                    ResetCycleFixture();
+                    state.CommercialTimeline.Clear();
+                    state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+                    acceptedContract.totalCycles = 4;
+                    acceptedContract.cyclesCompleted = 1;
+                    acceptedContract.cyclesFailed = 1;
+                    acceptedContract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                    acceptedContract.status = ProcurementContractStatus.Active;
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    int p6Completed = acceptedContract.cyclesCompleted;
+                    int p6Remaining = acceptedContract.totalCycles -
+                                      acceptedContract.cyclesCompleted - acceptedContract.cyclesFailed;
+                    int p6OrdersBeforeAdvance = state.PurchaseOrders.Count;
+                    bool p6Cancelled = ProcurementContractService.CancelContract(
+                        state, acceptedContract);
+                    CommercialEventRecord p6Record = FindProcurementTimelineRecord(
+                        state, acceptedContract.settlementId, acceptedContract.id,
+                        CommercialEventType.ContractCancelled);
+                    int p6CancelRecords = CountProcurementTimelineRecords(
+                        state, acceptedContract.settlementId, acceptedContract.id,
+                        CommercialEventType.ContractCancelled);
+                    int p6OrdersBeforeResume = state.PurchaseOrders.Count;
+                    int p6AdvancedAfterCancel = ProcurementContractService.AdvanceCycles(state);
+                    check(
+                        "P6 cancelling an active agreement records counts and stops cycles",
+                        p6Cancelled && acceptedContract.status == ProcurementContractStatus.Cancelled &&
+                        p6CancelRecords == 1 && p6Record != null &&
+                        p6Record.compactDetail.Contains($"{p6Completed} cycles completed") &&
+                        p6Record.compactDetail.Contains($"{p6Remaining} cycles remained") &&
+                        p6AdvancedAfterCancel == 0 &&
+                        state.PurchaseOrders.Count == p6OrdersBeforeResume &&
+                        p6OrdersBeforeResume == p6OrdersBeforeAdvance,
+                        $"cancelled={p6Cancelled}; status={acceptedContract.status}; " +
+                        $"ContractCancelled records={p6CancelRecords}; " +
+                        $"record detail={p6Record?.compactDetail ?? "none"}; " +
+                        $"cycles completed={p6Completed}; remaining={p6Remaining}; " +
+                        $"orders before={p6OrdersBeforeAdvance}; after resume=" +
+                        $"{state.PurchaseOrders.Count}; advanced={p6AdvancedAfterCancel}");
+
+                    ProcurementContractStatus p7Status = acceptedContract.status;
+                    string p7Note = acceptedContract.outcomeNote;
+                    int p7TimelineBefore = state.CommercialTimeline.Count;
+                    int p7OrdersBefore = state.PurchaseOrders.Count;
+                    bool p7CancelledAgain = ProcurementContractService.CancelContract(
+                        state, acceptedContract);
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    int p7Advanced = ProcurementContractService.AdvanceCycles(state);
+                    int p7CancelRecords = CountProcurementTimelineRecords(
+                        state, acceptedContract.settlementId, acceptedContract.id,
+                        CommercialEventType.ContractCancelled);
+                    check(
+                        "P7 cancelled agreement is terminal and idempotent",
+                        !p7CancelledAgain && acceptedContract.status == p7Status &&
+                        acceptedContract.outcomeNote == p7Note &&
+                        state.CommercialTimeline.Count == p7TimelineBefore &&
+                        p7CancelRecords == 1 && p7Advanced == 0 &&
+                        state.PurchaseOrders.Count == p7OrdersBefore &&
+                        acceptedContract.activeOrderId == ProcurementContract.NoActiveOrderId,
+                        $"second cancel={p7CancelledAgain}; status={p7Status}->{acceptedContract.status}; " +
+                        $"timeline {p7TimelineBefore}->{state.CommercialTimeline.Count}; " +
+                        $"ContractCancelled records={p7CancelRecords}; orders {p7OrdersBefore}->" +
+                        $"{state.PurchaseOrders.Count}; advanced={p7Advanced}; " +
+                        $"activeOrderId={acceptedContract.activeOrderId}");
+
+                    if (pReputation == null)
+                    {
+                        skip(
+                            "P8 active cancellation costs standing but suspended cancellation does not",
+                            $"supplier settlement {acceptedContract.settlementId} no longer resolves");
+                    }
+                    else
+                    {
+                        pReputation = new CommercialReputation(
+                            cycleSettlement.ID, cycleSettlement.Label ?? "Self-test",
+                            cycleSettlement.Faction?.Name ?? "");
+                        pReputation.Adjust(20f);
+                        state.Reputations[cycleSettlement.ID] = pReputation;
+                        ResetCycleFixture();
+                        acceptedContract.status = ProcurementContractStatus.Active;
+                        acceptedContract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                        state.CommercialTimeline.Clear();
+                        state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+                        float p8ActiveBefore = pReputation.Score;
+                        bool p8ActiveCancelled = ProcurementContractService.CancelContract(
+                            state, acceptedContract);
+                        float p8ActiveAfter = pReputation.Score;
+                        float p8ActiveDelta = p8ActiveAfter - p8ActiveBefore;
+
+                        acceptedContract.status = ProcurementContractStatus.Suspended;
+                        acceptedContract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                        float p8SuspendedBefore = pReputation.Score;
+                        bool p8SuspendedCancelled = ProcurementContractService.CancelContract(
+                            state, acceptedContract);
+                        float p8SuspendedAfter = pReputation.Score;
+                        check(
+                            "P8 active cancellation costs standing but suspended cancellation does not",
+                            p8ActiveCancelled && p8ActiveAfter < p8ActiveBefore &&
+                            p8ActiveDelta < 0f && p8SuspendedCancelled &&
+                            acceptedContract.status == ProcurementContractStatus.Cancelled &&
+                            Mathf.Approximately(p8SuspendedAfter, p8SuspendedBefore),
+                            $"active cancelled={p8ActiveCancelled}; reputation " +
+                            $"{p8ActiveBefore:F3}->{p8ActiveAfter:F3} (delta {p8ActiveDelta:F3}); " +
+                            $"suspended cancelled={p8SuspendedCancelled}; reputation " +
+                            $"{p8SuspendedBefore:F3}->{p8SuspendedAfter:F3}; " +
+                            $"status={acceptedContract.status}");
+                    }
+
+                    RestoreCycleProfile();
+                    ResetCycleFixture();
+                    state.CommercialTimeline.Clear();
+                    state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+                    acceptedContract.status = ProcurementContractStatus.Active;
+                    acceptedContract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    int p9Advanced = ProcurementContractService.AdvanceCycles(state);
+                    int p9OrderId = acceptedContract.activeOrderId;
+                    PurchaseOrder p9Order = FindFixtureOrder(p9OrderId);
+                    if (p9Order == null || !p9Order.IsOpen)
+                    {
+                        check(
+                            "P9 cancellation preserves an in-flight procurement order",
+                            false,
+                            $"cycle advance={p9Advanced}; activeOrderId={p9OrderId}; " +
+                            $"order={(p9Order == null ? "none" : p9Order.id.ToString())}; " +
+                            $"order state={(p9Order == null ? "none" : p9Order.status.ToString())}; " +
+                            $"capacity={ordinaryCapacity}; promised={acceptedContract.quantityPerCycle}");
+                    }
+                    else
+                    {
+                        PurchaseOrderStatus p9StateBefore = p9Order.status;
+                        int p9OrdersBefore = state.PurchaseOrders.Count;
+                        bool p9Cancelled = ProcurementContractService.CancelContract(
+                            state, acceptedContract);
+                        PurchaseOrder p9SurvivingOrder = FindFixtureOrder(p9OrderId);
+                        check(
+                            "P9 cancellation preserves an in-flight procurement order",
+                            p9Cancelled && acceptedContract.status == ProcurementContractStatus.Cancelled &&
+                            acceptedContract.activeOrderId == p9OrderId &&
+                            p9SurvivingOrder != null && p9SurvivingOrder.id == p9OrderId &&
+                            p9SurvivingOrder.status == p9StateBefore && p9SurvivingOrder.IsOpen &&
+                            state.PurchaseOrders.Count == p9OrdersBefore,
+                            $"cancelled={p9Cancelled}; contract status={acceptedContract.status}; " +
+                            $"order id={p9OrderId}; surviving id={p9SurvivingOrder?.id.ToString() ?? "none"}; " +
+                            $"state before={p9StateBefore}; state after=" +
+                            $"{p9SurvivingOrder?.status.ToString() ?? "none"}; " +
+                            $"activeOrderId={acceptedContract.activeOrderId}; " +
+                            $"orders {p9OrdersBefore}->{state.PurchaseOrders.Count}");
+                    }
+                }
             }
             finally
             {
@@ -5737,6 +6176,17 @@ namespace Intercolony
                 state.Ledger.Clear();
                 state.Ledger.AddRange(savedLedger);
                 state.LedgerStartTick = savedLedgerStartTick;
+
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedCommercialTimelineStartTick;
+
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> savedReputation in
+                         savedReputations)
+                {
+                    state.Reputations[savedReputation.Key] = savedReputation.Value;
+                }
 
                 List<SupplierOfferConsumption> liveConsumption =
                     consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
@@ -5787,6 +6237,69 @@ namespace Intercolony
                 $"higher score={(higher.Evaluation == null ? "null" : higher.Evaluation.AcceptanceScore.ToString("F3"))}; " +
                 $"lower reason={lower.Reason ?? "none"}; higher reason={higher.Reason ?? "none"}");
             state.ProcurementContracts.Clear();
+        }
+
+        private static int CountProcurementTimelineRecords(
+            IntercolonyWorldComponent state,
+            int settlementId,
+            int relatedEntityId,
+            CommercialEventType type)
+        {
+            int count = 0;
+            if (state == null)
+            {
+                return count;
+            }
+
+            foreach (CommercialEventRecord record in state.CommercialTimeline)
+            {
+                if (record != null && record.settlementId == settlementId &&
+                    record.relatedEntityId == relatedEntityId && record.type == type)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static CommercialEventRecord FindProcurementTimelineRecord(
+            IntercolonyWorldComponent state,
+            int settlementId,
+            int relatedEntityId,
+            CommercialEventType type)
+        {
+            if (state == null)
+            {
+                return null;
+            }
+
+            foreach (CommercialEventRecord record in state.CommercialTimeline)
+            {
+                if (record != null && record.settlementId == settlementId &&
+                    record.relatedEntityId == relatedEntityId && record.type == type)
+                {
+                    return record;
+                }
+            }
+
+            return null;
+        }
+
+        private static string CommercialTimelineTypes(IntercolonyWorldComponent state)
+        {
+            if (state == null || state.CommercialTimeline.Count == 0)
+            {
+                return "none";
+            }
+
+            List<string> types = new List<string>();
+            foreach (CommercialEventRecord record in state.CommercialTimeline)
+            {
+                types.Add(record == null ? "null" : record.type.ToString());
+            }
+
+            return string.Join(",", types.ToArray());
         }
 
         private static bool ContainsProcurementContractId(

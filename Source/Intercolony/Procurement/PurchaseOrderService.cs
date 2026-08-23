@@ -666,8 +666,50 @@ namespace Intercolony
                 order.id,
                 order.thingDef,
                 order.quantity,
-                order.paidSilver);
+                order.paidSilver,
+                order.supplierListingId != PurchaseOrder.NoSupplierListing
+                    ? $"Supplier Market purchase completed: {order.quantity}x " +
+                      $"{order.ItemLabel()} at {order.unitPrice:F2} silver per unit"
+                    : null);
+
+            ProcurementContract procurementContract = FindProcurementContractForOrder(order);
+            if (procurementContract != null)
+            {
+                int cycleNumber = procurementContract.cyclesCompleted +
+                                   procurementContract.cyclesFailed + 1;
+                CommercialTimelineService.Record(
+                    CommercialEventType.ProcurementCycleCompleted,
+                    procurementContract.settlementId,
+                    procurementContract.settlementName,
+                    order.id,
+                    order.thingDef,
+                    order.quantity,
+                    order.paidSilver,
+                    $"Cycle {cycleNumber} completed: {order.quantity}x " +
+                    $"{order.ItemLabel()} at {order.unitPrice:F2} silver per unit");
+            }
+
             IntercolonyLog.Message($"Purchase {order.id} completed. {note}");
+        }
+
+        private static ProcurementContract FindProcurementContractForOrder(PurchaseOrder order)
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null || order == null)
+            {
+                return null;
+            }
+
+            foreach (ProcurementContract contract in state.ProcurementContracts)
+            {
+                if (contract != null && contract.activeOrderId == order.id &&
+                    contract.status == ProcurementContractStatus.Active)
+                {
+                    return contract;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>Refunds a failed order. The only path to SupplierDefault.</summary>
