@@ -10,8 +10,8 @@ namespace Intercolony
     /// <summary>
     /// Runs every self-test in one go and reports one verdict.
     ///
-    /// **Why this exists.** Twenty suites behind twenty menu entries means the honest answer
-    /// to "is the mod still sound?" costs twenty clicks, so in practice it does not get asked —
+    /// **Why this exists.** Many suites behind many menu entries means the honest answer
+    /// to "is the mod still sound?" costs one click per suite, so in practice it does not get asked —
     /// which is how a project ends up with six suites changed and none of them executed.
     ///
     /// It also checks something no individual suite can. Suites deliberately drive real
@@ -135,6 +135,8 @@ namespace Intercolony
                 (s, m) => IntercolonyNegotiationSelfTest.Run(s)),
             new SelfTestDefinition("timeline", "timeline", false,
                 (s, m) => IntercolonyTimelineSelfTest.Run(s)),
+            new SelfTestDefinition("performance", "performance", false,
+                (s, m) => IntercolonyPerformanceProfile.Run(s, m)),
             new SelfTestDefinition("profile", "profile", false,
                 (s, m) => IntercolonyProfileSelfTest.Run()),
             new SelfTestDefinition("market", "market", false,
@@ -227,7 +229,7 @@ namespace Intercolony
         /// <summary>
         /// Matches the summary every suite ends with. They agree on
         /// "N passed, M failed" and some add ", K skipped"; nothing else in the output looks
-        /// like that, so one pattern reads all twenty.
+        /// like that, so one pattern reads every suite.
         ///
         /// **Case-insensitive, and that is not cosmetic.** The animal suite writes its skip count
         /// as "8 SKIPPED — not a clean run", so a case-sensitive pattern matched the first two
