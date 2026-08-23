@@ -77,6 +77,7 @@ namespace Intercolony
             CheckSupplierListings(Check, Skip, state);
             CheckProcurementContracts(Check, Skip, state);
             CheckStage8AFullSaveLoadMatrix(Check, Skip, state);
+            CheckStage8BMigrationMatrix(Check, state);
 
             List<ThingDef> tradable = IntercolonyProductClassifier.TradableDefs;
             if (tradable.Count == 0 || state.AllProfiles().Count == 0)
@@ -7555,6 +7556,343 @@ namespace Intercolony
             skip("M3 sales and purchase orders complete after reload and update durable history", reason);
             skip("M4 a second save/load preserves advanced and completed state", reason);
             skip("M5 every Stage 8A persisted collection keeps its exact fixture count", reason);
+        }
+
+        private static void CheckStage8BMigrationMatrix(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state)
+        {
+            const string N1 = "N1 schema 42 preserves every active obligation's price and quantity";
+            const string N2 = "N2 schema 49 preserves every active obligation's price and quantity";
+            const string N3 = "N3 every migration start version 42 through 55 reaches current";
+            const string N4 = "N4 current-schema world needs no migration";
+            const string N5 = "N5 schema 42 migration is idempotent";
+
+            FieldInfo saveVersionField = state == null
+                ? null
+                : typeof(IntercolonyWorldComponent).GetField(
+                    "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (state == null || saveVersionField == null)
+            {
+                string detail = "migration fixture unavailable: world or saveVersion field missing";
+                check(N1, false, detail);
+                check(N2, false, detail);
+                check(N3, false, detail);
+                check(N4, false, detail);
+                check(N5, false, detail);
+                return;
+            }
+
+            List<SalesOrder> savedSalesOrders = new List<SalesOrder>(state.Orders);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<RecurringContract> savedSalesContracts =
+                new List<RecurringContract>(state.Contracts);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            int savedSaveVersion = state.SaveVersion;
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+
+            try
+            {
+                Stage8BMigrationRun n1 = RunStage8BMigration(state, saveVersionField, 42);
+                check(
+                    N1,
+                    n1.failure == null &&
+                    n1.finalSaveVersion == IntercolonyWorldComponent.CurrentSaveVersion &&
+                    n1.before.TermsAndCountsEqual(n1.after),
+                    n1.Detail() + $"; start version=42; failure={n1.failure ?? "none"}");
+
+                Stage8BMigrationRun n2 = RunStage8BMigration(state, saveVersionField, 49);
+                check(
+                    N2,
+                    n2.failure == null &&
+                    n2.finalSaveVersion == IntercolonyWorldComponent.CurrentSaveVersion &&
+                    n2.before.TermsAndCountsEqual(n2.after),
+                    n2.Detail() + $"; start version=49; failure={n2.failure ?? "none"}");
+
+                List<int> failedStarts = new List<int>();
+                List<string> startFailures = new List<string>();
+                for (int startVersion = 42;
+                     startVersion < IntercolonyWorldComponent.CurrentSaveVersion;
+                     startVersion++)
+                {
+                    Stage8BMigrationRun run =
+                        RunStage8BMigration(state, saveVersionField, startVersion);
+                    if (run.failure != null ||
+                        run.finalSaveVersion != IntercolonyWorldComponent.CurrentSaveVersion)
+                    {
+                        failedStarts.Add(startVersion);
+                        startFailures.Add(
+                            $"{startVersion}: {run.Detail()}; final={run.finalSaveVersion}; " +
+                            $"failure={run.failure ?? "none"}");
+                    }
+                }
+
+                check(
+                    N3,
+                    failedStarts.Count == 0,
+                    $"enumerated starts=42..{IntercolonyWorldComponent.CurrentSaveVersion - 1}; " +
+                    $"failed starts={(failedStarts.Count == 0
+                        ? "none" : string.Join(",", failedStarts.ToArray()))}; " +
+                    $"details={(startFailures.Count == 0
+                        ? "none" : string.Join(" | ", startFailures.ToArray()))}");
+
+                Stage8BMigrationRun n4 = RunStage8BMigration(
+                    state, saveVersionField, IntercolonyWorldComponent.CurrentSaveVersion);
+                check(
+                    N4,
+                    n4.failure == null &&
+                    n4.migrationSaveVersionBefore == IntercolonyWorldComponent.CurrentSaveVersion &&
+                    n4.migrationSaveVersionBefore == n4.finalSaveVersion &&
+                    n4.finalSaveVersion == IntercolonyWorldComponent.CurrentSaveVersion &&
+                    n4.before.ExactlyEqual(n4.after),
+                    n4.Detail() + $"; start version={IntercolonyWorldComponent.CurrentSaveVersion}; " +
+                    $"failure={n4.failure ?? "none"}");
+
+                Stage8BMigrationRun n5 = RunStage8BMigration(state, saveVersionField, 42);
+                Stage8BSnapshot secondBefore = null;
+                Stage8BSnapshot secondAfter = null;
+                int secondVersionBefore = -1;
+                int secondVersionAfter = -1;
+                string secondFailure = null;
+                if (n5.failure == null)
+                {
+                    secondBefore = Stage8BSnapshot.From(state);
+                    secondVersionBefore = state.SaveVersion;
+                    try
+                    {
+                        state.MigrateIfNeeded();
+                        secondVersionAfter = state.SaveVersion;
+                        secondAfter = Stage8BSnapshot.From(state);
+                    }
+                    catch (Exception ex)
+                    {
+                        secondFailure = ex.GetType().Name + ": " + ex.Message;
+                    }
+                }
+
+                bool firstRunAnchored = n5.before.TermsAndCountsEqual(n5.after);
+                bool secondRunStable = secondBefore != null && secondAfter != null &&
+                    secondBefore.ExactlyEqual(secondAfter) &&
+                    secondVersionBefore == secondVersionAfter &&
+                    state.SaveVersion == IntercolonyWorldComponent.CurrentSaveVersion;
+                check(
+                    N5,
+                    n5.failure == null && firstRunAnchored && secondRunStable,
+                    $"start version=42; first {n5.Detail()}; second " +
+                    $"{(secondBefore == null ? "not run" : secondBefore.Detail(secondAfter))}; " +
+                    $"second version {secondVersionBefore}->{secondVersionAfter}; " +
+                    $"first failure={n5.failure ?? "none"}; second failure={secondFailure ?? "none"}");
+            }
+            finally
+            {
+                state.Orders.Clear();
+                state.Orders.AddRange(savedSalesOrders);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedSalesContracts);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                saveVersionField.SetValue(state, savedSaveVersion);
+            }
+        }
+
+        private static Stage8BMigrationRun RunStage8BMigration(
+            IntercolonyWorldComponent state,
+            FieldInfo saveVersionField,
+            int startVersion)
+        {
+            Stage8BMigrationRun run = new Stage8BMigrationRun { startVersion = startVersion };
+            try
+            {
+                state.Orders.Clear();
+                state.PurchaseOrders.Clear();
+                state.Contracts.Clear();
+                state.Reputations.Clear();
+
+                int now = GenTicks.TicksGame;
+                ThingDef product = ThingDefOf.Steel ?? ThingDefOf.Silver;
+                run.salesOrder = new SalesOrder
+                {
+                    id = 8_100,
+                    settlementId = 8_101,
+                    settlementName = "Stage 8B supplier",
+                    factionName = "Stage 8B faction",
+                    line = new OrderLine(product, 7),
+                    unitPrice = 13.75f,
+                    acceptedTick = now,
+                    deadlineTick = now + GenDate.TicksPerDay * 10,
+                    status = SalesOrderStatus.Accepted
+                };
+                run.purchaseOrder = new PurchaseOrder
+                {
+                    id = 8_102,
+                    requestId = 8_103,
+                    quotationId = 8_104,
+                    settlementId = 8_101,
+                    settlementName = "Stage 8B supplier",
+                    factionName = "Stage 8B faction",
+                    thingDef = product,
+                    quantity = 11,
+                    unitPrice = 3.625f,
+                    supplierDelivers = true,
+                    orderedTick = now,
+                    readyTick = now + GenDate.TicksPerDay * 4,
+                    status = PurchaseOrderStatus.Confirmed
+                };
+                run.salesContract = new RecurringContract
+                {
+                    id = 8_105,
+                    settlementId = 8_101,
+                    settlementName = "Stage 8B supplier",
+                    factionName = "Stage 8B faction",
+                    thingDef = product,
+                    quantityPerCycle = 13,
+                    totalCycles = 4,
+                    cyclesCompleted = 0,
+                    unitPrice = 2.875f,
+                    cadenceTicks = GenDate.TicksPerDay * 3,
+                    nextCycleTick = now + GenDate.TicksPerDay * 3,
+                    status = ContractStatus.Active
+                };
+
+                state.Orders.Add(run.salesOrder);
+                state.PurchaseOrders.Add(run.purchaseOrder);
+                state.Contracts.Add(run.salesContract);
+                run.before = Stage8BSnapshot.From(state);
+                saveVersionField.SetValue(state, startVersion);
+                run.migrationSaveVersionBefore = state.SaveVersion;
+                state.MigrateIfNeeded();
+                run.finalSaveVersion = state.SaveVersion;
+                run.after = Stage8BSnapshot.From(state);
+            }
+            catch (Exception ex)
+            {
+                run.failure = ex.GetType().Name + ": " + ex.Message;
+                run.finalSaveVersion = state.SaveVersion;
+                run.after = Stage8BSnapshot.From(state);
+            }
+
+            return run;
+        }
+
+        private sealed class Stage8BMigrationRun
+        {
+            public int startVersion;
+            public SalesOrder salesOrder;
+            public PurchaseOrder purchaseOrder;
+            public RecurringContract salesContract;
+            public Stage8BSnapshot before;
+            public Stage8BSnapshot after;
+            public int finalSaveVersion;
+            public int migrationSaveVersionBefore;
+            public string failure;
+
+            public string Detail()
+            {
+                return before == null
+                    ? "before snapshot unavailable"
+                    : before.Detail(after);
+            }
+        }
+
+        private sealed class Stage8BSnapshot
+        {
+            public int salesCount;
+            public float salesPrice;
+            public int salesQuantity;
+            public int purchaseCount;
+            public float purchasePrice;
+            public int purchaseQuantity;
+            public int contractCount;
+            public float contractPrice;
+            public int contractQuantity;
+            public int salesId;
+            public int purchaseId;
+            public int contractId;
+            public SalesOrderStatus? salesStatus;
+            public PurchaseOrderStatus? purchaseStatus;
+            public ContractStatus? contractStatus;
+
+            public static Stage8BSnapshot From(IntercolonyWorldComponent state)
+            {
+                SalesOrder sales = state.Orders.Count == 1 ? state.Orders[0] : null;
+                PurchaseOrder purchase =
+                    state.PurchaseOrders.Count == 1 ? state.PurchaseOrders[0] : null;
+                RecurringContract contract =
+                    state.Contracts.Count == 1 ? state.Contracts[0] : null;
+                return new Stage8BSnapshot
+                {
+                    salesCount = state.Orders.Count,
+                    salesPrice = sales == null ? float.NaN : sales.unitPrice,
+                    salesQuantity = sales == null ? -1 : sales.Quantity,
+                    purchaseCount = state.PurchaseOrders.Count,
+                    purchasePrice = purchase == null ? float.NaN : purchase.unitPrice,
+                    purchaseQuantity = purchase == null ? -1 : purchase.quantity,
+                    contractCount = state.Contracts.Count,
+                    contractPrice = contract == null ? float.NaN : contract.unitPrice,
+                    contractQuantity = contract == null ? -1 : contract.quantityPerCycle,
+                    salesId = sales?.id ?? -1,
+                    purchaseId = purchase?.id ?? -1,
+                    contractId = contract?.id ?? -1,
+                    salesStatus = sales?.status,
+                    purchaseStatus = purchase?.status,
+                    contractStatus = contract?.status
+                };
+            }
+
+            public bool TermsAndCountsEqual(Stage8BSnapshot other)
+            {
+                return other != null &&
+                    salesCount == other.salesCount && salesCount == 1 &&
+                    salesPrice == other.salesPrice && salesQuantity == other.salesQuantity &&
+                    salesStatus == other.salesStatus && salesStatus == SalesOrderStatus.Accepted &&
+                    purchaseCount == other.purchaseCount && purchaseCount == 1 &&
+                    purchasePrice == other.purchasePrice &&
+                    purchaseQuantity == other.purchaseQuantity &&
+                    purchaseStatus == other.purchaseStatus &&
+                    purchaseStatus == PurchaseOrderStatus.Confirmed &&
+                    contractCount == other.contractCount && contractCount == 1 &&
+                    contractPrice == other.contractPrice &&
+                    contractQuantity == other.contractQuantity &&
+                    contractStatus == other.contractStatus &&
+                    contractStatus == ContractStatus.Active;
+            }
+
+            public bool ExactlyEqual(Stage8BSnapshot other)
+            {
+                return TermsAndCountsEqual(other) &&
+                    salesId == other.salesId && purchaseId == other.purchaseId &&
+                    contractId == other.contractId && salesStatus == other.salesStatus &&
+                    purchaseStatus == other.purchaseStatus && contractStatus == other.contractStatus;
+            }
+
+            public string Detail(Stage8BSnapshot after)
+            {
+                return $"sales orders count {salesCount}->{after?.salesCount.ToString() ?? "missing"}; " +
+                    $"sales price {Format(salesPrice)}->{Format(after?.salesPrice)}; " +
+                    $"sales quantity {salesQuantity}->{after?.salesQuantity.ToString() ?? "missing"}; " +
+                    $"purchase orders count {purchaseCount}->{after?.purchaseCount.ToString() ?? "missing"}; " +
+                    $"purchase price {Format(purchasePrice)}->{Format(after?.purchasePrice)}; " +
+                    $"purchase quantity {purchaseQuantity}->{after?.purchaseQuantity.ToString() ?? "missing"}; " +
+                    $"sales contracts count {contractCount}->{after?.contractCount.ToString() ?? "missing"}; " +
+                    $"contract price {Format(contractPrice)}->{Format(after?.contractPrice)}; " +
+                    $"contract quantity {contractQuantity}->{after?.contractQuantity.ToString() ?? "missing"}";
+            }
+
+            private static string Format(float? value)
+            {
+                return !value.HasValue || float.IsNaN(value.Value)
+                    ? "missing"
+                    : value.Value.ToString("R");
+            }
         }
 
         private static Stage8ARoundTrip Stage8ARoundTripState(
