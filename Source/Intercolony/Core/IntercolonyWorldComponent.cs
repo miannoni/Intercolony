@@ -1572,6 +1572,8 @@ namespace Intercolony
                 performance.opportunitiesCreated = created;
             }
 
+            int supplierListingsCreated = SupplierListingService.Refresh(this);
+
             RfqService.ExpireStale(requests);
             ContractService.AdvanceContracts(this);
             ContractService.OfferContracts(this);
@@ -1587,6 +1589,7 @@ namespace Intercolony
             IntercolonyLog.Verbose(
                 $"Refresh #{refreshCount} ({cause}) at tick {lastRefreshTick}: " +
                 $"{expired} expired, {withdrawn} withdrawn, {created} created, " +
+                $"{supplierListingsCreated} supplier listings created, " +
                 $"{ActiveOpportunityCount} active.");
         }
 

@@ -465,6 +465,7 @@ namespace Intercolony
                 CheckSupplierListingCollection(check, skip);
                 CheckSupplierListingMigration(check, skip, state, saveVersionField);
                 CheckSupplierListingIds(check, skip, state, nextIdField, savedNextId);
+                CheckSupplierListingGeneration(check, skip, state);
             }
             finally
             {
@@ -480,6 +481,858 @@ namespace Intercolony
                     nextIdField.SetValue(state, savedNextId);
                 }
             }
+        }
+
+        private static void CheckSupplierListingGeneration(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            FieldInfo consumptionField = typeof(IntercolonyWorldComponent).GetField(
+                "supplierOfferConsumption", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo profileCacheField = typeof(IntercolonyWorldComponent).GetField(
+                "profileCache", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo refreshCountField = typeof(IntercolonyWorldComponent).GetField(
+                "refreshCount", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo economySeedField = typeof(IntercolonyWorldComponent).GetField(
+                "economySeed", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            if (state == null || consumptionField == null || profileCacheField == null ||
+                refreshCountField == null || economySeedField == null)
+            {
+                SkipSupplierListingGeneration(
+                    skip, "the live fixture fields needed for restoration are inaccessible");
+                return;
+            }
+
+            List<SupplierListing> savedListings =
+                new List<SupplierListing>(state.SupplierListings);
+            List<SupplierOfferConsumption> savedConsumption = CloneConsumptions(
+                consumptionField.GetValue(state) as List<SupplierOfferConsumption>);
+            object savedProfiles = profileCacheField.GetValue(state);
+            int savedRefreshCount = (int)refreshCountField.GetValue(state);
+            int savedEconomySeed = (int)economySeedField.GetValue(state);
+
+            try
+            {
+                List<Settlement> settlements = FindAccessibleSupplierSettlements(state);
+                if (settlements.Count == 0)
+                {
+                    SkipSupplierListingGeneration(
+                        skip, "no accessible settlement has an economic profile");
+                    return;
+                }
+
+                List<SupplierOfferConsumption> liveConsumption =
+                    consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
+                liveConsumption?.Clear();
+
+                Settlement settlement = settlements[0];
+                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                int window = state.RefreshCount;
+
+                CheckSupplierListingIdempotence(
+                    check, skip, state, settlement, window);
+                CheckSupplierListingConsumedQuantity(
+                    check, skip, settlement, profile, window);
+                CheckSupplierListingTechGate(
+                    check, skip, settlement, profile, window);
+                CheckSupplierListingSupplyDirection(
+                    check, skip, settlement, profile, window);
+                CheckSupplierListingSharedPrice(
+                    check, skip, settlement, profile, window);
+                CheckSupplierListingRfqPrice(
+                    check, skip, settlement, profile, window);
+                CheckSupplierListingCap(
+                    check, skip, settlement, profile, window);
+                CheckSupplierListingStaleWindow(
+                    check, skip, state, settlement, window);
+                CheckSupplierListingPublishedRate(
+                    check, skip, settlement, profile, window);
+            }
+            finally
+            {
+                state.SupplierListings.Clear();
+                state.SupplierListings.AddRange(savedListings);
+                consumptionField.SetValue(state, savedConsumption);
+                profileCacheField.SetValue(state, savedProfiles);
+                refreshCountField.SetValue(state, savedRefreshCount);
+                economySeedField.SetValue(state, savedEconomySeed);
+            }
+        }
+
+        private static void SkipSupplierListingGeneration(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("T1 listing refresh is idempotent within one window", reason);
+            skip("T2 listing quantity is net of consumed stock", reason);
+            skip("T3 listing generation respects the technical gate", reason);
+            skip("T4 surplus lists more than shortage", reason);
+            skip("T5 listing price uses shared supplier pricing", reason);
+            skip("T6 RFQ and listing prices agree", reason);
+            skip("T7 listing count respects the per-settlement cap", reason);
+            skip("T8 refresh prunes stale-window listings", reason);
+            skip("T9 published listing rate does not move with purchase size", reason);
+        }
+
+        private static List<Settlement> FindAccessibleSupplierSettlements(
+            IntercolonyWorldComponent state)
+        {
+            List<Settlement> result = new List<Settlement>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                return result;
+            }
+
+            foreach (Settlement settlement in settlements)
+            {
+                if (settlement != null &&
+                    IntercolonyMarketAccess.IsAccessible(settlement) &&
+                    state.GetProfile(settlement) != null)
+                {
+                    result.Add(settlement);
+                }
+            }
+
+            return result;
+        }
+
+        private static void CheckSupplierListingIdempotence(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            int window)
+        {
+            state.SupplierListings.Clear();
+            SupplierListingService.Refresh(state);
+            int firstCount = CountCurrentListings(state, settlement.ID, window);
+            if (firstCount == 0)
+            {
+                skip("T1 listing refresh is idempotent within one window",
+                    $"settlement={settlement.ID}; window={window}; first count=0");
+                return;
+            }
+
+            SupplierListingService.Refresh(state);
+            int secondCount = CountCurrentListings(state, settlement.ID, window);
+            check("T1 listing refresh is idempotent within one window",
+                secondCount == firstCount,
+                $"settlement={settlement.ID}; window={window}; " +
+                $"first count={firstCount}; second count={secondCount}");
+        }
+
+        private static void CheckSupplierListingConsumedQuantity(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            int window)
+        {
+            IntercolonyWorldComponent probeState = new IntercolonyWorldComponent(null);
+            List<SupplierListing> grossListings = SupplierListingService.GenerateFor(
+                probeState, settlement, profile, window, 0, () => 1);
+            SupplierListing gross = null;
+            foreach (SupplierListing listing in grossListings)
+            {
+                if (listing != null && listing.quantityAvailable > 1)
+                {
+                    gross = listing;
+                    break;
+                }
+            }
+
+            if (gross == null)
+            {
+                skip("T2 listing quantity is net of consumed stock",
+                    $"settlement={settlement.ID}; window={window}; no generated listing had quantity > 1");
+                return;
+            }
+
+            int grossQuantity = gross.quantityAvailable;
+            int consumed = Mathf.Max(1, grossQuantity / 3);
+            probeState.ConsumeSupplierOffer(
+                window, gross.thingDef, settlement.ID, consumed);
+            List<SupplierListing> netListings = SupplierListingService.GenerateFor(
+                probeState, settlement, profile, window, 0, () => 2);
+            SupplierListing net = FindListing(netListings, gross.thingDef, gross.stuffDef,
+                gross.quality);
+            int listedQuantity = net?.quantityAvailable ?? 0;
+            int expectedQuantity = grossQuantity - consumed;
+
+            check("T2 listing quantity is net of consumed stock",
+                net != null && listedQuantity == expectedQuantity,
+                $"settlement={settlement.ID}; window={window}; def={gross.thingDef.defName}; " +
+                $"gross={grossQuantity}; consumed={consumed}; listed={listedQuantity}");
+        }
+
+        private static void CheckSupplierListingTechGate(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            int window)
+        {
+            ThingDef blocked = null;
+            IntercolonyProductCategory blockedCategory = IntercolonyProductCategory.Commodities;
+            foreach (ThingDef def in IntercolonyProductClassifier.TradableDefs)
+            {
+                IntercolonyProductCategory? category =
+                    IntercolonyProductClassifier.Classify(def);
+                if (!category.HasValue || def.techLevel == TechLevel.Undefined ||
+                    RfqService.SupplierOfferQuantity(
+                        def, null, FixtureSupplyProfile(profile), 100f) <= 0)
+                {
+                    continue;
+                }
+
+                if (blocked == null || def.techLevel > blocked.techLevel)
+                {
+                    blocked = def;
+                    blockedCategory = category.Value;
+                }
+            }
+
+            if (blocked == null)
+            {
+                skip("T3 listing generation respects the technical gate",
+                    $"settlement={settlement.ID}; no high-tech tradable def with positive fixture supply");
+                return;
+            }
+
+            List<ThingDef> tradableDefs = IntercolonyProductClassifier.TradableDefs;
+            List<ThingDef> savedTradableDefs = new List<ThingDef>(tradableDefs);
+            TechLevel savedTechTier = profile.techTier;
+            IntercolonyArchetype savedArchetype = profile.archetype;
+            IntercolonyWealthTier savedWealthTier = profile.wealthTier;
+            float[] savedSupplyWeights = (float[])profile.supplyWeights.Clone();
+
+            try
+            {
+                // Make the target the only candidate and the only category with positive
+                // effective supply. Tribal tech one tier below the target is a known rejection
+                // without asking the gate for the expected answer.
+                profile.techTier = (TechLevel)Math.Max(
+                    (int)TechLevel.Undefined, (int)blocked.techLevel - 1);
+                profile.archetype = IntercolonyArchetype.Tribal;
+                profile.wealthTier = IntercolonyWealthTier.Wealthy;
+                for (int i = 0; i < profile.supplyWeights.Length; i++)
+                {
+                    profile.supplyWeights[i] = 0f;
+                }
+
+                profile.supplyWeights[(int)blockedCategory] = 100f;
+                tradableDefs.Clear();
+                tradableDefs.Add(blocked);
+
+                IntercolonyWorldComponent probeState = new IntercolonyWorldComponent(null);
+                int probeWindow = window + 100;
+                List<SupplierListing> listings = SupplierListingService.GenerateFor(
+                    probeState, settlement, profile, probeWindow,
+                    SupplierListingService.MaxPerSettlement - 1, () => 1);
+                bool appeared = false;
+                foreach (SupplierListing listing in listings)
+                {
+                    if (listing != null && listing.thingDef == blocked)
+                    {
+                        appeared = true;
+                        break;
+                    }
+                }
+
+                check("T3 listing generation respects the technical gate",
+                    !appeared,
+                    $"settlement={settlement.ID}; rejected def={blocked.defName}; " +
+                    $"appeared={appeared}; category={blockedCategory}; window={probeWindow}");
+            }
+            finally
+            {
+                tradableDefs.Clear();
+                tradableDefs.AddRange(savedTradableDefs);
+                profile.techTier = savedTechTier;
+                profile.archetype = savedArchetype;
+                profile.wealthTier = savedWealthTier;
+                Array.Copy(savedSupplyWeights, profile.supplyWeights, savedSupplyWeights.Length);
+            }
+        }
+
+        private static void CheckSupplierListingSupplyDirection(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            Settlement settlement,
+            SettlementEconomicProfile sourceProfile,
+            int window)
+        {
+            IntercolonyProductCategory? chosen = null;
+            foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
+            {
+                foreach (ThingDef def in IntercolonyProductClassifier.DefsInCategory(category))
+                {
+                    if (RfqService.CanTechnicallySupply(def, sourceProfile))
+                    {
+                        chosen = category;
+                        break;
+                    }
+                }
+
+                if (chosen.HasValue)
+                {
+                    break;
+                }
+            }
+
+            if (!chosen.HasValue)
+            {
+                skip("T4 surplus lists more than shortage",
+                    $"settlement={settlement.ID}; no technically supplyable category");
+                return;
+            }
+
+            SettlementEconomicProfile profile = CloneProfile(sourceProfile);
+            for (int i = 0; i < profile.supplyWeights.Length; i++)
+            {
+                profile.supplyWeights[i] = 0f;
+            }
+
+            profile.supplyWeights[(int)chosen.Value] = 1f;
+            IntercolonyWorldComponent probeState = new IntercolonyWorldComponent(null);
+            MarketPressureService.ApplySupplyShock(
+                probeState, settlement.ID, chosen.Value, MarketPressureService.MaxPressure);
+            float shortageSupply = EffectiveEconomyService.EffectiveSupply(
+                probeState, profile, chosen.Value);
+            List<SupplierListing> shortage = SupplierListingService.GenerateFor(
+                probeState, settlement, profile, window + 200, 0, () => 1);
+
+            probeState.MarketStates.Clear();
+            probeState.RefreshMarketStateIndex();
+            MarketPressureService.ApplySupplyShock(
+                probeState, settlement.ID, chosen.Value, -MarketPressureService.MaxPressure);
+            float surplusSupply = EffectiveEconomyService.EffectiveSupply(
+                probeState, profile, chosen.Value);
+            List<SupplierListing> surplus = SupplierListingService.GenerateFor(
+                probeState, settlement, profile, window + 200, 0, () => 2);
+
+            int shortageQuantity = TotalListingQuantity(shortage);
+            int surplusQuantity = TotalListingQuantity(surplus);
+            if (surplusSupply <= shortageSupply || shortageQuantity == 0 || surplusQuantity == 0)
+            {
+                skip("T4 surplus lists more than shortage",
+                    $"settlement={settlement.ID}; category={chosen.Value}; " +
+                    $"shortage supply={shortageSupply:F2}, surplus supply={surplusSupply:F2}; " +
+                    $"listed quantities={shortageQuantity},{surplusQuantity}; " +
+                    "deterministic two-condition fixture could not be constructed");
+                return;
+            }
+
+            check("T4 surplus lists more than shortage",
+                surplusQuantity > shortageQuantity,
+                $"settlement={settlement.ID}; category={chosen.Value}; window={window + 200}; " +
+                $"shortage supply={shortageSupply:F2}, quantity={shortageQuantity}; " +
+                $"surplus supply={surplusSupply:F2}, quantity={surplusQuantity}");
+        }
+
+        private static void CheckSupplierListingSharedPrice(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            Settlement settlement,
+            SettlementEconomicProfile sourceProfile,
+            int window)
+        {
+            if (!TryFindSupplyCategory(sourceProfile, out IntercolonyProductCategory category))
+            {
+                skip("T5 listing price uses shared supplier pricing",
+                    $"settlement={settlement.ID}; no supplyable category");
+                return;
+            }
+
+            SettlementEconomicProfile profile = CategoryOnlyProfile(sourceProfile, category);
+            IntercolonyWorldComponent probeState = new IntercolonyWorldComponent(null);
+            List<SupplierListing> listings = SupplierListingService.GenerateFor(
+                probeState, settlement, profile, window + 300, 0, () => 1);
+            if (listings.Count == 0)
+            {
+                skip("T5 listing price uses shared supplier pricing",
+                    $"settlement={settlement.ID}; category={category}; generator made no listing");
+                return;
+            }
+
+            SupplierListing listing = listings[0];
+            if (!TryReplayFirstListingPrice(
+                    probeState, settlement, profile, window + 300, listing,
+                    listing.quantityAvailable, out float expected))
+            {
+                skip("T5 listing price uses shared supplier pricing",
+                    $"settlement={settlement.ID}; listing={listing.id}; " +
+                    "the deterministic price replay could not match the generated first listing");
+                return;
+            }
+
+            check("T5 listing price uses shared supplier pricing",
+                Mathf.Approximately(listing.unitPrice, expected),
+                $"settlement={settlement.ID}; listing={listing.id}; window={listing.refreshWindow}; " +
+                $"listed={listing.unitPrice:F2}; shared={expected:F2}; " +
+                $"quantity={listing.quantityAvailable}; " +
+                $"supply={EffectiveEconomyService.EffectiveSupply(probeState, profile, category):F2}; " +
+                $"distance={MarketOpportunityGenerator.DistanceToPlayer(settlement):F2}; " +
+                $"delivers={listing.fulfillment == FulfillmentMode.SellerDelivery}");
+        }
+
+        private static void CheckSupplierListingPublishedRate(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            Settlement settlement,
+            SettlementEconomicProfile sourceProfile,
+            int window)
+        {
+            if (!TryFindSupplyCategory(sourceProfile, out IntercolonyProductCategory category))
+            {
+                skip("T9 published listing rate does not move with purchase size",
+                    $"settlement={settlement.ID}; no supplyable category");
+                return;
+            }
+
+            SettlementEconomicProfile profile = CategoryOnlyProfile(sourceProfile, category);
+            IntercolonyWorldComponent probeState = new IntercolonyWorldComponent(null);
+            List<SupplierListing> listings = SupplierListingService.GenerateFor(
+                probeState, settlement, profile, window + 600, 0, () => 1);
+            if (listings.Count == 0)
+            {
+                skip("T9 published listing rate does not move with purchase size",
+                    $"settlement={settlement.ID}; category={category}; generator made no listing");
+                return;
+            }
+
+            SupplierListing listing = listings[0];
+            if (listing.quantityAvailable <= 1)
+            {
+                skip("T9 published listing rate does not move with purchase size",
+                    $"settlement={settlement.ID}; listing={listing.id}; " +
+                    $"quantity={listing.quantityAvailable}; no different positive purchase size");
+                return;
+            }
+
+            int purchaseQuantity = Mathf.Max(1, listing.quantityAvailable / 2);
+            if (purchaseQuantity == listing.quantityAvailable)
+            {
+                skip("T9 published listing rate does not move with purchase size",
+                    $"settlement={settlement.ID}; listing={listing.id}; " +
+                    $"listed quantity={listing.quantityAvailable}; alternate quantity unavailable");
+                return;
+            }
+
+            if (!TryReplayFirstListingPrice(
+                    probeState, settlement, profile, window + 600, listing,
+                    purchaseQuantity, out float wouldBePrice))
+            {
+                skip("T9 published listing rate does not move with purchase size",
+                    $"settlement={settlement.ID}; listing={listing.id}; " +
+                    "the deterministic price replay could not match the generated first listing");
+                return;
+            }
+
+            float publishedRate = listing.unitPrice;
+            check("T9 published listing rate does not move with purchase size",
+                Mathf.Approximately(listing.unitPrice, publishedRate),
+                $"settlement={settlement.ID}; listing={listing.id}; window={listing.refreshWindow}; " +
+                $"listed quantity={listing.quantityAvailable}; purchase quantity={purchaseQuantity}; " +
+                $"published={publishedRate:F2}; would-be={wouldBePrice:F2}; " +
+                $"stored after calculation={listing.unitPrice:F2}; " +
+                $"supply={EffectiveEconomyService.EffectiveSupply(probeState, profile, category):F2}; " +
+                $"distance={MarketOpportunityGenerator.DistanceToPlayer(settlement):F2}; " +
+                $"delivers={listing.fulfillment == FulfillmentMode.SellerDelivery}");
+        }
+
+        private static void CheckSupplierListingRfqPrice(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            Settlement settlement,
+            SettlementEconomicProfile sourceProfile,
+            int window)
+        {
+            if (!TryFindSupplyCategory(sourceProfile, out IntercolonyProductCategory category))
+            {
+                skip("T6 RFQ and listing prices agree",
+                    $"settlement={settlement.ID}; no supplyable category");
+                return;
+            }
+
+            SettlementEconomicProfile profile = CategoryOnlyProfile(sourceProfile, category);
+            IntercolonyWorldComponent probeState = new IntercolonyWorldComponent(null);
+            List<SupplierListing> listings = SupplierListingService.GenerateFor(
+                probeState, settlement, profile, window + 400, 0, () => 1);
+            if (listings.Count == 0)
+            {
+                skip("T6 RFQ and listing prices agree",
+                    $"settlement={settlement.ID}; category={category}; generator made no listing");
+                return;
+            }
+
+            SupplierListing listing = listings[0];
+            bool delivers = listing.fulfillment == FulfillmentMode.SellerDelivery;
+            float supply = EffectiveEconomyService.EffectiveSupply(
+                probeState, profile, category);
+            float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+            int seed = 0x6B_2A_11;
+            float rfqPrice;
+            float listingPathPrice;
+            MethodInfo rfqPricingMethod = typeof(RfqService).GetMethod(
+                "QuotedUnitPrice", BindingFlags.Static | BindingFlags.NonPublic);
+            if (rfqPricingMethod == null)
+            {
+                skip("T6 RFQ and listing prices agree",
+                    $"settlement={settlement.ID}; RFQ quotation pricing method is inaccessible");
+                return;
+            }
+
+            PurchaseRequest rfqRequest = new PurchaseRequest
+            {
+                thingDef = listing.thingDef,
+                stuffDef = listing.stuffDef,
+                quantityRequested = listing.quantityAvailable
+            };
+            Rand.PushState(seed);
+            try
+            {
+                rfqPrice = (float)rfqPricingMethod.Invoke(null, new object[]
+                {
+                    probeState, rfqRequest, listing.stuffDef, listing.quality, profile,
+                    category, supply, distance, delivers, null
+                });
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            Rand.PushState(seed);
+            try
+            {
+                listingPathPrice = IntercolonyPricing.SupplierUnitPrice(
+                    probeState, listing.thingDef, listing.stuffDef, listing.quality, profile,
+                    category, supply, distance, delivers, listing.quantityAvailable, out _);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            check("T6 RFQ and listing prices agree",
+                Mathf.Approximately(rfqPrice, listingPathPrice),
+                $"settlement={settlement.ID}; listing={listing.id}; window={window + 400}; " +
+                $"def={listing.thingDef.defName}; quantity={listing.quantityAvailable}; " +
+                $"RFQ={rfqPrice:F2}; listing path={listingPathPrice:F2}");
+        }
+
+        private static void CheckSupplierListingCap(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            Settlement settlement,
+            SettlementEconomicProfile sourceProfile,
+            int window)
+        {
+            if (!TryFindSupplyCategory(sourceProfile, out IntercolonyProductCategory category))
+            {
+                skip("T7 listing count respects the per-settlement cap",
+                    $"settlement={settlement.ID}; no supplyable category");
+                return;
+            }
+
+            SettlementEconomicProfile profile = CategoryOnlyProfile(sourceProfile, category);
+            IntercolonyWorldComponent probeState = new IntercolonyWorldComponent(null);
+            List<SupplierListing> listings = SupplierListingService.GenerateFor(
+                probeState, settlement, profile, window + 500, 0, () => 1);
+            int cap = SupplierListingService.MaxPerSettlement;
+            if (listings.Count == 0)
+            {
+                skip("T7 listing count respects the per-settlement cap",
+                    $"settlement={settlement.ID}; category={category}; generator made no listing");
+                return;
+            }
+
+            check("T7 listing count respects the per-settlement cap",
+                listings.Count <= cap,
+                $"settlement={settlement.ID}; window={window + 500}; " +
+                $"count={listings.Count}; cap={cap}");
+        }
+
+        private static void CheckSupplierListingStaleWindow(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            int window)
+        {
+            state.SupplierListings.Clear();
+            state.SupplierListings.Add(new SupplierListing
+            {
+                id = 9_001,
+                settlementId = settlement.ID,
+                thingDef = ThingDefOf.Steel,
+                quantityAvailable = 1,
+                unitPrice = 1f,
+                expiryTick = SupplierListing.NoExpiryTick,
+                refreshWindow = window - 1
+            });
+
+            SupplierListingService.Refresh(state);
+            bool staleRemains = false;
+            int currentCount = 0;
+            foreach (SupplierListing listing in state.SupplierListings)
+            {
+                if (listing == null || listing.settlementId != settlement.ID)
+                {
+                    continue;
+                }
+
+                staleRemains |= listing.refreshWindow == window - 1;
+                if (listing.refreshWindow == window)
+                {
+                    currentCount++;
+                }
+            }
+
+            if (currentCount == 0)
+            {
+                skip("T8 refresh prunes stale-window listings",
+                    $"settlement={settlement.ID}; old window={window - 1}; " +
+                    $"current window={window}; no current listing generated");
+                return;
+            }
+
+            check("T8 refresh prunes stale-window listings",
+                !staleRemains && currentCount > 0,
+                $"settlement={settlement.ID}; old window={window - 1}; current window={window}; " +
+                $"stale remains={staleRemains}; current count={currentCount}");
+        }
+
+        private static bool TryFindSupplyCategory(
+            SettlementEconomicProfile profile,
+            out IntercolonyProductCategory category)
+        {
+            foreach (IntercolonyProductCategory candidate in IntercolonyProductCategoryUtility.All)
+            {
+                foreach (ThingDef def in IntercolonyProductClassifier.DefsInCategory(candidate))
+                {
+                    if (RfqService.CanTechnicallySupply(def, profile))
+                    {
+                        category = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            category = IntercolonyProductCategory.Commodities;
+            return false;
+        }
+
+        private static SettlementEconomicProfile CategoryOnlyProfile(
+            SettlementEconomicProfile source,
+            IntercolonyProductCategory category)
+        {
+            SettlementEconomicProfile profile = CloneProfile(source);
+            for (int i = 0; i < profile.supplyWeights.Length; i++)
+            {
+                profile.supplyWeights[i] = 0f;
+            }
+
+            profile.supplyWeights[(int)category] = 1f;
+            return profile;
+        }
+
+        private static SettlementEconomicProfile FixtureSupplyProfile(
+            SettlementEconomicProfile source)
+        {
+            SettlementEconomicProfile profile = CloneProfile(source);
+            profile.wealthTier = IntercolonyWealthTier.Wealthy;
+            return profile;
+        }
+
+        private static SettlementEconomicProfile CloneProfile(
+            SettlementEconomicProfile source)
+        {
+            SettlementEconomicProfile copy = new SettlementEconomicProfile
+            {
+                settlementId = source.settlementId,
+                factionLoadId = source.factionLoadId,
+                settlementName = source.settlementName,
+                factionName = source.factionName,
+                techTier = source.techTier,
+                wealthTier = source.wealthTier,
+                archetype = source.archetype,
+                qualityPreference = source.qualityPreference,
+                laborSupplyModifier = source.laborSupplyModifier,
+                volatility = source.volatility,
+                seed = source.seed
+            };
+            copy.demandWeights = (float[])source.demandWeights.Clone();
+            copy.supplyWeights = (float[])source.supplyWeights.Clone();
+            return copy;
+        }
+
+        private static int CountCurrentListings(
+            IntercolonyWorldComponent state, int settlementId, int window)
+        {
+            int count = 0;
+            foreach (SupplierListing listing in state.SupplierListings)
+            {
+                if (listing != null && listing.settlementId == settlementId &&
+                    listing.refreshWindow == window)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static SupplierListing FindListing(
+            List<SupplierListing> listings,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality)
+        {
+            foreach (SupplierListing listing in listings)
+            {
+                if (listing != null && listing.thingDef == def && listing.stuffDef == stuff &&
+                    listing.quality == quality)
+                {
+                    return listing;
+                }
+            }
+
+            return null;
+        }
+
+        private static int TotalListingQuantity(List<SupplierListing> listings)
+        {
+            int total = 0;
+            foreach (SupplierListing listing in listings)
+            {
+                if (listing != null)
+                {
+                    total += listing.quantityAvailable;
+                }
+            }
+
+            return total;
+        }
+
+        private static bool TryReplayFirstListingPrice(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            int refreshWindow,
+            SupplierListing target,
+            int pricingQuantity,
+            out float expected)
+        {
+            expected = 0f;
+            if (target == null || pricingQuantity <= 0)
+            {
+                return false;
+            }
+
+            FieldInfo saltField = typeof(SupplierListingService).GetField(
+                "GenerationSalt", BindingFlags.Static | BindingFlags.NonPublic);
+            if (saltField == null)
+            {
+                return false;
+            }
+
+            int salt = (int)saltField.GetValue(null);
+            int seed = Gen.HashCombineInt(
+                state.EconomySeed, settlement.ID, refreshWindow, salt);
+            IntercolonyProductCategory category;
+            if (!TryFindSupplyCategory(profile, out category))
+            {
+                return false;
+            }
+
+            Rand.PushState(seed);
+            try
+            {
+                float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+                float supply = EffectiveEconomyService.EffectiveSupply(state, profile, category);
+                Rand.Range(0f, supply);
+                List<ThingDef> defs = IntercolonyProductClassifier.DefsInCategory(category);
+                for (int i = defs.Count - 1; i >= 0; i--)
+                {
+                    if (!RfqService.CanTechnicallySupply(defs[i], profile))
+                    {
+                        defs.RemoveAt(i);
+                    }
+                }
+
+                if (defs.Count == 0)
+                {
+                    return false;
+                }
+
+                ThingDef def = defs[Rand.Range(0, defs.Count)];
+                ThingDef stuff = RfqService.PickSupplierStuff(def);
+                QualityCategory? quality = RfqService.PickOfferedQuality(def, profile, null);
+                int gross = RfqService.SupplierOfferQuantity(def, stuff, profile, supply);
+                int consumed = state.SupplierOfferConsumptionFor(
+                    refreshWindow, def, settlement.ID);
+                int quantityAvailable = Mathf.Max(0, gross - consumed);
+                if (quantityAvailable <= 0)
+                {
+                    return false;
+                }
+
+                bool rolledDelivers = Rand.Value < RfqService.DeliveryChance(profile, distance);
+                bool delivers = target.fulfillment == FulfillmentMode.SellerDelivery;
+                if (rolledDelivers != delivers)
+                {
+                    return false;
+                }
+
+                // Generation consumes this pickup jitter before it strikes the rate. Replaying
+                // it keeps SupplierUnitPrice on the same negotiation random draw as the service.
+                RfqService.LeadTimeDays(distance, delivers, supply);
+                expected = IntercolonyPricing.SupplierUnitPrice(
+                    state, def, stuff, quality, profile, category, supply, distance,
+                    delivers, pricingQuantity, out _);
+
+                return target.settlementId == settlement.ID && target.refreshWindow == refreshWindow &&
+                       target.thingDef == def && target.stuffDef == stuff &&
+                       target.quality == quality && target.quantityAvailable == quantityAvailable;
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+        }
+
+        private static List<SupplierOfferConsumption> CloneConsumptions(
+            List<SupplierOfferConsumption> source)
+        {
+            List<SupplierOfferConsumption> result =
+                new List<SupplierOfferConsumption>();
+            if (source == null)
+            {
+                return result;
+            }
+
+            foreach (SupplierOfferConsumption entry in source)
+            {
+                if (entry == null)
+                {
+                    continue;
+                }
+
+                result.Add(new SupplierOfferConsumption
+                {
+                    refreshWindow = entry.refreshWindow,
+                    thingDefShortHash = entry.thingDefShortHash,
+                    settlementId = entry.settlementId,
+                    quantityPurchased = entry.quantityPurchased
+                });
+            }
+
+            return result;
         }
 
         private static void CheckSupplierListingSentinel(

@@ -431,6 +431,100 @@ namespace Intercolony
                 "Economy difficulty (buying)", EffectiveEconomyDifficulty);
         }
 
+        /// <summary>Existing supplier markup shared by RFQ and Supplier Market offers.</summary>
+        public const float SupplierMargin = 1.15f;
+
+        /// <summary>
+        /// Supplier-side unit price shared by RFQs and standing supplier listings. Keeping the
+        /// factor multiplication here makes the displayed rate and the later charged rate use
+        /// one pricing calculation rather than two procurement copies.
+        /// </summary>
+        public static float SupplierUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            float distance,
+            bool delivers,
+            int quantity,
+            out string explanation)
+        {
+            List<PriceFactor> factors = new List<PriceFactor>();
+            float baseValue = BaseValue(def, stuff);
+
+            if (quality.HasValue)
+            {
+                factors.Add(new PriceFactor(
+                    $"{quality.Value.GetLabel()} workmanship",
+                    SupplierQualityCostFactor(quality.Value)));
+            }
+
+            factors.Add(new PriceFactor("Supplier margin", SupplierMargin));
+
+            // Effective supply already includes Stage 2 pressure and active event effects.
+            // SupplyCondition is read only to choose the truthful shortage/surplus label.
+            float scarcity = Mathf.Clamp(1.6f - supply * 0.5f, 0.9f, 1.6f);
+            float supplyCondition = EffectiveEconomyService.SupplyCondition(state, profile, category);
+            string scarcityLabel = Mathf.Approximately(
+                    supplyCondition, SettlementMarketState.Neutral)
+                ? "Local scarcity"
+                : supplyCondition < SettlementMarketState.Neutral
+                    ? "Local scarcity (shortage)"
+                    : "Local scarcity (surplus)";
+            factors.Add(new PriceFactor(scarcityLabel, scarcity));
+
+            if (distance >= 0f)
+            {
+                factors.Add(new PriceFactor(
+                    "Distance", 1f + Mathf.Min(distance, 150f) * 0.0012f));
+            }
+
+            float wealth = profile.wealthTier >= IntercolonyWealthTier.Comfortable ? 1.08f : 0.96f;
+            factors.Add(new PriceFactor("Supplier standing", wealth));
+            factors.Add(new PriceFactor("Negotiation", Rand.Range(0.94f, 1.1f)));
+            factors.Add(SupplierLogisticsFactor(delivers));
+            factors.Add(BuyingEconomyDifficultyFactor());
+
+            float price = baseValue;
+            foreach (PriceFactor factor in factors)
+            {
+                price *= factor.multiplier;
+            }
+
+            price = Mathf.Max(0.01f, price);
+            explanation = Explain(def, stuff, quantity, price, factors);
+            return price;
+        }
+
+        /// <summary>Supplier delivery premium used by procurement price formation.</summary>
+        public static PriceFactor SupplierLogisticsFactor(bool supplierDelivers)
+        {
+            return supplierDelivers
+                ? new PriceFactor("Supplier delivery", 1.12f)
+                : new PriceFactor("You collect", 1f);
+        }
+
+        /// <summary>
+        /// What a supplier charges for quality already fixed on the offer. This remains in the
+        /// pricing owner so a listing cannot show a quality price different from an RFQ.
+        /// </summary>
+        private static float SupplierQualityCostFactor(QualityCategory quality)
+        {
+            switch (quality)
+            {
+                case QualityCategory.Awful: return 0.6f;
+                case QualityCategory.Poor: return 0.8f;
+                case QualityCategory.Normal: return 1f;
+                case QualityCategory.Good: return 1.3f;
+                case QualityCategory.Excellent: return 1.75f;
+                case QualityCategory.Masterwork: return 2.5f;
+                default: return 3.8f;
+            }
+        }
+
         /// <summary>
         /// Marginal demand decay (DESIGN.md §13). Prevents one nearby settlement from becoming
         /// an infinite premium sink: the more you ship in a single lot, the worse the unit price.

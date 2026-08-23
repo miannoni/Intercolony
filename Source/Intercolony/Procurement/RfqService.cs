@@ -312,7 +312,7 @@ namespace Intercolony
         /// Quality the supplier will provide, centred on how much that settlement cares about
         /// craftsmanship. Must be called inside a pushed Rand state.
         /// </summary>
-        private static QualityCategory? PickOfferedQuality(
+        internal static QualityCategory? PickOfferedQuality(
             ThingDef def, SettlementEconomicProfile profile, QualityCategory? minQuality)
         {
             if (!IntercolonyPricing.CanHaveQuality(def))
@@ -354,7 +354,7 @@ namespace Intercolony
         }
 
         /// <summary>Material the supplier happens to work in. Must be called inside a pushed Rand state.</summary>
-        private static ThingDef PickSupplierStuff(ThingDef def)
+        internal static ThingDef PickSupplierStuff(ThingDef def)
         {
             if (def == null || !def.MadeFromStuff)
             {
@@ -410,20 +410,17 @@ namespace Intercolony
         private static int OfferedQuantity(
             PurchaseRequest request, ThingDef stuff, SettlementEconomicProfile profile, float supply)
         {
-            float capacity = SupplyCapacity(profile.wealthTier) * supply;
-            float unitValue = Mathf.Max(0.4f, request.IsAnimalOrder
-                ? IntercolonyPricing.BaseValue(request.thingDef, null, request.animalSpec)
-                : IntercolonyPricing.BaseValue(request.thingDef, stuff));
-            int affordable = Mathf.RoundToInt(capacity / unitValue);
-
-            // Crated goods and single-stack items are produced, not stockpiled in bulk.
-            if (request.thingDef.category == ThingCategory.Building)
+            int affordable;
+            if (request.IsAnimalOrder)
             {
-                affordable = Mathf.Min(affordable, 6);
+                float capacity = SupplyCapacity(profile.wealthTier) * supply;
+                float unitValue = Mathf.Max(
+                    0.4f, IntercolonyPricing.BaseValue(request.thingDef, null, request.animalSpec));
+                affordable = Mathf.RoundToInt(capacity / unitValue);
             }
-            else if (request.thingDef.stackLimit <= 1)
+            else
             {
-                affordable = Mathf.Min(affordable, 12);
+                affordable = SupplierOfferQuantity(request.thingDef, stuff, profile, supply);
             }
 
             int offered = Mathf.Min(request.quantityRequested, affordable);
@@ -450,6 +447,38 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Converts the existing RFQ supplier-capacity budget into a finite quantity for a
+        /// standing offer. Keeping this conversion here makes the Supplier Market and RFQs read
+        /// the same capacity model instead of creating separate stock pools.
+        /// </summary>
+        public static int SupplierOfferQuantity(
+            ThingDef def,
+            ThingDef stuff,
+            SettlementEconomicProfile profile,
+            float effectiveSupply)
+        {
+            if (def == null || profile == null || effectiveSupply <= 0f)
+            {
+                return 0;
+            }
+
+            float capacity = SupplyCapacity(profile.wealthTier) * effectiveSupply;
+            float unitValue = Mathf.Max(0.4f, IntercolonyPricing.BaseValue(def, stuff));
+            int affordable = Mathf.RoundToInt(capacity / unitValue);
+
+            if (def.category == ThingCategory.Building)
+            {
+                affordable = Mathf.Min(affordable, 6);
+            }
+            else if (def.stackLimit <= 1)
+            {
+                affordable = Mathf.Min(affordable, 12);
+            }
+
+            return Mathf.Max(0, affordable);
+        }
+
+        /// <summary>
         /// Buying costs more than selling. The player is the one who needs something, so the
         /// spread runs against them — a settlement with little of a good charges more for it,
         /// which is how scarcity shows up in the price rather than only in availability (§46).
@@ -461,7 +490,30 @@ namespace Intercolony
         /// with the same number a real quote would use. Two copies of it would let the dashboard
         /// recommend buying at a price procurement does not actually offer.
         /// </summary>
-        public const float SupplierMargin = 1.15f;
+        public const float SupplierMargin = IntercolonyPricing.SupplierMargin;
+
+        /// <summary>
+        /// Prices an ordinary supplier offer with the same factors used by an RFQ quotation.
+        /// The refresh generator calls this while inside its seeded random scope, so the
+        /// negotiation variation remains reproducible without becoming a second price model.
+        /// </summary>
+        public static float SupplierUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            float distance,
+            bool delivers,
+            int quantity,
+            out string explanation)
+        {
+            return IntercolonyPricing.SupplierUnitPrice(
+                state, def, stuff, quality, profile, category, supply, distance, delivers,
+                quantity, out explanation);
+        }
 
         private static float QuotedUnitPrice(
             IntercolonyWorldComponent state,
@@ -475,18 +527,16 @@ namespace Intercolony
             bool delivers,
             out string explanation)
         {
-            List<PriceFactor> factors = new List<PriceFactor>();
-            float baseValue = request.IsAnimalOrder
-                ? IntercolonyPricing.BaseValue(request.thingDef, null, request.animalSpec)
-                : IntercolonyPricing.BaseValue(request.thingDef, stuff);
-
-            // Better craftsmanship costs more, the same way a quality floor does on the sell
-            // side. Without this a supplier could offer Excellent work at Normal prices.
-            if (!request.IsAnimalOrder && quality.HasValue)
+            if (!request.IsAnimalOrder)
             {
-                factors.Add(new PriceFactor(
-                    $"{quality.Value.GetLabel()} workmanship", QualityCostFactor(quality.Value)));
+                return SupplierUnitPrice(
+                    state, request.thingDef, stuff, quality, profile, category, supply, distance,
+                    delivers, request.quantityRequested, out explanation);
             }
+
+            List<PriceFactor> factors = new List<PriceFactor>();
+            float baseValue = IntercolonyPricing.BaseValue(
+                request.thingDef, null, request.animalSpec);
 
             // Buyer's spread: the counterparty is selling, so they mark up.
             factors.Add(new PriceFactor("Supplier margin", SupplierMargin));
@@ -528,11 +578,8 @@ namespace Intercolony
             }
 
             price = Mathf.Max(0.01f, price);
-            explanation = request.IsAnimalOrder
-                ? IntercolonyPricing.Explain(request.thingDef, null, request.animalSpec,
-                    request.quantityRequested, price, factors)
-                : IntercolonyPricing.Explain(
-                    request.thingDef, stuff, request.quantityRequested, price, factors);
+            explanation = IntercolonyPricing.Explain(
+                request.thingDef, null, request.animalSpec, request.quantityRequested, price, factors);
             return price;
         }
 
@@ -542,27 +589,10 @@ namespace Intercolony
         /// </summary>
         public static PriceFactor ProcurementLogisticsFactor(bool supplierDelivers)
         {
-            return supplierDelivers
-                ? new PriceFactor("Supplier delivery", 1.12f)
-                : new PriceFactor("You collect", 1f);
+            return IntercolonyPricing.SupplierLogisticsFactor(supplierDelivers);
         }
 
-        /// <summary>What a supplier charges for better work. Mirrors the sell-side premium.</summary>
-        private static float QualityCostFactor(QualityCategory quality)
-        {
-            switch (quality)
-            {
-                case QualityCategory.Awful: return 0.6f;
-                case QualityCategory.Poor: return 0.8f;
-                case QualityCategory.Normal: return 1f;
-                case QualityCategory.Good: return 1.3f;
-                case QualityCategory.Excellent: return 1.75f;
-                case QualityCategory.Masterwork: return 2.5f;
-                default: return 3.8f;
-            }
-        }
-
-        private static float DeliveryChance(SettlementEconomicProfile profile, float distance)
+        internal static float DeliveryChance(SettlementEconomicProfile profile, float distance)
         {
             // Delivery is a service; better-off and closer settlements offer it more (§25.4).
             float chance = profile.wealthTier >= IntercolonyWealthTier.Comfortable ? 0.5f : 0.25f;
@@ -574,7 +604,7 @@ namespace Intercolony
             return chance;
         }
 
-        private static int LeadTimeDays(float distance, bool delivers, float supply)
+        internal static int LeadTimeDays(float distance, bool delivers, float supply)
         {
             // Pickup is "ready in N days"; delivery adds travel on top.
             int prep = Mathf.RoundToInt(Mathf.Lerp(5f, 1f, Mathf.Clamp01(supply / 2f)));

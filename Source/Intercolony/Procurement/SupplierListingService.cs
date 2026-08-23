@@ -1,0 +1,255 @@
+using System;
+using System.Collections.Generic;
+using RimWorld;
+using RimWorld.Planet;
+using UnityEngine;
+using Verse;
+
+namespace Intercolony
+{
+    /// <summary>
+    /// Creates the finite standing offers shown by the Supplier Market. This service owns neither
+    /// purchase acceptance nor fulfilment; a listing is only the current-window offer snapshot.
+    /// </summary>
+    public static class SupplierListingService
+    {
+        /// <summary>Maximum standing offers one settlement can publish in one market window.</summary>
+        public const int MaxPerSettlement = 3;
+
+        private const int MinLifespanDays = 3;
+        private const int MaxLifespanDays = 10;
+        private const int GenerationSalt = 0x5A71;
+
+        /// <summary>
+        /// Generates a bounded, deterministic batch for one supplier in a refresh window. The
+        /// caller owns insertion into world state so a direct generation remains side-effect free.
+        /// </summary>
+        public static List<SupplierListing> GenerateFor(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            int refreshWindow,
+            int existingCount,
+            Func<int> idAllocator)
+        {
+            List<SupplierListing> created = new List<SupplierListing>();
+            if (state == null || settlement == null || profile == null || idAllocator == null ||
+                existingCount >= MaxPerSettlement ||
+                !IntercolonyMarketAccess.IsAccessible(settlement))
+            {
+                return created;
+            }
+
+            int seed = Gen.HashCombineInt(
+                state.EconomySeed, settlement.ID, refreshWindow, GenerationSalt);
+            float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+            Dictionary<IntercolonyProductCategory, List<ThingDef>> candidates;
+
+            Rand.PushState(seed);
+            try
+            {
+                candidates = BuildCandidates(state, profile);
+                int slots = MaxPerSettlement - existingCount;
+                for (int i = 0; i < slots; i++)
+                {
+                    IntercolonyProductCategory? category = PickCategory(state, profile, candidates);
+                    if (!category.HasValue)
+                    {
+                        break;
+                    }
+
+                    List<ThingDef> defs = candidates[category.Value];
+                    ThingDef def = defs[Rand.Range(0, defs.Count)];
+                    defs.Remove(def);
+
+                    ThingDef stuff = RfqService.PickSupplierStuff(def);
+                    QualityCategory? quality = RfqService.PickOfferedQuality(def, profile, null);
+                    float supply = EffectiveEconomyService.EffectiveSupply(
+                        state, profile, category.Value);
+                    int grossQuantity = RfqService.SupplierOfferQuantity(
+                        def, stuff, profile, supply);
+                    int consumed = state.SupplierOfferConsumptionFor(
+                        refreshWindow, def, settlement.ID);
+                    int quantityAvailable = Mathf.Max(0, grossQuantity - consumed);
+                    if (quantityAvailable <= 0)
+                    {
+                        continue;
+                    }
+
+                    bool delivers = Rand.Value < RfqService.DeliveryChance(profile, distance);
+                    FulfillmentMode fulfillment = delivers
+                        ? FulfillmentMode.SellerDelivery
+                        : FulfillmentMode.BuyerPickup;
+                    int leadTimeDays = RfqService.LeadTimeDays(distance, delivers, supply);
+                    float unitPrice = RfqService.SupplierUnitPrice(
+                        state, def, stuff, quality, profile, category.Value, supply, distance,
+                        delivers, quantityAvailable, out _);
+                    int lifespanDays = Rand.RangeInclusive(MinLifespanDays, MaxLifespanDays);
+
+                    created.Add(new SupplierListing
+                    {
+                        id = idAllocator(),
+                        settlementId = settlement.ID,
+                        thingDef = def,
+                        stuffDef = stuff,
+                        quality = quality,
+                        quantityAvailable = quantityAvailable,
+                        unitPrice = unitPrice,
+                        fulfillment = fulfillment,
+                        leadTimeDays = leadTimeDays,
+                        createdTick = GenTicks.TicksGame,
+                        expiryTick = GenTicks.TicksGame + lifespanDays * GenDate.TicksPerDay,
+                        refreshWindow = refreshWindow
+                    });
+                }
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            return created;
+        }
+
+        /// <summary>
+        /// Expires the previous window and creates this window's offers on the same coarse market
+        /// refresh used by MarketOpportunityGenerator. Existing listings for the current window
+        /// are left untouched, making a repeated call idempotent.
+        /// </summary>
+        public static int Refresh(IntercolonyWorldComponent state)
+        {
+            if (state == null)
+            {
+                return 0;
+            }
+
+            PruneStale(state);
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                return 0;
+            }
+
+            int created = 0;
+            foreach (Settlement settlement in settlements)
+            {
+                if (settlement == null || HasCurrentWindowListing(state, settlement.ID))
+                {
+                    continue;
+                }
+
+                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                List<SupplierListing> fresh = GenerateFor(
+                    state, settlement, profile, state.RefreshCount, 0, state.NextId);
+                foreach (SupplierListing listing in fresh)
+                {
+                    state.SupplierListings.Add(listing);
+                    created++;
+                }
+            }
+
+            return created;
+        }
+
+        private static Dictionary<IntercolonyProductCategory, List<ThingDef>> BuildCandidates(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile)
+        {
+            Dictionary<IntercolonyProductCategory, List<ThingDef>> candidates =
+                new Dictionary<IntercolonyProductCategory, List<ThingDef>>();
+            foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
+            {
+                if (EffectiveEconomyService.EffectiveSupply(state, profile, category) <= 0f)
+                {
+                    continue;
+                }
+
+                List<ThingDef> defs = IntercolonyProductClassifier.DefsInCategory(category);
+                for (int i = defs.Count - 1; i >= 0; i--)
+                {
+                    if (!RfqService.CanTechnicallySupply(defs[i], profile))
+                    {
+                        defs.RemoveAt(i);
+                    }
+                }
+
+                if (defs.Count > 0)
+                {
+                    candidates[category] = defs;
+                }
+            }
+
+            return candidates;
+        }
+
+        private static IntercolonyProductCategory? PickCategory(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            Dictionary<IntercolonyProductCategory, List<ThingDef>> candidates)
+        {
+            float total = 0f;
+            foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
+            {
+                if (candidates.ContainsKey(category))
+                {
+                    total += Mathf.Max(0f,
+                        EffectiveEconomyService.EffectiveSupply(state, profile, category));
+                }
+            }
+
+            if (total <= 0f)
+            {
+                return null;
+            }
+
+            float roll = Rand.Range(0f, total);
+            float running = 0f;
+            foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
+            {
+                List<ThingDef> defs;
+                if (!candidates.TryGetValue(category, out defs))
+                {
+                    continue;
+                }
+
+                running += Mathf.Max(0f,
+                    EffectiveEconomyService.EffectiveSupply(state, profile, category));
+                if (roll < running)
+                {
+                    return category;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool HasCurrentWindowListing(
+            IntercolonyWorldComponent state, int settlementId)
+        {
+            foreach (SupplierListing listing in state.SupplierListings)
+            {
+                if (listing != null && listing.settlementId == settlementId &&
+                    listing.refreshWindow == state.RefreshCount)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void PruneStale(IntercolonyWorldComponent state)
+        {
+            int now = GenTicks.TicksGame;
+            for (int i = state.SupplierListings.Count - 1; i >= 0; i--)
+            {
+                SupplierListing listing = state.SupplierListings[i];
+                if (listing == null || listing.refreshWindow != state.RefreshCount ||
+                    listing.HasExpired(now) || !listing.IsValidAfterLoad)
+                {
+                    state.SupplierListings.RemoveAt(i);
+                }
+            }
+        }
+    }
+}
