@@ -151,6 +151,13 @@ namespace Intercolony
         private const float MinimumProposalAcceptanceChance = 0.10f;
         private const float MaximumProposalAcceptanceChance = 0.90f;
 
+        /// <summary>
+        /// Commercial reputation cost of voluntarily cancelling an active sales agreement.
+        /// Cancelling costs standing because walking away from a live commitment damages the
+        /// buyer relationship; cancellation while suspended by war is exempt below.
+        /// </summary>
+        private const float ContractCancellationReputationPenalty = -10f;
+
         /// <summary>Keeps proposal decisions in their own deterministic economy-seed stream.</summary>
         private const int ProposalDecisionSeedSalt = 0x0C0D;
 
@@ -1379,7 +1386,9 @@ namespace Intercolony
             if (!suspended)
             {
                 ReputationService.ApplyAdjustment(
-                    state, ReputationService.ForSettlement(state, contract.settlementId), -10f);
+                    state,
+                    ReputationService.ForSettlement(state, contract.settlementId),
+                    ContractCancellationReputationPenalty);
             }
 
             CommercialTimelineService.Record(

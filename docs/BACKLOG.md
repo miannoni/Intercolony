@@ -16,6 +16,19 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## Skip-reporting output still has suite-side format gaps.
+
+**Raised:** 2026-08-23, during skip-reporting verification.
+**Size:** small — test-output cleanup.
+**Status:** open.
+
+`IntercolonyUniqueGoodsSpike.cs:156` emits a bare `SKIPPED` with no reason, so it can never be
+explained by the reporting filter; the fix belongs in the suite, not `dev.ps1`.
+
+Three suites (`IntercolonyBrandSelfTest.cs`, `IntercolonyEventSelfTest.cs`, and
+`IntercolonyNegotiationSelfTest.cs`) still emit the legacy singular `SKIP` while the rest use
+`SKIPPED`; the formats should converge so the filter stops needing special cases.
+
 ## The Stage 3 drought pricing assertion can pass vacuously.
 
 **Raised:** 2026-08-23, during four fresh-world full-suite runs.
