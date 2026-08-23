@@ -1,30 +1,25 @@
 # Intercolony
 
-Intercolony gives the settlements on the world map concrete economic relationships with your
-colony. They want things, you decide what is worth producing, and the agreement matters after you
-accept it.
+Intercolony gives every settlement on RimWorld's world map its own commercial economy. Market
+pressure and regional diffusion change local demand, while circumstance events can disturb it. Your
+colony builds product brands and a specialization through what it makes, buys and delivers.
 
-The working loop is straightforward:
-
-> See what settlements want → accept work you can fulfill → make or gather the goods → deliver them
-> or wait for collection → get paid → build a record with that settlement.
-
-When the colony cannot make what it needs, it can ask settlements for quotations and buy from the
-suppliers that answer. When production needs more hands, it can hire workers for fixed or open-ended
-terms. Wages, arrears, combat clauses, dismissal, injury and death are obligations rather than free
-temporary colonists. Commercial reputation follows deliveries and defaults; employer reputation
-follows how hired people are treated.
+The loop is to read a settlement's economy, choose what to produce or source, negotiate bounded
+terms, fulfill the agreement, and build a durable commercial history with that settlement. Commercial
+relationships continue after acceptance through bounded renegotiation. When the colony needs inputs,
+it can use the supplier market, request quotations, place purchase orders, or keep a recurring
+procurement contract.
 
 ## What is in the mod
 
-- Settlement demand for commodities, intermediate goods, manufactured products, furniture, art,
-  weapons, apparel and minifiable equipment.
-- Sales orders with quantities, deadlines, delivery terms, quality and condition requirements where
-  those requirements make sense.
-- Direct buyer searches for stock the colony already holds.
-- Purchase requests, supplier quotations, pickup or delivery, and purchase orders.
-- Commercial reputation and recurring supply agreements with settlements that come to trust the
-  colony.
+- Per-settlement demand, market pressure, regional diffusion and circumstance events.
+- Product brand strength and colony specialization that shape commercial outcomes.
+- Sales orders with quantities, deadlines, delivery terms, quality and condition requirements, plus
+  direct buyer searches for stock the colony already holds.
+- Full procurement parity: a supplier market, RFQs, purchase orders and recurring procurement
+  contracts.
+- Commercial relationships with bounded negotiation, post-acceptance renegotiation and reputation.
+- Per-settlement commercial history that records trade and relationship outcomes.
 - Direct hiring, job postings, fixed and open-ended employment, payroll, arrears, conduct rules and
   employer reputation.
 - A business summary for cash movement, payroll runway and standing agreements.
@@ -59,10 +54,10 @@ The tested environment, reasoning, Harmony patch surface and bug-report details 
 
 ## Project status
 
-This is a hobby mod in public beta. Version 0.9.0 is available for external testing; its systems
-were built and exercised primarily in the author's own games, so broader compatibility, balance and
-usability remain beta questions rather than established guarantees. Keep normal backups of saves
-used to try it.
+The public release remains 0.9.3 on `main`. The broader 1.0 work is in development on branch `1.0`:
+Stages 0–7 are closed and Stage 8 is in progress. 1.0 is not released; the branch has not merged,
+the play sitting has not happened, and the remaining release documentation is still to be written.
+Keep normal backups of saves used to try it.
 
 ## Reporting problems
 

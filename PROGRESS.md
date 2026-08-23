@@ -2268,3 +2268,35 @@ Manual test:
   took the suite from 7 assertions to 39 and exposed a signing-fee assertion that had never once
   executed and double-applied the daily premium. Payroll is now 40/0; the full suite is 847 passed,
   0 failed, 14 skipped, clean log, no world-pawn drift.
+
+## 1.0 program — stages 0 through 8  (2026-08-23)
+
+The 1.0 program reached Stage 8 with Stages 0–7 closed and the integration evidence recorded.
+
+Implemented:
+- **Stage 0 — program spine:** gate closed.
+- **Stage 1 — settlement economies:** gate closed.
+- **Stage 2 — market fundamentals:** gate closed at 12/12; play calibration was deferred to the
+  final sitting.
+- **Stage 3 — circumstance events:** 8/10 criteria closed; criteria 9 and 10 were deferred to the
+  final sitting.
+- **Stage 4 — brand strength and colony specialization:** gate closed at 13/13.
+- **Stage 5 — relationships and negotiation:** gate closed at 12/12.
+- **Stage 6 — procurement parity:** gate closed at 12/12.
+- **Stage 7 — commercial history:** gate closed at 9/9.
+- **Stage 8 — 1.0 integration and release gate:** the full save/load matrix across all twelve
+  persistent kinds, the migration matrix from 42 to 56, and the performance profile across seven
+  paths were completed.
+
+Not implemented:
+- The §8.3–§8.7 play sitting, which needs a human.
+- Stage 3 criteria 9 and 10 and Stage 2 calibration, both deferred to that sitting.
+- `DESIGN.md`, the release notes and the Workshop description, still to write.
+
+Known limitations:
+- Stage 7B's W2 idempotence claim is unproven.
+- Two vacuous-pass assertions are logged in `docs/BACKLOG.md`.
+- The sales-side cancellation penalty is still an inline literal.
+
+Manual test:
+- Remaining human play and calibration paths are in [docs/PENDING_PLAYTESTS.md](docs/PENDING_PLAYTESTS.md).
