@@ -16,7 +16,9 @@ namespace Intercolony
     {
         /// <summary>
         /// Global capacity cap for retained timeline records (the 1.0 program Stage 0.3).
-        /// When exceeded, the oldest records are pruned first during market refresh or maintenance.
+        /// One thousand is the initial safe cap: it preserves a substantial narrative while
+        /// keeping worst-case serialized save growth finite and measurable before profiling can
+        /// justify a retune. When exceeded, the oldest records are pruned first.
         /// </summary>
         public const int MaxTimelineRecords = 1000;
 
@@ -25,6 +27,15 @@ namespace Intercolony
         /// been recorded yet", compared exactly rather than by sign.
         /// </summary>
         public const int NoHistory = -1;
+
+        /// <summary>
+        /// Returns the number of detailed records currently retained for save profiling. This is
+        /// a read-only measurement; it does not prune the timeline or inspect authoritative state.
+        /// </summary>
+        public static int RecordCount(IntercolonyWorldComponent state)
+        {
+            return state?.CommercialTimeline?.Count ?? 0;
+        }
 
         /// <summary>
         /// Records a commercial event in the world component's timeline.
@@ -63,6 +74,9 @@ namespace Intercolony
             }
 
             state.CommercialTimeline.Add(record);
+            // Enforce the save-size bound at the write boundary as well as during refresh. A save
+            // taken between refreshes must not be able to capture an oversized display history.
+            Prune(state);
             return record;
         }
 

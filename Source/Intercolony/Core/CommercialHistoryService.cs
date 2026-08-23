@@ -11,12 +11,15 @@ namespace Intercolony
         /// <summary>No retained commercial evidence exists for the settlement.</summary>
         None,
 
-        /// <summary>At least one meaningful detailed event remains in the timeline.</summary>
+        /// <summary>
+        /// At least one meaningful detailed event remains in the timeline. Its date is the
+        /// boundary of retained narrative detail, not a claim that no older event ever happened.
+        /// </summary>
         Timeline,
 
         /// <summary>
         /// Durable relationship evidence exists without a retained meaningful timeline event;
-        /// on an upgraded save this is the history that predates the record spine.
+        /// this can mean that detail was pruned or that the relationship predates the record spine.
         /// </summary>
         AggregateOnly
     }
@@ -40,8 +43,10 @@ namespace Intercolony
         public readonly bool HasCommercialStanding;
 
         /// <summary>
-        /// Earliest known meaningful event tick, or the timeline-start sentinel when no dated
-        /// interaction can be supported; callers must check <see cref="HasTradingSince"/> first.
+        /// Earliest retained meaningful event tick, or the timeline-start sentinel when no dated
+        /// interaction can be supported. This is a retained-detail boundary, not necessarily the
+        /// first event ever; callers must check <see cref="HistoryCoverage"/> and
+        /// <see cref="HasTradingSince"/> first.
         /// </summary>
         public readonly int TradingSinceTick;
 
@@ -49,8 +54,8 @@ namespace Intercolony
         public readonly bool HasTradingSince;
 
         /// <summary>
-        /// True when the date is only the detailed-record spine's start boundary, so UI can say
-        /// "history tracked since" instead of claiming that a trade happened on that tick.
+        /// True when the date is only the detailed-record spine's start boundary, so a caller can
+        /// say "history tracked since" instead of claiming that a trade happened on that tick.
         /// </summary>
         public readonly bool TradingSinceIsTimelineStart;
 
@@ -61,8 +66,8 @@ namespace Intercolony
         public readonly CommercialHistoryCoverage HistoryCoverage;
 
         /// <summary>
-        /// True when durable commercial evidence exists but no meaningful timeline record does,
-        /// which is the honest marker for an upgraded relationship whose detail starts later.
+        /// True when durable commercial evidence exists but no meaningful retained timeline record
+        /// does, which is the honest marker for detail that was pruned or predates the spine.
         /// </summary>
         public readonly bool HistoryPredatesTimeline;
 

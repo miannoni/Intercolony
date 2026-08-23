@@ -502,61 +502,667 @@ namespace Intercolony
 
         private static void CheckRetentionAndPruning(Results r, IntercolonyWorldComponent state)
         {
-            r.Check(CommercialTimelineService.MaxTimelineRecords == 1000,
-                "retention cap is 1,000 records (the 1.0 program Stage 0.3)",
-                $"MaxTimelineRecords={CommercialTimelineService.MaxTimelineRecords}");
+            List<CommercialHistoryEntry> savedHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<ProductBrandRecord> savedBrandRecords =
+                new List<ProductBrandRecord>(state.ProductBrandRecords);
+            List<CommercialEventRecord> savedTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            List<SalesOrder> savedSalesOrders = new List<SalesOrder>(state.Orders);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<RecurringContract> savedContracts =
+                new List<RecurringContract>(state.Contracts);
+            List<ProcurementContract> savedProcurementContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
 
-            int initialCount = state.CommercialTimeline.Count;
-
-            // Explicitly insert a known oldest marker at the beginning to test pruning by identity
-            CommercialEventRecord knownOldest = new CommercialEventRecord(
-                id: 99999,
-                tick: GenTicks.TicksGame - 100000,
-                settlementId: 7777,
-                type: CommercialEventType.SaleCompleted,
-                settlementName: "Oldest Settlement",
-                compactDetail: "known-oldest-record");
-            state.CommercialTimeline.Insert(0, knownOldest);
-            int oldestId = knownOldest.id;
-
-            // Fill timeline to exceed MaxTimelineRecords by 50
-            int totalToCreate = (CommercialTimelineService.MaxTimelineRecords + 50) - state.CommercialTimeline.Count;
-            if (totalToCreate > 0)
+            try
             {
-                for (int i = 0; i < totalToCreate; i++)
+                int bound = CommercialTimelineService.MaxTimelineRecords;
+                r.Check(bound > 0, "W1 retention bound is positive", $"bound={bound}");
+
+                // W1: use varied types, settlements, ticks and IDs. Exact retained identity is
+                // checked against this fixture's written records, not against a constant-derived
+                // detail string, so middle/type pruning cannot pass by accident.
+                ResetRetentionFixtures(state);
+                List<CommercialEventRecord> w1Written = new List<CommercialEventRecord>();
+                CommercialEventType[] w1Types =
+                    (CommercialEventType[])Enum.GetValues(typeof(CommercialEventType));
+                int w1Total = bound + 37;
+                for (int i = 0; i < w1Total; i++)
+                {
+                    CommercialEventRecord record = new CommercialEventRecord(
+                        id: 7310000 + i,
+                        tick: 73100000 + i,
+                        settlementId: 731100 + (i % 7),
+                        type: w1Types[i % w1Types.Length],
+                        settlementName: $"W1 settlement {i % 7}",
+                        compactDetail: $"W1 written {i}");
+                    state.CommercialTimeline.Add(record);
+                    w1Written.Add(record);
+                }
+
+                int w1PrePruneCount = state.CommercialTimeline.Count;
+                int w1Removed = CommercialTimelineService.Prune(state);
+                int w1RetainedOldestId = state.CommercialTimeline.Count == 0 ||
+                                         state.CommercialTimeline[0] == null
+                    ? -1
+                    : state.CommercialTimeline[0].id;
+                int w1RetainedNewestId = state.CommercialTimeline.Count == 0 ||
+                                         state.CommercialTimeline[state.CommercialTimeline.Count - 1] == null
+                    ? -1
+                    : state.CommercialTimeline[state.CommercialTimeline.Count - 1].id;
+                int w1ExpectedFirstId = w1Written[w1Written.Count - bound].id;
+                int w1ExpectedLastId = w1Written[w1Written.Count - 1].id;
+                HashSet<int> w1ExpectedIds = new HashSet<int>();
+                for (int i = w1Written.Count - bound; i < w1Written.Count; i++)
+                {
+                    w1ExpectedIds.Add(w1Written[i].id);
+                }
+
+                HashSet<int> w1ActualIds = new HashSet<int>();
+                foreach (CommercialEventRecord record in state.CommercialTimeline)
+                {
+                    if (record != null)
+                    {
+                        w1ActualIds.Add(record.id);
+                    }
+                }
+
+                int w1MissingId = -1;
+                foreach (int expectedId in w1ExpectedIds)
+                {
+                    if (!w1ActualIds.Contains(expectedId))
+                    {
+                        w1MissingId = expectedId;
+                        break;
+                    }
+                }
+
+                int w1UnexpectedId = -1;
+                foreach (int actualId in w1ActualIds)
+                {
+                    if (!w1ExpectedIds.Contains(actualId))
+                    {
+                        w1UnexpectedId = actualId;
+                        break;
+                    }
+                }
+
+                r.Check(
+                    w1PrePruneCount > bound && state.CommercialTimeline.Count == bound,
+                    "W1 pruning enforces the bound",
+                    $"before={w1PrePruneCount}; removed={w1Removed}; after=" +
+                    $"{state.CommercialTimeline.Count}; bound={bound}; " +
+                    $"retainedOldestId={w1RetainedOldestId}; retainedNewestId={w1RetainedNewestId}");
+                r.Check(
+                    w1ActualIds.Count == w1ExpectedIds.Count && w1MissingId < 0 &&
+                    w1UnexpectedId < 0 &&
+                    !state.CommercialTimeline.Exists(e => e != null && e.id == w1Written[0].id) &&
+                    state.CommercialTimeline.Exists(e => e != null && e.id == w1Written[w1Written.Count - 1].id),
+                    "W1 pruning retains exactly the newest fixture records",
+                    $"writtenOldestId={w1Written[0].id}; writtenNewestId=" +
+                    $"{w1Written[w1Written.Count - 1].id}; expectedFirstRetainedId={w1ExpectedFirstId}; " +
+                    $"expectedLastRetainedId={w1ExpectedLastId}; retainedOldestId={w1RetainedOldestId}; " +
+                    $"retainedNewestId={w1RetainedNewestId}; missingId={w1MissingId}; " +
+                    $"unexpectedId={w1UnexpectedId}; retainedCount={state.CommercialTimeline.Count}; " +
+                    $"bound={bound}");
+
+                // W2: the precondition is an exactly bounded, known-order fixture. The second
+                // prune must remove zero records and preserve object identity and order.
+                ResetRetentionFixtures(state);
+                List<CommercialEventRecord> w2Written = new List<CommercialEventRecord>();
+                for (int i = 0; i < bound; i++)
+                {
+                    CommercialEventRecord record = new CommercialEventRecord(
+                        id: 7320000 + i,
+                        tick: 73200000 + i,
+                        settlementId: 732100,
+                        type: CommercialEventType.SaleCompleted,
+                        compactDetail: $"W2 written {i}");
+                    state.CommercialTimeline.Add(record);
+                    w2Written.Add(record);
+                }
+
+                List<CommercialEventRecord> w2Before =
+                    new List<CommercialEventRecord>(state.CommercialTimeline);
+                r.Check(
+                    w2Before.Count == bound && ReferenceEquals(w2Before[0], w2Written[0]) &&
+                    ReferenceEquals(w2Before[w2Before.Count - 1], w2Written[w2Written.Count - 1]),
+                    "W2 idempotence fixture is already bounded and anchored",
+                    $"count={w2Before.Count}; bound={bound}; firstId={w2Before[0].id}; " +
+                    $"lastId={w2Before[w2Before.Count - 1].id}");
+                int w2Removed = CommercialTimelineService.Prune(state);
+                bool w2Same = state.CommercialTimeline.Count == w2Before.Count;
+                for (int i = 0; i < w2Before.Count && w2Same; i++)
+                {
+                    w2Same = ReferenceEquals(state.CommercialTimeline[i], w2Before[i]);
+                }
+
+                r.Check(
+                    w2Before.Count == bound && w2Removed == 0 && w2Same,
+                    "W2 pruning is idempotent",
+                    $"before={w2Before.Count}; after={state.CommercialTimeline.Count}; " +
+                    $"bound={bound}; removed={w2Removed}; beforeFirstId={w2Before[0].id}; " +
+                    $"afterFirstId={state.CommercialTimeline[0].id}; beforeLastId=" +
+                    $"{w2Before[w2Before.Count - 1].id}; afterLastId=" +
+                    $"{state.CommercialTimeline[state.CommercialTimeline.Count - 1].id}");
+
+                // W3: all values below are established independently of the detailed timeline.
+                // The old target detail intentionally disagrees with the durable aggregates and is
+                // pruned, so a read model that replays the timeline goes red.
+                ResetRetentionFixtures(state);
+                ThingDef w3Def = ThingDefOf.Steel ?? ThingDefOf.Silver;
+                if (w3Def == null)
+                {
+                    r.Skip(
+                        "W3 pruning preserves authoritative commercial state",
+                        "ThingDefOf.Steel and ThingDefOf.Silver are unavailable for the brand/order fixture");
+                }
+                else
+                {
+                    const int w3SettlementId = 733100;
+                    const int w3ExpectedCompletedSales = 7;
+                    const int w3ExpectedQuantity = 987;
+                    const int w3ExpectedTradeValue = 321;
+                    CommercialHistoryEntry w3Entry = new CommercialHistoryEntry
+                    {
+                        settlementId = w3SettlementId,
+                        thingDef = w3Def,
+                        completedSaleCount = w3ExpectedCompletedSales,
+                        totalQuantitySupplied = w3ExpectedQuantity,
+                        totalTradeValue = w3ExpectedTradeValue
+                    };
+                    state.CommercialHistory.Add(w3Entry);
+
+                    CommercialReputation w3Reputation = new CommercialReputation(
+                        w3SettlementId, "W3 Testholme", "W3 faction");
+                    w3Reputation.purchasesCompleted = 3;
+                    state.Reputations[w3SettlementId] = w3Reputation;
+
+                    ProductBrandRecord w3Brand = new ProductBrandRecord(
+                        w3Def, directScore: 37f, evidenceWeight: 1000f, unitsDelivered: 123);
+                    state.ProductBrandRecords.Add(w3Brand);
+
+                    state.Contracts.Add(new RecurringContract
+                    {
+                        id = 733110,
+                        settlementId = w3SettlementId,
+                        settlementName = "W3 Testholme",
+                        thingDef = w3Def,
+                        quantityPerCycle = 10,
+                        totalCycles = 2,
+                        status = ContractStatus.Active
+                    });
+                    state.ProcurementContracts.Add(new ProcurementContract
+                    {
+                        id = 733111,
+                        settlementId = w3SettlementId,
+                        settlementName = "W3 Testholme",
+                        thingDef = w3Def,
+                        quantityPerCycle = 10,
+                        totalCycles = 2,
+                        status = ProcurementContractStatus.Active
+                    });
+                    state.Orders.Add(MakeHistorySale(
+                        733120, w3SettlementId, w3Def, 10, 11, 1.1f,
+                        SalesOrderStatus.Accepted));
+                    state.PurchaseOrders.Add(MakeHistoryPurchase(
+                        733121, w3SettlementId, w3Def, 10, 13, 1.3f,
+                        PurchaseOrderStatus.Confirmed));
+
+                    state.CommercialTimelineStartTick = 73300000;
+                    int w3TargetDetailId = 733130;
+                    state.CommercialTimeline.Add(new CommercialEventRecord(
+                        w3TargetDetailId, 73300001, w3SettlementId,
+                        CommercialEventType.SaleCompleted, "W3 Testholme",
+                        silverAmount: 9999, quantity: 999, compactDetail: "W3 old detail"));
+                    int w3Total = bound + 41;
+                    for (int i = 0; i < w3Total; i++)
+                    {
+                        state.CommercialTimeline.Add(new CommercialEventRecord(
+                            7332000 + i, 73301000 + i, 733200 + (i % 3),
+                            CommercialEventType.PurchaseCompleted,
+                            compactDetail: $"W3 bulk {i}"));
+                    }
+
+                    CommercialHistorySummary w3BeforeSummary =
+                        CommercialHistoryService.BuildSummary(state, w3SettlementId);
+                    float w3BeforeReputation = w3Reputation.Score;
+                    float w3BeforeBrand = EffectiveBrandService.GetEffectiveBrand(state, w3Def);
+                    int w3BeforeActiveContracts = CountActiveContracts(state);
+                    int w3BeforeOpenOrders = CountOpenOrders(state);
+                    int w3BeforeRawSales = w3Entry.completedSaleCount;
+                    int w3BeforeRawQuantity = w3Entry.totalQuantitySupplied;
+                    int w3BeforeRawTradeValue = w3Entry.totalTradeValue;
+
+                    r.Check(
+                        w3BeforeSummary.CompletedSales == w3ExpectedCompletedSales &&
+                        w3BeforeSummary.TotalKnownTradeValue == w3ExpectedTradeValue &&
+                        w3BeforeReputation == CommercialReputation.StartingScore &&
+                        Mathf.Approximately(w3BeforeBrand, w3Brand.directScore) &&
+                        w3BeforeActiveContracts == 2 && w3BeforeOpenOrders == 2 &&
+                        w3BeforeRawSales == w3ExpectedCompletedSales &&
+                        w3BeforeRawQuantity == w3ExpectedQuantity &&
+                        w3BeforeRawTradeValue == w3ExpectedTradeValue,
+                        "W3 authoritative fixture is anchored to known values",
+                        $"sales={w3BeforeSummary.CompletedSales}/{w3ExpectedCompletedSales}; " +
+                        $"tradeValue={w3BeforeSummary.TotalKnownTradeValue}/{w3ExpectedTradeValue}; " +
+                        $"reputation={w3BeforeReputation}/{CommercialReputation.StartingScore}; " +
+                        $"brand={w3BeforeBrand:0.###}/{w3Brand.directScore:0.###}; " +
+                        $"activeContracts={w3BeforeActiveContracts}/2; openOrders={w3BeforeOpenOrders}/2; " +
+                        $"rawQuantity={w3BeforeRawQuantity}/{w3ExpectedQuantity}");
+
+                    CommercialTimelineService.Prune(state);
+                    CommercialHistorySummary w3AfterSummary =
+                        CommercialHistoryService.BuildSummary(state, w3SettlementId);
+                    ProductBrandRecord w3AfterBrandRecord = state.ProductBrandRecords.Find(
+                        record => record != null && record.thingDef == w3Def);
+                    CommercialHistoryEntry w3AfterEntry = state.CommercialHistory.Find(
+                        entry => entry != null && entry.settlementId == w3SettlementId &&
+                                 entry.thingDef == w3Def);
+                    float w3AfterReputation = w3Reputation.Score;
+                    float w3AfterBrand = EffectiveBrandService.GetEffectiveBrand(state, w3Def);
+                    int w3AfterActiveContracts = CountActiveContracts(state);
+                    int w3AfterOpenOrders = CountOpenOrders(state);
+                    int w3AfterRawSales = w3AfterEntry?.completedSaleCount ?? -1;
+                    int w3AfterRawQuantity = w3AfterEntry?.totalQuantitySupplied ?? -1;
+                    int w3AfterRawTradeValue = w3AfterEntry?.totalTradeValue ?? -1;
+
+                    r.Check(
+                        w3AfterSummary.CompletedSales == w3BeforeSummary.CompletedSales &&
+                        w3BeforeSummary.CompletedSales == w3ExpectedCompletedSales,
+                        "W3 completed-sales aggregate is unchanged by pruning",
+                        $"before={w3BeforeSummary.CompletedSales}; after={w3AfterSummary.CompletedSales}; " +
+                        $"expected={w3ExpectedCompletedSales}");
+                    r.Check(
+                        w3AfterSummary.TotalKnownTradeValue == w3BeforeSummary.TotalKnownTradeValue &&
+                        w3BeforeSummary.TotalKnownTradeValue == w3ExpectedTradeValue,
+                        "W3 trade-value aggregate is unchanged by pruning",
+                        $"before={w3BeforeSummary.TotalKnownTradeValue}; " +
+                        $"after={w3AfterSummary.TotalKnownTradeValue}; expected={w3ExpectedTradeValue}");
+                    r.Check(
+                        w3AfterRawSales == w3BeforeRawSales &&
+                        w3BeforeRawSales == w3ExpectedCompletedSales,
+                        "W3 raw completed-sale aggregate is unchanged by pruning",
+                        $"before={w3BeforeRawSales}; after={w3AfterRawSales}; " +
+                        $"expected={w3ExpectedCompletedSales}");
+                    r.Check(
+                        w3AfterRawQuantity == w3BeforeRawQuantity &&
+                        w3BeforeRawQuantity == w3ExpectedQuantity,
+                        "W3 raw supplied-quantity aggregate is unchanged by pruning",
+                        $"before={w3BeforeRawQuantity}; after={w3AfterRawQuantity}; " +
+                        $"expected={w3ExpectedQuantity}");
+                    r.Check(
+                        w3AfterRawTradeValue == w3BeforeRawTradeValue &&
+                        w3BeforeRawTradeValue == w3ExpectedTradeValue,
+                        "W3 raw trade-value aggregate is unchanged by pruning",
+                        $"before={w3BeforeRawTradeValue}; after={w3AfterRawTradeValue}; " +
+                        $"expected={w3ExpectedTradeValue}");
+                    r.Check(
+                        Mathf.Approximately(w3AfterReputation, w3BeforeReputation) &&
+                        Mathf.Approximately(w3BeforeReputation, CommercialReputation.StartingScore),
+                        "W3 reputation score is unchanged by pruning",
+                        $"before={w3BeforeReputation:0.###}; after={w3AfterReputation:0.###}; " +
+                        $"expected={CommercialReputation.StartingScore:0.###}");
+                    r.Check(
+                        w3AfterBrandRecord != null &&
+                        Mathf.Approximately(w3AfterBrand, w3BeforeBrand) &&
+                        Mathf.Approximately(w3BeforeBrand, w3Brand.directScore),
+                        "W3 brand score is unchanged by pruning",
+                        $"before={w3BeforeBrand:0.###}; after={w3AfterBrand:0.###}; " +
+                        $"expected={w3Brand.directScore:0.###}; recordPresent={w3AfterBrandRecord != null}");
+                    r.Check(
+                        w3AfterActiveContracts == w3BeforeActiveContracts &&
+                        w3BeforeActiveContracts == 2,
+                        "W3 active-contract count is unchanged by pruning",
+                        $"before={w3BeforeActiveContracts}; after={w3AfterActiveContracts}; expected=2");
+                    r.Check(
+                        w3AfterOpenOrders == w3BeforeOpenOrders && w3BeforeOpenOrders == 2,
+                        "W3 open-order count is unchanged by pruning",
+                        $"before={w3BeforeOpenOrders}; after={w3AfterOpenOrders}; expected=2");
+                    r.Check(
+                        !state.CommercialTimeline.Exists(e => e != null && e.id == w3TargetDetailId),
+                        "W3 pruning removes the contradictory target detail",
+                        $"targetDetailId={w3TargetDetailId}; retainedCount={state.CommercialTimeline.Count}; " +
+                        $"bound={bound}");
+                }
+
+                // W4: make the public contract-eligibility answer true from durable history, then
+                // remove two matching detail events. A timeline-backed eligibility regression goes
+                // false after the prune even though the aggregate remains intact.
+                ResetRetentionFixtures(state);
+                Settlement w4Settlement = FindContractFixtureSettlement(state, out string w4SettlementReason);
+                ThingDef w4Def = FindContractFixtureThingDef(out string w4ThingReason);
+                if (w4Settlement == null || w4Def == null)
+                {
+                    r.Skip(
+                        "W4 contract eligibility survives pruning",
+                        $"settlement={w4SettlementReason}; product={w4ThingReason}");
+                }
+                else
+                {
+                    CommercialReputation w4Reputation = new CommercialReputation(
+                        w4Settlement.ID, w4Settlement.Label, w4Settlement.Faction?.Name ?? "W4 faction");
+                    w4Reputation.Adjust(20f);
+                    state.Reputations[w4Settlement.ID] = w4Reputation;
+                    state.CommercialHistory.Add(new CommercialHistoryEntry
+                    {
+                        settlementId = w4Settlement.ID,
+                        thingDef = w4Def,
+                        completedSaleCount = ContractService.MinimumCompletedOrdersForAgreement,
+                        totalQuantitySupplied = ContractService.MinimumCompletedOrdersForAgreement * 10,
+                        totalTradeValue = 222
+                    });
+
+                    int w4FirstDetailId = 7341000;
+                    state.CommercialTimelineStartTick = 73400000;
+                    for (int i = 0; i < ContractService.MinimumCompletedOrdersForAgreement; i++)
+                    {
+                        state.CommercialTimeline.Add(new CommercialEventRecord(
+                            w4FirstDetailId + i, 73400001 + i, w4Settlement.ID,
+                            CommercialEventType.SaleCompleted, w4Settlement.Label,
+                            thingDef: w4Def, quantity: 10, silverAmount: 111,
+                            compactDetail: $"W4 old eligibility detail {i}"));
+                    }
+
+                    ContractTerms w4BeforeTerms = ContractService.PreviewContractTerms(
+                        state, w4Settlement, w4Def, ContractService.MinimumQuantityPerCycle);
+                    bool w4EligibleBefore = w4BeforeTerms != null;
+                    r.Check(
+                        w4EligibleBefore && w4Reputation.Score >= ContractService.MinimumReputation &&
+                        state.CommercialHistory[0].completedSaleCount >=
+                        ContractService.MinimumCompletedOrdersForAgreement,
+                        "W4 eligibility fixture is known-good before pruning",
+                        $"eligibleBefore={w4EligibleBefore}; reputation={w4Reputation.Score:0.###}; " +
+                        $"requiredReputation={ContractService.MinimumReputation:0.###}; " +
+                        $"aggregateSales={state.CommercialHistory[0].completedSaleCount}; " +
+                        $"requiredSales={ContractService.MinimumCompletedOrdersForAgreement}; " +
+                        $"settlementId={w4Settlement.ID}; product={w4Def.defName}");
+
+                    if (w4EligibleBefore)
+                    {
+                        int w4Total = bound + 29;
+                        for (int i = 0; i < w4Total; i++)
+                        {
+                            state.CommercialTimeline.Add(new CommercialEventRecord(
+                                7342000 + i, 73401000 + i, 734200,
+                                CommercialEventType.PurchaseCompleted,
+                                compactDetail: $"W4 bulk {i}"));
+                        }
+
+                        CommercialTimelineService.Prune(state);
+                        ContractTerms w4AfterTerms = ContractService.PreviewContractTerms(
+                            state, w4Settlement, w4Def, ContractService.MinimumQuantityPerCycle);
+                        bool w4EligibleAfter = w4AfterTerms != null;
+                        int w4RemainingDetails = 0;
+                        foreach (CommercialEventRecord record in state.CommercialTimeline)
+                        {
+                            if (record != null && record.settlementId == w4Settlement.ID)
+                            {
+                                w4RemainingDetails++;
+                            }
+                        }
+
+                        r.Check(
+                            w4EligibleAfter == w4EligibleBefore && w4EligibleAfter &&
+                            w4RemainingDetails == 0,
+                            "W4 contract eligibility survives hard pruning",
+                            $"eligibleBefore={w4EligibleBefore}; eligibleAfter={w4EligibleAfter}; " +
+                            $"remainingTargetDetails={w4RemainingDetails}; " +
+                            $"firstDetailId={w4FirstDetailId}; bound={bound}; " +
+                            $"retainedCount={state.CommercialTimeline.Count}");
+                    }
+                }
+
+                // W5: Record() is the actual append boundary. Sample RecordCount after every
+                // append so a refresh-only implementation cannot hide an oversized save window.
+                ResetRetentionFixtures(state);
+                int w5Total = bound + 23;
+                int w5MaximumObserved = 0;
+                int w5FirstOverflowIndex = -1;
+                for (int i = 0; i < w5Total; i++)
+                {
+                    CommercialTimelineService.Record(
+                        state, CommercialEventType.SaleCompleted, 735100, "W5 Testholme",
+                        relatedEntityId: 7350000 + i, compactDetail: $"W5 append {i}");
+                    int countAtAppend = CommercialTimelineService.RecordCount(state);
+                    if (countAtAppend > w5MaximumObserved)
+                    {
+                        w5MaximumObserved = countAtAppend;
+                    }
+
+                    if (countAtAppend > bound && w5FirstOverflowIndex < 0)
+                    {
+                        w5FirstOverflowIndex = i;
+                    }
+                }
+
+                r.Check(
+                    w5Total > bound && w5FirstOverflowIndex < 0 &&
+                    w5MaximumObserved <= bound,
+                    "W5 prune-on-append never exposes an oversized timeline",
+                    $"appended={w5Total}; bound={bound}; maxObserved={w5MaximumObserved}; " +
+                    $"firstOverflowIndex={w5FirstOverflowIndex}; finalCount=" +
+                    $"{CommercialTimelineService.RecordCount(state)}");
+
+                // W6: durable history remains after the target's only meaningful detail is
+                // pruned. The spine tick is a lower-bound boundary, not a fabricated first trade.
+                ResetRetentionFixtures(state);
+                const int w6Boundary = 73600000;
+                const int w6SettlementId = 736100;
+                const int w6TargetDetailId = 7361000;
+                state.CommercialTimelineStartTick = w6Boundary;
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = w6SettlementId,
+                    completedSaleCount = 1,
+                    totalTradeValue = 88
+                });
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    w6TargetDetailId, w6Boundary + 1, w6SettlementId,
+                    CommercialEventType.SaleCompleted, "W6 Testholme",
+                    compactDetail: "W6 only retained detail"));
+                int w6Total = bound + 31;
+                for (int i = 0; i < w6Total; i++)
                 {
                     state.CommercialTimeline.Add(new CommercialEventRecord(
-                        id: 100000 + i,
-                        tick: GenTicks.TicksGame + i,
-                        settlementId: 8000,
-                        type: CommercialEventType.SaleCompleted,
-                        settlementName: "Bulk Settlement",
-                        compactDetail: $"bulk-{i}"));
+                        7362000 + i, w6Boundary + 1000 + i, 736200,
+                        CommercialEventType.ContractCompleted,
+                        compactDetail: $"W6 bulk {i}"));
+                }
+
+                CommercialTimelineService.Prune(state);
+                CommercialHistorySummary w6Summary =
+                    CommercialHistoryService.BuildSummary(state, w6SettlementId);
+                bool w6TargetDetailGone = !state.CommercialTimeline.Exists(
+                    record => record != null && record.id == w6TargetDetailId);
+                r.Check(
+                    w6TargetDetailGone &&
+                    w6Summary.HistoryCoverage == CommercialHistoryCoverage.AggregateOnly &&
+                    w6Summary.HistoryPredatesTimeline && w6Summary.HasTradingSince &&
+                    w6Summary.TradingSinceTick == w6Boundary &&
+                    w6Summary.TradingSinceIsTimelineStart,
+                    "W6 read model marks pruned detail as an aggregate-only boundary",
+                    $"targetDetailId={w6TargetDetailId}; detailGone={w6TargetDetailGone}; " +
+                    $"coverage={w6Summary.HistoryCoverage}; predates={w6Summary.HistoryPredatesTimeline}; " +
+                    $"since={w6Summary.TradingSinceTick}; boundary={w6Boundary}; " +
+                    $"hasSince={w6Summary.HasTradingSince}; sinceIsStart=" +
+                    $"{w6Summary.TradingSinceIsTimelineStart}; retainedCount=" +
+                    $"{state.CommercialTimeline.Count}; bound={bound}");
+
+                // W7: compare the profiling accessor with the actual list both before and after
+                // an explicit prune. The pre-prune list is intentionally oversized.
+                ResetRetentionFixtures(state);
+                int w7Total = bound + 11;
+                for (int i = 0; i < w7Total; i++)
+                {
+                    state.CommercialTimeline.Add(new CommercialEventRecord(
+                        7372000 + i, 73700000 + i, 737200,
+                        CommercialEventType.SaleCompleted,
+                        compactDetail: $"W7 written {i}"));
+                }
+
+                int w7ActualBefore = state.CommercialTimeline.Count;
+                int w7ReportedBefore = CommercialTimelineService.RecordCount(state);
+                r.Check(
+                    w7ReportedBefore == w7ActualBefore,
+                    "W7 RecordCount reports the real pre-pruning count",
+                    $"reportedBefore={w7ReportedBefore}; actualBefore={w7ActualBefore}; bound={bound}");
+                CommercialTimelineService.Prune(state);
+                int w7ActualAfter = state.CommercialTimeline.Count;
+                int w7ReportedAfter = CommercialTimelineService.RecordCount(state);
+                r.Check(
+                    w7ReportedAfter == w7ActualAfter,
+                    "W7 RecordCount reports the real post-pruning count",
+                    $"reportedAfter={w7ReportedAfter}; actualAfter={w7ActualAfter}; " +
+                    $"bound={bound}");
+            }
+            finally
+            {
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedHistory);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> saved in savedReputations)
+                {
+                    state.Reputations[saved.Key] = saved.Value;
+                }
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedBrandRecords);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedTimeline);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedSalesOrders);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedContracts);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedProcurementContracts);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                r.Info(
+                    $"retention fixtures restored: history={state.CommercialHistory.Count}; " +
+                    $"reputations={state.Reputations.Count}; brands={state.ProductBrandRecords.Count}; " +
+                    $"timeline={state.CommercialTimeline.Count}; sales={state.Orders.Count}; " +
+                    $"purchases={state.PurchaseOrders.Count}; contracts=" +
+                    $"{state.Contracts.Count + state.ProcurementContracts.Count}.");
+            }
+        }
+
+        private static void ResetRetentionFixtures(IntercolonyWorldComponent state)
+        {
+            state.CommercialHistory.Clear();
+            state.Reputations.Clear();
+            state.ProductBrandRecords.Clear();
+            state.CommercialTimeline.Clear();
+            state.Orders.Clear();
+            state.PurchaseOrders.Clear();
+            state.Contracts.Clear();
+            state.ProcurementContracts.Clear();
+            state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+        }
+
+        private static int CountActiveContracts(IntercolonyWorldComponent state)
+        {
+            int count = 0;
+            foreach (RecurringContract contract in state.Contracts)
+            {
+                if (contract != null &&
+                    (contract.IsActive || contract.status == ContractStatus.Suspended))
+                {
+                    count++;
                 }
             }
 
-            int prePruneCount = state.CommercialTimeline.Count;
-            r.Check(prePruneCount >= CommercialTimelineService.MaxTimelineRecords + 50,
-                "staged oversized timeline for pruning", $"count={prePruneCount}");
+            foreach (ProcurementContract contract in state.ProcurementContracts)
+            {
+                if (contract != null &&
+                    (contract.status == ProcurementContractStatus.Active ||
+                     contract.status == ProcurementContractStatus.Suspended))
+                {
+                    count++;
+                }
+            }
 
-            int removed = CommercialTimelineService.Prune(state);
-            r.Check(removed == prePruneCount - CommercialTimelineService.MaxTimelineRecords,
-                "pruning drops exactly the excess records",
-                $"removed={removed}");
+            return count;
+        }
 
-            r.Check(state.CommercialTimeline.Count == CommercialTimelineService.MaxTimelineRecords,
-                "pruning bounds timeline to MaxTimelineRecords",
-                $"retained={state.CommercialTimeline.Count}");
+        private static int CountOpenOrders(IntercolonyWorldComponent state)
+        {
+            int count = 0;
+            foreach (SalesOrder order in state.Orders)
+            {
+                if (order != null && order.IsOpen)
+                {
+                    count++;
+                }
+            }
 
-            // Verify known-oldest record was dropped by identity (Item 7)
-            bool oldestStillPresent = state.CommercialTimeline.Exists(e => e != null && e.id == oldestId);
-            r.Check(!oldestStillPresent, "pruning drops known oldest record by identity", $"oldestId={oldestId}");
+            foreach (PurchaseOrder order in state.PurchaseOrders)
+            {
+                if (order != null && order.IsOpen)
+                {
+                    count++;
+                }
+            }
 
-            // Verify oldest were dropped, newest were retained
-            CommercialEventRecord newest = state.CommercialTimeline[state.CommercialTimeline.Count - 1];
-            r.Check(newest.compactDetail == $"bulk-{totalToCreate - 1}",
-                "pruning preserved newest records and dropped oldest",
-                $"newest detail='{newest.compactDetail}'");
+            return count;
+        }
+
+        private static Settlement FindContractFixtureSettlement(
+            IntercolonyWorldComponent state, out string reason)
+        {
+            if (Find.WorldObjects?.Settlements == null)
+            {
+                reason = "world settlements are unavailable";
+                return null;
+            }
+
+            foreach (Settlement settlement in Find.WorldObjects.Settlements)
+            {
+                if (settlement == null || !SettlementProfileGenerator.IsEligible(settlement))
+                {
+                    continue;
+                }
+
+                if (!IntercolonyMarketAccess.IsAccessible(settlement, out _))
+                {
+                    continue;
+                }
+
+                if (state.GetProfile(settlement) != null)
+                {
+                    reason = null;
+                    return settlement;
+                }
+            }
+
+            reason = "no eligible, accessible settlement with an economic profile";
+            return null;
+        }
+
+        private static ThingDef FindContractFixtureThingDef(out string reason)
+        {
+            List<ThingDef> candidates = IntercolonyProductClassifier.TradableDefs;
+            if (candidates != null)
+            {
+                foreach (ThingDef def in candidates)
+                {
+                    if (def != null && def.stackLimit > 1 && def.category == ThingCategory.Item &&
+                        IntercolonyProductClassifier.IsFungibleTradeItem(def))
+                    {
+                        reason = null;
+                        return def;
+                    }
+                }
+            }
+
+            reason = "no registered fungible stackable trade item";
+            return null;
         }
 
         // --- Scribe Round Trip -------------------------------------------------------------
