@@ -76,6 +76,7 @@ namespace Intercolony
 
             CheckSupplierListings(Check, Skip, state);
             CheckProcurementContracts(Check, Skip, state);
+            CheckStage8AFullSaveLoadMatrix(Check, Skip, state);
 
             List<ThingDef> tradable = IntercolonyProductClassifier.TradableDefs;
             if (tradable.Count == 0 || state.AllProfiles().Count == 0)
@@ -6744,6 +6745,1097 @@ namespace Intercolony
                 if (saveVersionField != null && savedSaveVersion >= 0)
                 {
                     saveVersionField.SetValue(state, savedSaveVersion);
+                }
+            }
+        }
+
+        private sealed class Stage8ACounts
+        {
+            public int activeMarketOpportunities;
+            public int activeEconomicEvents;
+            public int nonNeutralMarketPressure;
+            public int brandRecords;
+            public int negotiatedSalesOrders;
+            public int activeRfqs;
+            public int supplierMarketListings;
+            public int activePurchaseOrders;
+            public int recurringSalesContracts;
+            public int recurringProcurementContracts;
+            public int hiredWorkersPayroll;
+            public int commercialHistoryTimeline;
+
+            // This aggregate is not a thirteenth requested kind. It is included in the count
+            // report because M3 deliberately proves that completion updates this other persisted
+            // collection too.
+            public int commercialHistoryAggregate;
+
+            public static Stage8ACounts From(IntercolonyWorldComponent state)
+            {
+                if (state == null)
+                {
+                    return new Stage8ACounts
+                    {
+                        activeMarketOpportunities = -1,
+                        activeEconomicEvents = -1,
+                        nonNeutralMarketPressure = -1,
+                        brandRecords = -1,
+                        negotiatedSalesOrders = -1,
+                        activeRfqs = -1,
+                        supplierMarketListings = -1,
+                        activePurchaseOrders = -1,
+                        recurringSalesContracts = -1,
+                        recurringProcurementContracts = -1,
+                        hiredWorkersPayroll = -1,
+                        commercialHistoryTimeline = -1,
+                        commercialHistoryAggregate = -1
+                    };
+                }
+
+                return new Stage8ACounts
+                {
+                    activeMarketOpportunities = state.Opportunities?.Count ?? -1,
+                    activeEconomicEvents = state.EconomicEvents?.Count ?? -1,
+                    nonNeutralMarketPressure = state.MarketStates?.Count ?? -1,
+                    brandRecords = state.ProductBrandRecords?.Count ?? -1,
+                    negotiatedSalesOrders = state.Orders?.Count ?? -1,
+                    activeRfqs = state.Requests?.Count ?? -1,
+                    supplierMarketListings = state.SupplierListings?.Count ?? -1,
+                    activePurchaseOrders = state.PurchaseOrders?.Count ?? -1,
+                    recurringSalesContracts = state.Contracts?.Count ?? -1,
+                    recurringProcurementContracts = state.ProcurementContracts?.Count ?? -1,
+                    hiredWorkersPayroll = state.Employments?.Count ?? -1,
+                    commercialHistoryTimeline = state.CommercialTimeline?.Count ?? -1,
+                    commercialHistoryAggregate = state.CommercialHistory?.Count ?? -1
+                };
+            }
+
+            public bool SameAs(Stage8ACounts other)
+            {
+                return other != null &&
+                       activeMarketOpportunities == other.activeMarketOpportunities &&
+                       activeEconomicEvents == other.activeEconomicEvents &&
+                       nonNeutralMarketPressure == other.nonNeutralMarketPressure &&
+                       brandRecords == other.brandRecords &&
+                       negotiatedSalesOrders == other.negotiatedSalesOrders &&
+                       activeRfqs == other.activeRfqs &&
+                       supplierMarketListings == other.supplierMarketListings &&
+                       activePurchaseOrders == other.activePurchaseOrders &&
+                       recurringSalesContracts == other.recurringSalesContracts &&
+                       recurringProcurementContracts == other.recurringProcurementContracts &&
+                       hiredWorkersPayroll == other.hiredWorkersPayroll &&
+                       commercialHistoryTimeline == other.commercialHistoryTimeline &&
+                       commercialHistoryAggregate == other.commercialHistoryAggregate;
+            }
+
+            public override string ToString()
+            {
+                return "active market opportunities=" + activeMarketOpportunities +
+                       "; active economic events=" + activeEconomicEvents +
+                       "; non-neutral market pressure=" + nonNeutralMarketPressure +
+                       "; positive/negative brand records=" + brandRecords +
+                       "; negotiated sales orders=" + negotiatedSalesOrders +
+                       "; active RFQs=" + activeRfqs +
+                       "; Supplier Market listings=" + supplierMarketListings +
+                       "; active PurchaseOrders=" + activePurchaseOrders +
+                       "; recurring sales contracts=" + recurringSalesContracts +
+                       "; recurring procurement contracts=" + recurringProcurementContracts +
+                       "; hired workers/payroll state=" + hiredWorkersPayroll +
+                       "; commercial history timeline=" + commercialHistoryTimeline +
+                       "; durable commercial history aggregate=" + commercialHistoryAggregate;
+            }
+        }
+
+        private sealed class Stage8ARoundTrip
+        {
+            public IntercolonyWorldComponent loaded;
+            public string failure;
+        }
+
+        private sealed class Stage8AFixture
+        {
+            public ThingDef primaryDef;
+            public ThingDef secondaryDef;
+            public int categoryIndex;
+            public int now;
+            public MarketOpportunity opportunity;
+            public EconomicEvent economicEvent;
+            public SettlementMarketState marketState;
+            public ProductBrandRecord positiveBrand;
+            public ProductBrandRecord negativeBrand;
+            public SalesOrder salesOrder;
+            public PurchaseRequest request;
+            public SupplierListing listing;
+            public PurchaseOrder purchaseOrder;
+            public RecurringContract salesContract;
+            public ProcurementContract procurementContract;
+            public EmploymentContract employment;
+            public CommercialEventRecord timelineRecord;
+            public CommercialHistoryEntry history;
+        }
+
+        /// <summary>
+        /// Stage 8A's full current-schema matrix. This deliberately uses the real WorldComponent
+        /// Scribe path twice, and drives the loaded objects between those saves. The fixture is
+        /// kept here beside R11 because it reuses the same detached-world round-trip machinery,
+        /// but it owns every list it touches and restores the live world in the finally block.
+        /// </summary>
+        private static void CheckStage8AFullSaveLoadMatrix(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            const string M1 = "M1 all twelve Stage 8A kinds survive the first save/load";
+            const string M2 = "M2 the world advances after the first reload";
+            const string M3 = "M3 sales and purchase orders complete after reload and update durable history";
+            const string M4 = "M4 a second save/load preserves advanced and completed state";
+            const string M5 = "M5 every Stage 8A persisted collection keeps its exact fixture count";
+
+            if (state == null)
+            {
+                Stage8ASkipAll(skip, "world state is unavailable");
+                return;
+            }
+
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo refreshCountField = typeof(IntercolonyWorldComponent).GetField(
+                "refreshCount", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo lastRefreshTickField = typeof(IntercolonyWorldComponent).GetField(
+                "lastRefreshTick", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo economySeedField = typeof(IntercolonyWorldComponent).GetField(
+                "economySeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo consumptionField = typeof(IntercolonyWorldComponent).GetField(
+                "supplierOfferConsumption", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            if (nextIdField == null || refreshCountField == null || lastRefreshTickField == null ||
+                saveVersionField == null || economySeedField == null || consumptionField == null)
+            {
+                Stage8ASkipAll(
+                    skip,
+                    "one or more live collection/counter fields needed for complete restoration " +
+                    "are inaccessible");
+                return;
+            }
+
+            List<MarketOpportunity> savedOpportunities =
+                new List<MarketOpportunity>(state.Opportunities);
+            List<EconomicEvent> savedEconomicEvents =
+                new List<EconomicEvent>(state.EconomicEvents);
+            List<SettlementMarketState> savedMarketStates =
+                new List<SettlementMarketState>(state.MarketStates);
+            List<ProductBrandRecord> savedBrands =
+                new List<ProductBrandRecord>(state.ProductBrandRecords);
+            List<SalesOrder> savedSalesOrders = new List<SalesOrder>(state.Orders);
+            List<PurchaseRequest> savedRequests = new List<PurchaseRequest>(state.Requests);
+            List<SupplierListing> savedListings =
+                new List<SupplierListing>(state.SupplierListings);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<RecurringContract> savedSalesContracts =
+                new List<RecurringContract>(state.Contracts);
+            List<ProcurementContract> savedProcurementContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            List<EmploymentContract> savedEmployments =
+                new List<EmploymentContract>(state.Employments);
+            List<CommercialEventRecord> savedTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            List<CommercialHistoryEntry> savedHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
+            List<LedgerEntry> savedLedger = new List<LedgerEntry>(state.Ledger);
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            List<LaborDebt> savedLaborDebts = new List<LaborDebt>(state.LaborDebts);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<SupplierOfferConsumption> savedConsumption = CloneConsumptions(
+                consumptionField.GetValue(state) as List<SupplierOfferConsumption>);
+            Dictionary<SettlementMarketState, float[]> savedDemand =
+                new Dictionary<SettlementMarketState, float[]>();
+            Dictionary<SettlementMarketState, float[]> savedSupply =
+                new Dictionary<SettlementMarketState, float[]>();
+            Dictionary<SettlementMarketState, int> savedMarketRefreshes =
+                new Dictionary<SettlementMarketState, int>();
+            foreach (SettlementMarketState marketState in savedMarketStates)
+            {
+                if (marketState == null)
+                {
+                    continue;
+                }
+
+                savedDemand[marketState] = (float[])marketState.demandPressure.Clone();
+                savedSupply[marketState] = (float[])marketState.supplyPressure.Clone();
+                savedMarketRefreshes[marketState] = marketState.lastAdvancedRefresh;
+            }
+
+            Dictionary<Thing, int> savedSilver = SnapshotAllColonySilver(
+                Find.CurrentMap ?? Find.AnyPlayerHomeMap);
+            Dictionary<Faction, int> savedFactionGoodwill = Stage8ASnapshotFactionGoodwill();
+            EmployerReputation savedEmployerStanding = state.EmployerStanding?.Snapshot();
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+            int savedLedgerStartTick = state.LedgerStartTick;
+            int savedNextId = (int)nextIdField.GetValue(state);
+            int savedRefreshCount = (int)refreshCountField.GetValue(state);
+            int savedLastRefreshTick = (int)lastRefreshTickField.GetValue(state);
+            int savedSaveVersion = (int)saveVersionField.GetValue(state);
+            int savedEconomySeed = (int)economySeedField.GetValue(state);
+
+            ThingDef primaryDef = ThingDefOf.Steel ?? ThingDefOf.Silver;
+            List<ThingDef> tradableDefs = IntercolonyProductClassifier.TradableDefs;
+            if (primaryDef == null && tradableDefs != null)
+            {
+                foreach (ThingDef def in tradableDefs)
+                {
+                    if (def != null)
+                    {
+                        primaryDef = def;
+                        break;
+                    }
+                }
+            }
+
+            ThingDef secondaryDef = null;
+            if (tradableDefs != null)
+            {
+                foreach (ThingDef def in tradableDefs)
+                {
+                    if (def != null && def != primaryDef)
+                    {
+                        secondaryDef = def;
+                        break;
+                    }
+                }
+            }
+
+            if (secondaryDef == null && ThingDefOf.Silver != null && ThingDefOf.Silver != primaryDef)
+            {
+                secondaryDef = ThingDefOf.Silver;
+            }
+
+            if (primaryDef == null)
+            {
+                Stage8ASkipAll(skip, "no resolvable ThingDef is available for the fixture");
+                return;
+            }
+
+            if (secondaryDef == null)
+            {
+                skip("Stage 8A kind: positive and negative brand records",
+                    "two distinct resolvable ThingDefs are required to construct both signs");
+                skip(M1, "brand-record kind could not be constructed");
+                skip(M2, "full twelve-kind fixture was not constructible");
+                skip(M3, "full twelve-kind fixture was not constructible");
+                skip(M4, "full twelve-kind fixture was not constructible");
+                skip(M5, "full twelve-kind fixture was not constructible");
+                return;
+            }
+
+            IntercolonyProductCategory category =
+                IntercolonyProductClassifier.Classify(primaryDef) ??
+                IntercolonyProductCategory.Commodities;
+            int categoryIndex = (int)category;
+            if (categoryIndex < 0 ||
+                categoryIndex >= IntercolonyProductCategoryUtility.Count)
+            {
+                Stage8ASkipAll(
+                    skip,
+                    "the selected product category cannot address the persisted pressure arrays");
+                return;
+            }
+
+            Stage8AFixture fixture = new Stage8AFixture
+            {
+                primaryDef = primaryDef,
+                secondaryDef = secondaryDef,
+                categoryIndex = categoryIndex,
+                now = GenTicks.TicksGame
+            };
+
+            try
+            {
+                int now = fixture.now;
+                const int settlementId = 880_801;
+                const string settlementName = "Stage 8A Testholme";
+                const string factionName = "Stage 8A Test faction";
+
+                state.Opportunities.Clear();
+                state.EconomicEvents.Clear();
+                state.MarketStates.Clear();
+                state.ProductBrandRecords.Clear();
+                state.Orders.Clear();
+                state.Requests.Clear();
+                state.SupplierListings.Clear();
+                state.PurchaseOrders.Clear();
+                state.Contracts.Clear();
+                state.ProcurementContracts.Clear();
+                state.Employments.Clear();
+                state.CommercialTimeline.Clear();
+                state.CommercialHistory.Clear();
+                state.Reputations.Clear();
+                state.Ledger.Clear();
+                state.Postings.Clear();
+                state.LaborDebts.Clear();
+                state.CommercialTimelineStartTick = now;
+                state.LedgerStartTick = LedgerService.NoHistory;
+                List<SupplierOfferConsumption> liveConsumption =
+                    consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
+                liveConsumption?.Clear();
+                saveVersionField.SetValue(state, IntercolonyWorldComponent.CurrentSaveVersion);
+
+                fixture.opportunity = new MarketOpportunity
+                {
+                    id = state.NextId(),
+                    settlementId = settlementId,
+                    settlementName = settlementName,
+                    thingDef = primaryDef,
+                    quantity = 6,
+                    unitPrice = 4.5f,
+                    createdTick = now,
+                    expiryTick = now + GenDate.TicksPerDay * 10,
+                    deadlineDays = 5,
+                    distanceTiles = 12f,
+                    state = MarketOpportunityState.Available,
+                    priceExplanation = "Stage 8A negotiated opportunity"
+                };
+                state.Opportunities.Add(fixture.opportunity);
+
+                fixture.economicEvent = new EconomicEvent
+                {
+                    id = state.NextId(),
+                    type = EconomicEventType.Drought,
+                    startTick = now - GenDate.TicksPerDay,
+                    endTick = now + GenDate.TicksPerDay * 10,
+                    anchorSettlementId = settlementId,
+                    radiusTiles = 20f,
+                    factionLoadId = EconomicEvent.NoFaction
+                };
+                fixture.economicEvent.demandModifier[categoryIndex] = 1.35f;
+                fixture.economicEvent.supplyScarcityModifier[categoryIndex] = 1.45f;
+                state.EconomicEvents.Add(fixture.economicEvent);
+
+                fixture.marketState = new SettlementMarketState(settlementId);
+                fixture.marketState.demandPressure[categoryIndex] = 1.25f;
+                fixture.marketState.supplyPressure[categoryIndex] = 1.40f;
+                fixture.marketState.lastAdvancedRefresh = state.RefreshCount;
+                state.MarketStates.Add(fixture.marketState);
+                state.RefreshMarketStateIndex();
+
+                fixture.positiveBrand = new ProductBrandRecord(
+                    primaryDef, 65f, 12f, 24);
+                fixture.negativeBrand = new ProductBrandRecord(
+                    secondaryDef, -55f, 9f, 18);
+                state.ProductBrandRecords.Add(fixture.positiveBrand);
+                state.ProductBrandRecords.Add(fixture.negativeBrand);
+
+                fixture.salesContract = new RecurringContract
+                {
+                    id = state.NextId(),
+                    settlementId = settlementId,
+                    settlementName = settlementName,
+                    thingDef = primaryDef,
+                    quantityPerCycle = 2,
+                    cadenceTicks = GenDate.TicksPerDay,
+                    totalCycles = 2,
+                    cyclesCompleted = 0,
+                    unitPrice = 4f,
+                    referenceUnitPrice = 4f,
+                    status = ContractStatus.Active,
+                    nextCycleTick = now + GenDate.TicksPerDay
+                };
+                state.Contracts.Add(fixture.salesContract);
+
+                fixture.salesOrder = new SalesOrder
+                {
+                    id = state.NextId(),
+                    opportunityId = fixture.opportunity.id,
+                    contractId = fixture.salesContract.id,
+                    settlementId = settlementId,
+                    settlementName = settlementName,
+                    factionName = factionName,
+                    line = new OrderLine(primaryDef, 2),
+                    unitPrice = 4f,
+                    referenceUnitPrice = 4f,
+                    acceptedTick = now,
+                    deadlineTick = now + GenDate.TicksPerDay * 2,
+                    status = SalesOrderStatus.Accepted,
+                    DiscountFraction = 0.1f,
+                    fulfillment = FulfillmentMode.SellerDelivery,
+                    deliveredQuantity = 2,
+                    paidSilver = 8
+                };
+                fixture.salesContract.activeOrderId = fixture.salesOrder.id;
+                state.Orders.Add(fixture.salesOrder);
+
+                fixture.request = new PurchaseRequest
+                {
+                    id = state.NextId(),
+                    thingDef = primaryDef,
+                    quantityRequested = 5,
+                    quantityOrdered = 0,
+                    desiredDays = 5,
+                    createdTick = now,
+                    expiryTick = now + GenDate.TicksPerDay * 8,
+                    status = PurchaseRequestStatus.Open,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.Either,
+                    quotes = new List<Quotation>()
+                };
+                fixture.request.quotes.Add(new Quotation
+                {
+                    id = state.NextId(),
+                    settlementId = settlementId,
+                    settlementName = settlementName,
+                    factionName = factionName,
+                    refreshWindow = state.RefreshCount,
+                    quantityOffered = 5,
+                    unitPrice = 2.2f,
+                    leadTimeDays = 2,
+                    supplierDelivers = true,
+                    distanceTiles = 12f,
+                    priceExplanation = "Stage 8A RFQ quote"
+                });
+                state.Requests.Add(fixture.request);
+
+                fixture.listing = new SupplierListing
+                {
+                    id = state.NextId(),
+                    settlementId = settlementId,
+                    thingDef = primaryDef,
+                    quantityAvailable = 9,
+                    unitPrice = 2.1f,
+                    fulfillment = FulfillmentMode.SellerDelivery,
+                    leadTimeDays = 2,
+                    createdTick = now,
+                    expiryTick = SupplierListing.NoExpiryTick,
+                    refreshWindow = state.RefreshCount
+                };
+                state.SupplierListings.Add(fixture.listing);
+
+                fixture.purchaseOrder = new PurchaseOrder
+                {
+                    id = state.NextId(),
+                    requestId = fixture.request.id,
+                    quotationId = fixture.request.quotes[0].id,
+                    supplierListingId = fixture.listing.id,
+                    settlementId = settlementId,
+                    settlementName = settlementName,
+                    factionName = factionName,
+                    thingDef = primaryDef,
+                    quantity = 3,
+                    unitPrice = 2f,
+                    paidSilver = 6,
+                    supplierDelivers = true,
+                    orderedTick = now,
+                    readyTick = now + GenDate.TicksPerDay,
+                    pickupExpiryTick = now + GenDate.TicksPerDay * 3,
+                    status = PurchaseOrderStatus.Confirmed
+                };
+                state.PurchaseOrders.Add(fixture.purchaseOrder);
+
+                fixture.procurementContract = new ProcurementContract
+                {
+                    id = state.NextId(),
+                    settlementId = settlementId,
+                    settlementName = settlementName,
+                    thingDef = primaryDef,
+                    quantityPerCycle = 3,
+                    totalCycles = 2,
+                    unitPrice = 2f,
+                    cadenceDays = 3,
+                    cyclesCompleted = 0,
+                    cyclesFailed = 0,
+                    nextCycleTick = now + GenDate.TicksPerDay * 3,
+                    activeOrderId = ProcurementContract.NoActiveOrderId,
+                    status = ProcurementContractStatus.Active
+                };
+                state.ProcurementContracts.Add(fixture.procurementContract);
+
+                fixture.employment = new EmploymentContract
+                {
+                    id = state.NextId(),
+                    settlementId = settlementId,
+                    settlementName = settlementName,
+                    factionName = factionName,
+                    workerName = "Stage 8A travelling worker",
+                    workerSkills = "Construction 8; Intellectual 6",
+                    dailyWage = 17,
+                    termDays = 20,
+                    paidSilver = 34,
+                    wageStructure = WageStructure.Daily,
+                    nextPaymentTick = now + GenDate.TicksPerDay,
+                    arrearsSilver = 5,
+                    missedPayments = 1,
+                    refusingWork = true,
+                    refusalReason = WorkRefusalReason.UnpaidWages,
+                    hiredTick = now - GenDate.TicksPerDay,
+                    arrivalTick = now + GenDate.TicksPerDay,
+                    arrivedTick = EmploymentContract.NotArrived,
+                    status = EmploymentStatus.Travelling
+                };
+                state.Employments.Add(fixture.employment);
+
+                fixture.timelineRecord = new CommercialEventRecord(
+                    state.NextId(), now, settlementId, CommercialEventType.ContractStarted,
+                    settlementName, fixture.salesContract.id, primaryDef, 2, 8,
+                    "Stage 8A timeline fixture");
+                state.CommercialTimeline.Add(fixture.timelineRecord);
+
+                fixture.history = new CommercialHistoryEntry
+                {
+                    settlementId = settlementId,
+                    thingDef = primaryDef,
+                    completedSaleCount = 3,
+                    totalQuantitySupplied = 12,
+                    totalTradeValue = 90
+                };
+                state.CommercialHistory.Add(fixture.history);
+                CommercialReputation reputation = new CommercialReputation(
+                    settlementId, settlementName, factionName);
+                reputation.ordersCompleted = 3;
+                reputation.purchasesCompleted = 2;
+                state.Reputations[settlementId] = reputation;
+
+                Stage8ACounts beforeFirst = Stage8ACounts.From(state);
+                Stage8ARoundTrip first = Stage8ARoundTripState(
+                    state, "stage8A-first");
+                Stage8ACounts afterFirst = Stage8ACounts.From(first.loaded);
+                bool firstFields = Stage8AFieldsSurvived(
+                    fixture, first.loaded, afterAdvance: false, out string firstFieldDetail);
+                check(
+                    M1,
+                    first.failure == null && first.loaded != null &&
+                    beforeFirst.SameAs(afterFirst) && firstFields &&
+                    first.loaded.SaveVersion == IntercolonyWorldComponent.CurrentSaveVersion,
+                    Stage8ARoundTripDetail(
+                        beforeFirst, afterFirst, null, null) +
+                    $"; identifying fields={firstFieldDetail}; failure={first.failure ?? "none"}");
+
+                bool salesCompleted = false;
+                bool purchaseCompleted = false;
+                bool cycleAdvanced = false;
+                bool orderAdvanced = false;
+                bool timelineAdvanced = false;
+                string actionFailure = null;
+                Stage8ACounts beforeSecond = Stage8ACounts.From(first.loaded);
+                Stage8ACounts afterSecond = Stage8ACounts.From(null);
+                Stage8ARoundTrip second = new Stage8ARoundTrip
+                {
+                    failure = "second round trip was not attempted"
+                };
+
+                if (first.loaded != null)
+                {
+                    try
+                    {
+                        SalesOrder loadedSalesOrder = first.loaded.Orders.Find(
+                            order => order != null && order.id == fixture.salesOrder.id);
+                        RecurringContract loadedSalesContract = first.loaded.Contracts.Find(
+                            contract => contract != null && contract.id == fixture.salesContract.id);
+                        int timelineBeforeCompletion = first.loaded.CommercialTimeline.Count;
+                        int cyclesBefore = loadedSalesContract?.cyclesCompleted ?? -1;
+                        CommercialHistoryEntry loadedHistory = first.loaded.FindCommercialHistory(
+                            fixture.salesOrder.settlementId, fixture.primaryDef);
+                        int salesCountBefore = loadedHistory?.completedSaleCount ?? -1;
+                        int tradeValueBeforeSales = loadedHistory?.totalTradeValue ?? -1;
+
+                        if (loadedSalesOrder != null && loadedSalesContract != null &&
+                            loadedHistory != null)
+                        {
+                            SalesOrderService.Complete(
+                                first.loaded, loadedSalesOrder, GenTicks.TicksGame,
+                                "Stage 8A completed a sales order after reload");
+                            salesCompleted = loadedSalesOrder.status == SalesOrderStatus.Completed &&
+                                loadedHistory.completedSaleCount == salesCountBefore + 1 &&
+                                loadedHistory.totalTradeValue == tradeValueBeforeSales +
+                                loadedSalesOrder.paidSilver;
+
+                            ContractService.AdvanceContracts(first.loaded);
+                            cycleAdvanced = loadedSalesContract.cyclesCompleted == cyclesBefore + 1 &&
+                                loadedSalesContract.activeOrderId ==
+                                0 &&
+                                loadedSalesContract.status == ContractStatus.Active;
+                            orderAdvanced = loadedSalesOrder.status == SalesOrderStatus.Completed;
+                            timelineAdvanced = first.loaded.CommercialTimeline.Count >
+                                timelineBeforeCompletion;
+                        }
+
+                        PurchaseOrder loadedPurchaseOrder = first.loaded.PurchaseOrders.Find(
+                            order => order != null && order.id == fixture.purchaseOrder.id);
+                        CommercialHistoryEntry historyBeforePurchase = first.loaded.FindCommercialHistory(
+                            fixture.purchaseOrder.settlementId, fixture.primaryDef);
+                        int purchaseTradeBefore = historyBeforePurchase?.totalTradeValue ?? -1;
+                        if (loadedPurchaseOrder != null && historyBeforePurchase != null &&
+                            ReferenceEquals(IntercolonyWorldComponent.Current, state))
+                        {
+                            // PurchaseOrderService.Complete's public completion boundary uses the
+                            // live-world singleton. Adopt the detached loaded graph into that
+                            // singleton for this one call, then the shared child references make
+                            // the completion visible on first.loaded as well.
+                            Stage8AAdoptLoadedStateForCurrent(
+                                state, first.loaded, nextIdField);
+                            PurchaseOrderService.Complete(
+                                loadedPurchaseOrder,
+                                "Stage 8A completed a PurchaseOrder after reload");
+                            Stage8ASyncCurrentBackToLoaded(state, first.loaded, nextIdField);
+                            purchaseCompleted = loadedPurchaseOrder.status ==
+                                PurchaseOrderStatus.Completed &&
+                                historyBeforePurchase.totalTradeValue ==
+                                purchaseTradeBefore + loadedPurchaseOrder.paidSilver;
+                        }
+                        else if (!ReferenceEquals(IntercolonyWorldComponent.Current, state))
+                        {
+                            actionFailure =
+                                "PurchaseOrderService.Current did not resolve to the fixture world";
+                        }
+
+                        check(
+                            M2,
+                            cycleAdvanced && orderAdvanced && timelineAdvanced,
+                            $"sales status={loadedSalesOrder?.status.ToString() ?? "missing"}; " +
+                            $"contract cycles={cyclesBefore}->{loadedSalesContract?.cyclesCompleted.ToString() ?? "missing"}; " +
+                            $"activeOrderId={loadedSalesContract?.activeOrderId.ToString() ?? "missing"}; " +
+                            $"timeline {timelineBeforeCompletion}->{first.loaded.CommercialTimeline.Count}; " +
+                            $"failure={actionFailure ?? "none"}");
+                        check(
+                            M3,
+                            salesCompleted && purchaseCompleted,
+                            $"sales completed={salesCompleted}; purchase completed={purchaseCompleted}; " +
+                            $"sales aggregate={first.loaded.FindCommercialHistory(settlementId, primaryDef)?.completedSaleCount.ToString() ?? "missing"}; " +
+                            $"purchase status={loadedPurchaseOrder?.status.ToString() ?? "missing"}; " +
+                            $"failure={actionFailure ?? "none"}");
+
+                        beforeSecond = Stage8ACounts.From(first.loaded);
+                        second = Stage8ARoundTripState(first.loaded, "stage8A-second");
+                        afterSecond = Stage8ACounts.From(second.loaded);
+                        bool secondFields = Stage8AFieldsSurvived(
+                            fixture, second.loaded, afterAdvance: true, out string secondFieldDetail);
+                        check(
+                            M4,
+                            second.failure == null && second.loaded != null &&
+                            beforeSecond.SameAs(afterSecond) && secondFields &&
+                            salesCompleted && purchaseCompleted,
+                            Stage8ARoundTripDetail(
+                                beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                            $"; identifying fields={secondFieldDetail}; failure={second.failure ?? "none"}");
+                        check(
+                            M5,
+                            beforeFirst.SameAs(afterFirst) &&
+                            second.loaded != null && beforeSecond.SameAs(afterSecond),
+                            Stage8ARoundTripDetail(
+                                beforeFirst, afterFirst, beforeSecond, afterSecond));
+                    }
+                    catch (Exception ex)
+                    {
+                        actionFailure = ex.GetType().Name + ": " + ex.Message;
+                        check(M2, false,
+                            Stage8ARoundTripDetail(beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                            $"; post-reload advance threw {actionFailure}");
+                        check(M3, false,
+                            Stage8ARoundTripDetail(beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                            $"; post-reload completion threw {actionFailure}");
+                        check(M4, false,
+                            Stage8ARoundTripDetail(beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                            $"; second-cycle setup threw {actionFailure}");
+                        check(M5, false,
+                            Stage8ARoundTripDetail(beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                            $"; second-cycle setup threw {actionFailure}");
+                    }
+                }
+                else
+                {
+                    check(M2, false,
+                        Stage8ARoundTripDetail(beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                        $"; first reload failed: {first.failure ?? "no loaded state"}");
+                    check(M3, false,
+                        Stage8ARoundTripDetail(beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                        $"; first reload failed: {first.failure ?? "no loaded state"}");
+                    check(M4, false,
+                        Stage8ARoundTripDetail(beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                        $"; first reload failed: {first.failure ?? "no loaded state"}");
+                    check(M5, false,
+                        Stage8ARoundTripDetail(beforeFirst, afterFirst, beforeSecond, afterSecond) +
+                        $"; first reload failed: {first.failure ?? "no loaded state"}");
+                }
+            }
+            finally
+            {
+                RestoreAllColonySilver(
+                    Find.CurrentMap ?? Find.AnyPlayerHomeMap, savedSilver);
+
+                state.Opportunities.Clear();
+                state.Opportunities.AddRange(savedOpportunities);
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.AddRange(savedEconomicEvents);
+                state.MarketStates.Clear();
+                state.MarketStates.AddRange(savedMarketStates);
+                foreach (KeyValuePair<SettlementMarketState, float[]> entry in savedDemand)
+                {
+                    if (entry.Key == null || !savedSupply.ContainsKey(entry.Key))
+                    {
+                        continue;
+                    }
+
+                    Array.Copy(entry.Value, entry.Key.demandPressure, entry.Value.Length);
+                    Array.Copy(savedSupply[entry.Key], entry.Key.supplyPressure,
+                        savedSupply[entry.Key].Length);
+                    entry.Key.lastAdvancedRefresh = savedMarketRefreshes[entry.Key];
+                }
+                state.RefreshMarketStateIndex();
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedBrands);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedSalesOrders);
+                state.Requests.Clear();
+                state.Requests.AddRange(savedRequests);
+                state.SupplierListings.Clear();
+                state.SupplierListings.AddRange(savedListings);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedSalesContracts);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedProcurementContracts);
+                state.Employments.Clear();
+                state.Employments.AddRange(savedEmployments);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedTimeline);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedHistory);
+                state.Ledger.Clear();
+                state.Ledger.AddRange(savedLedger);
+                state.LedgerStartTick = savedLedgerStartTick;
+                state.Postings.Clear();
+                state.Postings.AddRange(savedPostings);
+                state.LaborDebts.Clear();
+                state.LaborDebts.AddRange(savedLaborDebts);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+                List<SupplierOfferConsumption> restoredConsumption =
+                    consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
+                if (restoredConsumption != null)
+                {
+                    restoredConsumption.Clear();
+                    restoredConsumption.AddRange(savedConsumption);
+                }
+
+                if (savedEmployerStanding != null && state.EmployerStanding != null)
+                {
+                    state.EmployerStanding.RestoreFrom(savedEmployerStanding);
+                }
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                state.LedgerStartTick = savedLedgerStartTick;
+                nextIdField.SetValue(state, savedNextId);
+                refreshCountField.SetValue(state, savedRefreshCount);
+                lastRefreshTickField.SetValue(state, savedLastRefreshTick);
+                saveVersionField.SetValue(state, savedSaveVersion);
+                economySeedField.SetValue(state, savedEconomySeed);
+                Stage8ARestoreFactionGoodwill(savedFactionGoodwill);
+            }
+        }
+
+        private static void Stage8ASkipAll(Action<string, string> skip, string reason)
+        {
+            skip("Stage 8A kind: active market opportunities", reason);
+            skip("Stage 8A kind: active economic event", reason);
+            skip("Stage 8A kind: non-neutral market pressure", reason);
+            skip("Stage 8A kind: positive and negative brand records", reason);
+            skip("Stage 8A kind: negotiated sales order", reason);
+            skip("Stage 8A kind: active RFQ", reason);
+            skip("Stage 8A kind: Supplier Market listing", reason);
+            skip("Stage 8A kind: active PurchaseOrder", reason);
+            skip("Stage 8A kind: recurring sales contract", reason);
+            skip("Stage 8A kind: recurring procurement contract", reason);
+            skip("Stage 8A kind: hired workers / payroll state", reason);
+            skip("Stage 8A kind: commercial history timeline", reason);
+            skip("M1 all twelve Stage 8A kinds survive the first save/load", reason);
+            skip("M2 the world advances after the first reload", reason);
+            skip("M3 sales and purchase orders complete after reload and update durable history", reason);
+            skip("M4 a second save/load preserves advanced and completed state", reason);
+            skip("M5 every Stage 8A persisted collection keeps its exact fixture count", reason);
+        }
+
+        private static Stage8ARoundTrip Stage8ARoundTripState(
+            IntercolonyWorldComponent source, string label)
+        {
+            IntercolonyWorldComponent savedState = source;
+            IntercolonyWorldComponent loadedState = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-{label}-{Guid.NewGuid():N}.xml");
+            try
+            {
+                Scribe.saver.InitSaving(path, label);
+                Scribe_Deep.Look(ref savedState, "state");
+                Scribe.saver.FinalizeSaving();
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedState, "state", (object)null);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = ex.GetType().Name + ": " + ex.Message;
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch
+                {
+                    // A failed temp-file cleanup must not hide the Scribe failure being tested.
+                }
+            }
+
+            return new Stage8ARoundTrip { loaded = loadedState, failure = failure };
+        }
+
+        private static string Stage8ARoundTripDetail(
+            Stage8ACounts beforeFirst,
+            Stage8ACounts afterFirst,
+            Stage8ACounts beforeSecond,
+            Stage8ACounts afterSecond)
+        {
+            return "round trip 1 before=[" + beforeFirst + "] after=[" + afterFirst +
+                   "]; round trip 2 before=[" +
+                   (beforeSecond == null ? "not attempted" : beforeSecond.ToString()) +
+                   "] after=[" +
+                   (afterSecond == null ? "not attempted" : afterSecond.ToString()) + "]";
+        }
+
+        private static bool Stage8AFieldsSurvived(
+            Stage8AFixture fixture,
+            IntercolonyWorldComponent loaded,
+            bool afterAdvance,
+            out string detail)
+        {
+            if (loaded == null)
+            {
+                detail = "loaded world is null";
+                return false;
+            }
+
+            MarketOpportunity opportunity = loaded.Opportunities.Find(
+                item => item != null && item.id == fixture.opportunity.id);
+            EconomicEvent economicEvent = loaded.EconomicEvents.Find(
+                item => item != null && item.id == fixture.economicEvent.id);
+            SettlementMarketState marketState = loaded.MarketStates.Find(
+                item => item != null && item.settlementId == fixture.marketState.settlementId);
+            ProductBrandRecord positiveBrand = loaded.ProductBrandRecords.Find(
+                item => item != null && item.thingDef == fixture.primaryDef);
+            ProductBrandRecord negativeBrand = loaded.ProductBrandRecords.Find(
+                item => item != null && item.thingDef == fixture.secondaryDef);
+            SalesOrder salesOrder = loaded.Orders.Find(
+                item => item != null && item.id == fixture.salesOrder.id);
+            PurchaseRequest request = loaded.Requests.Find(
+                item => item != null && item.id == fixture.request.id);
+            SupplierListing listing = loaded.SupplierListings.Find(
+                item => item != null && item.id == fixture.listing.id);
+            PurchaseOrder purchaseOrder = loaded.PurchaseOrders.Find(
+                item => item != null && item.id == fixture.purchaseOrder.id);
+            RecurringContract salesContract = loaded.Contracts.Find(
+                item => item != null && item.id == fixture.salesContract.id);
+            ProcurementContract procurementContract = loaded.ProcurementContracts.Find(
+                item => item != null && item.id == fixture.procurementContract.id);
+            EmploymentContract employment = loaded.Employments.Find(
+                item => item != null && item.id == fixture.employment.id);
+            CommercialEventRecord timeline = loaded.CommercialTimeline.Find(
+                item => item != null && item.id == fixture.timelineRecord.id);
+            CommercialHistoryEntry history = loaded.FindCommercialHistory(
+                fixture.history.settlementId, fixture.primaryDef);
+
+            Quotation quote = request?.quotes?.Find(
+                item => item != null && item.id == fixture.request.quotes[0].id);
+            bool completionState = salesOrder != null && purchaseOrder != null &&
+                salesOrder.status == SalesOrderStatus.Completed &&
+                purchaseOrder.status == PurchaseOrderStatus.Completed;
+            int expectedSales = fixture.history.completedSaleCount + (afterAdvance ? 1 : 0);
+            int expectedQuantity = fixture.history.totalQuantitySupplied +
+                (afterAdvance ? fixture.salesOrder.deliveredQuantity : 0);
+            int expectedTrade = fixture.history.totalTradeValue +
+                (afterAdvance ? fixture.salesOrder.paidSilver + fixture.purchaseOrder.paidSilver : 0);
+
+            bool ok = opportunity != null && opportunity.thingDef == fixture.primaryDef &&
+                opportunity.quantity == fixture.opportunity.quantity && opportunity.IsAvailable &&
+                economicEvent != null && economicEvent.type == fixture.economicEvent.type &&
+                economicEvent.IsActiveAt(GenTicks.TicksGame) &&
+                Mathf.Approximately(
+                    economicEvent.supplyScarcityModifier[fixture.categoryIndex],
+                    fixture.economicEvent.supplyScarcityModifier[fixture.categoryIndex]) &&
+                marketState != null && !marketState.IsNeutral &&
+                marketState.settlementId == fixture.marketState.settlementId &&
+                (afterAdvance || Mathf.Approximately(
+                    marketState.supplyPressure[fixture.categoryIndex],
+                    fixture.marketState.supplyPressure[fixture.categoryIndex])) &&
+                positiveBrand != null && positiveBrand.directScore > 0f &&
+                negativeBrand != null && negativeBrand.directScore < 0f &&
+                salesOrder != null && salesOrder.ThingDef == fixture.primaryDef &&
+                salesOrder.Quantity == fixture.salesOrder.Quantity &&
+                salesOrder.opportunityId == fixture.salesOrder.opportunityId &&
+                salesOrder.contractId == fixture.salesOrder.contractId &&
+                salesOrder.status == (afterAdvance
+                    ? SalesOrderStatus.Completed : SalesOrderStatus.Accepted) &&
+                request != null && request.thingDef == fixture.primaryDef &&
+                request.quantityRequested == fixture.request.quantityRequested &&
+                request.status == PurchaseRequestStatus.Open && quote != null &&
+                quote.quantityOffered == fixture.request.quotes[0].quantityOffered &&
+                listing != null && listing.thingDef == fixture.primaryDef &&
+                listing.quantityAvailable == fixture.listing.quantityAvailable &&
+                listing.IsAvailable && purchaseOrder != null &&
+                purchaseOrder.thingDef == fixture.primaryDef &&
+                purchaseOrder.quantity == fixture.purchaseOrder.quantity &&
+                purchaseOrder.status == (afterAdvance
+                    ? PurchaseOrderStatus.Completed : PurchaseOrderStatus.Confirmed) &&
+                salesContract != null && salesContract.thingDef == fixture.primaryDef &&
+                salesContract.quantityPerCycle == fixture.salesContract.quantityPerCycle &&
+                salesContract.status == ContractStatus.Active &&
+                salesContract.cyclesCompleted == (afterAdvance ? 1 : 0) &&
+                salesContract.activeOrderId == (afterAdvance
+                    ? 0 : fixture.salesOrder.id) &&
+                procurementContract != null && procurementContract.thingDef == fixture.primaryDef &&
+                procurementContract.quantityPerCycle == fixture.procurementContract.quantityPerCycle &&
+                procurementContract.cadenceDays == fixture.procurementContract.cadenceDays &&
+                procurementContract.status == ProcurementContractStatus.Active &&
+                employment != null && employment.workerName == fixture.employment.workerName &&
+                employment.dailyWage == fixture.employment.dailyWage &&
+                employment.wageStructure == fixture.employment.wageStructure &&
+                employment.nextPaymentTick == fixture.employment.nextPaymentTick &&
+                employment.arrearsSilver == fixture.employment.arrearsSilver &&
+                employment.missedPayments == fixture.employment.missedPayments &&
+                employment.status == EmploymentStatus.Travelling && timeline != null &&
+                timeline.type == fixture.timelineRecord.type &&
+                timeline.relatedEntityId == fixture.timelineRecord.relatedEntityId &&
+                history != null && history.completedSaleCount == expectedSales &&
+                history.totalQuantitySupplied == expectedQuantity &&
+                history.totalTradeValue == expectedTrade &&
+                (!afterAdvance || completionState);
+
+            detail =
+                $"opportunity={(opportunity == null ? "missing" : opportunity.id.ToString())}; " +
+                $"event={(economicEvent == null ? "missing" : economicEvent.id.ToString())}; " +
+                $"pressure={(marketState == null ? "missing" : marketState.supplyPressure[fixture.categoryIndex].ToString("F2"))}; " +
+                $"brands={(positiveBrand == null ? "missing" : positiveBrand.directScore.ToString("F1"))}/" +
+                $"{(negativeBrand == null ? "missing" : negativeBrand.directScore.ToString("F1"))}; " +
+                $"sales={(salesOrder == null ? "missing" : salesOrder.status.ToString())}; " +
+                $"RFQ={(request == null ? "missing" : request.status.ToString())}; " +
+                $"listing={(listing == null ? "missing" : listing.quantityAvailable.ToString())}; " +
+                $"purchase={(purchaseOrder == null ? "missing" : purchaseOrder.status.ToString())}; " +
+                $"salesContract={(salesContract == null ? "missing" : salesContract.cyclesCompleted.ToString())}; " +
+                $"procurement={(procurementContract == null ? "missing" : procurementContract.status.ToString())}; " +
+                $"worker={(employment == null ? "missing" : employment.workerName)}; " +
+                $"timeline={(timeline == null ? "missing" : timeline.id.ToString())}; " +
+                $"aggregate={(history == null ? "missing" : history.totalTradeValue.ToString())}";
+            return ok;
+        }
+
+        private static void Stage8AAdoptLoadedStateForCurrent(
+            IntercolonyWorldComponent current,
+            IntercolonyWorldComponent loaded,
+            FieldInfo nextIdField)
+        {
+            current.Opportunities.Clear();
+            current.Opportunities.AddRange(loaded.Opportunities);
+            current.EconomicEvents.Clear();
+            current.EconomicEvents.AddRange(loaded.EconomicEvents);
+            current.MarketStates.Clear();
+            current.MarketStates.AddRange(loaded.MarketStates);
+            current.ProductBrandRecords.Clear();
+            current.ProductBrandRecords.AddRange(loaded.ProductBrandRecords);
+            current.Orders.Clear();
+            current.Orders.AddRange(loaded.Orders);
+            current.Requests.Clear();
+            current.Requests.AddRange(loaded.Requests);
+            current.SupplierListings.Clear();
+            current.SupplierListings.AddRange(loaded.SupplierListings);
+            current.PurchaseOrders.Clear();
+            current.PurchaseOrders.AddRange(loaded.PurchaseOrders);
+            current.Contracts.Clear();
+            current.Contracts.AddRange(loaded.Contracts);
+            current.ProcurementContracts.Clear();
+            current.ProcurementContracts.AddRange(loaded.ProcurementContracts);
+            current.Employments.Clear();
+            current.Employments.AddRange(loaded.Employments);
+            current.CommercialTimeline.Clear();
+            current.CommercialTimeline.AddRange(loaded.CommercialTimeline);
+            current.CommercialTimelineStartTick = loaded.CommercialTimelineStartTick;
+            current.CommercialHistory.Clear();
+            current.CommercialHistory.AddRange(loaded.CommercialHistory);
+            current.Reputations.Clear();
+            foreach (KeyValuePair<int, CommercialReputation> entry in loaded.Reputations)
+            {
+                current.Reputations[entry.Key] = entry.Value;
+            }
+            current.RefreshMarketStateIndex();
+            current.EmployerStanding.RestoreFrom(loaded.EmployerStanding);
+            nextIdField.SetValue(current, loaded.PeekNextId());
+        }
+
+        private static void Stage8ASyncCurrentBackToLoaded(
+            IntercolonyWorldComponent current,
+            IntercolonyWorldComponent loaded,
+            FieldInfo nextIdField)
+        {
+            loaded.CommercialTimeline.Clear();
+            loaded.CommercialTimeline.AddRange(current.CommercialTimeline);
+            loaded.CommercialTimelineStartTick = current.CommercialTimelineStartTick;
+            loaded.CommercialHistory.Clear();
+            loaded.CommercialHistory.AddRange(current.CommercialHistory);
+            loaded.Reputations.Clear();
+            foreach (KeyValuePair<int, CommercialReputation> entry in current.Reputations)
+            {
+                loaded.Reputations[entry.Key] = entry.Value;
+            }
+            loaded.RefreshMarketStateIndex();
+            nextIdField.SetValue(loaded, current.PeekNextId());
+        }
+
+        private static Dictionary<Faction, int> Stage8ASnapshotFactionGoodwill()
+        {
+            Dictionary<Faction, int> result = new Dictionary<Faction, int>();
+            if (Faction.OfPlayer == null || Find.FactionManager == null)
+            {
+                return result;
+            }
+
+            foreach (Faction faction in Find.FactionManager.AllFactions)
+            {
+                if (faction != null && faction != Faction.OfPlayer)
+                {
+                    result[faction] = faction.GoodwillWith(Faction.OfPlayer);
+                }
+            }
+
+            return result;
+        }
+
+        private static void Stage8ARestoreFactionGoodwill(Dictionary<Faction, int> saved)
+        {
+            if (saved == null || Faction.OfPlayer == null)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<Faction, int> entry in saved)
+            {
+                Faction faction = entry.Key;
+                if (faction == null || faction == Faction.OfPlayer)
+                {
+                    continue;
+                }
+
+                int delta = entry.Value - faction.GoodwillWith(Faction.OfPlayer);
+                if (delta != 0 && faction.CanChangeGoodwillFor(Faction.OfPlayer, delta))
+                {
+                    faction.TryAffectGoodwillWith(
+                        Faction.OfPlayer, delta, canSendMessage: false,
+                        canSendHostilityLetter: false);
                 }
             }
         }
