@@ -745,8 +745,25 @@ namespace Intercolony
 
         public static bool Cancel(PurchaseOrder order)
         {
-            if (order == null || !order.IsOpen)
+            return Cancel(order, out _);
+        }
+
+        /// <summary>
+        /// Cancels a live purchase order and returns the service-owned refusal explanation when
+        /// the order has already concluded or is unavailable.
+        /// </summary>
+        public static bool Cancel(PurchaseOrder order, out string refusalReason)
+        {
+            refusalReason = null;
+            if (order == null)
             {
+                refusalReason = "That purchase order is no longer available.";
+                return false;
+            }
+
+            if (!order.IsOpen)
+            {
+                refusalReason = $"Purchase #{order.id} is already {order.status}.";
                 return false;
             }
 

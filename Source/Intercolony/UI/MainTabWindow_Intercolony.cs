@@ -170,6 +170,9 @@ namespace Intercolony
         private SupplierMarketColumn supplierMarketSortColumn = SupplierMarketColumn.TotalPayment;
         private bool supplierMarketSortDescending = true;
 
+        private PurchaseOrdersColumn purchaseOrdersSortColumn = PurchaseOrdersColumn.Timing;
+        private bool purchaseOrdersSortDescending;
+
         private enum OrderColumn
         {
             Id = 0,
@@ -2276,9 +2279,11 @@ namespace Intercolony
         }
 
         private Vector2 procurementScroll;
-        private const float PurchaseOrderRowHeight = 50f;
-        private const float PurchaseOrderSectionHeaderHeight = 26f;
+        private Vector2 procurementOrdersScroll;
+        private const float PurchaseOrderHeaderHeight = 30f;
+        private const float PurchaseOrderSectionHeaderHeight = 32f;
         private const float PurchaseOrderSectionGap = 8f;
+        private const float PurchaseOrderMinimumRowHeight = 42f;
 
         /// <summary>
         /// Procurement (DESIGN.md §19, §55, §103). Requests with their quotes underneath, so
@@ -2312,164 +2317,64 @@ namespace Intercolony
             GUI.color = Color.white;
         }
 
-        /// <summary>Purchases already placed. The procurement mirror of the Orders page.</summary>
+        /// <summary>
+        /// Purchases already placed. The procurement mirror of the Sales Orders page; request
+        /// history is deliberately not rendered here because a request and its order are distinct.
+        /// </summary>
         private void DrawProcurementOrders(Rect inRect, IntercolonyWorldComponent state)
         {
             float y = inRect.y;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, inRect.width, 34f), "Purchase orders");
+            DrawMeasuredPurchaseOrderLabel(
+                new Rect(0f, y, inRect.width, 34f), "Purchase orders");
             Text.Font = GameFont.Small;
             y += 40f;
 
-            List<PurchaseOrder> purchaseOrders =
-                SelectPurchaseOrdersForDisplay(state.PurchaseOrders);
-            List<PurchaseRequest> concludedRequests = SelectConcludedRequestsForDisplay(
-                state.Requests, out int concludedRequestTotal);
-            int clearableRequestCount = concludedRequestTotal > 0
-                ? OrderHistoryService.CountClearablePurchaseRequestHistory(state)
-                : 0;
-
-            float contentHeight = PurchaseOrdersHeight(purchaseOrders);
-            if (purchaseOrders.Count == 0)
+            List<PurchaseOrdersRow> rows = PurchaseOrdersUiService.BuildRows(state);
+            string emptyState = PurchaseOrdersUiService.EmptyState(rows);
+            if (rows.Count == 0)
             {
-                string emptyMessage = "Nothing on order.\n\n" +
-                                      "Accept a supplier's quotation on Find seller and the purchase appears here " +
-                                      "until it arrives.";
-                contentHeight += Text.CalcHeight(emptyMessage, inRect.width - 16f);
+                GUI.color = Color.gray;
+                DrawMeasuredPurchaseOrderLabel(
+                    new Rect(0f, y, inRect.width - 16f,
+                        Text.CalcHeight(emptyState, Mathf.Max(1f, inRect.width - 16f))),
+                    emptyState);
+                GUI.color = Color.white;
+                return;
             }
 
-            if (concludedRequests.Count > 0)
-            {
-                contentHeight += PurchaseOrderSectionHeaderHeight +
-                                 concludedRequests.Count * ConcludedRequestRowHeight +
-                                 PurchaseOrderSectionGap;
-            }
+            PurchaseOrdersUiService.SortRows(
+                rows, purchaseOrdersSortColumn, purchaseOrdersSortDescending);
+
+            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
+            float emptyStateHeight = emptyState.NullOrEmpty()
+                ? 0f
+                : Text.CalcHeight(emptyState, tableWidth) + 6f;
+            float contentHeight = emptyStateHeight + PurchaseOrderHeaderHeight +
+                                  PurchaseOrdersContentHeight(rows, tableWidth);
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             Rect viewRect = new Rect(
                 0f, 0f, inRect.width - 16f, Mathf.Max(contentHeight, outRect.height));
 
             BeginPageScrollView(outRect, ref procurementOrdersScroll, viewRect);
-            float rowY = DrawPurchaseOrders(viewRect.width, 0f, purchaseOrders, state);
-            if (purchaseOrders.Count == 0)
+            float rowY = 0f;
+            if (!emptyState.NullOrEmpty())
             {
                 GUI.color = Color.gray;
-                string emptyMessage = "Nothing on order.\n\n" +
-                                      "Accept a supplier's quotation on Find seller and the purchase appears here " +
-                                      "until it arrives.";
-                float emptyMessageHeight = Text.CalcHeight(emptyMessage, viewRect.width);
-                Widgets.Label(new Rect(0f, rowY, viewRect.width, emptyMessageHeight), emptyMessage);
+                DrawMeasuredPurchaseOrderLabel(
+                    new Rect(0f, rowY, tableWidth, emptyStateHeight - 6f), emptyState);
                 GUI.color = Color.white;
-                rowY += emptyMessageHeight;
+                rowY += emptyStateHeight;
             }
 
-            if (concludedRequests.Count > 0)
-            {
-                string header = concludedRequestTotal > concludedRequests.Count
-                    ? $"Concluded requests (showing {concludedRequests.Count} of {concludedRequestTotal})"
-                    : $"Concluded requests ({concludedRequests.Count})";
-                const float buttonWidth = 190f;
-                float headerWidth = clearableRequestCount > 0
-                    ? viewRect.width - buttonWidth - 8f
-                    : viewRect.width;
-                Widgets.Label(new Rect(0f, rowY, headerWidth, 24f), header);
-                if (clearableRequestCount > 0)
-                {
-                    Rect clearRect = new Rect(
-                        viewRect.width - buttonWidth, rowY - 1f, buttonWidth, 26f);
-                    DrawClearPurchaseRequestHistoryButton(
-                        clearRect, clearableRequestCount, state);
-                }
-                rowY += PurchaseOrderSectionHeaderHeight;
-
-                foreach (PurchaseRequest request in concludedRequests)
-                {
-                    DrawConcludedRequestRow(
-                        new Rect(0f, rowY, viewRect.width, ConcludedRequestRowHeight), request);
-                    rowY += ConcludedRequestRowHeight;
-                }
-            }
+            DrawPurchaseOrdersHeader(new Rect(0f, rowY, tableWidth, PurchaseOrderHeaderHeight));
+            rowY += PurchaseOrderHeaderHeight;
+            DrawPurchaseOrderSections(viewRect.width, rowY, rows, state, tableWidth);
 
             EndPageScrollView();
         }
-
-        private static void DrawClearPurchaseRequestHistoryButton(
-            Rect rect, int clearableCount, IntercolonyWorldComponent state)
-        {
-            if (!Widgets.ButtonText(rect, "Clear completed history"))
-            {
-                return;
-            }
-
-            string requestWord = clearableCount == 1 ? "request" : "requests";
-            Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
-                $"Remove {clearableCount} concluded {requestWord} from this list?\n\n" +
-                "Open requests and requests tied to purchase orders still in this list will " +
-                "be kept.",
-                () => OrderHistoryService.ClearPurchaseRequestHistory(state),
-                destructive: true));
-        }
-
-        private const float ConcludedRequestRowHeight = 26f;
-
-        /// <summary>
-        /// How many concluded requests are worth showing. These accumulate one per purchase
-        /// forever, and an unbounded history is what turned Find seller into a wall of dead
-        /// rows. Nothing is deleted — the cap is on what is drawn.
-        /// </summary>
-        private const int ConcludedRequestsShown = 25;
-
-        internal static List<PurchaseRequest> SelectConcludedRequestsForDisplay(
-            IEnumerable<PurchaseRequest> requests, out int total)
-        {
-            List<PurchaseRequest> concluded = new List<PurchaseRequest>();
-            foreach (PurchaseRequest request in requests)
-            {
-                if (request != null && !request.IsOpen)
-                {
-                    concluded.Add(request);
-                }
-            }
-
-            total = concluded.Count;
-            concluded.Sort((a, b) => b.id.CompareTo(a.id));
-            if (concluded.Count > ConcludedRequestsShown)
-            {
-                concluded.RemoveRange(
-                    ConcludedRequestsShown, concluded.Count - ConcludedRequestsShown);
-            }
-
-            return concluded;
-        }
-
-        private static void DrawConcludedRequestRow(Rect row, PurchaseRequest request)
-        {
-            GUI.color = new Color(0.7f, 0.7f, 0.7f);
-            Widgets.Label(new Rect(row.x + 6f, row.y + 2f, row.width * 0.6f, 22f),
-                $"#{request.id}  {request.quantityRequested}x {request.ItemLabel()}");
-            Widgets.Label(new Rect(row.x + row.width * 0.62f, row.y + 2f, row.width * 0.36f, 22f),
-                ConcludedRequestLabel(request.status));
-            GUI.color = Color.white;
-        }
-
-        /// <summary>Says what became of a request in words the player recognises.</summary>
-        private static string ConcludedRequestLabel(PurchaseRequestStatus status)
-        {
-            switch (status)
-            {
-                case PurchaseRequestStatus.Ordered:
-                    return "Ordered from a supplier";
-                case PurchaseRequestStatus.Cancelled:
-                    return "Withdrawn";
-                case PurchaseRequestStatus.Expired:
-                    return "Lapsed without an order";
-                default:
-                    return status.ToString();
-            }
-        }
-
-        private Vector2 procurementOrdersScroll;
 
         /// <summary>Draws the Supplier Market browse surface beside Find seller.</summary>
         private void DrawSupplierMarket(Rect inRect, IntercolonyWorldComponent state)
@@ -2707,9 +2612,8 @@ namespace Intercolony
             y += 40f;
 
             // Only live requests. Find seller is where a purchase is decided, and a concluded
-            // request is not a decision waiting to be made — it is history, and it belongs
-            // beside the purchases it produced. Every accepted quotation used to leave one of
-            // these behind, so this page filled with dead rows the more the player used it.
+            // request is not a decision waiting to be made. Purchase-order rows are kept on the
+            // separate Purchase Orders surface rather than being repeated alongside request rows.
             List<PurchaseRequest> requests = new List<PurchaseRequest>();
             foreach (PurchaseRequest request in state.Requests)
             {
@@ -2732,7 +2636,8 @@ namespace Intercolony
                 string emptyMessage = "No requests out.\n\n" +
                                       "Intercolony is not a shop. You state what you need, and known settlements " +
                                       "answer if they can — sometimes with less than you asked for, sometimes not " +
-                                      "at all. Requests you have already acted on are under Orders.";
+                                      "at all. Requests you have already acted on are no longer " +
+                                      "waiting decisions here.";
                 contentHeight += Text.CalcHeight(emptyMessage, inRect.width - 16f);
             }
 
@@ -2748,7 +2653,8 @@ namespace Intercolony
                 string emptyMessage = "No requests out.\n\n" +
                                       "Intercolony is not a shop. You state what you need, and known settlements " +
                                       "answer if they can — sometimes with less than you asked for, sometimes not " +
-                                      "at all. Requests you have already acted on are under Orders.";
+                                      "at all. Requests you have already acted on are no longer " +
+                                      "waiting decisions here.";
                 Widgets.Label(new Rect(0f, rowY, viewRect.width, Text.CalcHeight(emptyMessage, viewRect.width)), emptyMessage);
                 GUI.color = Color.white;
             }
@@ -2763,230 +2669,294 @@ namespace Intercolony
             EndPageScrollView();
         }
 
-        /// <summary>
-        /// Purchases above the requests. Open commitments come first, followed by retained
-        /// conclusions, because these are money already spent and should be the first thing the
-        /// player sees on this tab.
-        /// </summary>
-        private float DrawPurchaseOrders(
-            float width, float y, List<PurchaseOrder> orders, IntercolonyWorldComponent state)
+        private static float PurchaseOrdersContentHeight(
+            List<PurchaseOrdersRow> rows, float tableWidth)
         {
-            int openCount = 0;
-            while (openCount < orders.Count && orders[openCount].IsOpen)
+            bool hasLive = false;
+            bool hasConcluded = false;
+            float height = 0f;
+            foreach (PurchaseOrdersRow row in rows)
             {
-                openCount++;
+                if (row.isLive)
+                {
+                    hasLive = true;
+                }
+                else
+                {
+                    hasConcluded = true;
+                }
             }
 
-            if (openCount > 0)
+            if (hasLive)
             {
-                Widgets.Label(new Rect(0f, y, width, 24f), $"On order ({openCount})");
-                y += PurchaseOrderSectionHeaderHeight;
-                for (int i = 0; i < openCount; i++)
+                height += PurchaseOrderSectionHeaderHeight;
+                foreach (PurchaseOrdersRow row in rows)
                 {
-                    DrawPurchaseOrderRow(
-                        new Rect(0f, y, width, PurchaseOrderRowHeight), orders[i]);
-                    y += PurchaseOrderRowHeight;
+                    if (row.isLive)
+                    {
+                        height += PurchaseOrderRowHeight(row, tableWidth);
+                    }
+                }
+            }
+
+            if (hasConcluded)
+            {
+                height += (hasLive ? PurchaseOrderSectionGap : 0f) +
+                          PurchaseOrderSectionHeaderHeight;
+                foreach (PurchaseOrdersRow row in rows)
+                {
+                    if (!row.isLive)
+                    {
+                        height += PurchaseOrderRowHeight(row, tableWidth);
+                    }
+                }
+            }
+
+            return height;
+        }
+
+        private void DrawPurchaseOrdersHeader(Rect rect)
+        {
+            float x = rect.x;
+            for (int i = 0; i < PurchaseOrdersUiService.ColumnLabels.Length; i++)
+            {
+                PurchaseOrdersColumn column = (PurchaseOrdersColumn)i;
+                float width = rect.width * PurchaseOrdersUiService.ColumnWidths[i];
+                Rect cell = new Rect(x, rect.y, Mathf.Max(1f, width - 4f), rect.height);
+                if (column == PurchaseOrdersColumn.Action)
+                {
+                    x += width;
+                    continue;
                 }
 
-                y += PurchaseOrderSectionGap;
+                bool active = purchaseOrdersSortColumn == column;
+                string label = PurchaseOrdersUiService.HeaderLabel(
+                    column, active, purchaseOrdersSortDescending);
+                Widgets.DrawHighlightIfMouseover(cell);
+                GUI.color = active ? Color.white : new Color(1f, 1f, 1f, 0.6f);
+                if (column == PurchaseOrdersColumn.Quantity ||
+                    column == PurchaseOrdersColumn.TotalPrice)
+                {
+                    Text.Anchor = TextAnchor.UpperRight;
+                }
+                DrawMeasuredPurchaseOrderLabel(cell, label);
+                Text.Anchor = TextAnchor.UpperLeft;
+                GUI.color = Color.white;
+
+                if (Widgets.ButtonInvisible(cell))
+                {
+                    if (active)
+                    {
+                        purchaseOrdersSortDescending = !purchaseOrdersSortDescending;
+                    }
+                    else
+                    {
+                        purchaseOrdersSortColumn = column;
+                        purchaseOrdersSortDescending =
+                            PurchaseOrdersUiService.DefaultDescending(column);
+                    }
+
+                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+                }
+
+                x += width;
+            }
+        }
+
+        private float DrawPurchaseOrderSections(
+            float width,
+            float y,
+            List<PurchaseOrdersRow> rows,
+            IntercolonyWorldComponent state,
+            float tableWidth)
+        {
+            int liveCount = 0;
+            foreach (PurchaseOrdersRow row in rows)
+            {
+                if (row.isLive)
+                {
+                    liveCount++;
+                }
             }
 
-            int concludedCount = orders.Count - openCount;
+            if (liveCount > 0)
+            {
+                string header = $"Live orders ({liveCount})";
+                DrawMeasuredPurchaseOrderLabel(
+                    new Rect(0f, y, width, PurchaseOrderSectionHeaderHeight), header);
+                y += PurchaseOrderSectionHeaderHeight;
+                int index = 0;
+                foreach (PurchaseOrdersRow row in rows)
+                {
+                    if (!row.isLive)
+                    {
+                        continue;
+                    }
+
+                    float rowHeight = PurchaseOrderRowHeight(row, tableWidth);
+                    DrawPurchaseOrderRow(
+                        new Rect(0f, y, tableWidth, rowHeight), row, index++);
+                    y += rowHeight;
+                }
+            }
+
+            int concludedCount = rows.Count - liveCount;
             if (concludedCount > 0)
             {
+                y += liveCount > 0 ? PurchaseOrderSectionGap : 0f;
                 const float buttonWidth = 190f;
                 int clearableCount =
                     OrderHistoryService.CountClearablePurchaseOrderHistory(state);
-                Widgets.Label(new Rect(0f, y, width - buttonWidth - 8f, 24f),
-                    $"Concluded purchases ({concludedCount})");
+                float labelWidth = clearableCount > 0
+                    ? width - buttonWidth - 8f
+                    : width;
+                string header = $"Concluded orders ({concludedCount})";
+                DrawMeasuredPurchaseOrderLabel(
+                    new Rect(0f, y, labelWidth, PurchaseOrderSectionHeaderHeight), header);
                 if (clearableCount > 0)
                 {
                     Rect clearRect = new Rect(
-                        width - buttonWidth, y - 1f, buttonWidth, 26f);
+                        width - buttonWidth, y + 2f, buttonWidth, 26f);
                     if (Widgets.ButtonText(clearRect, "Clear completed history"))
                     {
-                        string purchaseWord = clearableCount == 1 ? "purchase" : "purchases";
+                        string orderWord = clearableCount == 1 ? "order" : "orders";
                         Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
-                            $"Remove {clearableCount} concluded {purchaseWord} from this list?\n\n" +
-                            "Purchases still on order, concluded requests, and your trading " +
-                            "record will be kept.",
+                            $"Remove {clearableCount} concluded {orderWord} from this list?\n\n" +
+                            "Live purchase orders and your trading record will be kept.",
                             () => OrderHistoryService.ClearPurchaseOrderHistory(state),
                             destructive: true));
                     }
                 }
 
                 y += PurchaseOrderSectionHeaderHeight;
-                for (int i = openCount; i < orders.Count; i++)
+                int index = 0;
+                foreach (PurchaseOrdersRow row in rows)
                 {
-                    DrawPurchaseOrderRow(
-                        new Rect(0f, y, width, PurchaseOrderRowHeight), orders[i]);
-                    y += PurchaseOrderRowHeight;
-                }
+                    if (row.isLive)
+                    {
+                        continue;
+                    }
 
-                y += PurchaseOrderSectionGap;
+                    float rowHeight = PurchaseOrderRowHeight(row, tableWidth);
+                    DrawPurchaseOrderRow(
+                        new Rect(0f, y, tableWidth, rowHeight), row, index++);
+                    y += rowHeight;
+                }
             }
 
             return y;
         }
 
-        private void DrawPurchaseOrderRow(Rect row, PurchaseOrder order)
+        private static float PurchaseOrderRowHeight(PurchaseOrdersRow row, float tableWidth)
         {
-            const float horizontalPadding = 6f;
-            const float columnGap = 8f;
-            const float actionWidth = 92f;
-
-            Widgets.DrawLightHighlight(row);
-            Widgets.DrawHighlightIfMouseover(row);
-
-            float contentWidth = row.width - horizontalPadding * 2f;
-            float itemWidth = contentWidth * 0.58f;
-            Rect itemRect = new Rect(
-                row.x + horizontalPadding, row.y + 2f, itemWidth, 22f);
-            Rect settlementRect = new Rect(
-                itemRect.xMax + columnGap,
-                row.y + 2f,
-                row.xMax - horizontalPadding - itemRect.xMax - columnGap,
-                22f);
-
-            GUI.color = order.IsOpen ? Color.white : new Color(0.7f, 0.7f, 0.7f);
-            Widgets.Label(itemRect,
-                $"#{order.id}  {order.quantity}x {order.ItemLabel()}");
-            Widgets.Label(settlementRect, order.settlementName);
-
-            string statusText;
-            if (!order.IsOpen)
+            float height = PurchaseOrderMinimumRowHeight;
+            for (int i = 0; i < (int)PurchaseOrdersColumn.Action; i++)
             {
-                statusText = ConcludedPurchaseStatusText(order);
-            }
-            else if (order.status == PurchaseOrderStatus.ReadyForPickup)
-            {
-                statusText = $"collect within {order.DaysUntilPickupExpires:F1}d";
-                GUI.color = new Color(0.6f, 0.9f, 0.6f);
-            }
-            else
-            {
-                statusText = order.supplierDelivers
-                    ? $"arriving in {order.DaysUntilReady:F1}d"
-                    : $"ready in {order.DaysUntilReady:F1}d";
+                PurchaseOrdersColumn column = (PurchaseOrdersColumn)i;
+                float cellWidth = tableWidth * PurchaseOrdersUiService.ColumnWidths[i] - 8f;
+                height = Mathf.Max(
+                    height,
+                    Text.CalcHeight(
+                        PurchaseOrdersUiService.CellLabel(row, column), Mathf.Max(1f, cellWidth)) +
+                    8f);
             }
 
-            if (order.IsOpen)
-            {
-                Rect cancelRect = new Rect(
-                    row.xMax - horizontalPadding - actionWidth, row.y + 25f, actionWidth, 24f);
-                Rect statusRect = new Rect(
-                    row.x + horizontalPadding,
-                    row.y + 27f,
-                    cancelRect.x - columnGap - row.x - horizontalPadding,
-                    22f);
+            return height;
+        }
 
-                Widgets.Label(statusRect, statusText);
-                GUI.color = Color.white;
-                if (Widgets.ButtonText(cancelRect, "Cancel"))
+        private void DrawPurchaseOrderRow(
+            Rect rect, PurchaseOrdersRow row, int index)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+            if (ShouldBuildTooltip(rect) && !row.tooltip.NullOrEmpty())
+            {
+                TooltipHandler.TipRegion(rect, row.tooltip);
+            }
+
+            GUI.color = row.isLive ? Color.white : new Color(0.7f, 0.7f, 0.7f);
+            for (int i = 0; i < (int)PurchaseOrdersColumn.Action; i++)
+            {
+                PurchaseOrdersColumn column = (PurchaseOrdersColumn)i;
+                Rect cell = PurchaseOrderCell(rect, column);
+                if (column == PurchaseOrdersColumn.Quantity ||
+                    column == PurchaseOrdersColumn.TotalPrice)
                 {
-                    ConfirmPurchaseCancellation(order);
+                    Text.Anchor = TextAnchor.UpperRight;
+                }
+                DrawMeasuredPurchaseOrderLabel(
+                    cell, PurchaseOrdersUiService.CellLabel(row, column));
+                Text.Anchor = TextAnchor.UpperLeft;
+            }
+
+            GUI.color = Color.white;
+            if (row.canCancel)
+            {
+                Rect actionCell = PurchaseOrderCell(rect, PurchaseOrdersColumn.Action);
+                Rect cancelRect = new Rect(
+                    actionCell.x,
+                    rect.y + Mathf.Max(0f, (rect.height - 26f) / 2f),
+                    actionCell.width,
+                    26f);
+                if (Widgets.ButtonText(cancelRect, row.actionLabel))
+                {
+                    ConfirmPurchaseCancellation(row);
                 }
             }
-            else
-            {
-                Rect statusRect = new Rect(
-                    row.x + horizontalPadding,
-                    row.y + 27f,
-                    row.width - horizontalPadding * 2f,
-                    22f);
-                Widgets.Label(statusRect, statusText);
-                GUI.color = Color.white;
-            }
-
-            if (ShouldBuildTooltip(row))
-            {
-                string detail = order.IsOpen
-                    ? (order.supplierDelivers
-                        ? "They deliver to your colony."
-                        : "Send a caravan to collect. Use the caravan's Collect button at the settlement.")
-                    : ConcludedPurchaseStatusText(order) +
-                      (order.outcomeNote.NullOrEmpty()
-                          ? ""
-                          : "\n\nOutcome: " + order.outcomeNote);
-                TooltipHandler.TipRegion(row,
-                    $"{order.quantity}x {order.ItemLabel()} from {order.settlementName}\n" +
-                    $"Paid {order.paidSilver} silver.\n\n{detail}");
-            }
         }
 
-        private static string ConcludedPurchaseStatusText(PurchaseOrder order)
+        private static Rect PurchaseOrderCell(Rect row, PurchaseOrdersColumn column)
         {
-            switch (order.status)
+            int index = (int)column;
+            float x = row.x;
+            for (int i = 0; i < index; i++)
             {
-                case PurchaseOrderStatus.Completed:
-                    return "Completed — goods received";
-                case PurchaseOrderStatus.Cancelled:
-                    return $"Cancelled by player — {order.paidSilver} silver forfeited";
-                case PurchaseOrderStatus.SupplierDefault:
-                    return $"Supplier default — {order.paidSilver} silver refunded";
-                case PurchaseOrderStatus.LostToWar:
-                    return $"Lost to war — {order.paidSilver} silver not recovered";
-                default:
-                    return order.status.ToString();
+                x += row.width * PurchaseOrdersUiService.ColumnWidths[i];
             }
+
+            return new Rect(
+                x + 4f,
+                row.y + 4f,
+                Mathf.Max(1f, row.width * PurchaseOrdersUiService.ColumnWidths[index] - 8f),
+                Mathf.Max(1f, row.height - 8f));
         }
 
-        private static float PurchaseOrdersHeight(List<PurchaseOrder> orders)
+        private static void DrawMeasuredPurchaseOrderLabel(Rect rect, string text)
         {
-            if (orders.Count == 0)
-            {
-                return 0f;
-            }
-
-            bool hasOpen = false;
-            bool hasConcluded = false;
-            foreach (PurchaseOrder order in orders)
-            {
-                hasOpen |= order.IsOpen;
-                hasConcluded |= !order.IsOpen;
-            }
-
-            int sectionCount = (hasOpen ? 1 : 0) + (hasConcluded ? 1 : 0);
-            return orders.Count * PurchaseOrderRowHeight +
-                   sectionCount * (PurchaseOrderSectionHeaderHeight + PurchaseOrderSectionGap);
+            string value = text ?? "";
+            float measuredHeight = Text.CalcHeight(value, Mathf.Max(1f, rect.width));
+            Widgets.Label(
+                new Rect(rect.x, rect.y, rect.width, Mathf.Max(rect.height, measuredHeight)), value);
         }
 
-        /// <summary>
-        /// Selects every retained purchase for the Procurement tab, with active commitments ahead
-        /// of concluded history and the newest order first within each group.
-        /// </summary>
+        /// <summary>Compatibility seam for existing order diagnostics.</summary>
         internal static List<PurchaseOrder> SelectPurchaseOrdersForDisplay(
             IEnumerable<PurchaseOrder> orders)
         {
-            List<PurchaseOrder> selected = new List<PurchaseOrder>();
-            foreach (PurchaseOrder order in orders)
-            {
-                if (order != null)
-                {
-                    selected.Add(order);
-                }
-            }
-
-            selected.Sort((a, b) =>
-            {
-                if (a.IsOpen != b.IsOpen)
-                {
-                    return a.IsOpen ? -1 : 1;
-                }
-
-                return b.id.CompareTo(a.id);
-            });
-            return selected;
+            return PurchaseOrdersUiService.SelectPurchaseOrdersForDisplay(orders);
         }
 
-        private void ConfirmPurchaseCancellation(PurchaseOrder order)
+        private void ConfirmPurchaseCancellation(PurchaseOrdersRow row)
         {
-            if (order == null || !order.IsOpen)
+            PurchaseOrder order = row.order;
+            if (order == null || !row.canCancel)
             {
                 return;
             }
 
-            Action cancelPurchase = () => PurchaseOrderService.Cancel(order);
+            Action cancelPurchase = () =>
+            {
+                if (!PurchaseOrderService.Cancel(order, out string refusalReason) &&
+                    !refusalReason.NullOrEmpty())
+                {
+                    Messages.Message(
+                        refusalReason, MessageTypeDefOf.RejectInput, historical: false);
+                }
+            };
             Find.WindowStack.Add(new Dialog_MessageBox(
                 $"Purchase #{order.id}: {order.quantity}x {order.ItemLabel()} from " +
                 $"{order.settlementName}.\n\n" +

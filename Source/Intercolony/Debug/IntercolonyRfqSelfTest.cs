@@ -921,6 +921,9 @@ namespace Intercolony
                     "RFQ origin=NoSupplierListing; " +
                     $"published={PublishedRate:F2}; " +
                     $"listing failure={listingFailure ?? "none"}");
+
+                CheckPurchaseOrdersReadModel(
+                    check, skip, state, settlement, ResetFixture, listingOrder, rfqOrder);
             }
             finally
             {
@@ -958,6 +961,480 @@ namespace Intercolony
             skip("V7 purchase origins remain traceable", reason);
             skip("V8 listing total uses IntercolonyPricing.TotalPayment", reason);
             SkipSupplierMarketReadModel(skip, reason);
+            SkipPurchaseOrdersReadModel(skip, reason);
+        }
+
+        private static void CheckPurchaseOrdersReadModel(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            Action<SupplierListing> resetFixture,
+            PurchaseOrder listingOrder,
+            PurchaseOrder rfqOrder)
+        {
+            if (state == null || settlement == null || resetFixture == null)
+            {
+                SkipPurchaseOrdersReadModel(
+                    skip, "the live purchase-order fixture is inaccessible");
+                return;
+            }
+
+            if (listingOrder == null || rfqOrder == null)
+            {
+                skip(
+                    "P1 Purchase Orders row carries order values",
+                    $"the fixture could not construct both known orders: " +
+                    $"listing={(listingOrder == null ? "null" : listingOrder.id.ToString())}, " +
+                    $"RFQ={(rfqOrder == null ? "null" : rfqOrder.id.ToString())}");
+                skip(
+                    "P5 Purchase Orders origin is correct",
+                    $"the fixture could not construct both known orders: " +
+                    $"listing={(listingOrder == null ? "null" : listingOrder.id.ToString())}, " +
+                    $"RFQ={(rfqOrder == null ? "null" : rfqOrder.id.ToString())}");
+            }
+            else
+            {
+                resetFixture(null);
+                state.PurchaseOrders.Add(listingOrder);
+                state.PurchaseOrders.Add(rfqOrder);
+
+                int recomputedTotal = listingOrder.TotalPrice;
+                listingOrder.paidSilver = recomputedTotal + 7;
+                PurchaseOrdersRow valuesRow = PurchaseOrdersUiService.BuildRow(listingOrder);
+                string expectedSupplier = listingOrder.settlementName + "\nSupplier Market";
+                string expectedItem = listingOrder.ItemLabel();
+                string expectedFulfillment = listingOrder.supplierDelivers
+                    ? "Delivery"
+                    : "Pickup";
+                int expectedTotal = listingOrder.paidSilver;
+
+                check(
+                    "P1 Purchase Orders row carries order values",
+                    valuesRow.order == listingOrder &&
+                    valuesRow.orderId == listingOrder.id &&
+                    valuesRow.orderIdLabel == $"#{listingOrder.id}" &&
+                    valuesRow.supplierLabel == expectedSupplier &&
+                    valuesRow.itemLabel == expectedItem &&
+                    valuesRow.quantity == listingOrder.quantity &&
+                    valuesRow.quantityLabel == listingOrder.quantity.ToString("N0") &&
+                    valuesRow.totalPrice == expectedTotal &&
+                    valuesRow.totalPriceLabel == $"{expectedTotal:N0} silver" &&
+                    valuesRow.fulfillmentLabel == expectedFulfillment,
+                    $"order={listingOrder.id}; supplier row=" +
+                    $"\"{valuesRow.supplierLabel}\" expected=\"{expectedSupplier}\"; " +
+                    $"item row=\"{valuesRow.itemLabel}\" expected=\"{expectedItem}\"; " +
+                    $"quantity row/order={valuesRow.quantity}/{listingOrder.quantity}; " +
+                    $"total row/order/recomputed={valuesRow.totalPrice}/{expectedTotal}/" +
+                    $"{recomputedTotal}; fulfillment row/expected=\"" +
+                    $"{valuesRow.fulfillmentLabel}\"/\"{expectedFulfillment}\"");
+            }
+
+            resetFixture(null);
+            PurchaseOrder deliveryOrder = MakeReadModelOrder(
+                960_201, settlement, supplierDelivers: true,
+                PurchaseOrderStatus.Confirmed, PurchaseOrder.NoSupplierListing);
+            PurchaseOrder pickupOrder = MakeReadModelOrder(
+                960_202, settlement, supplierDelivers: false,
+                PurchaseOrderStatus.Confirmed, PurchaseOrder.NoSupplierListing);
+            int now = GenTicks.TicksGame;
+            deliveryOrder.readyTick = now + 2 * GenDate.TicksPerDay;
+            deliveryOrder.pickupExpiryTick = now + 9 * GenDate.TicksPerDay;
+            pickupOrder.readyTick = now + 3 * GenDate.TicksPerDay;
+            pickupOrder.pickupExpiryTick = now + 11 * GenDate.TicksPerDay;
+            PurchaseOrdersRow deliveryRow = PurchaseOrdersUiService.BuildRow(deliveryOrder);
+            PurchaseOrdersRow pickupRow = PurchaseOrdersUiService.BuildRow(pickupOrder);
+
+            check(
+                "P2 Purchase Orders timing names the correct fulfillment fact",
+                deliveryRow.hasTiming && pickupRow.hasTiming &&
+                deliveryRow.timingTick == deliveryOrder.readyTick &&
+                pickupRow.timingTick == pickupOrder.pickupExpiryTick &&
+                deliveryRow.timingLabel != pickupRow.timingLabel &&
+                deliveryRow.timingLabel.Contains("Arrives in") &&
+                !deliveryRow.timingLabel.Contains("Collect by") &&
+                pickupRow.timingLabel.Contains("Collect by") &&
+                !pickupRow.timingLabel.Contains("Arrives in"),
+                $"delivery order={deliveryOrder.id}; label=\"{deliveryRow.timingLabel}\"; " +
+                $"tick row/order={deliveryRow.timingTick}/{deliveryOrder.readyTick}; " +
+                $"pickup order={pickupOrder.id}; label=\"{pickupRow.timingLabel}\"; " +
+                $"tick row/order={pickupRow.timingTick}/{pickupOrder.pickupExpiryTick}");
+
+            resetFixture(null);
+            PurchaseOrder noArrivalOrder = MakeReadModelOrder(
+                960_301, settlement, supplierDelivers: true,
+                PurchaseOrderStatus.Confirmed, PurchaseOrder.NoSupplierListing);
+            noArrivalOrder.readyTick = 0;
+            PurchaseOrder noPickupOrder = MakeReadModelOrder(
+                960_302, settlement, supplierDelivers: false,
+                PurchaseOrderStatus.Confirmed, PurchaseOrder.NoSupplierListing);
+            noPickupOrder.pickupExpiryTick = 0;
+            PurchaseOrdersRow noArrivalRow = PurchaseOrdersUiService.BuildRow(noArrivalOrder);
+            PurchaseOrdersRow noPickupRow = PurchaseOrdersUiService.BuildRow(noPickupOrder);
+            string sentinelRendering = float.MaxValue.ToString(
+                "F0", System.Globalization.CultureInfo.InvariantCulture);
+
+            check(
+                "P3 Purchase Orders missing timing never formats a sentinel",
+                !noArrivalRow.hasTiming && !noPickupRow.hasTiming &&
+                noArrivalRow.timingLabel == "No arrival date" &&
+                noPickupRow.timingLabel == "No pickup deadline" &&
+                !ContainsDigit(noArrivalRow.timingLabel) &&
+                !ContainsDigit(noPickupRow.timingLabel) &&
+                !noArrivalRow.timingLabel.Contains(sentinelRendering) &&
+                !noPickupRow.timingLabel.Contains(sentinelRendering),
+                $"arrival order={noArrivalOrder.id}; label=\"{noArrivalRow.timingLabel}\"; " +
+                $"pickup order={noPickupOrder.id}; label=\"{noPickupRow.timingLabel}\"; " +
+                $"float.MaxValue F0=\"{sentinelRendering}\"");
+
+            resetFixture(null);
+            List<PurchaseOrder> statusOrders = new List<PurchaseOrder>();
+            List<string> enumeratedStatuses = new List<string>();
+            int statusOrderId = 960_400;
+            foreach (PurchaseOrderStatus status in Enum.GetValues(typeof(PurchaseOrderStatus)))
+            {
+                enumeratedStatuses.Add(status.ToString());
+                PurchaseOrder statusOrder = MakeReadModelOrder(
+                    statusOrderId++, settlement, supplierDelivers: true, status: status,
+                    PurchaseOrder.NoSupplierListing);
+                statusOrders.Add(statusOrder);
+                state.PurchaseOrders.Add(statusOrder);
+            }
+
+            List<PurchaseOrdersRow> statusRows = PurchaseOrdersUiService.BuildRows(state);
+            bool allStatusesClassified = statusRows.Count == statusOrders.Count;
+            int liveCount = 0;
+            int concludedCount = 0;
+            bool liveFirst = true;
+            bool reachedConcluded = false;
+            List<string> groupMemberships = new List<string>();
+            foreach (PurchaseOrdersRow row in statusRows)
+            {
+                if (row.isLive)
+                {
+                    liveCount++;
+                    if (reachedConcluded)
+                    {
+                        liveFirst = false;
+                    }
+                }
+                else
+                {
+                    concludedCount++;
+                    reachedConcluded = true;
+                }
+
+                groupMemberships.Add(
+                    $"{row.orderId}:{row.order?.status.ToString() ?? "null"}=" +
+                    (row.isLive ? "live" : "concluded"));
+            }
+
+            foreach (PurchaseOrder expectedOrder in statusOrders)
+            {
+                bool found = false;
+                foreach (PurchaseOrdersRow row in statusRows)
+                {
+                    if (row.order == expectedOrder)
+                    {
+                        bool expectedLive = expectedOrder.status == PurchaseOrderStatus.Confirmed ||
+                                             expectedOrder.status == PurchaseOrderStatus.ReadyForPickup;
+                        found = row.isLive == expectedLive;
+                        break;
+                    }
+                }
+
+                allStatusesClassified &= found;
+            }
+
+            check(
+                "P4 Purchase Orders separate every status live-before-concluded",
+                allStatusesClassified && liveCount > 0 && concludedCount > 0 && liveFirst,
+                $"statuses enumerated=[{string.Join(", ", enumeratedStatuses.ToArray())}]; " +
+                $"rows={statusRows.Count}/{statusOrders.Count}; live={liveCount}; " +
+                $"concluded={concludedCount}; liveFirst={liveFirst}; " +
+                $"groups=[{string.Join(", ", groupMemberships.ToArray())}]");
+
+            if (listingOrder != null && rfqOrder != null)
+            {
+                PurchaseOrdersRow listingOriginRow = PurchaseOrdersUiService.BuildRow(listingOrder);
+                PurchaseOrdersRow rfqOriginRow = PurchaseOrdersUiService.BuildRow(rfqOrder);
+                string expectedListingSupplier = listingOrder.settlementName +
+                                                  "\nSupplier Market";
+                string expectedRfqSupplier = rfqOrder.settlementName + "\nRFQ";
+
+                check(
+                    "P5 Purchase Orders origin is correct",
+                    listingOriginRow.supplierLabel == expectedListingSupplier &&
+                    rfqOriginRow.supplierLabel == expectedRfqSupplier &&
+                    listingOriginRow.supplierLabel.Contains("Supplier Market") &&
+                    !listingOriginRow.supplierLabel.Contains("RFQ") &&
+                    rfqOriginRow.supplierLabel.Contains("RFQ") &&
+                    !rfqOriginRow.supplierLabel.Contains("Supplier Market"),
+                    $"listing order={listingOrder.id}; supplierListingId=" +
+                    $"{listingOrder.supplierListingId}; label=\"{listingOriginRow.supplierLabel}\"; " +
+                    $"expected=\"{expectedListingSupplier}\"; RFQ order={rfqOrder.id}; " +
+                    $"supplierListingId={rfqOrder.supplierListingId}; " +
+                    $"label=\"{rfqOriginRow.supplierLabel}\"; " +
+                    $"expected=\"{expectedRfqSupplier}\"");
+            }
+
+            PurchaseOrdersRow historyRow = PurchaseOrdersUiService.BuildRow(
+                rfqOrder ?? MakeReadModelOrder(
+                    960_601, settlement, supplierDelivers: true,
+                    PurchaseOrderStatus.Confirmed, PurchaseOrder.NoSupplierListing));
+            bool rowHasQuotationList = false;
+            bool rowHasRequestStatus = false;
+            bool rowHasRequestTimeline = false;
+            foreach (FieldInfo field in typeof(PurchaseOrdersRow).GetFields(
+                         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                string fieldName = field.Name.ToLowerInvariant();
+                rowHasQuotationList |= fieldName.Contains("quote") ||
+                    fieldName.Contains("quotation") || field.FieldType == typeof(PurchaseRequest) ||
+                    typeof(IEnumerable<Quotation>).IsAssignableFrom(field.FieldType);
+                rowHasRequestStatus |= fieldName.Contains("requeststatus") ||
+                    field.FieldType == typeof(PurchaseRequestStatus);
+                rowHasRequestTimeline |= fieldName.Contains("requesttimeline") ||
+                    fieldName.Contains("timeline");
+            }
+
+            string historyTooltip = historyRow.tooltip ?? "";
+            bool tooltipHasRequestHistory = historyTooltip.IndexOf(
+                "request", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool tooltipHasQuotationList = historyTooltip.IndexOf(
+                "quote", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                historyTooltip.IndexOf("quotation", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool tooltipHasTimeline = historyTooltip.IndexOf(
+                "timeline", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                historyTooltip.IndexOf("history", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            check(
+                "P6 Purchase Orders row omits request history",
+                !rowHasQuotationList && !rowHasRequestStatus && !rowHasRequestTimeline &&
+                !tooltipHasRequestHistory && !tooltipHasQuotationList && !tooltipHasTimeline,
+                $"row fields expose quotationList={rowHasQuotationList}, " +
+                $"requestStatus={rowHasRequestStatus}, requestTimeline={rowHasRequestTimeline}; " +
+                $"tooltip request={tooltipHasRequestHistory}, quotationList={tooltipHasQuotationList}, " +
+                $"timeline/history={tooltipHasTimeline}; tooltip=\"{historyTooltip}\"");
+
+            CheckPurchaseOrderAction(check, skip, settlement);
+
+            resetFixture(null);
+            PurchaseOrder oldOrder = MakeReadModelOrder(
+                960_801, settlement, supplierDelivers: true,
+                PurchaseOrderStatus.Confirmed, PurchaseOrder.NoSupplierListing);
+            state.PurchaseOrders.Add(oldOrder);
+            List<PurchaseOrdersRow> oldRows = PurchaseOrdersUiService.BuildRows(state);
+            resetFixture(null);
+            PurchaseOrder newOrder = MakeReadModelOrder(
+                960_802, settlement, supplierDelivers: false,
+                PurchaseOrderStatus.ReadyForPickup, PurchaseOrder.NoSupplierListing);
+            state.PurchaseOrders.Add(newOrder);
+            List<PurchaseOrdersRow> newRows = PurchaseOrdersUiService.BuildRows(state);
+
+            check(
+                "P8 Purchase Orders rows refresh after the order set changes",
+                oldRows.Count == 1 && oldRows[0].order == oldOrder &&
+                newRows.Count == 1 && newRows[0].order == newOrder &&
+                newRows[0].orderId == newOrder.id &&
+                !ContainsPurchaseOrderRow(newRows, oldOrder.id),
+                $"old order={oldOrder.id}; old rows={PurchaseOrderRowIds(oldRows)}; " +
+                $"new order={newOrder.id}; new rows={PurchaseOrderRowIds(newRows)}; " +
+                $"new group={(newRows.Count == 0 ? "none" :
+                    (newRows[0].isLive ? "live" : "concluded"))}");
+        }
+
+        private static void SkipPurchaseOrdersReadModel(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("P1 Purchase Orders row carries order values", reason);
+            skip("P2 Purchase Orders timing names the correct fulfillment fact", reason);
+            skip("P3 Purchase Orders missing timing never formats a sentinel", reason);
+            skip("P4 Purchase Orders separate every status live-before-concluded", reason);
+            skip("P5 Purchase Orders origin is correct", reason);
+            skip("P6 Purchase Orders row omits request history", reason);
+            skip("P7 Purchase Orders action reuses cancellation refusal", reason);
+            skip("P8 Purchase Orders rows refresh after the order set changes", reason);
+        }
+
+        private static void CheckPurchaseOrderAction(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            Settlement settlement)
+        {
+            MethodInfo actionMethod = typeof(MainTabWindow_Intercolony).GetMethod(
+                "ConfirmPurchaseCancellation", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo liveMessagesField = typeof(Messages).GetField(
+                "liveMessages", BindingFlags.Static | BindingFlags.NonPublic);
+            if (actionMethod == null || liveMessagesField == null || Find.WindowStack == null)
+            {
+                skip(
+                    "P7 Purchase Orders action reuses cancellation refusal",
+                    "the existing per-row handler, message list, or window stack is inaccessible");
+                return;
+            }
+
+            List<Message> liveMessages = liveMessagesField.GetValue(null) as List<Message>;
+            if (liveMessages == null)
+            {
+                skip(
+                    "P7 Purchase Orders action reuses cancellation refusal",
+                    "the existing live message list is inaccessible");
+                return;
+            }
+
+            List<Window> savedWindows = new List<Window>(Find.WindowStack.Windows);
+            List<Message> savedMessages = new List<Message>(liveMessages);
+            bool ok = false;
+            string detail = "no refusal was surfaced";
+            try
+            {
+                PurchaseOrder order = MakeReadModelOrder(
+                    960_901, settlement, supplierDelivers: true,
+                    PurchaseOrderStatus.Confirmed, PurchaseOrder.NoSupplierListing);
+                PurchaseOrdersRow row = PurchaseOrdersUiService.BuildRow(order);
+                order.status = PurchaseOrderStatus.Completed;
+                bool cancelled = PurchaseOrderService.Cancel(order, out string refusalReason);
+                actionMethod.Invoke(new MainTabWindow_Intercolony(), new object[] { row });
+
+                Dialog_MessageBox dialog = null;
+                for (int i = Find.WindowStack.Windows.Count - 1; i >= 0; i--)
+                {
+                    Window window = Find.WindowStack.Windows[i];
+                    if (!savedWindows.Contains(window) && window is Dialog_MessageBox)
+                    {
+                        dialog = (Dialog_MessageBox)window;
+                        break;
+                    }
+                }
+
+                if (dialog != null && dialog.buttonAAction != null)
+                {
+                    dialog.buttonAAction();
+                }
+
+                string surfaced = null;
+                for (int i = liveMessages.Count - 1; i >= 0; i--)
+                {
+                    if (liveMessages[i] != null &&
+                        liveMessages[i].text.ToString() == refusalReason)
+                    {
+                        surfaced = liveMessages[i].text.ToString();
+                        break;
+                    }
+                }
+
+                ok = !cancelled && row.actionLabel == "Cancel" && dialog != null &&
+                     !refusalReason.NullOrEmpty() && surfaced == refusalReason;
+                detail = $"order={order.id}; action=\"{row.actionLabel}\"; " +
+                         $"service refused={(!cancelled)}; service=\"{refusalReason}\"; " +
+                         $"surfaced=\"{surfaced ?? "none"}\"";
+            }
+            catch (Exception ex)
+            {
+                detail = $"handler/message probe threw {ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                List<Window> currentWindows = new List<Window>(Find.WindowStack.Windows);
+                foreach (Window window in currentWindows)
+                {
+                    if (!savedWindows.Contains(window))
+                    {
+                        Find.WindowStack.TryRemove(window, doCloseSound: false);
+                    }
+                }
+
+                liveMessages.Clear();
+                liveMessages.AddRange(savedMessages);
+            }
+
+            check(
+                "P7 Purchase Orders action reuses cancellation refusal", ok, detail);
+        }
+
+        private static PurchaseOrder MakeReadModelOrder(
+            int id,
+            Settlement settlement,
+            bool supplierDelivers,
+            PurchaseOrderStatus status,
+            int supplierListingId)
+        {
+            int now = GenTicks.TicksGame;
+            return new PurchaseOrder
+            {
+                id = id,
+                requestId = supplierListingId == PurchaseOrder.NoSupplierListing ? 910_111 : 0,
+                quotationId = supplierListingId == PurchaseOrder.NoSupplierListing ? 910_112 : 0,
+                supplierListingId = supplierListingId,
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "Self-test",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = ThingDefOf.Steel,
+                quantity = 3,
+                unitPrice = 0.51f,
+                paidSilver = 2,
+                supplierDelivers = supplierDelivers,
+                orderedTick = now,
+                readyTick = now + GenDate.TicksPerDay,
+                pickupExpiryTick = now + 4 * GenDate.TicksPerDay,
+                status = status
+            };
+        }
+
+        private static bool ContainsDigit(string value)
+        {
+            if (value == null)
+            {
+                return false;
+            }
+
+            foreach (char character in value)
+            {
+                if (character >= '0' && character <= '9')
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ContainsPurchaseOrderRow(
+            List<PurchaseOrdersRow> rows,
+            int orderId)
+        {
+            if (rows == null)
+            {
+                return false;
+            }
+
+            foreach (PurchaseOrdersRow row in rows)
+            {
+                if (row.order != null && row.order.id == orderId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string PurchaseOrderRowIds(List<PurchaseOrdersRow> rows)
+        {
+            if (rows == null)
+            {
+                return "null";
+            }
+
+            List<string> ids = new List<string>();
+            foreach (PurchaseOrdersRow row in rows)
+            {
+                ids.Add(row.order == null ? "null" : row.order.id.ToString());
+            }
+
+            return string.Join(",", ids.ToArray());
         }
 
         private static void CheckSupplierMarketReadModel(
