@@ -131,7 +131,7 @@ namespace Intercolony
         {
         }
 
-        public int TotalPrice => Mathf.RoundToInt(unitPrice * quantity);
+        public int TotalPrice => IntercolonyPricing.TotalPayment(unitPrice, quantity);
 
         public int TicksRemaining => expiryTick - GenTicks.TicksGame;
 

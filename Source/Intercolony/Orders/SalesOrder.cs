@@ -163,11 +163,11 @@ namespace Intercolony
 
         public bool IsAnimalOrder => line?.IsAnimalOrder == true;
 
-        public int TotalPayment => Mathf.RoundToInt(unitPrice * Quantity);
+        public int TotalPayment => IntercolonyPricing.TotalPayment(unitPrice, Quantity);
 
         /// <summary>The silver actually due after applying the discount to the agreed value.</summary>
         public int DiscountedTotalPayment =>
-            Mathf.RoundToInt(unitPrice * Quantity * (1f - discountFraction));
+            IntercolonyPricing.TotalPayment(unitPrice * (1f - discountFraction), Quantity);
 
         public int RemainingQuantity => Mathf.Max(0, Quantity - deliveredQuantity);
 

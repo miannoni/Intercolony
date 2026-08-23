@@ -11,9 +11,9 @@ namespace Intercolony
 {
     /// <summary>
     /// Self-test for the Stage 5A evaluator and Stage 5B counteroffer state machine. The evaluator
-    /// assertions are deliberately behavioural, while the five state-machine assertions cover
-    /// agreed terms, the finite round boundary, refusal retention, persistence, and the invariant
-    /// that negotiation never edits a binding order.
+    /// assertions are deliberately behavioural, while the Stage 5B assertions cover agreed terms,
+    /// the finite round boundary, refusal retention, persistence, the counteroffer surface, and
+    /// the invariant that negotiation never edits a binding order.
     /// </summary>
     public static class IntercolonyNegotiationSelfTest
     {
@@ -59,7 +59,7 @@ namespace Intercolony
         public static string Run(IntercolonyWorldComponent state)
         {
             Results r = new Results();
-            r.sb.AppendLine("Negotiation evaluator/state-machine self-test (Stage 5A/5B Part One)");
+            r.sb.AppendLine("Negotiation evaluator/state-machine self-test (Stage 5A/5B Parts One and Two)");
 
             if (state == null)
             {
@@ -217,7 +217,7 @@ namespace Intercolony
                 if (!stateMachineCategory.HasValue)
                 {
                     r.Skip(
-                        "five Stage 5B state-machine assertions",
+                        "nine Stage 5B state-machine/UI assertions",
                         "the loaded world has no definition-driven fungible market product");
                 }
                 else
@@ -315,6 +315,8 @@ namespace Intercolony
                 state.Opportunities.Add(boundedOpportunity);
                 IntercolonyNegotiationTerms firstCounter = FindCounteredTerms(
                     state, profile, product, category, boundedOpportunity, out _);
+                bool counterActionInitiallyOffered =
+                    CounterofferUiService.CounterActionAvailable(boundedOpportunity);
                 if (firstCounter == null)
                 {
                     // The hard evaluator boundary supplies a deterministic terminal response if
@@ -349,6 +351,45 @@ namespace Intercolony
                     $"first={firstEvaluation?.Decision}, state={boundedOpportunity.NegotiationState}, " +
                     $"failure={firstFailure ?? furtherFailure}, secondFailure={furtherFailure}");
 
+                r.Check(
+                    counterActionInitiallyOffered &&
+                    !CounterofferUiService.CounterActionAvailable(boundedOpportunity),
+                    "the Market counter action is offered once and then disappears",
+                    $"initial={counterActionInitiallyOffered}, " +
+                    $"after={CounterofferUiService.CounterActionAvailable(boundedOpportunity)}, " +
+                    $"state={boundedOpportunity.NegotiationState}");
+
+                MarketOpportunity supportedModeOpportunity = TestOpportunity(profile, product, 6);
+                MarketOpportunity unsupportedModeOpportunity = TestOpportunity(profile, product, 7);
+                unsupportedModeOpportunity.thingDef = null;
+                CounterofferEditableTerms supportedEditable =
+                    CounterofferUiService.EditableTerms(supportedModeOpportunity);
+                CounterofferEditableTerms unsupportedEditable =
+                    CounterofferUiService.EditableTerms(unsupportedModeOpportunity);
+                IntercolonyNegotiationTerms unsupportedProposal =
+                    CounterofferUiService.OriginalTerms(unsupportedModeOpportunity);
+                unsupportedProposal.fulfillment = FulfillmentMode.BuyerPickup;
+                List<CounterofferComparisonRow> unsupportedRows =
+                    CounterofferUiService.BuildComparisonRows(
+                        unsupportedModeOpportunity, unsupportedProposal, allowEditing: true);
+                bool unsupportedModeWasNormalized = false;
+                foreach (CounterofferComparisonRow row in unsupportedRows)
+                {
+                    if (row.term == CounterofferTerm.Fulfillment)
+                    {
+                        unsupportedModeWasNormalized =
+                            row.proposed == row.original && !row.IsEditable;
+                        break;
+                    }
+                }
+                r.Check(
+                    supportedModeOpportunity.SupportsBothFulfillmentModes &&
+                    supportedEditable.fulfillment && !unsupportedEditable.fulfillment &&
+                    unsupportedModeWasNormalized,
+                    "the fulfilment editor follows the opportunity's two-mode capability",
+                    $"supported={supportedModeOpportunity.SupportsBothFulfillmentModes}/" +
+                    $"{supportedEditable.fulfillment}, unsupported={unsupportedEditable.fulfillment}");
+
                 SetReputation(state, profile, NeutralScore);
                 MarketOpportunity refusedOpportunity = TestOpportunity(profile, product, 3);
                 state.Opportunities.Add(refusedOpportunity);
@@ -377,6 +418,52 @@ namespace Intercolony
                     "a refused negotiation retains the original opportunity without an order",
                     $"state={refusedOpportunity.NegotiationState}, available={refusedOpportunity.IsAvailable}, " +
                     $"orders={state.Orders.Count - orderCountBeforeRefusal}, failure={refusalFailure}");
+
+                CounterofferAnswerView acceptedAnswer =
+                    CounterofferUiService.BuildAnswerView(acceptedOpportunity, acceptedEvaluation);
+                CounterofferAnswerView refusedAnswer =
+                    CounterofferUiService.BuildAnswerView(refusedOpportunity, refusalEvaluation);
+                CounterofferAnswerView finalCounterAnswer = firstEvaluation == null
+                    ? null
+                    : CounterofferUiService.BuildAnswerView(boundedOpportunity, firstEvaluation);
+                bool answerRowsMatchDecisions = acceptedAnswer.answerRow.decision ==
+                                                   acceptedEvaluation?.Decision &&
+                                               acceptedAnswer.answerRow.value == "Accepted" &&
+                                               acceptedAnswer.answerRow.tooltip.Contains("Accepted") &&
+                                               SameTerms(
+                                                   acceptedEvaluation?.ProposedTerms,
+                                                   acceptedAnswer.comparisonTerms) &&
+                                               refusedAnswer.answerRow.decision ==
+                                                   refusalEvaluation?.Decision &&
+                                               refusedAnswer.answerRow.value == "Refused" &&
+                                               refusedAnswer.answerRow.tooltip.Contains("Refused") &&
+                                               SameTerms(
+                                                   refusalEvaluation?.ProposedTerms,
+                                                   refusedAnswer.comparisonTerms);
+                bool finalCounterAnswerMatches = firstEvaluation != null &&
+                    firstEvaluation.Decision == IntercolonyNegotiationDecision.Countered &&
+                    firstEvaluation.FinalCounterTerms != null &&
+                    finalCounterAnswer.answerRow.value == "Final counter" &&
+                    finalCounterAnswer.answerRow.tooltip.Contains("Countered") &&
+                    SameTerms(
+                        firstEvaluation.FinalCounterTerms,
+                        finalCounterAnswer.comparisonTerms);
+                if (firstEvaluation?.Decision == IntercolonyNegotiationDecision.Countered)
+                {
+                    r.Check(
+                        answerRowsMatchDecisions && finalCounterAnswerMatches,
+                        "the answer row and displayed terms follow the evaluator's actual response",
+                        $"accepted={acceptedAnswer.answerRow.value}, refused={refusedAnswer.answerRow.value}, " +
+                        $"first={firstEvaluation.Decision}, " +
+                        $"finalTerms={DescribeTerms(firstEvaluation.FinalCounterTerms)}");
+                }
+                else
+                {
+                    r.Skip(
+                        "the answer row and displayed terms follow the evaluator's actual response",
+                        $"this loaded world produced {firstEvaluation?.Decision.ToString() ?? "no response"} " +
+                        "instead of a final counter for the bounded answer fixture");
+                }
 
                 SetReputation(state, profile, UntrustedScore);
                 MarketOpportunity persistedOpportunity = TestOpportunity(profile, product, 4);
@@ -504,6 +591,31 @@ namespace Intercolony
                     $"response={bindingEvaluation?.Decision}, " +
                     $"newOrder={DescribeOrder(bindingOrder ?? finalCounterOrder)}, " +
                     $"failure={bindingFailure}");
+
+                SalesOrder acceptedFinalCounterOrder = null;
+                if (firstEvaluation?.Decision == IntercolonyNegotiationDecision.Countered)
+                {
+                    acceptedFinalCounterOrder = MarketOpportunityNegotiationService.AcceptFinalCounter(
+                        state, boundedOpportunity);
+                }
+
+                if (firstEvaluation?.Decision == IntercolonyNegotiationDecision.Countered)
+                {
+                    bool finalCounterTermsBound = acceptedFinalCounterOrder != null &&
+                        SameOrderTerms(acceptedFinalCounterOrder, firstEvaluation.FinalCounterTerms);
+                    r.Check(
+                        finalCounterTermsBound,
+                        "accepting the final counter creates an order with its agreed terms",
+                        $"decision={firstEvaluation.Decision}, " +
+                        $"order={DescribeOrder(acceptedFinalCounterOrder)}, " +
+                        $"terms={DescribeTerms(firstEvaluation.FinalCounterTerms)}");
+                }
+                else
+                {
+                    r.Skip(
+                        "accepting the final counter creates an order with its agreed terms",
+                        "the bounded answer fixture did not produce a final counter to accept");
+                }
             }
             catch (Exception ex)
             {
@@ -826,6 +938,17 @@ namespace Intercolony
                    Mathf.Approximately(first.unitPrice, second.unitPrice) &&
                    first.deadlineDays == second.deadlineDays &&
                    first.fulfillment == second.fulfillment;
+        }
+
+        private static bool SameOrderTerms(
+            SalesOrder order, IntercolonyNegotiationTerms terms)
+        {
+            return order != null && terms != null &&
+                   order.Quantity == terms.quantity &&
+                   Mathf.Approximately(order.unitPrice, terms.unitPrice) &&
+                   order.deadlineTick ==
+                   order.acceptedTick + terms.deadlineDays * GenDate.TicksPerDay &&
+                   order.fulfillment == terms.fulfillment;
         }
 
         private static string Summarize(Results r)

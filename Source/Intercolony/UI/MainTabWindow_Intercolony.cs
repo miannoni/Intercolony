@@ -13,8 +13,8 @@ namespace Intercolony
     /// The rudimentary market tab (DESIGN.md §52, §53, §97). Lists every live opportunity so
     /// the player can inspect what counterparties want, at what price, and for how long.
     ///
-    /// Deliberately read-only: accepting an opportunity turns it into a binding Sales Order,
-    /// which is Phase 5 (§98). Nothing here commits the player to anything.
+    /// The market rows stay compact, but their actions are deliberate commitment boundaries:
+    /// Accept creates a binding Sales Order and Counter opens the one bounded negotiation round.
     /// </summary>
     public partial class MainTabWindow_Intercolony : MainTabWindow
     {
@@ -35,7 +35,7 @@ namespace Intercolony
             Expires = 6,
             Deadline = 7,
 
-            /// <summary>Action column. Not sortable; exists so Accept has its own space.</summary>
+            /// <summary>Action column. Not sortable; holds Accept and Counter side by side.</summary>
             Accept = 8
         }
 
@@ -691,6 +691,11 @@ namespace Intercolony
             }
         }
 
+        internal void ShowOrdersTab()
+        {
+            SelectTab(Tab.Orders, IntercolonyWorldComponent.Current);
+        }
+
         private void DrawMarket(Rect inRect, IntercolonyWorldComponent state)
         {
             int totalAvailable = 0;
@@ -766,7 +771,7 @@ namespace Intercolony
         /// and the rows cannot drift apart.
         /// </summary>
         private static readonly float[] ColumnWidths =
-            { 0.16f, 0.23f, 0.06f, 0.08f, 0.09f, 0.08f, 0.08f, 0.10f, 0.12f };
+            { 0.15f, 0.21f, 0.06f, 0.08f, 0.09f, 0.08f, 0.08f, 0.09f, 0.16f };
 
         /// <summary>
         /// Headers are short because the column has to hold the value, not the explanation.
@@ -1063,16 +1068,72 @@ namespace Intercolony
             Widgets.Label(Cell(7), MarketCellLabel(opportunity, 7));
             GUI.color = Color.white;
 
-            // Accept has its own column. Previously it was drawn over the last one, so the
-            // deadline text ran underneath the button.
-            Rect acceptCell = Cell((int)Column.Accept);
-            const float AcceptHeight = 23f;
-            Rect acceptRect = new Rect(acceptCell.x, rect.y + (rect.height - AcceptHeight) / 2f,
-                Mathf.Min(acceptCell.width, 76f), AcceptHeight);
-            if (Widgets.ButtonText(acceptRect, "Accept"))
+            // Keep both commitment choices in the action column. A counter button must disappear
+            // after the service records its response, or a stale row would invite a second round.
+            Rect actionCell = Cell((int)Column.Accept);
+            const float ActionHeight = 23f;
+            const float ActionGap = 4f;
+            float actionWidth = (actionCell.width - ActionGap) / 2f;
+            Rect firstActionRect = new Rect(
+                actionCell.x,
+                rect.y + (rect.height - ActionHeight) / 2f,
+                actionWidth,
+                ActionHeight);
+            Rect secondActionRect = new Rect(
+                actionCell.x + actionWidth + ActionGap,
+                firstActionRect.y,
+                actionWidth,
+                ActionHeight);
+
+            if (opportunity.HasPendingCounterpartyCounter)
+            {
+                if (Widgets.ButtonText(actionCell, "Answer"))
+                {
+                    OpenCounterofferAnswer(opportunity);
+                }
+                return;
+            }
+
+            if (opportunity.CanAcceptOriginalTerms && Widgets.ButtonText(firstActionRect, "Accept"))
             {
                 AcceptOpportunity(opportunity);
             }
+
+            if (CounterofferUiService.CounterActionAvailable(opportunity) &&
+                Widgets.ButtonText(secondActionRect, "Counter"))
+            {
+                OpenCounterofferDialog(opportunity);
+            }
+        }
+
+        private void OpenCounterofferDialog(MarketOpportunity opportunity)
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null)
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(new Dialog_Counteroffer(state, opportunity));
+        }
+
+        private void OpenCounterofferAnswer(MarketOpportunity opportunity)
+        {
+            // A pending final counter is persisted, but its ephemeral evaluator result is not an
+            // entity. The read-only answer uses the persisted terms; acceptance still uses the
+            // service's exact final-counter boundary rather than reconstructing a proposal.
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null || !opportunity.TryGetFinalCounterTerms(
+                    out IntercolonyNegotiationTerms finalTerms))
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(new Dialog_Counteroffer(
+                state,
+                opportunity,
+                CounterofferUiService.BuildPersistedFinalCounterView(opportunity, finalTerms),
+                acceptedOrder: null));
         }
 
         private static float MarketRowHeight(MarketOpportunity opportunity, float tableWidth)

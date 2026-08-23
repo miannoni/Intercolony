@@ -308,6 +308,21 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Rounds one agreed sale amount. The market surface and the binding order both call this
+        /// owner so a counteroffer cannot advertise one total and pay another after acceptance.
+        /// Keeping the rounding here avoids repeating the old Find Buyer trap in another dialog.
+        /// </summary>
+        public static int TotalPayment(float unitPrice, int quantity)
+        {
+            if (quantity <= 0 || float.IsNaN(unitPrice) || float.IsInfinity(unitPrice))
+            {
+                return 0;
+            }
+
+            return Mathf.RoundToInt(unitPrice * quantity);
+        }
+
+        /// <summary>
         /// Re-prices an existing offer for a different lot size.
         ///
         /// A buyer's rate is not flat: §13 saturation means the first units are worth more to
