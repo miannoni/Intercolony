@@ -203,6 +203,7 @@ namespace Intercolony
             // hidden as orders complete and reputation moves, so do not carry an old proposal
             // result into the next visit.
             contractProposalSettlementCache = null;
+            expandedRelationSettlementId = NoExpandedRelation;
         }
 
         public override void DoWindowContents(Rect inRect)
@@ -3354,6 +3355,10 @@ namespace Intercolony
         }
 
         private Vector2 relationsScroll;
+        private const int NoExpandedRelation = -1;
+        // §7.6 choice A: Relations already owns a bounded page scroll and the existing inline
+        // row-selection pattern; modal windows in this UI are reserved for commitment workflows.
+        private int expandedRelationSettlementId = NoExpandedRelation;
 
         /// <summary>
         /// Relationship view (DESIGN.md §57, §27). Shows commercial reputation alongside
@@ -3369,11 +3374,8 @@ namespace Intercolony
             y += 38f;
             Text.Font = GameFont.Small;
 
-            List<CommercialReputation> records = new List<CommercialReputation>();
-            foreach (KeyValuePair<int, CommercialReputation> entry in state.Reputations)
-            {
-                records.Add(entry.Value);
-            }
+            List<CommercialHistoryRelationRow> records =
+                CommercialHistoryUiService.BuildRows(state);
 
             if (records.Count == 0)
             {
@@ -3387,69 +3389,209 @@ namespace Intercolony
                 return;
             }
 
-            records.Sort((a, b) => b.Score.CompareTo(a.Score));
-
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, records.Count * 58f);
+            float viewWidth = Mathf.Max(1f, inRect.width - 16f);
+            float contentHeight = 0f;
+            for (int i = 0; i < records.Count; i++)
+            {
+                contentHeight += RelationRowHeight(
+                    records[i],
+                    viewWidth,
+                    records[i].settlementId == expandedRelationSettlementId);
+            }
+
+            Rect viewRect = new Rect(0f, 0f, viewWidth, contentHeight);
 
             BeginPageScrollView(outRect, ref relationsScroll, viewRect);
             float rowY = 0f;
             for (int i = 0; i < records.Count; i++)
             {
-                DrawRelationRow(new Rect(0f, rowY, viewRect.width, 58f), records[i], i);
-                rowY += 58f;
+                bool expanded = records[i].settlementId == expandedRelationSettlementId;
+                float rowHeight = RelationRowHeight(records[i], viewRect.width, expanded);
+                DrawRelationRow(
+                    new Rect(0f, rowY, viewRect.width, rowHeight),
+                    records[i],
+                    i,
+                    expanded);
+                rowY += rowHeight;
             }
 
             EndPageScrollView();
         }
 
-        private void DrawRelationRow(Rect rect, CommercialReputation rep, int index)
+        private void DrawRelationRow(
+            Rect rect, CommercialHistoryRelationRow row, int index, bool expanded)
         {
+            const float HeaderHeight = 58f;
+            Rect headerRect = new Rect(rect.x, rect.y, rect.width, HeaderHeight);
             if (index % 2 == 1)
             {
-                Widgets.DrawLightHighlight(rect);
+                Widgets.DrawLightHighlight(headerRect);
             }
 
-            Widgets.DrawHighlightIfMouseover(rect);
+            Widgets.DrawHighlightIfMouseover(headerRect);
+            if (expanded)
+            {
+                Widgets.DrawHighlightSelected(headerRect);
+            }
 
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width * 0.34f, 24f),
-                $"{rep.settlementName}");
+            float nameWidth = rect.width * 0.34f;
+            float scoreWidth = rect.width * 0.28f;
+            float factionWidth = rect.width - nameWidth - scoreWidth - 6f;
+            float nameHeight = Text.CalcHeight(row.settlementLabel, nameWidth - 6f);
+            Widgets.Label(
+                new Rect(rect.x + 6f, rect.y + 4f, nameWidth - 6f, nameHeight),
+                row.settlementLabel);
 
-            GUI.color = TierColour(rep.Tier);
-            Widgets.Label(new Rect(rect.x + rect.width * 0.36f, rect.y + 4f, rect.width * 0.28f, 24f),
-                $"{rep.ScoreDisplay}/100  {rep.TierLabel()}");
+            GUI.color = row.hasReputation ? TierColour(row.tier) : Color.gray;
+            float scoreHeight = Text.CalcHeight(row.scoreLabel, scoreWidth - 6f);
+            Widgets.Label(
+                new Rect(rect.x + nameWidth, rect.y + 4f, scoreWidth - 6f, scoreHeight),
+                row.scoreLabel);
             GUI.color = Color.white;
 
             // Owning faction and its goodwill beside it, per §27's illustrative UI — the
             // two numbers together are the point: liked is not the same as relied upon.
-            Settlement settlement = IntercolonyMarketAccess.FindSettlement(rep.settlementId);
-            Faction faction = settlement?.Faction;
             GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(rect.x + rect.width * 0.66f, rect.y + 4f, rect.width * 0.34f, 24f),
-                faction != null
-                    ? $"{rep.factionName}  goodwill {faction.PlayerGoodwill:+#;-#;0}"
-                    : $"{rep.factionName}  (gone)");
+            float factionHeight = Text.CalcHeight(row.factionAndGoodwillLabel, factionWidth);
+            Widgets.Label(
+                new Rect(rect.x + nameWidth + scoreWidth, rect.y + 4f, factionWidth, factionHeight),
+                row.factionAndGoodwillLabel);
             GUI.color = Color.white;
 
             GUI.color = new Color(1f, 1f, 1f, 0.65f);
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 28f, rect.width - 12f, 24f),
-                $"{rep.ordersCompleted} completed   {rep.ordersLate} late   " +
-                $"{rep.ordersFailed} failed   {rep.ordersCancelled} cancelled   " +
-                $"{rep.purchasesCompleted} purchases");
+            float statsWidth = rect.width - 12f;
+            float statsHeight = Text.CalcHeight(row.statsLabel, statsWidth);
+            Widgets.Label(
+                new Rect(rect.x + 6f, rect.y + 28f, statsWidth, statsHeight),
+                row.statsLabel);
             GUI.color = Color.white;
 
-            if (ShouldBuildTooltip(rect))
+            if (ShouldBuildTooltip(headerRect))
             {
-                string economy = SettlementEconomyDisplay.SettlementEconomicSummary(
-                    rep.settlementId);
-                TooltipHandler.TipRegion(rect,
-                    $"{rep.factionName}\n" +
-                    $"Commercial reputation: {rep.ScoreDisplay}/100 ({rep.TierLabel()})\n\n" +
-                    (economy.NullOrEmpty() ? "" : economy + "\n") +
-                    "A better record means larger orders, more frequent offers, slightly better " +
-                    "prices and more generous deadlines.\n\n" +
-                    "This is separate from faction goodwill, and it is held by this settlement " +
-                    "rather than its faction: another town of the same faction forms its own view.");
+                TooltipHandler.TipRegion(headerRect, row.rowTooltip);
+            }
+
+            if (Widgets.ButtonInvisible(headerRect))
+            {
+                expandedRelationSettlementId = expanded
+                    ? NoExpandedRelation
+                    : row.settlementId;
+            }
+
+            if (expanded)
+            {
+                DrawRelationHistoryDetail(
+                    new Rect(rect.x, rect.y + HeaderHeight, rect.width, rect.height - HeaderHeight),
+                    row);
+            }
+        }
+
+        private static float RelationRowHeight(
+            CommercialHistoryRelationRow row, float width, bool expanded)
+        {
+            return 58f + (expanded ? RelationHistoryDetailHeight(row, width) : 0f);
+        }
+
+        private static float RelationHistoryDetailHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            float contentWidth = Mathf.Max(1f, width - 12f);
+            float labelWidth = Mathf.Min(190f, contentWidth * 0.42f);
+            float valueWidth = Mathf.Max(1f, contentWidth - labelWidth - 12f);
+            float y = 6f;
+
+            string summaryHeading = "Commercial history";
+            y += Text.CalcHeight(summaryHeading, contentWidth) + 4f;
+            for (int i = 0; i < row.summaryRows.Count; i++)
+            {
+                CommercialHistorySummaryRow summary = row.summaryRows[i];
+                float keyHeight = Text.CalcHeight(summary.label, labelWidth);
+                float valueHeight = Text.CalcHeight(summary.value, valueWidth);
+                y += Mathf.Max(keyHeight, valueHeight) + 4f;
+            }
+
+            string timelineHeading = "Recent activity";
+            y += Text.CalcHeight(timelineHeading, contentWidth) + 4f;
+            if (row.timelineRows.Count == 0)
+            {
+                y += Text.CalcHeight(row.emptyTimelineLabel, contentWidth) + 4f;
+            }
+            else
+            {
+                for (int i = 0; i < row.timelineRows.Count; i++)
+                {
+                    y += Text.CalcHeight(row.timelineRows[i].label, contentWidth) + 4f;
+                }
+            }
+
+            return y + 6f;
+        }
+
+        private static void DrawRelationHistoryDetail(
+            Rect rect, CommercialHistoryRelationRow row)
+        {
+            Widgets.DrawLightHighlight(rect);
+            float contentWidth = Mathf.Max(1f, rect.width - 12f);
+            float labelWidth = Mathf.Min(190f, contentWidth * 0.42f);
+            float valueWidth = Mathf.Max(1f, contentWidth - labelWidth - 12f);
+            float valueX = rect.x + labelWidth + 12f;
+            float y = rect.y + 6f;
+
+            string summaryHeading = "Commercial history";
+            float headingHeight = Text.CalcHeight(summaryHeading, contentWidth);
+            Widgets.Label(new Rect(rect.x + 6f, y, contentWidth, headingHeight), summaryHeading);
+            y += headingHeight + 4f;
+
+            for (int i = 0; i < row.summaryRows.Count; i++)
+            {
+                CommercialHistorySummaryRow summary = row.summaryRows[i];
+                float keyHeight = Text.CalcHeight(summary.label, labelWidth);
+                float valueHeight = Text.CalcHeight(summary.value, valueWidth);
+                float rowHeight = Mathf.Max(keyHeight, valueHeight);
+                Widgets.Label(new Rect(rect.x + 6f, y, labelWidth, keyHeight), summary.label);
+                Rect valueRect = new Rect(valueX, y, valueWidth, valueHeight);
+                Widgets.Label(valueRect, summary.value);
+                if (!string.IsNullOrEmpty(summary.tooltip))
+                {
+                    TooltipHandler.TipRegion(valueRect, summary.tooltip);
+                }
+
+                y += rowHeight + 4f;
+            }
+
+            Widgets.DrawLineHorizontal(rect.x + 6f, y, contentWidth);
+            y += 4f;
+            string timelineHeading = "Recent activity";
+            float timelineHeadingHeight = Text.CalcHeight(timelineHeading, contentWidth);
+            Widgets.Label(
+                new Rect(rect.x + 6f, y, contentWidth, timelineHeadingHeight),
+                timelineHeading);
+            y += timelineHeadingHeight + 4f;
+
+            if (row.timelineRows.Count == 0)
+            {
+                float emptyHeight = Text.CalcHeight(row.emptyTimelineLabel, contentWidth);
+                GUI.color = Color.gray;
+                Widgets.Label(
+                    new Rect(rect.x + 6f, y, contentWidth, emptyHeight),
+                    row.emptyTimelineLabel);
+                GUI.color = Color.white;
+                return;
+            }
+
+            for (int i = 0; i < row.timelineRows.Count; i++)
+            {
+                CommercialHistoryTimelineRow timeline = row.timelineRows[i];
+                float eventHeight = Text.CalcHeight(timeline.label, contentWidth);
+                Rect eventRect = new Rect(rect.x + 6f, y, contentWidth, eventHeight);
+                Widgets.Label(eventRect, timeline.label);
+                if (!string.IsNullOrEmpty(timeline.tooltip))
+                {
+                    TooltipHandler.TipRegion(eventRect, timeline.tooltip);
+                }
+
+                y += eventHeight + 4f;
             }
         }
 

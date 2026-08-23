@@ -1271,6 +1271,15 @@ namespace Intercolony
             const int spineOnlySettlementId = 710703;
             const int timelineSettlementId = 710704;
             const int quietSettlementId = 710705;
+            const int relationsSummarySettlementId = 710801;
+            const int relationsNeverSettlementId = 710802;
+            const int relationsAggregateSettlementId = 710803;
+            const int relationsRetainedSettlementId = 710804;
+            const int relationsSpineSettlementId = 710805;
+            const int relationsUnsupportedSettlementId = 710806;
+            const int relationsTimelineSettlementId = 710807;
+            const int relationsFilterSettlementId = 710808;
+            const int relationsMutationSettlementId = 710809;
 
             List<CommercialHistoryEntry> savedHistory =
                 new List<CommercialHistoryEntry>(state.CommercialHistory);
@@ -1628,10 +1637,399 @@ namespace Intercolony
                         $"{DescribeInts(u8AfterTotals)}; saveVersion=55->{state.SaveVersion}; " +
                         $"current={IntercolonyWorldComponent.CurrentSaveVersion}");
                 }
+
+                // --- Stage 7C Relations read model -----------------------------------------
+                // Y1: durable aggregates deliberately disagree with the retained detail. The
+                // row must present the summary service's six labelled values, not recalculate
+                // them from orders or timeline rows.
+                ResetHistoryFixtures(state);
+                const int y1ExpectedSales = 5;
+                const int y1ExpectedPurchases = 7;
+                const int y1ExpectedActiveContracts = 2;
+                const int y1ExpectedTradeValue = 600;
+                const int y1FirstMeaningfulTick = 7108010;
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = relationsSummarySettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 3,
+                    totalTradeValue = 214
+                });
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = relationsSummarySettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 2,
+                    totalTradeValue = 386
+                });
+                CommercialReputation y1Reputation = new CommercialReputation(
+                    relationsSummarySettlementId, "Y1 Summary Testholme", "Y1 faction");
+                y1Reputation.purchasesCompleted = y1ExpectedPurchases;
+                state.Reputations[relationsSummarySettlementId] = y1Reputation;
+                state.Contracts.Add(new RecurringContract
+                {
+                    id = 710811,
+                    settlementId = relationsSummarySettlementId,
+                    settlementName = "Y1 Summary Testholme",
+                    quantityPerCycle = 1,
+                    totalCycles = 1,
+                    unitPrice = 1f,
+                    status = ContractStatus.Active
+                });
+                state.ProcurementContracts.Add(new ProcurementContract
+                {
+                    id = 710812,
+                    settlementId = relationsSummarySettlementId,
+                    settlementName = "Y1 Summary Testholme",
+                    quantityPerCycle = 1,
+                    totalCycles = 1,
+                    unitPrice = 1f,
+                    cadenceDays = 1,
+                    status = ProcurementContractStatus.Suspended
+                });
+                state.CommercialTimelineStartTick = 7108000;
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    710813, y1FirstMeaningfulTick, relationsSummarySettlementId,
+                    CommercialEventType.SaleCompleted, "Y1 Summary Testholme",
+                    compactDetail: "Y1 detail sale"));
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    710814, 7108020, relationsSummarySettlementId,
+                    CommercialEventType.PurchaseCompleted, "Y1 Summary Testholme",
+                    compactDetail: "Y1 detail purchase"));
+
+                CommercialHistorySummary y1Summary =
+                    CommercialHistoryService.BuildSummary(state, relationsSummarySettlementId);
+                CommercialHistoryRelationRow y1Row =
+                    CommercialHistoryUiService.BuildRow(state, relationsSummarySettlementId);
+                string y1ExpectedStanding = y1Summary.CommercialStanding;
+                string y1ExpectedTradingSince = "Earliest retained event: " +
+                    GenDate.DateShortStringAt(
+                        GenDate.TickGameToAbs(y1FirstMeaningfulTick), Vector2.zero);
+                string y1ExpectedSalesText = y1Summary.CompletedSales.ToString("N0");
+                string y1ExpectedPurchasesText = y1Summary.CompletedPurchases.ToString("N0");
+                string y1ExpectedContractsText = y1Summary.ActiveContracts.ToString("N0");
+                string y1ExpectedTradeValueText =
+                    $"{y1Summary.TotalKnownTradeValue:N0} silver";
+                string y1PresentedStanding = SummaryRowValue(
+                    y1Row.summaryRows, "Commercial standing");
+                string y1PresentedTradingSince = SummaryRowValue(
+                    y1Row.summaryRows, "Trading since");
+                string y1PresentedSales = SummaryRowValue(
+                    y1Row.summaryRows, "Completed sales");
+                string y1PresentedPurchases = SummaryRowValue(
+                    y1Row.summaryRows, "Completed purchases");
+                string y1PresentedContracts = SummaryRowValue(
+                    y1Row.summaryRows, "Active contracts");
+                string y1PresentedTradeValue = SummaryRowValue(
+                    y1Row.summaryRows, "Total known trade value");
+                bool y1SummaryFixtureKnown =
+                    y1Summary.HasCommercialStanding &&
+                    y1Summary.HasTradingSince &&
+                    y1Summary.TradingSinceTick == y1FirstMeaningfulTick &&
+                    y1Summary.HistoryCoverage == CommercialHistoryCoverage.Timeline &&
+                    y1Summary.CompletedSales == y1ExpectedSales &&
+                    y1Summary.CompletedPurchases == y1ExpectedPurchases &&
+                    y1Summary.ActiveContracts == y1ExpectedActiveContracts &&
+                    y1Summary.TotalKnownTradeValue == y1ExpectedTradeValue;
+
+                r.Check(
+                    y1SummaryFixtureKnown && y1PresentedStanding == y1ExpectedStanding,
+                    "Y1 Commercial standing row presents the summary value",
+                    $"presented=\"{y1PresentedStanding}\"; summary=\"{y1ExpectedStanding}\"; " +
+                    $"summary={DescribeSummary(y1Summary)}");
+                r.Check(
+                    y1SummaryFixtureKnown && y1PresentedTradingSince == y1ExpectedTradingSince,
+                    "Y1 Trading since row presents the summary value",
+                    $"presented=\"{y1PresentedTradingSince}\"; " +
+                    $"summary=\"{y1ExpectedTradingSince}\"; summary={DescribeSummary(y1Summary)}");
+                r.Check(
+                    y1SummaryFixtureKnown && y1PresentedSales == y1ExpectedSalesText,
+                    "Y1 Completed sales row presents the summary value",
+                    $"presented=\"{y1PresentedSales}\"; summary=\"{y1ExpectedSalesText}\"; " +
+                    $"summary={DescribeSummary(y1Summary)}");
+                r.Check(
+                    y1SummaryFixtureKnown && y1PresentedPurchases == y1ExpectedPurchasesText,
+                    "Y1 Completed purchases row presents the summary value",
+                    $"presented=\"{y1PresentedPurchases}\"; " +
+                    $"summary=\"{y1ExpectedPurchasesText}\"; summary={DescribeSummary(y1Summary)}");
+                r.Check(
+                    y1SummaryFixtureKnown && y1PresentedContracts == y1ExpectedContractsText,
+                    "Y1 Active contracts row presents the summary value",
+                    $"presented=\"{y1PresentedContracts}\"; " +
+                    $"summary=\"{y1ExpectedContractsText}\"; summary={DescribeSummary(y1Summary)}");
+                r.Check(
+                    y1SummaryFixtureKnown && y1PresentedTradeValue == y1ExpectedTradeValueText,
+                    "Y1 Total known trade value row presents the summary value",
+                    $"presented=\"{y1PresentedTradeValue}\"; " +
+                    $"summary=\"{y1ExpectedTradeValueText}\"; summary={DescribeSummary(y1Summary)}");
+
+                // Y2: these are three different coverage answers, not three spellings of an
+                // empty timeline. Pairwise inequality is intentional: collapsing any two cases
+                // makes this assertion red even if the collapsed wording is otherwise plausible.
+                ResetHistoryFixtures(state);
+                const int y2SpineBoundary = 7108200;
+                const int y2RetainedTick = 7108210;
+                state.CommercialTimelineStartTick = y2SpineBoundary;
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = relationsAggregateSettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 1,
+                    totalTradeValue = 17
+                });
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    7108231, y2RetainedTick, relationsRetainedSettlementId,
+                    CommercialEventType.SaleCompleted, "Y2 retained Testholme",
+                    compactDetail: "Y2 retained detail"));
+                CommercialHistoryRelationRow y2NeverRow =
+                    CommercialHistoryUiService.BuildRow(state, relationsNeverSettlementId);
+                CommercialHistoryRelationRow y2AggregateRow =
+                    CommercialHistoryUiService.BuildRow(state, relationsAggregateSettlementId);
+                CommercialHistoryRelationRow y2RetainedRow =
+                    CommercialHistoryUiService.BuildRow(state, relationsRetainedSettlementId);
+                string y2NeverSince = SummaryRowValue(
+                    y2NeverRow.summaryRows, "Trading since");
+                string y2AggregateSince = SummaryRowValue(
+                    y2AggregateRow.summaryRows, "Trading since");
+                string y2RetainedSince = SummaryRowValue(
+                    y2RetainedRow.summaryRows, "Trading since");
+                string y2AggregateExpected = "Detailed history tracked since " +
+                    GenDate.DateShortStringAt(
+                        GenDate.TickGameToAbs(y2SpineBoundary), Vector2.zero);
+                string y2RetainedExpected = "Earliest retained event: " +
+                    GenDate.DateShortStringAt(
+                        GenDate.TickGameToAbs(y2RetainedTick), Vector2.zero);
+                r.Check(
+                    y2NeverSince == "No commercial history recorded" &&
+                    y2AggregateSince == y2AggregateExpected &&
+                    y2RetainedSince == y2RetainedExpected &&
+                    y2NeverSince != y2AggregateSince &&
+                    y2NeverSince != y2RetainedSince &&
+                    y2AggregateSince != y2RetainedSince &&
+                    !ContainsIgnoreCase(y2NeverSince, "since"),
+                    "Y2 coverage cases have distinct truthful Relations wording",
+                    $"never=\"{y2NeverSince}\"; aggregate-only=\"{y2AggregateSince}\"; " +
+                    $"retained=\"{y2RetainedSince}\"");
+
+                // Y3: a durable relationship with no retained detail gets the spine lower bound.
+                // The label and tooltip must both preserve that distinction from a first trade.
+                ResetHistoryFixtures(state);
+                const int y3SpineBoundary = 7108300;
+                state.CommercialTimelineStartTick = y3SpineBoundary;
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = relationsSpineSettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 1,
+                    totalTradeValue = 29
+                });
+                CommercialHistoryRelationRow y3Row =
+                    CommercialHistoryUiService.BuildRow(state, relationsSpineSettlementId);
+                string y3Since = SummaryRowValue(y3Row.summaryRows, "Trading since");
+                string y3SinceTooltip = SummaryRowTooltip(y3Row.summaryRows, "Trading since");
+                r.Check(
+                    ContainsIgnoreCase(y3Since, "Detailed history tracked since") &&
+                    !ContainsIgnoreCase(y3Since, "first trade") &&
+                    ContainsIgnoreCase(y3SinceTooltip, "not a claim") &&
+                    ContainsIgnoreCase(y3SinceTooltip, "record spine"),
+                    "Y3 spine boundary is not presented as a first trade",
+                    $"presented=\"{y3Since}\"; tooltip=\"{y3SinceTooltip}\"; " +
+                    $"boundary={y3SpineBoundary}");
+
+                // Y4: search the actual presented strings for the independent sentinel digits.
+                // Equality with an expected empty-state sentence would not catch a stray
+                // sentinel in a tooltip or one of the other displayed fields.
+                const string y4NoHistoryDigits = "-1";
+                const string y4FloatMaxDigits =
+                    "34028230000000000000000000000000000000";
+                List<string> y4Presented = new List<string>();
+                y4Presented.AddRange(PresentedRelationStrings(y2NeverRow));
+                y4Presented.AddRange(PresentedRelationStrings(y2AggregateRow));
+                y4Presented.AddRange(PresentedRelationStrings(y2RetainedRow));
+                bool y4NoSentinel = true;
+                foreach (string presented in y4Presented)
+                {
+                    if (presented != null &&
+                        (presented.Contains(y4NoHistoryDigits) ||
+                         presented.Contains(y4FloatMaxDigits)))
+                    {
+                        y4NoSentinel = false;
+                        break;
+                    }
+                }
+
+                r.Check(
+                    y4NoSentinel,
+                    "Y4 Relations history presentation never formats a none sentinel",
+                    $"searched NoHistory digits=\"{y4NoHistoryDigits}\"; " +
+                    $"searched float.MaxValue F0 digits=\"{y4FloatMaxDigits}\"; " +
+                    $"presented={DescribeStrings(y4Presented)}");
+
+                // Y5: zero is not evidence for a retained trade-value total. The fixture has a
+                // durable sales count but its value aggregate is the explicit unknown sentinel.
+                ResetHistoryFixtures(state);
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = relationsUnsupportedSettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 2,
+                    totalTradeValue = 0
+                });
+                CommercialHistorySummary y5Summary =
+                    CommercialHistoryService.BuildSummary(state, relationsUnsupportedSettlementId);
+                CommercialHistoryRelationRow y5Row =
+                    CommercialHistoryUiService.BuildRow(state, relationsUnsupportedSettlementId);
+                string y5TradeValue = SummaryRowValue(
+                    y5Row.summaryRows, "Total known trade value");
+                r.Check(
+                    !y5Summary.HasTotalKnownTradeValue &&
+                    y5TradeValue == "No retained trade-value total" &&
+                    y5TradeValue != "0",
+                    "Y5 unsupported trade value is presented honestly, not as zero",
+                    $"supported={y5Summary.HasTotalKnownTradeValue}; " +
+                    $"presented=\"{y5TradeValue}\"; expected=\"No retained trade-value total\"; " +
+                    $"summary={DescribeSummary(y5Summary)}");
+
+                // Y6: exercise the actual Relations row with a thousand retained records. The
+                // expected twelve is an independent screenful contract, not the implementation
+                // constant, so changing the UI to request everything makes this red.
+                ResetHistoryFixtures(state);
+                const int y6RecordCount = 1000;
+                const int y6RequestedRows = 12;
+                const int y6FirstId = 7108400;
+                for (int i = 0; i < y6RecordCount; i++)
+                {
+                    int id = y6FirstId + i;
+                    state.CommercialTimeline.Add(new CommercialEventRecord(
+                        id, 7108400 + i, relationsTimelineSettlementId,
+                        CommercialEventType.SaleCompleted, "Y6 Timeline Testholme",
+                        compactDetail: $"Y6-event-{id}"));
+                }
+
+                CommercialHistoryRelationRow y6Row =
+                    CommercialHistoryUiService.BuildRow(state, relationsTimelineSettlementId);
+                List<string> y6DisplayedLabels = RelationTimelineLabels(y6Row.timelineRows);
+                List<string> y6ExpectedMarkers = new List<string>();
+                for (int i = y6RecordCount - 1;
+                     i >= y6RecordCount - y6RequestedRows;
+                     i--)
+                {
+                    y6ExpectedMarkers.Add($"Y6-event-{y6FirstId + i}");
+                }
+                bool y6NewestFirst = y6DisplayedLabels.Count == y6ExpectedMarkers.Count;
+                for (int i = 0; i < y6ExpectedMarkers.Count && y6NewestFirst; i++)
+                {
+                    y6NewestFirst = ContainsIgnoreCase(
+                        y6DisplayedLabels[i], y6ExpectedMarkers[i]);
+                }
+                r.Check(
+                    y6Row.timelineRows.Count <= y6RequestedRows &&
+                    y6Row.timelineRows.Count == y6RequestedRows,
+                    "Y6 Relations timeline is bounded to the requested count",
+                    $"requested max={y6RequestedRows}; returned count={y6Row.timelineRows.Count}; " +
+                    $"ordered labels={DescribeStrings(y6DisplayedLabels)}");
+                r.Check(
+                    y6NewestFirst,
+                    "Y6 Relations timeline is ordered newest first",
+                    $"expected markers={DescribeStrings(y6ExpectedMarkers)}; " +
+                    $"ordered labels={DescribeStrings(y6DisplayedLabels)}");
+
+                // Y7: use a small mixed fixture so dropping the settlement filter cannot hide
+                // behind the twelve-row cap.
+                ResetHistoryFixtures(state);
+                const int y7OldTargetId = 7108501;
+                const int y7NewTargetId = 7108502;
+                const int y7OtherId = 7108503;
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    y7OldTargetId, 7108501, relationsFilterSettlementId,
+                    CommercialEventType.SaleCompleted, "Y7 target Testholme",
+                    compactDetail: $"Y7-target-{y7OldTargetId}"));
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    y7NewTargetId, 7108503, relationsFilterSettlementId,
+                    CommercialEventType.PurchaseCompleted, "Y7 target Testholme",
+                    compactDetail: $"Y7-target-{y7NewTargetId}"));
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    y7OtherId, 7108504, relationsNeverSettlementId,
+                    CommercialEventType.SaleCompleted, "Y7 other Testholme",
+                    compactDetail: $"Y7-other-{y7OtherId}"));
+                CommercialHistoryRelationRow y7Row =
+                    CommercialHistoryUiService.BuildRow(state, relationsFilterSettlementId);
+                List<string> y7DisplayedLabels = RelationTimelineLabels(y7Row.timelineRows);
+                List<string> y7ExpectedMarkers = new List<string>
+                {
+                    $"Y7-target-{y7OldTargetId}",
+                    $"Y7-target-{y7NewTargetId}"
+                };
+                bool y7OnlyTarget = y7DisplayedLabels.Count == y7ExpectedMarkers.Count;
+                foreach (string expectedMarker in y7ExpectedMarkers)
+                {
+                    bool found = false;
+                    foreach (string label in y7DisplayedLabels)
+                    {
+                        if (ContainsIgnoreCase(label, expectedMarker))
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    y7OnlyTarget = y7OnlyTarget && found;
+                }
+
+                foreach (string label in y7DisplayedLabels)
+                {
+                    y7OnlyTarget = y7OnlyTarget &&
+                        ContainsIgnoreCase(label, "Y7-target-") &&
+                        !ContainsIgnoreCase(label, "Y7-other-");
+                }
+                r.Check(
+                    y7OnlyTarget,
+                    "Y7 Relations timeline contains only that settlement's events",
+                    $"requested settlement={relationsFilterSettlementId}; " +
+                    $"expected markers={DescribeStrings(y7ExpectedMarkers)}; " +
+                    $"labels={DescribeStrings(y7DisplayedLabels)}");
+
+                // Y8: call both the direct row builder and the collection builder against an ID
+                // absent from every persisted source, then verify that presentation created no
+                // reputation, aggregate, timeline, order, or contract record.
+                ResetHistoryFixtures(state);
+                int y8ReputationsBefore = state.Reputations.Count;
+                int y8HistoryBefore = state.CommercialHistory.Count;
+                int y8TimelineBefore = state.CommercialTimeline.Count;
+                int y8SalesBefore = state.Orders.Count;
+                int y8PurchasesBefore = state.PurchaseOrders.Count;
+                int y8ContractsBefore = state.Contracts.Count;
+                int y8ProcurementBefore = state.ProcurementContracts.Count;
+                List<CommercialHistoryRelationRow> y8Rows =
+                    CommercialHistoryUiService.BuildRows(state);
+                CommercialHistoryRelationRow y8DirectRow =
+                    CommercialHistoryUiService.BuildRow(state, relationsMutationSettlementId);
+                bool y8HasHistory = state.CommercialHistory.Exists(
+                    entry => entry != null && entry.settlementId == relationsMutationSettlementId);
+                bool y8HasTimeline = state.CommercialTimeline.Exists(
+                    record => record != null && record.settlementId == relationsMutationSettlementId);
+                r.Check(
+                    y8Rows.Count == 0 && y8DirectRow.summaryRows.Count == 6 &&
+                    state.Reputations.Count == y8ReputationsBefore &&
+                    state.FindReputation(relationsMutationSettlementId) == null &&
+                    state.CommercialHistory.Count == y8HistoryBefore && !y8HasHistory &&
+                    state.CommercialTimeline.Count == y8TimelineBefore && !y8HasTimeline &&
+                    state.Orders.Count == y8SalesBefore &&
+                    state.PurchaseOrders.Count == y8PurchasesBefore &&
+                    state.Contracts.Count == y8ContractsBefore &&
+                    state.ProcurementContracts.Count == y8ProcurementBefore,
+                    "Y8 Relations read model mutates no persisted history",
+                    $"rows={y8Rows.Count}; reputations {y8ReputationsBefore}->{state.Reputations.Count}; " +
+                    $"history {y8HistoryBefore}->{state.CommercialHistory.Count}; " +
+                    $"timeline {y8TimelineBefore}->{state.CommercialTimeline.Count}; " +
+                    $"sales {y8SalesBefore}->{state.Orders.Count}; " +
+                    $"purchases {y8PurchasesBefore}->{state.PurchaseOrders.Count}; " +
+                    $"contracts {y8ContractsBefore}->{state.Contracts.Count}; " +
+                    $"procurement {y8ProcurementBefore}->{state.ProcurementContracts.Count}");
             }
             catch (Exception ex)
             {
-                r.Check(false, "Stage 7A commercial-history fixtures completed", ex.ToString());
+                r.Check(false, "Stage 7A/7C commercial-history fixtures completed", ex.ToString());
             }
             finally
             {
@@ -1775,6 +2173,129 @@ namespace Intercolony
             }
 
             return "[" + string.Join(",", text.ToArray()) + "]";
+        }
+
+        private static string SummaryRowValue(
+            List<CommercialHistorySummaryRow> rows, string label)
+        {
+            if (rows != null)
+            {
+                foreach (CommercialHistorySummaryRow row in rows)
+                {
+                    if (row.label == label)
+                    {
+                        return row.value;
+                    }
+                }
+            }
+
+            return "<missing>";
+        }
+
+        private static string SummaryRowTooltip(
+            List<CommercialHistorySummaryRow> rows, string label)
+        {
+            if (rows != null)
+            {
+                foreach (CommercialHistorySummaryRow row in rows)
+                {
+                    if (row.label == label)
+                    {
+                        return row.tooltip;
+                    }
+                }
+            }
+
+            return "<missing>";
+        }
+
+        private static List<string> PresentedRelationStrings(
+            CommercialHistoryRelationRow row)
+        {
+            List<string> result = new List<string>
+            {
+                row.settlementLabel,
+                row.factionLabel,
+                row.factionAndGoodwillLabel,
+                row.goodwillLabel,
+                row.scoreLabel,
+                row.statsLabel,
+                row.rowTooltip,
+                row.emptyTimelineLabel
+            };
+
+            if (row.summaryRows != null)
+            {
+                foreach (CommercialHistorySummaryRow summary in row.summaryRows)
+                {
+                    result.Add(summary.label);
+                    result.Add(summary.value);
+                    result.Add(summary.tooltip);
+                }
+            }
+
+            if (row.timelineRows != null)
+            {
+                foreach (CommercialHistoryTimelineRow timeline in row.timelineRows)
+                {
+                    result.Add(timeline.label);
+                    result.Add(timeline.tooltip);
+                }
+            }
+
+            return result;
+        }
+
+        private static List<string> RelationTimelineLabels(
+            List<CommercialHistoryTimelineRow> rows)
+        {
+            List<string> result = new List<string>();
+            if (rows == null)
+            {
+                return result;
+            }
+
+            foreach (CommercialHistoryTimelineRow row in rows)
+            {
+                result.Add(row.label ?? "");
+            }
+
+            return result;
+        }
+
+        private static string DescribeTimelineLabels(
+            List<CommercialHistoryTimelineRow> rows)
+        {
+            List<string> labels = new List<string>();
+            if (rows != null)
+            {
+                foreach (CommercialHistoryTimelineRow row in rows)
+                {
+                    labels.Add(row.label ?? "<null>");
+                }
+            }
+
+            return "[" + string.Join(" | ", labels.ToArray()) + "]";
+        }
+
+        private static string DescribeStrings(List<string> values)
+        {
+            List<string> text = new List<string>();
+            if (values != null)
+            {
+                foreach (string value in values)
+                {
+                    text.Add(value == null ? "<null>" : $"\"{value.Replace("\n", "\\n")}\"");
+                }
+            }
+
+            return "[" + string.Join(" | ", text.ToArray()) + "]";
+        }
+
+        private static bool ContainsIgnoreCase(string value, string fragment)
+        {
+            return !string.IsNullOrEmpty(value) &&
+                   value.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static Dictionary<Thing, int> SnapshotHistorySilver(Map map)
