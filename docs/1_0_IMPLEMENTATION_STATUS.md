@@ -4,9 +4,9 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 5 — Commercial relationships & negotiation
-Current slice:      5C — post-acceptance renegotiation; all play calibration deferred to one sitting at the end of 1.0
-Last completed:     5B part 2 — counteroffer surface on the Market tab (`4fb2452`, 2026-08-22)
-Current save schema: 47
+Current slice:      5E — relationship-tier milestones; all play calibration deferred to one sitting at the end of 1.0
+Last completed:     5D part 1 — negotiation outcomes reach the commercial timeline (`e6d39c2`, 2026-08-23)
+Current save schema: 48
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
 
@@ -1134,6 +1134,78 @@ because every opportunity a live world currently generates is a fungible trade i
 therefore supports both modes. The branch it covers is real — it is the one a future non-fungible
 opportunity will take — but no world generates one yet, so this assertion is proving the gate,
 not proving a shipped scenario.
+
+### 5C — post-acceptance renegotiation of a binding sales order (2026-08-23)
+
+**Claim:** a player holding a binding `Accepted` sales order can request one of three things: a
+deadline extension, capped at `MaxExtensionDays = 15`; a quantity reduction; or mutual cancellation.
+Each kind is attemptable ONCE per order, tracked by a per-kind persisted flag.
+
+**Files:**
+- `Source/Intercolony/Contracts/IntercolonyNegotiationEvaluator.cs`
+- `Source/Intercolony/Contracts/PostAcceptanceRenegotiationService.cs` (new)
+- `Source/Intercolony/Core/IntercolonyWorldComponent.cs`
+- `Source/Intercolony/Debug/IntercolonyNegotiationSelfTest.cs`
+- `Source/Intercolony/Orders/SalesOrder.cs`
+- `Source/Intercolony/Orders/SalesOrderService.cs`
+
+**Schema:** bumped from 47 to 48, additively; each order persists the three per-kind attempt flags.
+
+**Commit:** `4016062`.
+
+**Tests:** verified to the project standard before commit: the negotiation suite was green at
+30/0/0, then a mutation battery individually drove each assertion red by breaking exactly the
+behaviour it claims to cover, then four fresh-world full-suite runs were green with a clean log.
+
+**The gate is deliberately two-layered.** `SalesOrder.CanRequest` refuses a wrong status or a
+spent attempt, and `PostAcceptanceRenegotiationService` re-checks status itself. That redundancy
+is what assertion A7 pins, and it is why A7 asserts the service's exact failure string rather than
+merely that the call failed.
+
+**Mutual cancellation goes through `SalesOrderService.CancelByMutualAgreement`.** It skips the
+reputation penalty and the `SaleCancelled` timeline record that a player withdrawal earns. Ending
+a deal by agreement is not the same event as walking away from it.
+
+**A REAL DEFECT was found and fixed here, and it is worth recording as a calibration lesson.**
+`IntercolonyNegotiationEvaluator.CancellationWeight` was `0.85f`, which made mutual cancellation
+unreachable at EVERY reputation tier — the maximum realistic favourable contribution is about
+`+0.90`, so any weight above roughly `0.80` puts acceptance past `AcceptedScoreThreshold` for
+everyone. It was retuned to `0.55f`. Assertion A3b now FAILS, never skips, if no counterparty in
+the world will accept a mutual cancellation, so the constant cannot silently drift back into
+unreachable territory.
+
+**A7 was HOLLOW when first written and was caught by mutation, not by reading — the seventh such
+catch on this project.** Replacing the service's status gate with `if (false)` left the suite fully
+green, because `SalesOrder.CanRequest` fires first and hid it.
+
+### 5D part 1 — negotiation outcomes reach the commercial timeline (2026-08-23)
+
+**Claim:** four values were appended to `CommercialEventType`: `CounterofferAccepted`,
+`DeadlineExtended`, `QuantityReduced`, `SaleCancelledByAgreement`. Appending needs no migration.
+
+**Files:**
+- `Source/Intercolony/Contracts/MarketOpportunityNegotiationService.cs`
+- `Source/Intercolony/Contracts/PostAcceptanceRenegotiationService.cs`
+- `Source/Intercolony/Core/CommercialEventRecord.cs`
+- `Source/Intercolony/Debug/IntercolonyNegotiationSelfTest.cs`
+- `Source/Intercolony/Orders/SalesOrderService.cs`
+
+**Schema:** unchanged at 48. The four event values were appended; no migration is needed.
+
+**Commit:** `e6d39c2`.
+
+**Tests:** verified to the project standard before commit: the negotiation suite was green at
+30/0/0, then a mutation battery individually drove each assertion red by breaking exactly the
+behaviour it claims to cover, then four fresh-world full-suite runs were green with a clean log.
+
+**Records are written at the point the durable term actually changes, never at the point one is
+proposed.** A structurally invalid counteroffer, a refusal, and a declined final counter record
+nothing, because none of them changed anything binding.
+
+**Six assertions T1–T6 cover the outcomes.** T6 pins the negative case — declining a final counter
+must leave the timeline length unchanged — and was verified by mutating
+`MarketOpportunityNegotiationService.TryDecline` until it went red at
+`timeline before=3 after=4`.
 
 ## RELEASED — Stage 3 proceeds; calibration is deferred to the end of 1.0 (2026-08-22)
 
