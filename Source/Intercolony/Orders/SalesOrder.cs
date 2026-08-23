@@ -121,6 +121,10 @@ namespace Intercolony
 
         public SalesOrderStatus status = SalesOrderStatus.Accepted;
 
+        private bool deadlineExtensionAttempted;
+        private bool quantityReductionAttempted;
+        private bool mutualCancellationAttempted;
+
         /// <summary>How the goods move (§25). Fixed at acceptance; the price already reflects it.</summary>
         public FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery;
 
@@ -198,6 +202,43 @@ namespace Intercolony
         public bool CanMarkReady => status == SalesOrderStatus.Accepted &&
                                     fulfillment == FulfillmentMode.BuyerPickup;
 
+        /// <summary>Whether this accepted order still permits one request of the given kind.</summary>
+        public bool CanRequest(RenegotiationRequestKind kind)
+        {
+            if (status != SalesOrderStatus.Accepted)
+            {
+                return false;
+            }
+
+            switch (kind)
+            {
+                case RenegotiationRequestKind.DeadlineExtension:
+                    return !deadlineExtensionAttempted;
+                case RenegotiationRequestKind.QuantityReduction:
+                    return !quantityReductionAttempted;
+                case RenegotiationRequestKind.MutualCancellation:
+                    return !mutualCancellationAttempted;
+                default:
+                    return false;
+            }
+        }
+
+        internal void MarkRenegotiationAttempted(RenegotiationRequestKind kind)
+        {
+            switch (kind)
+            {
+                case RenegotiationRequestKind.DeadlineExtension:
+                    deadlineExtensionAttempted = true;
+                    break;
+                case RenegotiationRequestKind.QuantityReduction:
+                    quantityReductionAttempted = true;
+                    break;
+                case RenegotiationRequestKind.MutualCancellation:
+                    mutualCancellationAttempted = true;
+                    break;
+            }
+        }
+
         public bool BuyerEnRoute => status == SalesOrderStatus.AwaitingCollection;
 
         public float DaysUntilBuyerArrives =>
@@ -253,6 +294,12 @@ namespace Intercolony
             Scribe_Values.Look(ref deadlineTick, "deadlineTick", 0);
             Scribe_Values.Look(ref completedTick, "completedTick", NeverCompletedTick);
             Scribe_Values.Look(ref status, "status", SalesOrderStatus.Accepted);
+            Scribe_Values.Look(
+                ref deadlineExtensionAttempted, "deadlineExtensionAttempted", false);
+            Scribe_Values.Look(
+                ref quantityReductionAttempted, "quantityReductionAttempted", false);
+            Scribe_Values.Look(
+                ref mutualCancellationAttempted, "mutualCancellationAttempted", false);
             Scribe_Values.Look(ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(
                 ref buyerPickupDistanceTiles, "buyerPickupDistanceTiles", UnknownBuyerPickupDistance);

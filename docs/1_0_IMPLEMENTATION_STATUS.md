@@ -4,9 +4,9 @@ The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTA
 first; this file says where in that program we actually are.
 
 Current stage:      Stage 5 — Commercial relationships & negotiation
-Current slice:      starting Stage 5; all play calibration deferred to one sitting at the end of 1.0
-Last completed:     Stage 4 complete — brand strength, all 13 criteria (2026-08-22)
-Current save schema: 46
+Current slice:      5C — post-acceptance renegotiation; all play calibration deferred to one sitting at the end of 1.0
+Last completed:     5B part 2 — counteroffer surface on the Market tab (`4fb2452`, 2026-08-22)
+Current save schema: 47
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
 
@@ -1080,6 +1080,60 @@ what it saw, not how much it saw.**
 **Files:** `docs/1_0_IMPLEMENTATION_STATUS.md` (new).
 **Schema:** unchanged.
 **Tests:** none applicable.
+
+### 5B part 2 — counteroffer surface on the Market tab (2026-08-22)
+
+**Claim:** the Market tab exposes the Stage 5B negotiation the service already supported.
+Accept and Counter sit side by side in the action column; a row whose counterparty has already
+answered shows a single Answer button instead.
+
+**Files:**
+- `Source/Intercolony/UI/CounterofferUiService.cs` (new) — the read model
+- `Source/Intercolony/UI/Dialog_Counteroffer.cs` (new) — the dialog
+- `Source/Intercolony/UI/MainTabWindow_Intercolony.cs`
+- `Source/Intercolony/Market/IntercolonyPricing.cs`
+- `Source/Intercolony/Market/MarketOpportunity.cs`
+- `Source/Intercolony/Orders/SalesOrder.cs`
+- `Source/Intercolony/Debug/IntercolonyNegotiationSelfTest.cs`
+
+**Schema:** unchanged at 47. Nothing new is persisted; the pending final counter was already
+persisted by 5B part 1.
+
+**Commit:** `4fb2452`.
+
+**Tests:** negotiation suite 15 passed, 0 failed, 0 skipped. Full suite green on four fresh
+worlds: 1140/0/15, 1139/0/15, 1140/0/15, 1140/0/15, log clean on all four.
+
+**The read model is separate from the drawing, and that is what made the assertions possible.**
+`CounterofferUiService` decides which controls and rows exist; `Dialog_Counteroffer` only paints
+them. RimWorld's immediate-mode widgets are not a unit-test surface, so a counteroffer rule
+living inside `DoWindowContents` could not have been asserted at all.
+
+**Four assertions, each mutation-proven in isolation, each turning exactly its own assertion red.**
+(a) making the counter action always available broke "the Market counter action is offered once
+and then disappears"; (b) making the fulfilment mode always editable broke "the fulfilment editor
+follows the opportunity's two-mode capability"; (c) making the answer view show the player's
+proposed terms instead of the counterparty's final counter broke "the answer row and displayed
+terms follow the evaluator's actual response"; (d) making `AcceptFinalCounter` bind the original
+terms broke "accepting the final counter creates an order with its agreed terms". No mutation
+leaked into another assertion.
+
+**`IntercolonyPricing.TotalPayment` is now the single owner of unit-price x quantity rounding.**
+`MarketOpportunity.TotalPrice`, `SalesOrder.TotalPayment`, `SalesOrder.DiscountedTotalPayment`
+and the dialog's total row all call it. This is the standing rule from `0b1dfe9` — a displayed
+figure and a charged figure come from one calculation — applied before a second dialog could
+reintroduce the Find Buyer defect of advertising one total and paying another.
+
+**The dialog measures its body rather than boxing it.** `Text.CalcHeight` sizes every row, the
+window clamps to a fraction of `UI.screenHeight`, and the content scrolls past the clamp. A long
+evaluator explanation is exactly the runtime-composed string that project rule 7 exists for.
+
+**One fixture is deliberately artificial and should be recognised as such.** The two-mode
+assertion makes `SupportsBothFulfillmentModes` false by nulling the opportunity's `thingDef`,
+because every opportunity a live world currently generates is a fungible trade item and
+therefore supports both modes. The branch it covers is real — it is the one a future non-fungible
+opportunity will take — but no world generates one yet, so this assertion is proving the gate,
+not proving a shipped scenario.
 
 ## RELEASED — Stage 3 proceeds; calibration is deferred to the end of 1.0 (2026-08-22)
 

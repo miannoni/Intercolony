@@ -78,6 +78,12 @@ namespace Intercolony
         public IntercolonyNegotiationTerms originalTerms;
         public IntercolonyNegotiationTerms proposedTerms;
 
+        /// <summary>Whether a final counter is legal for this proposal.</summary>
+        public bool counterAllowed = true;
+
+        /// <summary>Whether the proposal asks to end an existing bound obligation.</summary>
+        public bool cancellationRequested = false;
+
         /// <summary>
         /// Some opportunities support only their advertised logistics mode. The evaluator treats
         /// an unsupported mode change as invalid instead of pretending a later UI can fulfil it.
@@ -284,6 +290,19 @@ namespace Intercolony
         private const float EventUrgencyWeight = 0.25f;
 
         /// <summary>
+        /// At 0.85f, mutual cancellation was refused at every reputation, making the
+        /// concession unreachable rather than merely expensive. The other contributions cap
+        /// near +0.90 in realistic favourable conditions: 0.10 base willingness, the full
+        /// 0.60 ReputationWeight at a maxed score, and roughly 0.20 between market, identity
+        /// and wealth. Any weight above about 0.80 therefore puts acceptance past
+        /// AcceptedScoreThreshold no matter who is asking. At 0.55f, a Preferred partner
+        /// (reputation 80+) can have a bound obligation released, a Known trader at the 50
+        /// starting score cannot, and an Untrusted one is nowhere near. Ending an obligation
+        /// early remains the most expensive concession of the three without being impossible.
+        /// </summary>
+        private const float CancellationWeight = 0.55f;
+
+        /// <summary>
         /// Trusted partners can reduce the quantity they are willing to accept on a sale without
         /// being treated like strangers. This is the new relationship behaviour §5.2 asks for.
         /// </summary>
@@ -350,6 +369,14 @@ namespace Intercolony
             result.Factors.Add(new IntercolonyNegotiationFactor(
                 "Counterparty baseline", BaseWillingness,
                 "A workable proposal starts open to one bounded change."));
+
+            if (proposal.cancellationRequested)
+            {
+                score -= CancellationWeight;
+                result.Factors.Add(new IntercolonyNegotiationFactor(
+                    "Mutual cancellation", -CancellationWeight,
+                    "ending a bound obligation early"));
+            }
 
             float priceBurden = proposal.direction == IntercolonyNegotiationDirection.Sale
                 ? proposed.unitPrice / original.unitPrice - NeutralRatio
@@ -547,8 +574,17 @@ namespace Intercolony
             }
             else if (score >= CounteredScoreThreshold && hardRefusals.Count == 0)
             {
-                result.Decision = IntercolonyNegotiationDecision.Countered;
-                result.FinalCounterTerms = BuildFinalCounter(original, proposed);
+                if (proposal.counterAllowed)
+                {
+                    result.Decision = IntercolonyNegotiationDecision.Countered;
+                    result.FinalCounterTerms = BuildFinalCounter(original, proposed);
+                }
+                else
+                {
+                    result.Decision = IntercolonyNegotiationDecision.Refused;
+                    result.RefusalReason =
+                        "A bound obligation is not reopened for negotiation.";
+                }
             }
             else
             {

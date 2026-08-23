@@ -1013,23 +1013,47 @@ namespace Intercolony
         /// <summary>Player-initiated withdrawal. Distinct from failure so later reputation work can treat them differently (§27).</summary>
         public static bool Cancel(SalesOrder order)
         {
+            return CancelInternal(
+                IntercolonyWorldComponent.Current, order, playerWithdrawal: true);
+        }
+
+        internal static bool CancelByMutualAgreement(
+            IntercolonyWorldComponent state, SalesOrder order)
+        {
+            return CancelInternal(state, order, playerWithdrawal: false);
+        }
+
+        private static bool CancelInternal(
+            IntercolonyWorldComponent state, SalesOrder order, bool playerWithdrawal)
+        {
             if (order == null || !order.IsOpen)
             {
                 return false;
             }
 
             order.status = SalesOrderStatus.Cancelled;
-            order.outcomeNote = "Cancelled by the player.";
-            ReputationService.NoteOrderCancelled(IntercolonyWorldComponent.Current, order);
-            CommercialTimelineService.Record(
-                CommercialEventType.SaleCancelled,
-                order.settlementId,
-                order.settlementName,
-                order.id,
-                order.ThingDef,
-                order.Quantity,
-                compactDetail: "Withdrawn by the player");
-            IntercolonyLog.Message($"Order {order.id} cancelled by the player.");
+            order.outcomeNote = playerWithdrawal
+                ? "Cancelled by the player."
+                : "Cancelled by mutual agreement.";
+
+            if (playerWithdrawal)
+            {
+                ReputationService.NoteOrderCancelled(state, order);
+                CommercialTimelineService.Record(
+                    CommercialEventType.SaleCancelled,
+                    order.settlementId,
+                    order.settlementName,
+                    order.id,
+                    order.ThingDef,
+                    order.Quantity,
+                    compactDetail: "Withdrawn by the player");
+                IntercolonyLog.Message($"Order {order.id} cancelled by the player.");
+            }
+            else
+            {
+                IntercolonyLog.Message($"Order {order.id} cancelled by mutual agreement.");
+            }
+
             return true;
         }
 
