@@ -77,6 +77,7 @@ namespace Intercolony
                 CheckContractWriteSites(r, state);
                 CheckQuerying(r, state);
                 CheckCommercialHistoryReadModel(r, state);
+                CheckStage7AcceptanceSurface(r, state);
                 CheckRetentionAndPruning(r, state);
                 CheckScribeRoundTrip(r);
             }
@@ -2077,6 +2078,311 @@ namespace Intercolony
             state.Contracts.Clear();
             state.ProcurementContracts.Clear();
             state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+        }
+
+        // --- Stage 7D acceptance surface -------------------------------------------------
+
+        /// <summary>
+        /// Covers only the Stage 7 gate holes that U/W/Y do not prove. Sale and purchase rows
+        /// are seeded through their real completion transitions; the remaining event kinds are
+        /// compact read-model fixtures because their write sites already have dedicated transition
+        /// tests. The assertion is still against the presented Relations row, not raw records.
+        /// </summary>
+        private static void CheckStage7AcceptanceSurface(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const int settlementId = 710901;
+            const int saleId = 710902;
+            const int purchaseId = 710903;
+
+            List<CommercialHistoryEntry> savedHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<ProductBrandRecord> savedBrands =
+                new List<ProductBrandRecord>(state.ProductBrandRecords);
+            List<CommercialEventRecord> savedTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            List<SalesOrder> savedSalesOrders = new List<SalesOrder>(state.Orders);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<RecurringContract> savedContracts =
+                new List<RecurringContract>(state.Contracts);
+            List<ProcurementContract> savedProcurementContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+
+            try
+            {
+                ResetHistoryFixtures(state);
+                state.ProductBrandRecords.Clear();
+
+                ThingDef fixtureDef = IntercolonyProductClassifier.TradableDefs.Count > 0
+                    ? IntercolonyProductClassifier.TradableDefs[0]
+                    : ThingDefOf.Steel ?? ThingDefOf.Silver;
+                if (fixtureDef == null)
+                {
+                    const string reason =
+                        "no ThingDef is available for the commercial-history fixture";
+                    r.Skip("G1 presented sale and purchase rows", reason);
+                    r.Skip("G2 presented procurement contract rows", reason);
+                    r.Skip("G3 presented negotiation rows", reason);
+                    r.Skip("G4 presented brand context without a brand control", reason);
+                    r.Skip("G8 distinguished standing from brand", reason);
+                    r.Skip("G9 one settlement-history surface covered all five categories", reason);
+                    return;
+                }
+
+                CommercialReputation reputation = new CommercialReputation(
+                    settlementId, "Stage 7D Testholme", "Stage 7D faction");
+                state.Reputations[settlementId] = reputation;
+                state.ProductBrandRecords.Add(new ProductBrandRecord(
+                    fixtureDef,
+                    ProductBrandService.EstablishedThreshold + 10f,
+                    evidenceWeight: 4f,
+                    unitsDelivered: 4));
+
+                // Real production paths: these two completion boundaries must write the rows
+                // that G1 presents. PurchaseOrderService resolves its owner through Current,
+                // which is the same world component passed to this self-test in live use.
+                SalesOrder completedSale = MakeHistorySale(
+                    saleId, settlementId, fixtureDef, 4, 37, 9.99f,
+                    SalesOrderStatus.Accepted);
+                completedSale.acceptedTick = GenTicks.TicksGame;
+                completedSale.deadlineTick = GenTicks.TicksGame + GenDate.TicksPerDay;
+                completedSale.deliveredQuantity = completedSale.Quantity;
+                state.Orders.Add(completedSale);
+                SalesOrderService.Complete(
+                    state, completedSale, GenTicks.TicksGame, "Stage 7D sale fixture");
+
+                PurchaseOrder completedPurchase = MakeHistoryPurchase(
+                    purchaseId, settlementId, fixtureDef, 3, 29, 2.5f,
+                    PurchaseOrderStatus.Confirmed);
+                state.PurchaseOrders.Add(completedPurchase);
+                PurchaseOrderService.Complete(completedPurchase, "Stage 7D purchase fixture");
+
+                // Direct records are used for the hard-to-reach read combinations. Their
+                // production writers are covered by the contract, RFQ, negotiation and brand
+                // self-tests; unique detail markers make a missing presented category explicit.
+                CommercialTimelineService.Record(
+                    state, CommercialEventType.ContractStarted, settlementId,
+                    "Stage 7D Testholme", 710904, fixtureDef, 40, 120,
+                    "procurement contract started");
+                CommercialTimelineService.Record(
+                    state, CommercialEventType.ProcurementCycleCompleted, settlementId,
+                    "Stage 7D Testholme", 710905, fixtureDef, 40, 120,
+                    "procurement cycle completed");
+                CommercialTimelineService.Record(
+                    state, CommercialEventType.ContractCancelled, settlementId,
+                    "Stage 7D Testholme", 710906, fixtureDef, 40, 0,
+                    "procurement contract ended/cancelled");
+                CommercialTimelineService.Record(
+                    state, CommercialEventType.CounterofferAccepted, settlementId,
+                    "Stage 7D Testholme", 710907, fixtureDef, 5, 80,
+                    "accepted counteroffer");
+                CommercialTimelineService.Record(
+                    state, CommercialEventType.DeadlineExtended, settlementId,
+                    "Stage 7D Testholme", 710908, fixtureDef, 5, 0,
+                    "deadline extension accepted");
+                CommercialTimelineService.Record(
+                    state, CommercialEventType.QuantityReduced, settlementId,
+                    "Stage 7D Testholme", 710909, fixtureDef, 3, 0,
+                    "quantity reduction accepted");
+                CommercialTimelineService.Record(
+                    state, CommercialEventType.BrandMilestone, settlementId,
+                    "Stage 7D Testholme", 710910, fixtureDef, 4, 0,
+                    "product brand reached Established");
+
+                CommercialHistoryRelationRow row =
+                    CommercialHistoryUiService.BuildRow(state, settlementId);
+                List<string> labels = RelationTimelineLabels(row.timelineRows);
+
+                bool g1Sale = HasTimelineLabel(labels, "Sale completed");
+                bool g1Purchase = HasTimelineLabel(labels, "Purchase completed");
+                r.Check(
+                    g1Sale && g1Purchase,
+                    "G1 presented timeline contains distinguishable completed sale and purchase rows",
+                    $"missing categories={MissingCategories(
+                        !g1Sale ? "completed sale" : null,
+                        !g1Purchase ? "completed purchase" : null)}; " +
+                    $"labels={DescribeStrings(labels)}");
+
+                bool g2Started = HasTimelineLabel(labels, "Sales agreement started") &&
+                                 HasTimelineLabel(labels, "procurement contract started");
+                bool g2Cycle = HasTimelineLabel(labels, "Procurement cycle completed") &&
+                               HasTimelineLabel(labels, "procurement cycle completed");
+                bool g2Ended = HasTimelineLabel(labels, "Sales agreement cancelled") &&
+                               HasTimelineLabel(labels, "procurement contract ended/cancelled");
+                r.Check(
+                    g2Started && g2Cycle && g2Ended,
+                    "G2 presented timeline contains procurement start, cycle completion and contract end",
+                    $"missing categories={MissingCategories(
+                        !g2Started ? "procurement contract started" : null,
+                        !g2Cycle ? "procurement cycle completed" : null,
+                        !g2Ended ? "procurement contract ended" : null)}; " +
+                    $"labels={DescribeStrings(labels)}");
+
+                bool g3Counter = HasTimelineLabel(labels, "Counteroffer accepted") &&
+                                 HasTimelineLabel(labels, "accepted counteroffer");
+                bool g3Deadline = HasTimelineLabel(labels, "Deadline extended") &&
+                                  HasTimelineLabel(labels, "deadline extension accepted");
+                bool g3Quantity = HasTimelineLabel(labels, "Quantity reduced") &&
+                                  HasTimelineLabel(labels, "quantity reduction accepted");
+                r.Check(
+                    g3Counter && g3Deadline && g3Quantity,
+                    "G3 presented timeline contains accepted counteroffer, deadline extension and quantity reduction",
+                    $"missing categories={MissingCategories(
+                        !g3Counter ? "accepted counteroffer" : null,
+                        !g3Deadline ? "deadline extension" : null,
+                        !g3Quantity ? "quantity reduction" : null)}; " +
+                    $"labels={DescribeStrings(labels)}");
+
+                List<string> presented = PresentedRelationStrings(row);
+                List<string> brandControls = new List<string>();
+                string[] brandControlFragments =
+                {
+                    "manage brand", "brand management", "set brand", "adjust brand", "edit brand"
+                };
+                foreach (string value in presented)
+                {
+                    foreach (string fragment in brandControlFragments)
+                    {
+                        if (ContainsIgnoreCase(value, fragment))
+                        {
+                            brandControls.Add(value);
+                            break;
+                        }
+                    }
+                }
+
+                bool g4Milestone = HasTimelineLabel(labels, "Brand milestone") &&
+                                   HasTimelineLabel(labels, "product brand reached Established");
+                bool g4NoManagementControl = brandControls.Count == 0;
+                r.Check(
+                    g4Milestone && g4NoManagementControl,
+                    "G4 presented timeline shows brand milestones as context without a brand-management control",
+                    $"missing categories={MissingCategories(
+                        !g4Milestone ? "brand milestone" : null,
+                        !g4NoManagementControl ? "no brand-management control" : null)}; " +
+                    $"controls={DescribeStrings(brandControls)}; presented={DescribeStrings(presented)}");
+
+                string standingBefore = SummaryRowValue(row.summaryRows, "Commercial standing");
+                string brandLabel = FindTimelineLabel(labels, "Brand milestone");
+                ProductBrandUiService.BrandSummary brandBefore =
+                    ProductBrandUiService.BuildSummary(state);
+                float brandScoreBefore = EffectiveBrandService.GetEffectiveBrand(state, fixtureDef);
+                reputation.Adjust(25f);
+                CommercialHistoryRelationRow afterReputationChange =
+                    CommercialHistoryUiService.BuildRow(state, settlementId);
+                string standingAfter = SummaryRowValue(
+                    afterReputationChange.summaryRows, "Commercial standing");
+                ProductBrandUiService.BrandSummary brandAfter =
+                    ProductBrandUiService.BuildSummary(state);
+                float brandScoreAfter = EffectiveBrandService.GetEffectiveBrand(state, fixtureDef);
+                bool g8StandingMoved = standingBefore != standingAfter;
+                bool g8BrandStayed = Mathf.Approximately(brandScoreBefore, brandScoreAfter) &&
+                                     brandBefore.knownFor.Count == brandAfter.knownFor.Count &&
+                                     brandBefore.weakReputation.Count == brandAfter.weakReputation.Count;
+                bool g8DifferentFacts = standingBefore != brandLabel &&
+                                        standingAfter != brandLabel &&
+                                        standingBefore != standingAfter;
+                r.Check(
+                    standingBefore == reputation.TierLabel(ReputationTier.Known) &&
+                    standingAfter == reputation.TierLabel(ReputationTier.Reliable) &&
+                    g8StandingMoved && g8BrandStayed && g8DifferentFacts,
+                    "G8 commercial reliability and product brand are different labelled facts",
+                    $"missing categories={MissingCategories(
+                        standingBefore != reputation.TierLabel(ReputationTier.Known) ? "initial reputation tier" : null,
+                        standingAfter != reputation.TierLabel(ReputationTier.Reliable) ? "changed reputation tier" : null,
+                        !g8BrandStayed ? "stable global product brand" : null,
+                        !g8DifferentFacts ? "distinct standing/brand wording" : null)}; " +
+                    $"standing={standingBefore}->{standingAfter}; brandRow={brandLabel}; " +
+                    $"brandScore={brandScoreBefore:0.##}->{brandScoreAfter:0.##}");
+
+                bool g9Sales = g1Sale && g1Purchase;
+                bool g9Contracts = g2Started && g2Cycle && g2Ended;
+                bool g9Negotiation = g3Counter && g3Deadline && g3Quantity;
+                bool g9Brand = g4Milestone;
+                r.Check(
+                    g9Sales && g9Contracts && g9Negotiation && g9Brand,
+                    "G9 one settlement-history detail row covers sales, purchases, contracts, negotiation and brand context",
+                    $"missing categories={MissingCategories(
+                        !g1Sale ? "sales" : null,
+                        !g1Purchase ? "purchases" : null,
+                        !g9Contracts ? "contract events" : null,
+                        !g9Negotiation ? "negotiation events" : null,
+                        !g9Brand ? "brand context" : null)}; " +
+                    $"settlement={settlementId}; labels={DescribeStrings(labels)}");
+            }
+            catch (Exception ex)
+            {
+                r.Check(false, "Stage 7D acceptance-surface fixtures completed", ex.ToString());
+            }
+            finally
+            {
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedHistory);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> saved in savedReputations)
+                {
+                    state.Reputations[saved.Key] = saved.Value;
+                }
+
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedBrands);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedTimeline);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedSalesOrders);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedContracts);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedProcurementContracts);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                r.Info(
+                    $"Stage 7D acceptance fixtures restored: history={state.CommercialHistory.Count}; " +
+                    $"reputations={state.Reputations.Count}; brands={state.ProductBrandRecords.Count}; " +
+                    $"timeline={state.CommercialTimeline.Count}; sales={state.Orders.Count}; " +
+                    $"purchases={state.PurchaseOrders.Count}; contracts={state.Contracts.Count +
+                    state.ProcurementContracts.Count}.");
+            }
+        }
+
+        private static bool HasTimelineLabel(List<string> labels, string fragment)
+        {
+            return FindTimelineLabel(labels, fragment) != null;
+        }
+
+        private static string FindTimelineLabel(List<string> labels, string fragment)
+        {
+            if (labels != null)
+            {
+                foreach (string label in labels)
+                {
+                    if (ContainsIgnoreCase(label, fragment))
+                    {
+                        return label;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static string MissingCategories(params string[] categories)
+        {
+            List<string> missing = new List<string>();
+            foreach (string category in categories)
+            {
+                if (!string.IsNullOrEmpty(category))
+                {
+                    missing.Add(category);
+                }
+            }
+
+            return missing.Count == 0 ? "none" : string.Join(", ", missing.ToArray());
         }
 
         private static SalesOrder MakeHistorySale(
