@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -492,6 +493,26 @@ namespace Intercolony
                         // agreement cycle is no longer live, so count it without adding a second
                         // supplier-default policy here.
                         contract.cyclesFailed++;
+
+                        if (order.status == PurchaseOrderStatus.SupplierDefault)
+                        {
+                            string reason = order.outcomeNote.NullOrEmpty()
+                                ? "The supplier did not fulfil the paid order."
+                                : order.outcomeNote;
+                            contract.outcomeNote =
+                                $"Cycle {contract.cyclesCompleted + contract.cyclesFailed} of " +
+                                $"{contract.totalCycles} failed: supplier default. {reason}";
+                            IntercolonyLetters.Send(
+                                IntercolonyLetterImportance.Always,
+                                "Procurement cycle failed",
+                                $"Cycle {contract.cyclesCompleted + contract.cyclesFailed} of " +
+                                $"{contract.totalCycles} for {contract.settlementName} failed.\n\n" +
+                                $"The supplier defaulted: {reason}\n\n" +
+                                "Any payment was handled by the existing purchase-order refund " +
+                                "rule. The agreement remains active and its next cycle is still " +
+                                "scheduled.",
+                                LetterDefOf.NegativeEvent);
+                        }
                     }
 
                     resolved++;
@@ -526,7 +547,7 @@ namespace Intercolony
                     IntercolonyLetterImportance.Always,
                     "Procurement cycle failed",
                     $"Cycle {cycleNumber} of {contract.totalCycles} for {contract.settlementName} " +
-                    $"could not be ordered.\n\n{failureReason ?? "The purchase order could not be created."}\n\n" +
+                    $"could not be fulfilled.\n\n{failureReason ?? "The purchase order could not be created."}\n\n" +
                     "This cycle is counted as failed; the agreement remains active and its next " +
                     "cycle is still scheduled.",
                     LetterDefOf.NegativeEvent);
@@ -572,12 +593,105 @@ namespace Intercolony
                 order: out PurchaseOrder order,
                 failureReason: out failureReason);
 
-            if (created)
+            if (!created)
             {
-                contract.activeOrderId = order.id;
+                return false;
             }
 
-            return created;
+            if (TryGetCurrentSupplyFailure(state, contract, out string supplyFailure))
+            {
+                // The cycle has already been paid for. Reuse the purchase-order default path so
+                // refund placement, accounting, and the SupplierDefault status remain governed
+                // by one rule rather than a second contract-specific refund implementation.
+                PurchaseOrderService.Refund(order, supplyFailure);
+                if (order.IsOpen)
+                {
+                    // A refund that cannot currently be placed remains an open purchase order;
+                    // let its existing lifecycle retry instead of counting a live order as failed.
+                    contract.activeOrderId = order.id;
+                    failureReason = null;
+                    return true;
+                }
+
+                failureReason = supplyFailure;
+                contract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                return false;
+            }
+
+            contract.activeOrderId = order.id;
+            return true;
+        }
+
+        /// <summary>
+        /// Checks the current product capacity at the cycle boundary. This deliberately reuses
+        /// the effective-economy read model and the RFQ/listing capacity conversion: events and
+        /// market pressure can make a previously accepted promise impossible without adding a
+        /// supplier personality or an independent random failure roll.
+        /// </summary>
+        private static bool TryGetCurrentSupplyFailure(
+            IntercolonyWorldComponent state,
+            ProcurementContract contract,
+            out string failureReason)
+        {
+            failureReason = null;
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(contract.settlementId);
+            if (settlement == null)
+            {
+                failureReason =
+                    "Supplier default: the supplier settlement no longer exists to fulfil this cycle.";
+                return true;
+            }
+
+            SettlementEconomicProfile profile = state.GetProfile(settlement);
+            if (profile == null)
+            {
+                failureReason =
+                    "Supplier default: the supplier has no current economic capacity for this cycle.";
+                return true;
+            }
+
+            if (!TryGetCategory(contract.thingDef, out IntercolonyProductCategory category,
+                    out string categoryReason))
+            {
+                failureReason = "Supplier default: " + categoryReason;
+                return true;
+            }
+
+            if (!RfqService.CanTechnicallySupply(contract.thingDef, profile))
+            {
+                failureReason =
+                    $"Supplier default: {settlement.Label} can no longer technically supply " +
+                    $"{contract.ItemLabel()}.";
+                return true;
+            }
+
+            float effectiveSupply = EffectiveEconomyService.EffectiveSupply(
+                state, profile, category);
+            int available = RfqService.SupplierOfferQuantity(
+                contract.thingDef, contract.stuffDef, profile, effectiveSupply);
+            if (available >= contract.quantityPerCycle)
+            {
+                return false;
+            }
+
+            List<string> rows = new List<string>
+            {
+                $"Promised: {contract.quantityPerCycle}x {contract.ItemLabel()}",
+                $"Current effective supply: {effectiveSupply:F2}",
+                $"Current capacity: {available}x {contract.ItemLabel()}"
+            };
+            foreach (PriceFactor factor in EffectiveEconomyService.ExplainSupply(
+                         state, profile, category))
+            {
+                if (factor.label != "Local supply")
+                {
+                    rows.Add($"{factor.label}: {factor.multiplier:F2}x");
+                }
+            }
+
+            failureReason = "Supplier default: current supply conditions cannot cover this cycle.\n" +
+                            string.Join("\n", rows.ToArray());
+            return true;
         }
 
         private static bool CycleCountReached(ProcurementContract contract)

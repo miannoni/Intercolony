@@ -682,22 +682,44 @@ namespace Intercolony
             // still owed, so only that proportional balance remains refundable. Goods retain
             // their established accounting unchanged.
             int requestedRefund = RefundableSilver(order);
+            if (requestedRefund <= 0)
+            {
+                IntercolonyLog.Warning(
+                    $"Purchase {order.id}: no silver is refundable; keeping the order open.");
+                return;
+            }
+
             int refundedSilver = 0;
             Map map = null;
             bool usedFallback = false;
-            if (requestedRefund > 0)
+            bool usedStorageFallback = false;
+            map = ResolveDestinationMap(order, out usedFallback);
+            if (map != null)
             {
-                map = ResolveDestinationMap(order, out usedFallback);
-                refundedSilver = map == null ? 0 : GiveSilver(map, requestedRefund);
-                // A refund that paid nothing is not a default; hold and retry.
-                if (map == null || refundedSilver <= 0)
-                {
-                    return;
-                }
+                refundedSilver = GiveSilver(map, requestedRefund, out usedStorageFallback);
             }
 
+            if (usedStorageFallback)
+            {
+                IntercolonyLog.Warning(
+                    $"Purchase {order.id}: refund could not fit entirely in colony storage; " +
+                    $"{refundedSilver} silver was returned including the trade-spot fallback.");
+            }
+
+            // A refund that did not return the whole amount is not a default; hold and retry.
+            if (map == null || refundedSilver != requestedRefund)
+            {
+                IntercolonyLog.Warning(
+                    $"Purchase {order.id}: refund placement returned {refundedSilver} of " +
+                    $"{requestedRefund} silver; keeping the order open.");
+                return;
+            }
+
+            string storageFallbackNote = usedStorageFallback
+                ? " The money was returned but could not be stored, so it was left at the trade spot."
+                : string.Empty;
             order.status = PurchaseOrderStatus.SupplierDefault;
-            order.outcomeNote = reason;
+            order.outcomeNote = reason + storageFallbackNote;
             if (order.IsAnimalOrder)
             {
                 // Status UI uses paidSilver as the displayed refunded amount after default.
@@ -723,9 +745,11 @@ namespace Intercolony
                 refundedSilver,
                 reason);
 
-            IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {refundedSilver} silver.");
+            IntercolonyLog.Message(
+                $"Purchase {order.id} failed: {order.outcomeNote} Refunded {refundedSilver} silver.");
             Messages.Message(
                 $"{order.settlementName} defaulted on your order. {refundedSilver} silver refunded." +
+                storageFallbackNote +
                 DestinationFallbackNotice(map, usedFallback, "the refund"),
                 MessageTypeDefOf.NegativeEvent, historical: true);
         }
@@ -911,11 +935,167 @@ namespace Intercolony
             return remaining <= 0;
         }
 
-        private static int GiveSilver(Map map, int amount)
+        private static int GiveSilver(Map map, int amount, out bool usedStorageFallback)
         {
+            usedStorageFallback = false;
+            if (map == null || amount <= 0)
+            {
+                return 0;
+            }
+
+            int stored = GiveSilverToStorage(map, amount);
+            int remaining = amount - stored;
+            if (remaining <= 0)
+            {
+                return stored;
+            }
+
+            // Storage is preferred because payment came from storage, but a full or absent
+            // stockpile must not strand a refund. Use the same visible trade-spot drop as the
+            // original implementation for whatever storage could not accept.
+            usedStorageFallback = true;
+            int dropped = DropSilverAtTradeSpot(map, remaining);
+            return stored + dropped;
+        }
+
+        private static int GiveSilverToStorage(Map map, int amount)
+        {
+            if (map == null || amount <= 0 || map.haulDestinationManager == null)
+            {
+                return 0;
+            }
+
+            Thing probe = ThingMaker.MakeThing(ThingDefOf.Silver);
+            List<IntVec3> storageCells = new List<IntVec3>();
+            List<int> storageCapacities = new List<int>();
+
+            foreach (SlotGroup group in map.haulDestinationManager.AllGroupsListInPriorityOrder)
+            {
+                if (group?.parent == null || !group.parent.HaulDestinationEnabled ||
+                    !group.parent.Accepts(probe))
+                {
+                    continue;
+                }
+
+                foreach (IntVec3 cell in group.CellsList)
+                {
+                    if (!StoreUtility.IsGoodStoreCell(
+                            cell, map, probe, null, Faction.OfPlayer))
+                    {
+                        continue;
+                    }
+
+                    int itemCount = 0;
+                    foreach (Thing existing in cell.GetThingList(map))
+                    {
+                        if (existing.def.category == ThingCategory.Item)
+                        {
+                            itemCount++;
+                        }
+
+                        if (existing.CanStackWith(probe))
+                        {
+                            int stackCapacity = Mathf.Max(
+                                0, existing.def.stackLimit - existing.stackCount);
+                            if (stackCapacity > 0)
+                            {
+                                storageCells.Add(cell);
+                                storageCapacities.Add(stackCapacity);
+                            }
+                        }
+                    }
+
+                    int freeSlots = Mathf.Max(
+                        0, cell.GetMaxItemsAllowedInCell(map) - itemCount);
+                    for (int i = 0; i < freeSlots; i++)
+                    {
+                        storageCells.Add(cell);
+                        storageCapacities.Add(probe.def.stackLimit);
+                    }
+                }
+            }
+
+            probe.Destroy(DestroyMode.Vanish);
+
             int remaining = amount;
             int placed = 0;
+            for (int i = 0; i < storageCells.Count && remaining > 0; i++)
+            {
+                int stack = Mathf.Min(remaining, storageCapacities[i]);
+                Thing silver = ThingMaker.MakeThing(ThingDefOf.Silver);
+                silver.stackCount = stack;
+                IntVec3 cell = storageCells[i];
+                Thing existing = null;
+                foreach (Thing candidate in cell.GetThingList(map))
+                {
+                    if (candidate.CanStackWith(silver) &&
+                        candidate.stackCount < candidate.def.stackLimit)
+                    {
+                        existing = candidate;
+                        break;
+                    }
+                }
+
+                if (existing != null)
+                {
+                    int before = silver.stackCount;
+                    existing.TryAbsorbStack(silver, respectStackLimit: true);
+                    int absorbed = before - silver.stackCount;
+                    placed += absorbed;
+                    remaining -= absorbed;
+                    if (absorbed != before)
+                    {
+                        if (silver != null && !silver.Destroyed)
+                        {
+                            silver.Destroy(DestroyMode.Vanish);
+                        }
+
+                        break;
+                    }
+                }
+                else
+                {
+                    Thing spawned = GenSpawn.Spawn(silver, cell, map);
+                    if (spawned == null || spawned.Destroyed)
+                    {
+                        if (silver != null && !silver.Destroyed)
+                        {
+                            silver.Destroy(DestroyMode.Vanish);
+                        }
+
+                        break;
+                    }
+
+                    placed += stack;
+                    remaining -= stack;
+                }
+            }
+
+            if (remaining > 0)
+            {
+                IntercolonyLog.Warning(
+                    $"Refund silver placement was incomplete: requested {amount}, " +
+                    $"actually placed {placed}.");
+            }
+
+            return placed;
+        }
+
+        private static int DropSilverAtTradeSpot(Map map, int amount)
+        {
+            if (map == null || amount <= 0)
+            {
+                return 0;
+            }
+
             IntVec3 cell = DropCellFinder.TradeDropSpot(map);
+            if (!cell.IsValid || !cell.InBounds(map))
+            {
+                return 0;
+            }
+
+            int remaining = amount;
+            int placed = 0;
             while (remaining > 0)
             {
                 int stack = Mathf.Min(remaining, ThingDefOf.Silver.stackLimit);
@@ -934,7 +1114,8 @@ namespace Intercolony
             if (placed < amount)
             {
                 IntercolonyLog.Warning(
-                    $"Refund silver placement was incomplete: requested {amount}, actually placed {placed}.");
+                    $"Refund silver trade-spot fallback was incomplete: requested {amount}, " +
+                    $"actually placed {placed}.");
             }
 
             return placed;

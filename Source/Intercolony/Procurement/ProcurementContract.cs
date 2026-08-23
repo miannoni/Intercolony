@@ -25,7 +25,13 @@ namespace Intercolony
         Cancelled,
 
         /// <summary>The supplier failed to fulfil a cycle.</summary>
-        SupplierDefault
+        SupplierDefault,
+
+        /// <summary>
+        /// The agreement is paused because the supplier's faction went to war. It is not
+        /// terminal and resumes if relations recover.
+        /// </summary>
+        Suspended
     }
 
     /// <summary>
@@ -78,6 +84,12 @@ namespace Intercolony
 
         /// <summary>Absolute tick when the next procurement cycle is due.</summary>
         public int nextCycleTick;
+
+        /// <summary>
+        /// Absolute tick when war suspended this agreement, or 0. The suspension clock is
+        /// persisted so resumption can move the next cycle by the exact outage duration.
+        /// </summary>
+        public int suspendedTick;
 
         /// <summary>
         /// Sentinel meaning that no procurement order is currently in flight.
@@ -154,6 +166,28 @@ namespace Intercolony
             decisionDueTick != NoDecisionDueTick &&
             proposalAppeal != NoProposalAppeal;
 
+        /// <summary>
+        /// Describes the frozen procurement item for letters and diagnostics, including the
+        /// material and quality that are part of the supplier's promise.
+        /// </summary>
+        public string ItemLabel()
+        {
+            string label = thingDef?.LabelCap.ToString() ?? "<missing def>";
+            System.Collections.Generic.List<string> parts =
+                new System.Collections.Generic.List<string>();
+            if (stuffDef != null)
+            {
+                parts.Add(stuffDef.label);
+            }
+
+            if (quality.HasValue)
+            {
+                parts.Add(quality.Value.GetLabel());
+            }
+
+            return parts.Count == 0 ? label : $"{label} ({string.Join(", ", parts.ToArray())})";
+        }
+
         /// <summary>Writes the durable procurement terms, progress, and lifecycle state.</summary>
         public void ExposeData()
         {
@@ -171,6 +205,7 @@ namespace Intercolony
             Scribe_Values.Look(ref cyclesCompleted, "cyclesCompleted", 0);
             Scribe_Values.Look(ref cyclesFailed, "cyclesFailed", 0);
             Scribe_Values.Look(ref nextCycleTick, "nextCycleTick", 0);
+            Scribe_Values.Look(ref suspendedTick, "suspendedTick", 0);
             Scribe_Values.Look(ref activeOrderId, "activeOrderId", NoActiveOrderId);
             Scribe_Values.Look(ref status, "status", ProcurementContractStatus.Offered);
             Scribe_Values.Look(ref createdTick, "createdTick", 0);

@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 53;
+        public const int CurrentSaveVersion = 54;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -548,7 +548,8 @@ namespace Intercolony
                 if (contract != null && contract.settlementId == settlementId &&
                     contract.thingDef == thingDef &&
                     (contract.status == ProcurementContractStatus.Offered ||
-                     contract.status == ProcurementContractStatus.Active))
+                     contract.status == ProcurementContractStatus.Active ||
+                     contract.status == ProcurementContractStatus.Suspended))
                 {
                     return contract;
                 }
@@ -2496,6 +2497,16 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     "  schema 52 -> 53: procurement proposal answer fields added; " +
                     "sentinel Scribe defaults make this migration a deliberate no-op.");
+            }
+
+            if (saveVersion < 54)
+            {
+                // 53 -> 54 added procurement suspension state. Existing agreements were not
+                // suspended by the previous schema, so the missing suspendedTick defaults to 0
+                // and no status is rewritten.
+                IntercolonyLog.Message(
+                    "  schema 53 -> 54: procurement suspension fields added; " +
+                    "existing agreements remain unsuspended.");
             }
 
             saveVersion = CurrentSaveVersion;

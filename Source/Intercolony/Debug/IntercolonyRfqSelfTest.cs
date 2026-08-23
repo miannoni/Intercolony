@@ -4193,6 +4193,14 @@ namespace Intercolony
             skip("G5 open procurement order blocks a second cycle", reason);
             skip("G6 procurement agreement completes exactly at its cycle count", reason);
             skip("G7 concluded procurement order restores the active-order sentinel", reason);
+            skip("J1 supply shortfall fails one procurement cycle", reason);
+            skip("J2 ordinary procurement supply succeeds", reason);
+            skip("J3 paid supplier default refunds through PurchaseOrderService", reason);
+            skip("J4 hostility suspends a procurement agreement", reason);
+            skip("J5 suspended procurement agreement runs no cycles", reason);
+            skip("J6 resumption shifts the outage and cycles resume", reason);
+            skip("J7 repeated supplier defaults keep the agreement active", reason);
+            skip("J8 schema 54 migration preserves procurement agreements", reason);
         }
 
         private static void CheckProcurementContractCycles(
@@ -4206,6 +4214,8 @@ namespace Intercolony
                 "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
             FieldInfo consumptionField = typeof(IntercolonyWorldComponent).GetField(
                 "supplierOfferConsumption", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
             if (state == null || acceptedContract == null || paymentMap == null ||
                 ThingDefOf.Silver == null || nextIdField == null || consumptionField == null)
             {
@@ -4232,12 +4242,108 @@ namespace Intercolony
             int savedCompleted = acceptedContract.cyclesCompleted;
             int savedFailed = acceptedContract.cyclesFailed;
             int savedNextCycleTick = acceptedContract.nextCycleTick;
+            int savedSuspendedTick = acceptedContract.suspendedTick;
             int savedActiveOrderId = acceptedContract.activeOrderId;
             ProcurementContractStatus savedStatus = acceptedContract.status;
             string savedOutcomeNote = acceptedContract.outcomeNote;
+            Settlement cycleSettlement = IntercolonyMarketAccess.FindSettlement(
+                acceptedContract.settlementId);
+            SettlementEconomicProfile cycleProfile = cycleSettlement == null
+                ? null
+                : state.GetProfile(cycleSettlement);
+            IntercolonyProductCategory? cycleCategory =
+                IntercolonyProductClassifier.Classify(acceptedContract.thingDef);
+            float[] savedCycleSupplyWeights = cycleProfile == null
+                ? null
+                : (float[])cycleProfile.supplyWeights.Clone();
+            TechLevel savedCycleTechTier = cycleProfile == null
+                ? TechLevel.Undefined
+                : cycleProfile.techTier;
+            TechLevel cycleFixtureTechTier = savedCycleTechTier;
+            Faction supplierFaction = cycleSettlement?.Faction;
+            FactionRelation supplierRelation = supplierFaction == null || Faction.OfPlayer == null
+                ? null
+                : supplierFaction.RelationWith(Faction.OfPlayer, allowNull: true);
+            FactionRelation playerRelation = supplierFaction == null || Faction.OfPlayer == null
+                ? null
+                : Faction.OfPlayer.RelationWith(supplierFaction, allowNull: true);
+            bool bilateralRelationAvailable = supplierRelation != null &&
+                                              supplierRelation.other != null &&
+                                              playerRelation != null &&
+                                              playerRelation.other != null;
+            FactionRelationKind savedSupplierRelationKind = bilateralRelationAvailable
+                ? supplierRelation.kind
+                : FactionRelationKind.Neutral;
+            FactionRelationKind savedPlayerRelationKind = bilateralRelationAvailable
+                ? playerRelation.kind
+                : FactionRelationKind.Neutral;
+            int savedSupplierBaseGoodwill = bilateralRelationAvailable
+                ? supplierRelation.baseGoodwill
+                : 0;
+            int savedPlayerBaseGoodwill = bilateralRelationAvailable
+                ? playerRelation.baseGoodwill
+                : 0;
             Thing fixtureSilver = null;
             Zone_Stockpile fixtureSilverZone = null;
             Dictionary<Thing, int> fixtureSilverBaseline = null;
+
+            void RestoreCycleProfile()
+            {
+                if (cycleProfile == null || savedCycleSupplyWeights == null)
+                {
+                    return;
+                }
+
+                Array.Copy(savedCycleSupplyWeights, cycleProfile.supplyWeights,
+                    savedCycleSupplyWeights.Length);
+                cycleProfile.techTier = cycleFixtureTechTier;
+            }
+
+            void MakeSupplyInsufficient()
+            {
+                RestoreCycleProfile();
+                if (cycleProfile != null && cycleCategory.HasValue)
+                {
+                    cycleProfile.supplyWeights[(int)cycleCategory.Value] = 0f;
+                }
+            }
+
+            void MakeSupplierHostile()
+            {
+                supplierFaction.SetRelation(
+                    new FactionRelation(Faction.OfPlayer, FactionRelationKind.Hostile)
+                    {
+                        baseGoodwill = -100
+                    });
+                FactionRelation mirror = Faction.OfPlayer.RelationWith(
+                    supplierFaction, allowNull: true);
+                if (mirror != null)
+                {
+                    mirror.kind = FactionRelationKind.Hostile;
+                    mirror.baseGoodwill = -100;
+                }
+            }
+
+            void RestoreSupplierRelation()
+            {
+                if (!bilateralRelationAvailable)
+                {
+                    return;
+                }
+
+                supplierFaction.SetRelation(
+                    new FactionRelation(Faction.OfPlayer, savedSupplierRelationKind)
+                    {
+                        baseGoodwill = savedSupplierBaseGoodwill
+                    });
+                FactionRelation mirror = Faction.OfPlayer.RelationWith(
+                    supplierFaction, allowNull: true);
+                if (mirror != null)
+                {
+                    mirror.kind = savedPlayerRelationKind;
+                    mirror.baseGoodwill = savedPlayerBaseGoodwill;
+                }
+            }
 
             try
             {
@@ -4509,6 +4615,311 @@ namespace Intercolony
                     $"active order id={acceptedContract.activeOrderId}; " +
                     $"cycles completed={acceptedContract.cyclesCompleted}; " +
                     $"cycles failed={acceptedContract.cyclesFailed}; status={acceptedContract.status}");
+
+                if (cycleProfile != null && cycleCategory.HasValue &&
+                    acceptedContract.thingDef != null &&
+                    acceptedContract.thingDef.techLevel != TechLevel.Undefined &&
+                    cycleProfile.techTier < acceptedContract.thingDef.techLevel)
+                {
+                    // Keep the cycle fixture on the deterministic, technically capable side of
+                    // the existing gate. The J assertions below are about current capacity, not
+                    // the separate tech-level refusal path.
+                    cycleFixtureTechTier = acceptedContract.thingDef.techLevel;
+                    cycleProfile.techTier = cycleFixtureTechTier;
+                }
+
+                bool supplyFixtureAvailable = cycleProfile != null && cycleCategory.HasValue;
+                string supplyFixtureReason = supplyFixtureAvailable
+                    ? null
+                    : "accepted supplier profile or product category is unavailable";
+                float ordinaryEffectiveSupply = 0f;
+                int ordinaryCapacity = 0;
+                if (supplyFixtureAvailable)
+                {
+                    ordinaryEffectiveSupply = EffectiveEconomyService.EffectiveSupply(
+                        state, cycleProfile, cycleCategory.Value);
+                    ordinaryCapacity = RfqService.SupplierOfferQuantity(
+                        acceptedContract.thingDef, acceptedContract.stuffDef, cycleProfile,
+                        ordinaryEffectiveSupply);
+                    if (ordinaryCapacity < acceptedContract.quantityPerCycle)
+                    {
+                        supplyFixtureReason =
+                            $"ordinary effective supply={ordinaryEffectiveSupply:F2}; " +
+                            $"computed capacity={ordinaryCapacity}; " +
+                            $"promised={acceptedContract.quantityPerCycle}";
+                    }
+                }
+
+                if (!supplyFixtureAvailable)
+                {
+                    skip("J1 supply shortfall fails one procurement cycle", supplyFixtureReason);
+                    skip("J2 ordinary procurement supply succeeds", supplyFixtureReason);
+                    skip("J3 paid supplier default refunds through PurchaseOrderService",
+                        supplyFixtureReason);
+                    skip("J7 repeated supplier defaults keep the agreement active",
+                        supplyFixtureReason);
+                }
+                else
+                {
+                    ResetCycleFixture();
+                    MakeSupplyInsufficient();
+                    float j1EffectiveSupply = EffectiveEconomyService.EffectiveSupply(
+                        state, cycleProfile, cycleCategory.Value);
+                    int j1Capacity = RfqService.SupplierOfferQuantity(
+                        acceptedContract.thingDef, acceptedContract.stuffDef, cycleProfile,
+                        j1EffectiveSupply);
+                    int j1FailedBefore = acceptedContract.cyclesFailed;
+                    int j1CompletedBefore = acceptedContract.cyclesCompleted;
+                    int j1OrdersBefore = state.PurchaseOrders.Count;
+                    int j1DueTick = GenTicks.TicksGame;
+                    acceptedContract.nextCycleTick = j1DueTick;
+                    int j1Advanced = ProcurementContractService.AdvanceCycles(state);
+                    check(
+                        "J1 supply shortfall fails one procurement cycle",
+                        acceptedContract.quantityPerCycle > j1Capacity &&
+                        j1Advanced == 1 &&
+                        acceptedContract.cyclesFailed == j1FailedBefore + 1 &&
+                        acceptedContract.cyclesCompleted == j1CompletedBefore &&
+                        acceptedContract.status == ProcurementContractStatus.Active &&
+                        state.PurchaseOrders.Count == j1OrdersBefore + 1 &&
+                        acceptedContract.activeOrderId == ProcurementContract.NoActiveOrderId,
+                        $"promised={acceptedContract.quantityPerCycle}; " +
+                        $"effective supply={j1EffectiveSupply:F2}; computed capacity={j1Capacity}; " +
+                        $"failed {j1FailedBefore}->{acceptedContract.cyclesFailed}; " +
+                        $"completed {j1CompletedBefore}->{acceptedContract.cyclesCompleted}; " +
+                        $"status={acceptedContract.status}; orders {j1OrdersBefore}->" +
+                        $"{state.PurchaseOrders.Count}; advanced={j1Advanced}");
+
+                    if (ordinaryCapacity < acceptedContract.quantityPerCycle)
+                    {
+                        skip("J2 ordinary procurement supply succeeds", supplyFixtureReason);
+                    }
+                    else
+                    {
+                        RestoreCycleProfile();
+                        ResetCycleFixture();
+                        int j2FailedBefore = acceptedContract.cyclesFailed;
+                        int j2CompletedBefore = acceptedContract.cyclesCompleted;
+                        int j2OrdersBefore = state.PurchaseOrders.Count;
+                        acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                        int j2Advanced = ProcurementContractService.AdvanceCycles(state);
+                        PurchaseOrder j2Order = FindFixtureOrder(acceptedContract.activeOrderId);
+                        check(
+                            "J2 ordinary procurement supply succeeds",
+                            ordinaryEffectiveSupply > 0f &&
+                            ordinaryCapacity >= acceptedContract.quantityPerCycle &&
+                            j2Advanced == 1 &&
+                            state.PurchaseOrders.Count == j2OrdersBefore + 1 &&
+                            j2Order != null && j2Order.IsOpen &&
+                            acceptedContract.cyclesFailed == j2FailedBefore &&
+                            acceptedContract.cyclesCompleted == j2CompletedBefore &&
+                            acceptedContract.status == ProcurementContractStatus.Active,
+                            $"promised={acceptedContract.quantityPerCycle}; " +
+                            $"effective supply={ordinaryEffectiveSupply:F2}; " +
+                            $"computed capacity={ordinaryCapacity}; orders {j2OrdersBefore}->" +
+                            $"{state.PurchaseOrders.Count}; failed {j2FailedBefore}->" +
+                            $"{acceptedContract.cyclesFailed}; completed {j2CompletedBefore}->" +
+                            $"{acceptedContract.cyclesCompleted}; status={acceptedContract.status}; " +
+                            $"advanced={j2Advanced}");
+                    }
+
+                    ResetCycleFixture();
+                    MakeSupplyInsufficient();
+                    int j3SilverBefore = PurchaseOrderService.CountColonySilver(paymentMap);
+                    int j3FailedBefore = acceptedContract.cyclesFailed;
+                    int j3OrdersBefore = state.PurchaseOrders.Count;
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    int j3Advanced = ProcurementContractService.AdvanceCycles(state);
+                    PurchaseOrder j3Order = state.PurchaseOrders.Count > j3OrdersBefore
+                        ? state.PurchaseOrders[state.PurchaseOrders.Count - 1]
+                        : null;
+                    int j3SilverAfter = PurchaseOrderService.CountColonySilver(paymentMap);
+                    check(
+                        "J3 paid supplier default refunds through PurchaseOrderService",
+                        j3Advanced == 1 && j3Order != null &&
+                        j3Order.status == PurchaseOrderStatus.SupplierDefault &&
+                        j3SilverAfter == j3SilverBefore &&
+                        acceptedContract.cyclesFailed == j3FailedBefore + 1 &&
+                        acceptedContract.status == ProcurementContractStatus.Active &&
+                        acceptedContract.activeOrderId == ProcurementContract.NoActiveOrderId,
+                        $"silver {j3SilverBefore}->{j3SilverAfter}; " +
+                        $"order status={(j3Order == null ? "null" : j3Order.status.ToString())}; " +
+                        $"paid={(j3Order == null ? "null" : j3Order.paidSilver.ToString())}; " +
+                        $"failed {j3FailedBefore}->{acceptedContract.cyclesFailed}; " +
+                        $"status={acceptedContract.status}; advanced={j3Advanced}");
+
+                    ResetCycleFixture();
+                    MakeSupplyInsufficient();
+                    acceptedContract.totalCycles = 4;
+                    int j7FailuresRequested = 3;
+                    int j7FailedBefore = acceptedContract.cyclesFailed;
+                    int j7OrdersBefore = state.PurchaseOrders.Count;
+                    for (int i = 0; i < j7FailuresRequested; i++)
+                    {
+                        acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                        ProcurementContractService.AdvanceCycles(state);
+                    }
+
+                    check(
+                        "J7 repeated supplier defaults keep the agreement active",
+                        acceptedContract.cyclesFailed == j7FailedBefore + j7FailuresRequested &&
+                        acceptedContract.status == ProcurementContractStatus.Active &&
+                        acceptedContract.activeOrderId == ProcurementContract.NoActiveOrderId &&
+                        acceptedContract.nextCycleTick > GenTicks.TicksGame &&
+                        state.PurchaseOrders.Count == j7OrdersBefore + j7FailuresRequested,
+                        $"defaults requested={j7FailuresRequested}; failed {j7FailedBefore}->" +
+                        $"{acceptedContract.cyclesFailed}; total={acceptedContract.totalCycles}; " +
+                        $"status={acceptedContract.status}; next tick={acceptedContract.nextCycleTick}; " +
+                        $"orders {j7OrdersBefore}->{state.PurchaseOrders.Count}");
+                }
+
+                if (!bilateralRelationAvailable || supplierFaction == null)
+                {
+                    skip("J4 hostility suspends a procurement agreement",
+                        "supplier faction has no bilateral player relation to mutate safely");
+                    skip("J5 suspended procurement agreement runs no cycles",
+                        "supplier faction has no bilateral player relation to mutate safely");
+                    skip("J6 resumption shifts the outage and cycles resume",
+                        "supplier faction has no bilateral player relation to mutate safely");
+                }
+                else
+                {
+                    RestoreCycleProfile();
+                    ResetCycleFixture();
+                    int j4Now = GenTicks.TicksGame;
+                    acceptedContract.nextCycleTick = j4Now;
+                    int j4OrdersBefore = state.PurchaseOrders.Count;
+                    MakeSupplierHostile();
+                    HostilityPolicy.Sweep(state);
+                    check(
+                        "J4 hostility suspends a procurement agreement",
+                        acceptedContract.status == ProcurementContractStatus.Suspended &&
+                        acceptedContract.suspendedTick == j4Now,
+                        $"faction={supplierFaction.Name}; hostile={HostilityPolicy.IsAtWar(supplierFaction)}; " +
+                        $"status={acceptedContract.status}; suspended tick={acceptedContract.suspendedTick}; " +
+                        $"expected tick={j4Now}; orders before={j4OrdersBefore}; " +
+                        $"orders after={state.PurchaseOrders.Count}");
+
+                    int j5CompletedBefore = acceptedContract.cyclesCompleted;
+                    int j5FailedBefore = acceptedContract.cyclesFailed;
+                    int j5OrdersBefore = state.PurchaseOrders.Count;
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    int j5Advanced = ProcurementContractService.AdvanceCycles(state);
+                    check(
+                        "J5 suspended procurement agreement runs no cycles",
+                        acceptedContract.status == ProcurementContractStatus.Suspended &&
+                        j5Advanced == 0 && state.PurchaseOrders.Count == j5OrdersBefore &&
+                        acceptedContract.cyclesCompleted == j5CompletedBefore &&
+                        acceptedContract.cyclesFailed == j5FailedBefore &&
+                        acceptedContract.activeOrderId == ProcurementContract.NoActiveOrderId,
+                        $"status={acceptedContract.status}; due tick={acceptedContract.nextCycleTick}; " +
+                        $"orders {j5OrdersBefore}->{state.PurchaseOrders.Count}; " +
+                        $"completed {j5CompletedBefore}->{acceptedContract.cyclesCompleted}; " +
+                        $"failed {j5FailedBefore}->{acceptedContract.cyclesFailed}; advanced={j5Advanced}");
+
+                    if (!supplyFixtureAvailable ||
+                        ordinaryCapacity < acceptedContract.quantityPerCycle)
+                    {
+                        skip("J6 resumption shifts the outage and cycles resume",
+                            $"ordinary effective supply={ordinaryEffectiveSupply:F2}; " +
+                            $"computed capacity={ordinaryCapacity}; " +
+                            $"promised={acceptedContract.quantityPerCycle}");
+                    }
+                    else
+                    {
+                        ResetCycleFixture();
+                        RestoreCycleProfile();
+                        MakeSupplierHostile();
+                        int j6SuspensionTick = GenTicks.TicksGame;
+                        int j6OutageLength =
+                            3 * acceptedContract.cadenceDays * GenDate.TicksPerDay;
+                        int j6NextTickBeforeSuspension =
+                            j6SuspensionTick - 2 * acceptedContract.cadenceDays * GenDate.TicksPerDay;
+                        acceptedContract.nextCycleTick = j6NextTickBeforeSuspension;
+                        HostilityPolicy.Sweep(state);
+                        bool j6Suspended =
+                            acceptedContract.status == ProcurementContractStatus.Suspended;
+
+                        // The self-test must not wait three in-game days. Move the persisted
+                        // suspension marker back by the intended outage, which constructs the same
+                        // due/past-clock precondition while leaving the real world clock and every
+                        // other system alone.
+                        acceptedContract.suspendedTick = j6SuspensionTick - j6OutageLength;
+                        int j6ObservedOutage = GenTicks.TicksGame - acceptedContract.suspendedTick;
+                        RestoreSupplierRelation();
+                        HostilityPolicy.Sweep(state);
+                        int j6NextTickAfterResume = acceptedContract.nextCycleTick;
+                        // The shifted schedule is deliberately still ahead of the current tick, so
+                        // a reset-to-now implementation cannot satisfy the clock assertion. Make
+                        // the cycle due only after recording that shifted value, then drive one
+                        // cycle.
+                        acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                        int j6Advanced = ProcurementContractService.AdvanceCycles(state);
+                        PurchaseOrder j6Order = FindFixtureOrder(acceptedContract.activeOrderId);
+                        check(
+                            "J6 resumption shifts the outage and cycles resume",
+                            j6Suspended &&
+                            acceptedContract.status == ProcurementContractStatus.Active &&
+                            j6ObservedOutage == j6OutageLength &&
+                            j6NextTickAfterResume ==
+                                j6NextTickBeforeSuspension + j6ObservedOutage &&
+                            j6NextTickAfterResume > GenTicks.TicksGame &&
+                            j6Advanced == 1 && j6Order != null && j6Order.IsOpen,
+                            $"tick before suspension={j6NextTickBeforeSuspension}; " +
+                            $"outage={j6ObservedOutage}; " +
+                            $"tick after resumption={j6NextTickAfterResume}; " +
+                            $"current tick={GenTicks.TicksGame}; suspended={j6Suspended}; " +
+                            $"status={acceptedContract.status}; advanced={j6Advanced}; " +
+                            $"order id={acceptedContract.activeOrderId}");
+                    }
+                }
+
+                if (saveVersionField == null)
+                {
+                    skip("J8 schema 54 migration preserves procurement agreements",
+                        "persisted saveVersion field is not accessible");
+                }
+                else
+                {
+                    const int ExpectedSchemaAfterMigration = 54;
+                    int j8ContractCountBefore = state.ProcurementContracts.Count;
+                    ProcurementContractStatus j8StatusBefore = acceptedContract.status;
+                    int j8CompletedBefore = acceptedContract.cyclesCompleted;
+                    int j8FailedBefore = acceptedContract.cyclesFailed;
+                    int j8SaveVersionBefore = state.SaveVersion;
+                    int j8SaveVersionAfter = -1;
+                    string j8Failure = null;
+                    try
+                    {
+                        saveVersionField.SetValue(state, 53);
+                        state.MigrateIfNeeded();
+                        j8SaveVersionAfter = state.SaveVersion;
+                    }
+                    catch (Exception ex)
+                    {
+                        j8Failure = $"{ex.GetType().Name}: {ex.Message}";
+                    }
+                    finally
+                    {
+                        saveVersionField.SetValue(state, j8SaveVersionBefore);
+                    }
+
+                    check(
+                        "J8 schema 54 migration preserves procurement agreements",
+                        j8Failure == null && j8ContractCountBefore == state.ProcurementContracts.Count &&
+                        acceptedContract.status == j8StatusBefore &&
+                        acceptedContract.status != ProcurementContractStatus.Suspended &&
+                        acceptedContract.cyclesCompleted == j8CompletedBefore &&
+                        acceptedContract.cyclesFailed == j8FailedBefore &&
+                        j8SaveVersionAfter == ExpectedSchemaAfterMigration &&
+                        state.SaveVersion == j8SaveVersionBefore,
+                        $"saveVersion 53->{j8SaveVersionAfter}, restored={state.SaveVersion}; " +
+                        $"contracts {j8ContractCountBefore}->{state.ProcurementContracts.Count}; " +
+                        $"status {j8StatusBefore}->{acceptedContract.status}; " +
+                        $"completed {j8CompletedBefore}->{acceptedContract.cyclesCompleted}; " +
+                        $"failed {j8FailedBefore}->{acceptedContract.cyclesFailed}; " +
+                        $"failure={j8Failure ?? "none"}");
+                }
             }
             finally
             {
@@ -4525,9 +4936,16 @@ namespace Intercolony
                 acceptedContract.cyclesCompleted = savedCompleted;
                 acceptedContract.cyclesFailed = savedFailed;
                 acceptedContract.nextCycleTick = savedNextCycleTick;
+                acceptedContract.suspendedTick = savedSuspendedTick;
                 acceptedContract.activeOrderId = savedActiveOrderId;
                 acceptedContract.status = savedStatus;
                 acceptedContract.outcomeNote = savedOutcomeNote;
+                RestoreCycleProfile();
+                if (cycleProfile != null)
+                {
+                    cycleProfile.techTier = savedCycleTechTier;
+                }
+                RestoreSupplierRelation();
                 state.ProcurementContracts.Clear();
                 state.ProcurementContracts.AddRange(savedContracts);
                 state.PurchaseOrders.Clear();
