@@ -3,10 +3,10 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 7 — Commercial history
-Current slice:      7A — not started
-Last completed:     Stage 6 — procurement parity, gate closed (`02e511a`, 2026-08-23)
-Current save schema: 55
+Current stage:      Stage 8 — 1.0 integration, balance and release gate
+Current slice:      8A — not started
+Last completed:     Stage 7 — commercial history, gate closed (`fbfb6fe`, 2026-08-23)
+Current save schema: 56
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
 
@@ -19,7 +19,7 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [x] Stage 4 — Brand strength & colony specialization (13/13 criteria closed 2026-08-22)
 - [x] Stage 5 — Commercial relationships & negotiation (gate closed 2026-08-23; 12/12 criteria)
 - [x] Stage 6 — Procurement parity (gate closed 2026-08-23; 12/12 criteria)
-- [ ] Stage 7 — Commercial history
+- [x] Stage 7 — Commercial history (gate closed 2026-08-23; 9/9 criteria)
 - [ ] Stage 8 — 1.0 integration and release gate
 
 ## Second full-suite run — 2026-08-21, and 2B is unblocked
@@ -1397,6 +1397,69 @@ back to the trade spot rather than leaving an order in limbo.
 
 Verification stated: RFQ suite 194/0/0 with zero skips; four fresh-world full-suite runs at
 1282-1283 passed, 0 failed, 14-15 skipped, log clean on every run.
+
+### 7D — Stage 7 acceptance gate closure (`fbfb6fe`)
+
+All nine criteria from the plan's Stage 7 acceptance gate were proven. 7A established the
+commercial history read model and schema 56; 7B established retention and pruning safety; 7C
+exposed the settlement history surface in Relations; and 7D closed the gate at 9/9.
+
+**The four slices were:**
+
+- 7A `287c013` — commercial history read model and schema 56.
+- 7B `4b39161` — retention and pruning safety.
+- 7C `2469dfa` — settlement history surface in Relations.
+- 7D `fbfb6fe` — gate closure, 9/9.
+
+The schema advanced from 55 to 56 across the stage.
+
+### The decisions worth keeping
+
+**The summary came from durable aggregates, never from counting timeline records.** §7.7
+required aggregates to survive pruning, and counting prunable records would silently break that.
+
+**Total known trade value became a durable aggregate rather than being omitted.** The first pass
+declared it unsupported — correctly refusing to sum it from prunable records — but §7.1 listed it
+in the minimum overview, so the answer was to give the aggregate somewhere to keep it, exactly as
+it already kept `completedSaleCount`. It accumulated the RECORDED silver at completion only, in
+both directions, so a refund never had to be unwound.
+
+**Coverage was stated, not papered over.** A settlement that never traded, one whose detail was
+pruned, and one whose history predated the record spine were three different facts with three
+different wordings. A date that was really a ledger boundary said so instead of posing as a first
+trade — schema 43 existed for that reason.
+
+**A figure the retained data could not support said so** instead of printing a plausible zero.
+
+**§7.6 resolved to option A**, expandable detail inside Relations, decided from existing UI patterns
+and logged in the code. The surface requested 12 timeline rows and scrolled; it never tried to
+draw the full thousand.
+
+**Pruning kept the newest and touched nothing authoritative.** The §7.7 audit confirmed eligibility
+read the durable aggregate, brand read `ProductBrandRecords`, reputation read the persisted record,
+and obligations came from the contract collections. None read the timeline. The bound was enforced
+on append as well as on refresh, so a save taken between refreshes could not capture an oversized
+history.
+
+### The verification findings
+
+- **U1 was hollow — the tenth such catch, and a new shape.** It captured the summary, pruned,
+  captured again and compared the two, so a count that was ALWAYS wrong was just as stable as a
+  right one; removing the aggregate read entirely left the suite green. **The rule this established:**
+  every "assert nothing changed" test was suspect unless it also anchored on a known-correct value.
+  U1, W2, W3 and W4 were all rewritten to anchor first, then assert stability.
+- **W2's idempotence claim was NOT proven and was recorded as unproven.** Three mutations failed
+  to isolate it — two landed inside a guard the bounded fixture never entered, since at exactly the
+  bound the excess computed to zero — and the fourth aborted the suite. The five assertions carrying
+  §7.7's actual safety requirements were all red-on-cue.
+- **Y7 failed on its own extraction, not on production.** The timeline row type exposed only a label
+  and a tooltip, no id, so its id list came back empty while the labels were correct. Y6 was checked
+  for the same fault and did not have it.
+- **A8 relabeled rather than deleted.** A deleted row went red on absence, but CONFLATION was the
+  failure criterion 8 named, and it was the one a reader would never notice.
+
+Verification stated: timeline suite 117/0/0 with zero skips; four fresh-world full-suite runs at
+1329-1332 passed, 0 failed, 14-16 skipped, log clean on every run.
 
 ## RELEASED — Stage 3 proceeds; calibration is deferred to the end of 1.0 (2026-08-22)
 
