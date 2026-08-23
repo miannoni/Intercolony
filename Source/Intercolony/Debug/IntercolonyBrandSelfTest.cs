@@ -64,7 +64,7 @@ namespace Intercolony
             public void Skip(string label, string detail)
             {
                 skipped++;
-                sb.AppendLine($"  SKIP {label}  ({detail})");
+                sb.AppendLine($"  SKIPPED  {label}  ({detail})");
             }
         }
 

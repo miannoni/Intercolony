@@ -167,7 +167,8 @@ namespace Intercolony
             {
                 r.skipped += 7;
                 r.sb.AppendLine(
-                    "  SKIP  lifecycle assertions require two accessible settlements");
+                    $"  SKIPPED  lifecycle assertions  (need at least 2 accessible settlements; " +
+                    $"found {accessible.Count})");
                 return;
             }
 
@@ -267,7 +268,9 @@ namespace Intercolony
             {
                 r.skipped++;
                 r.sb.AppendLine(
-                    $"  SKIP  faction-wide start shock cap was not tested: busiest faction has {busiestCount} settlements, cap is {EconomicEventService.MaxShockedSettlementsPerEvent}");
+                    $"  SKIPPED  faction-wide start shock cap  (busiest faction has " +
+                    $"{busiestCount} settlements; cap is " +
+                    $"{EconomicEventService.MaxShockedSettlementsPerEvent})");
             }
             else
             {
@@ -285,7 +288,8 @@ namespace Intercolony
             {
                 r.skipped += 4;
                 r.sb.AppendLine(
-                    "  SKIP  player-messaging assertions require two eligible settlements");
+                    $"  SKIPPED  player-messaging assertions  (need at least 2 eligible " +
+                    $"settlements; found {eligible.Count})");
                 return;
             }
 
@@ -398,7 +402,8 @@ namespace Intercolony
             {
                 r.skipped += AssertionCount;
                 r.sb.AppendLine(
-                    "  SKIP  accepted-obligation assertions require an eligible settlement");
+                    "  SKIPPED  accepted-obligation assertions  (need an eligible settlement; " +
+                    "found 0)");
                 return;
             }
 
@@ -424,8 +429,10 @@ namespace Intercolony
                 r.skipped += AssertionCount;
                 r.sb.AppendLine(
                     profile == null
-                        ? "  SKIP  accepted-obligation assertions require a profile for the eligible settlement"
-                        : "  SKIP  accepted-obligation assertions require a tradable stackable commodity good");
+                        ? $"  SKIPPED  accepted-obligation assertions  (no profile for " +
+                          $"eligible settlement {settlement.ID}; eligible settlements={eligible.Count})"
+                        : $"  SKIPPED  accepted-obligation assertions  (no tradable stackable " +
+                          $"commodity good; candidate count={commodityDefs.Count})");
                 return;
             }
 
@@ -643,7 +650,8 @@ namespace Intercolony
                 {
                     r.skipped += 2;
                     r.sb.AppendLine(
-                        "  SKIP  forced-generation lifecycle assertions require an eligible accessible anchor settlement");
+                        "  SKIPPED  forced-generation lifecycle assertions  (generation " +
+                        "decision returned no eligible accessible anchor settlement)");
                     return;
                 }
 
@@ -805,7 +813,9 @@ namespace Intercolony
             if (anchor == null)
             {
                 r.skipped++;
-                r.sb.AppendLine("  SKIP  factory assertions require a settlement with a faction");
+                r.sb.AppendLine(
+                    $"  SKIPPED  factory assertions  (no settlement with a faction; " +
+                    $"world settlement count={(settlements == null ? 0 : settlements.Count)})");
                 return;
             }
 

@@ -153,7 +153,8 @@ namespace Intercolony
             Thing hpProbe = MakeQualityThing(ThingDefOf.DiningChair, ThingDefOf.Steel, QualityCategory.Good);
             if (hpProbe == null)
             {
-                sb.AppendLine("      SKIPPED");
+                sb.AppendLine(
+                    "      SKIPPED (DiningChair quality probe with Steel at Good quality unavailable)");
             }
             else
             {

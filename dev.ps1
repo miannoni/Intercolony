@@ -1044,10 +1044,7 @@ function Invoke-DevTest($Name) {
     # surfaces FAIL lines here. Keep skipped assertion names and reasons visible on both the
     # single-suite and aggregate paths without changing the pass/fail or exit-code rules.
     $skipLines = @($rawOutput -split "`r?`n" | Where-Object {
-        $_ -cmatch '^\s*SKIP' -and
-            ($_ -match ' — ' -or $_ -match ' - ' -or
-             $_ -cmatch '^\s*SKIP\s+[^:]+:\s+\S' -or
-             $_ -match '\s+\(.+\)\s*$')
+        $_ -cmatch '^\s*SKIPPED\b.*(?:\s+[-—]\s+\S.*|\s+\(.+\)\s*)$'
     })
     if ($skipLines.Count -gt 0) {
         Write-Host "Skipped assertions:" -ForegroundColor Yellow
