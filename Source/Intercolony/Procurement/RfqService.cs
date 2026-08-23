@@ -131,10 +131,13 @@ namespace Intercolony
                 return;
             }
 
-            IntercolonyProductCategory? category = request.IsAnimalOrder
-                ? IntercolonyProductCategory.Commodities
-                : IntercolonyProductClassifier.Classify(request.thingDef);
-            if (!category.HasValue)
+            IntercolonyProductCategory category;
+            if (request.IsAnimalOrder)
+            {
+                category = IntercolonyProductCategory.Commodities;
+            }
+            else if (!IntercolonyProductClassifier.TryGetTradableCategory(
+                         request.thingDef, out category))
             {
                 request.noResponseReason = "nobody trades this";
                 return;
@@ -161,7 +164,7 @@ namespace Intercolony
                     }
 
                     considered++;
-                    Quotation quote = TryQuote(state, request, settlement, profile, category.Value);
+                    Quotation quote = TryQuote(state, request, settlement, profile, category);
                     if (quote != null)
                     {
                         // Roll the complete quotation first, then subtract stock already bought.

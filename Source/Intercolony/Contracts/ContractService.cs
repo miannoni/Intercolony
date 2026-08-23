@@ -428,7 +428,7 @@ namespace Intercolony
                 state, settlement, profile, thingDef, category, quantityPerCycle,
                 chosenUnitPrice, terms.referenceUnitPrice);
             contract.proposalAppeal = appeal;
-            contract.decisionDueTick = GenTicks.TicksGame + DecisionDelayTicks(appeal);
+            contract.decisionDueTick = GenTicks.TicksGame + ProposalDecisionDelayTicks(appeal);
 
             state.AddContract(contract);
             IntercolonyLog.Message(
@@ -470,7 +470,11 @@ namespace Intercolony
                 reputationAppeal * ProposalReputationAppealWeight);
         }
 
-        private static int DecisionDelayTicks(float appeal)
+        /// <summary>
+        /// Uses the same bounded deliberation clock for every player-initiated standing proposal;
+        /// procurement reuses this instead of creating a second answer scheduler.
+        /// </summary>
+        internal static int ProposalDecisionDelayTicks(float appeal)
         {
             float distanceFromMiddle = Mathf.Abs(Mathf.Clamp01(appeal) * 2f - 1f);
             float days = Mathf.Lerp(

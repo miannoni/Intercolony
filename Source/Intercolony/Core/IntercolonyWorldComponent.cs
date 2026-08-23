@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 52;
+        public const int CurrentSaveVersion = 53;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -499,6 +499,62 @@ namespace Intercolony
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Whether this supplier and product already have a live standing agreement. The overload
+        /// keeps procurement's one-proposal-per-supplier-and-product rule beside the existing
+        /// sales relationship helper instead of scattering another lifecycle predicate.
+        /// </summary>
+        public bool HasContractWith(int settlementId, ThingDef thingDef)
+        {
+            if (thingDef == null)
+            {
+                return false;
+            }
+
+            foreach (RecurringContract contract in contracts)
+            {
+                bool hasPendingRenewal = contract.status == ContractStatus.Completed &&
+                                         contract.renewalOffered &&
+                                         contract.renewalExpiryTick > GenTicks.TicksGame;
+
+                if (contract.settlementId == settlementId && contract.thingDef == thingDef &&
+                    (contract.IsOffer || contract.IsPendingPlayerProposal || contract.IsActive ||
+                     contract.status == ContractStatus.Suspended || hasPendingRenewal))
+                {
+                    return true;
+                }
+            }
+
+            return FindProcurementContractWith(settlementId, thingDef) != null;
+        }
+
+        /// <summary>
+        /// Returns the live procurement agreement for one supplier/product pair, if any. Keeping
+        /// lookup and the boolean relationship check together ensures refusal text cannot drift
+        /// from the predicate that enforces the one-proposal rule.
+        /// </summary>
+        public ProcurementContract FindProcurementContractWith(
+            int settlementId, ThingDef thingDef)
+        {
+            if (thingDef == null)
+            {
+                return null;
+            }
+
+            foreach (ProcurementContract contract in procurementContracts)
+            {
+                if (contract != null && contract.settlementId == settlementId &&
+                    contract.thingDef == thingDef &&
+                    (contract.status == ProcurementContractStatus.Offered ||
+                     contract.status == ProcurementContractStatus.Active))
+                {
+                    return contract;
+                }
+            }
+
+            return null;
         }
 
         public int ActiveContractCount
@@ -1613,6 +1669,7 @@ namespace Intercolony
 
             RfqService.ExpireStale(requests);
             ContractService.AdvanceContracts(this);
+            ProcurementContractService.AdvanceProposals(this);
             ContractService.OfferContracts(this);
             PurchaseOrderService.AdvanceOrders(purchaseOrders);
 
@@ -2427,6 +2484,17 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     "  schema 51 -> 52: procurement contracts added; existing saves start with " +
                     "no procurement contracts.");
+            }
+
+            if (saveVersion < 53)
+            {
+                // 52 -> 53 added decisionDueTick, proposalAppeal, and proposalDecision to
+                // ProcurementContract. This is deliberately a no-op: all three fields have
+                // sentinel Scribe defaults, so a schema-52 save without those nodes already
+                // loads into the correct pending/unanswered shape.
+                IntercolonyLog.Message(
+                    "  schema 52 -> 53: procurement proposal answer fields added; " +
+                    "sentinel Scribe defaults make this migration a deliberate no-op.");
             }
 
             saveVersion = CurrentSaveVersion;

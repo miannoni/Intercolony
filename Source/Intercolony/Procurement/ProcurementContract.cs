@@ -104,6 +104,35 @@ namespace Intercolony
         /// <summary>Absolute tick when the initial offer expires, or <see cref="NoExpiryTick"/>.</summary>
         public int offerExpiryTick = NoExpiryTick;
 
+        /// <summary>
+        /// Sentinel meaning this player proposal has not been scheduled for a supplier answer.
+        /// This mirrors the sales agreement's persisted decision marker so save/load cannot turn
+        /// a pending procurement proposal into an instant answer.
+        /// </summary>
+        public const int NoDecisionDueTick = -1;
+
+        /// <summary>Absolute tick when the supplier's delayed answer is due.</summary>
+        public int decisionDueTick = NoDecisionDueTick;
+
+        /// <summary>
+        /// Sentinel meaning no Stage 5 evaluation was stored for this proposal. The score is
+        /// persisted because the supplier evaluates once when the proposal is sent.
+        /// </summary>
+        public const float NoProposalAppeal = -1f;
+
+        /// <summary>Stage 5 acceptance score normalized to the evaluator's 0..1 answer delay range.</summary>
+        public float proposalAppeal = NoProposalAppeal;
+
+        /// <summary>Sentinel meaning no supplier decision has been captured yet.</summary>
+        public const int NoProposalDecision = -1;
+
+        /// <summary>
+        /// The supplier decision captured when the proposal is evaluated. It survives resolution
+        /// as commercial history so the contract records whether the supplier accepted, refused,
+        /// or countered; <see cref="NoProposalDecision"/> means the proposal was not yet evaluated.
+        /// </summary>
+        public int proposalDecision = NoProposalDecision;
+
         /// <summary>Whether the supplier has offered another run of the agreement.</summary>
         public bool renewalOffered;
 
@@ -112,6 +141,18 @@ namespace Intercolony
 
         /// <summary>Number of completed renewal runs beyond the first agreement.</summary>
         public int renewals;
+
+        /// <summary>Why a terminal proposal did not become an active agreement.</summary>
+        public string outcomeNote = "";
+
+        /// <summary>
+        /// Whether this record is waiting for the one supplier answer allowed by the proposal
+        /// state machine. Keeping this derived from status prevents a second answer after load.
+        /// </summary>
+        public bool IsPendingProposal =>
+            status == ProcurementContractStatus.Offered &&
+            decisionDueTick != NoDecisionDueTick &&
+            proposalAppeal != NoProposalAppeal;
 
         /// <summary>Writes the durable procurement terms, progress, and lifecycle state.</summary>
         public void ExposeData()
@@ -134,13 +175,22 @@ namespace Intercolony
             Scribe_Values.Look(ref status, "status", ProcurementContractStatus.Offered);
             Scribe_Values.Look(ref createdTick, "createdTick", 0);
             Scribe_Values.Look(ref offerExpiryTick, "offerExpiryTick", NoExpiryTick);
+            Scribe_Values.Look(ref decisionDueTick, "decisionDueTick", NoDecisionDueTick);
+            Scribe_Values.Look(ref proposalAppeal, "proposalAppeal", NoProposalAppeal);
+            Scribe_Values.Look(ref proposalDecision, "proposalDecision", NoProposalDecision);
             Scribe_Values.Look(ref renewalOffered, "renewalOffered", false);
             Scribe_Values.Look(ref renewalExpiryTick, "renewalExpiryTick", 0);
             Scribe_Values.Look(ref renewals, "renewals", 0);
+            Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit && settlementName == null)
             {
                 settlementName = "";
+            }
+
+            if (Scribe.mode == LoadSaveMode.PostLoadInit && outcomeNote == null)
+            {
+                outcomeNote = "";
             }
         }
 

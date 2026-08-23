@@ -3026,6 +3026,11 @@ namespace Intercolony
             List<ProcurementContract> savedContracts = state == null
                 ? null
                 : new List<ProcurementContract>(state.ProcurementContracts);
+            List<PurchaseOrder> savedOrders = state == null
+                ? null
+                : new List<PurchaseOrder>(state.PurchaseOrders);
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
             FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
                 "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
             FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
@@ -3041,6 +3046,7 @@ namespace Intercolony
                 CheckProcurementContractCollection(check, skip);
                 CheckProcurementContractMigration(check, skip, state, saveVersionField);
                 CheckProcurementContractIds(check, skip, state, nextIdField, savedNextId);
+                CheckProcurementProposalPath(check, skip, state);
             }
             finally
             {
@@ -3049,6 +3055,14 @@ namespace Intercolony
                     state.ProcurementContracts.Clear();
                     state.ProcurementContracts.AddRange(savedContracts);
                 }
+
+                if (state != null && savedOrders != null)
+                {
+                    state.PurchaseOrders.Clear();
+                    state.PurchaseOrders.AddRange(savedOrders);
+                }
+
+                RestoreStoredSilver(paymentMap, savedSilver);
 
                 if (state != null && saveVersionField != null)
                 {
@@ -3370,9 +3384,9 @@ namespace Intercolony
         {
             if (state == null || saveVersionField == null)
             {
-                skip("C5 schema 51-to-52 migration preserves non-empty contract count",
+                skip("C5 schema 51-to-53 migration preserves non-empty contract count",
                     "live state or persisted saveVersion field is not accessible");
-                skip("C5 schema 51-to-52 migration preserves empty contract count",
+                skip("C5 schema 51-to-53 migration preserves empty contract count",
                     "live state or persisted saveVersion field is not accessible");
                 return;
             }
@@ -3421,13 +3435,13 @@ namespace Intercolony
             }
 
             check(
-                "C5 schema 51-to-52 migration preserves non-empty contract count",
+                "C5 schema 51-to-53 migration preserves non-empty contract count",
                 failure == null && nonEmptyBefore == nonEmptyAfter,
                 $"non-empty count {nonEmptyBefore}->{nonEmptyAfter}; " +
                 $"migration saveVersion={migrationSaveVersion}; " +
                 $"restored saveVersion={state.SaveVersion}; failure={failure ?? "none"}");
             check(
-                "C5 schema 51-to-52 migration preserves empty contract count",
+                "C5 schema 51-to-53 migration preserves empty contract count",
                 failure == null && emptyBefore == emptyAfter && emptyBefore == 0 &&
                 migrationSaveVersion == IntercolonyWorldComponent.CurrentSaveVersion,
                 $"empty count {emptyBefore}->{emptyAfter}; non-empty count " +
@@ -3495,6 +3509,703 @@ namespace Intercolony
                 $"other record id={otherRecordId}; contract ids={ProcurementContractIds(contracts)}; " +
                 $"count={contracts.Count}; repeats={!noRepeats}; collision={!noCollision}; " +
                 $"shared sequence={sharedSequence}; failure={failure ?? "none"}");
+        }
+
+        private static void CheckProcurementProposalPath(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            if (state == null)
+            {
+                SkipProcurementProposalPath(skip, "live world state is unavailable");
+                return;
+            }
+
+            state.ProcurementContracts.Clear();
+            if (!TryFindProcurementProposalFixture(
+                    state, out Settlement settlement, out ThingDef product,
+                    out ThingDef otherProduct, out SettlementEconomicProfile profile,
+                    out string fixtureReason))
+            {
+                SkipProcurementProposalPath(skip, fixtureReason);
+                return;
+            }
+
+            CheckProcurementProposalPending(check, state, settlement, product);
+            CheckProcurementProposalAnswersOnce(check, state, settlement, product);
+            CheckProcurementProposalSaveLoad(check, state, settlement, product, profile);
+            CheckProcurementProposalValidation(check, state, settlement, product);
+            CheckProcurementProposalTechnicalGate(
+                check, skip, state, settlement, profile);
+            CheckProcurementProposalDuplicateScope(
+                check, skip, state, settlement, product, otherProduct);
+            CheckProcurementProposalAcceptance(check, skip, state, product);
+            CheckProcurementProposalPriceDirection(check, state, settlement, product);
+        }
+
+        private static void SkipProcurementProposalPath(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("E1 sent procurement proposal remains pending", reason);
+            skip("E2 procurement proposal answer applies exactly once", reason);
+            skip("E3 persisted procurement decision survives save/load", reason);
+            skip("E4 procurement proposal bounds refuse before evaluation", reason);
+            skip("E5 technically unsupplyable procurement item is refused", reason);
+            skip("E6 procurement proposal duplicate scope is supplier and product", reason);
+            skip("E7 accepted procurement proposal schedules without prepayment", reason);
+            skip("E8 supplier price appeal increases with purchase price", reason);
+        }
+
+        private static bool TryFindProcurementProposalFixture(
+            IntercolonyWorldComponent state,
+            out Settlement settlement,
+            out ThingDef product,
+            out ThingDef otherProduct,
+            out SettlementEconomicProfile profile,
+            out string reason)
+        {
+            settlement = null;
+            product = null;
+            otherProduct = null;
+            profile = null;
+            reason = null;
+
+            List<Settlement> settlements = FindAccessibleSupplierSettlements(state);
+            foreach (Settlement candidateSettlement in settlements)
+            {
+                SettlementEconomicProfile candidateProfile =
+                    state.GetProfile(candidateSettlement);
+                if (candidateProfile == null)
+                {
+                    continue;
+                }
+
+                foreach (ThingDef candidateDef in IntercolonyProductClassifier.TradableDefs)
+                {
+                    if (!IntercolonyProductClassifier.Classify(candidateDef).HasValue ||
+                        !RfqService.CanTechnicallySupply(candidateDef, candidateProfile) ||
+                        state.HasContractWith(candidateSettlement.ID, candidateDef))
+                    {
+                        continue;
+                    }
+
+                    if (product == null)
+                    {
+                        settlement = candidateSettlement;
+                        profile = candidateProfile;
+                        product = candidateDef;
+                    }
+                    else if (candidateSettlement == settlement && candidateDef != product)
+                    {
+                        otherProduct = candidateDef;
+                        reason = null;
+                        return true;
+                    }
+                }
+
+                if (product != null && settlement == candidateSettlement)
+                {
+                    reason = null;
+                    return true;
+                }
+            }
+
+            reason = "no accessible supplier with an eligible, technically supplyable tradable item";
+            return false;
+        }
+
+        private static ProcurementContractProposalResult ProposeProcurementFixture(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product,
+            int quantity = 10,
+            int cadenceDays = 1,
+            int totalCycles = 2,
+            float? agreedUnitPrice = null)
+        {
+            return ProcurementContractService.ProposeContract(
+                state, settlement, product, quantity, cadenceDays, totalCycles,
+                agreedUnitPrice, FulfillmentMode.SellerDelivery);
+        }
+
+        private static void CheckProcurementProposalPending(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product)
+        {
+            state.ProcurementContracts.Clear();
+            int currentTick = GenTicks.TicksGame;
+            ProcurementContractProposalResult result =
+                ProposeProcurementFixture(state, settlement, product);
+            ProcurementContract contract = result.Contract;
+            bool noActiveContract = true;
+            foreach (ProcurementContract existing in state.ProcurementContracts)
+            {
+                if (existing != null && existing.settlementId == settlement.ID &&
+                    existing.thingDef == product &&
+                    existing.status == ProcurementContractStatus.Active)
+                {
+                    noActiveContract = false;
+                    break;
+                }
+            }
+
+            check(
+                "E1 sent procurement proposal remains pending",
+                result.Success && contract != null &&
+                contract.status == ProcurementContractStatus.Offered &&
+                contract.decisionDueTick > currentTick && noActiveContract,
+                $"current tick={currentTick}; due tick={contract?.decisionDueTick.ToString() ?? "null"}; " +
+                $"status={(contract == null ? "null" : contract.status.ToString())}; " +
+                $"active={(!noActiveContract)}; reason={result.Reason ?? "none"}");
+            state.ProcurementContracts.Clear();
+        }
+
+        private static void CheckProcurementProposalAnswersOnce(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product)
+        {
+            state.ProcurementContracts.Clear();
+            ProcurementContractProposalResult result =
+                ProposeProcurementFixture(state, settlement, product);
+            ProcurementContract contract = result.Contract;
+            ProcurementContractStatus initialStatus =
+                contract?.status ?? ProcurementContractStatus.Cancelled;
+            int originalDueTick = contract?.decisionDueTick ?? -1;
+            int dueTick = GenTicks.TicksGame;
+            int firstAdvanced = 0;
+            ProcurementContractStatus firstStatus = ProcurementContractStatus.Cancelled;
+            string firstNote = null;
+            ProcurementContractAnswer secondAnswer = null;
+
+            if (contract != null)
+            {
+                contract.decisionDueTick = dueTick;
+                firstAdvanced = ProcurementContractService.AdvanceProposals(state);
+                firstStatus = contract.status;
+                firstNote = contract.outcomeNote;
+                secondAnswer = ProcurementContractService.AnswerProposal(state, contract);
+            }
+
+            check(
+                "E2 procurement proposal answer applies exactly once",
+                result.Success && contract != null &&
+                initialStatus == ProcurementContractStatus.Offered &&
+                firstAdvanced == 1 && firstStatus != initialStatus &&
+                secondAnswer != null && !secondAnswer.Applied &&
+                contract.status == firstStatus && contract.outcomeNote == firstNote,
+                $"original due tick={originalDueTick}; driven due tick={dueTick}; " +
+                $"initial status={initialStatus}; first status={firstStatus}; " +
+                $"first advances={firstAdvanced}; second applied={secondAnswer?.Applied.ToString() ?? "null"}; " +
+                $"final status={(contract == null ? "null" : contract.status.ToString())}; " +
+                $"reason={result.Reason ?? secondAnswer?.Reason ?? "none"}");
+            state.ProcurementContracts.Clear();
+        }
+
+        private static void CheckProcurementProposalSaveLoad(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product,
+            SettlementEconomicProfile profile)
+        {
+            state.ProcurementContracts.Clear();
+            ProcurementContractProposalResult result =
+                ProposeProcurementFixture(state, settlement, product);
+            ProcurementContract original = result.Contract;
+            int capturedDecision = original?.proposalDecision ?? -1;
+            List<ProcurementContract> savedList = original == null
+                ? new List<ProcurementContract>()
+                : new List<ProcurementContract> { original };
+            List<ProcurementContract> loadedList = null;
+            ProcurementContract loaded = null;
+            ProcurementContractAnswer answer = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProcurementProposal-E3-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "procurementProposalDecisionTest");
+                Scribe_Collections.Look(ref savedList, "procurementContracts", LookMode.Deep);
+                Scribe.saver.FinalizeSaving();
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Collections.Look(ref loadedList, "procurementContracts", LookMode.Deep);
+                Scribe.loader.FinalizeLoading();
+
+                loaded = loadedList != null && loadedList.Count == 1 ? loadedList[0] : null;
+                state.ProcurementContracts.Clear();
+                if (loaded != null)
+                {
+                    state.ProcurementContracts.Add(loaded);
+                }
+
+                if (loaded != null)
+                {
+                    TechLevel savedTechTier = profile.techTier;
+                    IntercolonyWealthTier savedWealthTier = profile.wealthTier;
+                    IntercolonyArchetype savedArchetype = profile.archetype;
+                    float[] savedSupplyWeights = (float[])profile.supplyWeights.Clone();
+                    try
+                    {
+                        // Make a later market read materially different from the captured answer.
+                        profile.techTier = TechLevel.Neolithic;
+                        profile.wealthTier = IntercolonyWealthTier.Destitute;
+                        profile.archetype = IntercolonyArchetype.Tribal;
+                        for (int i = 0; i < profile.supplyWeights.Length; i++)
+                        {
+                            profile.supplyWeights[i] = 0f;
+                        }
+
+                        loaded.decisionDueTick = GenTicks.TicksGame;
+                        answer = ProcurementContractService.AnswerProposal(state, loaded);
+                    }
+                    finally
+                    {
+                        profile.techTier = savedTechTier;
+                        profile.wealthTier = savedWealthTier;
+                        profile.archetype = savedArchetype;
+                        Array.Copy(savedSupplyWeights, profile.supplyWeights,
+                            savedSupplyWeights.Length);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            IntercolonyNegotiationDecision decision =
+                (IntercolonyNegotiationDecision)capturedDecision;
+            ProcurementContractStatus expectedStatus =
+                decision == IntercolonyNegotiationDecision.Accepted
+                    ? ProcurementContractStatus.Active
+                    : ProcurementContractStatus.Cancelled;
+            check(
+                "E3 persisted procurement decision survives save/load",
+                failure == null && result.Success && original != null &&
+                loaded != null && loaded.proposalDecision == capturedDecision &&
+                answer != null && answer.Applied && answer.Decision == decision &&
+                loaded.status == expectedStatus,
+                $"captured decision={decision}; loaded decision=" +
+                $"{(loaded == null ? "null" : ((IntercolonyNegotiationDecision)loaded.proposalDecision).ToString())}; " +
+                $"loaded status={(loaded == null ? "null" : loaded.status.ToString())}; " +
+                $"expected status={expectedStatus}; answer={answer?.Decision.ToString() ?? "null"}; " +
+                $"answer reason={answer?.Reason ?? "none"}; " +
+                $"captured due tick={original?.decisionDueTick.ToString() ?? "null"}; " +
+                $"loaded due tick={(loaded == null ? "null" : loaded.decisionDueTick.ToString())}; " +
+                $"failure={failure ?? "none"}");
+            state.ProcurementContracts.Clear();
+        }
+
+        private static void CheckProcurementProposalValidation(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product)
+        {
+            state.ProcurementContracts.Clear();
+            ProcurementContractProposalResult quantity =
+                ProposeProcurementFixture(state, settlement, product, 0, 1, 1);
+            bool quantityRefused = !quantity.Success && quantity.Contract == null &&
+                                   quantity.Evaluation == null &&
+                                   !string.IsNullOrEmpty(quantity.Reason) &&
+                                   quantity.Reason.Contains("10") &&
+                                   quantity.Reason.Contains("4000") &&
+                                   state.ProcurementContracts.Count == 0;
+
+            ProcurementContractProposalResult cadence =
+                ProposeProcurementFixture(state, settlement, product, 10, 0, 1);
+            bool cadenceRefused = !cadence.Success && cadence.Contract == null &&
+                                  cadence.Evaluation == null &&
+                                  !string.IsNullOrEmpty(cadence.Reason) &&
+                                  cadence.Reason.Contains("1") &&
+                                  cadence.Reason.Contains("365") &&
+                                  state.ProcurementContracts.Count == 0;
+
+            ProcurementContractProposalResult cycles =
+                ProposeProcurementFixture(state, settlement, product, 10, 1, 0);
+            bool cyclesRefused = !cycles.Success && cycles.Contract == null &&
+                                 cycles.Evaluation == null &&
+                                 !string.IsNullOrEmpty(cycles.Reason) &&
+                                 cycles.Reason.Contains("1") &&
+                                 cycles.Reason.Contains("365") &&
+                                 state.ProcurementContracts.Count == 0;
+
+            ProcurementContractProposalResult valid =
+                ProposeProcurementFixture(state, settlement, product, 10, 1, 1);
+            bool validAccepted = valid.Success && valid.Contract != null &&
+                                 state.ProcurementContracts.Count == 1;
+            check(
+                "E4 procurement proposal bounds refuse before evaluation",
+                quantityRefused && cadenceRefused && cyclesRefused && validAccepted,
+                $"quantity attempted=0, bound=10..4000, refused={quantityRefused}, " +
+                $"reason={quantity.Reason ?? "none"}; cadence attempted=0, bound=1..365, " +
+                $"refused={cadenceRefused}, reason={cadence.Reason ?? "none"}; " +
+                $"total cycles attempted=0, bound=1..365, refused={cyclesRefused}, " +
+                $"reason={cycles.Reason ?? "none"}; valid succeeded={validAccepted}");
+            state.ProcurementContracts.Clear();
+        }
+
+        private static void CheckProcurementProposalTechnicalGate(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            SettlementEconomicProfile profile)
+        {
+            ThingDef blocked = null;
+            IntercolonyProductCategory blockedCategory = IntercolonyProductCategory.Commodities;
+            foreach (ThingDef def in IntercolonyProductClassifier.TradableDefs)
+            {
+                IntercolonyProductCategory? category =
+                    IntercolonyProductClassifier.Classify(def);
+                if (!category.HasValue || def.techLevel == TechLevel.Undefined ||
+                    state.HasContractWith(settlement.ID, def) ||
+                    RfqService.SupplierOfferQuantity(
+                        def, null, FixtureSupplyProfile(profile), 100f) <= 0)
+                {
+                    continue;
+                }
+
+                if (blocked == null || def.techLevel > blocked.techLevel)
+                {
+                    blocked = def;
+                    blockedCategory = category.Value;
+                }
+            }
+
+            if (blocked == null)
+            {
+                skip("E5 technically unsupplyable procurement item is refused",
+                    $"settlement={settlement.ID}; no positive-supply high-tech tradable def");
+                return;
+            }
+
+            TechLevel savedTechTier = profile.techTier;
+            IntercolonyArchetype savedArchetype = profile.archetype;
+            IntercolonyWealthTier savedWealthTier = profile.wealthTier;
+            float[] savedSupplyWeights = (float[])profile.supplyWeights.Clone();
+            state.ProcurementContracts.Clear();
+            try
+            {
+                // This is the T3 fixture: make the selected high-tech item the only supplied
+                // category, then put the supplier one tech tier below that item.
+                profile.techTier = (TechLevel)Math.Max(
+                    (int)TechLevel.Undefined, (int)blocked.techLevel - 1);
+                profile.archetype = IntercolonyArchetype.Tribal;
+                profile.wealthTier = IntercolonyWealthTier.Wealthy;
+                for (int i = 0; i < profile.supplyWeights.Length; i++)
+                {
+                    profile.supplyWeights[i] = 0f;
+                }
+
+                profile.supplyWeights[(int)blockedCategory] = 100f;
+                bool gateRefuses = !RfqService.CanTechnicallySupply(blocked, profile);
+                ProcurementContractProposalResult result =
+                    ProposeProcurementFixture(state, settlement, blocked);
+                check(
+                    "E5 technically unsupplyable procurement item is refused",
+                    gateRefuses && !result.Success && result.Contract == null &&
+                    result.Failure == ProcurementContractProposalFailure.SupplierCannotSupply &&
+                    !string.IsNullOrEmpty(result.Reason) &&
+                    state.ProcurementContracts.Count == 0,
+                    $"settlement={settlement.ID}; def={blocked.defName}; " +
+                    $"supplier tech={profile.techTier}; item tech={blocked.techLevel}; " +
+                    $"real gate refuses={gateRefuses}; reason={result.Reason ?? "none"}");
+            }
+            finally
+            {
+                profile.techTier = savedTechTier;
+                profile.archetype = savedArchetype;
+                profile.wealthTier = savedWealthTier;
+                Array.Copy(savedSupplyWeights, profile.supplyWeights,
+                    savedSupplyWeights.Length);
+                state.ProcurementContracts.Clear();
+            }
+        }
+
+        private static void CheckProcurementProposalDuplicateScope(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product,
+            ThingDef otherProduct)
+        {
+            if (otherProduct == null)
+            {
+                skip("E6 procurement proposal duplicate scope is supplier and product",
+                    $"settlement={settlement.ID}; no second eligible product");
+                return;
+            }
+
+            state.ProcurementContracts.Clear();
+            ProcurementContractProposalResult first =
+                ProposeProcurementFixture(state, settlement, product);
+            int afterFirst = state.ProcurementContracts.Count;
+            ProcurementContractProposalResult duplicate =
+                ProposeProcurementFixture(state, settlement, product);
+            int afterDuplicate = state.ProcurementContracts.Count;
+            ProcurementContractProposalResult different =
+                ProposeProcurementFixture(state, settlement, otherProduct);
+            int afterDifferent = state.ProcurementContracts.Count;
+            check(
+                "E6 procurement proposal duplicate scope is supplier and product",
+                first.Success && afterFirst == 1 && !duplicate.Success &&
+                duplicate.Contract == null && !string.IsNullOrEmpty(duplicate.Reason) &&
+                afterDuplicate == 1 && different.Success &&
+                different.Contract != null && different.Contract.thingDef == otherProduct &&
+                afterDifferent == 2,
+                $"supplier={settlement.ID}; product={product.defName}; " +
+                $"duplicate reason={duplicate.Reason ?? "none"}; counts={afterFirst}->" +
+                $"{afterDuplicate}; different product={otherProduct.defName}; " +
+                $"different success={different.Success}; final count={afterDifferent}");
+            state.ProcurementContracts.Clear();
+        }
+
+        private static void CheckProcurementProposalAcceptance(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            ThingDef product)
+        {
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            int ordersBefore = state.PurchaseOrders.Count;
+            int silverBefore = paymentMap == null
+                ? 0
+                : PurchaseOrderService.CountColonySilver(paymentMap);
+            int now = GenTicks.TicksGame;
+            List<ProcurementContract> savedContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            int savedNextId = state.PeekNextId();
+            List<string> candidateDecisions = new List<string>();
+            int candidatesTried = 0;
+            int reputationPinnedCandidates = 0;
+            IntercolonyNegotiationDecision? bestDecision = null;
+            ProcurementContractProposalResult result = null;
+            ProcurementContract contract = null;
+            Settlement acceptedSettlement = null;
+            bool acceptedCandidate = false;
+
+            try
+            {
+                state.ProcurementContracts.Clear();
+                foreach (Settlement candidateSettlement in
+                         FindAccessibleSupplierSettlements(state))
+                {
+                    SettlementEconomicProfile candidateProfile =
+                        state.GetProfile(candidateSettlement);
+                    if (candidateProfile == null ||
+                        !RfqService.CanTechnicallySupply(product, candidateProfile) ||
+                        state.HasContractWith(candidateSettlement.ID, product))
+                    {
+                        continue;
+                    }
+
+                    candidatesTried++;
+                    bool candidateHadReputation = state.Reputations.TryGetValue(
+                        candidateSettlement.ID,
+                        out CommercialReputation candidateSavedReputation);
+                    ProcurementContract candidateContract = null;
+                    bool candidateAccepted = false;
+                    try
+                    {
+                        // A favourable relationship makes the reachability probe independent of
+                        // whatever reputation the live world happened to give this settlement.
+                        SetProcurementReputation(state, candidateProfile);
+                        reputationPinnedCandidates++;
+                        ProcurementContractProposalResult candidateResult =
+                            ProposeProcurementFixture(
+                                state, candidateSettlement, product);
+                        candidateContract = candidateResult.Contract;
+
+                        IntercolonyNegotiationDecision? candidateDecision = null;
+                        if (candidateContract != null &&
+                            candidateContract.proposalDecision >= 0)
+                        {
+                            candidateDecision =
+                                (IntercolonyNegotiationDecision)candidateContract.proposalDecision;
+                        }
+                        else if (candidateResult.Evaluation != null)
+                        {
+                            candidateDecision = candidateResult.Evaluation.Decision;
+                        }
+
+                        string decisionText = candidateDecision.HasValue
+                            ? candidateDecision.Value.ToString()
+                            : candidateResult.Failure.ToString();
+                        candidateDecisions.Add(
+                            $"settlement {candidateSettlement.ID}={decisionText}");
+                        if (!bestDecision.HasValue ||
+                            candidateDecision == IntercolonyNegotiationDecision.Accepted ||
+                            (candidateDecision == IntercolonyNegotiationDecision.Countered &&
+                             bestDecision == IntercolonyNegotiationDecision.Refused))
+                        {
+                            if (candidateDecision.HasValue)
+                            {
+                                bestDecision = candidateDecision;
+                            }
+                        }
+
+                        candidateAccepted = candidateContract != null &&
+                            candidateDecision == IntercolonyNegotiationDecision.Accepted;
+                        if (candidateAccepted)
+                        {
+                            result = candidateResult;
+                            contract = candidateContract;
+                            acceptedSettlement = candidateSettlement;
+                            acceptedCandidate = true;
+                        }
+                    }
+                    finally
+                    {
+                        if (!candidateAccepted)
+                        {
+                            if (candidateContract != null)
+                            {
+                                state.ProcurementContracts.Remove(candidateContract);
+                            }
+
+                            if (candidateHadReputation)
+                            {
+                                state.Reputations[candidateSettlement.ID] =
+                                    candidateSavedReputation;
+                            }
+                            else
+                            {
+                                state.Reputations.Remove(candidateSettlement.ID);
+                            }
+                        }
+                    }
+
+                    if (candidateAccepted)
+                    {
+                        break;
+                    }
+                }
+
+                string candidateDecisionDetail = candidateDecisions.Count == 0
+                    ? "none"
+                    : string.Join(", ", candidateDecisions.ToArray());
+                string searchDetail =
+                    $"candidates tried={candidatesTried}; decisions={candidateDecisionDetail}; " +
+                    $"best decision={bestDecision?.ToString() ?? "none"}; " +
+                    $"accepted settlement id={acceptedSettlement?.ID.ToString() ?? "none"}; " +
+                    $"current tick={now}; next cycle tick=" +
+                    $"{(contract == null ? "null" : contract.nextCycleTick.ToString())}; " +
+                    $"reputation set deliberately={reputationPinnedCandidates} candidate(s) " +
+                    "to 100 and restored";
+
+                if (paymentMap == null)
+                {
+                    skip("E7 accepted procurement proposal schedules without prepayment",
+                        "no player map is available to count silver; " + searchDetail);
+                }
+                else
+                {
+                    int answered = 0;
+                    if (contract != null)
+                    {
+                        contract.decisionDueTick = now;
+                        answered = ProcurementContractService.AdvanceProposals(state);
+                    }
+
+                    int ordersAfter = state.PurchaseOrders.Count;
+                    int silverAfter = PurchaseOrderService.CountColonySilver(paymentMap);
+                    check(
+                        "E7 accepted procurement proposal schedules without prepayment",
+                        result != null && result.Success && contract != null &&
+                        contract.proposalDecision == (int)IntercolonyNegotiationDecision.Accepted &&
+                        answered == 1 && contract.status == ProcurementContractStatus.Active &&
+                        contract.nextCycleTick > now && ordersAfter == ordersBefore &&
+                        silverAfter == silverBefore,
+                        $"{searchDetail}; next cycle tick after answer=" +
+                        $"{(contract == null ? "null" : contract.nextCycleTick.ToString())}; " +
+                        $"status={(contract == null ? "null" : contract.status.ToString())}; " +
+                        $"answered={answered}; orders={ordersBefore}->{ordersAfter}; " +
+                        $"silver={silverBefore}->{silverAfter}; reason={result?.Reason ?? "none"}");
+                }
+
+                check(
+                    "E7b a reasonable procurement proposal is accepted by some supplier",
+                    acceptedCandidate && result != null && result.Success &&
+                    result.Evaluation != null &&
+                    result.Evaluation.Decision == IntercolonyNegotiationDecision.Accepted,
+                    searchDetail);
+            }
+            finally
+            {
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedContracts);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> savedReputation in
+                         savedReputations)
+                {
+                    state.Reputations[savedReputation.Key] = savedReputation.Value;
+                }
+                if (nextIdField != null)
+                {
+                    nextIdField.SetValue(state, savedNextId);
+                }
+            }
+        }
+
+        private static void SetProcurementReputation(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile)
+        {
+            CommercialReputation reputation = new CommercialReputation(
+                profile.settlementId, profile.settlementName, profile.factionName);
+            reputation.Adjust(
+                CommercialReputation.MaxScore - CommercialReputation.StartingScore);
+            state.Reputations[profile.settlementId] = reputation;
+        }
+
+        private static void CheckProcurementProposalPriceDirection(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product)
+        {
+            state.ProcurementContracts.Clear();
+            ProcurementContractProposalResult lower =
+                ProposeProcurementFixture(state, settlement, product);
+            float lowerPrice = lower.Contract?.unitPrice ?? 0f;
+            float higherPrice = lowerPrice * 1.5f;
+            state.ProcurementContracts.Clear();
+            ProcurementContractProposalResult higher =
+                ProposeProcurementFixture(
+                    state, settlement, product, 10, 1, 2, higherPrice);
+            bool comparison = lower.Evaluation != null && higher.Evaluation != null &&
+                              higher.Evaluation.AcceptanceScore >=
+                              lower.Evaluation.AcceptanceScore;
+            check(
+                "E8 supplier price appeal increases with purchase price",
+                lower.Success && higher.Success && comparison,
+                $"lower price={lowerPrice:F2}; higher price={higherPrice:F2}; " +
+                $"lower score={(lower.Evaluation == null ? "null" : lower.Evaluation.AcceptanceScore.ToString("F3"))}; " +
+                $"higher score={(higher.Evaluation == null ? "null" : higher.Evaluation.AcceptanceScore.ToString("F3"))}; " +
+                $"lower reason={lower.Reason ?? "none"}; higher reason={higher.Reason ?? "none"}");
+            state.ProcurementContracts.Clear();
         }
 
         private static bool ContainsProcurementContractId(
