@@ -37,6 +37,43 @@ identical numbers and calling it a pass.
 **Defect class:** a vacuous pass here is the same defect class as the hollow assertions caught by
 mutation elsewhere in this program: green without the ability to go red.
 
+## The market-shortage assertion can pass vacuously.
+
+**Raised:** 2026-08-23, during the Stage 8 verification run.
+**Size:** small — test-fixture fix.
+**Status:** open.
+
+The market-shortage assertion reported `27 -> 27` and passed. That is the same vacuous-pass class
+as the Stage 3 drought assertion: the comparison stayed unchanged, so the green result did not
+prove that a shortage changed the quantity or condition under test.
+
+**Fix:** make the fixture assert the change it is supposed to observe, and SKIP with a reason when
+the shortage does not move the sampled value. The assertion must be able to go red when the shortage
+path is removed.
+
+## The SALES-side contract cancellation penalty is still an inline literal.
+
+**Raised:** 2026-08-23, during the Stage 8 documentation audit.
+**Size:** small — constant extraction and calibration check.
+**Status:** open.
+
+The procurement-side cancellation penalty is now a named constant. The corresponding SALES-side
+contract cancellation penalty is still an inline literal. The calibration sitting must hunt for the
+literal, confirm the intended value and meaning, and give it the same named-constant treatment so
+the two sides cannot drift silently.
+
+## Stage 7B's W2 idempotence claim remains unproven.
+
+**Raised:** 2026-08-23, during Stage 7B verification.
+**Size:** unknown until the fixture is isolated.
+**Status:** open; recorded as unproven, not as a passing proof.
+
+Three mutations failed to isolate W2's idempotence claim. Two landed inside a guard the bounded
+fixture never enters, because at exactly the bound the excess computed to zero; the fourth mutation
+aborted the suite. The surrounding §7.7 safety assertions were red-on-cue, but that does not prove
+W2's idempotence. Isolate a fixture that actually enters the guarded path, then rerun the mutation
+and four-fresh-world stability checks.
+
 ## ~~A sold animal may leave dangling pawn relations in the save~~ — HYPOTHESIS DISPROVEN
 
 **Raised:** 2026-08-21, from reading the log of Matteo's play session.

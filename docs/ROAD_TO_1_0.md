@@ -11,6 +11,11 @@ Hospitality, Common Sense, RT Fuse, Tilled Soil, FSF Filth Vanishes With Rain An
 scale. Royalty, Ideology and Anomaly were not installed. `docs/PENDING_PLAYTESTS.md:18-38` defines
 that boundary. Evidence outside it is not implied.
 
+> **Historical record — earlier 0.9.x criterion set.** The 36-criterion audit below, including its
+> former `Shortest path to 1.0` conclusion, is retained as the earlier 0.9.x criterion set. That
+> conclusion is superseded by the expanded 1.0 target recorded after the audit. No criterion was
+> deleted, rewritten, or renumbered.
+
 ## Met and proven
 
 ### Commerce
@@ -369,3 +374,39 @@ One record has fallen behind the source:
 The code-level cleanup-failure hole found during the audit is now guarded by a last-resort faction
 restore. It does not change the recorded normal-departure results, and that exception path has not
 been exercised in play.
+
+---
+
+## Expanded 1.0 target
+
+The old 36-criterion audit above remains the 0.9.x criterion set. The 1.0 target is the expanded
+nine-stage product program, stages 0 through 8, with the remaining human calibration and release
+work closed at Stage 8. The old evidence-only conclusion is not the 1.0 scope.
+
+### Stage gates
+
+- **Stage 0 — program spine:** complete; gate closed 2026-08-21.
+- **Stage 1 — settlement economies:** complete; gate closed 2026-08-21.
+- **Stage 2 — market fundamentals:** 12/12; complete; gate closed 2026-08-22. Play calibration was
+  deferred to the Stage 8 sitting.
+- **Stage 3 — circumstance events:** 8/10; complete; gate closed 2026-08-22. Criteria 9 and 10
+  were deferred to the Stage 8 sitting.
+- **Stage 4 — brand:** 13/13; complete; gate closed 2026-08-22.
+- **Stage 5 — relationships & negotiation:** 12/12; complete; gate closed 2026-08-23.
+- **Stage 6 — procurement parity:** 12/12; complete; gate closed 2026-08-23.
+- **Stage 7 — commercial history:** 9/9; complete; gate closed 2026-08-23.
+- **Stage 8 — 1.0 integration and release gate:** in progress.
+
+### Program evidence
+
+The save schema moved from 42 to 56 across the program. The full suite stands at roughly 1350
+assertions passing, with 14–16 world-condition skips and a clean log across four fresh worlds.
+
+Stage 8A, the full save/load matrix covering all twelve persistent kinds, is complete. Stage 8B,
+the migration matrix from 42 to 56 with thirteen additive steps and one value-changing step, is
+complete. Stage 8C, the performance profile across seven paths, is complete; every path was far
+inside budget.
+
+The remaining Stage 8 work is this documentation pass and the play sitting. The agenda is recorded
+in `docs/PENDING_PLAYTESTS.md`; those human observations close the deferred Stage 2 calibration and
+Stage 3 criteria 9 and 10 alongside the §8.3–§8.7 sanity and UX checks.

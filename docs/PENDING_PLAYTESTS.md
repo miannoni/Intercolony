@@ -46,6 +46,124 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### 1.0 calibration sitting — Stage 8 remaining play
+
+Stage 8A's full save/load matrix, Stage 8B's 42 → 56 migration matrix, and Stage 8C's seven-path
+performance profile are complete. The following work still needs a human at the keyboard. Run it
+on a real colony, record the world and load order, and write down decisions and visible outcomes;
+do not turn a self-test pass into a play claim.
+
+#### Economic sanity (§8.3)
+
+Play several market refreshes across multiple settlement archetypes and answer these nine questions:
+
+- Can I tell agricultural from industrial/affluent economies?
+- Do shortages/surpluses persist enough to plan around?
+- Do they eventually normalize?
+- Are events noticeable without dominating every decision?
+- Does one region sometimes differ meaningfully from another?
+- Does Procurement reflect the same market conditions as Selling?
+- Are there obvious arbitrage loops?
+- Are ordinary goods still buyable/sellable often enough to be useful?
+- Does scarcity create choices rather than merely empty screens?
+
+Record decisions, not just generated rows.
+
+#### Brand sanity (§8.4)
+
+Verify in normal play:
+
+- high-skill production can build a valuable brand;
+- mediocre output can dilute it;
+- pivoting to an unrelated industry does not penalize the new industry beyond the tiny carryover floor;
+- moving from revolvers to rifles meaningfully carries reputation;
+- brand premium is useful but not an infinite money printer;
+- a player can understand why their brand changed.
+
+#### Negotiation sanity (§8.5)
+
+Verify:
+
+- negotiation is optional, not required for every trade;
+- outcomes feel connected to terms and relationship;
+- absurd demands get rejected even at high reputation;
+- strong brand helps the relevant product;
+- events matter;
+- renegotiation is useful when a real obligation becomes difficult;
+- failed negotiation does not destroy the original opportunity/order.
+
+Record the original terms, the attempted change, the response, and the surviving order or
+opportunity after each failed or accepted negotiation.
+
+#### Procurement parity (§8.6)
+
+Complete each loop separately. Record the request or order ID, quantity, payment, destination,
+terminal status, and whether the result is visible after reload:
+
+1. `Supplier Market -> PurchaseOrder -> delivery`: accept a supplier listing, wait for delivery,
+   and verify that the goods arrive at the ordering colony with the quoted properties.
+2. `Supplier Market -> PurchaseOrder -> pickup`: accept a supplier listing, collect it with a
+   caravan, and verify the goods and payment at the ordering colony.
+3. `RFQ -> quote -> PurchaseOrder -> delivery`: request goods, accept a quote, wait for delivery,
+   and verify the delivered quantity, price, and destination.
+4. `RFQ -> quote -> PurchaseOrder -> pickup`: request goods, accept a quote, collect the purchase
+   with a caravan, and verify the delivered quantity, price, and destination.
+5. `Procurement contract -> cycle -> PurchaseOrder -> completion`: let one recurring procurement
+   cycle create and resolve a purchase order, then verify completion and the commercial history.
+6. `Procurement contract -> supplier failure -> refund/outcome`: force or observe a supplier
+   failure, then verify the refund or other stated outcome, the terminal record, and its history.
+
+#### UX pass (§8.7)
+
+Review the relevant Selling, Procurement, Relations, negotiation, event, brand, and Commercial
+History surfaces at **1.0x, 1.25x, 1.5x, and 1.75x UI scale** where practical. At each scale, check:
+
+- no paragraph-heavy dialog regressions;
+- pricing factors remain legible;
+- event cause is visible;
+- brand is understandable;
+- negotiation final terms are explicit;
+- Procurement tabs do not feel like a different product from Selling;
+- Commercial History is readable when dense.
+
+Use the measured text/layout rules already established in the project. Record the scale, screen,
+content density, and any clipping, overlap, unreadable text, or ambiguous term.
+
+#### Deferred Stage 3 play — criteria 9 and 10
+
+**Criterion 9 — does event frequency flood normal play?** Play without forcing events for several
+market refreshes. Generation rolls roughly a 12% chance per refresh and allows at most 3 concurrent
+events. Record whether normal stretches, one-region events, occasional overlap, and no permanently
+crisis-bound world are what the player actually sees. Retune the named chance or cap if the observed
+frequency is wrong.
+
+**Criterion 10 — does an event produce an obvious decision?** Use the dev action to force a drought
+or war mobilization, then play through it. Record whether it changes a real choice: what to produce,
+what stock to hold, which buyer to choose, or whether to delay a purchase. If the event only changes
+numbers without changing a decision, record that the magnitude needs retuning. End the event and
+watch the pressure tail: the live modifier should disappear while its pressure remains and decays
+over roughly 25 refreshes.
+
+#### Deferred Stage 2 play calibration
+
+Run this on a real colony, not a `-quicktest` world. During several refreshes, answer:
+
+1. Does the market read as alive rather than flat or chaotic?
+2. Do regions actually form, with diffusion visible without making the world uniform?
+3. Does a price breakdown explain itself, showing `Current shortage` or `Current surplus` only when
+   conditions are moving the number?
+4. Does a procurement quote read the same way, using `Local scarcity (shortage)` or
+   `Local scarcity (surplus)` consistently with Selling?
+5. Is Stage 1 criterion 7 met: is a settlement's economy legible from the Market listing and
+   Relations tooltips without debug numbers?
+
+For the shortage surfaces, enable Development mode, open the world map, press `/`, choose
+**Intercolony -> Shock settlement economy**, click a settlement already used for trade, and apply
+`manufactured: demand shortage` three or four times. Use **Dump effective economy** to confirm the
+pressure, inspect a live offer and a procurement quote from the shocked settlement, then compare an
+untouched settlement. Record the baseline, current condition, visible explanation, and whether the
+player could make a different choice.
+
 ### The whole suite, in one action
 
 **This no longer needs a human.** Since the dev test bridge landed, the whole suite runs from a
