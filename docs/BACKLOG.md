@@ -16,11 +16,13 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
-## Skip-reporting output still has suite-side format gaps.
+## ~~Skip-reporting output still has suite-side format gaps~~ — FIXED in 1.0 (`ff93d94`)
 
 **Raised:** 2026-08-23, during skip-reporting verification.
 **Size:** small — test-output cleanup.
-**Status:** open.
+**Closed:** 2026-08-23 in commit `ff93d94`. The bare `SKIPPED` in
+`IntercolonyUniqueGoodsSpike.cs` now carries a reason, and Brand, Event and Negotiation have
+converged on `SKIPPED`, so `dev.ps1`'s filter now uses one pattern.
 
 `IntercolonyUniqueGoodsSpike.cs:156` emits a bare `SKIPPED` with no reason, so it can never be
 explained by the reporting filter; the fix belongs in the suite, not `dev.ps1`.
