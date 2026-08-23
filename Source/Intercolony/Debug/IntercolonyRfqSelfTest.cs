@@ -1819,6 +1819,81 @@ namespace Intercolony
             };
         }
 
+        private static Dictionary<Thing, int> SnapshotAllColonySilver(Map map)
+        {
+            Dictionary<Thing, int> result = new Dictionary<Thing, int>();
+            if (map == null || ThingDefOf.Silver == null)
+            {
+                return result;
+            }
+
+            foreach (Thing thing in map.listerThings.ThingsOfDef(ThingDefOf.Silver))
+            {
+                if (thing != null && !thing.Destroyed)
+                {
+                    result[thing] = thing.stackCount;
+                }
+            }
+
+            return result;
+        }
+
+        private static int CountAllColonySilver(Map map)
+        {
+            if (map == null || ThingDefOf.Silver == null)
+            {
+                return 0;
+            }
+
+            int total = 0;
+            foreach (Thing thing in map.listerThings.ThingsOfDef(ThingDefOf.Silver))
+            {
+                if (thing != null && !thing.Destroyed)
+                {
+                    // Deliberately includes loose silver at the trade spot: a refund is still
+                    // colony silver when storage is full.
+                    total += thing.stackCount;
+                }
+            }
+
+            return total;
+        }
+
+        private static void RestoreAllColonySilver(
+            Map map,
+            Dictionary<Thing, int> savedSilver)
+        {
+            if (map == null || savedSilver == null)
+            {
+                return;
+            }
+
+            List<Thing> current = new List<Thing>(
+                map.listerThings.ThingsOfDef(ThingDefOf.Silver));
+            foreach (Thing thing in current)
+            {
+                if (savedSilver.TryGetValue(thing, out int originalCount))
+                {
+                    if (!thing.Destroyed)
+                    {
+                        thing.stackCount = originalCount;
+                    }
+                }
+                else if (!thing.Destroyed)
+                {
+                    thing.Destroy(DestroyMode.Vanish);
+                }
+            }
+
+            foreach (KeyValuePair<Thing, int> saved in savedSilver)
+            {
+                if (saved.Key != null && !saved.Key.Destroyed)
+                {
+                    saved.Key.stackCount = saved.Value;
+                }
+            }
+        }
+
         private static Dictionary<Thing, int> SnapshotStoredSilver(Map map)
         {
             Dictionary<Thing, int> result = new Dictionary<Thing, int>();
@@ -6143,6 +6218,11 @@ namespace Intercolony
                             $"orders {p9OrdersBefore}->{state.PurchaseOrders.Count}");
                     }
                 }
+
+                // --- Stage 6I part 4: acceptance gate criteria 9-12 ----------------------
+                CheckStage6IAcceptanceGatePart4(
+                    check, skip, state, acceptedContract, paymentMap, cycleSettlement,
+                    cycleProfile, cycleCategory);
             }
             finally
             {
@@ -6198,6 +6278,779 @@ namespace Intercolony
 
                 nextIdField.SetValue(state, savedNextId);
             }
+        }
+
+        private static void CheckStage6IAcceptanceGatePart4(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            ProcurementContract acceptedContract,
+            Map paymentMap,
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory? category)
+        {
+            const string R9 = "R9 paid procurement default conserves all colony silver";
+            const string R10a = "R10a market shock changes future supplier listings";
+            const string R10b = "R10b market shock does not rewrite a paid purchase order";
+            const string R10c = "R10c market shock does not rewrite accepted procurement terms";
+            const string R11 = "R11 all five live record kinds survive save/load";
+            const string R12a = "R12 market opportunity still uses shared sell pricing";
+            const string R12b = "R12 sales recurring contract still runs a cycle";
+
+            if (state == null)
+            {
+                skip(R9, "world state is unavailable");
+                skip(R10a, "world state is unavailable");
+                skip(R10b, "world state is unavailable");
+                skip(R10c, "world state is unavailable");
+                skip(R11, "world state is unavailable");
+                skip(R12a, "world state is unavailable");
+                skip(R12b, "world state is unavailable");
+                return;
+            }
+
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo refreshCountField = typeof(IntercolonyWorldComponent).GetField(
+                "refreshCount", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo lastRefreshTickField = typeof(IntercolonyWorldComponent).GetField(
+                "lastRefreshTick", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo consumptionField = typeof(IntercolonyWorldComponent).GetField(
+                "supplierOfferConsumption", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            List<RecurringContract> savedSalesContracts =
+                new List<RecurringContract>(state.Contracts);
+            List<ProcurementContract> savedProcurementContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            List<SupplierListing> savedListings =
+                new List<SupplierListing>(state.SupplierListings);
+            List<PurchaseRequest> savedRequests = new List<PurchaseRequest>(state.Requests);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<SalesOrder> savedSalesOrders = new List<SalesOrder>(state.Orders);
+            List<CommercialEventRecord> savedTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+            List<LedgerEntry> savedLedger = new List<LedgerEntry>(state.Ledger);
+            int savedLedgerStartTick = state.LedgerStartTick;
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<EconomicEvent> savedEconomicEvents =
+                new List<EconomicEvent>(state.EconomicEvents);
+            List<SettlementMarketState> savedMarketStates =
+                new List<SettlementMarketState>(state.MarketStates);
+            Dictionary<SettlementMarketState, float[]> savedDemand =
+                new Dictionary<SettlementMarketState, float[]>();
+            Dictionary<SettlementMarketState, float[]> savedSupply =
+                new Dictionary<SettlementMarketState, float[]>();
+            Dictionary<SettlementMarketState, int> savedMarketRefreshes =
+                new Dictionary<SettlementMarketState, int>();
+            foreach (SettlementMarketState marketState in savedMarketStates)
+            {
+                if (marketState == null)
+                {
+                    continue;
+                }
+
+                savedDemand[marketState] = (float[])marketState.demandPressure.Clone();
+                savedSupply[marketState] = (float[])marketState.supplyPressure.Clone();
+                savedMarketRefreshes[marketState] = marketState.lastAdvancedRefresh;
+            }
+
+            List<SupplierOfferConsumption> savedConsumption = consumptionField == null
+                ? null
+                : CloneConsumptions(
+                    consumptionField.GetValue(state) as List<SupplierOfferConsumption>);
+            Dictionary<Thing, int> savedSilver = SnapshotAllColonySilver(paymentMap);
+            float[] savedProfileSupplyWeights = profile?.supplyWeights == null
+                ? null
+                : (float[])profile.supplyWeights.Clone();
+            int savedNextId = nextIdField == null ? -1 : (int)nextIdField.GetValue(state);
+            int savedRefreshCount = refreshCountField == null
+                ? -1
+                : (int)refreshCountField.GetValue(state);
+            int savedLastRefreshTick = lastRefreshTickField == null
+                ? -1
+                : (int)lastRefreshTickField.GetValue(state);
+            int savedSaveVersion = saveVersionField == null
+                ? -1
+                : (int)saveVersionField.GetValue(state);
+
+            int savedProcurementQuantity = acceptedContract?.quantityPerCycle ?? 0;
+            float savedProcurementUnitPrice = acceptedContract?.unitPrice ?? 0f;
+            int savedProcurementCadence = acceptedContract?.cadenceDays ?? 0;
+            int savedProcurementTotalCycles = acceptedContract?.totalCycles ?? 0;
+            int savedProcurementCompleted = acceptedContract?.cyclesCompleted ?? 0;
+            int savedProcurementFailed = acceptedContract?.cyclesFailed ?? 0;
+            int savedProcurementNextTick = acceptedContract?.nextCycleTick ?? 0;
+            int savedProcurementActiveOrder = acceptedContract?.activeOrderId ?? 0;
+            ProcurementContractStatus savedProcurementStatus = acceptedContract == null
+                ? ProcurementContractStatus.Offered
+                : acceptedContract.status;
+            string savedProcurementNote = acceptedContract?.outcomeNote;
+            Thing temporarySilver = null;
+            Zone_Stockpile temporarySilverZone = null;
+            PurchaseOrder paidOrderForShock = null;
+            float paidOrderUnitPriceBeforeShock = 0f;
+            int paidOrderQuantityBeforeShock = 0;
+            int paidOrderTotalBeforeShock = 0;
+            bool shockApplied = false;
+
+            try
+            {
+                PurchaseOrder defaultOrder = null;
+                bool cyclePreconditions = paymentMap != null && ThingDefOf.Silver != null &&
+                    acceptedContract != null && settlement != null && profile != null &&
+                    category.HasValue && (int)category.Value >= 0 &&
+                    (int)category.Value < IntercolonyProductCategoryUtility.Count &&
+                    consumptionField != null;
+                string cycleReason = cyclePreconditions
+                    ? null
+                    : "paid-cycle fixture needs a payment map, silver, accepted contract, " +
+                      "supplier profile/category, and the consumption ledger";
+
+                if (!cyclePreconditions)
+                {
+                    skip(R9, cycleReason);
+                    skip(R10b, "no paid purchase order can be constructed: " + cycleReason);
+                }
+                else
+                {
+                    state.ProcurementContracts.Clear();
+                    state.ProcurementContracts.Add(acceptedContract);
+                    state.PurchaseOrders.Clear();
+                    acceptedContract.quantityPerCycle = 1;
+                    acceptedContract.unitPrice = Mathf.Max(
+                        1f, savedProcurementUnitPrice > 0f ? savedProcurementUnitPrice : 1f);
+                    acceptedContract.cadenceDays = 1;
+                    acceptedContract.totalCycles = 2;
+                    acceptedContract.cyclesCompleted = 0;
+                    acceptedContract.cyclesFailed = 0;
+                    acceptedContract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                    acceptedContract.status = ProcurementContractStatus.Active;
+                    acceptedContract.outcomeNote = "R9 acceptance-gate fixture";
+
+                    int expectedCycleCost = IntercolonyPricing.TotalPayment(
+                        acceptedContract.unitPrice, acceptedContract.quantityPerCycle);
+                    int storedSilver = PurchaseOrderService.CountColonySilver(paymentMap);
+                    // Keep one silver beyond the payment so the service splits a paid stack
+                    // rather than consuming the exact original Thing object.
+                    int requiredStoredSilver = expectedCycleCost + 1;
+                    if (storedSilver < requiredStoredSilver)
+                    {
+                        int needed = requiredStoredSilver - storedSilver;
+                        Thing topUp = null;
+                        foreach (Thing silver in paymentMap.listerThings.ThingsOfDef(ThingDefOf.Silver))
+                        {
+                            if (silver != null && !silver.Destroyed && silver.IsInAnyStorage() &&
+                                silver.stackCount + needed <= ThingDefOf.Silver.stackLimit)
+                            {
+                                topUp = silver;
+                                break;
+                            }
+                        }
+
+                        if (topUp != null)
+                        {
+                            topUp.stackCount += needed;
+                        }
+                        else
+                        {
+                            TryCreateStoredSilver(
+                                paymentMap, needed, out temporarySilver, out temporarySilverZone);
+                        }
+
+                        storedSilver = PurchaseOrderService.CountColonySilver(paymentMap);
+                    }
+
+                    if (storedSilver < requiredStoredSilver)
+                    {
+                        skip(R9,
+                            $"stored silver={storedSilver}; paid cycle needs {expectedCycleCost} " +
+                            $"plus one preservation silver; " +
+                            "temporary stored-silver fixture could not be made");
+                        skip(R10b,
+                            $"no paid purchase order: stored silver={storedSilver}; " +
+                            $"cycle cost={expectedCycleCost}");
+                    }
+                    else
+                    {
+                        int silverTotalBefore = CountAllColonySilver(paymentMap);
+                        profile.supplyWeights[(int)category.Value] = 0f;
+                        acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                        int advanced = ProcurementContractService.AdvanceCycles(state);
+                        if (state.PurchaseOrders.Count > 0)
+                        {
+                            defaultOrder = state.PurchaseOrders[state.PurchaseOrders.Count - 1];
+                        }
+
+                        int silverTotalAfter = CountAllColonySilver(paymentMap);
+                        int silverDifference = silverTotalAfter - silverTotalBefore;
+                        check(
+                            R9,
+                            advanced == 1 && defaultOrder != null &&
+                            defaultOrder.status == PurchaseOrderStatus.SupplierDefault &&
+                            defaultOrder.paidSilver == expectedCycleCost &&
+                            silverTotalAfter == silverTotalBefore,
+                            $"silverTotalBefore={silverTotalBefore}; " +
+                            $"silverTotalAfter={silverTotalAfter}; " +
+                            $"difference={silverDifference}; expectedCycleCost={expectedCycleCost}; " +
+                            $"advanced={advanced}; orderStatus=" +
+                            $"{(defaultOrder == null ? "null" : defaultOrder.status.ToString())}; " +
+                            $"paid={(defaultOrder == null ? "null" : defaultOrder.paidSilver.ToString())}");
+
+                        if (defaultOrder == null || defaultOrder.paidSilver <= 0)
+                        {
+                            skip(R10b,
+                                "the paid-cycle fixture did not produce a paid purchase order");
+                        }
+                        else
+                        {
+                            paidOrderForShock = defaultOrder;
+                            paidOrderUnitPriceBeforeShock = defaultOrder.unitPrice;
+                            paidOrderQuantityBeforeShock = defaultOrder.quantity;
+                            paidOrderTotalBeforeShock = defaultOrder.paidSilver;
+                        }
+                    }
+                }
+
+                if (profile != null && savedProfileSupplyWeights != null)
+                {
+                    Array.Copy(savedProfileSupplyWeights, profile.supplyWeights,
+                        savedProfileSupplyWeights.Length);
+                }
+
+                bool listingPreconditions = settlement != null && profile != null &&
+                    ThingDefOf.Steel != null;
+                if (!listingPreconditions)
+                {
+                    skip(R10a,
+                        "supplier listing fixture needs an accessible settlement, profile, and Steel");
+                }
+                else
+                {
+                    int listingWindow = state.RefreshCount + 10_000;
+                    int listingId = 920_000;
+                    List<SupplierListing> beforeListings = SupplierListingService.GenerateFor(
+                        state, settlement, profile, listingWindow, 0, () => listingId++);
+                    if (beforeListings.Count == 0)
+                    {
+                        skip(R10a,
+                            $"supplier listing generator produced 0 baseline listings for " +
+                            $"settlement {settlement.ID} in window {listingWindow}");
+                    }
+                    else
+                    {
+                        IntercolonyProductCategory? listingCategory =
+                            IntercolonyProductClassifier.Classify(beforeListings[0].thingDef);
+                        if (!listingCategory.HasValue)
+                        {
+                            skip(R10a,
+                                $"baseline listing {beforeListings[0].id} item " +
+                                $"{beforeListings[0].thingDef?.defName ?? "null"} has no category");
+                        }
+                        else
+                        {
+                            SettlementMarketState listingMarketState = state.MarketStateFor(
+                                settlement.ID, createIfMissing: false);
+                            if (listingMarketState != null)
+                            {
+                                listingMarketState.supplyPressure[(int)listingCategory.Value] =
+                                    SettlementMarketState.Neutral;
+                            }
+
+                            float supplyBefore = EffectiveEconomyService.EffectiveSupply(
+                                state, profile, listingCategory.Value);
+                            MarketPressureService.ApplySupplyShock(
+                                state, settlement.ID, listingCategory.Value, 0.35f);
+                            shockApplied = true;
+                            float supplyAfter = EffectiveEconomyService.EffectiveSupply(
+                                state, profile, listingCategory.Value);
+                            int afterId = 930_000;
+                            List<SupplierListing> afterListings = SupplierListingService.GenerateFor(
+                                state, settlement, profile, listingWindow, 0, () => afterId++);
+                            bool listingsDiffer = !SameSupplierListingBatch(
+                                beforeListings, afterListings);
+                            check(
+                                R10a,
+                                supplyAfter < supplyBefore && listingsDiffer,
+                                $"supply {supplyBefore:F4}->{supplyAfter:F4}; " +
+                                $"listings {SupplierListingBatchDetail(beforeListings)} -> " +
+                                $"{SupplierListingBatchDetail(afterListings)}");
+                        }
+                    }
+                }
+
+                if (acceptedContract == null || settlement == null ||
+                    acceptedContract.thingDef == null ||
+                    acceptedContract.quantityPerCycle <= 0 || acceptedContract.totalCycles <= 0)
+                {
+                    skip(R10c,
+                        "accepted procurement contract has no valid item, quantity, or cycle terms");
+                }
+                else
+                {
+                    acceptedContract.status = ProcurementContractStatus.Active;
+                    float contractUnitPriceBefore = acceptedContract.unitPrice;
+                    int contractQuantityBefore = acceptedContract.quantityPerCycle;
+                    int contractCadenceBefore = acceptedContract.cadenceDays;
+                    int contractTotalCyclesBefore = acceptedContract.totalCycles;
+                    IntercolonyProductCategory contractCategory =
+                        IntercolonyProductClassifier.Classify(acceptedContract.thingDef) ??
+                        IntercolonyProductCategory.Commodities;
+                    if (settlement != null)
+                    {
+                        MarketPressureService.ApplySupplyShock(
+                            state, settlement.ID, contractCategory, 0.35f);
+                        shockApplied = true;
+                    }
+
+                    check(
+                        R10c,
+                        acceptedContract.unitPrice == contractUnitPriceBefore &&
+                        acceptedContract.quantityPerCycle == contractQuantityBefore &&
+                        acceptedContract.cadenceDays == contractCadenceBefore &&
+                        acceptedContract.totalCycles == contractTotalCyclesBefore,
+                        $"quantity {contractQuantityBefore}->{acceptedContract.quantityPerCycle}; " +
+                        $"unitPrice {contractUnitPriceBefore:F4}->{acceptedContract.unitPrice:F4}; " +
+                        $"cadenceDays {contractCadenceBefore}->{acceptedContract.cadenceDays}; " +
+                        $"totalCycles {contractTotalCyclesBefore}->{acceptedContract.totalCycles}");
+                }
+
+                if (paidOrderForShock == null)
+                {
+                    // R9 already emitted a specific skip when its paid precondition was
+                    // unavailable. Do not duplicate it here.
+                }
+                else
+                {
+                    if (!shockApplied)
+                    {
+                        IntercolonyProductCategory orderCategory =
+                            IntercolonyProductClassifier.Classify(paidOrderForShock.thingDef) ??
+                            IntercolonyProductCategory.Commodities;
+                        MarketPressureService.ApplySupplyShock(
+                            state, paidOrderForShock.settlementId, orderCategory, 0.35f);
+                    }
+
+                    check(
+                        R10b,
+                        paidOrderForShock.unitPrice == paidOrderUnitPriceBeforeShock &&
+                        paidOrderForShock.quantity == paidOrderQuantityBeforeShock &&
+                        paidOrderForShock.paidSilver == paidOrderTotalBeforeShock,
+                        $"unitPrice {paidOrderUnitPriceBeforeShock:F4}->" +
+                        $"{paidOrderForShock.unitPrice:F4}; " +
+                        $"quantity {paidOrderQuantityBeforeShock}->{paidOrderForShock.quantity}; " +
+                        $"total {paidOrderTotalBeforeShock}->{paidOrderForShock.paidSilver}");
+                }
+
+                CheckStage6IAcceptanceGateSaveLoad(
+                    check, skip, state, acceptedContract, settlement);
+                CheckStage6IAcceptanceGateSelling(
+                    check, skip, state, settlement, profile);
+            }
+            finally
+            {
+                RestoreAllColonySilver(paymentMap, savedSilver);
+                temporarySilverZone?.Delete(playSound: false);
+                if (temporarySilver != null && !temporarySilver.Destroyed)
+                {
+                    temporarySilver.Destroy(DestroyMode.Vanish);
+                }
+
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedSalesContracts);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedProcurementContracts);
+                state.SupplierListings.Clear();
+                state.SupplierListings.AddRange(savedListings);
+                state.Requests.Clear();
+                state.Requests.AddRange(savedRequests);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedSalesOrders);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedTimeline);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                state.Ledger.Clear();
+                state.Ledger.AddRange(savedLedger);
+                state.LedgerStartTick = savedLedgerStartTick;
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+
+                state.EconomicEvents.Clear();
+                state.EconomicEvents.AddRange(savedEconomicEvents);
+                state.MarketStates.Clear();
+                state.MarketStates.AddRange(savedMarketStates);
+                foreach (KeyValuePair<SettlementMarketState, float[]> entry in savedDemand)
+                {
+                    Array.Copy(entry.Value, entry.Key.demandPressure, entry.Value.Length);
+                    Array.Copy(savedSupply[entry.Key], entry.Key.supplyPressure,
+                        savedSupply[entry.Key].Length);
+                    entry.Key.lastAdvancedRefresh = savedMarketRefreshes[entry.Key];
+                }
+                state.RefreshMarketStateIndex();
+
+                if (consumptionField != null && savedConsumption != null)
+                {
+                    List<SupplierOfferConsumption> liveConsumption =
+                        consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
+                    if (liveConsumption != null)
+                    {
+                        liveConsumption.Clear();
+                        liveConsumption.AddRange(savedConsumption);
+                    }
+                }
+
+                if (acceptedContract != null)
+                {
+                    acceptedContract.quantityPerCycle = savedProcurementQuantity;
+                    acceptedContract.unitPrice = savedProcurementUnitPrice;
+                    acceptedContract.cadenceDays = savedProcurementCadence;
+                    acceptedContract.totalCycles = savedProcurementTotalCycles;
+                    acceptedContract.cyclesCompleted = savedProcurementCompleted;
+                    acceptedContract.cyclesFailed = savedProcurementFailed;
+                    acceptedContract.nextCycleTick = savedProcurementNextTick;
+                    acceptedContract.activeOrderId = savedProcurementActiveOrder;
+                    acceptedContract.status = savedProcurementStatus;
+                    acceptedContract.outcomeNote = savedProcurementNote;
+                }
+
+                if (profile != null && savedProfileSupplyWeights != null)
+                {
+                    Array.Copy(savedProfileSupplyWeights, profile.supplyWeights,
+                        savedProfileSupplyWeights.Length);
+                }
+
+                if (nextIdField != null && savedNextId >= 0)
+                {
+                    nextIdField.SetValue(state, savedNextId);
+                }
+                if (refreshCountField != null && savedRefreshCount >= 0)
+                {
+                    refreshCountField.SetValue(state, savedRefreshCount);
+                }
+                if (lastRefreshTickField != null)
+                {
+                    lastRefreshTickField.SetValue(state, savedLastRefreshTick);
+                }
+                if (saveVersionField != null && savedSaveVersion >= 0)
+                {
+                    saveVersionField.SetValue(state, savedSaveVersion);
+                }
+            }
+        }
+
+        private static void CheckStage6IAcceptanceGateSaveLoad(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            ProcurementContract acceptedContract,
+            Settlement settlement)
+        {
+            const string assertion = "R11 all five live record kinds survive save/load";
+            if (state == null || acceptedContract == null || ThingDefOf.Steel == null)
+            {
+                skip(assertion,
+                    "save/load fixture needs world state, an accepted procurement contract, and Steel");
+                return;
+            }
+
+            int supplierId = state.NextId();
+            int requestId = state.NextId();
+            int orderId = state.NextId();
+            int salesContractId = state.NextId();
+            SupplierListing listing = new SupplierListing
+            {
+                id = supplierId,
+                settlementId = settlement?.ID ?? acceptedContract.settlementId,
+                thingDef = ThingDefOf.Steel,
+                quantityAvailable = 7,
+                unitPrice = 1.25f,
+                leadTimeDays = 2,
+                createdTick = GenTicks.TicksGame,
+                expiryTick = SupplierListing.NoExpiryTick,
+                refreshWindow = state.RefreshCount
+            };
+            PurchaseRequest request = new PurchaseRequest
+            {
+                id = requestId,
+                thingDef = ThingDefOf.Steel,
+                quantityRequested = 3,
+                desiredDays = 5,
+                createdTick = GenTicks.TicksGame,
+                expiryTick = GenTicks.TicksGame + GenDate.TicksPerDay * 5,
+                status = PurchaseRequestStatus.Open
+            };
+            PurchaseOrder order = new PurchaseOrder
+            {
+                id = orderId,
+                settlementId = listing.settlementId,
+                settlementName = settlement?.Label ?? acceptedContract.settlementName,
+                factionName = settlement?.Faction?.Name ?? "",
+                thingDef = ThingDefOf.Steel,
+                quantity = 2,
+                unitPrice = 1.5f,
+                paidSilver = 3,
+                orderedTick = GenTicks.TicksGame,
+                readyTick = GenTicks.TicksGame + GenDate.TicksPerDay,
+                pickupExpiryTick = GenTicks.TicksGame + GenDate.TicksPerDay * 2,
+                status = PurchaseOrderStatus.Confirmed
+            };
+            RecurringContract salesContract = new RecurringContract
+            {
+                id = salesContractId,
+                settlementId = listing.settlementId,
+                settlementName = listing.settlementId.ToString(),
+                factionName = "R11 sales fixture",
+                thingDef = ThingDefOf.Steel,
+                quantityPerCycle = 2,
+                cadenceTicks = GenDate.TicksPerDay,
+                totalCycles = 3,
+                unitPrice = 2.25f,
+                status = ContractStatus.Active,
+                nextCycleTick = GenTicks.TicksGame + GenDate.TicksPerDay
+            };
+
+            List<RecurringContract> beforeSales = new List<RecurringContract> { salesContract };
+            List<ProcurementContract> beforeProcurement =
+                new List<ProcurementContract> { acceptedContract };
+            List<SupplierListing> beforeListings = new List<SupplierListing> { listing };
+            List<PurchaseRequest> beforeRequests = new List<PurchaseRequest> { request };
+            List<PurchaseOrder> beforeOrders = new List<PurchaseOrder> { order };
+            state.Contracts.Clear();
+            state.Contracts.Add(salesContract);
+            state.ProcurementContracts.Clear();
+            acceptedContract.status = ProcurementContractStatus.Active;
+            state.ProcurementContracts.Add(acceptedContract);
+            state.SupplierListings.Clear();
+            state.SupplierListings.Add(listing);
+            state.Requests.Clear();
+            state.Requests.Add(request);
+            state.PurchaseOrders.Clear();
+            state.PurchaseOrders.Add(order);
+
+            IntercolonyWorldComponent savedState = state;
+            IntercolonyWorldComponent loadedState = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-Stage6I-R11-{Guid.NewGuid():N}.xml");
+            try
+            {
+                Scribe.saver.InitSaving(path, "stage6IAcceptanceGate");
+                Scribe_Deep.Look(ref savedState, "state");
+                Scribe.saver.FinalizeSaving();
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedState, "state", (object)null);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            int salesAfter = loadedState?.Contracts?.Count ?? -1;
+            int procurementAfter = loadedState?.ProcurementContracts?.Count ?? -1;
+            int listingsAfter = loadedState?.SupplierListings?.Count ?? -1;
+            int requestsAfter = loadedState?.Requests?.Count ?? -1;
+            int ordersAfter = loadedState?.PurchaseOrders?.Count ?? -1;
+            RecurringContract loadedSalesContract = loadedState?.Contracts != null &&
+                loadedState.Contracts.Count == 1 ? loadedState.Contracts[0] : null;
+            ProcurementContract loadedProcurement = loadedState?.ProcurementContracts != null &&
+                loadedState.ProcurementContracts.Count == 1
+                ? loadedState.ProcurementContracts[0]
+                : null;
+            SupplierListing loadedListing = loadedState?.SupplierListings != null &&
+                loadedState.SupplierListings.Count == 1 ? loadedState.SupplierListings[0] : null;
+            PurchaseRequest loadedRequest = loadedState?.Requests != null &&
+                loadedState.Requests.Count == 1 ? loadedState.Requests[0] : null;
+            PurchaseOrder loadedOrder = loadedState?.PurchaseOrders != null &&
+                loadedState.PurchaseOrders.Count == 1 ? loadedState.PurchaseOrders[0] : null;
+            bool identifyingFieldsSurvived = loadedListing?.id == listing.id &&
+                loadedListing.thingDef == listing.thingDef && loadedListing.quantityAvailable ==
+                listing.quantityAvailable && loadedListing.IsAvailable &&
+                loadedRequest?.id == request.id && loadedRequest.thingDef == request.thingDef &&
+                loadedRequest.quantityRequested == request.quantityRequested &&
+                loadedRequest.status == PurchaseRequestStatus.Open &&
+                loadedOrder?.id == order.id && loadedOrder.thingDef == order.thingDef &&
+                loadedOrder.quantity == order.quantity && loadedOrder.paidSilver == order.paidSilver &&
+                loadedOrder.status == PurchaseOrderStatus.Confirmed &&
+                loadedSalesContract?.id == salesContract.id &&
+                loadedSalesContract.thingDef == salesContract.thingDef &&
+                loadedSalesContract.quantityPerCycle == salesContract.quantityPerCycle &&
+                loadedSalesContract.status == ContractStatus.Active &&
+                loadedProcurement?.id == acceptedContract.id &&
+                loadedProcurement.thingDef == acceptedContract.thingDef &&
+                loadedProcurement.quantityPerCycle == acceptedContract.quantityPerCycle &&
+                loadedProcurement.unitPrice == acceptedContract.unitPrice &&
+                loadedProcurement.cadenceDays == acceptedContract.cadenceDays &&
+                loadedProcurement.totalCycles == acceptedContract.totalCycles &&
+                loadedProcurement.status == ProcurementContractStatus.Active;
+            check(
+                assertion,
+                failure == null && salesAfter == beforeSales.Count &&
+                procurementAfter == beforeProcurement.Count &&
+                listingsAfter == beforeListings.Count &&
+                requestsAfter == beforeRequests.Count && ordersAfter == beforeOrders.Count &&
+                identifyingFieldsSurvived,
+                $"available supplier listing count {beforeListings.Count}->{listingsAfter}; " +
+                $"open RFQ request count {beforeRequests.Count}->{requestsAfter}; " +
+                $"open purchase order count {beforeOrders.Count}->{ordersAfter}; " +
+                $"active SALES recurring contract count {beforeSales.Count}->{salesAfter}; " +
+                $"active procurement contract count {beforeProcurement.Count}->{procurementAfter}; " +
+                $"ids listing={supplierId}; request={requestId}; order={orderId}; " +
+                $"sales={salesContractId}; procurement={acceptedContract.id}; " +
+                $"failure={failure ?? "none"}");
+        }
+
+        private static void CheckStage6IAcceptanceGateSelling(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            SettlementEconomicProfile profile)
+        {
+            const string pricingAssertion = "R12 market opportunity still uses shared sell pricing";
+            const string cycleAssertion = "R12 sales recurring contract still runs a cycle";
+            if (state == null || settlement == null || profile == null)
+            {
+                string reason = "selling fixture needs world state, an accessible settlement, and profile";
+                skip(pricingAssertion, reason);
+                skip(cycleAssertion, reason);
+                return;
+            }
+
+            // R12 is a selling-pricing integration guard, not an opportunity-posting dice test.
+            // Use the exact UnitPrice overload that MarketOpportunityGenerator.CreateOne calls,
+            // then put that result on a probe opportunity so TotalPrice still crosses the same
+            // shared payment boundary without depending on a random offer being posted.
+            ThingDef product = IntercolonyProductClassifier.TradableDefs.Count > 0
+                ? IntercolonyProductClassifier.TradableDefs[0]
+                : null;
+            IntercolonyProductCategory category = product == null
+                ? IntercolonyProductCategory.Commodities
+                : IntercolonyProductClassifier.Classify(product) ??
+                  IntercolonyProductCategory.Commodities;
+            if (product == null)
+            {
+                skip(pricingAssertion,
+                    "selling pricing fixture has no tradable product to value");
+            }
+            else
+            {
+                const int quantity = 1;
+                float unitPrice = IntercolonyPricing.UnitPrice(
+                    state, product, null, quantity, profile, category,
+                    MarketOpportunityGenerator.DistanceToPlayer(settlement), null,
+                    out List<PriceFactor> factors);
+                MarketOpportunity opportunity = new MarketOpportunity
+                {
+                    settlementId = settlement.ID,
+                    thingDef = product,
+                    quantity = quantity,
+                    unitPrice = unitPrice
+                };
+                int sharedTotal = IntercolonyPricing.TotalPayment(unitPrice, quantity);
+                check(
+                    pricingAssertion,
+                    unitPrice > 0f && opportunity.TotalPrice == sharedTotal,
+                    $"product={product.defName}; category={category}; " +
+                    $"unitPrice={unitPrice:F4}; quantity={quantity}; " +
+                    $"total={opportunity.TotalPrice}; sharedTotal={sharedTotal}; " +
+                    $"factors={(factors == null ? "null" : factors.Count.ToString())}; " +
+                    "pricing entry point=IntercolonyPricing.UnitPrice");
+            }
+
+            RecurringContract salesContract = new RecurringContract
+            {
+                id = state.NextId(),
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "R12 sales fixture",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = ThingDefOf.Steel != null ? ThingDefOf.Steel :
+                    IntercolonyProductClassifier.TradableDefs[0],
+                quantityPerCycle = 1,
+                cadenceTicks = GenDate.TicksPerDay,
+                totalCycles = 2,
+                unitPrice = 1f,
+                status = ContractStatus.Active,
+                nextCycleTick = GenTicks.TicksGame
+            };
+            state.Contracts.Add(salesContract);
+            int ordersBefore = state.Orders.Count;
+            ContractService.AdvanceContracts(state);
+            SalesOrder cycleOrder = state.FindOrder(salesContract.activeOrderId);
+            check(
+                cycleAssertion,
+                state.Orders.Count == ordersBefore + 1 && salesContract.activeOrderId != 0 &&
+                cycleOrder != null && cycleOrder.status == SalesOrderStatus.Accepted &&
+                cycleOrder.contractId == salesContract.id &&
+                cycleOrder.unitPrice == salesContract.unitPrice,
+                $"orders {ordersBefore}->{state.Orders.Count}; contract={salesContract.id}; " +
+                $"activeOrderId={salesContract.activeOrderId}; order=" +
+                $"{(cycleOrder == null ? "null" : cycleOrder.id.ToString())}; status=" +
+                $"{(cycleOrder == null ? "null" : cycleOrder.status.ToString())}; " +
+                $"unitPrice={(cycleOrder == null ? "null" : cycleOrder.unitPrice.ToString("F4"))}");
+        }
+
+        private static bool SameSupplierListingBatch(
+            List<SupplierListing> before,
+            List<SupplierListing> after)
+        {
+            if (before == null || after == null || before.Count != after.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < before.Count; i++)
+            {
+                SupplierListing left = before[i];
+                SupplierListing right = after[i];
+                if (left == null || right == null || left.thingDef != right.thingDef ||
+                    left.quantityAvailable != right.quantityAvailable ||
+                    left.unitPrice != right.unitPrice || left.fulfillment != right.fulfillment ||
+                    left.leadTimeDays != right.leadTimeDays)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string SupplierListingBatchDetail(List<SupplierListing> listings)
+        {
+            if (listings == null)
+            {
+                return "null";
+            }
+
+            List<string> details = new List<string>();
+            foreach (SupplierListing listing in listings)
+            {
+                details.Add(listing == null
+                    ? "null"
+                    : $"{listing.thingDef?.defName ?? "null"}:{listing.quantityAvailable}@" +
+                      $"{listing.unitPrice:F3}");
+            }
+
+            return "[" + string.Join(",", details.ToArray()) + "]";
         }
 
         private static void SetProcurementReputation(
