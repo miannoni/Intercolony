@@ -92,7 +92,8 @@ namespace Intercolony
         private Tab tab = Tab.Business;
         private Tab sellingTab = Tab.Market;
 
-        // Find seller rather than the supplier market, because the market does not exist yet.
+        // Find seller remains the default procurement page so an existing colony opens on its
+        // familiar RFQ workflow; the Supplier Market sits beside it in the same sub-tab row.
         private Tab procurementTab = Tab.FindSeller;
 
         // A page is latched off after a failure because DoWindowContents runs every frame; retrying
@@ -164,6 +165,10 @@ namespace Intercolony
 
         private QuoteColumn quoteSortColumn = QuoteColumn.Quantity;
         private bool quoteSortDescending = true;
+
+        private Vector2 supplierMarketScroll;
+        private SupplierMarketColumn supplierMarketSortColumn = SupplierMarketColumn.TotalPayment;
+        private bool supplierMarketSortDescending = true;
 
         private enum OrderColumn
         {
@@ -284,6 +289,12 @@ namespace Intercolony
             if (tab == Tab.FindSeller)
             {
                 DrawFindSeller(inRect, state);
+                return;
+            }
+
+            if (tab == Tab.SupplierMarket)
+            {
+                DrawSupplierMarket(inRect, state);
                 return;
             }
 
@@ -417,7 +428,7 @@ namespace Intercolony
         /// </summary>
         private static bool IsPlaceholderTab(Tab which)
         {
-            return which == Tab.SupplierMarket || which == Tab.SupplyContracts;
+            return which == Tab.SupplyContracts;
         }
 
         /// <summary>Tab caption, including a count badge where one is useful.</summary>
@@ -1005,16 +1016,8 @@ namespace Intercolony
             }
 
             // Tie-break on id so equal keys keep a stable, non-jittering order between frames.
-            list.Sort((a, b) =>
-            {
-                int result = comparison(a, b);
-                if (result != 0)
-                {
-                    return sortDescending ? -result : result;
-                }
-
-                return a.id.CompareTo(b.id);
-            });
+            MarketTableSortUtility.Sort(
+                list, comparison, sortDescending, (a, b) => a.id.CompareTo(b.id));
         }
 
         private void DrawRow(Rect rect, MarketOpportunity opportunity, int index)
@@ -2467,6 +2470,225 @@ namespace Intercolony
         }
 
         private Vector2 procurementOrdersScroll;
+
+        /// <summary>Draws the Supplier Market browse surface beside Find seller.</summary>
+        private void DrawSupplierMarket(Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+            Text.Font = GameFont.Medium;
+            DrawMeasuredSupplierLabel(new Rect(0f, y, inRect.width, 34f), "Supplier market");
+            Text.Font = GameFont.Small;
+            y += 40f;
+
+            List<SupplierMarketRow> rows = SupplierMarketUiService.BuildRows(state);
+            if (rows.Count == 0)
+            {
+                GUI.color = Color.gray;
+                string emptyMessage = SupplierMarketUiService.EmptyState(state);
+                float emptyHeight = Text.CalcHeight(emptyMessage, inRect.width - 12f);
+                DrawMeasuredSupplierLabel(
+                    new Rect(0f, y, inRect.width - 12f, emptyHeight), emptyMessage);
+                GUI.color = Color.white;
+                return;
+            }
+
+            SupplierMarketUiService.SortRows(
+                rows, supplierMarketSortColumn, supplierMarketSortDescending);
+
+            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
+            DrawSupplierMarketHeader(new Rect(0f, y, tableWidth, 28f));
+            y += 28f;
+            Widgets.DrawLineHorizontal(0f, y, inRect.width);
+            y += 2f;
+
+            float contentHeight = 0f;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                contentHeight += SupplierMarketRowHeight(rows[i], tableWidth);
+            }
+
+            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            Rect viewRect = new Rect(0f, 0f, tableWidth, contentHeight);
+            BeginPageScrollView(outRect, ref supplierMarketScroll, viewRect);
+
+            float rowY = 0f;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                float rowHeight = SupplierMarketRowHeight(rows[i], tableWidth);
+                DrawSupplierMarketRow(
+                    new Rect(0f, rowY, tableWidth, rowHeight), rows[i], i, state);
+                rowY += rowHeight;
+            }
+
+            EndPageScrollView();
+        }
+
+        private void DrawSupplierMarketHeader(Rect rect)
+        {
+            float x = rect.x;
+            for (int i = 0; i < SupplierMarketUiService.ColumnLabels.Length; i++)
+            {
+                float width = rect.width * SupplierMarketUiService.ColumnWidths[i];
+                Rect cell = new Rect(x, rect.y, Mathf.Max(1f, width - 4f), rect.height);
+                if (i == SupplierMarketUiService.ColumnLabels.Length - 1)
+                {
+                    x += width;
+                    continue;
+                }
+
+                SupplierMarketColumn column = (SupplierMarketColumn)i;
+                bool active = supplierMarketSortColumn == column;
+                string label = SupplierMarketUiService.HeaderLabel(
+                    column, active, supplierMarketSortDescending);
+                Widgets.DrawHighlightIfMouseover(cell);
+                GUI.color = active ? Color.white : new Color(1f, 1f, 1f, 0.6f);
+                DrawMeasuredSupplierLabel(cell, label);
+                GUI.color = Color.white;
+
+                if (Widgets.ButtonInvisible(cell))
+                {
+                    if (active)
+                    {
+                        supplierMarketSortDescending = !supplierMarketSortDescending;
+                    }
+                    else
+                    {
+                        supplierMarketSortColumn = column;
+                        supplierMarketSortDescending =
+                            SupplierMarketUiService.DefaultDescending(column);
+                    }
+
+                    SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+                }
+
+                x += width;
+            }
+        }
+
+        private void DrawSupplierMarketRow(
+            Rect rect,
+            SupplierMarketRow row,
+            int index,
+            IntercolonyWorldComponent state)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+            if (ShouldBuildTooltip(rect) && !row.tooltip.NullOrEmpty())
+            {
+                TooltipHandler.TipRegion(rect, row.tooltip);
+            }
+
+            for (int i = 0; i < (int)SupplierMarketColumn.Reason + 1; i++)
+            {
+                SupplierMarketColumn column = (SupplierMarketColumn)i;
+                DrawMeasuredSupplierLabel(
+                    SupplierMarketCell(rect, column),
+                    SupplierMarketUiService.CellLabel(row, column));
+            }
+
+            Rect actionCell = SupplierMarketActionCell(rect);
+            Rect buyRect = new Rect(
+                actionCell.x,
+                rect.y + Mathf.Max(0f, (rect.height - 26f) / 2f),
+                actionCell.width,
+                26f);
+            if (Widgets.ButtonText(buyRect, "Buy", active: row.canBuy))
+            {
+                OpenSupplierMarketPurchase(state, row.listing);
+            }
+
+            if (!row.canBuy && !row.purchaseFailureReason.NullOrEmpty())
+            {
+                TooltipHandler.TipRegion(buyRect, row.purchaseFailureReason);
+            }
+        }
+
+        private void OpenSupplierMarketPurchase(
+            IntercolonyWorldComponent state, SupplierListing listing)
+        {
+            if (state == null || listing == null || !listing.IsAvailable)
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(new Dialog_ConfirmQuantity(
+                "Confirm purchase?",
+                "Buy",
+                listing.quantityAvailable,
+                quantity => SupplierMarketUiService.BuildConfirmationRows(
+                    state, listing, quantity),
+                quantity =>
+                {
+                    if (!SupplierListingService.TryPurchase(
+                            state, listing, quantity, out _, out string failureReason) &&
+                        !failureReason.NullOrEmpty())
+                    {
+                        // The purchase service owns this explanation. The UI does not compose a
+                        // parallel reason that could drift from the transaction boundary.
+                        Messages.Message(
+                            failureReason, MessageTypeDefOf.RejectInput, historical: false);
+                    }
+                }));
+        }
+
+        private static float SupplierMarketRowHeight(SupplierMarketRow row, float tableWidth)
+        {
+            float height = 30f;
+            for (int i = 0; i <= (int)SupplierMarketColumn.Reason; i++)
+            {
+                SupplierMarketColumn column = (SupplierMarketColumn)i;
+                float cellWidth = tableWidth * SupplierMarketUiService.ColumnWidths[i] - 4f;
+                height = Mathf.Max(
+                    height,
+                    Text.CalcHeight(
+                        SupplierMarketUiService.CellLabel(row, column), Mathf.Max(1f, cellWidth)) +
+                    8f);
+            }
+
+            return height;
+        }
+
+        private static Rect SupplierMarketCell(Rect row, SupplierMarketColumn column)
+        {
+            int index = (int)column;
+            float x = row.x;
+            for (int i = 0; i < index; i++)
+            {
+                x += row.width * SupplierMarketUiService.ColumnWidths[i];
+            }
+
+            return new Rect(
+                x, row.y + 4f, Mathf.Max(
+                    1f, row.width * SupplierMarketUiService.ColumnWidths[index] - 4f),
+                Mathf.Max(1f, row.height - 8f));
+        }
+
+        private static Rect SupplierMarketActionCell(Rect row)
+        {
+            float x = row.x;
+            for (int i = 0; i < SupplierMarketUiService.ColumnLabels.Length - 1; i++)
+            {
+                x += row.width * SupplierMarketUiService.ColumnWidths[i];
+            }
+
+            return new Rect(
+                x, row.y + 4f,
+                Mathf.Max(1f, row.width * SupplierMarketUiService.ColumnWidths[
+                    SupplierMarketUiService.ColumnLabels.Length - 1] - 4f),
+                Mathf.Max(1f, row.height - 8f));
+        }
+
+        private static void DrawMeasuredSupplierLabel(Rect rect, string text)
+        {
+            string value = text ?? "";
+            float measuredHeight = Text.CalcHeight(value, Mathf.Max(1f, rect.width));
+            Widgets.Label(
+                new Rect(rect.x, rect.y, rect.width, Mathf.Max(rect.height, measuredHeight)), value);
+        }
 
         private void DrawFindSeller(Rect inRect, IntercolonyWorldComponent state)
         {

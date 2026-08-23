@@ -261,13 +261,12 @@ namespace Intercolony
                 return false;
             }
 
-            int price = IntercolonyPricing.TotalPayment(unitPrice, quantity);
-            int available = CountColonySilver(paymentMap);
-            if (available < price)
+            if (!CanPayForPurchase(paymentMap, unitPrice, quantity, out failureReason))
             {
-                failureReason = $"Not enough silver in storage: {available} of {price} needed.";
                 return false;
             }
+
+            int price = IntercolonyPricing.TotalPayment(unitPrice, quantity);
 
             // Peek while building the local order. The stable ID is committed only after the
             // payment succeeds, so a refused purchase does not consume an ID either.
@@ -309,6 +308,44 @@ namespace Intercolony
                 $"{quantity}x {thingDef.label ?? "goods"}");
             state.AddPurchaseOrder(order);
             state.ConsumeSupplierOffer(refreshWindow, thingDef, settlementId, quantity);
+            return true;
+        }
+
+        /// <summary>
+        /// Checks the read-only payment boundary shared by the supplier-market read model and
+        /// the order-creation path. The transaction still performs the final silver take after
+        /// this check, because another action may have spent the colony's money between frames.
+        /// </summary>
+        internal static bool CanPayForPurchase(
+            Map paymentMap, float unitPrice, int quantity, out string failureReason)
+        {
+            failureReason = null;
+            if (paymentMap == null)
+            {
+                failureReason = "No colony to pay from.";
+                return false;
+            }
+
+            if (quantity <= 0)
+            {
+                failureReason = "Purchase quantity must be positive.";
+                return false;
+            }
+
+            if (unitPrice <= 0f || float.IsNaN(unitPrice) || float.IsInfinity(unitPrice))
+            {
+                failureReason = "The supplier's published price is invalid.";
+                return false;
+            }
+
+            int price = IntercolonyPricing.TotalPayment(unitPrice, quantity);
+            int available = CountColonySilver(paymentMap);
+            if (available < price)
+            {
+                failureReason = $"Not enough silver in storage: {available} of {price} needed.";
+                return false;
+            }
+
             return true;
         }
 

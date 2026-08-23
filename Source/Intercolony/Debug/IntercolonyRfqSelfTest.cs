@@ -701,6 +701,9 @@ namespace Intercolony
 
             try
             {
+                CheckSupplierMarketReadModel(
+                    check, skip, state, settlement, window, refreshCountField, ResetFixture);
+
                 SupplierListing rateListing = NewPurchasePathListing(
                     910_101, 2, settlement.ID, window, PublishedRate);
                 ResetFixture(rateListing);
@@ -954,6 +957,366 @@ namespace Intercolony
             skip("V6 failed listing purchase changes nothing", reason);
             skip("V7 purchase origins remain traceable", reason);
             skip("V8 listing total uses IntercolonyPricing.TotalPayment", reason);
+            SkipSupplierMarketReadModel(skip, reason);
+        }
+
+        private static void CheckSupplierMarketReadModel(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            int window,
+            FieldInfo refreshCountField,
+            Action<SupplierListing> resetFixture)
+        {
+            if (state == null || settlement == null || refreshCountField == null ||
+                resetFixture == null)
+            {
+                SkipSupplierMarketReadModel(
+                    skip, "the live fixture fields needed for the read-model probe are inaccessible");
+                return;
+            }
+
+            SupplierListing valuesListing = NewSupplierMarketListing(
+                920_101, 7, settlement.ID, window, 1.37f,
+                FulfillmentMode.BuyerPickup, 11);
+            resetFixture(valuesListing);
+            int selectedQuantity = 4;
+            SupplierMarketRow valuesRow = SupplierMarketUiService.BuildRow(
+                state, valuesListing, selectedQuantity);
+            string expectedItem = valuesListing.thingDef.LabelCap.ToString();
+            string expectedSupplier = settlement.Label.ToString();
+            string expectedFulfillment = "Pickup";
+
+            check(
+                "Y1 Supplier Market row carries listing values",
+                valuesRow.listing == valuesListing &&
+                valuesRow.itemLabel == expectedItem &&
+                valuesRow.supplierLabel == expectedSupplier &&
+                valuesRow.quantityAvailable == valuesListing.quantityAvailable &&
+                valuesRow.selectedQuantity == selectedQuantity &&
+                valuesRow.unitPrice == valuesListing.unitPrice &&
+                valuesRow.fulfillmentLabel == expectedFulfillment &&
+                valuesRow.leadTimeDays == valuesListing.leadTimeDays,
+                $"listing={valuesListing.id}; item row=\"{valuesRow.itemLabel}\" " +
+                $"listing=\"{expectedItem}\"; supplier row=\"{valuesRow.supplierLabel}\" " +
+                $"listing=\"{expectedSupplier}\"; quantity row/listing=" +
+                $"{valuesRow.quantityAvailable}/{valuesListing.quantityAvailable}; " +
+                $"selected={valuesRow.selectedQuantity}; lead row/listing=" +
+                $"{valuesRow.leadTimeDays}/{valuesListing.leadTimeDays}; " +
+                $"fulfillment row/listing=\"{valuesRow.fulfillmentLabel}\"/\"" +
+                $"{expectedFulfillment}\"; unit row/listing={valuesRow.unitPrice:F2}/" +
+                $"{valuesListing.unitPrice:F2}");
+
+            SupplierListing totalListing = NewSupplierMarketListing(
+                920_102, 5, settlement.ID, window, 0.51f,
+                FulfillmentMode.SellerDelivery, 3);
+            resetFixture(totalListing);
+            int totalQuantity = 3;
+            SupplierMarketRow totalRow = SupplierMarketUiService.BuildRow(
+                state, totalListing, totalQuantity);
+            int sharedTotal = IntercolonyPricing.TotalPayment(
+                totalListing.unitPrice, totalQuantity);
+
+            check(
+                "Y2 Supplier Market total uses shared payment calculation",
+                totalRow.totalPayment == sharedTotal,
+                $"listing={totalListing.id}; rate={totalListing.unitPrice:F2}; " +
+                $"quantity={totalQuantity}; row total={totalRow.totalPayment}; " +
+                $"shared total={sharedTotal}");
+
+            SupplierListing zeroListing = NewSupplierMarketListing(
+                920_103, 0, settlement.ID, window, 0.73f,
+                FulfillmentMode.SellerDelivery, 2);
+            SupplierListing expiredListing = NewSupplierMarketListing(
+                920_104, 2, settlement.ID, window, 0.73f,
+                FulfillmentMode.SellerDelivery, 2);
+            expiredListing.expiryTick = GenTicks.TicksGame;
+            resetFixture(zeroListing);
+            state.SupplierListings.Add(expiredListing);
+            List<SupplierMarketRow> unavailableRows =
+                SupplierMarketUiService.BuildRows(state);
+            bool zeroAppeared = ContainsSupplierMarketRow(unavailableRows, zeroListing.id);
+            bool expiredAppeared = ContainsSupplierMarketRow(unavailableRows, expiredListing.id);
+
+            check(
+                "Y3 unavailable Supplier Market listings are not offered",
+                !zeroAppeared && !expiredAppeared,
+                $"zero-quantity listing={zeroListing.id}; quantity={zeroListing.quantityAvailable}; " +
+                $"appeared={zeroAppeared}; expired listing={expiredListing.id}; " +
+                $"quantity={expiredListing.quantityAvailable}; expiry={expiredListing.expiryTick}; " +
+                $"now={GenTicks.TicksGame}; appeared={expiredAppeared}");
+
+            SupplierListing refusalListing = NewSupplierMarketListing(
+                920_105, 2, settlement.ID, window, 0.51f,
+                FulfillmentMode.SellerDelivery, 3);
+            refusalListing.expiryTick = GenTicks.TicksGame;
+            resetFixture(refusalListing);
+            bool purchaseCreated = SupplierListingService.TryPurchase(
+                state, refusalListing, 1,
+                out PurchaseOrder refusedOrder, out string purchaseFailure);
+            SupplierMarketRow refusalRow = SupplierMarketUiService.BuildRow(
+                state, refusalListing, 1);
+
+            check(
+                "Y4 Supplier Market surfaces the purchase service refusal",
+                !purchaseCreated && refusedOrder == null &&
+                !string.IsNullOrEmpty(purchaseFailure) &&
+                refusalRow.purchaseFailureReason == purchaseFailure && !refusalRow.canBuy,
+                $"listing={refusalListing.id}; purchase created={purchaseCreated}; " +
+                $"order={(refusedOrder == null ? "null" : refusedOrder.id.ToString())}; " +
+                $"TryPurchase=\"{purchaseFailure ?? "null"}\"; " +
+                $"row=\"{refusalRow.purchaseFailureReason ?? "null"}\"");
+
+            SupplierListing sortA = NewSupplierMarketListing(
+                920_201, 8, settlement.ID, window, 0.81f,
+                FulfillmentMode.SellerDelivery, 4);
+            SupplierListing sortB = NewSupplierMarketListing(
+                920_202, 2, settlement.ID, window, 0.93f,
+                FulfillmentMode.SellerDelivery, 12);
+            SupplierListing sortC = NewSupplierMarketListing(
+                920_203, 5, settlement.ID, window, 1.07f,
+                FulfillmentMode.SellerDelivery, 9);
+            resetFixture(sortA);
+            state.SupplierListings.Add(sortB);
+            state.SupplierListings.Add(sortC);
+            List<SupplierMarketRow> sortFixture =
+                SupplierMarketUiService.BuildRows(state);
+            if (sortFixture.Count != 3)
+            {
+                SkipSupplierMarketSort(
+                    skip,
+                    $"expected 3 accessible fixture rows; built {sortFixture.Count}; " +
+                    $"listing ids={SupplierMarketRowIds(sortFixture)}");
+            }
+            else
+            {
+                List<SupplierMarketRow> quantityAscending =
+                    new List<SupplierMarketRow>(sortFixture);
+                SupplierMarketUiService.SortRows(
+                    quantityAscending, SupplierMarketColumn.Quantity, descending: false);
+                check(
+                    "Y5 Supplier Market quantity sort ascending",
+                    SupplierMarketRowsMatchIds(
+                        quantityAscending, sortB.id, sortC.id, sortA.id),
+                    SupplierMarketSortDetail(
+                        SupplierMarketColumn.Quantity, false,
+                        $"{sortB.id}={sortB.quantityAvailable}, " +
+                        $"{sortC.id}={sortC.quantityAvailable}, " +
+                        $"{sortA.id}={sortA.quantityAvailable}",
+                        SupplierMarketRowIds(quantityAscending)));
+
+                List<SupplierMarketRow> quantityDescending =
+                    new List<SupplierMarketRow>(sortFixture);
+                SupplierMarketUiService.SortRows(
+                    quantityDescending, SupplierMarketColumn.Quantity, descending: true);
+                check(
+                    "Y5 Supplier Market quantity sort descending",
+                    SupplierMarketRowsMatchIds(
+                        quantityDescending, sortA.id, sortC.id, sortB.id),
+                    SupplierMarketSortDetail(
+                        SupplierMarketColumn.Quantity, true,
+                        $"{sortA.id}={sortA.quantityAvailable}, " +
+                        $"{sortC.id}={sortC.quantityAvailable}, " +
+                        $"{sortB.id}={sortB.quantityAvailable}",
+                        SupplierMarketRowIds(quantityDescending)));
+
+                List<SupplierMarketRow> leadAscending =
+                    new List<SupplierMarketRow>(sortFixture);
+                SupplierMarketUiService.SortRows(
+                    leadAscending, SupplierMarketColumn.LeadTime, descending: false);
+                check(
+                    "Y5 Supplier Market lead-time sort ascending",
+                    SupplierMarketRowsMatchIds(
+                        leadAscending, sortA.id, sortC.id, sortB.id),
+                    SupplierMarketSortDetail(
+                        SupplierMarketColumn.LeadTime, false,
+                        $"{sortA.id}={sortA.leadTimeDays}, " +
+                        $"{sortC.id}={sortC.leadTimeDays}, " +
+                        $"{sortB.id}={sortB.leadTimeDays}",
+                        SupplierMarketRowIds(leadAscending)));
+
+                List<SupplierMarketRow> leadDescending =
+                    new List<SupplierMarketRow>(sortFixture);
+                SupplierMarketUiService.SortRows(
+                    leadDescending, SupplierMarketColumn.LeadTime, descending: true);
+                check(
+                    "Y5 Supplier Market lead-time sort descending",
+                    SupplierMarketRowsMatchIds(
+                        leadDescending, sortB.id, sortC.id, sortA.id),
+                    SupplierMarketSortDetail(
+                        SupplierMarketColumn.LeadTime, true,
+                        $"{sortB.id}={sortB.leadTimeDays}, " +
+                        $"{sortC.id}={sortC.leadTimeDays}, " +
+                        $"{sortA.id}={sortA.leadTimeDays}",
+                        SupplierMarketRowIds(leadDescending)));
+            }
+
+            resetFixture(null);
+            refreshCountField.SetValue(state, 0);
+            List<SupplierMarketRow> notLookedRows =
+                SupplierMarketUiService.BuildRows(state);
+            string notLookedMessage = SupplierMarketUiService.EmptyState(state);
+
+            SupplierListing unreachableListing = NewSupplierMarketListing(
+                920_601, 1, settlement.ID, window, 0.51f,
+                FulfillmentMode.SellerDelivery, 1);
+            unreachableListing.expiryTick = GenTicks.TicksGame;
+            resetFixture(unreachableListing);
+            refreshCountField.SetValue(state, 1);
+            List<SupplierMarketRow> noReachableRows =
+                SupplierMarketUiService.BuildRows(state);
+            string noReachableMessage = SupplierMarketUiService.EmptyState(state);
+
+            check(
+                "Y6 empty state reports that no listings were generated",
+                notLookedRows.Count == 0 &&
+                notLookedMessage == SupplierMarketUiService.NotLookedMessage &&
+                notLookedMessage != noReachableMessage,
+                $"no-listings rows={notLookedRows.Count}; no-listings=\"{notLookedMessage}\"; " +
+                $"no-reachable=\"{noReachableMessage}\"");
+            check(
+                "Y6 empty state reports that no reachable offers are available",
+                noReachableRows.Count == 0 &&
+                noReachableMessage == SupplierMarketUiService.NoReachableOffersMessage &&
+                notLookedMessage != noReachableMessage,
+                $"no-reachable rows={noReachableRows.Count}; no-reachable=\"{noReachableMessage}\"; " +
+                $"no-listings=\"{notLookedMessage}\"");
+
+            SupplierListing oldListing = NewSupplierMarketListing(
+                920_701, 2, settlement.ID, window, 0.51f,
+                FulfillmentMode.SellerDelivery, 2);
+            SupplierListing newListing = NewSupplierMarketListing(
+                920_702, 3, settlement.ID, window, 0.51f,
+                FulfillmentMode.SellerDelivery, 2);
+            resetFixture(oldListing);
+            List<SupplierMarketRow> oldRows = SupplierMarketUiService.BuildRows(state);
+            resetFixture(newListing);
+            List<SupplierMarketRow> newRows = SupplierMarketUiService.BuildRows(state);
+
+            check(
+                "Y7 Supplier Market rows refresh after listings change",
+                oldRows.Count == 1 && newRows.Count == 1 &&
+                oldRows[0].listing == oldListing &&
+                newRows[0].listing == newListing &&
+                !ContainsSupplierMarketRow(newRows, oldListing.id),
+                $"old listing={oldListing.id}; old rows={SupplierMarketRowIds(oldRows)}; " +
+                $"new listing={newListing.id}; new rows={SupplierMarketRowIds(newRows)}; " +
+                $"new quantity={newListing.quantityAvailable}");
+        }
+
+        private static void SkipSupplierMarketReadModel(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("Y1 Supplier Market row carries listing values", reason);
+            skip("Y2 Supplier Market total uses shared payment calculation", reason);
+            skip("Y3 unavailable Supplier Market listings are not offered", reason);
+            skip("Y4 Supplier Market surfaces the purchase service refusal", reason);
+            SkipSupplierMarketSort(skip, reason);
+            skip("Y6 empty state reports that no listings were generated", reason);
+            skip("Y6 empty state reports that no reachable offers are available", reason);
+            skip("Y7 Supplier Market rows refresh after listings change", reason);
+        }
+
+        private static void SkipSupplierMarketSort(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("Y5 Supplier Market quantity sort ascending", reason);
+            skip("Y5 Supplier Market quantity sort descending", reason);
+            skip("Y5 Supplier Market lead-time sort ascending", reason);
+            skip("Y5 Supplier Market lead-time sort descending", reason);
+        }
+
+        private static SupplierListing NewSupplierMarketListing(
+            int id,
+            int quantity,
+            int settlementId,
+            int refreshWindow,
+            float unitPrice,
+            FulfillmentMode fulfillment,
+            int leadTimeDays)
+        {
+            return new SupplierListing
+            {
+                id = id,
+                settlementId = settlementId,
+                thingDef = ThingDefOf.Steel,
+                quantityAvailable = quantity,
+                unitPrice = unitPrice,
+                fulfillment = fulfillment,
+                leadTimeDays = leadTimeDays,
+                createdTick = GenTicks.TicksGame,
+                expiryTick = SupplierListing.NoExpiryTick,
+                refreshWindow = refreshWindow
+            };
+        }
+
+        private static bool ContainsSupplierMarketRow(
+            List<SupplierMarketRow> rows,
+            int listingId)
+        {
+            if (rows == null)
+            {
+                return false;
+            }
+
+            foreach (SupplierMarketRow row in rows)
+            {
+                if (row.listing != null && row.listing.id == listingId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool SupplierMarketRowsMatchIds(
+            List<SupplierMarketRow> rows,
+            params int[] expectedIds)
+        {
+            if (rows == null || expectedIds == null || rows.Count != expectedIds.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < expectedIds.Length; i++)
+            {
+                if (rows[i].listing == null || rows[i].listing.id != expectedIds[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string SupplierMarketRowIds(List<SupplierMarketRow> rows)
+        {
+            if (rows == null)
+            {
+                return "null";
+            }
+
+            List<string> ids = new List<string>();
+            foreach (SupplierMarketRow row in rows)
+            {
+                ids.Add(row.listing == null ? "null" : row.listing.id.ToString());
+            }
+
+            return string.Join(",", ids.ToArray());
+        }
+
+        private static string SupplierMarketSortDetail(
+            SupplierMarketColumn column,
+            bool descending,
+            string expected,
+            string actual)
+        {
+            return $"column={column}; direction={(descending ? "descending" : "ascending")}; " +
+                   $"expected={expected}; actual={actual}";
         }
 
         private static SupplierListing NewPurchasePathListing(

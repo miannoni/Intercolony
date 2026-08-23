@@ -35,6 +35,67 @@ namespace Intercolony
             order = null;
             failureReason = null;
 
+            if (!CanPurchase(state, listing, quantity, out failureReason))
+            {
+                return false;
+            }
+
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(listing.settlementId);
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+
+            bool created = PurchaseOrderService.TryCreatePaidOrder(
+                state,
+                paymentMap,
+                listing.refreshWindow,
+                0,
+                0,
+                listing.id,
+                listing.settlementId,
+                settlement.Label ?? "unnamed",
+                settlement.Faction?.Name ?? "",
+                listing.thingDef,
+                listing.stuffDef,
+                listing.quality,
+                quantity,
+                null,
+                listing.unitPrice,
+                listing.fulfillment == FulfillmentMode.SellerDelivery,
+                listing.leadTimeDays,
+                out order,
+                out failureReason);
+            if (!created)
+            {
+                return false;
+            }
+
+            // The order and its durable consumption record now exist. Keep the listing as the
+            // public face of the remaining quantity; refresh pruning will remove it later.
+            listing.quantityAvailable -= quantity;
+            IntercolonyLog.Message(
+                $"Purchase {order.id}: {order.quantity}x {order.ItemLabel()} from " +
+                $"{order.settlementName} for {order.paidSilver} silver, " +
+                $"{(order.supplierDelivers ? "delivered" : "pickup")} in {listing.leadTimeDays}d.");
+            Messages.Message(
+                order.supplierDelivers
+                    ? $"Ordered {order.quantity}x {order.thingDef.label}. Arriving in {listing.leadTimeDays} days."
+                    : $"Ordered {order.quantity}x {order.thingDef.label}. Ready to collect in {listing.leadTimeDays} days.",
+                MessageTypeDefOf.PositiveEvent, historical: false);
+            return true;
+        }
+
+        /// <summary>
+        /// Read-only purchase eligibility for the Supplier Market. It uses the same refusal text
+        /// as <see cref="TryPurchase"/> so a disabled row cannot invent a second explanation for
+        /// a transaction the purchase service would reject.
+        /// </summary>
+        internal static bool CanPurchase(
+            IntercolonyWorldComponent state,
+            SupplierListing listing,
+            int quantity,
+            out string failureReason)
+        {
+            failureReason = null;
+
             if (state == null)
             {
                 failureReason = "No procurement state is loaded.";
@@ -100,50 +161,8 @@ namespace Intercolony
             }
 
             Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
-            if (paymentMap == null)
-            {
-                failureReason = "No colony to pay from.";
-                return false;
-            }
-
-            bool created = PurchaseOrderService.TryCreatePaidOrder(
-                state,
-                paymentMap,
-                listing.refreshWindow,
-                0,
-                0,
-                listing.id,
-                listing.settlementId,
-                settlement.Label ?? "unnamed",
-                settlement.Faction?.Name ?? "",
-                listing.thingDef,
-                listing.stuffDef,
-                listing.quality,
-                quantity,
-                null,
-                listing.unitPrice,
-                listing.fulfillment == FulfillmentMode.SellerDelivery,
-                listing.leadTimeDays,
-                out order,
-                out failureReason);
-            if (!created)
-            {
-                return false;
-            }
-
-            // The order and its durable consumption record now exist. Keep the listing as the
-            // public face of the remaining quantity; refresh pruning will remove it later.
-            listing.quantityAvailable -= quantity;
-            IntercolonyLog.Message(
-                $"Purchase {order.id}: {order.quantity}x {order.ItemLabel()} from " +
-                $"{order.settlementName} for {order.paidSilver} silver, " +
-                $"{(order.supplierDelivers ? "delivered" : "pickup")} in {listing.leadTimeDays}d.");
-            Messages.Message(
-                order.supplierDelivers
-                    ? $"Ordered {order.quantity}x {order.thingDef.label}. Arriving in {listing.leadTimeDays} days."
-                    : $"Ordered {order.quantity}x {order.thingDef.label}. Ready to collect in {listing.leadTimeDays} days.",
-                MessageTypeDefOf.PositiveEvent, historical: false);
-            return true;
+            return PurchaseOrderService.CanPayForPurchase(
+                paymentMap, listing.unitPrice, quantity, out failureReason);
         }
 
         /// <summary>
