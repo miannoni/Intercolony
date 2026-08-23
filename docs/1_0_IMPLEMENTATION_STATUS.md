@@ -3,10 +3,10 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 6 — Procurement parity
-Current slice:      6A — not started
-Last completed:     Stage 5 — commercial relationships & negotiation, gate closed (`3b1e37f`, 2026-08-23)
-Current save schema: 49
+Current stage:      Stage 7 — Commercial history
+Current slice:      7A — not started
+Last completed:     Stage 6 — procurement parity, gate closed (`02e511a`, 2026-08-23)
+Current save schema: 55
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
 
@@ -18,7 +18,7 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [x] Stage 3 — Circumstance-driven economic events (8/10 criteria closed 2026-08-22; 9 and 10 join the calibration sitting)
 - [x] Stage 4 — Brand strength & colony specialization (13/13 criteria closed 2026-08-22)
 - [x] Stage 5 — Commercial relationships & negotiation (gate closed 2026-08-23; 12/12 criteria)
-- [ ] Stage 6 — Procurement parity
+- [x] Stage 6 — Procurement parity (gate closed 2026-08-23; 12/12 criteria)
 - [ ] Stage 7 — Commercial history
 - [ ] Stage 8 — 1.0 integration and release gate
 
@@ -1308,6 +1308,95 @@ identical from the green run.
 
 Verification stated: negotiation suite 37/0/0; four fresh-world full-suite runs at 1169-1171
 passed, 0 failed, 14-15 skipped, log clean.
+
+### 6I — Stage 6 acceptance gate closure (`25df317`, `02e511a`)
+
+All twelve criteria from the plan's Stage 6 acceptance gate were proven. Criteria 1-8 were
+closed by slices 6A-6H: Supplier Market listings used effective supply and shared finite
+availability with RFQs; listing purchases became normal PurchaseOrders; delivery and pickup
+continued to work; the dedicated Purchase Orders surface reflected both purchase origins; and
+recurring procurement agreements used Stage 5 negotiation and ordinary per-cycle payment. 6I
+closed criteria 9-12: supplier failure and refund stayed explicit and silver-neutral; market
+shocks changed listings and future cycles without rewriting paid or accepted PurchaseOrders;
+save/load preserved the active procurement and sales state together; and selling behavior did
+not regress.
+
+**The nine slices were:**
+
+- 6A `47c8f20` — `SupplierListing` record and schema 50.
+- 6B `f423214` — listing generation against the Stage 2 economy.
+- 6C `7c76f4e` — Supplier Market browse surface.
+- 6D `1acd363` — listing purchase into a normal `PurchaseOrder` and schema 51.
+- 6E `737506a` — dedicated Purchase Orders surface.
+- 6F `5a27554`, `3641189` — procurement recurring contracts and schemas 52, 53.
+- 6G `820f1df` — supplier default and hostility and schema 54.
+- 6H `fc5657e` — procurement negotiation and schema 55.
+- 6I `25df317`, `02e511a` — timeline integration, cancellation, and gate criteria 9-12.
+
+The schema advanced from 49 to 55 across the stage.
+
+### The decisions worth keeping
+
+**§6.8 chose Option A, a dedicated procurement contract model.** Only two of
+`RecurringContract`'s fields were clearly sale-specific, so on field count Option B looked
+attractive and its migration was genuinely cheap — one defaulted field, no value rewritten.
+What decided it was that the LIFECYCLE and every downstream consumer were sale-oriented: a sales
+cycle created a `SalesOrder` and treated non-completion as a missed player delivery, while a
+procurement cycle created a `PurchaseOrder`, paid per cycle, and needed supplier-default refunds.
+Cheap migration therefore carried a broad and unproven runtime preservation boundary — the
+opposite of the trade the plan warned against.
+
+**A listing's `unitPrice` was a published rate**, struck once at generation and charged whatever
+quantity was later bought.
+
+**Each cycle paid at its own creation point.** There was no prepayment, debt, or credit.
+
+**The next cycle scheduled from the tick it was DUE, not from now.** Scheduling from now would
+have made a fortnightly agreement drift toward monthly over a long game, while remaining
+invisible to any test that fired cycles on time.
+
+**Supplier default was a supply question, not a personality.** No reliability stat or extra roll
+was added, as §6.9 required.
+
+**Refunds returned silver to colony storage**, matching where payment was taken from, and fell
+back to the trade spot rather than leaving an order in limbo.
+
+### The gaps found and closed, which were the durable part
+
+- **An Active procurement agreement could not be ended at all.** The player could enter a
+  multi-cycle purchasing commitment with no way out, and a war-suspended agreement trapped them
+  too. This was found while wiring §6.12's timeline, because the "contract cancelled" event had
+  nothing to record.
+- **The proposal path wrote its own item-eligibility rule** and refused textbooks, which the RFQ
+  path quoted routinely. No player could have proposed a standing agreement for a large part of
+  the catalogue. One rule, `TryGetTradableCategory`, was shared by both paths.
+- **A war left procurement agreements running** as if nothing had happened, because
+  `ProcurementContractStatus` had no `Suspended` state while the sales side did.
+- **A supplier's counter collapsed into a refusal**, so the player was told the supplier declined
+  when it had actually made an offer. The counter path was corrected.
+
+### The verification findings
+
+- **Three separate slices shipped assertions that all SKIPPED** — eight in 6D, seven in 6F
+  part 3, and one in 6I — each because a precondition was assumed rather than constructed. Every
+  one read as a clean pass.
+- **`dev.ps1` printed only lines matching `^\s*FAIL\s`**, so skip reasons never reached the
+  console on either the single-suite or aggregate path. A run in which nothing was tested was
+  indistinguishable from a green one. This was fixed in 6F part 3, which made the later skips
+  visible at all.
+- **A mutation whose restore silently failed poisoned three later rounds** in 6D, because the
+  next battery backed up the contaminated file as its baseline. Batteries then refused to start,
+  and refused to continue after a restore, while any marker remained. They also refused an
+  `AMBIGUOUS` anchor as well as a missing one, after one mutation landed on the sales resumption
+  path instead of the procurement path.
+- **A self-consistent mutation proved nothing.** Twice a mutation changed both the value written
+  and the value compared, leaving the assertion green for the wrong reason.
+- **Test staleness became intermittent rather than always present.** J8 hardcoded a schema
+  version and broke at the next bump. E3 mapped a decision to an expected status and failed only
+  in worlds that produced a counter — one run in four, which read as noise.
+
+Verification stated: RFQ suite 194/0/0 with zero skips; four fresh-world full-suite runs at
+1282-1283 passed, 0 failed, 14-15 skipped, log clean on every run.
 
 ## RELEASED — Stage 3 proceeds; calibration is deferred to the end of 1.0 (2026-08-22)
 
