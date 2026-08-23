@@ -1,5 +1,9 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
 using System.Text;
+using System.Xml;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -68,6 +72,8 @@ namespace Intercolony
             }
 
             sb.AppendLine("RFQ self-test");
+
+            CheckSupplierListings(Check, Skip, state);
 
             List<ThingDef> tradable = IntercolonyProductClassifier.TradableDefs;
             if (tradable.Count == 0 || state.AllProfiles().Count == 0)
@@ -435,6 +441,421 @@ namespace Intercolony
                 DefDatabase<ThingDef>.GetNamedSilentFail("ElectricStove"), ThingDefOf.Steel, null, 1);
 
             return Summarize();
+        }
+
+        private static void CheckSupplierListings(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            List<SupplierListing> savedListings =
+                new List<SupplierListing>(state.SupplierListings);
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            int savedSaveVersion = state.SaveVersion;
+            int savedNextId = state.PeekNextId();
+
+            try
+            {
+                CheckSupplierListingSentinel(check);
+                CheckSupplierListingAvailability(check);
+                CheckSupplierListingExpiryBoundary(check);
+                CheckSupplierListingCollection(check, skip);
+                CheckSupplierListingMigration(check, skip, state, saveVersionField);
+                CheckSupplierListingIds(check, skip, state, nextIdField, savedNextId);
+            }
+            finally
+            {
+                state.SupplierListings.Clear();
+                state.SupplierListings.AddRange(savedListings);
+                if (saveVersionField != null)
+                {
+                    saveVersionField.SetValue(state, savedSaveVersion);
+                }
+
+                if (nextIdField != null)
+                {
+                    nextIdField.SetValue(state, savedNextId);
+                }
+            }
+        }
+
+        private static void CheckSupplierListingSentinel(
+            Action<string, bool, string> check)
+        {
+            int tick = GenTicks.TicksGame;
+            int quantity = 7;
+            int id = 6_001;
+            SupplierListing saved = new SupplierListing
+            {
+                id = id,
+                thingDef = ThingDefOf.Steel,
+                quantityAvailable = quantity,
+                expiryTick = SupplierListing.NoExpiryTick
+            };
+            List<SupplierListing> savedList = new List<SupplierListing> { saved };
+            List<SupplierListing> loadedList = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-SupplierListing-S1-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "supplierListingTest");
+                Scribe_Collections.Look(ref savedList, "supplierListings", LookMode.Deep);
+                Scribe.saver.FinalizeSaving();
+
+                // Model the real save shape for a value equal to the corrected default. If the
+                // production default is changed back to zero, loading this absent node returns
+                // zero and the assertion goes red.
+                XmlDocument document = new XmlDocument();
+                document.Load(path);
+                XmlNode expiryNode = document.SelectSingleNode("//expiryTick");
+                if (expiryNode != null)
+                {
+                    expiryNode.ParentNode.RemoveChild(expiryNode);
+                    document.Save(path);
+                }
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Collections.Look(ref loadedList, "supplierListings", LookMode.Deep);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            SupplierListing loaded = loadedList != null && loadedList.Count == 1
+                ? loadedList[0]
+                : null;
+            check(
+                "S1 no-expiry sentinel survives an omitted-node save/load",
+                failure == null && loaded != null && loaded.expiryTick == -1 && loaded.IsAvailable,
+                $"tick={tick}; quantity={quantity}; id={id}; count " +
+                $"{savedList.Count}->{loadedList?.Count ?? -1}; expiry expected -1, " +
+                $"loaded {(loaded == null ? "null" : loaded.expiryTick.ToString())}; " +
+                $"available={(loaded == null ? "null" : loaded.IsAvailable.ToString())}; " +
+                $"failure={failure ?? "none"}");
+        }
+
+        private static void CheckSupplierListingAvailability(
+            Action<string, bool, string> check)
+        {
+            int tick = GenTicks.TicksGame;
+            int zeroQuantity = 0;
+            int positiveQuantity = 9;
+            int expiry = tick + 100;
+            SupplierListing empty = NewSupplierListing(6_002, zeroQuantity, expiry);
+            SupplierListing stocked = NewSupplierListing(6_003, positiveQuantity, expiry);
+
+            check(
+                "S2 availability is derived from quantity and expiry",
+                !empty.IsAvailable && stocked.IsAvailable,
+                $"tick={tick}; quantities={zeroQuantity},{positiveQuantity}; " +
+                $"expiry={expiry}; ids={empty.id},{stocked.id}; " +
+                $"available={empty.IsAvailable},{stocked.IsAvailable}");
+        }
+
+        private static void CheckSupplierListingExpiryBoundary(
+            Action<string, bool, string> check)
+        {
+            int tick = GenTicks.TicksGame;
+            int expiredExpiry = tick;
+            int futureExpiry = tick + 100;
+            int expiredQuantity = 4;
+            int futureQuantity = 5;
+            SupplierListing expired = NewSupplierListing(6_004, expiredQuantity, expiredExpiry);
+            SupplierListing notYetExpired =
+                NewSupplierListing(6_005, futureQuantity, futureExpiry);
+
+            check(
+                "S3 expired and not-yet-expired listings have the right availability",
+                expired.HasExpired(tick) && !expired.IsAvailable &&
+                !notYetExpired.HasExpired(tick) && notYetExpired.IsAvailable,
+                $"sample tick={tick}; expired expiry={expiredExpiry}, quantity={expiredQuantity}, " +
+                $"available={expired.IsAvailable}; not-yet expiry={futureExpiry}, " +
+                $"quantity={futureQuantity}, available={notYetExpired.IsAvailable}");
+        }
+
+        private static void CheckSupplierListingCollection(
+            Action<string, bool, string> check,
+            Action<string, string> skip)
+        {
+            ThingDef validDef = ThingDefOf.Steel;
+            if (validDef == null)
+            {
+                skip("S4 null listing is pruned and valid listing survives",
+                    "Steel definition is unavailable in this install");
+                skip("S4 unresolvable listing is pruned",
+                    "Steel definition is unavailable in this install");
+                return;
+            }
+
+            const string missingDefName = "Intercolony_SupplierListing_SelfTest_MissingDef";
+            bool canExerciseUnresolvable =
+                DefDatabase<ThingDef>.GetNamedSilentFail(missingDefName) == null;
+            int validId = 6_006;
+            int missingId = 6_007;
+            List<SupplierListing> savedListings = new List<SupplierListing>
+            {
+                null,
+                new SupplierListing
+                {
+                    id = validId,
+                    thingDef = validDef,
+                    quantityAvailable = 3,
+                    expiryTick = SupplierListing.NoExpiryTick
+                }
+            };
+            if (canExerciseUnresolvable)
+            {
+                savedListings.Insert(1, new SupplierListing
+                {
+                    id = missingId,
+                    thingDef = new ThingDef { defName = missingDefName },
+                    quantityAvailable = 3,
+                    expiryTick = SupplierListing.NoExpiryTick
+                });
+            }
+
+            IntercolonyWorldComponent savedState = new IntercolonyWorldComponent(null);
+            savedState.SupplierListings.AddRange(savedListings);
+            IntercolonyWorldComponent loadedState = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-SupplierListing-S4-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "supplierListingWorldTest");
+                Scribe_Deep.Look(ref savedState, "state");
+                Scribe.saver.FinalizeSaving();
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedState, "state", (object)null);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            List<SupplierListing> loadedListings = loadedState?.SupplierListings;
+            bool validSurvived = loadedListings != null && loadedListings.Count == 1 &&
+                                 loadedListings[0] != null && loadedListings[0].id == validId &&
+                                 loadedListings[0].thingDef == validDef;
+            check(
+                "S4 collection round-trip prunes null listings and keeps valid listings",
+                failure == null && validSurvived,
+                $"count {savedListings.Count}->{loadedListings?.Count ?? -1}; " +
+                $"valid id={validId}; loaded ids={ListingIds(loadedListings)}; failure={failure ?? "none"}");
+
+            if (canExerciseUnresolvable)
+            {
+                check(
+                    "S4 unresolvable listing is pruned",
+                    failure == null && !ContainsListingId(loadedListings, missingId),
+                    $"count {savedListings.Count}->{loadedListings?.Count ?? -1}; " +
+                    $"missing id={missingId}; loaded ids={ListingIds(loadedListings)}; " +
+                    $"failure={failure ?? "none"}");
+            }
+            else
+            {
+                skip("S4 unresolvable listing is pruned",
+                    $"def name {missingDefName} already resolves in this install");
+            }
+        }
+
+        private static void CheckSupplierListingMigration(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            FieldInfo saveVersionField)
+        {
+            if (saveVersionField == null)
+            {
+                skip("S5 schema 49-to-50 migration preserves listing counts",
+                    "persisted saveVersion field is not accessible");
+                return;
+            }
+
+            List<SupplierListing> beforeListings =
+                new List<SupplierListing>(state.SupplierListings);
+            int beforeSaveVersion = state.SaveVersion;
+            int nonEmptyBefore = -1;
+            int nonEmptyAfter = -1;
+            int emptyBefore = -1;
+            int emptyAfter = -1;
+            int migrationSaveVersion = -1;
+            string failure = null;
+
+            try
+            {
+                state.SupplierListings.Clear();
+                state.SupplierListings.Add(new SupplierListing
+                {
+                    id = 6_008,
+                    thingDef = ThingDefOf.Steel,
+                    quantityAvailable = 3,
+                    expiryTick = SupplierListing.NoExpiryTick
+                });
+                saveVersionField.SetValue(state, 49);
+                nonEmptyBefore = state.SupplierListings.Count;
+                state.MigrateIfNeeded();
+                nonEmptyAfter = state.SupplierListings.Count;
+
+                state.SupplierListings.Clear();
+                saveVersionField.SetValue(state, 49);
+                emptyBefore = state.SupplierListings.Count;
+                state.MigrateIfNeeded();
+                emptyAfter = state.SupplierListings.Count;
+                migrationSaveVersion = state.SaveVersion;
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                state.SupplierListings.Clear();
+                state.SupplierListings.AddRange(beforeListings);
+                saveVersionField.SetValue(state, beforeSaveVersion);
+            }
+
+            check(
+                "S5 schema 49-to-50 migration preserves non-empty and empty listing counts",
+                failure == null && nonEmptyBefore == nonEmptyAfter &&
+                emptyBefore == emptyAfter && emptyBefore == 0 &&
+                migrationSaveVersion == IntercolonyWorldComponent.CurrentSaveVersion,
+                $"non-empty count {nonEmptyBefore}->{nonEmptyAfter}; empty count " +
+                $"{emptyBefore}->{emptyAfter}; migrated saveVersion={migrationSaveVersion}; " +
+                $"restored saveVersion={state.SaveVersion}; failure={failure ?? "none"}");
+        }
+
+        private static void CheckSupplierListingIds(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            FieldInfo nextIdField,
+            int savedNextId)
+        {
+            if (nextIdField == null)
+            {
+                skip("S6 listing ids are unique and use the shared counter",
+                    "persisted nextId field is not accessible for fixture restoration");
+                return;
+            }
+
+            int otherRecordId = -1;
+            List<SupplierListing> listings = new List<SupplierListing>();
+            string failure = null;
+            try
+            {
+                MarketOpportunity otherRecord = new MarketOpportunity { id = state.NextId() };
+                otherRecordId = otherRecord.id;
+                for (int i = 0; i < 4; i++)
+                {
+                    listings.Add(new SupplierListing
+                    {
+                        id = state.NextId(),
+                        thingDef = ThingDefOf.Steel,
+                        quantityAvailable = i + 1,
+                        expiryTick = SupplierListing.NoExpiryTick
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                nextIdField.SetValue(state, savedNextId);
+            }
+
+            bool noRepeats = true;
+            bool noCollision = otherRecordId >= 0;
+            bool sharedSequence = listings.Count == 4;
+            HashSet<int> ids = new HashSet<int>();
+            for (int i = 0; i < listings.Count; i++)
+            {
+                SupplierListing listing = listings[i];
+                noRepeats &= ids.Add(listing.id);
+                noCollision &= listing.id != otherRecordId;
+                sharedSequence &= listing.id == otherRecordId + i + 1;
+            }
+
+            check(
+                "S6 listing ids are unique and use the shared counter",
+                failure == null && listings.Count == 4 && noRepeats && noCollision && sharedSequence,
+                $"other record id={otherRecordId}; listing ids={ListingIds(listings)}; " +
+                $"count={listings.Count}; repeats={!noRepeats}; collision={!noCollision}; " +
+                $"shared sequence={sharedSequence}; " +
+                $"failure={failure ?? "none"}");
+        }
+
+        private static SupplierListing NewSupplierListing(int id, int quantity, int expiry)
+        {
+            return new SupplierListing
+            {
+                id = id,
+                thingDef = ThingDefOf.Steel,
+                quantityAvailable = quantity,
+                expiryTick = expiry
+            };
+        }
+
+        private static bool ContainsListingId(List<SupplierListing> listings, int id)
+        {
+            if (listings == null)
+            {
+                return false;
+            }
+
+            foreach (SupplierListing listing in listings)
+            {
+                if (listing != null && listing.id == id)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string ListingIds(List<SupplierListing> listings)
+        {
+            if (listings == null)
+            {
+                return "null";
+            }
+
+            List<string> ids = new List<string>();
+            foreach (SupplierListing listing in listings)
+            {
+                ids.Add(listing == null ? "null" : listing.id.ToString());
+            }
+
+            return string.Join(",", ids.ToArray());
         }
 
         private static void CheckEffectiveSupplyForRfq(

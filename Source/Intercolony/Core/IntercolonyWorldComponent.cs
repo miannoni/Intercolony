@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 49;
+        public const int CurrentSaveVersion = 50;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -75,6 +75,16 @@ namespace Intercolony
         /// real entity.
         /// </summary>
         private List<MarketOpportunity> opportunities = new List<MarketOpportunity>();
+
+        /// <summary>
+        /// Public finite procurement offers. These are separate from quotations because a
+        /// listing is a market origin, not an RFQ response, while both later produce a normal
+        /// purchase order.
+        /// </summary>
+        private List<SupplierListing> supplierListings = new List<SupplierListing>();
+
+        /// <summary>Live and persisted supplier-market listings.</summary>
+        public List<SupplierListing> SupplierListings => supplierListings;
 
         /// <summary>
         /// Player's maximum acceptable haul, in world tiles, or <see cref="NoDistanceLimit"/>
@@ -1020,6 +1030,7 @@ namespace Intercolony
                 ref disabledContractProposalCategories,
                 "disabledContractProposalCategories", LookMode.Value);
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
+            Scribe_Collections.Look(ref supplierListings, "supplierListings", LookMode.Deep);
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
             Scribe_Collections.Look(ref commercialHistory, "commercialHistory", LookMode.Deep);
             Scribe_Collections.Look(ref productBrandRecords, "productBrandRecords", LookMode.Deep);
@@ -1071,6 +1082,24 @@ namespace Intercolony
                         IntercolonyLog.Warning(
                             $"Dropped {nulls} null and {broken} unresolvable opportunit(ies) while loading. " +
                             "Unresolvable usually means a mod that supplied the item was removed.");
+                    }
+                }
+
+                if (supplierListings == null)
+                {
+                    supplierListings = new List<SupplierListing>();
+                }
+                else
+                {
+                    int nullListings = supplierListings.RemoveAll(listing => listing == null);
+                    int brokenListings = supplierListings.RemoveAll(
+                        listing => !listing.IsValidAfterLoad);
+                    if (nullListings > 0 || brokenListings > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullListings} null and {brokenListings} unresolvable " +
+                            "supplier listing(s) while loading. Unresolvable usually means a mod " +
+                            "that supplied the item was removed.");
                     }
                 }
 
@@ -2321,6 +2350,20 @@ namespace Intercolony
                     "reputation record(s).");
             }
 
+            if (saveVersion < 50)
+            {
+                // 49 -> 50 added public supplier listings. Older saves contain no listing
+                // records, so the additive migration keeps the collection empty rather than
+                // fabricating offers from profiles, quotations, or historical purchases.
+                if (supplierListings == null)
+                {
+                    supplierListings = new List<SupplierListing>();
+                }
+
+                IntercolonyLog.Message(
+                    "  schema 49 -> 50: supplier listings added; existing saves start with no listings.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -2358,6 +2401,14 @@ namespace Intercolony
                 if (opportunity.id > highest)
                 {
                     highest = opportunity.id;
+                }
+            }
+
+            foreach (SupplierListing listing in supplierListings)
+            {
+                if (listing != null && listing.id > highest)
+                {
+                    highest = listing.id;
                 }
             }
 
