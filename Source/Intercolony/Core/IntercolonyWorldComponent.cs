@@ -1670,6 +1670,7 @@ namespace Intercolony
             RfqService.ExpireStale(requests);
             ContractService.AdvanceContracts(this);
             ProcurementContractService.AdvanceProposals(this);
+            ProcurementContractService.AdvanceCycles(this);
             ContractService.OfferContracts(this);
             PurchaseOrderService.AdvanceOrders(purchaseOrders);
 

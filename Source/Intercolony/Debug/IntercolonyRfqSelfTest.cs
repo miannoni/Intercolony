@@ -4151,6 +4151,19 @@ namespace Intercolony
                     result.Evaluation != null &&
                     result.Evaluation.Decision == IntercolonyNegotiationDecision.Accepted,
                     searchDetail);
+
+                if (acceptedCandidate && contract != null &&
+                    contract.status == ProcurementContractStatus.Active && paymentMap != null)
+                {
+                    CheckProcurementContractCycles(check, skip, state, contract, paymentMap);
+                }
+                else
+                {
+                    SkipProcurementContractCycles(
+                        skip,
+                        "the accepted E7 contract or a player payment map was unavailable; " +
+                        searchDetail);
+                }
             }
             finally
             {
@@ -4166,6 +4179,372 @@ namespace Intercolony
                 {
                     nextIdField.SetValue(state, savedNextId);
                 }
+            }
+        }
+
+        private static void SkipProcurementContractCycles(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("G1 due procurement cycle creates one order at the agreed price", reason);
+            skip("G2 procurement cycle pays only its own cost", reason);
+            skip("G3 late procurement cycle keeps the scheduled cadence", reason);
+            skip("G4 unaffordable procurement cycle fails without ending the agreement", reason);
+            skip("G5 open procurement order blocks a second cycle", reason);
+            skip("G6 procurement agreement completes exactly at its cycle count", reason);
+            skip("G7 concluded procurement order restores the active-order sentinel", reason);
+        }
+
+        private static void CheckProcurementContractCycles(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            ProcurementContract acceptedContract,
+            Map paymentMap)
+        {
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo consumptionField = typeof(IntercolonyWorldComponent).GetField(
+                "supplierOfferConsumption", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (state == null || acceptedContract == null || paymentMap == null ||
+                ThingDefOf.Silver == null || nextIdField == null || consumptionField == null)
+            {
+                SkipProcurementContractCycles(
+                    skip, "live state, silver, or fixture-restoration fields were unavailable");
+                return;
+            }
+
+            List<ProcurementContract> savedContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            List<PurchaseOrder> savedOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<LedgerEntry> savedLedger = new List<LedgerEntry>(state.Ledger);
+            List<SupplierOfferConsumption> savedConsumption = CloneConsumptions(
+                consumptionField.GetValue(state) as List<SupplierOfferConsumption>);
+            Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
+            int savedLedgerStartTick = state.LedgerStartTick;
+            int savedNextId = state.PeekNextId();
+
+            int savedQuantity = acceptedContract.quantityPerCycle;
+            float savedUnitPrice = acceptedContract.unitPrice;
+            int savedCadenceDays = acceptedContract.cadenceDays;
+            int savedTotalCycles = acceptedContract.totalCycles;
+            int savedCompleted = acceptedContract.cyclesCompleted;
+            int savedFailed = acceptedContract.cyclesFailed;
+            int savedNextCycleTick = acceptedContract.nextCycleTick;
+            int savedActiveOrderId = acceptedContract.activeOrderId;
+            ProcurementContractStatus savedStatus = acceptedContract.status;
+            string savedOutcomeNote = acceptedContract.outcomeNote;
+            Thing fixtureSilver = null;
+            Zone_Stockpile fixtureSilverZone = null;
+            Dictionary<Thing, int> fixtureSilverBaseline = null;
+
+            try
+            {
+                // Use a positive frozen value. A quicktest may have one stored silver stack that
+                // is smaller than two cycles at the live proposal price, so keep this synthetic
+                // cycle payable and let G4 raise it above the fixture purse deliberately.
+                float cycleUnitPrice = savedUnitPrice * 1.5f;
+                if (cycleUnitPrice <= 0f || cycleUnitPrice == savedUnitPrice)
+                {
+                    cycleUnitPrice = savedUnitPrice + 1f;
+                }
+
+                acceptedContract.quantityPerCycle = 1;
+                acceptedContract.unitPrice = cycleUnitPrice;
+                acceptedContract.cadenceDays = 1;
+                acceptedContract.totalCycles = 2;
+                acceptedContract.cyclesCompleted = 0;
+                acceptedContract.cyclesFailed = 0;
+                acceptedContract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                acceptedContract.status = ProcurementContractStatus.Active;
+                acceptedContract.outcomeNote = "cycle test fixture";
+
+                int availableSilver = PurchaseOrderService.CountColonySilver(paymentMap);
+                int expectedCycleCost = IntercolonyPricing.TotalPayment(
+                    acceptedContract.unitPrice, acceptedContract.quantityPerCycle);
+                int requiredSilver = expectedCycleCost * acceptedContract.totalCycles + 2;
+                if (availableSilver < requiredSilver)
+                {
+                    float affordableUnitPrice = availableSilver > 2
+                        ? (availableSilver - 2f) /
+                          (acceptedContract.quantityPerCycle * acceptedContract.totalCycles)
+                        : 1f;
+                    cycleUnitPrice = Mathf.Max(
+                        1f, Mathf.Min(cycleUnitPrice, affordableUnitPrice));
+                    acceptedContract.unitPrice = cycleUnitPrice;
+                    expectedCycleCost = IntercolonyPricing.TotalPayment(
+                        acceptedContract.unitPrice, acceptedContract.quantityPerCycle);
+                    requiredSilver = expectedCycleCost * acceptedContract.totalCycles + 2;
+                }
+
+                if (availableSilver < requiredSilver)
+                {
+                    int neededSilver = requiredSilver - availableSilver;
+                    Thing topUp = null;
+                    foreach (Thing silver in savedSilver.Keys)
+                    {
+                        if (silver != null && !silver.Destroyed &&
+                            silver.stackCount + neededSilver <= ThingDefOf.Silver.stackLimit)
+                        {
+                            topUp = silver;
+                            break;
+                        }
+                    }
+
+                    if (topUp != null)
+                    {
+                        topUp.stackCount += neededSilver;
+                    }
+                    else if (!TryCreateStoredSilver(
+                        paymentMap, neededSilver, out fixtureSilver, out fixtureSilverZone))
+                    {
+                        SkipProcurementContractCycles(
+                            skip,
+                            $"stored silver was {availableSilver}, needed {requiredSilver}, " +
+                            "and a temporary stockpile could not be created");
+                        return;
+                    }
+                }
+
+                fixtureSilverBaseline = SnapshotStoredSilver(paymentMap);
+                int fixtureSilverAmount = PurchaseOrderService.CountColonySilver(paymentMap);
+                if (fixtureSilverAmount < requiredSilver)
+                {
+                    SkipProcurementContractCycles(
+                        skip,
+                        $"stored silver after fixture setup was {fixtureSilverAmount}, " +
+                        $"needed {requiredSilver}");
+                    return;
+                }
+
+                void ResetCycleFixture()
+                {
+                    state.ProcurementContracts.Clear();
+                    state.ProcurementContracts.Add(acceptedContract);
+                    state.PurchaseOrders.Clear();
+                    RestoreStoredSilver(paymentMap, fixtureSilverBaseline);
+                    acceptedContract.quantityPerCycle = 1;
+                    acceptedContract.unitPrice = cycleUnitPrice;
+                    acceptedContract.cadenceDays = 1;
+                    acceptedContract.totalCycles = 2;
+                    acceptedContract.cyclesCompleted = 0;
+                    acceptedContract.cyclesFailed = 0;
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    acceptedContract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                    acceptedContract.status = ProcurementContractStatus.Active;
+                    acceptedContract.outcomeNote = "cycle test fixture";
+                }
+
+                PurchaseOrder FindFixtureOrder(int id)
+                {
+                    foreach (PurchaseOrder order in state.PurchaseOrders)
+                    {
+                        if (order != null && order.id == id)
+                        {
+                            return order;
+                        }
+                    }
+
+                    return null;
+                }
+
+                ResetCycleFixture();
+                int g1OrdersBefore = state.PurchaseOrders.Count;
+                int g1Now = GenTicks.TicksGame;
+                acceptedContract.nextCycleTick = g1Now;
+                int g1Advanced = ProcurementContractService.AdvanceCycles(state);
+                int g1OrderId = acceptedContract.activeOrderId;
+                PurchaseOrder g1Order = FindFixtureOrder(g1OrderId);
+                check(
+                    "G1 due procurement cycle creates one order at the agreed price",
+                    g1Advanced == 1 && state.PurchaseOrders.Count == g1OrdersBefore + 1 &&
+                    g1Order != null && g1Order.unitPrice == acceptedContract.unitPrice &&
+                    g1Order.quantity == acceptedContract.quantityPerCycle,
+                    $"orders {g1OrdersBefore}->{state.PurchaseOrders.Count}; order id={g1OrderId}; " +
+                    $"contract price={acceptedContract.unitPrice:F4}; " +
+                    $"order price={(g1Order == null ? "null" : g1Order.unitPrice.ToString("F4"))}; " +
+                    $"advanced={g1Advanced}");
+
+                ResetCycleFixture();
+                int g2ExpectedCost = IntercolonyPricing.TotalPayment(
+                    acceptedContract.unitPrice, acceptedContract.quantityPerCycle);
+                int g2SilverBefore = PurchaseOrderService.CountColonySilver(paymentMap);
+                acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                ProcurementContractService.AdvanceCycles(state);
+                int g2SilverAfter = PurchaseOrderService.CountColonySilver(paymentMap);
+                check(
+                    "G2 procurement cycle pays only its own cost",
+                    g2SilverBefore - g2SilverAfter == g2ExpectedCost &&
+                    state.PurchaseOrders.Count == 1,
+                    $"silver before={g2SilverBefore}; after={g2SilverAfter}; " +
+                    $"expected cycle cost={g2ExpectedCost}; orders={state.PurchaseOrders.Count}; " +
+                    $"cycles completed={acceptedContract.cyclesCompleted}; " +
+                    $"cycles failed={acceptedContract.cyclesFailed}");
+
+                ResetCycleFixture();
+                int g3Now = GenTicks.TicksGame;
+                int g3OldTick = g3Now - 3 * acceptedContract.cadenceDays * GenDate.TicksPerDay;
+                int g3CadenceTicks = acceptedContract.cadenceDays * GenDate.TicksPerDay;
+                int g3ScheduledCandidate = g3OldTick + g3CadenceTicks;
+                int g3NowCandidate = g3Now + g3CadenceTicks;
+                acceptedContract.nextCycleTick = g3OldTick;
+                ProcurementContractService.AdvanceCycles(state);
+                check(
+                    "G3 late procurement cycle keeps the scheduled cadence",
+                    acceptedContract.nextCycleTick == g3ScheduledCandidate &&
+                    g3ScheduledCandidate != g3NowCandidate,
+                    $"old tick={g3OldTick}; new tick={acceptedContract.nextCycleTick}; " +
+                    $"scheduled+cadence={g3ScheduledCandidate}; now+cadence={g3NowCandidate}; " +
+                    $"now={g3Now}; orders={state.PurchaseOrders.Count}");
+
+                ResetCycleFixture();
+                int g4SilverBefore = PurchaseOrderService.CountColonySilver(paymentMap);
+                acceptedContract.unitPrice = g4SilverBefore + 1f;
+                int g4ExpectedCost = IntercolonyPricing.TotalPayment(
+                    acceptedContract.unitPrice, acceptedContract.quantityPerCycle);
+                int g4OldNextTick = GenTicks.TicksGame;
+                int g4FailedBefore = acceptedContract.cyclesFailed;
+                acceptedContract.nextCycleTick = g4OldNextTick;
+                ProcurementContractService.AdvanceCycles(state);
+                int g4NewNextTick = acceptedContract.nextCycleTick;
+                check(
+                    "G4 unaffordable procurement cycle fails without ending the agreement",
+                    g4ExpectedCost > g4SilverBefore &&
+                    acceptedContract.cyclesFailed == g4FailedBefore + 1 &&
+                    acceptedContract.status == ProcurementContractStatus.Active &&
+                    g4NewNextTick == g4OldNextTick +
+                        acceptedContract.cadenceDays * GenDate.TicksPerDay &&
+                    state.PurchaseOrders.Count == 0 &&
+                    acceptedContract.activeOrderId == ProcurementContract.NoActiveOrderId,
+                    $"silver before={g4SilverBefore}; expected cost={g4ExpectedCost}; " +
+                    $"silver after={PurchaseOrderService.CountColonySilver(paymentMap)}; " +
+                    $"failed {g4FailedBefore}->{acceptedContract.cyclesFailed}; " +
+                    $"status={acceptedContract.status}; next tick old={g4OldNextTick}, " +
+                    $"new={g4NewNextTick}; orders={state.PurchaseOrders.Count}");
+
+                ResetCycleFixture();
+                PurchaseOrder g5LiveOrder = new PurchaseOrder
+                {
+                    id = state.NextId(),
+                    settlementId = acceptedContract.settlementId,
+                    settlementName = acceptedContract.settlementName,
+                    destinationMap = paymentMap,
+                    thingDef = acceptedContract.thingDef,
+                    quantity = acceptedContract.quantityPerCycle,
+                    unitPrice = acceptedContract.unitPrice,
+                    supplierDelivers = true,
+                    status = PurchaseOrderStatus.Confirmed,
+                    orderedTick = GenTicks.TicksGame,
+                    readyTick = GenTicks.TicksGame + GenDate.TicksPerDay
+                };
+                state.PurchaseOrders.Add(g5LiveOrder);
+                acceptedContract.activeOrderId = g5LiveOrder.id;
+                int g5OrdersBefore = state.PurchaseOrders.Count;
+                int g5SilverBefore = PurchaseOrderService.CountColonySilver(paymentMap);
+                int g5DueTick = GenTicks.TicksGame;
+                acceptedContract.nextCycleTick = g5DueTick;
+                int g5Advanced = ProcurementContractService.AdvanceCycles(state);
+                check(
+                    "G5 open procurement order blocks a second cycle",
+                    g5Advanced == 0 && state.PurchaseOrders.Count == g5OrdersBefore &&
+                    acceptedContract.activeOrderId == g5LiveOrder.id && g5LiveOrder.IsOpen &&
+                    PurchaseOrderService.CountColonySilver(paymentMap) == g5SilverBefore,
+                    $"live order id={g5LiveOrder.id}; active order id={acceptedContract.activeOrderId}; " +
+                    $"orders {g5OrdersBefore}->{state.PurchaseOrders.Count}; " +
+                    $"silver before={g5SilverBefore}; after={PurchaseOrderService.CountColonySilver(paymentMap)}; " +
+                    $"advanced={g5Advanced}; status={acceptedContract.status}");
+
+                ResetCycleFixture();
+                int g6AdvanceCalls = 0;
+                while (acceptedContract.status == ProcurementContractStatus.Active &&
+                       g6AdvanceCalls < acceptedContract.totalCycles + 2)
+                {
+                    if (acceptedContract.activeOrderId != ProcurementContract.NoActiveOrderId)
+                    {
+                        PurchaseOrder open = FindFixtureOrder(acceptedContract.activeOrderId);
+                        if (open != null)
+                        {
+                            open.status = PurchaseOrderStatus.Completed;
+                        }
+                    }
+
+                    acceptedContract.nextCycleTick = GenTicks.TicksGame;
+                    ProcurementContractService.AdvanceCycles(state);
+                    g6AdvanceCalls++;
+                }
+
+                int g6OrdersAtCompletion = state.PurchaseOrders.Count;
+                int g6FurtherAdvanced = ProcurementContractService.AdvanceCycles(state);
+                check(
+                    "G6 procurement agreement completes exactly at its cycle count",
+                    acceptedContract.cyclesCompleted + acceptedContract.cyclesFailed ==
+                        acceptedContract.totalCycles &&
+                    acceptedContract.status == ProcurementContractStatus.Completed &&
+                    g6FurtherAdvanced == 0 && state.PurchaseOrders.Count == g6OrdersAtCompletion,
+                    $"cycles completed={acceptedContract.cyclesCompleted}; failed=" +
+                    $"{acceptedContract.cyclesFailed}; total={acceptedContract.totalCycles}; " +
+                    $"status={acceptedContract.status}; advance calls={g6AdvanceCalls}; " +
+                    $"orders at completion={g6OrdersAtCompletion}; further advanced={g6FurtherAdvanced}");
+
+                ResetCycleFixture();
+                int g7Now = GenTicks.TicksGame;
+                acceptedContract.nextCycleTick = g7Now;
+                ProcurementContractService.AdvanceCycles(state);
+                int g7OrderId = acceptedContract.activeOrderId;
+                PurchaseOrder g7Order = FindFixtureOrder(g7OrderId);
+                if (g7Order != null)
+                {
+                    g7Order.status = PurchaseOrderStatus.Completed;
+                }
+
+                ProcurementContractService.AdvanceCycles(state);
+                check(
+                    "G7 concluded procurement order restores the active-order sentinel",
+                    g7Order != null && g7Order.status == PurchaseOrderStatus.Completed &&
+                    acceptedContract.activeOrderId == ProcurementContract.NoActiveOrderId &&
+                    acceptedContract.cyclesCompleted == 1 &&
+                    acceptedContract.status == ProcurementContractStatus.Active,
+                    $"order id={g7OrderId}; order status={(g7Order == null ? "null" : g7Order.status.ToString())}; " +
+                    $"active order id={acceptedContract.activeOrderId}; " +
+                    $"cycles completed={acceptedContract.cyclesCompleted}; " +
+                    $"cycles failed={acceptedContract.cyclesFailed}; status={acceptedContract.status}");
+            }
+            finally
+            {
+                RestoreStoredSilver(paymentMap, savedSilver);
+                if (fixtureSilverZone != null)
+                {
+                    fixtureSilverZone.Delete(playSound: false);
+                }
+
+                acceptedContract.quantityPerCycle = savedQuantity;
+                acceptedContract.unitPrice = savedUnitPrice;
+                acceptedContract.cadenceDays = savedCadenceDays;
+                acceptedContract.totalCycles = savedTotalCycles;
+                acceptedContract.cyclesCompleted = savedCompleted;
+                acceptedContract.cyclesFailed = savedFailed;
+                acceptedContract.nextCycleTick = savedNextCycleTick;
+                acceptedContract.activeOrderId = savedActiveOrderId;
+                acceptedContract.status = savedStatus;
+                acceptedContract.outcomeNote = savedOutcomeNote;
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedContracts);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedOrders);
+                state.Ledger.Clear();
+                state.Ledger.AddRange(savedLedger);
+                state.LedgerStartTick = savedLedgerStartTick;
+
+                List<SupplierOfferConsumption> liveConsumption =
+                    consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
+                if (liveConsumption != null)
+                {
+                    liveConsumption.Clear();
+                    liveConsumption.AddRange(savedConsumption);
+                }
+
+                nextIdField.SetValue(state, savedNextId);
             }
         }
 

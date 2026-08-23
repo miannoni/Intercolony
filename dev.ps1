@@ -1039,6 +1039,17 @@ function Invoke-DevTest($Name) {
         Write-Host "Failing assertions:" -ForegroundColor Red
         $failureLines | ForEach-Object { Write-Host $_ -ForegroundColor Red }
     }
+
+    # The bridge carries the suite's complete report in result.output, but the test console only
+    # surfaces FAIL lines here. Keep skipped assertion names and reasons visible on both the
+    # single-suite and aggregate paths without changing the pass/fail or exit-code rules.
+    $skipLines = @($rawOutput -split "`r?`n" | Where-Object {
+        $_ -cmatch '^\s*SKIPPED\s' -and ($_ -match ' — ' -or $_ -match ' - ')
+    })
+    if ($skipLines.Count -gt 0) {
+        Write-Host "Skipped assertions:" -ForegroundColor Yellow
+        $skipLines | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+    }
     Write-Host "Full test output: $TestOutput"
 
     if ($failed -gt 0 -or -not $success) {

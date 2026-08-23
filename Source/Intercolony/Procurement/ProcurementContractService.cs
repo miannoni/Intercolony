@@ -442,6 +442,174 @@ namespace Intercolony
             return answered;
         }
 
+        /// <summary>
+        /// Advances active procurement agreements through one scheduled cycle. The purchase order
+        /// remains the source of truth for fulfilment; this method only owns the agreement's cycle
+        /// counters and cadence so a paid order cannot be replaced while it is still open.
+        /// </summary>
+        public static int AdvanceCycles(IntercolonyWorldComponent state)
+        {
+            if (state == null)
+            {
+                return 0;
+            }
+
+            int now = GenTicks.TicksGame;
+            int resolved = 0;
+            foreach (ProcurementContract contract in state.ProcurementContracts)
+            {
+                if (contract == null || contract.status != ProcurementContractStatus.Active)
+                {
+                    continue;
+                }
+
+                if (CycleCountReached(contract))
+                {
+                    Complete(state, contract);
+                    continue;
+                }
+
+                // Resolve the in-flight order before considering the next scheduled cycle. An
+                // open order deliberately holds the agreement at its due tick; the next refresh
+                // will retry after the shared purchase-order service closes it.
+                if (contract.activeOrderId != ProcurementContract.NoActiveOrderId)
+                {
+                    PurchaseOrder order = state.FindPurchaseOrder(contract.activeOrderId);
+                    if (order == null || order.IsOpen)
+                    {
+                        continue;
+                    }
+
+                    contract.activeOrderId = ProcurementContract.NoActiveOrderId;
+                    if (order.status == PurchaseOrderStatus.Completed)
+                    {
+                        contract.cyclesCompleted++;
+                    }
+                    else
+                    {
+                        // Supplier-default and war-loss transitions remain owned by their existing
+                        // purchase-order services. Once either has concluded the corresponding
+                        // agreement cycle is no longer live, so count it without adding a second
+                        // supplier-default policy here.
+                        contract.cyclesFailed++;
+                    }
+
+                    resolved++;
+                    if (CycleCountReached(contract))
+                    {
+                        Complete(state, contract);
+                        continue;
+                    }
+                }
+
+                if (now < contract.nextCycleTick)
+                {
+                    continue;
+                }
+
+                int cycleNumber = contract.cyclesCompleted + contract.cyclesFailed + 1;
+                if (TryCreateCycleOrder(state, contract, out string failureReason))
+                {
+                    // Keep the order ID tied to the cycle that was actually paid for. The next
+                    // due tick is derived from the scheduled tick, not from a late refresh.
+                    contract.nextCycleTick += contract.cadenceDays * GenDate.TicksPerDay;
+                    resolved++;
+                    continue;
+                }
+
+                contract.cyclesFailed++;
+                contract.outcomeNote =
+                    $"Cycle {cycleNumber} of {contract.totalCycles} failed: " +
+                    (failureReason ?? "The purchase order could not be created.");
+                contract.nextCycleTick += contract.cadenceDays * GenDate.TicksPerDay;
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
+                    "Procurement cycle failed",
+                    $"Cycle {cycleNumber} of {contract.totalCycles} for {contract.settlementName} " +
+                    $"could not be ordered.\n\n{failureReason ?? "The purchase order could not be created."}\n\n" +
+                    "This cycle is counted as failed; the agreement remains active and its next " +
+                    "cycle is still scheduled.",
+                    LetterDefOf.NegativeEvent);
+                IntercolonyLog.Message(
+                    $"Procurement contract {contract.id} cycle {cycleNumber} failed: " +
+                    (failureReason ?? "purchase order could not be created."));
+                resolved++;
+
+                if (CycleCountReached(contract))
+                {
+                    Complete(state, contract);
+                }
+            }
+
+            return resolved;
+        }
+
+        private static bool TryCreateCycleOrder(
+            IntercolonyWorldComponent state,
+            ProcurementContract contract,
+            out string failureReason)
+        {
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(contract.settlementId);
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            bool created = PurchaseOrderService.TryCreatePaidOrder(
+                state,
+                paymentMap,
+                refreshWindow: ProcurementContract.NoExpiryTick,
+                requestId: 0,
+                quotationId: 0,
+                supplierListingId: PurchaseOrder.NoSupplierListing,
+                settlementId: contract.settlementId,
+                settlementName: settlement?.Label ?? contract.settlementName,
+                factionName: settlement?.Faction?.Name ?? "",
+                thingDef: contract.thingDef,
+                stuffDef: contract.stuffDef,
+                quality: contract.quality,
+                quantity: contract.quantityPerCycle,
+                animalSpec: null,
+                unitPrice: contract.unitPrice,
+                supplierDelivers: contract.fulfillment == FulfillmentMode.SellerDelivery,
+                leadTimeDays: 0,
+                order: out PurchaseOrder order,
+                failureReason: out failureReason);
+
+            if (created)
+            {
+                contract.activeOrderId = order.id;
+            }
+
+            return created;
+        }
+
+        private static bool CycleCountReached(ProcurementContract contract)
+        {
+            return contract.cyclesCompleted + contract.cyclesFailed >= contract.totalCycles;
+        }
+
+        private static void Complete(
+            IntercolonyWorldComponent state, ProcurementContract contract)
+        {
+            if (contract == null || contract.status == ProcurementContractStatus.Completed)
+            {
+                return;
+            }
+
+            contract.status = ProcurementContractStatus.Completed;
+            contract.activeOrderId = ProcurementContract.NoActiveOrderId;
+            contract.outcomeNote =
+                $"All {contract.totalCycles} procurement cycles resolved: " +
+                $"{contract.cyclesCompleted} completed and {contract.cyclesFailed} failed.";
+
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
+                "Procurement agreement completed",
+                $"Your procurement agreement with {contract.settlementName} is complete.\n\n" +
+                contract.outcomeNote,
+                LetterDefOf.PositiveEvent);
+            IntercolonyLog.Message(
+                $"Procurement contract {contract.id} completed: {contract.cyclesCompleted} " +
+                $"cycles completed, {contract.cyclesFailed} failed.");
+        }
+
         /// <summary>Withdraws a still-pending proposal without creating an agreement.</summary>
         public static bool CancelProposal(
             IntercolonyWorldComponent state, ProcurementContract contract)
