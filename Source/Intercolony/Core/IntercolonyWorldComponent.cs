@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 55;
+        public const int CurrentSaveVersion = 56;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -279,6 +279,11 @@ namespace Intercolony
         /// <summary>Records one completed order in the durable supply history.</summary>
         public void RecordCompletedSale(SalesOrder order)
         {
+            RecordCompletedSale(order, recordTradeValue: true);
+        }
+
+        private void RecordCompletedSale(SalesOrder order, bool recordTradeValue)
+        {
             ThingDef thingDef = order?.ThingDef;
             if (order == null || order.status != SalesOrderStatus.Completed || thingDef == null)
             {
@@ -298,6 +303,37 @@ namespace Intercolony
 
             entry.completedSaleCount++;
             entry.totalQuantitySupplied += Mathf.Max(0, order.deliveredQuantity);
+            if (recordTradeValue)
+            {
+                entry.totalTradeValue += order.paidSilver;
+            }
+        }
+
+        /// <summary>
+        /// Records the silver actually paid for one completed purchase in the same durable
+        /// settlement/item aggregate as completed sales, so refunds and pruned order detail never
+        /// have to be replayed to answer the long-term trade-value question.
+        /// </summary>
+        public void RecordCompletedPurchase(PurchaseOrder order)
+        {
+            if (order == null || order.status != PurchaseOrderStatus.Completed ||
+                order.thingDef == null)
+            {
+                return;
+            }
+
+            CommercialHistoryEntry entry = FindCommercialHistory(order.settlementId, order.thingDef);
+            if (entry == null)
+            {
+                entry = new CommercialHistoryEntry
+                {
+                    settlementId = order.settlementId,
+                    thingDef = order.thingDef
+                };
+                commercialHistory.Add(entry);
+            }
+
+            entry.totalTradeValue += order.paidSilver;
         }
 
         /// <summary>
@@ -2250,7 +2286,10 @@ namespace Intercolony
                 {
                     if (order?.status == SalesOrderStatus.Completed && order.ThingDef != null)
                     {
-                        RecordCompletedSale(order);
+                        // This historical repair is allowed to rebuild the pre-existing count and
+                        // quantity aggregate, but D5 forbids inventing a past trade-value total
+                        // from retained orders that may already be incomplete or pruned.
+                        RecordCompletedSale(order, recordTradeValue: false);
                     }
                 }
 
@@ -2519,6 +2558,17 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     "  schema 54 -> 55: procurement final-counter terms and bounded negotiation " +
                     "states added; existing contracts require no migration.");
+            }
+
+            if (saveVersion < 56)
+            {
+                // 55 -> 56 added the durable completed-trade silver total to commercial history.
+                // Missing Scribe nodes load as zero, and no old order or timeline record is
+                // replayed: the historical amount cannot be reconstructed honestly after detail
+                // pruning, so the aggregate starts accumulating only from this schema onward.
+                IntercolonyLog.Message(
+                    "  schema 55 -> 56: durable completed-trade value added; existing totals start " +
+                    "at zero because historical silver cannot be reconstructed honestly.");
             }
 
             saveVersion = CurrentSaveVersion;

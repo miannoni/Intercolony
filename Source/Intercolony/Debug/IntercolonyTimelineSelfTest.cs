@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
@@ -75,6 +76,7 @@ namespace Intercolony
                 CheckWriteSites(r, state);
                 CheckContractWriteSites(r, state);
                 CheckQuerying(r, state);
+                CheckCommercialHistoryReadModel(r, state);
                 CheckRetentionAndPruning(r, state);
                 CheckScribeRoundTrip(r);
             }
@@ -644,6 +646,583 @@ namespace Intercolony
                 int nullEntries = loadedList.RemoveAll(e => e == null);
                 r.Check(nullEntries == 0 && loadedList.Count == 2 && loadedList.Exists(e => e.thingDef == null),
                     "load validation preserves records with null thingDef");
+            }
+        }
+
+        // --- Stage 7A commercial-history read model ----------------------------------------
+
+        /// <summary>
+        /// Exercises the aggregate/timeline split through the public read model. These fixtures
+        /// deliberately use recorded payments that disagree with unit-price arithmetic: a test
+        /// that recomputes a price, counts timeline rows, or creates state while reading must fail
+        /// without needing an existing save to contain any particular settlement.
+        /// </summary>
+        private static void CheckCommercialHistoryReadModel(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const int summarySettlementId = 710701;
+            const int oldHistorySettlementId = 710702;
+            const int spineOnlySettlementId = 710703;
+            const int timelineSettlementId = 710704;
+            const int quietSettlementId = 710705;
+
+            List<CommercialHistoryEntry> savedHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<CommercialEventRecord> savedTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            List<SalesOrder> savedSalesOrders = new List<SalesOrder>(state.Orders);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<RecurringContract> savedContracts =
+                new List<RecurringContract>(state.Contracts);
+            List<ProcurementContract> savedProcurementContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            int savedTimelineStartTick = state.CommercialTimelineStartTick;
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            int savedSaveVersion = saveVersionField == null
+                ? -1
+                : (int)saveVersionField.GetValue(state);
+            Map silverMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            Dictionary<Thing, int> savedSilver = SnapshotHistorySilver(silverMap);
+
+            ThingDef fixtureDef = ThingDefOf.Steel ?? ThingDefOf.Silver;
+
+            try
+            {
+                if (fixtureDef == null)
+                {
+                    const string reason = "ThingDefOf.Steel and ThingDefOf.Silver are unavailable";
+                    r.Skip("U1 summary survives timeline pruning", reason);
+                    r.Skip("U2 recorded sale and purchase silver accumulate", reason);
+                    r.Skip("U3 failed, cancelled and refunded value stays unchanged", reason);
+                }
+                else
+                {
+                    ResetHistoryFixtures(state);
+
+                    // U1: all three durable count/value sources are populated before the detail
+                    // timeline is removed. Timeline silver is intentionally unrelated to 37+83.
+                    SalesOrder summarySale = MakeHistorySale(
+                        710711, summarySettlementId, fixtureDef, 4, 37, 9.99f,
+                        SalesOrderStatus.Completed);
+                    PurchaseOrder summaryPurchase = MakeHistoryPurchase(
+                        710712, summarySettlementId, fixtureDef, 30, 83, 2.5f,
+                        PurchaseOrderStatus.Completed);
+                    state.Orders.Add(summarySale);
+                    state.PurchaseOrders.Add(summaryPurchase);
+                    state.RecordCompletedSale(summarySale);
+                    state.RecordCompletedPurchase(summaryPurchase);
+
+                    // Anchor the pruning check to the facts this fixture creates: one completed
+                    // sale, one completed purchase, and the two recorded payments (37 + 83).
+                    const int u1ExpectedCompletedSales = 1;
+                    const int u1ExpectedCompletedPurchases = 1;
+                    const int u1ExpectedTradeValue = 37 + 83;
+
+                    CommercialReputation summaryReputation = new CommercialReputation(
+                        summarySettlementId, "Summary Testholme", "Summary faction");
+                    summaryReputation.purchasesCompleted = 1;
+                    state.Reputations[summarySettlementId] = summaryReputation;
+                    state.Contracts.Add(new RecurringContract
+                    {
+                        id = 710713,
+                        settlementId = summarySettlementId,
+                        settlementName = "Summary Testholme",
+                        thingDef = fixtureDef,
+                        quantityPerCycle = 1,
+                        totalCycles = 1,
+                        unitPrice = 1f,
+                        status = ContractStatus.Active
+                    });
+                    state.ProcurementContracts.Add(new ProcurementContract
+                    {
+                        id = 710714,
+                        settlementId = summarySettlementId,
+                        settlementName = "Summary Testholme",
+                        thingDef = fixtureDef,
+                        quantityPerCycle = 1,
+                        totalCycles = 1,
+                        unitPrice = 1f,
+                        cadenceDays = 1,
+                        status = ProcurementContractStatus.Active
+                    });
+                    state.CommercialTimelineStartTick = 7107000;
+                    state.CommercialTimeline.Add(new CommercialEventRecord(
+                        710715, 7107010, summarySettlementId, CommercialEventType.SaleCompleted,
+                        "Summary Testholme", summarySale.id, fixtureDef, 4, 5, "detail sale"));
+                    state.CommercialTimeline.Add(new CommercialEventRecord(
+                        710716, 7107020, summarySettlementId, CommercialEventType.PurchaseCompleted,
+                        "Summary Testholme", summaryPurchase.id, fixtureDef, 30, 7, "detail purchase"));
+
+                    CommercialHistorySummary u1Before =
+                        CommercialHistoryService.BuildSummary(state, summarySettlementId);
+                    state.CommercialTimeline.Clear();
+                    CommercialHistorySummary u1After =
+                        CommercialHistoryService.BuildSummary(state, summarySettlementId);
+                    r.Check(
+                        u1Before.CompletedSales == u1ExpectedCompletedSales &&
+                        u1Before.CompletedPurchases == u1ExpectedCompletedPurchases &&
+                        u1Before.TotalKnownTradeValue == u1ExpectedTradeValue &&
+                        u1Before.CompletedSales == u1After.CompletedSales &&
+                        u1Before.CompletedPurchases == u1After.CompletedPurchases &&
+                        u1Before.ActiveContracts == u1After.ActiveContracts &&
+                        u1Before.TotalKnownTradeValue == u1After.TotalKnownTradeValue,
+                        "U1 summary counts and trade value survive timeline pruning",
+                        $"before={DescribeSummary(u1Before)}; after={DescribeSummary(u1After)}");
+
+                    // U2: the fixture's agreed-price totals are 40 and 75, while the recorded
+                    // payments are 37 and 83. Each delta must use the latter in its direction.
+                    ResetHistoryFixtures(state);
+                    SalesOrder u2Sale = MakeHistorySale(
+                        710721, summarySettlementId, fixtureDef, 4, 37, 9.99f,
+                        SalesOrderStatus.Completed);
+                    PurchaseOrder u2Purchase = MakeHistoryPurchase(
+                        710722, summarySettlementId, fixtureDef, 30, 83, 2.5f,
+                        PurchaseOrderStatus.Completed);
+                    state.Orders.Add(u2Sale);
+                    state.PurchaseOrders.Add(u2Purchase);
+                    int u2Before = CommercialHistoryService.BuildSummary(
+                        state, summarySettlementId).TotalKnownTradeValue;
+                    state.RecordCompletedSale(u2Sale);
+                    int u2AfterSale = CommercialHistoryService.BuildSummary(
+                        state, summarySettlementId).TotalKnownTradeValue;
+                    state.RecordCompletedPurchase(u2Purchase);
+                    int u2AfterPurchase = CommercialHistoryService.BuildSummary(
+                        state, summarySettlementId).TotalKnownTradeValue;
+                    r.Check(
+                        u2AfterSale - u2Before == 37 &&
+                        u2AfterPurchase - u2AfterSale == 83,
+                        "U2 total trade value uses the recorded sale and purchase silver",
+                        $"sale increment expected=37 actual={u2AfterSale - u2Before}; " +
+                        $"purchase increment expected=83 actual={u2AfterPurchase - u2AfterSale}; " +
+                        $"totals {u2Before}->{u2AfterSale}->{u2AfterPurchase}");
+
+                    // U3: terminal non-completions carry payment-shaped data but never enter the
+                    // completed aggregate. The refunded purchase is represented by the terminal
+                    // SupplierDefault status, which is the status the refund path writes.
+                    ResetHistoryFixtures(state);
+                    SalesOrder u3BaselineSale = MakeHistorySale(
+                        710731, summarySettlementId, fixtureDef, 4, 37, 9.99f,
+                        SalesOrderStatus.Completed);
+                    PurchaseOrder u3BaselinePurchase = MakeHistoryPurchase(
+                        710732, summarySettlementId, fixtureDef, 30, 83, 2.5f,
+                        PurchaseOrderStatus.Completed);
+                    state.RecordCompletedSale(u3BaselineSale);
+                    state.RecordCompletedPurchase(u3BaselinePurchase);
+                    int u3Baseline = CommercialHistoryService.BuildSummary(
+                        state, summarySettlementId).TotalKnownTradeValue;
+
+                    SalesOrder failedSale = MakeHistorySale(
+                        710733, summarySettlementId, fixtureDef, 8, 111, 12.5f,
+                        SalesOrderStatus.Failed);
+                    state.RecordCompletedSale(failedSale);
+                    int u3AfterFailedSale = CommercialHistoryService.BuildSummary(
+                        state, summarySettlementId).TotalKnownTradeValue;
+                    r.Check(
+                        u3AfterFailedSale == u3Baseline,
+                        "U3 failed sale adds no trade value",
+                        $"baseline={u3Baseline}; after failed sale={u3AfterFailedSale}; " +
+                        $"failed payment={failedSale.paidSilver}; status={failedSale.status}");
+
+                    SalesOrder cancelledOrder = MakeHistorySale(
+                        710734, summarySettlementId, fixtureDef, 9, 127, 14.5f,
+                        SalesOrderStatus.Cancelled);
+                    state.RecordCompletedSale(cancelledOrder);
+                    int u3AfterCancelledOrder = CommercialHistoryService.BuildSummary(
+                        state, summarySettlementId).TotalKnownTradeValue;
+                    r.Check(
+                        u3AfterCancelledOrder == u3AfterFailedSale,
+                        "U3 cancelled order adds no trade value",
+                        $"before cancelled={u3AfterFailedSale}; after={u3AfterCancelledOrder}; " +
+                        $"cancelled payment={cancelledOrder.paidSilver}; status={cancelledOrder.status}");
+
+                    PurchaseOrder refundedPurchase = MakeHistoryPurchase(
+                        710735, summarySettlementId, fixtureDef, 11, 139, 3.25f,
+                        PurchaseOrderStatus.SupplierDefault);
+                    refundedPurchase.outcomeNote = "Refunded by supplier default.";
+                    state.RecordCompletedPurchase(refundedPurchase);
+                    int u3AfterRefundedPurchase = CommercialHistoryService.BuildSummary(
+                        state, summarySettlementId).TotalKnownTradeValue;
+                    r.Check(
+                        u3AfterRefundedPurchase == u3AfterCancelledOrder,
+                        "U3 refunded purchase adds no trade value",
+                        $"before refund={u3AfterCancelledOrder}; after={u3AfterRefundedPurchase}; " +
+                        $"refunded payment={refundedPurchase.paidSilver}; " +
+                        $"status={refundedPurchase.status}; note={refundedPurchase.outcomeNote}");
+                }
+
+                // U4: a missing record and durable history without a retained event are different
+                // coverage answers. The no-history answer is the explicit bool, not a date value.
+                ResetHistoryFixtures(state);
+                state.CommercialTimelineStartTick = 7107400;
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = oldHistorySettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 1,
+                    totalTradeValue = 73
+                });
+                CommercialHistorySummary neverTraded =
+                    CommercialHistoryService.BuildSummary(state, quietSettlementId);
+                CommercialHistorySummary predatesSpine =
+                    CommercialHistoryService.BuildSummary(state, oldHistorySettlementId);
+                r.Check(
+                    neverTraded.HistoryCoverage != predatesSpine.HistoryCoverage &&
+                    neverTraded.HistoryCoverage == CommercialHistoryCoverage.None &&
+                    predatesSpine.HistoryCoverage == CommercialHistoryCoverage.AggregateOnly &&
+                    !neverTraded.HasTradingSince,
+                    "U4 never-traded and pre-spine history have distinguishable coverage",
+                    $"never coverage={neverTraded.HistoryCoverage}; pre-spine coverage=" +
+                    $"{predatesSpine.HistoryCoverage}; never since=" +
+                    $"{neverTraded.TradingSinceTick}/{neverTraded.HasTradingSince}; " +
+                    $"pre-spine since={predatesSpine.TradingSinceTick}/" +
+                    $"{predatesSpine.HasTradingSince}");
+
+                // U5: without a retained event, the only honest date is the spine boundary. It is
+                // explicitly flagged as a lower bound so the UI cannot call it a first trade.
+                ResetHistoryFixtures(state);
+                const int spineBoundary = 7107500;
+                state.CommercialTimelineStartTick = spineBoundary;
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = spineOnlySettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 1,
+                    totalTradeValue = 91
+                });
+                CommercialHistorySummary spineSummary =
+                    CommercialHistoryService.BuildSummary(state, spineOnlySettlementId);
+                r.Check(
+                    spineSummary.HasTradingSince &&
+                    spineSummary.TradingSinceTick == spineBoundary &&
+                    spineSummary.TradingSinceIsTimelineStart &&
+                    spineSummary.HistoryPredatesTimeline,
+                    "U5 trading-since reports the timeline spine boundary",
+                    $"summary={DescribeSummary(spineSummary)}; boundary={spineBoundary}");
+
+                // U6: include three retained target events, one unsupported future/noise value,
+                // and one meaningful event for a different settlement.
+                ResetHistoryFixtures(state);
+                CommercialEventType unsupportedType = (CommercialEventType)999;
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    710761, 100, timelineSettlementId, CommercialEventType.SaleCompleted,
+                    "Timeline Testholme", compactDetail: "old target"));
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    710762, 200, timelineSettlementId, CommercialEventType.ContractStarted,
+                    "Timeline Testholme", compactDetail: "middle target"));
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    710763, 300, timelineSettlementId, CommercialEventType.PurchaseCompleted,
+                    "Timeline Testholme", compactDetail: "new target"));
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    710764, 400, timelineSettlementId, unsupportedType,
+                    "Timeline Testholme", compactDetail: "noise target"));
+                state.CommercialTimeline.Add(new CommercialEventRecord(
+                    710765, 500, quietSettlementId, CommercialEventType.SaleCompleted,
+                    "Other Testholme", compactDetail: "other settlement"));
+
+                List<CommercialEventRecord> u6All =
+                    CommercialHistoryService.BuildTimeline(state, timelineSettlementId, 20);
+                List<CommercialEventRecord> u6Capped =
+                    CommercialHistoryService.BuildTimeline(state, timelineSettlementId, 2);
+                r.Check(
+                    u6All.Count == 3 && u6All.TrueForAll(record => record.type != unsupportedType),
+                    "U6 timeline keeps only meaningful event types",
+                    $"returned ids={DescribeIds(u6All)}; types={DescribeTypes(u6All)}");
+                r.Check(
+                    u6All.TrueForAll(record => record.settlementId == timelineSettlementId),
+                    "U6 timeline excludes another settlement's events",
+                    $"requested settlement={timelineSettlementId}; returned ids={DescribeIds(u6All)}");
+                r.Check(
+                    u6All.Count == 3 && u6All[0].id == 710763 &&
+                    u6All[1].id == 710762 && u6All[2].id == 710761,
+                    "U6 timeline is newest first",
+                    $"ordered ids={DescribeIds(u6All)}");
+                r.Check(
+                    u6Capped.Count <= 2,
+                    "U6 timeline respects the requested bound",
+                    $"requested max=2; returned count={u6Capped.Count}; " +
+                    $"ordered ids={DescribeIds(u6Capped)}");
+
+                // U7: use an ID absent from every persisted collection before both read calls.
+                ResetHistoryFixtures(state);
+                int u7ReputationsBefore = state.Reputations.Count;
+                int u7HistoryBefore = state.CommercialHistory.Count;
+                int u7TimelineBefore = state.CommercialTimeline.Count;
+                CommercialHistorySummary u7Summary =
+                    CommercialHistoryService.BuildSummary(state, quietSettlementId);
+                List<CommercialEventRecord> u7Timeline =
+                    CommercialHistoryService.BuildTimeline(state, quietSettlementId, 5);
+                bool u7HasHistory = state.CommercialHistory.Exists(
+                    entry => entry != null && entry.settlementId == quietSettlementId);
+                bool u7HasTimeline = state.CommercialTimeline.Exists(
+                    record => record != null && record.settlementId == quietSettlementId);
+                r.Check(
+                    state.Reputations.Count == u7ReputationsBefore &&
+                    state.FindReputation(quietSettlementId) == null &&
+                    state.CommercialHistory.Count == u7HistoryBefore && !u7HasHistory &&
+                    state.CommercialTimeline.Count == u7TimelineBefore && !u7HasTimeline &&
+                    u7Timeline.Count == 0,
+                    "U7 summary and timeline reads mutate no persisted history",
+                    $"summary={DescribeSummary(u7Summary)}; reputations " +
+                    $"{u7ReputationsBefore}->{state.Reputations.Count}; history " +
+                    $"{u7HistoryBefore}->{state.CommercialHistory.Count}; timeline " +
+                    $"{u7TimelineBefore}->{state.CommercialTimeline.Count}; " +
+                    $"returned ids={DescribeIds(u7Timeline)}");
+
+                // U8: a 55-schema save already contains entries, but its old silver totals cannot
+                // be reconstructed. The migration may advance the version, never the totals.
+                ResetHistoryFixtures(state);
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = oldHistorySettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 2,
+                    totalTradeValue = 137
+                });
+                state.CommercialHistory.Add(new CommercialHistoryEntry
+                {
+                    settlementId = spineOnlySettlementId,
+                    thingDef = fixtureDef,
+                    completedSaleCount = 3,
+                    totalTradeValue = 263
+                });
+                List<int> u8BeforeTotals = new List<int>();
+                foreach (CommercialHistoryEntry entry in state.CommercialHistory)
+                {
+                    u8BeforeTotals.Add(entry.totalTradeValue);
+                }
+
+                if (saveVersionField == null)
+                {
+                    r.Skip("U8 55-to-current migration preserves trade value", "private saveVersion field is unavailable");
+                }
+                else
+                {
+                    saveVersionField.SetValue(state, 55);
+                    state.MigrateIfNeeded();
+                    List<int> u8AfterTotals = new List<int>();
+                    foreach (CommercialHistoryEntry entry in state.CommercialHistory)
+                    {
+                        u8AfterTotals.Add(entry.totalTradeValue);
+                    }
+
+                    bool u8Unchanged = u8BeforeTotals.Count == u8AfterTotals.Count;
+                    for (int i = 0; i < u8BeforeTotals.Count && u8Unchanged; i++)
+                    {
+                        u8Unchanged = u8BeforeTotals[i] == u8AfterTotals[i];
+                    }
+
+                    r.Check(
+                        u8Unchanged && state.SaveVersion == IntercolonyWorldComponent.CurrentSaveVersion,
+                        "U8 55-to-current migration adds no trade value",
+                        $"totals before={DescribeInts(u8BeforeTotals)}; after=" +
+                        $"{DescribeInts(u8AfterTotals)}; saveVersion=55->{state.SaveVersion}; " +
+                        $"current={IntercolonyWorldComponent.CurrentSaveVersion}");
+                }
+            }
+            catch (Exception ex)
+            {
+                r.Check(false, "Stage 7A commercial-history fixtures completed", ex.ToString());
+            }
+            finally
+            {
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedHistory);
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> saved in savedReputations)
+                {
+                    state.Reputations[saved.Key] = saved.Value;
+                }
+
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedTimeline);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedSalesOrders);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedContracts);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedProcurementContracts);
+                state.CommercialTimelineStartTick = savedTimelineStartTick;
+                if (saveVersionField != null && savedSaveVersion >= 0)
+                {
+                    saveVersionField.SetValue(state, savedSaveVersion);
+                }
+
+                RestoreHistorySilver(silverMap, savedSilver);
+                r.Info(
+                    $"commercial history fixtures restored: history={state.CommercialHistory.Count}; " +
+                    $"reputations={state.Reputations.Count}; timeline={state.CommercialTimeline.Count}; " +
+                    $"sales={state.Orders.Count}; purchases={state.PurchaseOrders.Count}; " +
+                    $"contracts={state.Contracts.Count + state.ProcurementContracts.Count}; " +
+                    $"saveVersion={state.SaveVersion}.");
+            }
+        }
+
+        private static void ResetHistoryFixtures(IntercolonyWorldComponent state)
+        {
+            state.CommercialHistory.Clear();
+            state.Reputations.Clear();
+            state.CommercialTimeline.Clear();
+            state.Orders.Clear();
+            state.PurchaseOrders.Clear();
+            state.Contracts.Clear();
+            state.ProcurementContracts.Clear();
+            state.CommercialTimelineStartTick = CommercialTimelineService.NoHistory;
+        }
+
+        private static SalesOrder MakeHistorySale(
+            int id,
+            int settlementId,
+            ThingDef thingDef,
+            int quantity,
+            int paidSilver,
+            float unitPrice,
+            SalesOrderStatus status)
+        {
+            return new SalesOrder
+            {
+                id = id,
+                settlementId = settlementId,
+                settlementName = "History Testholme",
+                factionName = "History faction",
+                line = new OrderLine(thingDef, quantity),
+                unitPrice = unitPrice,
+                acceptedTick = 1,
+                deadlineTick = 100000,
+                deliveredQuantity = status == SalesOrderStatus.Completed ? quantity : 0,
+                paidSilver = paidSilver,
+                status = status
+            };
+        }
+
+        private static PurchaseOrder MakeHistoryPurchase(
+            int id,
+            int settlementId,
+            ThingDef thingDef,
+            int quantity,
+            int paidSilver,
+            float unitPrice,
+            PurchaseOrderStatus status)
+        {
+            return new PurchaseOrder
+            {
+                id = id,
+                settlementId = settlementId,
+                settlementName = "History Testholme",
+                factionName = "History faction",
+                thingDef = thingDef,
+                quantity = quantity,
+                unitPrice = unitPrice,
+                paidSilver = paidSilver,
+                orderedTick = 1,
+                readyTick = 100000,
+                pickupExpiryTick = 100000,
+                status = status
+            };
+        }
+
+        private static string DescribeSummary(CommercialHistorySummary summary)
+        {
+            return $"id={summary.SettlementId}; standing={summary.CommercialStanding ?? "<none>"}; " +
+                   $"hasStanding={summary.HasCommercialStanding}; since={summary.TradingSinceTick}; " +
+                   $"hasSince={summary.HasTradingSince}; sinceIsStart={summary.TradingSinceIsTimelineStart}; " +
+                   $"coverage={summary.HistoryCoverage}; predates={summary.HistoryPredatesTimeline}; " +
+                   $"sales={summary.CompletedSales}/{summary.HasCompletedSales}; " +
+                   $"purchases={summary.CompletedPurchases}/{summary.HasCompletedPurchases}; " +
+                   $"active={summary.ActiveContracts}/{summary.HasActiveContracts}; " +
+                   $"value={summary.TotalKnownTradeValue}/{summary.HasTotalKnownTradeValue}";
+        }
+
+        private static string DescribeIds(List<CommercialEventRecord> records)
+        {
+            List<string> ids = new List<string>();
+            foreach (CommercialEventRecord record in records)
+            {
+                ids.Add(record == null ? "null" : record.id.ToString());
+            }
+
+            return "[" + string.Join(",", ids.ToArray()) + "]";
+        }
+
+        private static string DescribeTypes(List<CommercialEventRecord> records)
+        {
+            List<string> types = new List<string>();
+            foreach (CommercialEventRecord record in records)
+            {
+                types.Add(record == null ? "null" : record.type.ToString());
+            }
+
+            return "[" + string.Join(",", types.ToArray()) + "]";
+        }
+
+        private static string DescribeInts(List<int> values)
+        {
+            List<string> text = new List<string>();
+            foreach (int value in values)
+            {
+                text.Add(value.ToString());
+            }
+
+            return "[" + string.Join(",", text.ToArray()) + "]";
+        }
+
+        private static Dictionary<Thing, int> SnapshotHistorySilver(Map map)
+        {
+            Dictionary<Thing, int> result = new Dictionary<Thing, int>();
+            if (map == null || ThingDefOf.Silver == null)
+            {
+                return result;
+            }
+
+            foreach (Thing thing in map.listerThings.ThingsOfDef(ThingDefOf.Silver))
+            {
+                if (thing != null && !thing.Destroyed)
+                {
+                    result[thing] = thing.stackCount;
+                }
+            }
+
+            return result;
+        }
+
+        private static void RestoreHistorySilver(
+            Map map, Dictionary<Thing, int> savedSilver)
+        {
+            if (map == null || savedSilver == null || ThingDefOf.Silver == null)
+            {
+                return;
+            }
+
+            List<Thing> current = new List<Thing>(
+                map.listerThings.ThingsOfDef(ThingDefOf.Silver));
+            foreach (Thing thing in current)
+            {
+                if (thing == null || thing.Destroyed)
+                {
+                    continue;
+                }
+
+                if (savedSilver.TryGetValue(thing, out int savedCount))
+                {
+                    thing.stackCount = savedCount;
+                }
+                else
+                {
+                    thing.Destroy(DestroyMode.Vanish);
+                }
+            }
+
+            foreach (KeyValuePair<Thing, int> saved in savedSilver)
+            {
+                if (saved.Key != null && !saved.Key.Destroyed)
+                {
+                    saved.Key.stackCount = saved.Value;
+                }
             }
         }
 

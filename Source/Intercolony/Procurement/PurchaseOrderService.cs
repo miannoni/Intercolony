@@ -658,6 +658,7 @@ namespace Intercolony
                     state, order.settlementId, category.Value, order.paidSilver);
             }
 
+            state?.RecordCompletedPurchase(order);
             ReputationService.NotePurchaseCompleted(state, order);
             CommercialTimelineService.Record(
                 CommercialEventType.PurchaseCompleted,
