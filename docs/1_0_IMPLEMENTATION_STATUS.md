@@ -3,9 +3,9 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 5 — Commercial relationships & negotiation
-Current slice:      5F — Stage 5 acceptance gate closure; all play calibration deferred to one sitting at the end of 1.0
-Last completed:     5E — relationship-tier milestones (`bd308cf`, 2026-08-23)
+Current stage:      Stage 6 — Procurement parity
+Current slice:      6A — not started
+Last completed:     Stage 5 — commercial relationships & negotiation, gate closed (`3b1e37f`, 2026-08-23)
 Current save schema: 49
 Current mod version: 0.9.3
 Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
@@ -17,7 +17,7 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [x] Stage 2 — Market fundamentals overhaul (all 12 criteria met 2026-08-22; play calibration deferred to end of 1.0)
 - [x] Stage 3 — Circumstance-driven economic events (8/10 criteria closed 2026-08-22; 9 and 10 join the calibration sitting)
 - [x] Stage 4 — Brand strength & colony specialization (13/13 criteria closed 2026-08-22)
-- [ ] Stage 5 — Commercial relationships & negotiation
+- [x] Stage 5 — Commercial relationships & negotiation (gate closed 2026-08-23; 12/12 criteria)
 - [ ] Stage 6 — Procurement parity
 - [ ] Stage 7 — Commercial history
 - [ ] Stage 8 — 1.0 integration and release gate
@@ -1261,6 +1261,53 @@ hardcoded to the enum default.
 
 **R7 drives `NoteOrderFailed` (`-12f`) rather than the funnel directly, so reverting any hook to
 `rep.Adjust` reds it.**
+
+### 5F — Stage 5 acceptance gate closure (`e2e4d3f`, `3b1e37f`)
+
+All twelve criteria from the plan's Stage 5 acceptance gate are now proven. Criteria 1, 6, 7,
+8, 9 and 10 were closed by slices 5A-5D. 5F closed the remaining six:
+
+- G2a higher trust improves a moderate counteroffer; G2b an absurd counteroffer is refused
+  even at maximum reputation.
+- G3 a strong brand in the sold-goods category improves leverage; G4 a strong brand in an
+  unrelated category gives strictly less.
+- G5 higher market/event urgency improves willingness for an above-market sale.
+- G11a the persisted final-counter view and its comparison rows equal the terms the accept
+  path binds; G11b the displayed total equals the charged total.
+- G12a every non-initial negotiation state refuses a further counter, with the states
+  enumerated from the enum via Enum.GetValues so a state added later is covered without anyone
+  remembering; G12b one negotiation admits at most one final counter.
+
+### The verification finding, which is the durable part
+
+**Fifteen mutations across four rounds were needed, because three criteria are defended by two
+independent mechanisms each and no single mutation can drive them red.** A one-mutation-per-
+assertion battery would have declared all of them proven while three were untested.
+
+- **G2b is guarded by a price HARD REFUSAL that runs before the score is consulted at all.**
+  Zeroing weights and dropping AcceptedScoreThreshold both left it green, and one of those
+  mutations made five assertions SKIP rather than fail — which reads like a pass at a glance.
+  It reds only when PriceHardRefusalBurden, CombinedHardRefusalBurden and the acceptance bar
+  are lifted together. Lifting only the hard refusal still leaves the offer refused on score
+  (-0.143 against a bar of 0.10). That is defence in depth, and it is worth knowing it is
+  there.
+- **G5 rides on two urgency channels**, MarketConditionWeight and EventUrgencyWeight. Zeroing
+  either alone leaves the other carrying the signal; it reds only when both are gone.
+- **G4 discriminates correctly**, which is the point of the pair: making the brand lookup
+  category-blind — strongest brand anywhere rather than the offered product's — reds G4 while
+  G3 stays green.
+- G11a compares the view against the resulting SalesOrder rather than against the terms the
+  fixture passed in. That is the only comparison that catches the defect the rule exists for,
+  and building the view from OriginalTerms reds it at viewUnitPrice=100.000 against
+  orderUnitPrice=75.000.
+
+**The general rule this establishes, and it should be applied from Stage 6 onward: when a
+mutation leaves an assertion green, the next question is whether a SECOND mechanism protects
+the same case — not whether the assertion is hollow.** Both answers are possible and they look
+identical from the green run.
+
+Verification stated: negotiation suite 37/0/0; four fresh-world full-suite runs at 1169-1171
+passed, 0 failed, 14-15 skipped, log clean.
 
 ## RELEASED — Stage 3 proceeds; calibration is deferred to the end of 1.0 (2026-08-22)
 
