@@ -1,9 +1,6 @@
-> **UNRELEASED - prepared release body. Delete this line when 1.0 ships.**
-
 # Intercolony 1.0 - release notes
 
-Intercolony 1.0 is not released. The `1.0` branch has not merged, and the 1.0 play sitting has not
-happened. These are the prepared notes for that release.
+This is the Intercolony 1.0 release, shipped as mod version 1.0.0 for RimWorld 1.6.
 
 Compared with 0.9.3, settlements now give the player a changing regional economy to read, trade
 into, and build a reputation within.
