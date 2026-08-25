@@ -169,6 +169,15 @@ namespace Intercolony
         private Vector2 supplierMarketScroll;
         private SupplierMarketColumn supplierMarketSortColumn = SupplierMarketColumn.TotalPayment;
         private bool supplierMarketSortDescending = true;
+        private const float SupplierMarketRefreshIntervalSeconds = 0.5f;
+        private List<SupplierMarketRow> supplierMarketRows;
+        private List<float> supplierMarketRowHeights;
+        private float supplierMarketRowHeightsWidth = -1f;
+        private int supplierMarketRowsListingCount = -1;
+        private float supplierMarketRowsBuiltAtRealtime;
+        private SupplierMarketColumn supplierMarketRowsSortColumn;
+        private bool supplierMarketRowsSortDescending;
+        private bool supplierMarketRowsHaveSort;
 
         private PurchaseOrdersColumn purchaseOrdersSortColumn = PurchaseOrdersColumn.Timing;
         private bool purchaseOrdersSortDescending;
@@ -204,6 +213,13 @@ namespace Intercolony
             // result into the next visit.
             contractProposalSettlementCache = null;
             expandedRelationSettlementId = NoExpandedRelation;
+            ResetSupplierMarketCache();
+        }
+
+        public override void PostClose()
+        {
+            ResetSupplierMarketCache();
+            base.PostClose();
         }
 
         public override void DoWindowContents(Rect inRect)
@@ -676,6 +692,11 @@ namespace Intercolony
 
         private void SelectTab(Tab which, IntercolonyWorldComponent state)
         {
+            if (tab != which)
+            {
+                ResetSupplierMarketCache();
+            }
+
             tab = which;
 
             if (GroupFor(which) == TabGroup.Selling)
@@ -2386,7 +2407,8 @@ namespace Intercolony
             Text.Font = GameFont.Small;
             y += 40f;
 
-            List<SupplierMarketRow> rows = SupplierMarketUiService.BuildRows(state);
+            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
+            List<SupplierMarketRow> rows = GetSupplierMarketRows(state, tableWidth);
             if (rows.Count == 0)
             {
                 GUI.color = Color.gray;
@@ -2398,10 +2420,6 @@ namespace Intercolony
                 return;
             }
 
-            SupplierMarketUiService.SortRows(
-                rows, supplierMarketSortColumn, supplierMarketSortDescending);
-
-            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
             DrawSupplierMarketHeader(new Rect(0f, y, tableWidth, 28f));
             y += 28f;
             Widgets.DrawLineHorizontal(0f, y, inRect.width);
@@ -2410,7 +2428,7 @@ namespace Intercolony
             float contentHeight = 0f;
             for (int i = 0; i < rows.Count; i++)
             {
-                contentHeight += SupplierMarketRowHeight(rows[i], tableWidth);
+                contentHeight += supplierMarketRowHeights[i];
             }
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
@@ -2420,13 +2438,73 @@ namespace Intercolony
             float rowY = 0f;
             for (int i = 0; i < rows.Count; i++)
             {
-                float rowHeight = SupplierMarketRowHeight(rows[i], tableWidth);
+                float rowHeight = supplierMarketRowHeights[i];
                 DrawSupplierMarketRow(
                     new Rect(0f, rowY, tableWidth, rowHeight), rows[i], i, state);
                 rowY += rowHeight;
             }
 
             EndPageScrollView();
+        }
+
+        private void ResetSupplierMarketCache()
+        {
+            supplierMarketRows = null;
+            supplierMarketRowHeights = null;
+            supplierMarketRowHeightsWidth = -1f;
+            supplierMarketRowsListingCount = -1;
+            supplierMarketRowsBuiltAtRealtime = 0f;
+            supplierMarketRowsHaveSort = false;
+        }
+
+        private List<SupplierMarketRow> GetSupplierMarketRows(
+            IntercolonyWorldComponent state, float tableWidth)
+        {
+            int listingCount = state?.SupplierListings?.Count ?? 0;
+            float now = Time.realtimeSinceStartup;
+            bool rebuild = supplierMarketRows == null ||
+                           supplierMarketRowsListingCount != listingCount ||
+                           now - supplierMarketRowsBuiltAtRealtime >
+                           SupplierMarketRefreshIntervalSeconds;
+
+            if (rebuild)
+            {
+                supplierMarketRows = SupplierMarketUiService.BuildRows(state);
+                supplierMarketRowHeights = null;
+                supplierMarketRowHeightsWidth = -1f;
+                supplierMarketRowsListingCount = listingCount;
+                supplierMarketRowsBuiltAtRealtime = now;
+                supplierMarketRowsHaveSort = false;
+            }
+
+            if (!supplierMarketRowsHaveSort ||
+                supplierMarketRowsSortColumn != supplierMarketSortColumn ||
+                supplierMarketRowsSortDescending != supplierMarketSortDescending)
+            {
+                SupplierMarketUiService.SortRows(
+                    supplierMarketRows, supplierMarketSortColumn, supplierMarketSortDescending);
+                supplierMarketRowHeights = null;
+                supplierMarketRowHeightsWidth = -1f;
+                supplierMarketRowsSortColumn = supplierMarketSortColumn;
+                supplierMarketRowsSortDescending = supplierMarketSortDescending;
+                supplierMarketRowsHaveSort = true;
+            }
+
+            if (supplierMarketRowHeights == null ||
+                supplierMarketRowHeights.Count != supplierMarketRows.Count ||
+                supplierMarketRowHeightsWidth != tableWidth)
+            {
+                supplierMarketRowHeights = new List<float>(supplierMarketRows.Count);
+                for (int i = 0; i < supplierMarketRows.Count; i++)
+                {
+                    supplierMarketRowHeights.Add(
+                        SupplierMarketRowHeight(supplierMarketRows[i], tableWidth));
+                }
+
+                supplierMarketRowHeightsWidth = tableWidth;
+            }
+
+            return supplierMarketRows;
         }
 
         private void DrawSupplierMarketHeader(Rect rect)
@@ -2483,9 +2561,13 @@ namespace Intercolony
             }
 
             Widgets.DrawHighlightIfMouseover(rect);
-            if (ShouldBuildTooltip(rect) && !row.tooltip.NullOrEmpty())
+            if (ShouldBuildTooltip(rect))
             {
-                TooltipHandler.TipRegion(rect, row.tooltip);
+                string tooltip = SupplierMarketUiService.BuildTooltip(state, row);
+                if (!tooltip.NullOrEmpty())
+                {
+                    TooltipHandler.TipRegion(rect, tooltip);
+                }
             }
 
             for (int i = 0; i < (int)SupplierMarketColumn.Reason + 1; i++)
@@ -2529,9 +2611,13 @@ namespace Intercolony
                     state, listing, quantity),
                 quantity =>
                 {
-                    if (!SupplierListingService.TryPurchase(
-                            state, listing, quantity, out _, out string failureReason) &&
-                        !failureReason.NullOrEmpty())
+                    bool purchased = SupplierListingService.TryPurchase(
+                        state, listing, quantity, out _, out string failureReason);
+                    if (purchased)
+                    {
+                        ResetSupplierMarketCache();
+                    }
+                    else if (!failureReason.NullOrEmpty())
                     {
                         // The purchase service owns this explanation. The UI does not compose a
                         // parallel reason that could drift from the transaction boundary.

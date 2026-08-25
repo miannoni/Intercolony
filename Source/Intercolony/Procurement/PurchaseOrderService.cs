@@ -319,6 +319,18 @@ namespace Intercolony
         internal static bool CanPayForPurchase(
             Map paymentMap, float unitPrice, int quantity, out string failureReason)
         {
+            int availableSilver = CountColonySilver(paymentMap);
+            return CanPayForPurchase(
+                paymentMap, unitPrice, quantity, availableSilver, out failureReason);
+        }
+
+        internal static bool CanPayForPurchase(
+            Map paymentMap,
+            float unitPrice,
+            int quantity,
+            int availableSilver,
+            out string failureReason)
+        {
             failureReason = null;
             if (paymentMap == null)
             {
@@ -339,10 +351,10 @@ namespace Intercolony
             }
 
             int price = IntercolonyPricing.TotalPayment(unitPrice, quantity);
-            int available = CountColonySilver(paymentMap);
-            if (available < price)
+            if (availableSilver < price)
             {
-                failureReason = $"Not enough silver in storage: {available} of {price} needed.";
+                failureReason =
+                    $"Not enough silver in storage: {availableSilver} of {price} needed.";
                 return false;
             }
 

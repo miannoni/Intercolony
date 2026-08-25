@@ -200,13 +200,25 @@ namespace Intercolony
             SettlementEconomicProfile profile,
             IntercolonyProductCategory category)
         {
+            return SupplyCondition(
+                state, profile, category, SettlementForEvents(profile));
+        }
+
+        /// <summary>
+        /// The same supply condition calculation when the caller already resolved the settlement.
+        /// </summary>
+        internal static float SupplyCondition(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            Settlement settlement)
+        {
             if (profile == null)
             {
                 return SettlementMarketState.Neutral;
             }
 
             float scarcity = CurrentSupplyPressure(state, profile.settlementId, category);
-            Settlement settlement = SettlementForEvents(profile);
             if (settlement != null)
             {
                 // Event data is stored in the scarcity direction on purpose. It therefore
@@ -285,6 +297,19 @@ namespace Intercolony
             SettlementEconomicProfile profile,
             IntercolonyProductCategory category)
         {
+            return ExplainSupply(
+                state, profile, category, SettlementForEvents(profile));
+        }
+
+        /// <summary>
+        /// The same supply explanation when the caller already resolved the settlement.
+        /// </summary>
+        internal static List<PriceFactor> ExplainSupply(
+            IntercolonyWorldComponent state,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            Settlement settlement)
+        {
             List<PriceFactor> factors = new List<PriceFactor>();
             if (profile == null)
             {
@@ -307,7 +332,6 @@ namespace Intercolony
                     pressureCondition));
             }
 
-            Settlement settlement = SettlementForEvents(profile);
             List<EconomicEvent> events = EconomicEventService.SupplyScarcityEvents(
                 state, settlement, category);
             float eventScarcity = AddSupplyEventFactors(factors, events, category);
