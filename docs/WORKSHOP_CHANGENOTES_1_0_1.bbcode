@@ -1,0 +1,23 @@
+[h1]1.0.1[/h1]
+
+1.0.1 fixes two defects found in play immediately after 1.0 shipped, both in Procurement. The Market tab was slow because it rebuilt the whole table every frame, and the Contracts tab said "Under development" even though standing procurement agreements were built underneath.
+
+[hr][/hr]
+[h1]Procurement[/h1]
+
+[list]
+[*][b]The Market tab no longer rebuilds its table every frame.[/b] It builds the table once and reuses it, refreshing when you enter the tab, sort a column, buy something, or the listings change, and otherwise about twice a second. Nothing the table shows changed.
+[*][b]The Contracts tab is a real screen now.[/b] Propose a standing purchase to a settlement, see your agreements with a count badge on the tab, withdraw a proposal that has not been answered, accept or decline the supplier's final counter after its exact terms are laid out, and withdraw from a live or war-suspended agreement.
+[/list]
+
+[h1]One limitation[/h1]
+
+[list]
+[*][b]Procurement agreements cannot be renewed yet.[/b] When the agreed cycles are done the agreement ends and you propose a new one. The selling side does renew; the buying side does not yet.
+[/list]
+
+[h1]Saves[/h1]
+
+[b]The save format did not change.[/b] Schema stays 56 and no migration runs, so a 1.0 colony opens directly. This was verified by checking that nothing in this release touches persistence.
+
+Problems to the [url=https://github.com/miannoni/Intercolony/issues]GitHub issue tracker[/url], please, with your mod list and [b]Player.log[/b].
