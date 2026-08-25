@@ -64,8 +64,7 @@ namespace Intercolony
             FindBuyer,
 
             // Procurement mirrors selling one for one, so the two directions of the same
-            // business read the same way. Two of the four are placeholders on purpose: an
-            // empty seat that says "not yet" is more honest than a missing one.
+            // business read the same way.
             SupplierMarket,
             FindSeller,
             PurchaseOrders,
@@ -324,9 +323,9 @@ namespace Intercolony
                 return;
             }
 
-            if (IsPlaceholderTab(tab))
+            if (tab == Tab.SupplyContracts)
             {
-                DrawPlaceholderPage(inRect, tab, state);
+                DrawProcurementContracts(inRect, state);
                 return;
             }
 
@@ -442,15 +441,6 @@ namespace Intercolony
             Tab.SupplyContracts,
         };
 
-        /// <summary>
-        /// Pages that exist as a seat at the table and nothing more. They are drawn disabled
-        /// with a tooltip saying so, because a tab that silently does nothing reads as broken.
-        /// </summary>
-        private static bool IsPlaceholderTab(Tab which)
-        {
-            return which == Tab.SupplyContracts;
-        }
-
         /// <summary>Tab caption, including a count badge where one is useful.</summary>
         private static string TabLabel(Tab which, IntercolonyWorldComponent state)
         {
@@ -495,10 +485,41 @@ namespace Intercolony
                     int purchases = OpenPurchaseCount(state);
                     return purchases > 0 ? $"Orders ({purchases})" : "Orders";
                 case Tab.SupplyContracts:
-                    return "Contracts";
+                    int procurementContracts = LiveProcurementContractCount(state);
+                    return procurementContracts > 0
+                        ? $"Contracts ({procurementContracts})"
+                        : "Contracts";
                 default:
                     return which.ToString();
             }
+        }
+
+        private static int LiveProcurementContractCount(IntercolonyWorldComponent state)
+        {
+            int live = 0;
+            List<ProcurementContract> contracts = state?.ProcurementContracts;
+            if (contracts == null)
+            {
+                return live;
+            }
+
+            foreach (ProcurementContract contract in contracts)
+            {
+                if (contract == null)
+                {
+                    continue;
+                }
+
+                if (contract.status == ProcurementContractStatus.Offered ||
+                    contract.status == ProcurementContractStatus.CounterpartyCountered ||
+                    contract.status == ProcurementContractStatus.Active ||
+                    contract.status == ProcurementContractStatus.Suspended)
+                {
+                    live++;
+                }
+            }
+
+            return live;
         }
 
         private static int OpenPurchaseCount(IntercolonyWorldComponent state)
@@ -623,18 +644,10 @@ namespace Intercolony
             {
                 Tab which = order[i];
                 Rect buttonRect = new Rect(x, rect.y, widths[i], rect.height);
-                bool placeholder = IsPlaceholderTab(which);
 
-                if (Widgets.ButtonText(
-                        buttonRect, labels[i], drawBackground: tab != which,
-                        active: !placeholder) && !placeholder)
+                if (Widgets.ButtonText(buttonRect, labels[i], drawBackground: tab != which))
                 {
                     SelectTab(which, state);
-                }
-
-                if (placeholder && ShouldBuildTooltip(buttonRect))
-                {
-                    TooltipHandler.TipRegion(buttonRect, "Under development.");
                 }
 
                 x += widths[i] + Gap;
@@ -704,7 +717,7 @@ namespace Intercolony
                 sellingTab = which;
             }
 
-            if (GroupFor(which) == TabGroup.Procurement && !IsPlaceholderTab(which))
+            if (GroupFor(which) == TabGroup.Procurement)
             {
                 procurementTab = which;
             }
@@ -2308,38 +2321,6 @@ namespace Intercolony
         private const float PurchaseOrderMinimumRowHeight = 42f;
 
         /// <summary>
-        /// Procurement (DESIGN.md §19, §55, §103). Requests with their quotes underneath, so
-        /// comparing suppliers is a matter of reading down a list rather than clicking through.
-        /// </summary>
-        /// <summary>
-        /// A page that exists so the shape of procurement matches the shape of selling, and
-        /// says outright that it is not built yet. Better than omitting the tab, which would
-        /// leave the two halves of the same business looking arbitrarily different.
-        /// </summary>
-        private void DrawPlaceholderPage(
-            Rect inRect, Tab which, IntercolonyWorldComponent state)
-        {
-            float y = inRect.y;
-
-            Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, inRect.width, 34f), TabLabel(which, state));
-            Text.Font = GameFont.Small;
-            y += 40f;
-
-            string body = which == Tab.SupplierMarket
-                ? "Under development.\n\nToday you ask settlements for what you need and they " +
-                  "answer. A supplier market would work the other way around: standing offers " +
-                  "you can browse and take, the way the selling Market already works."
-                : "Under development.\n\nA procurement contract would be a standing agreement " +
-                  "to buy — the mirror of the supply agreements you already offer, with a " +
-                  "settlement committing to deliver on a cadence rather than one order at a time.";
-
-            GUI.color = Color.gray;
-            Widgets.Label(new Rect(0f, y, Mathf.Min(inRect.width, 560f), inRect.height - y), body);
-            GUI.color = Color.white;
-        }
-
-        /// <summary>
         /// Purchases already placed. The procurement mirror of the Sales Orders page; request
         /// history is deliberately not rendered here because a request and its order are distinct.
         /// </summary>
@@ -3060,8 +3041,481 @@ namespace Intercolony
                 cancelAction: () => { }));
         }
 
+        private Vector2 procurementContractsScroll;
         private Vector2 contractsScroll;
         private List<Settlement> contractProposalSettlementCache;
+
+        /// <summary>
+        /// Recurring procurement agreements. Offers and final supplier counters come first because
+        /// they are the decisions waiting on the player; live agreements follow, then history.
+        /// </summary>
+        private void DrawProcurementContracts(
+            Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(
+                new Rect(0f, y, Mathf.Max(1f, inRect.width - 200f), 34f),
+                "Procurement agreements");
+            Text.Font = GameFont.Small;
+
+            Rect proposeRect = new Rect(inRect.width - 190f, y + 2f, 190f, 30f);
+            if (Widgets.ButtonText(proposeRect, "Propose procurement agreement"))
+            {
+                Find.WindowStack.Add(new Dialog_ProposeProcurementAgreement(state));
+            }
+
+            y += 40f;
+
+            List<ProcurementContract> contracts = new List<ProcurementContract>();
+            if (state.ProcurementContracts != null)
+            {
+                foreach (ProcurementContract contract in state.ProcurementContracts)
+                {
+                    if (contract != null)
+                    {
+                        contracts.Add(contract);
+                    }
+                }
+            }
+
+            if (contracts.Count == 0)
+            {
+                GUI.color = Color.gray;
+                string emptyMessage =
+                    "You have no standing purchase agreements.\n\n" +
+                    "Propose one to a settlement that can supply the goods.";
+                float emptyHeight = Text.CalcHeight(emptyMessage, Mathf.Max(1f, inRect.width));
+                Widgets.Label(
+                    new Rect(0f, y, inRect.width, emptyHeight), emptyMessage);
+                GUI.color = Color.white;
+                return;
+            }
+
+            contracts.Sort((a, b) =>
+            {
+                int rank = ProcurementContractRank(a).CompareTo(ProcurementContractRank(b));
+                return rank != 0 ? rank : b.id.CompareTo(a.id);
+            });
+
+            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
+            List<float> rowHeights = new List<float>(contracts.Count);
+            float contentHeight = 0f;
+            foreach (ProcurementContract contract in contracts)
+            {
+                float rowHeight = ProcurementContractRowHeight(contract, tableWidth);
+                rowHeights.Add(rowHeight);
+                contentHeight += rowHeight;
+            }
+
+            Rect outRect = new Rect(0f, y, inRect.width, Mathf.Max(0f, inRect.yMax - y));
+            Rect viewRect = new Rect(0f, 0f, tableWidth, Mathf.Max(contentHeight, outRect.height));
+            BeginPageScrollView(outRect, ref procurementContractsScroll, viewRect);
+
+            float rowY = 0f;
+            for (int i = 0; i < contracts.Count; i++)
+            {
+                DrawProcurementContractRow(
+                    new Rect(0f, rowY, tableWidth, rowHeights[i]), contracts[i], i, state);
+                rowY += rowHeights[i];
+            }
+
+            EndPageScrollView();
+        }
+
+        private static int ProcurementContractRank(ProcurementContract contract)
+        {
+            if (contract == null)
+            {
+                return 3;
+            }
+
+            if (contract.status == ProcurementContractStatus.Offered ||
+                contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                return 0;
+            }
+
+            if (contract.status == ProcurementContractStatus.Active)
+            {
+                return 1;
+            }
+
+            if (contract.status == ProcurementContractStatus.Suspended)
+            {
+                return 2;
+            }
+
+            return 3;
+        }
+
+        private static string ProcurementContractIdentity(ProcurementContract contract)
+        {
+            return $"#{contract.id}  {contract.settlementName} — {contract.quantityPerCycle}x " +
+                   $"{contract.ItemLabel()} every {contract.cadenceDays}d";
+        }
+
+        private static string ProcurementContractPaymentSummary(ProcurementContract contract)
+        {
+            int paymentPerCycle = ProcurementContractPaymentPerCycle(contract);
+            int totalPayment = IntercolonyPricing.TotalPayment(
+                paymentPerCycle, contract.totalCycles);
+            return $"{contract.totalCycles} cycles   {paymentPerCycle} silver each   " +
+                   $"{totalPayment} total";
+        }
+
+        private static int ProcurementContractPaymentPerCycle(ProcurementContract contract)
+        {
+            return IntercolonyPricing.TotalPayment(
+                contract.unitPrice, contract.quantityPerCycle);
+        }
+
+        private static string ProcurementContractStatusText(ProcurementContract contract)
+        {
+            if (contract.IsPendingProposal)
+            {
+                return "awaiting the settlement's answer";
+            }
+
+            if (contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                return "supplier returned a final counter — answer required";
+            }
+
+            if (contract.status == ProcurementContractStatus.Active)
+            {
+                if (contract.activeOrderId != ProcurementContract.NoActiveOrderId)
+                {
+                    return "cycle in progress";
+                }
+
+                float daysUntilNextCycle =
+                    (contract.nextCycleTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
+                return $"next cycle in {Mathf.Max(0f, daysUntilNextCycle):F1}d";
+            }
+
+            if (contract.status == ProcurementContractStatus.Suspended)
+            {
+                return "suspended by war — would resume if relations recovered";
+            }
+
+            string status = contract.status.ToString();
+            if (!string.IsNullOrEmpty(contract.outcomeNote))
+            {
+                status += $": {contract.outcomeNote}";
+            }
+
+            return status;
+        }
+
+        private static Color ProcurementContractStatusColour(ProcurementContract contract)
+        {
+            if (contract.IsPendingProposal ||
+                contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                return new Color(0.6f, 0.9f, 1f);
+            }
+
+            if (contract.status == ProcurementContractStatus.Suspended)
+            {
+                // Amber says this is a war pause, not a failed agreement.
+                return new Color(1f, 0.8f, 0.4f);
+            }
+
+            if (contract.status == ProcurementContractStatus.Completed)
+            {
+                return new Color(0.6f, 0.9f, 0.6f);
+            }
+
+            if (contract.status == ProcurementContractStatus.Active)
+            {
+                return Color.white;
+            }
+
+            return new Color(0.9f, 0.6f, 0.6f);
+        }
+
+        private static float ProcurementContractRowHeight(
+            ProcurementContract contract, float rowWidth)
+        {
+            float contentWidth = Mathf.Max(1f, rowWidth - 220f);
+            string identity = ProcurementContractIdentity(contract);
+            string payment = ProcurementContractPaymentSummary(contract);
+            string status =
+                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
+                ProcurementContractStatusText(contract);
+            float height = 4f;
+            height += Mathf.Max(Text.LineHeight, Text.CalcHeight(identity, contentWidth));
+            height += Mathf.Max(Text.LineHeight, Text.CalcHeight(payment, contentWidth));
+            height += Mathf.Max(Text.LineHeight, Text.CalcHeight(status, contentWidth));
+            return Mathf.Max(74f, height + 4f);
+        }
+
+        private static float DrawMeasuredProcurementLabel(
+            Rect rect, string text)
+        {
+            string value = text ?? "";
+            float measuredHeight = Mathf.Max(
+                Text.LineHeight, Text.CalcHeight(value, Mathf.Max(1f, rect.width)));
+            Widgets.Label(
+                new Rect(rect.x, rect.y, rect.width, measuredHeight), value);
+            return measuredHeight;
+        }
+
+        private void DrawProcurementContractRow(
+            Rect rect,
+            ProcurementContract contract,
+            int index,
+            IntercolonyWorldComponent state)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            float contentWidth = Mathf.Max(1f, rect.width - 220f);
+            float lineY = rect.y + 4f;
+            lineY += DrawMeasuredProcurementLabel(
+                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                ProcurementContractIdentity(contract));
+
+            GUI.color = new Color(1f, 1f, 1f, 0.7f);
+            lineY += DrawMeasuredProcurementLabel(
+                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                ProcurementContractPaymentSummary(contract));
+            GUI.color = Color.white;
+
+            GUI.color = ProcurementContractStatusColour(contract);
+            string status =
+                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
+                ProcurementContractStatusText(contract);
+            DrawMeasuredProcurementLabel(
+                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight), status);
+            GUI.color = Color.white;
+
+            if (contract.status == ProcurementContractStatus.Offered &&
+                contract.IsPendingProposal)
+            {
+                Rect cancelRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(cancelRect, "Cancel"))
+                {
+                    ProcurementContractService.CancelProposal(state, contract);
+                }
+
+                if (ShouldBuildTooltip(cancelRect))
+                {
+                    TooltipHandler.TipRegion(
+                        cancelRect, "Withdraw this proposal before the supplier answers.");
+                }
+            }
+            else if (contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                Rect acceptRect = new Rect(rect.xMax - 200f, rect.y + 20f, 92f, 30f);
+                if (contract.CanAcceptFinalCounter && Widgets.ButtonText(acceptRect, "Accept"))
+                {
+                    OpenProcurementCounterConfirmation(state, contract);
+                }
+
+                Rect declineRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (contract.CanDeclineFinalCounter && Widgets.ButtonText(declineRect, "Decline"))
+                {
+                    ProcurementContractService.TryDeclineFinalCounter(state, contract);
+                }
+
+                if (ShouldBuildTooltip(declineRect))
+                {
+                    TooltipHandler.TipRegion(
+                        declineRect,
+                        "Declining is terminal; this final counter cannot be reopened.");
+                }
+            }
+            else if (contract.status == ProcurementContractStatus.Active ||
+                     contract.status == ProcurementContractStatus.Suspended)
+            {
+                bool suspended = contract.status == ProcurementContractStatus.Suspended;
+                Rect withdrawRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(withdrawRect, "Withdraw"))
+                {
+                    Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                        $"Withdraw from the procurement agreement with {contract.settlementName}?\n\n" +
+                        (suspended
+                            ? "It is only suspended — it would resume on its own if relations " +
+                              "recovered. Withdrawing ends it for good."
+                            : "Withdrawing ends future deliveries and damages your standing with them."),
+                        () => ProcurementContractService.CancelContract(state, contract),
+                        destructive: true));
+                }
+            }
+        }
+
+        private static void OpenProcurementCounterConfirmation(
+            IntercolonyWorldComponent state, ProcurementContract contract)
+        {
+            if (state == null || contract == null ||
+                !contract.TryGetFinalCounterTerms(
+                    out ProcurementContractCounterTerms terms))
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(new ProcurementCounterConfirmationDialog(
+                terms,
+                () => ProcurementContractService.TryAcceptFinalCounter(state, contract)));
+        }
+
+        private sealed class ProcurementCounterConfirmationDialog : Window
+        {
+            private const float WindowWidth = 520f;
+            private const float WindowMargin = 18f;
+            private const float TitleHeight = 38f;
+            private const float ButtonHeight = 36f;
+            private const float BottomGap = 10f;
+            private const float TermLabelWidth = 150f;
+            private const float TermColumnGap = 8f;
+            private const float TermRowGap = 5f;
+            private const float ScrollbarWidth = 16f;
+
+            private readonly List<TermRow> rows;
+            private readonly Action onConfirm;
+            private Vector2 contentScroll;
+
+            public ProcurementCounterConfirmationDialog(
+                ProcurementContractCounterTerms terms, Action onConfirm)
+            {
+                int totalPayment = IntercolonyPricing.TotalPayment(
+                    terms.paymentPerCycle, terms.totalCycles);
+                rows = new List<TermRow>
+                {
+                    new TermRow("Quantity per cycle", terms.quantityPerCycle.ToString("N0")),
+                    new TermRow("Unit price", $"{terms.unitPrice:F2} silver"),
+                    new TermRow("Cadence", $"{terms.cadenceDays:N0} days"),
+                    new TermRow("Total cycles", terms.totalCycles.ToString("N0")),
+                    new TermRow(
+                        "Fulfilment",
+                        terms.fulfillment == FulfillmentMode.BuyerPickup
+                            ? "Buyer pickup"
+                            : "Supplier delivery"),
+                    new TermRow("Payment per cycle", $"{terms.paymentPerCycle:N0} silver"),
+                    new TermRow("Total", $"{totalPayment:N0} silver")
+                };
+                this.onConfirm = onConfirm;
+                doCloseX = true;
+                forcePause = true;
+                absorbInputAroundWindow = true;
+            }
+
+            public override Vector2 InitialSize
+            {
+                get
+                {
+                    Text.Font = GameFont.Small;
+                    float bodyWidth = WindowWidth - WindowMargin * 2f - ScrollbarWidth;
+                    float bodyHeight = MeasureRows(rows, Mathf.Max(1f, bodyWidth));
+                    float fixedHeight = WindowMargin * 2f + TitleHeight + BottomGap + ButtonHeight;
+                    float minimumHeight = fixedHeight + Text.LineHeight;
+                    float maximumHeight = Mathf.Max(minimumHeight, UI.screenHeight * 0.7f);
+                    return new Vector2(
+                        WindowWidth,
+                        Mathf.Min(Mathf.Max(minimumHeight, fixedHeight + bodyHeight), maximumHeight));
+                }
+            }
+
+            public override void DoWindowContents(Rect inRect)
+            {
+                Text.Font = GameFont.Medium;
+                Widgets.Label(
+                    new Rect(WindowMargin, WindowMargin, inRect.width - WindowMargin * 2f, TitleHeight),
+                    "Final procurement counter");
+                Text.Font = GameFont.Small;
+
+                float contentTop = WindowMargin + TitleHeight;
+                float contentBottom = inRect.height - WindowMargin - ButtonHeight - BottomGap;
+                Rect contentRect = new Rect(
+                    WindowMargin,
+                    contentTop,
+                    Mathf.Max(1f, inRect.width - WindowMargin * 2f),
+                    Mathf.Max(1f, contentBottom - contentTop));
+                float contentWidth = Mathf.Max(1f, contentRect.width - ScrollbarWidth);
+                float contentHeight = MeasureRows(rows, contentWidth);
+
+                if (contentHeight <= contentRect.height)
+                {
+                    DrawRows(contentRect.width, contentRect.y);
+                }
+                else
+                {
+                    Rect viewRect = new Rect(0f, 0f, contentWidth, contentHeight);
+                    Widgets.BeginScrollView(contentRect, ref contentScroll, viewRect);
+                    DrawRows(viewRect.width, 0f);
+                    Widgets.EndScrollView();
+                }
+
+                float buttonY = inRect.height - WindowMargin - ButtonHeight;
+                if (Widgets.ButtonText(
+                        new Rect(WindowMargin, buttonY, 170f, ButtonHeight), "Accept counter"))
+                {
+                    onConfirm?.Invoke();
+                    Close();
+                }
+
+                if (Widgets.ButtonText(
+                        new Rect(inRect.width - WindowMargin - 120f, buttonY, 120f, ButtonHeight),
+                        "Cancel"))
+                {
+                    Close();
+                }
+            }
+
+            private void DrawRows(float width, float startY)
+            {
+                float y = startY;
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    TermRow row = rows[i];
+                    float valueWidth = ValueWidth(width);
+                    float rowHeight = RowHeight(row, width);
+
+                    GUI.color = new Color(1f, 1f, 1f, 0.65f);
+                    Widgets.Label(
+                        new Rect(0f, y, TermLabelWidth, rowHeight), row.label);
+                    GUI.color = Color.white;
+                    Widgets.Label(
+                        new Rect(TermLabelWidth + TermColumnGap, y, valueWidth, rowHeight),
+                        row.value ?? "");
+                    y += rowHeight + TermRowGap;
+                }
+            }
+
+            private static float MeasureRows(List<TermRow> rows, float width)
+            {
+                float height = 0f;
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    height += RowHeight(rows[i], width);
+                    if (i < rows.Count - 1)
+                    {
+                        height += TermRowGap;
+                    }
+                }
+
+                return height;
+            }
+
+            private static float RowHeight(TermRow row, float width)
+            {
+                float valueHeight = Text.CalcHeight(row.value ?? "", ValueWidth(width));
+                float labelHeight = Text.CalcHeight(row.label ?? "", TermLabelWidth);
+                return Mathf.Max(valueHeight, labelHeight, Text.LineHeight);
+            }
+
+            private static float ValueWidth(float width)
+            {
+                return Mathf.Max(1f, width - TermLabelWidth - TermColumnGap);
+            }
+        }
 
         /// <summary>
         /// Recurring contracts (DESIGN.md §29, §107). Offers first, then live agreements, then
@@ -3397,7 +3851,7 @@ namespace Intercolony
                 ContractService.MaxAcceptableQuantity(contract),
                 (qty, fulfillment) =>
                 {
-                    int cycleValue = Mathf.RoundToInt(negotiatedRate * qty);
+                    int cycleValue = IntercolonyPricing.TotalPayment(negotiatedRate, qty);
                     string logistics = fulfillment == FulfillmentMode.BuyerPickup
                         ? "They collect each delivery, so no caravan is needed — but the goods " +
                           "must be ready and marked so every cycle."
@@ -3420,7 +3874,7 @@ namespace Intercolony
                            $"{contract.totalCycles} times.\n\n" +
                            $"{negotiation}\n\n" +
                            $"Payment: {cycleValue} silver per delivery, " +
-                           $"{cycleValue * contract.totalCycles} in total\n" +
+                           $"{IntercolonyPricing.TotalPayment(cycleValue, contract.totalCycles)} in total\n" +
                            $"Rate: {negotiatedRate:F2} each — better than spot, because they are " +
                            "buying certainty\n\n" +
                            $"{sizing} That is roughly " +
@@ -3989,7 +4443,7 @@ namespace Intercolony
                 maximum,
                 qty =>
                 {
-                    int cost = Mathf.RoundToInt(quote.unitPrice * qty);
+                    int cost = IntercolonyPricing.TotalPayment(quote.unitPrice, qty);
 
                     StringBuilder body = new StringBuilder();
                     body.AppendLine($"Buy {qty}x {request.thingDef?.LabelCap} from {quote.settlementName}.");
