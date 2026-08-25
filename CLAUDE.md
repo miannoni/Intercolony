@@ -177,13 +177,12 @@ Target framework is `net472`.
 
 ## Current state
 
-**Branch:** `1.0`. **Stage:** 8 — 1.0 integration, balance and release gate. Stages 0–7 are
-closed, and Stage 8 slices 8A–8C are complete. The current save schema is 56; the in-game suite
-contains around 1,350 assertions.
+**Branch:** `main`. **Stage:** 8 — 1.0 integration, balance and release gate. Stages 0–7 are
+closed, and Stage 8 slices 8A–8C are complete. `main` carries mod version 1.0.0 for RimWorld 1.6;
+the current save schema is 56, and the in-game suite contains roughly 1,350 assertions.
 
-`main` stays at 0.9.3 and is not touched until Stage 8 merges. The 1.0 branch is not released: the
-§8.3–§8.7 play sitting still needs a human, and the remaining documentation and release-gate work
-are recorded in `docs/PENDING_PLAYTESTS.md` and `docs/1_0_IMPLEMENTATION_STATUS.md`.
+The `1.0` branch is merged into `main` and released. The §8.3–§8.7 play sitting in
+`docs/PENDING_PLAYTESTS.md` is still outstanding.
 
 ---
 

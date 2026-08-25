@@ -2300,3 +2300,30 @@ Known limitations:
 
 Manual test:
 - Remaining human play and calibration paths are in [docs/PENDING_PLAYTESTS.md](docs/PENDING_PLAYTESTS.md).
+
+## 1.0 release  (2026-08-24)
+
+Implemented:
+- Intercolony 1.0 shipped: mod version `1.0.0`, RimWorld `1.6`, save schema `56`.
+- `package.ps1` built the clean package: 9 files, 2.23 MiB; the shipped assembly contains no dev
+  test bridge.
+- Branch `1.0` was merged into `main` as a `--no-ff` merge commit `e7053b6` (149 commits), tagged
+  `v1.0.0` and pushed. GitHub release `Intercolony 1.0` was published, not a pre-release, with
+  `dist/Intercolony-1.0.0.zip` attached.
+- Workshop item `3780094556` received an UPDATE, not a new item, from a real directory copy in the
+  `Mods` folder, never through the repo junction; the junction has since been restored. The 1.0
+  Workshop description and change notes are in `docs/WORKSHOP_DESCRIPTION.bbcode` and
+  `docs/WORKSHOP_CHANGENOTES_1_0.bbcode`.
+
+Not implemented:
+- The §8.3–§8.7 play sitting never happened. 1.0 shipped without it, deliberately, on Matteo's
+  decision. Stage 2's play calibration and Stage 3's criteria 9 and 10 were folded into that
+  sitting and are therefore also still outstanding. The agenda remains in `docs/PENDING_PLAYTESTS.md`.
+
+Known limitations:
+- Stage 7B's W2 idempotence claim is unproven.
+- Two vacuous-pass assertions are parked in `docs/BACKLOG.md`.
+- The sales-side contract cancellation penalty is still an inline literal.
+
+Manual test:
+- Testing reach was one machine, one load order, Biotech only, UI scale 1.75x.

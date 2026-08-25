@@ -3,12 +3,12 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 8 — 1.0 integration, balance and release gate
-Current slice:      8E — awaiting the play sitting; 8A-8D complete
-Last completed:     8D — §8.9 documentation, all nine documents (`6b1f3d0`, 2026-08-23)
+Current stage:      Stage 8 — 1.0 integration, balance and release gate (shipped 2026-08-24)
+Current slice:      1.0 release complete; the §8.3–§8.7 play sitting remains outstanding
+Last completed:     1.0 release (`e7053b6`, 2026-08-24)
 Current save schema: 56
-Current mod version: 0.9.3
-Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at Stage 8
+Current mod version: 1.0.0
+Branch:             `main` — `1.0` merged with `--no-ff` as `e7053b6`
 
 ## Stage status
 
@@ -20,7 +20,7 @@ Branch:             `1.0` — branched from `main` at `0f55a27`, merges back at 
 - [x] Stage 5 — Commercial relationships & negotiation (gate closed 2026-08-23; 12/12 criteria)
 - [x] Stage 6 — Procurement parity (gate closed 2026-08-23; 12/12 criteria)
 - [x] Stage 7 — Commercial history (gate closed 2026-08-23; 9/9 criteria)
-- [ ] Stage 8 — 1.0 integration and release gate
+- [x] Stage 8 — 1.0 integration and release gate (released 2026-08-24; play sitting outstanding)
 
 ## Stage 8 — what is done and what needs Matteo
 
@@ -52,14 +52,26 @@ deferred there when those stages closed.
 
 ### Needs Matteo — the release
 
-The merge of `1.0` into `main`, and then the Workshop update. **`docs/RELEASE_PROCEDURE.md` must
-be read before either.** Two facts decide whether it goes well: the Workshop upload must never
-point at the repo folder, because RimWorld uploads RootDir wholesale and would publish
-`reference/`, and the menu must read "Update on Steam Workshop" rather than "Upload" or a second
-Workshop item is created.
+**DONE 2026-08-24.** Intercolony 1.0 shipped as mod version `1.0.0` for RimWorld `1.6`, with save
+schema `56`.
 
-`docs/RELEASE_NOTES_1_0.md` is written and carries an UNRELEASED banner line designed to be
-deleted in one edit.
+`package.ps1` built the clean package: 9 files, 2.23 MiB. It verified that the shipped assembly
+contains no dev test bridge.
+
+Branch `1.0` was merged into `main` as a `--no-ff` merge commit (`e7053b6`, 149 commits), tagged
+`v1.0.0`, and pushed. GitHub release `Intercolony 1.0` was published, not a pre-release, with
+`dist/Intercolony-1.0.0.zip` attached.
+
+The existing Workshop item `3780094556` received an UPDATE, not a new item, from a real directory
+copy in the `Mods` folder, never through the repo junction. The junction has since been restored.
+The 1.0 Workshop description and change notes are in `docs/WORKSHOP_DESCRIPTION.bbcode` and
+`docs/WORKSHOP_CHANGENOTES_1_0.bbcode`.
+
+The §8.3–§8.7 play sitting never happened. 1.0 shipped without it, deliberately, on Matteo's
+decision. Stage 2's play calibration and Stage 3's criteria 9 and 10 were folded into that sitting
+and are therefore also still outstanding. The agenda remains in `docs/PENDING_PLAYTESTS.md`.
+
+Testing reach was one machine, one load order, Biotech only, UI scale 1.75x.
 
 ### Known gaps, carried openly
 
