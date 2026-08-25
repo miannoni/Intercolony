@@ -16,6 +16,24 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## Procurement agreements can never be renewed.
+
+**Raised:** 2026-08-25, while building the procurement agreements UI.
+**Size:** unknown until the renewal path is implemented.
+**Status:** open.
+
+`ProcurementContract.cs` declares `renewalOffered`, `renewalExpiryTick` and `renewals`, and persists
+all three through `ExposeData` (around lines 239–245 and 495). Nothing in the procurement code under
+`Source/Intercolony` sets `renewalOffered` to `true`; `ProcurementContractService` has no
+`AcceptRenewal` or `DeclineRenewal`, unlike the selling-side `ContractService`, whose UI answers a
+renewal offer inline.
+
+A procurement agreement runs its scheduled cycles and ends; the three fields are scribed into every
+save and read back as defaults forever. The selling side renews and the buying side does not, breaking
+the mirror the procurement work was built to hold; a persisted field nobody writes looks implemented
+from the save schema and is not. The tab had no way to offer a renewal, which exposed this during UI
+work.
+
 ## ~~Skip-reporting output still has suite-side format gaps~~ — FIXED in 1.0 (`ff93d94`)
 
 **Raised:** 2026-08-23, during skip-reporting verification.
