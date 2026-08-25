@@ -69,6 +69,54 @@ namespace Intercolony
         }
     }
 
+    /// <summary>The fixed terms an eligible procurement proposal would carry.</summary>
+    public sealed class ProcurementContractTerms
+    {
+        internal ProcurementContractTerms(
+            float referenceUnitPrice,
+            float unitPrice,
+            float minimumUnitPrice,
+            float maximumUnitPrice,
+            int paymentPerCycle,
+            int totalCycles,
+            int totalPayment)
+        {
+            this.referenceUnitPrice = referenceUnitPrice;
+            this.unitPrice = unitPrice;
+            this.minimumUnitPrice = minimumUnitPrice;
+            this.maximumUnitPrice = maximumUnitPrice;
+            this.paymentPerCycle = paymentPerCycle;
+            this.totalCycles = totalCycles;
+            this.totalPayment = totalPayment;
+        }
+
+        public readonly float referenceUnitPrice;
+
+        public readonly float unitPrice;
+
+        /// <summary>Inclusive bounds for a player-proposed agreed unit price.</summary>
+        public readonly float minimumUnitPrice;
+
+        public readonly float maximumUnitPrice;
+
+        /// <summary>Agreed value of one procurement cycle, rounded by the shared payment rule.</summary>
+        public readonly int paymentPerCycle;
+
+        /// <summary>Number of cycles in the agreement.</summary>
+        public readonly int totalCycles;
+
+        /// <summary>Agreed value across every scheduled procurement cycle.</summary>
+        public readonly int totalPayment;
+
+        public bool IsUnitPriceInRange(float agreedUnitPrice)
+        {
+            return !float.IsNaN(agreedUnitPrice) &&
+                   !float.IsInfinity(agreedUnitPrice) &&
+                   agreedUnitPrice >= minimumUnitPrice &&
+                   agreedUnitPrice <= maximumUnitPrice;
+        }
+    }
+
     /// <summary>The delayed supplier answer applied to one procurement proposal.</summary>
     public sealed class ProcurementContractAnswer
     {
@@ -256,39 +304,15 @@ namespace Intercolony
                     "Fulfillment must be supplier delivery or buyer pickup.");
             }
 
-            int seed = Gen.HashCombineInt(
-                state.EconomySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
-            seed = Gen.HashCombineInt(seed, cadenceDays, totalCycles, DecisionSeedSalt);
-            Rand.PushState(seed);
             float referenceUnitPrice;
-            try
+            if (!TryCalculateReferenceUnitPrice(
+                    state, settlement, thingDef, stuffDef, quality, profile, category,
+                    quantityPerCycle, cadenceDays, totalCycles, fulfillment,
+                    out referenceUnitPrice))
             {
-                if (!RfqService.CanTechnicallySupply(thingDef, profile))
-                {
-                    return ProcurementContractProposalResult.Refused(
-                        ProcurementContractProposalFailure.SupplierCannotSupply,
-                        $"{settlement.Label} cannot technically supply {thingDef.label}.");
-                }
-
-                float supply = EffectiveEconomyService.EffectiveSupply(
-                    state, profile, category);
-                float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
-                referenceUnitPrice = IntercolonyPricing.SupplierUnitPrice(
-                    state,
-                    thingDef,
-                    stuffDef,
-                    quality,
-                    profile,
-                    category,
-                    supply,
-                    distance,
-                    fulfillment == FulfillmentMode.SellerDelivery,
-                    quantityPerCycle,
-                    out _);
-            }
-            finally
-            {
-                Rand.PopState();
+                return ProcurementContractProposalResult.Refused(
+                    ProcurementContractProposalFailure.SupplierCannotSupply,
+                    $"{settlement.Label} cannot technically supply {thingDef.label}.");
             }
 
             float unitPrice = agreedUnitPrice ?? referenceUnitPrice;
@@ -375,6 +399,159 @@ namespace Intercolony
                 $"{quantityPerCycle}x {thingDef.label} every {cadenceDays}d x{totalCycles}; " +
                 "awaiting supplier answer.");
             return ProcurementContractProposalResult.Sent(contract, evaluation);
+        }
+
+        /// <summary>
+        /// Computes the fixed terms an eligible procurement proposal would carry without
+        /// constructing or recording a contract. Returns null when the supplied proposal could
+        /// not be sent.
+        /// </summary>
+        public static ProcurementContractTerms PreviewContractTerms(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            float? agreedUnitPrice = null,
+            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+        {
+            if (state == null)
+            {
+                return null;
+            }
+
+            string accessReason = null;
+            bool accessible = settlement != null && IntercolonyMarketAccess.IsAccessible(
+                settlement, out accessReason);
+            if (!accessible)
+            {
+                return null;
+            }
+
+            SettlementEconomicProfile profile = state.GetProfile(settlement);
+            if (profile == null)
+            {
+                return null;
+            }
+
+            if (!TryGetCategory(thingDef, out IntercolonyProductCategory category, out _))
+            {
+                return null;
+            }
+
+            if (quantityPerCycle < MinimumQuantityPerCycle ||
+                quantityPerCycle > MaximumQuantityPerCycle)
+            {
+                return null;
+            }
+
+            if (cadenceDays < MinimumCadenceDays || cadenceDays > MaximumCadenceDays)
+            {
+                return null;
+            }
+
+            if (totalCycles < MinimumTotalCycles || totalCycles > MaximumTotalCycles)
+            {
+                return null;
+            }
+
+            if ((long)cadenceDays * totalCycles > MaximumTermDays)
+            {
+                return null;
+            }
+
+            if (fulfillment != FulfillmentMode.SellerDelivery &&
+                fulfillment != FulfillmentMode.BuyerPickup)
+            {
+                return null;
+            }
+
+            if (!TryCalculateReferenceUnitPrice(
+                    state, settlement, thingDef, stuffDef, quality, profile, category,
+                    quantityPerCycle, cadenceDays, totalCycles, fulfillment,
+                    out float referenceUnitPrice))
+            {
+                return null;
+            }
+
+            float unitPrice = agreedUnitPrice ?? referenceUnitPrice;
+            if (unitPrice < MinimumUnitPrice ||
+                float.IsNaN(unitPrice) ||
+                float.IsInfinity(unitPrice) ||
+                unitPrice > referenceUnitPrice * MaximumUnitPriceMultiplier)
+            {
+                return null;
+            }
+
+            if (state.HasContractWith(settlement.ID, thingDef))
+            {
+                return null;
+            }
+
+            int paymentPerCycle = IntercolonyPricing.TotalPayment(
+                unitPrice, quantityPerCycle);
+            int totalPayment = IntercolonyPricing.TotalPayment(
+                paymentPerCycle, totalCycles);
+            return new ProcurementContractTerms(
+                referenceUnitPrice,
+                unitPrice,
+                MinimumUnitPrice,
+                referenceUnitPrice * MaximumUnitPriceMultiplier,
+                paymentPerCycle,
+                totalCycles,
+                totalPayment);
+        }
+
+        private static bool TryCalculateReferenceUnitPrice(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            FulfillmentMode fulfillment,
+            out float referenceUnitPrice)
+        {
+            referenceUnitPrice = 0f;
+            int seed = Gen.HashCombineInt(
+                state.EconomySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
+            seed = Gen.HashCombineInt(seed, cadenceDays, totalCycles, DecisionSeedSalt);
+            Rand.PushState(seed);
+            try
+            {
+                if (!RfqService.CanTechnicallySupply(thingDef, profile))
+                {
+                    return false;
+                }
+
+                float supply = EffectiveEconomyService.EffectiveSupply(
+                    state, profile, category);
+                float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+                referenceUnitPrice = IntercolonyPricing.SupplierUnitPrice(
+                    state,
+                    thingDef,
+                    stuffDef,
+                    quality,
+                    profile,
+                    category,
+                    supply,
+                    distance,
+                    fulfillment == FulfillmentMode.SellerDelivery,
+                    quantityPerCycle,
+                    out _);
+                return true;
+            }
+            finally
+            {
+                Rand.PopState();
+            }
         }
 
         /// <summary>

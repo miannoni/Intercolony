@@ -3643,6 +3643,7 @@ namespace Intercolony
                 check, skip, state, settlement, product, otherProduct);
             CheckProcurementProposalAcceptance(check, skip, state, product);
             CheckProcurementProposalPriceDirection(check, state, settlement, product);
+            CheckProcurementContractPreview(check, state, settlement, product);
         }
 
         private static void SkipProcurementProposalPath(
@@ -3657,6 +3658,118 @@ namespace Intercolony
             skip("E6 procurement proposal duplicate scope is supplier and product", reason);
             skip("E7 accepted procurement proposal schedules without prepayment", reason);
             skip("E8 supplier price appeal increases with purchase price", reason);
+            skip("E9 procurement preview price matches sent proposal", reason);
+            skip("E10 procurement preview refuses out-of-range quantity with proposal", reason);
+            skip("E11 procurement preview refuses an existing settlement-item agreement", reason);
+            skip("E12 procurement preview total payment uses shared pricing", reason);
+        }
+
+        private static void CheckProcurementContractPreview(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product)
+        {
+            const int quantity = 10;
+            const int cadenceDays = 1;
+            const int totalCycles = 2;
+            state.ProcurementContracts.Clear();
+            ProcurementContractTerms preview =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
+            ProcurementContractProposalResult proposal =
+                ProcurementContractService.ProposeContract(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
+
+            // This fails if preview and proposal calculate the seeded supplier price differently.
+            check(
+                "E9 procurement preview price matches sent proposal",
+                preview != null && proposal.Success && proposal.Contract != null &&
+                proposal.Contract.unitPrice == preview.unitPrice,
+                $"preview unit={preview?.unitPrice.ToString("R") ?? "null"}; " +
+                $"proposal unit={proposal.Contract?.unitPrice.ToString("R") ?? "null"}; " +
+                $"preview reference={preview?.referenceUnitPrice.ToString("R") ?? "null"}; " +
+                $"reason={proposal.Reason ?? "none"}");
+
+            state.ProcurementContracts.Clear();
+            const int outOfRangeQuantity = 0;
+            ProcurementContractTerms outOfRangePreview =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, outOfRangeQuantity,
+                    cadenceDays, totalCycles);
+            ProcurementContractProposalResult outOfRangeProposal =
+                ProcurementContractService.ProposeContract(
+                    state, settlement, product, null, null, outOfRangeQuantity,
+                    cadenceDays, totalCycles);
+
+            // This fails if preview accepts a quantity that ProposeContract rejects at its bounds.
+            check(
+                "E10 procurement preview refuses out-of-range quantity with proposal",
+                outOfRangePreview == null && !outOfRangeProposal.Success &&
+                outOfRangeProposal.Contract == null &&
+                outOfRangeProposal.Failure == ProcurementContractProposalFailure.QuantityOutOfRange,
+                $"quantity={outOfRangeQuantity}; preview=" +
+                $"{(outOfRangePreview == null ? "null" : "terms")}; " +
+                $"proposal success={outOfRangeProposal.Success}; " +
+                $"failure={outOfRangeProposal.Failure}; " +
+                $"reason={outOfRangeProposal.Reason ?? "none"}");
+
+            state.ProcurementContracts.Clear();
+            ProcurementContractProposalResult existingProposal =
+                ProposeProcurementFixture(state, settlement, product);
+            ProcurementContractTerms existingPreview =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
+            ProcurementContractProposalResult duplicateProposal =
+                ProcurementContractService.ProposeContract(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
+
+            // This fails if preview omits the same settlement-and-item duplicate guard as proposal.
+            check(
+                "E11 procurement preview refuses an existing settlement-item agreement",
+                existingProposal.Success && existingProposal.Contract != null &&
+                existingPreview == null && !duplicateProposal.Success &&
+                duplicateProposal.Contract == null &&
+                duplicateProposal.Failure == ProcurementContractProposalFailure.ExistingContract,
+                $"existing success={existingProposal.Success}; preview=" +
+                $"{(existingPreview == null ? "null" : "terms")}; " +
+                $"duplicate success={duplicateProposal.Success}; " +
+                $"failure={duplicateProposal.Failure}; " +
+                $"reason={duplicateProposal.Reason ?? "none"}");
+
+            state.ProcurementContracts.Clear();
+            const float paymentFixtureUnitPrice = 0.02f;
+            const int paymentFixtureQuantity = 76;
+            const int paymentFixtureCadenceDays = 5;
+            const int paymentFixtureCycles = 5;
+            ProcurementContractTerms paymentTerms =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, paymentFixtureQuantity,
+                    paymentFixtureCadenceDays, paymentFixtureCycles,
+                    paymentFixtureUnitPrice);
+            int expectedPaymentPerCycle = IntercolonyPricing.TotalPayment(
+                paymentFixtureUnitPrice, paymentFixtureQuantity);
+            int expectedTotalPayment = IntercolonyPricing.TotalPayment(
+                expectedPaymentPerCycle, paymentFixtureCycles);
+
+            // This fails if payment truncates instead of rounding, or multiplies the unit price across all cycles instead of using the rounded per-cycle payment.
+            check(
+                "E12 procurement preview total payment uses shared pricing",
+                paymentTerms != null && paymentTerms.totalCycles == paymentFixtureCycles &&
+                paymentTerms.unitPrice == paymentFixtureUnitPrice &&
+                paymentTerms.paymentPerCycle == expectedPaymentPerCycle &&
+                paymentTerms.totalPayment == expectedTotalPayment &&
+                paymentTerms.totalPayment == IntercolonyPricing.TotalPayment(
+                    paymentTerms.paymentPerCycle, paymentFixtureCycles),
+                $"fixture unit={paymentFixtureUnitPrice:R}; " +
+                $"preview unit={paymentTerms?.unitPrice.ToString("R") ?? "null"}; " +
+                $"quantity={paymentFixtureQuantity}; cycles={paymentFixtureCycles}; " +
+                $"perCycle={paymentTerms?.paymentPerCycle.ToString() ?? "null"}; " +
+                $"total={paymentTerms?.totalPayment.ToString() ?? "null"}; " +
+                $"expected perCycle={expectedPaymentPerCycle}; " +
+                $"expected total={expectedTotalPayment}");
+
+            state.ProcurementContracts.Clear();
         }
 
         private static void CheckProcurementNegotiation(
