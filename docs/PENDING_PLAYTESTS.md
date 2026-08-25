@@ -46,6 +46,31 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### Procurement Contracts has never been used by a human
+
+Added 2026-08-25 on branch `1.0.1`. In 1.0 this tab was an **Under development** placeholder,
+although `ProcurementContractService` was complete and self-tested; no player has proposed a
+standing purchase through the UI. It now lists procurement agreements, badges the tab with the live
+count, and offers **Propose procurement agreement**, **Cancel** on a pending proposal,
+**Accept/Decline** on a supplier's final counter, and **Withdraw** on a live or suspended agreement.
+
+**Steps.** On a real colony, check that the propose dialog lists settlements and items, wait for the
+supplier's delayed answer and read it on screen, then accept a final counter and verify the agreement
+uses the counter's terms rather than the original ones. Let cycles arrive and be paid, and check the
+row layout at **1.75x UI scale**. Agreements cannot be renewed; a term ending is expected behaviour,
+as recorded in `docs/BACKLOG.md`.
+
+### Supplier Market framerate fix needs to be felt, not measured
+
+Added 2026-08-25 on branch `1.0.1`. Opening **Procurement → Market** used to drop the framerate for
+as long as it stayed open. Rows and measured heights are now cached and rebuilt on entry, sort change,
+listing-count change, after a purchase, and every half second; self-tests exercise the read model but
+cannot observe framerate.
+
+**Steps.** On a mature colony with many supplier listings, open the tab and confirm the game runs
+normally. Sort a column and make a purchase, then confirm the table updates immediately rather than
+lagging up to half a second behind. This remains unproven until the fix is felt in play.
+
 ### 1.0 calibration sitting — Stage 8 remaining play
 
 Stage 8A's full save/load matrix, Stage 8B's 42 → 56 migration matrix, and Stage 8C's seven-path
