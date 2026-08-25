@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text;
 using RimWorld;
 using UnityEngine;
@@ -40,6 +40,26 @@ namespace Intercolony
         /// <summary>Multiplier once demand is thoroughly saturated.</summary>
         private const float SaturationWorst = 0.96f;
 
+        /// <summary>
+        /// The lowest multiplier a -100 brand may apply to a newly computed price. A 25% discount
+        /// makes a bad reputation matter while keeping the product sellable; the positive floor is
+        /// also a guard against the trap where a sufficiently bad reputation turns payment into a
+        /// negative number. This is deliberately named so the late balance pass can retune it
+        /// without rewriting the brand calculation.
+        /// </summary>
+        public const float BrandMinimumMultiplier = 0.75f;
+
+        /// <summary>
+        /// The highest multiplier a +100 brand may apply to a newly computed price. A 30% premium
+        /// is economically exciting, but the bound keeps a respected product from becoming an
+        /// infinite-profit arbitrage route. This is deliberately named so the late balance pass
+        /// can retune it without changing the pricing owner or its factor-row contract.
+        /// </summary>
+        public const float BrandMaximumMultiplier = 1.30f;
+
+        /// <summary>Label for the prospective brand premium or discount in a price breakdown.</summary>
+        public const string BrandFactorLabel = "Brand strength";
+
         // A specification promises only its stated constraints. When a term is unspecified,
         // the seller may fulfil it with the cheapest eligible animal, so the buyer pays only
         // for the value guaranteed by the promise. These are owner-tunable balance values.
@@ -55,6 +75,7 @@ namespace Intercolony
         /// in which case the distance factor is skipped rather than guessed.
         /// </summary>
         public static float UnitPrice(
+            IntercolonyWorldComponent state,
             ThingDef def,
             int quantity,
             SettlementEconomicProfile profile,
@@ -63,7 +84,7 @@ namespace Intercolony
             QualityCategory? minQuality,
             out List<PriceFactor> factors)
         {
-            return UnitPrice(def, null, quantity, profile, category, distanceTiles, minQuality, out factors);
+            return UnitPrice(state, def, null, quantity, profile, category, distanceTiles, minQuality, out factors);
         }
 
         /// <summary>
@@ -74,6 +95,7 @@ namespace Intercolony
         /// would quote the same silver for both.
         /// </summary>
         public static float UnitPrice(
+            IntercolonyWorldComponent state,
             ThingDef def,
             ThingDef stuff,
             int quantity,
@@ -84,7 +106,30 @@ namespace Intercolony
             out List<PriceFactor> factors)
         {
             return UnitPrice(
-                def, stuff, null, quantity, profile, category, distanceTiles, minQuality, out factors);
+                state, def, stuff, (AnimalSpec)null, quantity, profile, category,
+                distanceTiles, minQuality, out factors);
+        }
+
+        /// <summary>
+        /// Immediate known-inventory valuation. A live Thing carries RimWorld's material and
+        /// quality-aware MarketValue, so a direct sale can price the object the buyer is actually
+        /// being offered rather than pretending every item of the same ThingDef is identical.
+        /// </summary>
+        internal static float UnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            Thing actualThing,
+            int quantity,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float distanceTiles,
+            QualityCategory? minQuality,
+            out List<PriceFactor> factors)
+        {
+            return UnitPrice(
+                state, def, stuff, null, actualThing, quantity, profile, category,
+                distanceTiles, minQuality, out factors);
         }
 
         /// <summary>
@@ -93,9 +138,28 @@ namespace Intercolony
         /// Animals never enter material or quality valuation.
         /// </summary>
         public static float UnitPrice(
+            IntercolonyWorldComponent state,
             ThingDef def,
             ThingDef stuff,
             AnimalSpec animalSpec,
+            int quantity,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float distanceTiles,
+            QualityCategory? minQuality,
+            out List<PriceFactor> factors)
+        {
+            return UnitPrice(
+                state, def, stuff, animalSpec, null, quantity, profile, category,
+                distanceTiles, minQuality, out factors);
+        }
+
+        private static float UnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            AnimalSpec animalSpec,
+            Thing actualThing,
             int quantity,
             SettlementEconomicProfile profile,
             IntercolonyProductCategory category,
@@ -124,13 +188,54 @@ namespace Intercolony
             }
             else
             {
-                baseValue = BaseValue(def, stuff);
+                baseValue = BaseValue(def, stuff, actualThing);
+            }
+
+            // Brand is a prospective expectation about a price being computed now. Read the
+            // effective view once and add its named row here so UI and order code cannot multiply
+            // the same premium separately, and so an accepted order's stored price is untouched.
+            float effectiveBrand = EffectiveBrandService.GetEffectiveBrand(state, def);
+            if (!Mathf.Approximately(effectiveBrand, ProductBrandRecord.Neutral))
+            {
+                factors.Add(BrandFactorFor(effectiveBrand));
             }
 
             // The category supplies the settlement's broad economic character; the good-specific
             // perturbation keeps that character from making every item in the category rank alike.
-            float demand = Mathf.Clamp(profile.DemandFor(def, category), 0.4f, 2.0f);
-            factors.Add(new PriceFactor("Local demand", demand));
+            List<PriceFactor> demandRows =
+                EffectiveEconomyService.ExplainDemand(state, profile, def, category);
+            float effectiveDemand = demandRows.Count == 0 ? 0f : 1f;
+            foreach (PriceFactor row in demandRows)
+            {
+                effectiveDemand *= row.multiplier;
+            }
+
+            float clampedDemand = Mathf.Clamp(effectiveDemand, 0.4f, 2.0f);
+
+            // The service's rows are the effective demand, not modifiers to apply on top of it.
+            // Pricing owns the separate sanity clamp, so when a condition exists its displayed
+            // multiplier is reconciled to the price actually charged. If the base row is inside
+            // the bound, clamping can only pull the product back toward that base; the adjusted
+            // ratio therefore keeps the condition's direction and never labels a shortage as a
+            // reduction or a surplus as an increase. A base already outside the bound cannot make
+            // that promise, so that genuinely contradictory case stays collapsed to one row.
+            if (demandRows.Count == 1)
+            {
+                factors.Add(new PriceFactor("Local demand", clampedDemand));
+            }
+            else if (demandRows.Count > 1 && demandRows[0].multiplier > 0f &&
+                     demandRows[0].multiplier >= 0.4f && demandRows[0].multiplier <= 2.0f)
+            {
+                PriceFactor baseRow = demandRows[0];
+                PriceFactor conditionRow = demandRows[1];
+                factors.Add(baseRow);
+                factors.Add(new PriceFactor(
+                    conditionRow.label, clampedDemand / baseRow.multiplier));
+            }
+            else
+            {
+                factors.Add(new PriceFactor("Local demand", clampedDemand));
+            }
 
             float wealth = WealthFactor(profile.wealthTier);
             factors.Add(new PriceFactor("Buyer wealth", wealth));
@@ -177,6 +282,47 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Converts effective brand strength into the bounded price factor used by
+        /// <see cref="UnitPrice(IntercolonyWorldComponent, ThingDef, ThingDef, AnimalSpec, int,
+        /// SettlementEconomicProfile, IntercolonyProductCategory, float, QualityCategory?, out
+        /// List{PriceFactor})"/>. The two sides are interpolated separately so zero remains exactly
+        /// x1.00 instead of drifting toward the midpoint of asymmetric bounds.
+        /// </summary>
+        public static PriceFactor BrandFactorFor(float effectiveBrand)
+        {
+            if (float.IsNaN(effectiveBrand))
+            {
+                effectiveBrand = ProductBrandRecord.Neutral;
+            }
+
+            float clampedBrand = Mathf.Clamp(
+                effectiveBrand, ProductBrandRecord.MinScore, ProductBrandRecord.MaxScore);
+            float multiplier = clampedBrand >= ProductBrandRecord.Neutral
+                ? Mathf.Lerp(
+                    1f, BrandMaximumMultiplier,
+                    clampedBrand / ProductBrandRecord.MaxScore)
+                : Mathf.Lerp(
+                    1f, BrandMinimumMultiplier,
+                    clampedBrand / ProductBrandRecord.MinScore);
+            return new PriceFactor(BrandFactorLabel, multiplier);
+        }
+
+        /// <summary>
+        /// Rounds one agreed sale amount. The market surface and the binding order both call this
+        /// owner so a counteroffer cannot advertise one total and pay another after acceptance.
+        /// Keeping the rounding here avoids repeating the old Find Buyer trap in another dialog.
+        /// </summary>
+        public static int TotalPayment(float unitPrice, int quantity)
+        {
+            if (quantity <= 0 || float.IsNaN(unitPrice) || float.IsInfinity(unitPrice))
+            {
+                return 0;
+            }
+
+            return Mathf.RoundToInt(unitPrice * quantity);
+        }
+
+        /// <summary>
         /// Re-prices an existing offer for a different lot size.
         ///
         /// A buyer's rate is not flat: §13 saturation means the first units are worth more to
@@ -188,6 +334,7 @@ namespace Intercolony
         /// than the unit rate rises. That is why the confirmation slider only ever reduces.
         /// </summary>
         public static float RepriceForQuantity(
+            IntercolonyWorldComponent state,
             MarketOpportunity opportunity,
             SettlementEconomicProfile profile,
             int quantity,
@@ -211,6 +358,7 @@ namespace Intercolony
                 ?? IntercolonyProductCategory.Commodities;
 
             float price = UnitPrice(
+                state,
                 opportunity.thingDef,
                 opportunity.stuffDef,
                 Mathf.Max(1, quantity),
@@ -283,6 +431,100 @@ namespace Intercolony
                 "Economy difficulty (buying)", EffectiveEconomyDifficulty);
         }
 
+        /// <summary>Existing supplier markup shared by RFQ and Supplier Market offers.</summary>
+        public const float SupplierMargin = 1.15f;
+
+        /// <summary>
+        /// Supplier-side unit price shared by RFQs and standing supplier listings. Keeping the
+        /// factor multiplication here makes the displayed rate and the later charged rate use
+        /// one pricing calculation rather than two procurement copies.
+        /// </summary>
+        public static float SupplierUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            float distance,
+            bool delivers,
+            int quantity,
+            out string explanation)
+        {
+            List<PriceFactor> factors = new List<PriceFactor>();
+            float baseValue = BaseValue(def, stuff);
+
+            if (quality.HasValue)
+            {
+                factors.Add(new PriceFactor(
+                    $"{quality.Value.GetLabel()} workmanship",
+                    SupplierQualityCostFactor(quality.Value)));
+            }
+
+            factors.Add(new PriceFactor("Supplier margin", SupplierMargin));
+
+            // Effective supply already includes Stage 2 pressure and active event effects.
+            // SupplyCondition is read only to choose the truthful shortage/surplus label.
+            float scarcity = Mathf.Clamp(1.6f - supply * 0.5f, 0.9f, 1.6f);
+            float supplyCondition = EffectiveEconomyService.SupplyCondition(state, profile, category);
+            string scarcityLabel = Mathf.Approximately(
+                    supplyCondition, SettlementMarketState.Neutral)
+                ? "Local scarcity"
+                : supplyCondition < SettlementMarketState.Neutral
+                    ? "Local scarcity (shortage)"
+                    : "Local scarcity (surplus)";
+            factors.Add(new PriceFactor(scarcityLabel, scarcity));
+
+            if (distance >= 0f)
+            {
+                factors.Add(new PriceFactor(
+                    "Distance", 1f + Mathf.Min(distance, 150f) * 0.0012f));
+            }
+
+            float wealth = profile.wealthTier >= IntercolonyWealthTier.Comfortable ? 1.08f : 0.96f;
+            factors.Add(new PriceFactor("Supplier standing", wealth));
+            factors.Add(new PriceFactor("Negotiation", Rand.Range(0.94f, 1.1f)));
+            factors.Add(SupplierLogisticsFactor(delivers));
+            factors.Add(BuyingEconomyDifficultyFactor());
+
+            float price = baseValue;
+            foreach (PriceFactor factor in factors)
+            {
+                price *= factor.multiplier;
+            }
+
+            price = Mathf.Max(0.01f, price);
+            explanation = Explain(def, stuff, quantity, price, factors);
+            return price;
+        }
+
+        /// <summary>Supplier delivery premium used by procurement price formation.</summary>
+        public static PriceFactor SupplierLogisticsFactor(bool supplierDelivers)
+        {
+            return supplierDelivers
+                ? new PriceFactor("Supplier delivery", 1.12f)
+                : new PriceFactor("You collect", 1f);
+        }
+
+        /// <summary>
+        /// What a supplier charges for quality already fixed on the offer. This remains in the
+        /// pricing owner so a listing cannot show a quality price different from an RFQ.
+        /// </summary>
+        private static float SupplierQualityCostFactor(QualityCategory quality)
+        {
+            switch (quality)
+            {
+                case QualityCategory.Awful: return 0.6f;
+                case QualityCategory.Poor: return 0.8f;
+                case QualityCategory.Normal: return 1f;
+                case QualityCategory.Good: return 1.3f;
+                case QualityCategory.Excellent: return 1.75f;
+                case QualityCategory.Masterwork: return 2.5f;
+                default: return 3.8f;
+            }
+        }
+
         /// <summary>
         /// Marginal demand decay (DESIGN.md §13). Prevents one nearby settlement from becoming
         /// an infinite premium sink: the more you ship in a single lot, the worse the unit price.
@@ -342,6 +584,22 @@ namespace Intercolony
             }
 
             return def.BaseMarketValue;
+        }
+
+        private static float BaseValue(ThingDef def, ThingDef stuff, Thing actualThing)
+        {
+            Thing valueThing = actualThing?.GetInnerIfMinified();
+            if (valueThing != null && !valueThing.Destroyed && valueThing.def == def)
+            {
+                float marketValue = valueThing.MarketValue;
+                if (marketValue > 0f && !float.IsNaN(marketValue) &&
+                    !float.IsInfinity(marketValue))
+                {
+                    return marketValue;
+                }
+            }
+
+            return BaseValue(def, stuff);
         }
 
         /// <summary>
@@ -475,13 +733,38 @@ namespace Intercolony
         public static string Explain(
             ThingDef def, ThingDef stuff, int quantity, float unitPrice, List<PriceFactor> factors)
         {
-            return Explain(def, stuff, null, quantity, unitPrice, factors);
+            return Explain(
+                def, stuff, null, (AnimalSpec)null, quantity, unitPrice, factors);
+        }
+
+        /// <summary>Breakdown for a known live item, including its RimWorld market value.</summary>
+        public static string Explain(
+            ThingDef def,
+            ThingDef stuff,
+            Thing actualThing,
+            int quantity,
+            float unitPrice,
+            List<PriceFactor> factors)
+        {
+            return Explain(def, stuff, actualThing, null, quantity, unitPrice, factors);
         }
 
         /// <summary>Breakdown that identifies the animal species base before spec multipliers.</summary>
         public static string Explain(
             ThingDef def,
             ThingDef stuff,
+            AnimalSpec animalSpec,
+            int quantity,
+            float unitPrice,
+            List<PriceFactor> factors)
+        {
+            return Explain(def, stuff, null, animalSpec, quantity, unitPrice, factors);
+        }
+
+        private static string Explain(
+            ThingDef def,
+            ThingDef stuff,
+            Thing actualThing,
             AnimalSpec animalSpec,
             int quantity,
             float unitPrice,
@@ -494,7 +777,9 @@ namespace Intercolony
                 : stuff != null && def.MadeFromStuff
                     ? $"Base value ({stuff.label})"
                     : "Base value";
-            float displayedBase = isAnimalPrice ? def.BaseMarketValue : BaseValue(def, stuff);
+            float displayedBase = isAnimalPrice
+                ? def.BaseMarketValue
+                : BaseValue(def, stuff, actualThing);
             sb.AppendLine($"{baseLabel,-25} {displayedBase,10:F2}");
             foreach (PriceFactor factor in factors)
             {

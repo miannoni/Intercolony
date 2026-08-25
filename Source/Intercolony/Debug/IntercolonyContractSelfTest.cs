@@ -510,7 +510,7 @@ namespace Intercolony
                             IntercolonyProductClassifier.Classify(real.thingDef)
                             ?? IntercolonyProductCategory.Commodities;
                         float spot = IntercolonyPricing.UnitPrice(
-                            real.thingDef, null, real.quantityPerCycle, profile, category,
+                            state, real.thingDef, null, real.quantityPerCycle, profile, category,
                             MarketOpportunityGenerator.DistanceToPlayer(subject), null, out _);
 
                         Check("a contract pays more per unit than spot", real.unitPrice > spot,

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  This file is not localization and must not be treated as reopening the English-only decision.
+  RimWorld renders an inspect-tab label only through labelKey.Translate(), so a keyed English
+  string is the only way to give the tab a name. Deleting this file makes the tab render literally
+  as the key string IntercolonyTabEconomy on screen instead of a real label.
+-->
+<LanguageData>
+  <IntercolonyTabEconomy>Economy</IntercolonyTabEconomy>
+</LanguageData>

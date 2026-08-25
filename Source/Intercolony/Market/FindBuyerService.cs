@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -47,6 +47,12 @@ namespace Intercolony
 
         /// <summary>Price factor breakdown, for the §47 tooltip.</summary>
         public List<PriceFactor> factors = new List<PriceFactor>();
+
+        /// <summary>
+        /// The live stored item used for an immediate direct-sale quote, when the caller supplied
+        /// a map. This is a transient read-model reference, never persisted with an order.
+        /// </summary>
+        public Thing knownInventory;
     }
 
     /// <summary>
@@ -73,8 +79,10 @@ namespace Intercolony
     public static class FindBuyerService
     {
         /// <summary>
-        /// Below this category demand weight a settlement is simply not in the market for the
-        /// good, and is reported as uninterested rather than quoted a derisory price.
+        /// Below this effective demand weight a settlement is simply not in the market for the
+        /// good, and is reported as uninterested rather than quoted a derisory price. The small
+        /// brand adjustment is applied before this gate; the threshold itself remains the Stage 1
+        /// boundary that keeps "No current interest" from becoming dead code.
         ///
         /// Demand weights cluster around 1.0, so this has to sit close to that to bite at all.
         /// At 0.55 every settlement in a 31-settlement world was interested in everything,
@@ -84,12 +92,42 @@ namespace Intercolony
         internal const float InterestThreshold = 0.9f;
 
         /// <summary>
+        /// A +100 brand may move the interest input by only one tenth of a demand-weight point.
+        /// That is enough to rescue some near-threshold buyers without turning craftsmanship into
+        /// universal demand or stacking a second large price effect on top of §4.7 Part One.
+        /// </summary>
+        internal const float RenownedBrandInterestShiftAtMaximum = 0.10f;
+
+        /// <summary>
+        /// A -100 brand removes the same small tenth from the interest input. Keeping the shift
+        /// bounded and additive avoids the opposite trap: a notorious product must lose buyers,
+        /// but it must not become unsellable everywhere merely because its price is also lower.
+        /// </summary>
+        internal const float NotoriousBrandInterestShiftAtMinimum = 0.10f;
+
+        /// <summary>
         /// Who would buy <paramref name="quantity"/> of this good, best offer first.
         /// Uninterested settlements are included but sort last: §12 shows them explicitly, and
         /// "nobody near you wants this" is a useful answer.
         /// </summary>
         public static List<BuyerOffer> FindBuyers(
             IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            int quantity,
+            bool includeUninterested = true)
+        {
+            return FindBuyers(state, null, def, stuff, quantity, includeUninterested);
+        }
+
+        /// <summary>
+        /// Map-aware direct-sale search. When current stored inventory is available, its live
+        /// RimWorld MarketValue is used for the immediate quote; the map-less overload retains
+        /// the definition-only quote used by read-only market probes.
+        /// </summary>
+        public static List<BuyerOffer> FindBuyers(
+            IntercolonyWorldComponent state,
+            Map knownInventoryMap,
             ThingDef def,
             ThingDef stuff,
             int quantity,
@@ -127,7 +165,8 @@ namespace Intercolony
                 }
 
                 BuyerOffer offer = Evaluate(
-                    state, settlement, profile, def, stuff, category.Value, quantity);
+                    state, settlement, profile, def, stuff, category.Value, quantity,
+                    knownInventoryMap);
                 if (offer.Interested || includeUninterested)
                 {
                     offers.Add(offer);
@@ -230,7 +269,8 @@ namespace Intercolony
             ThingDef def,
             ThingDef stuff,
             IntercolonyProductCategory category,
-            int wantedQuantity)
+            int wantedQuantity,
+            Map knownInventoryMap)
         {
             BuyerOffer offer = new BuyerOffer
             {
@@ -238,17 +278,20 @@ namespace Intercolony
                 profile = profile,
                 def = def,
                 stuff = stuff,
+                knownInventory = FindKnownInventory(knownInventoryMap, def),
                 distanceTiles = MarketOpportunityGenerator.DistanceToPlayer(settlement)
             };
 
-            float demand = profile.DemandFor(def, category);
-            if (demand < InterestThreshold)
+            float demand = EffectiveEconomyService.EffectiveDemand(state, profile, def, category);
+            float interestDemand = demand + BrandInterestShiftFor(
+                EffectiveBrandService.GetEffectiveBrand(state, def));
+            if (interestDemand < InterestThreshold)
             {
                 offer.noInterestReason = "no current interest";
                 return offer;
             }
 
-            int maxAppetite = MaximumAppetite(def, stuff, profile, category);
+            int maxAppetite = MaximumAppetite(state, def, stuff, profile, category);
             if (maxAppetite <= 0)
             {
                 offer.noInterestReason = "cannot afford a worthwhile lot";
@@ -265,11 +308,34 @@ namespace Intercolony
 
             offer.quantity = Mathf.Min(wantedQuantity, offer.maxQuantity);
             offer.unitPrice = SellRateFor(
-                offer, offer.quantity, FulfillmentMode.BuyerPickup,
+                state, offer, offer.quantity, FulfillmentMode.BuyerPickup,
                 out List<PriceFactor> factors);
             offer.factors = factors;
 
             return offer;
+        }
+
+        private static float BrandInterestShiftFor(float effectiveBrand)
+        {
+            if (float.IsNaN(effectiveBrand))
+            {
+                return 0f;
+            }
+
+            float clampedBrand = Mathf.Clamp(
+                effectiveBrand, ProductBrandRecord.MinScore, ProductBrandRecord.MaxScore);
+            if (clampedBrand >= ProductBrandRecord.Neutral)
+            {
+                return Mathf.Lerp(
+                    0f,
+                    RenownedBrandInterestShiftAtMaximum,
+                    clampedBrand / ProductBrandRecord.MaxScore);
+            }
+
+            return -Mathf.Lerp(
+                0f,
+                NotoriousBrandInterestShiftAtMinimum,
+                clampedBrand / ProductBrandRecord.MinScore);
         }
 
         private static BuyerOffer EvaluateAnimal(
@@ -290,7 +356,7 @@ namespace Intercolony
             };
 
             const IntercolonyProductCategory category = IntercolonyProductCategory.Commodities;
-            float demand = profile.DemandFor(race, category);
+            float demand = EffectiveEconomyService.EffectiveDemand(state, profile, race, category);
             if (demand < InterestThreshold)
             {
                 offer.noInterestReason = "no current interest";
@@ -314,7 +380,7 @@ namespace Intercolony
 
             offer.quantity = Mathf.Min(wantedQuantity, offer.maxQuantity);
             offer.unitPrice = SellRateFor(
-                offer, offer.quantity, FulfillmentMode.BuyerPickup,
+                state, offer, offer.quantity, FulfillmentMode.BuyerPickup,
                 out List<PriceFactor> factors);
             offer.factors = factors;
             return offer;
@@ -325,15 +391,43 @@ namespace Intercolony
         /// and confirmation so the advertised rate is the rate used to create the order.
         /// </summary>
         internal static float SellRateFor(
-            BuyerOffer offer, int quantity, FulfillmentMode fulfillment)
+            IntercolonyWorldComponent state,
+            BuyerOffer offer,
+            int quantity,
+            FulfillmentMode fulfillment)
         {
-            return SellRateFor(offer, quantity, fulfillment, out _);
+            return SellRateFor(state, offer, quantity, fulfillment, null, out _);
         }
 
-        private static float SellRateFor(
+        /// <summary>Reprices a direct sale against the live inventory on a known map.</summary>
+        internal static float SellRateFor(
+            IntercolonyWorldComponent state,
             BuyerOffer offer,
             int quantity,
             FulfillmentMode fulfillment,
+            Map knownInventoryMap)
+        {
+            Thing knownInventory = FindKnownInventory(knownInventoryMap, offer?.def);
+            return SellRateFor(
+                state, offer, quantity, fulfillment, knownInventory, out _);
+        }
+
+        private static float SellRateFor(
+            IntercolonyWorldComponent state,
+            BuyerOffer offer,
+            int quantity,
+            FulfillmentMode fulfillment,
+            out List<PriceFactor> factors)
+        {
+            return SellRateFor(state, offer, quantity, fulfillment, null, out factors);
+        }
+
+        private static float SellRateFor(
+            IntercolonyWorldComponent state,
+            BuyerOffer offer,
+            int quantity,
+            FulfillmentMode fulfillment,
+            Thing knownInventory,
             out List<PriceFactor> factors)
         {
             float rate;
@@ -371,12 +465,14 @@ namespace Intercolony
 
                 rate = offer.IsAnimalOffer
                     ? IntercolonyPricing.UnitPrice(
-                        offer.def, null, offer.animalSpec, Mathf.Max(1, quantity),
+                        state, offer.def, null, offer.animalSpec, Mathf.Max(1, quantity),
                         offer.profile, IntercolonyProductCategory.Commodities,
                         offer.distanceTiles, null, out factors)
                     : IntercolonyPricing.UnitPrice(
-                        offer.def, offer.stuff, Mathf.Max(1, quantity), offer.profile,
-                        category, offer.distanceTiles, null, out factors);
+                        state, offer.def, offer.stuff,
+                        knownInventory ?? offer.knownInventory,
+                        Mathf.Max(1, quantity), offer.profile, category, offer.distanceTiles,
+                        null, out factors);
             }
 
             PriceFactor logistics = IntercolonyPricing.LogisticsFactor(fulfillment);
@@ -391,6 +487,7 @@ namespace Intercolony
         /// the same crated-goods reasoning as generation (docs/unique-goods-spike.md).
         /// </summary>
         internal static int MaximumAppetite(
+            IntercolonyWorldComponent state,
             ThingDef def,
             ThingDef stuff,
             SettlementEconomicProfile profile,
@@ -401,7 +498,7 @@ namespace Intercolony
                 return 0;
             }
 
-            float demand = profile.DemandFor(def, category);
+            float demand = EffectiveEconomyService.EffectiveDemand(state, profile, def, category);
             return MaxAppetite(def, stuff, profile, demand);
         }
 
@@ -508,6 +605,30 @@ namespace Intercolony
                 case IntercolonyWealthTier.Comfortable: return 4500f;
                 default: return 9000f;
             }
+        }
+
+        private static Thing FindKnownInventory(Map map, ThingDef def)
+        {
+            if (map == null || def == null)
+            {
+                return null;
+            }
+
+            foreach (Thing thing in map.listerThings.AllThings)
+            {
+                if (!OrderValidator.IsAvailableColonyStock(thing))
+                {
+                    continue;
+                }
+
+                Thing inner = thing.GetInnerIfMinified();
+                if (inner?.def == def)
+                {
+                    return inner;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

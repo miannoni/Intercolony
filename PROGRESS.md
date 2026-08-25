@@ -2216,3 +2216,87 @@ Manual test:
   and it stays in `docs/PENDING_PLAYTESTS.md`.
 - Shipped: Workshop item `3780094556` updated (menu confirmed reading **Update**, not Upload),
   `main` pushed, tag `v0.9.3` and GitHub pre-release created to the 0.9.0 standard.
+
+## Dev test bridge — running the self-tests without a human  (2026-08-21)
+
+Implemented:
+- A loopback request/response socket inside the running game (`Source/Intercolony/Debug/Bridge/`),
+  gated twice: compiled out unless built with `-p:EnableDevBridge=true`, and dormant unless the
+  process has `INTERCOLONY_DEV_BRIDGE=1`. Binds `IPAddress.Loopback` with no setting for the
+  address. Seven verbs: `status`, `tests.list`, `tests.run`, `tests.run_all`, `state.summary`,
+  `world_pawns.count`, `postings.count`.
+- The socket thread never touches Verse. Commands execute on the Unity main thread through a
+  dev-only `MonoBehaviour` pump running in `Update()` rather than a tick, so a paused or loading
+  game can still answer `status` — which is what an orchestrator polls for readiness.
+- `IntercolonyAllSelfTests` gained a registry: stable machine ids (`job-posting`) beside the
+  display names the table already printed (`job posting`), plus `List()`, `RunOne()` and
+  structured results. One list, read by both the debug action and the bridge. Rendered output is
+  byte-identical — order, labels and map requirements were diffed against the previous version.
+- `dev.ps1 bridge` and `dev.ps1 test <name> [-Fresh]`, with readiness by `status` poll rather than
+  a log substring or a sleep. `package.ps1` refuses to package an assembly containing the bridge.
+- A TypeScript CLI and stdio MCP server (`tools/intercolony-dev/`) over one shared orchestrator,
+  and a repo-relative `.mcp.json`.
+
+Not implemented:
+- No `tests.run` on a named save, and no save/load orchestration. Every run has been on a
+  `-quicktest` world.
+- No general-purpose verbs. `eval`, reflection and "run the debug action called X" are refused by
+  design and listed as such in `docs/DEV_TEST_BRIDGE.md`.
+
+Known limitations:
+- **The bridge has never run against a real save, a migration, or two colonies.** `tests.run`
+  resolves `Find.CurrentMap`, and this mod has a documented history of one-map assumptions being
+  wrong. Listed in `docs/PENDING_PLAYTESTS.md` along with the untriggered crash, port-in-use and
+  command-timeout paths.
+- `dist/` is gitignored, so a fresh clone must `npm install && npm run build` once before the MCP
+  server will start.
+- The Steam `Mods\Intercolony` junction points at the other checkout, so testing required
+  repointing it by hand and restoring it afterwards.
+
+Manual test:
+- Proven against a live game on 2026-08-21: both builds; the normal build contains no bridge
+  markers and `package.ps1` rejects a bridge build and accepts a normal one, checked on real DLLs;
+  `status` answers with world, map, tick and schema 44; malformed, unknown, oversized (70 KB and
+  2 MB), unescaped-control-character and bad-number requests all return structured errors with the
+  listener healthy afterwards; CLI exit codes 0/1/2 including a skipped-only run exiting 0; all
+  eight MCP tools driven over stdio from the repo root.
+- **The motivating scenario did not reproduce.** `job-posting` alone on a verified-fresh world
+  with zero open postings: 25 passed, 0 failed, world pawns 16 → 16 and 17 → 17, delta 0. The
+  suspected pawn leak is not present, and is now cheap to re-check.
+- **Two real defects found, both in the payroll suite, neither in production.** It hired before
+  funding the colony, so the hire was refused and everything after it was unreachable; fixing that
+  took the suite from 7 assertions to 39 and exposed a signing-fee assertion that had never once
+  executed and double-applied the daily premium. Payroll is now 40/0; the full suite is 847 passed,
+  0 failed, 14 skipped, clean log, no world-pawn drift.
+
+## 1.0 program — stages 0 through 8  (2026-08-23)
+
+The 1.0 program reached Stage 8 with Stages 0–7 closed and the integration evidence recorded.
+
+Implemented:
+- **Stage 0 — program spine:** gate closed.
+- **Stage 1 — settlement economies:** gate closed.
+- **Stage 2 — market fundamentals:** gate closed at 12/12; play calibration was deferred to the
+  final sitting.
+- **Stage 3 — circumstance events:** 8/10 criteria closed; criteria 9 and 10 were deferred to the
+  final sitting.
+- **Stage 4 — brand strength and colony specialization:** gate closed at 13/13.
+- **Stage 5 — relationships and negotiation:** gate closed at 12/12.
+- **Stage 6 — procurement parity:** gate closed at 12/12.
+- **Stage 7 — commercial history:** gate closed at 9/9.
+- **Stage 8 — 1.0 integration and release gate:** the full save/load matrix across all twelve
+  persistent kinds, the migration matrix from 42 to 56, and the performance profile across seven
+  paths were completed.
+
+Not implemented:
+- The §8.3–§8.7 play sitting, which needs a human.
+- Stage 3 criteria 9 and 10 and Stage 2 calibration, both deferred to that sitting.
+- `DESIGN.md`, the release notes and the Workshop description, still to write.
+
+Known limitations:
+- Stage 7B's W2 idempotence claim is unproven.
+- Two vacuous-pass assertions are logged in `docs/BACKLOG.md`.
+- The sales-side cancellation penalty is still an inline literal.
+
+Manual test:
+- Remaining human play and calibration paths are in [docs/PENDING_PLAYTESTS.md](docs/PENDING_PLAYTESTS.md).

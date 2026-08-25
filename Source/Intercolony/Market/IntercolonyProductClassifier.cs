@@ -274,7 +274,7 @@ namespace Intercolony
                 tradableCache = new List<ThingDef>();
                 foreach (ThingDef def in DefDatabase<ThingDef>.AllDefsListForReading)
                 {
-                    if (IsFungibleTradeItem(def) && Classify(def).HasValue)
+                    if (TryGetTradableCategory(def, out _))
                     {
                         tradableCache.Add(def);
                     }
@@ -283,6 +283,30 @@ namespace Intercolony
                 IntercolonyLog.Verbose($"Classified {tradableCache.Count} tradable fungible defs.");
                 return tradableCache;
             }
+        }
+
+        /// <summary>
+        /// Resolves the one physical-goods gate shared by the RFQ catalogue and proposal path.
+        /// Keeping the physical-form and category checks together prevents a caller from
+        /// inventing a narrower eligibility rule for a new procurement surface.
+        /// </summary>
+        internal static bool TryGetTradableCategory(
+            ThingDef def, out IntercolonyProductCategory category)
+        {
+            category = default(IntercolonyProductCategory);
+            if (!IsFungibleTradeItem(def))
+            {
+                return false;
+            }
+
+            IntercolonyProductCategory? classified = Classify(def);
+            if (!classified.HasValue)
+            {
+                return false;
+            }
+
+            category = classified.Value;
+            return true;
         }
 
         /// <summary>Tradable defs in one category. Allocates; call on refresh, not per frame.</summary>

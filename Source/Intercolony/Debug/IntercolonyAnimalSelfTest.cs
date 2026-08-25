@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -872,12 +872,13 @@ namespace Intercolony
                     race.BaseMarketValue * adultStage.marketValueFactor * 1.20f * 1.40f;
                 float actualAdultFemalePregnant = IntercolonyPricing.BaseValue(
                     race, null, adultFemalePregnant);
-                check("adult female pregnant animal price exactly applies 1.20 then 1.40",
-                    actualAdultFemalePregnant == expectedAdultFemalePregnant,
+                check("adult female pregnant animal price applies 1.20 then 1.40",
+                    WithinOneUlp(actualAdultFemalePregnant, expectedAdultFemalePregnant),
                     $"{race.defName}: expected {expectedAdultFemalePregnant:R}, actual {actualAdultFemalePregnant:R}");
 
                 SettlementEconomicProfile animalProfile = FixedPricingProfile();
                 float animalUnitPrice = IntercolonyPricing.UnitPrice(
+                    null,
                     race,
                     ThingDefOf.Steel,
                     adultFemalePregnant,
@@ -914,14 +915,22 @@ namespace Intercolony
                 // reconstructed from the returned factors. Bit equality protects its operation
                 // order as well as its numerical result.
                 float expected = ThingDefOf.Steel.BaseMarketValue;
-                expected *= Mathf.Clamp(profile.DemandFor(ThingDefOf.Steel, category), 0.4f, 2f);
+                expected *= Mathf.Clamp(profile.BaseDemandFor(ThingDefOf.Steel, category), 0.4f, 2f);
                 expected *= 0.95f;
                 expected *= Mathf.Lerp(1.22f, 0.96f, Mathf.Clamp01(quantity / 2000f));
-                expected *= 1f;
+
+                // The economy-difficulty slot. Setting the slider to 1.0 does *not* neutralise
+                // this factor: the selling factor is 2 - difficulty x EconomyDifficultyBaseline,
+                // and the baseline is 1.35, so a neutral slider still leaves 0.65. This line read
+                // "expected *= 1f" and had done since before the difficulty scales were recentred
+                // on 2026-08-10 — which made the assertion claim the production formula had
+                // changed when in fact only this constant had. The floor cannot bind here, since
+                // 0.65 is comfortably above it.
+                expected *= 2f - IntercolonyPricing.EconomyDifficultyBaseline;
                 expected = Mathf.Max(0.01f, expected);
 
                 float actual = IntercolonyPricing.UnitPrice(
-                    ThingDefOf.Steel, null, quantity, profile, category, -1f, null, out _);
+                    null, ThingDefOf.Steel, null, quantity, profile, category, -1f, null, out _);
                 int expectedBits = BitConverter.ToInt32(BitConverter.GetBytes(expected), 0);
                 int actualBits = BitConverter.ToInt32(BitConverter.GetBytes(actual), 0);
                 check("goods price is bit-for-bit unchanged from the pre-animal formula",
@@ -932,6 +941,30 @@ namespace Intercolony
             {
                 IntercolonyMod.Settings.economyDifficulty = previousDifficulty;
             }
+        }
+
+        /// <summary>
+        /// Float equality, allowing the last bit to differ.
+        ///
+        /// Two multiplications in a different order give a different last bit — `Bear_Grizzly`
+        /// priced at 1176.00012 against an expected 1176, about one ULP at that magnitude. The
+        /// assertion is meant to catch a changed formula, not a changed association order, and
+        /// exact `==` cannot tell the two apart. Which race this even reaches depends on what the
+        /// current world loaded, so an exact comparison also made the suite's result depend on the
+        /// save it ran in.
+        ///
+        /// One ULP rather than a fixed epsilon because the values range from a few silver to
+        /// thousands, and a fixed epsilon is either useless at the top or spurious at the bottom.
+        /// </summary>
+        private static bool WithinOneUlp(float actual, float expected)
+        {
+            if (actual == expected)
+            {
+                return true;
+            }
+
+            float magnitude = Mathf.Max(Mathf.Abs(actual), Mathf.Abs(expected));
+            return Mathf.Abs(actual - expected) <= magnitude * 1.2e-7f;
         }
 
         private static SettlementEconomicProfile FixedPricingProfile()

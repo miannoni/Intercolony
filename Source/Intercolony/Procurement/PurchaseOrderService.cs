@@ -94,54 +94,32 @@ namespace Intercolony
                 return null;
             }
 
-            int price = Mathf.RoundToInt(quote.unitPrice * quantity);
-            int available = CountColonySilver(paymentMap);
-            if (available < price)
+            if (!TryCreatePaidOrder(
+                    state,
+                    paymentMap,
+                    quote.refreshWindow,
+                    request.id,
+                    quote.id,
+                    PurchaseOrder.NoSupplierListing,
+                    quote.settlementId,
+                    quote.settlementName,
+                    quote.factionName,
+                    request.thingDef,
+                    quote.offeredStuff ?? request.stuffDef,
+                    quote.offeredQuality,
+                    quantity,
+                    quote.animalSpec,
+                    quote.unitPrice,
+                    quote.supplierDelivers,
+                    quote.leadTimeDays,
+                    out PurchaseOrder order,
+                    out string failureReason))
             {
                 Messages.Message(
-                    $"Not enough silver in storage: {available} of {price} needed.",
+                    failureReason ?? "Could not create the purchase order.",
                     MessageTypeDefOf.RejectInput, historical: false);
                 return null;
             }
-
-            LedgerService.Record(state, LedgerKind.PurchasePayment, -price, quote.settlementName,
-                $"{quantity}x {request?.thingDef?.label ?? "goods"}");
-
-            if (!TryTakeSilver(paymentMap, price))
-            {
-                Messages.Message("Could not collect the silver.", MessageTypeDefOf.RejectInput, historical: false);
-                return null;
-            }
-
-            int readyTick = GenTicks.TicksGame + quote.leadTimeDays * GenDate.TicksPerDay;
-
-            PurchaseOrder order = new PurchaseOrder
-            {
-                id = state.NextId(),
-                requestId = request.id,
-                quotationId = quote.id,
-                settlementId = quote.settlementId,
-                settlementName = quote.settlementName,
-                factionName = quote.factionName,
-                destinationMap = paymentMap,
-                thingDef = request.thingDef,
-                stuffDef = quote.offeredStuff ?? request.stuffDef,
-                quality = quote.offeredQuality,
-                quantity = quantity,
-                animalSpec = quote.animalSpec?.Copy(),
-                unitPrice = quote.unitPrice,
-                paidSilver = price,
-                supplierDelivers = quote.supplierDelivers,
-                orderedTick = GenTicks.TicksGame,
-                readyTick = readyTick,
-                pickupExpiryTick = readyTick + PickupGraceDays * GenDate.TicksPerDay,
-                status = PurchaseOrderStatus.Confirmed
-            };
-
-            state.AddPurchaseOrder(order);
-
-            state.ConsumeSupplierOffer(
-                quote.refreshWindow, request.thingDef, quote.settlementId, quantity);
 
             request.quantityOrdered += quantity;
             if (request.QuantityOutstanding == 0)
@@ -151,7 +129,8 @@ namespace Intercolony
 
             IntercolonyLog.Message(
                 $"Purchase {order.id}: {order.quantity}x {order.ItemLabel()} from {order.settlementName} " +
-                $"for {price} silver, {(order.supplierDelivers ? "delivered" : "pickup")} in {quote.leadTimeDays}d.");
+                $"for {order.paidSilver} silver, " +
+                $"{(order.supplierDelivers ? "delivered" : "pickup")} in {quote.leadTimeDays}d.");
             Messages.Message(
                 order.supplierDelivers
                     ? $"Ordered {order.quantity}x {order.thingDef.label}. Arriving in {quote.leadTimeDays} days."
@@ -159,6 +138,215 @@ namespace Intercolony
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             return order;
+        }
+
+        /// <summary>
+        /// Constructs the common persisted order from already validated transaction terms. The
+        /// caller supplies the next ID so this seam has no world-state side effects when a later
+        /// payment check refuses the transaction.
+        /// </summary>
+        internal static PurchaseOrder CreateOrder(
+            int orderId,
+            int requestId,
+            int quotationId,
+            int supplierListingId,
+            int settlementId,
+            string settlementName,
+            string factionName,
+            Map destinationMap,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            int quantity,
+            AnimalSpec animalSpec,
+            float unitPrice,
+            int paidSilver,
+            bool supplierDelivers,
+            int leadTimeDays)
+        {
+            if (thingDef == null || quantity <= 0 || unitPrice <= 0f ||
+                float.IsNaN(unitPrice) || float.IsInfinity(unitPrice) || paidSilver < 0 ||
+                leadTimeDays < 0)
+            {
+                return null;
+            }
+
+            int readyTick = GenTicks.TicksGame + leadTimeDays * GenDate.TicksPerDay;
+            return new PurchaseOrder
+            {
+                id = orderId,
+                requestId = requestId,
+                quotationId = quotationId,
+                supplierListingId = supplierListingId,
+                settlementId = settlementId,
+                settlementName = settlementName ?? "",
+                factionName = factionName ?? "",
+                destinationMap = destinationMap,
+                thingDef = thingDef,
+                stuffDef = stuffDef,
+                quality = quality,
+                quantity = quantity,
+                animalSpec = animalSpec?.Copy(),
+                unitPrice = unitPrice,
+                paidSilver = paidSilver,
+                supplierDelivers = supplierDelivers,
+                orderedTick = GenTicks.TicksGame,
+                readyTick = readyTick,
+                pickupExpiryTick = readyTick + PickupGraceDays * GenDate.TicksPerDay,
+                status = PurchaseOrderStatus.Confirmed
+            };
+        }
+
+        /// <summary>
+        /// Pays for and registers one ordinary purchase order. RFQ and supplier-listing origins
+        /// use this same boundary so payment and finite supplier consumption cannot diverge.
+        /// </summary>
+        internal static bool TryCreatePaidOrder(
+            IntercolonyWorldComponent state,
+            Map paymentMap,
+            int refreshWindow,
+            int requestId,
+            int quotationId,
+            int supplierListingId,
+            int settlementId,
+            string settlementName,
+            string factionName,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            int quantity,
+            AnimalSpec animalSpec,
+            float unitPrice,
+            bool supplierDelivers,
+            int leadTimeDays,
+            out PurchaseOrder order,
+            out string failureReason)
+        {
+            order = null;
+            failureReason = null;
+
+            if (state == null)
+            {
+                failureReason = "No procurement state is loaded.";
+                return false;
+            }
+
+            if (paymentMap == null)
+            {
+                failureReason = "No colony to pay from.";
+                return false;
+            }
+
+            if (thingDef == null)
+            {
+                failureReason = "The purchased item is no longer available.";
+                return false;
+            }
+
+            if (quantity <= 0)
+            {
+                failureReason = "Purchase quantity must be positive.";
+                return false;
+            }
+
+            if (unitPrice <= 0f || float.IsNaN(unitPrice) || float.IsInfinity(unitPrice))
+            {
+                failureReason = "The supplier's published price is invalid.";
+                return false;
+            }
+
+            if (leadTimeDays < 0)
+            {
+                failureReason = "The supplier's lead time is invalid.";
+                return false;
+            }
+
+            if (!CanPayForPurchase(paymentMap, unitPrice, quantity, out failureReason))
+            {
+                return false;
+            }
+
+            int price = IntercolonyPricing.TotalPayment(unitPrice, quantity);
+
+            // Peek while building the local order. The stable ID is committed only after the
+            // payment succeeds, so a refused purchase does not consume an ID either.
+            order = CreateOrder(
+                state.PeekNextId(),
+                requestId,
+                quotationId,
+                supplierListingId,
+                settlementId,
+                settlementName,
+                factionName,
+                paymentMap,
+                thingDef,
+                stuffDef,
+                quality,
+                quantity,
+                animalSpec,
+                unitPrice,
+                price,
+                supplierDelivers,
+                leadTimeDays);
+            if (order == null)
+            {
+                failureReason = "The purchase terms could not be recorded.";
+                return false;
+            }
+
+            if (!TryTakeSilver(paymentMap, price))
+            {
+                order = null;
+                failureReason = "Could not collect the silver.";
+                return false;
+            }
+
+            // No operation below this point refuses: the order exists, payment is collected,
+            // and these are the shared durable registration steps for every purchase origin.
+            state.NextId();
+            LedgerService.Record(state, LedgerKind.PurchasePayment, -price, settlementName,
+                $"{quantity}x {thingDef.label ?? "goods"}");
+            state.AddPurchaseOrder(order);
+            state.ConsumeSupplierOffer(refreshWindow, thingDef, settlementId, quantity);
+            return true;
+        }
+
+        /// <summary>
+        /// Checks the read-only payment boundary shared by the supplier-market read model and
+        /// the order-creation path. The transaction still performs the final silver take after
+        /// this check, because another action may have spent the colony's money between frames.
+        /// </summary>
+        internal static bool CanPayForPurchase(
+            Map paymentMap, float unitPrice, int quantity, out string failureReason)
+        {
+            failureReason = null;
+            if (paymentMap == null)
+            {
+                failureReason = "No colony to pay from.";
+                return false;
+            }
+
+            if (quantity <= 0)
+            {
+                failureReason = "Purchase quantity must be positive.";
+                return false;
+            }
+
+            if (unitPrice <= 0f || float.IsNaN(unitPrice) || float.IsInfinity(unitPrice))
+            {
+                failureReason = "The supplier's published price is invalid.";
+                return false;
+            }
+
+            int price = IntercolonyPricing.TotalPayment(unitPrice, quantity);
+            int available = CountColonySilver(paymentMap);
+            if (available < price)
+            {
+                failureReason = $"Not enough silver in storage: {available} of {price} needed.";
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -452,12 +640,77 @@ namespace Intercolony
             return true;
         }
 
-        private static void Complete(PurchaseOrder order, string note)
+        /// <summary>
+        /// Internal so self-tests exercise the real completion transition; a hand-completed order
+        /// would only verify arithmetic chosen by the test itself.
+        /// </summary>
+        internal static void Complete(PurchaseOrder order, string note)
         {
             order.status = PurchaseOrderStatus.Completed;
             order.outcomeNote = note;
-            ReputationService.NotePurchaseCompleted(IntercolonyWorldComponent.Current, order);
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            IntercolonyProductCategory? category = order.IsAnimalOrder
+                ? IntercolonyProductCategory.Commodities
+                : IntercolonyProductClassifier.Classify(order.thingDef);
+            if (category.HasValue)
+            {
+                MarketPressureService.NudgeSupplyUp(
+                    state, order.settlementId, category.Value, order.paidSilver);
+            }
+
+            state?.RecordCompletedPurchase(order);
+            ReputationService.NotePurchaseCompleted(state, order);
+            CommercialTimelineService.Record(
+                CommercialEventType.PurchaseCompleted,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.thingDef,
+                order.quantity,
+                order.paidSilver,
+                order.supplierListingId != PurchaseOrder.NoSupplierListing
+                    ? $"Supplier Market purchase completed: {order.quantity}x " +
+                      $"{order.ItemLabel()} at {order.unitPrice:F2} silver per unit"
+                    : null);
+
+            ProcurementContract procurementContract = FindProcurementContractForOrder(order);
+            if (procurementContract != null)
+            {
+                int cycleNumber = procurementContract.cyclesCompleted +
+                                   procurementContract.cyclesFailed + 1;
+                CommercialTimelineService.Record(
+                    CommercialEventType.ProcurementCycleCompleted,
+                    procurementContract.settlementId,
+                    procurementContract.settlementName,
+                    order.id,
+                    order.thingDef,
+                    order.quantity,
+                    order.paidSilver,
+                    $"Cycle {cycleNumber} completed: {order.quantity}x " +
+                    $"{order.ItemLabel()} at {order.unitPrice:F2} silver per unit");
+            }
+
             IntercolonyLog.Message($"Purchase {order.id} completed. {note}");
+        }
+
+        private static ProcurementContract FindProcurementContractForOrder(PurchaseOrder order)
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null || order == null)
+            {
+                return null;
+            }
+
+            foreach (ProcurementContract contract in state.ProcurementContracts)
+            {
+                if (contract != null && contract.activeOrderId == order.id &&
+                    contract.status == ProcurementContractStatus.Active)
+                {
+                    return contract;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>Refunds a failed order. The only path to SupplierDefault.</summary>
@@ -472,22 +725,44 @@ namespace Intercolony
             // still owed, so only that proportional balance remains refundable. Goods retain
             // their established accounting unchanged.
             int requestedRefund = RefundableSilver(order);
+            if (requestedRefund <= 0)
+            {
+                IntercolonyLog.Warning(
+                    $"Purchase {order.id}: no silver is refundable; keeping the order open.");
+                return;
+            }
+
             int refundedSilver = 0;
             Map map = null;
             bool usedFallback = false;
-            if (requestedRefund > 0)
+            bool usedStorageFallback = false;
+            map = ResolveDestinationMap(order, out usedFallback);
+            if (map != null)
             {
-                map = ResolveDestinationMap(order, out usedFallback);
-                refundedSilver = map == null ? 0 : GiveSilver(map, requestedRefund);
-                // A refund that paid nothing is not a default; hold and retry.
-                if (map == null || refundedSilver <= 0)
-                {
-                    return;
-                }
+                refundedSilver = GiveSilver(map, requestedRefund, out usedStorageFallback);
             }
 
+            if (usedStorageFallback)
+            {
+                IntercolonyLog.Warning(
+                    $"Purchase {order.id}: refund could not fit entirely in colony storage; " +
+                    $"{refundedSilver} silver was returned including the trade-spot fallback.");
+            }
+
+            // A refund that did not return the whole amount is not a default; hold and retry.
+            if (map == null || refundedSilver != requestedRefund)
+            {
+                IntercolonyLog.Warning(
+                    $"Purchase {order.id}: refund placement returned {refundedSilver} of " +
+                    $"{requestedRefund} silver; keeping the order open.");
+                return;
+            }
+
+            string storageFallbackNote = usedStorageFallback
+                ? " The money was returned but could not be stored, so it was left at the trade spot."
+                : string.Empty;
             order.status = PurchaseOrderStatus.SupplierDefault;
-            order.outcomeNote = reason;
+            order.outcomeNote = reason + storageFallbackNote;
             if (order.IsAnimalOrder)
             {
                 // Status UI uses paidSilver as the displayed refunded amount after default.
@@ -500,9 +775,24 @@ namespace Intercolony
                     $"{order.quantity}x {order.thingDef?.label ?? "goods"} refunded");
             }
 
-            IntercolonyLog.Message($"Purchase {order.id} failed: {reason} Refunded {refundedSilver} silver.");
+            // Recorded here rather than at the status assignment above so the timeline carries the
+            // silver actually returned. The early return before it means a refund that paid nothing
+            // is not a default, and so is not an event either.
+            CommercialTimelineService.Record(
+                CommercialEventType.PurchaseFailed,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.thingDef,
+                order.quantity,
+                refundedSilver,
+                reason);
+
+            IntercolonyLog.Message(
+                $"Purchase {order.id} failed: {order.outcomeNote} Refunded {refundedSilver} silver.");
             Messages.Message(
                 $"{order.settlementName} defaulted on your order. {refundedSilver} silver refunded." +
+                storageFallbackNote +
                 DestinationFallbackNotice(map, usedFallback, "the refund"),
                 MessageTypeDefOf.NegativeEvent, historical: true);
         }
@@ -515,14 +805,32 @@ namespace Intercolony
             }
 
             return order.IsAnimalOrder
-                ? Mathf.Min(order.paidSilver, Mathf.RoundToInt(order.unitPrice * order.quantity))
+                ? Mathf.Min(order.paidSilver,
+                    IntercolonyPricing.TotalPayment(order.unitPrice, order.quantity))
                 : order.paidSilver;
         }
 
         public static bool Cancel(PurchaseOrder order)
         {
-            if (order == null || !order.IsOpen)
+            return Cancel(order, out _);
+        }
+
+        /// <summary>
+        /// Cancels a live purchase order and returns the service-owned refusal explanation when
+        /// the order has already concluded or is unavailable.
+        /// </summary>
+        public static bool Cancel(PurchaseOrder order, out string refusalReason)
+        {
+            refusalReason = null;
+            if (order == null)
             {
+                refusalReason = "That purchase order is no longer available.";
+                return false;
+            }
+
+            if (!order.IsOpen)
+            {
+                refusalReason = $"Purchase #{order.id} is already {order.status}.";
                 return false;
             }
 
@@ -530,6 +838,15 @@ namespace Intercolony
             order.status = PurchaseOrderStatus.Cancelled;
             order.outcomeNote = $"Cancelled by the player. {order.paidSilver} silver forfeited.";
             ReputationService.NotePurchaseCancelled(IntercolonyWorldComponent.Current, order);
+            CommercialTimelineService.Record(
+                CommercialEventType.PurchaseCancelled,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.thingDef,
+                order.quantity,
+                order.paidSilver,
+                "Withdrawn by the player; payment forfeited");
             IntercolonyLog.Message($"Purchase {order.id} cancelled; {order.paidSilver} silver forfeited.");
             Messages.Message(
                 $"Purchase #{order.id} cancelled; {order.paidSilver} silver was forfeited.",
@@ -627,6 +944,14 @@ namespace Intercolony
                 return amount <= 0;
             }
 
+            // Keep this operation atomic for callers that must leave payment untouched when a
+            // transaction refuses. The snapshot below can otherwise consume a prefix and then
+            // discover that the requested total was not actually present.
+            if (CountColonySilver(map) < amount)
+            {
+                return false;
+            }
+
             // Snapshot first: destroying stacks mutates the lister mid-iteration.
             List<Thing> stacks = new List<Thing>();
             foreach (Thing thing in map.listerThings.ThingsOfDef(ThingDefOf.Silver))
@@ -653,11 +978,167 @@ namespace Intercolony
             return remaining <= 0;
         }
 
-        private static int GiveSilver(Map map, int amount)
+        private static int GiveSilver(Map map, int amount, out bool usedStorageFallback)
         {
+            usedStorageFallback = false;
+            if (map == null || amount <= 0)
+            {
+                return 0;
+            }
+
+            int stored = GiveSilverToStorage(map, amount);
+            int remaining = amount - stored;
+            if (remaining <= 0)
+            {
+                return stored;
+            }
+
+            // Storage is preferred because payment came from storage, but a full or absent
+            // stockpile must not strand a refund. Use the same visible trade-spot drop as the
+            // original implementation for whatever storage could not accept.
+            usedStorageFallback = true;
+            int dropped = DropSilverAtTradeSpot(map, remaining);
+            return stored + dropped;
+        }
+
+        private static int GiveSilverToStorage(Map map, int amount)
+        {
+            if (map == null || amount <= 0 || map.haulDestinationManager == null)
+            {
+                return 0;
+            }
+
+            Thing probe = ThingMaker.MakeThing(ThingDefOf.Silver);
+            List<IntVec3> storageCells = new List<IntVec3>();
+            List<int> storageCapacities = new List<int>();
+
+            foreach (SlotGroup group in map.haulDestinationManager.AllGroupsListInPriorityOrder)
+            {
+                if (group?.parent == null || !group.parent.HaulDestinationEnabled ||
+                    !group.parent.Accepts(probe))
+                {
+                    continue;
+                }
+
+                foreach (IntVec3 cell in group.CellsList)
+                {
+                    if (!StoreUtility.IsGoodStoreCell(
+                            cell, map, probe, null, Faction.OfPlayer))
+                    {
+                        continue;
+                    }
+
+                    int itemCount = 0;
+                    foreach (Thing existing in cell.GetThingList(map))
+                    {
+                        if (existing.def.category == ThingCategory.Item)
+                        {
+                            itemCount++;
+                        }
+
+                        if (existing.CanStackWith(probe))
+                        {
+                            int stackCapacity = Mathf.Max(
+                                0, existing.def.stackLimit - existing.stackCount);
+                            if (stackCapacity > 0)
+                            {
+                                storageCells.Add(cell);
+                                storageCapacities.Add(stackCapacity);
+                            }
+                        }
+                    }
+
+                    int freeSlots = Mathf.Max(
+                        0, cell.GetMaxItemsAllowedInCell(map) - itemCount);
+                    for (int i = 0; i < freeSlots; i++)
+                    {
+                        storageCells.Add(cell);
+                        storageCapacities.Add(probe.def.stackLimit);
+                    }
+                }
+            }
+
+            probe.Destroy(DestroyMode.Vanish);
+
             int remaining = amount;
             int placed = 0;
+            for (int i = 0; i < storageCells.Count && remaining > 0; i++)
+            {
+                int stack = Mathf.Min(remaining, storageCapacities[i]);
+                Thing silver = ThingMaker.MakeThing(ThingDefOf.Silver);
+                silver.stackCount = stack;
+                IntVec3 cell = storageCells[i];
+                Thing existing = null;
+                foreach (Thing candidate in cell.GetThingList(map))
+                {
+                    if (candidate.CanStackWith(silver) &&
+                        candidate.stackCount < candidate.def.stackLimit)
+                    {
+                        existing = candidate;
+                        break;
+                    }
+                }
+
+                if (existing != null)
+                {
+                    int before = silver.stackCount;
+                    existing.TryAbsorbStack(silver, respectStackLimit: true);
+                    int absorbed = before - silver.stackCount;
+                    placed += absorbed;
+                    remaining -= absorbed;
+                    if (absorbed != before)
+                    {
+                        if (silver != null && !silver.Destroyed)
+                        {
+                            silver.Destroy(DestroyMode.Vanish);
+                        }
+
+                        break;
+                    }
+                }
+                else
+                {
+                    Thing spawned = GenSpawn.Spawn(silver, cell, map);
+                    if (spawned == null || spawned.Destroyed)
+                    {
+                        if (silver != null && !silver.Destroyed)
+                        {
+                            silver.Destroy(DestroyMode.Vanish);
+                        }
+
+                        break;
+                    }
+
+                    placed += stack;
+                    remaining -= stack;
+                }
+            }
+
+            if (remaining > 0)
+            {
+                IntercolonyLog.Warning(
+                    $"Refund silver placement was incomplete: requested {amount}, " +
+                    $"actually placed {placed}.");
+            }
+
+            return placed;
+        }
+
+        private static int DropSilverAtTradeSpot(Map map, int amount)
+        {
+            if (map == null || amount <= 0)
+            {
+                return 0;
+            }
+
             IntVec3 cell = DropCellFinder.TradeDropSpot(map);
+            if (!cell.IsValid || !cell.InBounds(map))
+            {
+                return 0;
+            }
+
+            int remaining = amount;
+            int placed = 0;
             while (remaining > 0)
             {
                 int stack = Mathf.Min(remaining, ThingDefOf.Silver.stackLimit);
@@ -676,7 +1157,8 @@ namespace Intercolony
             if (placed < amount)
             {
                 IntercolonyLog.Warning(
-                    $"Refund silver placement was incomplete: requested {amount}, actually placed {placed}.");
+                    $"Refund silver trade-spot fallback was incomplete: requested {amount}, " +
+                    $"actually placed {placed}.");
             }
 
             return placed;

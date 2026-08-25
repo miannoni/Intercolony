@@ -16,6 +16,218 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## ~~Skip-reporting output still has suite-side format gaps~~ — FIXED in 1.0 (`ff93d94`)
+
+**Raised:** 2026-08-23, during skip-reporting verification.
+**Size:** small — test-output cleanup.
+**Closed:** 2026-08-23 in commit `ff93d94`. The bare `SKIPPED` in
+`IntercolonyUniqueGoodsSpike.cs` now carries a reason, and Brand, Event and Negotiation have
+converged on `SKIPPED`, so `dev.ps1`'s filter now uses one pattern.
+
+`IntercolonyUniqueGoodsSpike.cs:156` emits a bare `SKIPPED` with no reason, so it can never be
+explained by the reporting filter; the fix belongs in the suite, not `dev.ps1`.
+
+Three suites (`IntercolonyBrandSelfTest.cs`, `IntercolonyEventSelfTest.cs`, and
+`IntercolonyNegotiationSelfTest.cs`) still emit the legacy singular `SKIP` while the rest use
+`SKIPPED`; the formats should converge so the filter stops needing special cases.
+
+## The Stage 3 drought pricing assertion can pass vacuously.
+
+**Raised:** 2026-08-23, during four fresh-world full-suite runs.
+**Size:** small — test-fixture fix.
+**Status:** open.
+
+The assertion `a drought changes a newly computed price without repricing the accepted deal`
+failed once in four fresh-world full-suite runs on 2026-08-23 with `before 0.3763, current
+0.3763` — the two values were identical.
+
+**Cause:** it was the fixture, not the production code: nothing guaranteed that the drought it
+triggered actually moved the price of the category the test then sampled, so in some worlds the
+assertion compared a number to itself.
+
+**Fix:** make the fixture assert its own precondition — that the drought moved the sampled
+category's price at all — and SKIP with a reason when it did not, rather than comparing two
+identical numbers and calling it a pass.
+
+**Defect class:** a vacuous pass here is the same defect class as the hollow assertions caught by
+mutation elsewhere in this program: green without the ability to go red.
+
+## The market-shortage assertion can pass vacuously.
+
+**Raised:** 2026-08-23, during the Stage 8 verification run.
+**Size:** small — test-fixture fix.
+**Status:** open.
+
+The market-shortage assertion reported `27 -> 27` and passed. That is the same vacuous-pass class
+as the Stage 3 drought assertion: the comparison stayed unchanged, so the green result did not
+prove that a shortage changed the quantity or condition under test.
+
+**Fix:** make the fixture assert the change it is supposed to observe, and SKIP with a reason when
+the shortage does not move the sampled value. The assertion must be able to go red when the shortage
+path is removed.
+
+## The SALES-side contract cancellation penalty is still an inline literal.
+
+**Raised:** 2026-08-23, during the Stage 8 documentation audit.
+**Size:** small — constant extraction and calibration check.
+**Status:** open.
+
+The procurement-side cancellation penalty is now a named constant. The corresponding SALES-side
+contract cancellation penalty is still an inline literal. The calibration sitting must hunt for the
+literal, confirm the intended value and meaning, and give it the same named-constant treatment so
+the two sides cannot drift silently.
+
+## Stage 7B's W2 idempotence claim remains unproven.
+
+**Raised:** 2026-08-23, during Stage 7B verification.
+**Size:** unknown until the fixture is isolated.
+**Status:** open; recorded as unproven, not as a passing proof.
+
+Three mutations failed to isolate W2's idempotence claim. Two landed inside a guard the bounded
+fixture never enters, because at exactly the bound the excess computed to zero; the fourth mutation
+aborted the suite. The surrounding §7.7 safety assertions were red-on-cue, but that does not prove
+W2's idempotence. Isolate a fixture that actually enters the guarded path, then rerun the mutation
+and four-fresh-world stability checks.
+
+## ~~A sold animal may leave dangling pawn relations in the save~~ — HYPOTHESIS DISPROVEN
+
+**Raised:** 2026-08-21, from reading the log of Matteo's play session.
+**Disproven:** 2026-08-21, the same day, by reading the discard path properly.
+**Status:** the *observation* stands and is unexplained; the *accusation against our code* was wrong.
+
+**The blaming of `SalesOrderService` below is incorrect, and it is left here rather than deleted
+because a wrong theory that looks this plausible is worth being able to recognise again.**
+`PassToWorld(pawn, Discard)` routes to `WorldPawns.DiscardPawn`, which calls `Pawn.Discard`, which
+calls `relations.ClearAllRelations()` (`reference/decompiled/Verse/Pawn.cs:2442-2456`). That method
+does **both** halves of the cleanup: it removes the pawn's own direct relations, and then walks
+`pawnsWithDirectRelationsWithMe` removing every relation on *other* pawns whose `otherPawn` points
+back at it (`reference/decompiled/RimWorld/Pawn_RelationsTracker.cs:844-855`). So the exact dangling
+reference described below is cleaned up by the discard itself, and the parent/child relations that
+`Notify_PawnSold` leaves behind are removed a moment later regardless.
+
+**What the reasoning got wrong.** It correctly established that vanilla keeps a sold pawn while we
+discard it, correctly established that `Notify_PawnSold` clears only `Bond`, and then stopped one
+call short — at the difference, instead of following our own path to its end. The two verified facts
+made the conclusion feel measured. **Every fact in it was true and the conclusion was still false**,
+which is precisely the failure mode this project warns about when reading a delegate's output; it
+turns out to be just as available first-hand.
+
+**What is still unexplained, and is now the whole of the item.** Matteo's log really does carry 143
+`Trying to save reference to a discarded thing Chicken66024 … label=otherPawn` warnings. Something
+holds a `DirectPawnRelation` to a discarded pawn, and the clean-up above says it should not be
+reachable through a sale. Candidates not yet examined: a chicken that died rather than being sold, a
+stale `pawnsWithDirectRelationsWithMe` reverse index, or a mod. **Do not start from the sale path** —
+it has been read and it is clean.
+
+**Size:** unknown until the cause is found.
+**Not in the 1.0 program**, and not RED: RimWorld tolerates the reference, logs it, and loads with it
+null.
+
+His `Player.log` carries **143 warnings**, all naming one pawn and one field:
+
+```
+Trying to save reference to a discarded thing Chicken66024 with saveDestroyedThings=true.
+This means that it's not deep-saved anywhere and is no longer managed by anything in the
+code, so saving its reference will always fail. , label=otherPawn
+```
+
+`otherPawn` is `DirectPawnRelation.otherPawn` (`reference/decompiled/RimWorld/DirectPawnRelation.cs:9`,
+saved with `saveDestroyedThings: true` at line 28). So some surviving pawn still holds a direct
+relation to a pawn that has been discarded. Earlier in the same session,
+`Chess Township collected 1x Chicken (male, Adult, not pregnant) and paid 95 silver` — an
+Intercolony buyer-pickup animal sale.
+
+**Why this is plausibly ours, and it is a real difference from vanilla.** Our handoff is
+`SalesOrderService.cs:1022-1024`: `DeSpawn` → `PreTraded(PlayerSells, …)` → `PassToWorld(…,
+Discard)`. Vanilla's equivalent, `Pawn_TraderTracker.GiveSoldThingToTrader`
+(`reference/decompiled/RimWorld/Pawn_TraderTracker.cs:156-160`), calls `PreTraded` and then
+**`AddPawnToStock(pawn)`** — the sold pawn stays a live, managed pawn in the trader's stock, so
+every relation pointing at it still resolves. We discard instead, and nothing else in the game
+does that to a pawn that other pawns are related to.
+
+**`PreTraded` does not clear enough to make discarding safe.** It ends at
+`relations.Notify_PawnSold(playerNegotiator)`, which
+(`reference/decompiled/RimWorld/Pawn_RelationsTracker.cs:940-963`) removes **only**
+`PawnRelationDefOf.Bond`, and only for related pawns that are alive *and* have a mood need —
+it `continue`s past everything else. Animals that breed acquire `Parent`/`Child` relations to
+one another, and chickens breed constantly. Those relations are never removed, so after the
+discard they dangle.
+
+This is consistent with `CLAUDE.md`'s existing rule that handoffs must go through `PreTraded` —
+that rule is about the *bond and the thought*, and it is correct as far as it goes. What it does
+not cover is that vanilla never discards the pawn afterwards.
+
+**The decisive test, which has not been run:** sell an animal that has a living parent or
+offspring in the colony, then save, and watch for a warning naming that animal by id. If it
+appears, the fix is to strip the remaining direct relations before discarding — or to stop
+discarding.
+
+**Why it is not RED and not being fixed mid-slice (§19).** No crash, no lost silver, no lost
+obligation. RimWorld tolerates the dangling reference, logs it, and loads with the reference
+null. The cost is log noise and a slightly degraded save, not corruption. It also predates
+Stage 2 entirely and has nothing to do with the market work in flight.
+
+## ~~Suppliers quote ancient ruins scenery~~ — NOT REACHABLE IN PLAY, closed 2026-08-22
+
+**Raised:** 2026-08-20, from the Stage 0.2 market baseline.
+**Closed:** 2026-08-22 by tracing the def chain and both production paths. **No code change was
+needed, and none should be made.**
+
+**The player cannot request or be offered an Ancient APC.** `TradableDefs` is built from
+`IsFungibleTradeItem`, which requires `HasSupportedPhysicalForm` — `category == Item`, or a
+`Building` that is **minifiable**. `ThingDef.Minifiable` is `minifiedDef != null`
+(`reference/decompiled/Verse/ThingDef.cs:541`), and **no def in the ancient chain sets
+`minifiedDef`**: `AncientAPC` → `NonDeconstructibleAncientBuildingBase` → `AncientBuildingBase` →
+`BuildingBase`, all four checked, and `Buildings_Ancient_Outdoors.xml` and
+`Buildings_Ancient_Indoors.xml` contain zero occurrences of it between them. So ancient scenery
+never enters `TradableDefs`.
+
+Both production paths are gated on that list, which was the other half worth checking rather than
+assuming:
+
+- **Demand:** `MarketOpportunityGenerator` picks from `DefsInCategory`, which iterates `TradableDefs`
+  (`IntercolonyProductClassifier.cs:289-301`). So the entry's worry that "the same classifier rule
+  presumably lets them be *demanded* too" is also unfounded.
+- **Procurement:** `Dialog_CreateRequest.cs:885` draws its candidate list from `TradableDefs`.
+
+**Where the 88 quotes actually came from — and this is the part worth keeping.** The baseline's
+original `PickProbeGoods` (`fe011b7`) iterated `DefDatabase<ThingDef>.AllDefsListForReading` and
+filtered **only** on `Classify(def).HasValue`. `Classify` maps a def to a category and says nothing
+about tradability, so the diagnostic quoted defs the market can never offer, then reported real
+quote counts for them. The numbers were true; the premise was not.
+
+**The lesson generalises past this item: a diagnostic that bypasses the production gate reports
+things the player can never see, and its output looks exactly as authoritative as a real finding.**
+This one cost a backlog entry and an afternoon's suspicion of a defect that does not exist. The
+probe basket was already changed to rank by observed demand from real opportunities, which fixed it
+by accident — the current `PickProbeGoods` cannot select an untradeable def because it starts from
+generated opportunities.
+
+**If this is ever reopened**, the question worth asking is a different one: whether
+`IntercolonyTradeBlacklistDef` should exclude ancient scenery *defensively*, in case a mod makes one
+minifiable. That is speculative and not worth doing now.
+
+The baseline's first probe basket took the alphabetically first classifiable def per category
+and landed on `AncientAPC`, `AncientBandNode` and `AncientCryptosleepCasket`. All three were
+quoted by suppliers: 88, 69 and 79 settlements respectively offered to sell them, an Ancient
+Cryptosleep Casket at a mean 723 silver.
+
+These are map scenery from ancient ruins. Whether a settlement should be able to *manufacture
+and deliver* one is a real question — vanilla treats them as things you find, not things anyone
+makes. `IntercolonyProductClassifier` classifies them as tradeable products, which is what puts
+them in supplier reach.
+
+Not fixed now because it is outside the 1.0 program's scope and nothing in that program depends
+on it: the baseline's probe basket was changed to rank by observed demand instead, so the
+diagnostic no longer asks about goods nobody trades. But a player who requests an Ancient APC
+and gets 88 quotes is seeing something odd, and the same classifier rule presumably lets them
+be *demanded* too.
+
+Worth checking against `IntercolonyTradeBlacklistDef`, which already exists to exclude defs and
+currently excludes 10.
+
+---
+
 ## Procurement should be as complete a system as selling
 
 **Raised:** 2026-08-07, by Matteo, while looking at the tab structure.
@@ -82,11 +294,29 @@ to that should shape which of the four get mirrored.
 
 ---
 
-## Empty-state paragraphs use hard-coded heights and can clip
+## ~~Empty-state paragraphs use hard-coded heights and can clip~~ — FIXED in 0.9.3 (`c1610af`)
 
 **Raised:** 2026-08-08, by Matteo, during the 0.9.0 Steam smoke test.
-**Size:** small — one focused pass across five call sites.
-**Status:** open. Non-blocking beta UX issue; deliberately not fixed on launch day.
+**Closed:** 2026-08-22 on audit. **It was fixed on 2026-08-18 and this entry was never struck** —
+the fix arrived as part of 0.9.3's measured-text pass rather than as work on this item, so nobody
+came back to the backlog to close it.
+
+**Verified rather than assumed.** Every `emptyMessage` site in the UI now binds the string to a local
+and sizes its rect with `Text.CalcHeight`, including the Relations paragraph that was the original
+report — the "No trading history yet… Reputation is held per settlement" text, now measured at
+`MainTabWindow_Intercolony.cs:3089`. Grepping for a `Widgets.Label` with any of the five recorded
+literal heights (`60f`, `70f`, `76f`, `44f`) returns nothing. The commit that did it is
+`c1610af`, *"measure dialog and empty-state text instead of boxing it"*.
+
+**The line numbers in the table below are all stale**, which is itself the lesson: an entry that
+pins a defect to `file.cs:1916` decays as soon as the file moves, and every one of those five now
+points at unrelated code. Anchoring on a searchable symbol — here `emptyMessage` — survives edits
+where a line number does not.
+
+**Why it stayed open for four days after being fixed.** The 0.9.3 batch was scoped from
+`docs/BACKLOG.md`'s Tier 2 UI list, and this defect was fixed *as an instance of the general rule*
+rather than as this item, so the closing pass missed it. Worth checking the backlog against the
+code after any batch that applies a rule broadly, not just after work aimed at a named entry.
 
 The explanatory paragraph on the **Relations** screen is vertically clipped at 1.75x UI scale: its
 second wrapped line is cut off.

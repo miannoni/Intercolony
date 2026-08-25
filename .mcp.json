@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "intercolony-rimworld": {
+      "command": "node",
+      "args": ["tools/intercolony-dev/dist/mcp.js"]
+    }
+  }
+}

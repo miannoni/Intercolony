@@ -41,7 +41,598 @@ test result.
 
 ## Outstanding
 
-### Correction-batch self-tests
+Self-test items now run unattended through the dev test bridge and are closed as a class.
+They no longer need individual entries here, because every pass reports its own failures and skips.
+What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
+A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
+
+### 1.0 calibration sitting — Stage 8 remaining play
+
+Stage 8A's full save/load matrix, Stage 8B's 42 → 56 migration matrix, and Stage 8C's seven-path
+performance profile are complete. The following work still needs a human at the keyboard. Run it
+on a real colony, record the world and load order, and write down decisions and visible outcomes;
+do not turn a self-test pass into a play claim.
+
+#### Economic sanity (§8.3)
+
+Play several market refreshes across multiple settlement archetypes and answer these nine questions:
+
+- Can I tell agricultural from industrial/affluent economies?
+- Do shortages/surpluses persist enough to plan around?
+- Do they eventually normalize?
+- Are events noticeable without dominating every decision?
+- Does one region sometimes differ meaningfully from another?
+- Does Procurement reflect the same market conditions as Selling?
+- Are there obvious arbitrage loops?
+- Are ordinary goods still buyable/sellable often enough to be useful?
+- Does scarcity create choices rather than merely empty screens?
+
+Record decisions, not just generated rows.
+
+#### Brand sanity (§8.4)
+
+Verify in normal play:
+
+- high-skill production can build a valuable brand;
+- mediocre output can dilute it;
+- pivoting to an unrelated industry does not penalize the new industry beyond the tiny carryover floor;
+- moving from revolvers to rifles meaningfully carries reputation;
+- brand premium is useful but not an infinite money printer;
+- a player can understand why their brand changed.
+
+#### Negotiation sanity (§8.5)
+
+Verify:
+
+- negotiation is optional, not required for every trade;
+- outcomes feel connected to terms and relationship;
+- absurd demands get rejected even at high reputation;
+- strong brand helps the relevant product;
+- events matter;
+- renegotiation is useful when a real obligation becomes difficult;
+- failed negotiation does not destroy the original opportunity/order.
+
+Record the original terms, the attempted change, the response, and the surviving order or
+opportunity after each failed or accepted negotiation.
+
+#### Procurement parity (§8.6)
+
+Complete each loop separately. Record the request or order ID, quantity, payment, destination,
+terminal status, and whether the result is visible after reload:
+
+1. `Supplier Market -> PurchaseOrder -> delivery`: accept a supplier listing, wait for delivery,
+   and verify that the goods arrive at the ordering colony with the quoted properties.
+2. `Supplier Market -> PurchaseOrder -> pickup`: accept a supplier listing, collect it with a
+   caravan, and verify the goods and payment at the ordering colony.
+3. `RFQ -> quote -> PurchaseOrder -> delivery`: request goods, accept a quote, wait for delivery,
+   and verify the delivered quantity, price, and destination.
+4. `RFQ -> quote -> PurchaseOrder -> pickup`: request goods, accept a quote, collect the purchase
+   with a caravan, and verify the delivered quantity, price, and destination.
+5. `Procurement contract -> cycle -> PurchaseOrder -> completion`: let one recurring procurement
+   cycle create and resolve a purchase order, then verify completion and the commercial history.
+6. `Procurement contract -> supplier failure -> refund/outcome`: force or observe a supplier
+   failure, then verify the refund or other stated outcome, the terminal record, and its history.
+
+#### UX pass (§8.7)
+
+Review the relevant Selling, Procurement, Relations, negotiation, event, brand, and Commercial
+History surfaces at **1.0x, 1.25x, 1.5x, and 1.75x UI scale** where practical. At each scale, check:
+
+- no paragraph-heavy dialog regressions;
+- pricing factors remain legible;
+- event cause is visible;
+- brand is understandable;
+- negotiation final terms are explicit;
+- Procurement tabs do not feel like a different product from Selling;
+- Commercial History is readable when dense.
+
+Use the measured text/layout rules already established in the project. Record the scale, screen,
+content density, and any clipping, overlap, unreadable text, or ambiguous term.
+
+#### Deferred Stage 3 play — criteria 9 and 10
+
+**Criterion 9 — does event frequency flood normal play?** Play without forcing events for several
+market refreshes. Generation rolls roughly a 12% chance per refresh and allows at most 3 concurrent
+events. Record whether normal stretches, one-region events, occasional overlap, and no permanently
+crisis-bound world are what the player actually sees. Retune the named chance or cap if the observed
+frequency is wrong.
+
+**Criterion 10 — does an event produce an obvious decision?** Use the dev action to force a drought
+or war mobilization, then play through it. Record whether it changes a real choice: what to produce,
+what stock to hold, which buyer to choose, or whether to delay a purchase. If the event only changes
+numbers without changing a decision, record that the magnitude needs retuning. End the event and
+watch the pressure tail: the live modifier should disappear while its pressure remains and decays
+over roughly 25 refreshes.
+
+#### Deferred Stage 2 play calibration
+
+Run this on a real colony, not a `-quicktest` world. During several refreshes, answer:
+
+1. Does the market read as alive rather than flat or chaotic?
+2. Do regions actually form, with diffusion visible without making the world uniform?
+3. Does a price breakdown explain itself, showing `Current shortage` or `Current surplus` only when
+   conditions are moving the number?
+4. Does a procurement quote read the same way, using `Local scarcity (shortage)` or
+   `Local scarcity (surplus)` consistently with Selling?
+5. Is Stage 1 criterion 7 met: is a settlement's economy legible from the Market listing and
+   Relations tooltips without debug numbers?
+
+For the shortage surfaces, enable Development mode, open the world map, press `/`, choose
+**Intercolony -> Shock settlement economy**, click a settlement already used for trade, and apply
+`manufactured: demand shortage` three or four times. Use **Dump effective economy** to confirm the
+pressure, inspect a live offer and a procurement quote from the shocked settlement, then compare an
+untouched settlement. Record the baseline, current condition, visible explanation, and whether the
+player could make a different choice.
+
+### The whole suite, in one action
+
+**This no longer needs a human.** Since the dev test bridge landed, the whole suite runs from a
+shell and reports its own counts:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File dev.ps1 test all -Fresh
+```
+
+`-Fresh` restarts into a clean `-quicktest` world first and refuses to run at all rather than
+claim an isolation it cannot verify. Exit code 0 means clean, 1 means assertions failed, 2 means
+everything else — including a run whose assertions passed but whose log gained new exceptions.
+See `docs/DEV_TEST_BRIDGE.md`. **Do not ask for the manual click-through below unless the bridge
+itself is broken.**
+
+The manual route, kept because it is the fallback when the bridge will not start:
+
+**`Run ALL self-tests`.** Enable **Development mode** (Options → General), load a colony **with
+a map**, press **F12**, click the **orange bug icon** top-right, type `Run ALL`, and click
+**Intercolony → Run ALL self-tests**. Read it with
+`powershell -ExecutionPolicy Bypass -File dev.ps1 log`.
+
+It runs all seventeen suites, prints one table, and ends with a `VERDICT:` line. That line is
+the whole answer:
+
+- `all clean` — nothing more to do.
+- `no failures, but assertions were skipped` — a skipped assertion is not proof; the table says
+  which suite.
+- `no failures, but not everything ran` — you were probably on the main menu rather than in a
+  colony; ten suites need a map.
+- `FAILURES` — the full output of only the failing suites is printed underneath it.
+
+**It also answers the question no single suite can.** Suites drive real transitions on synthetic
+orders, which since Stage 0.3b writes commercial events and from Stage 2B will move market
+pressure. Each runs inside a guard that restores what it found, and a broken guard is invisible
+from inside the suite that tripped it — so the runner records the world's counts before and
+after and prints a `did anything leak into the world?` block. `OK` on both lines means the
+guards held. `LEAK` means stop: a diagnostic is writing into the player's real history.
+
+The individual per-suite actions still exist for when one of them is being worked on.
+
+### OPEN — one full-suite assertion failed once in 18 runs, and its identity was lost
+
+**Observed 2026-08-22. NOT REPRODUCED in 37 further runs — §18's outcome, not a clean bill.**
+One `dev.ps1 test all -Fresh` run failed a single assertion. **Thirty-seven subsequent runs all
+passed**, at 1002–1003 passed / 0 failed / 13–14 skipped, world-pawn delta 0, both leak guards `OK`
+and clean logs throughout. Twenty of those were run specifically to catch it, after the failure
+archiving below was in place, and it did not recur.
+
+§18 says to trace the path, force the condition, instrument the boundary, and if it still will not
+reproduce, record `NOT REPRODUCED`, prove what can be proven, and continue rather than writing a
+speculative fix for a defect the roadmap expected. That is what this is. **It is not evidence that
+nothing is wrong** — one occurrence at ≤1-in-38 is entirely consistent with a rare race or a
+world-shape edge that these worlds did not produce.
+
+**Which assertion it was is not known**, and that is the part worth fixing rather than the rate.
+`dev.ps1` wrote the bridge's assertion output to a single fixed path that every later run
+overwrote, so seventeen passes destroyed the only record of the one failure between them. The
+harness now archives a timestamped copy whenever a run is not clean, so the next occurrence
+identifies itself.
+
+**Do not assume it was the retention work committed the same day.** Three separate mutations proved
+those thirteen assertions sensitive, and they are deterministic — they build their own fixtures and
+sample nothing from the world. The failure appeared in the first run after that change, which is
+suggestive and is exactly why it is written down, but one occurrence in eighteen is not attribution.
+Roughly a thousand assertions ran in each of those runs and several suites size themselves to
+whatever the loaded world contains.
+
+**This project has been here before and the rule came from it.** Two assertions were once shipped in
+a single day having been mutation-tested and gone red, and both were still flaky — same code, one
+fresh world green and the next red. **Mutation proves sensitivity; only repetition proves
+stability.** A one-in-eighteen failure is precisely what the four-fresh-worlds standard exists to
+surface, and precisely what a single run would have called clean.
+
+**How to close it:** run the suite repeatedly and read the archived output the next time one is not
+clean. If it recurs and names a statistical assertion, enlarge its sample rather than loosening its
+comparison — loosening is how a flaky test usually gets "fixed", and it makes the assertion pass with
+the feature deleted.
+
+### The dev test bridge — what it has not shown
+
+The bridge was proven against a live game on 2026-08-21: both builds, the runtime gate, all seven
+commands, malformed and oversized and unknown requests, the CLI's three exit codes, and the eight
+MCP tools driven over stdio. These are the parts that were **not** exercised.
+
+- **The bridge has only ever run on `-quicktest` worlds.** Every run generated a fresh world. It
+  has never been pointed at a real save, so it has never seen a schema migration, a colony with
+  history, or a world with more than a handful of world pawns. `dev.ps1 run -MainMenu` exists for
+  loading a real save; the bridge has not been used that way.
+- **Two colonies.** Every bridge run had one map. `Find.CurrentMap` is what `tests.run` resolves,
+  and the mod has a documented history of one-map assumptions being wrong — the 0.9.0 buyer-pickup
+  defect was exactly that. A suite run through the bridge with two colonies loaded is untested.
+- **A genuinely crashing suite.** `tests.run` claims to report an exception with its text and
+  `success=false`, and the runner treats output with no summary line as not having completed.
+  Neither path has been triggered on purpose, because no suite currently throws.
+- **Port-in-use reporting.** The `AddressAlreadyInUse` branch names the likely cause, but two
+  bridge-enabled games have never been run at once to see it.
+- **The command timeout.** Ten minutes, chosen because the full suite runs synchronously on the
+  main thread. No run has come close, so the timeout path and its tombstoning of an abandoned
+  command are unexercised in play.
+- **Anyone else's machine.** `.mcp.json` uses a repo-relative path and was driven from this repo
+  root, but has only been loaded on one machine, with one Node version, one RimWorld install, and
+  a `Mods\Intercolony` junction that had to be repointed by hand to test at all.
+
+### 1.0 program — Stage 3, the two event criteria (added 2026-08-22)
+
+**For the single calibration sitting at the end of 1.0**, alongside the Stage 2 gate below. Eight of
+Stage 3's ten acceptance criteria are closed by assertion; these two are judgements only a player can
+make.
+
+**You can now cause any of this on demand** — §3.8 exists so nobody waits on RNG. Dev mode, world
+map, press `/`, then under **Intercolony**:
+
+| Action | Use |
+|---|---|
+| `Force economic event` | Click a settlement, pick Poor harvest / War mobilization / Construction boom / Epidemic |
+| `Dump economic events` | Type, anchor, scope, days left, settlements affected, modifiers |
+| `End economic events now` | End them early to watch the pressure tail decay |
+| `Dump effective economy` | Baseline vs pressure vs effective, per category |
+| `Shock settlement economy` | Direct pressure shock, four steps per category |
+
+**Criterion 9 — does event frequency flood normal play?** Generation rolls roughly a 12% chance per
+market refresh, capped at 3 concurrent events. §3.5 wants long stretches of normality, sometimes one
+region affected, occasionally two overlapping, and never a world permanently in crisis. Play without
+forcing anything and judge whether that is what you get. **This is a retune, not a rewrite** — the
+chance and the cap are named constants.
+
+**Criterion 10 — does an event produce an obvious decision?** The test is whether a drought or war
+mobilization ever makes you *do something different*: change what you produce, hold stock back, pick
+a different buyer, delay a purchase. If events are only visible as slightly different numbers and
+never change a choice, the magnitudes are too small — also a retune.
+
+**Worth watching while you judge those two:** whether the *tail* reads correctly. When an event ends,
+its live modifier disappears but the pressure it caused remains and decays over roughly 25 refreshes.
+That is deliberate (§3.4) and is what makes an event feel like it had consequences rather than being
+switched off. If the aftermath instead feels like the event never ended, `StartShockFraction` is the
+constant to move.
+
+### 1.0 program — Stage 2, the 2K play gate
+
+**Added 2026-08-21 when 2J closed the last Stage 2 code slice.** Every remaining Stage 2 question is
+a judgement about feel or text, which is what §20.4 says a self-test cannot settle. Do these in one
+sitting on a real colony, not a `-quicktest` world.
+
+1. **Does the market read as alive rather than flat or chaotic?** Every Stage 2 coefficient was
+   chosen conservatively and documented as retune-at-2K: `ReversionRetention` (0.82, a shock decays
+   over ~25 refreshes), `NudgeValueScale`, the chain table and `DiffusionCoefficient`. Expect to move
+   numbers, not structure.
+2. **Do regions actually form?** Diffusion moves one hop per refresh within 40 tiles. If the world
+   reads as uniform, or if nothing ever spreads, the coefficient is wrong in one direction or the
+   other. The 2I entry names a known gap worth closing only if this looks wrong.
+3. **Does a price breakdown explain itself?** New in 2J: a market opportunity, Find Buyer tooltip,
+   sell confirmation or animal preview should show `Current shortage` or `Current surplus` as its own
+   row when conditions are moving the number, and nothing at all when they are not.
+4. **Does a procurement quote read the same way?** Its scarcity row is labelled
+   `Local scarcity (shortage)` / `(surplus)`. The same circumstance should read the same way whether
+   the player is buying or selling — that symmetry is the point, and only reading both settles it.
+
+**Exact steps for 3 and 4**, since they need a shortage that will not occur on demand:
+
+1. Turn dev mode on: **Options → Development mode**.
+2. Open the world map (**the globe button**, bottom right), and press **`/`** — the debug actions
+   menu (`Dev_ToggleDebugActionsMenu`, bound to Slash on this machine; check
+   `Config/KeyPrefs.xml` if it does not open).
+3. Choose **Intercolony → Shock settlement economy**. The cursor becomes a world tool.
+4. **Click a settlement you already trade with.** A menu lists four steps per category; pick e.g.
+   `manufactured: demand shortage`. Click it **three or four times** — one step is 0.30 and the
+   effect is deliberately modest. The log names the resulting pressure after each click.
+5. Confirm it landed: **Intercolony → Dump effective economy** prints baseline, pressure and
+   effective for both sides of every category on each disturbed settlement.
+6. Now open the Intercolony tab and **hover the price on an offer from that settlement**. Under a
+   shortage the breakdown should carry a `Current shortage` row of its own, *beside* `Local demand`
+   rather than folded into it.
+7. **Then hover an offer from an untouched settlement.** It must show `Local demand` alone — no
+   `x1.00` condition row. A row that says nothing buries the row that matters, and its absence is
+   as much the design as its presence.
+8. For step 4, raise a purchase request (**Find seller**) against the shocked settlement and hover
+   the quoted price. Expect `Local scarcity (shortage)`. Note that this one is a *label* only: the
+   number was already moving with pressure before 2J, because that factor is affine in supply and
+   cannot be split without changing the quote.
+5. **Stage 1 criterion 7**, carried here from the Stage 1 gate: whether a settlement's economy is
+   legible from the Market listing and Relations tooltips without debug numbers. Same sitting, same
+   kind of question.
+
+(Matteo) Test Result: shortage did appear in the UI, as intended, but price didnt move much...
+
+**Analysed from his log, 2026-08-21. The explanation surface works; the price surface could not
+have moved, and that is a design finding rather than a coefficient one.**
+
+What the log shows. He shocked `Craps's Settlement`, commodities demand, five times:
+
+```
+Craps's Settlement: commodities demand shortage; resulting pressure 1.300.
+Craps's Settlement: commodities demand shortage; resulting pressure 1.600.
+Craps's Settlement: commodities demand shortage; resulting pressure 1.600.   (x3 more)
+```
+
+**It saturated at `MaxPressure` (1.60) on the second click**, so this was the strongest shortage the
+system can express — clicking more did nothing, which is correct and is why the value is logged.
+
+**Why the board did not move, and could not have.** Three separate things stack up:
+
+1. **A listed opportunity never re-prices.** `MarketOpportunity.unitPrice` and `priceExplanation`
+   are computed once at generation, and `MainTabWindow_Intercolony.cs:1187` renders that stored
+   string. So a shock is invisible on every offer already on the board — in price *and* in
+   explanation. **This is deliberate and should stay**: the standing rule is that a deal records the
+   market rate it was struck against, and re-pricing an offer under the player would be worse than
+   not moving it.
+2. **The board is pinned at its ceiling.** The market suite's own note on this run reads
+   `12 extra refreshes took live offers from 100 to 100, ceiling 100`, and the refresh log shows
+   turnover of 0–21 per cycle. New offers — the only ones that can carry the shock — arrive slowly.
+3. **He shocked one settlement out of 358.** Even after turnover, the chance that a given new offer
+   comes from that settlement is tiny.
+
+So what he saw is consistent and correct: the shortage row appeared where prices are computed
+**live** (Find Buyer, and the sell confirmation via `RepriceForQuantity`), and nothing changed on
+the Market board, which is frozen by design.
+
+**A second candidate explanation, derived from the constants rather than observed, and it is
+testable.** If he was looking at a **live-priced** surface (Find Buyer, or the sell confirmation)
+rather than the Market board, then the board explanation above does not apply and something else
+did. The arithmetic says the price-sanity clamp is the likely culprit, and that it bites hardest
+exactly where a shortage should matter most.
+
+Let `d` be the settlement's baseline demand for the good (`BaseDemandFor(def, category)` — the
+category weight times the good's affinity). Pressure maxes at `MarketPressureService.MaxPressure`
+= 1.60, and `EffectiveEconomyService.MaxCondition` is 2.0, so the strongest possible demand
+condition is 1.60. Pricing then clamps the composed value to `[0.4, 2.0]`, so the most a maximum
+shortage can multiply the price by is:
+
+```
+min(2.0, d * 1.60) / d
+```
+
+- `d ≤ 1.25` → the full **×1.60**. The shock arrives unclipped.
+- `d = 1.60` → only **×1.25**.
+- `d ≥ 2.0` → **×1.00 — a maximum shortage changes the price by nothing at all**, because the
+  settlement's standing appetite had already reached the ceiling on its own.
+
+So the harder a settlement already wants a category, the less a shortage in it can move the price —
+which is backwards from what a player would expect, and commodities is a category some archetypes
+weight heavily. The `[0.4, 2.0]` bound is a *price sanity* clamp that predates market pressure
+entirely; it was never chosen with a second multiplicative layer underneath it in mind.
+
+**How to settle which explanation it was, in one look:** the new world-map Economy tab shows the
+settlement's baseline demand beside its current condition. If `d` for that category is near or above
+2.0, this is the clamp and the fix is the bound, not the pressure. If `d` is well under 1.25 and the
+price still barely moved, neither explanation holds and it needs a fresh look.
+
+**The 2K conclusion this points to: the lever is visibility, not `ReversionRetention`.** A shortage
+at full strength decays below the prune epsilon in about 19 refreshes — which is exactly what
+happened here, and why market pressure read `0 settlement(s)` by the time the suites were run
+(`0.60 × 0.82¹⁹ ≈ 0.013`). Mean reversion behaved as designed. The problem is that a shortage's
+whole life can pass without the player being able to see it anywhere they normally look. Retuning
+the decay would not fix that; putting the economy where the player looks would — see the world-map
+Economy tab raised from his Stage 1 feedback below.
+
+**Not on this list, because it is proven:** the 42 → 43 → 44 migration ran on the real 22.5 MB
+`Fenhana` colony with zero exceptions and the full suite then passed 944/0/9 against it.
+
+### 1.0 program — Stage 0
+
+#### ~~Capture the market baseline~~ — DONE 2026-08-20
+
+Captured on the `Fenhana` / `Intercolony 0.9.3 preflight` save (schema 42, economy seed
+`-1586549745`, refresh 432), determinism **PASS**, written up in
+`docs/MARKET_BASELINE_0_9_3.md`. Taken on a persistent save rather than a `-quicktest` world,
+so the same economy is re-measurable after Stage 2.
+
+**Rerun wanted, low priority.** The capture exposed two flaws in the diagnostic, both fixed
+since: it reported generator appetite without the global live-offer ceiling that actually
+governs market size, and its probe basket was alphabetically chosen and full of ancient ruins
+scenery. Rerunning on the same save replaces the two affected sections. Not blocking — the
+figures that matter for Stage 2 comparison (offer rate, category shares, price factor spread)
+are unaffected by either flaw.
+
+#### ~~Schema 42 → 43 migration under a real save~~ — DONE 2026-08-20
+
+Ran in the real load order on a 21.5 MB schema-42 colony, `nextId 6826`, zero exceptions and no
+dropped records. **This was the first time any Intercolony migration ran outside a throwaway
+install** — see the top of this file's Outstanding list, which said so for the three earlier
+ones. `dev.ps1 run -MainMenu` now exists to keep it repeatable.
+
+### Stage 0 self-tests (commercial timeline, `04be001` / `a502b63`)
+
+#### ~~Timeline self-test — never run~~ — DONE 2026-08-21 by Matteo
+
+**47 passed, 0 failed**, and the line that actually matters is present:
+`commercial timeline restored to 10 record(s).` The suite deliberately overfills the timeline past
+its 1,000-record cap and prunes it, so a wrong restore would have destroyed real history; it did
+not. Run on the real colony after a live 42 → 44 migration, not on a throwaway world.
+
+The steps below are kept because they are still the manual route.
+
+**Full path.** From RimWorld's main menu, open **Options** → **General** and enable
+**Development mode**. Load any colony. Press **F12**, click the **orange bug icon** in the
+top-right toolbar, type `Run timeline self-test`, and click the exact action
+**Intercolony → Run timeline self-test**.
+
+**Pass.** The debug log begins `Commercial timeline spine self-test`, ends with a line
+reading `N passed, 0 failed`, and contains no `FAIL` line and no red exception. It also
+prints `commercial timeline restored to N record(s)` — that line is not decoration. The test
+deliberately overfills the timeline past its 1,000-record cap and prunes it, so if the
+restore is wrong it destroys real history. Confirm that count matches what was there before.
+
+**Why it is not proven.** Both slices are committed on a clean build alone. The test now
+drives the real production transitions (`SalesOrderService.Fail`/`.Cancel`,
+`PurchaseOrderService.Cancel`, and both `HostilityPolicy` war paths) rather than recording
+its own events, so a passing run is genuine evidence that the write sites fire — but nobody
+has run it.
+
+(Matteo) Test Result: Ran it, didnt check the logs - you look.
+
+#### Stage 1 — profile and market suites, plus a look at the new tooltip
+
+`Run profile self-test` and `Run market self-test` (F12 → orange bug icon). Stage 1 rewrote
+exact-good demand, so the market suite's per-good assertions are the ones that matter: they now
+read the affinity-spread constant rather than the old 0.55–1.45 cycle range, and two new checks
+prove the affinity depends on seed and def alone.
+
+**Pass.** Both report 0 failed.
+
+**CORRECTION 2026-08-21.** This entry used to say "specifically look for" three assertions by name —
+`exact-good affinity depends only on seed and def`, `exact-good affinity differs between
+settlements`, and `per-good demand crosses the interest threshold both ways`. All three exist
+(`IntercolonyMarketSelfTest.cs:229`, `:231`, `:281`) but **the suite never prints a `PASS` line**,
+only bracketed notes and a summary, so the instruction could not be followed and looking for them
+would suggest they were missing. `0 failed` is the whole signal; the three matter because of what
+they guard — the 0.15 affinity band still straddling the 0.9 interest threshold, without which
+Find Buyer quietly stops ever saying "No current interest".
+
+**Also worth 30 seconds of looking:** hover a row in the **Market** tab and a row in
+**Relations**. Both tooltips should now carry four rows — economy, usually supplies, usually
+demands, quality preference. The question is whether they read as identity or as noise, which no
+self-test can answer.
+
+(Matteo) Test Result: Ran the tests, you look at the log. In terms of UI, indeed it does show usually produces and usually supplies - in fact, in the "world" tab, when I click a settlement and I get the option to click the "planet" and "terrain" buttons, I think there should be a third "economy" button that shows that settlement's economic information. This only showing up in the intercolony tab means the player might not see it, and it would be natural to look at the settlements close to you using the world tab and "economy" button and check what they will usually demand and supply for you to plan your colony around that.... THIS IS IMPORTANT!!!!
+
+**Suites: profile 154/0/0, market 84/0/0 — checked in his log, both clean.**
+
+**The Economy tab is being built (2026-08-21), and it is feasible with no Harmony patch.** The
+Planet and Terrain buttons he describes are `WITab_Planet` and `WITab_Terrain`, listed in
+`<inspectorTabs>` on the abstract `StaticWorldObjectBase` world object def, which `Settlement`
+inherits (`reference/vanilla-defs/Core/Defs/WorldObjectDefs/WorldObjects.xml:30-40`). `WITab` is
+`public abstract` and subclassable (`reference/decompiled/RimWorld.Planet/WITab.cs`). So a third
+button is a def patch plus one class — the supported route, not a patch.
+
+**This also answers criterion 7 in a way the tooltips could not.** Stage 1 asked whether a
+settlement's economy is legible without debug numbers, and the answer shipped as two tooltips
+inside the mod's own tab. His objection is that a player choosing where to settle is looking at the
+*world map*, and will never find it there. That is a placement failure rather than a content one —
+the 1.4/1.5 ledger entry even records rejecting a dedicated screen in favour of tooltips, and this
+is the third option nobody considered: put it on the object the player already clicks.
+
+**And it is the natural home for the 2J visibility problem above.** The tab is the one surface that
+can show current conditions *live* — a listed opportunity's price is frozen at generation, so the
+Market board structurally cannot show a shortage that arrives later. The tab is being built with the
+two kept deliberately apart: *what this place is* (baseline identity, unchanging) and *what it is
+going through right now* (only shown when something actually is).
+
+#### ~~The three suites that now touch the timeline — rerun to confirm no regression~~ -- CLOSED 2026-08-21
+
+The bridge run closed this with order **107/0/1**, RFQ **81/0/0** and combat clause **54/0/0**; its
+whole-run leak block also reported the commercial timeline unchanged at **12 records**, a stronger
+check than dumping the timeline and inspecting it by eye. The detailed run record below is retained.
+
+Stage 0 gate criterion 6. `IntercolonyOrderSelfTest`, `IntercolonyRfqSelfTest` and
+`IntercolonyCombatClauseSelfTest` all drive transitions that now record commercial events, and
+each is wrapped in `IntercolonyTimelineGuard` so the records are rolled back afterwards.
+
+**Full path.** Same F12 → orange bug icon route. Run `Run order self-test`,
+`Run RFQ self-test` and `Run combat clause self-test`.
+
+**Pass.** Each reports its usual counts with **0 failed** and no new skips, and — the point of
+the guard — running `Dump commercial timeline` afterwards shows the **same record count as
+before the suites ran**, with no `Testholme`, `MatrixTest` or `Test faction` rows. A row from
+a settlement that does not exist means the guard is not working.
+
+(Matteo) Test Result: I didnt run this because it looks like something you can do yourself using the MCP.
+
+**DONE 2026-08-21 through the bridge, and he was right that it needed no human.** Run against his
+live migrated colony (schema 44, 69 world pawns, tick ~7,035,000) rather than a `-quicktest` world:
+**order 107/0/1, RFQ 81/0/0, combat clause 54/0/0**, world-pawn delta 0 on each. The order suite's
+single skip is the known one — `recorded-map collection vs AnyPlayerHomeMap`, which needs a second
+colony and honestly reports itself rather than passing.
+
+**The guard question is answered, and by the right measurement.** A full 17-suite run on the same
+colony reported `OK commercial timeline unchanged at 12 record(s)` and
+`OK market pressure unchanged at 0 settlement(s)`. No `Testholme`, `MatrixTest` or `Test faction`
+rows survived. That is the leak block comparing counts either side of the whole run, which is
+stronger than eyeballing a dump afterwards.
+
+**One transient worth recording rather than alarming about.** The first full run showed a world-pawn
+delta of **+2** (69 → 71). An immediate second identical run showed **0**, starting from 69 again —
+so the two pawns were gone, not accumulated. A leak accumulates; this did not. The cause is that a
+**live colony keeps ticking while the suite runs**, so world pawns legitimately come and go, which
+is also why every `-quicktest` run reads exactly 0: those worlds are static. This is a strong
+candidate explanation for the long-standing `job posting` pawn-count anomaly, which was recorded as
+74 → 80 on a live colony and has never reproduced on a static one. Not proof, but it is the first
+mechanism proposed that fits every observation.
+
+#### ~~Contract timeline events — no self-test coverage~~ — CLOSED 2026-08-21 (`05d7bb7`)
+
+**All seven write sites are now driven by the timeline suite**, which went 47 → 68 assertions. Three
+of them are separate `ContractStarted` paths — incoming offer, player proposal, renewal — and each is
+driven on its own, because covering one proves nothing about the others.
+
+**Verified in both directions rather than watched passing.** Deleting `AcceptRenewal`'s `Record` call
+turns exactly its two assertions red and leaves the other nineteen green, which is the result that
+matters: the other two `ContractStarted` sites do **not** mask a missing one. Green on four
+consecutive fresh worlds afterwards, all 21 running rather than skipping.
+
+**This closes the item without needing a live contract in play**, which is what it had been waiting
+for. The note below about needing the 0.9.3 save is superseded — and the reason it could never have
+worked is worth keeping: a contract accepted *before* the schema-43 upgrade tick correctly has no
+record, so an existing agreement could not have proved anything either way.
+
+#### Superseded: contract timeline events needed a live contract
+
+`ContractStarted`, `ContractCompleted`, `ContractFailed` and `ContractCancelled` are wired at
+six sites in `ContractService` but are **not** covered by the timeline self-test: driving them
+needs a live contract with cycles running, which `IntercolonyContractSelfTest` already builds.
+The cheapest proof is play — accept a supply agreement and confirm a `ContractStarted` row
+appears in **Dump commercial timeline** (same F12 menu). Worth folding into the contract
+self-test if Stage 5 touches these paths anyway.
+
+(Matteo) Test Result: You can test this, the 0.9.3 save has a contract - I'm pretty sure.
+
+**STILL OPEN, and an existing contract cannot close it — this is worth understanding before anyone
+tries again.** The timeline records an event *at the moment a status changes*. Schema 43 deliberately
+started history at the upgrade tick rather than inventing a past, and this save reports
+`timeline: 12 record(s), since tick 6473557`. Any contract accepted before that tick has no
+`ContractStarted` row and never will, correctly. So the test needs a contract that **starts after**
+the upgrade, not one that already exists.
+
+**A second obstacle, and it is a real gap in our own tooling:** `IntercolonyWorldComponent`
+maintains a `contracts` list (`Core/IntercolonyWorldComponent.cs:435`), but `DebugStateSummary`
+never prints it — it reports opportunities, orders, employments, postings, timeline, ledger,
+employer standing and labor debts, and stops. So neither the bridge nor `Dump state` can even
+answer "does this save have a supply agreement?". `Dump contracts` exists as a debug action but is
+not reachable over the bridge. **Fix the state summary first**; until then this check cannot be
+automated at all, which is why it stayed open rather than being quietly attempted.
+
+#### ~~Schema 42 → 43 migration under a real save — never run~~ -- CLOSED 2026-08-21
+
+This was a duplicate of the already-closed **Schema 42 → 43 migration under a real save** entry above; listing the same closed item twice is part of why this file stopped being usable.
+
+**Full path.** Load an actual save made with 0.9.3 (schema 42) — not a new colony. Then read
+the log with `powershell -ExecutionPolicy Bypass -File dev.ps1 log`.
+
+**Pass.** The log contains `Migrating state from schema 42 to 43` followed by
+`schema 42 -> 43: commercial timeline record spine added; history starts recording at tick N`,
+with no red errors, and every existing order, contract, request and employment still present
+afterwards.
+
+**Why a plain `dev.ps1` run cannot prove this — and what can, which is newer than this entry.**
+A `-quicktest` launch creates a *new* world that initializes at the current schema and therefore
+never enters the migration path at all. That much is still true and always will be. What has
+changed since this was written is the conclusion drawn from it: `dev.ps1 bridge -Save <name>`
+stages a copy of a real save as RimWorld's stock `autostart` file and boots into it through the
+real `GameDataSaveLoader.LoadGame`, so a migration **can** now be proven unattended. The 42 → 43 → 44
+chain was run that way on the 22.5 MB `Fenhana` colony with zero exceptions. Do not repeat the old
+claim that only a human at the keyboard can exercise a migration.
+
+### ~~Correction-batch self-tests~~ -- CLOSED 2026-08-21
+
+These were self-test items, and the bridge now runs them unattended on every pass, so they do not
+need re-listing here. The 2026-08-21 real-colony run reported order **107/0/1**, contract **39/0/0**
+and RFQ **81/0/0**.
 
 These are dev actions, not play-tests, but their procedures remain here so later changes can rerun
 them. All of them: **F12** → **orange bug icon** (top-right toolbar) → type the search term → click
@@ -53,7 +644,10 @@ regression; after the focused fix, the stated result is the rerun. The order sui
 skipped recorded-map collection versus `Find.AnyPlayerHomeMap` because the world had one home map,
 and skipped live-offer acceptance because no offer existed. Those limits remain manual work below.
 
-#### Find Buyer, availability and pickup timing — `Run order self-test`
+#### ~~Find Buyer, availability and pickup timing — `Run order self-test`~~ -- CLOSED 2026-08-21
+
+The unattended real-colony run reported **107 passed, 0 failed, 1 skipped** for the order suite, so
+this self-test item is closed; the skipped assertion remains subject to the file's no-proof rule.
 
 **Full path.** From RimWorld's main menu, open **Options** → **General** and enable
 **Development mode**. Load a colony with a home map. Press **F12**, click the **orange bug icon** in
@@ -70,7 +664,9 @@ route fallback; and the rule that an en-route buyer survives the old readiness d
 skip which prevents the new availability/pickup assertions from running is not evidence for those
 assertions and must not be marked as a pass.
 
-#### Contract liveness and completed-history offers — `Run contract self-test`
+#### ~~Contract liveness and completed-history offers — `Run contract self-test`~~ -- CLOSED 2026-08-21
+
+The unattended real-colony run reported **39 passed, 0 failed, 0 skipped** for the contract suite.
 
 **Full path.** From RimWorld's main menu, open **Options** → **General** and enable
 **Development mode**. Load a colony. Press **F12**, click the **orange bug icon** in the top-right
@@ -88,7 +684,9 @@ orders and reputation.
 accessible settlement/economic profile exists is a failure to verify this batch. Do not count
 "nothing visibly changed" as a pass.
 
-#### Procurement cancellation and concluded-order selection — `Run RFQ self-test`
+#### ~~Procurement cancellation and concluded-order selection — `Run RFQ self-test`~~ -- CLOSED 2026-08-21
+
+The unattended real-colony run reported **81 passed, 0 failed, 0 skipped** for the RFQ suite.
 
 **Full path.** From RimWorld's main menu, open **Options** → **General** and enable
 **Development mode**. Load a colony. Press **F12**, click the **orange bug icon** in the top-right
@@ -107,7 +705,10 @@ cancellation settlement prerequisite cannot be resolved, the test itself emits a
 initial `(no tradable defs or no settlements; skipped)` with no final count is also not a pass. Do
 not rerun until a quiet result and mark the first attempt passed.
 
-#### Buy-only unlock, including the obligation guard — `Run order self-test`
+#### ~~Buy-only unlock, including the obligation guard — `Run order self-test`~~ -- CLOSED 2026-08-21
+
+The unattended real-colony run reported **107 passed, 0 failed, 1 skipped** for the order suite; the
+buy-only assertions ran cleanly, while the separately named skipped assertion remains unproven.
 
 Added 2026-08-09 with the buy-only setting. Same action as the availability checks above, so one
 click covers both, but read the `Buy-only trade unlock:` block specifically.
@@ -317,7 +918,11 @@ with **You deliver**, load matching animals into a caravan and take them.
 **Not proven by any of this:** balance. Whether animal prices are sane against the rest of
 the economy needs play, not a test.
 
-#### Animal specification, matcher and eligibility — `Run animal spec self-test`
+#### ~~Animal specification, matcher and eligibility — `Run animal spec self-test`~~ -- CLOSED 2026-08-21
+
+The real-colony run reported **62 passed, 0 failed, 7 skipped**. This closes the suite item, but a
+skip is not proof: the real colony converted some old skips into assertions, not all of them, so
+those seven specific assertions remain unproven.
 
 Added 2026-08-09 with the `AnimalSpec` slice (schema 25). **F12** → **orange bug icon** → type
 `Run animal spec self-test` → click **Intercolony → Run animal spec self-test**.
@@ -352,7 +957,12 @@ equality, so a changed multiplier fails loudly instead of drifting. Two are wort
 The pricing group skips only if no positive-value live-bearing race using Core's `AnimalAdult` stage
 is loaded, which in practice means it runs almost always.
 
-#### Which colony a buyer collects from — `Run order self-test`
+#### ~~Which colony a buyer collects from — `Run order self-test`~~ -- CLOSED 2026-08-21
+
+This assertion had reported `SKIPPED` since 0.9.0 for want of a second colony. Matteo's first real
+two-colony run exposed two wrong-colony regressions, `9ca5062` fixed them, and the assertion now
+passes (`PROGRESS.md:2145-2152`). This closes only the self-test half: **The buyer-pickup colony fix
+needs two colonies** remains open as the manual reproduction (`PROGRESS.md:2214-2216`).
 
 Added 2026-08-09 with the fulfilment-colony fix (schema 26). Same action as the availability checks.
 
@@ -408,7 +1018,12 @@ vanish from the *first* colony instead. Either result means the fix did not take
 **Do not reuse this as the abandoned-colony test.** Since `b6e868e`, collection must never substitute
 another colony after the fulfilment colony disappears; that refusal path is the separate test below.
 
-### Procurement delivery and refund use the paying colony
+### ~~Procurement delivery and refund use the paying colony~~ -- CLOSED 2026-08-21
+
+Matteo directly observed two-colony delivery and refund routing working on 2026-08-13
+(`docs/BACKLOG.md:229-234`). That observation closes the paying-colony paths, while the same record
+says the map-less and zero-placement paths still lack practical play reproduction; they remain open
+as the separate item below.
 
 Added 2026-08-13 with the purchase-order destination fix (schema 32). Neither path is verified in
 play.
@@ -435,6 +1050,8 @@ at the first colony means the fix did not take.
 **Use the same world for the sales-side check above.** This is exactly the two-colony setup needed
 by the buyer-pickup assertion that `Run order self-test` keeps skipping, so one two-colony session
 can settle both the sales side and the procurement side.
+
+#### Map-less and zero-placement procurement paths remain unobserved
 
 **Not covered:** the no-home-map refund hold and the zero-placement refund hold have no coverage and
 are not practically reachable by hand. Do not treat this two-colony test as evidence for either.
@@ -523,6 +1140,57 @@ to the menu and reload.
 
 **Pass.** The log names each step through 39 in order, the second load reports the current schema, and
 no exception appears.
+
+### ~~The world-map Economy tab has never been seen on screen~~ — CONFIRMED IN PLAY 2026-08-22
+
+**Matteo confirmed it.** The Economy button appears on a settlement's world-map inspect pane and
+vanilla's Planet and Terrain tabs are both still present, which was the check that mattered: had the
+def patch replaced the inherited `inspectorTabs` list rather than merging into it, those two would
+have disappeared from every settlement in the game. The `XmlInheritance` reading was right.
+
+**This also closes Stage 1 acceptance criterion 7**, which had been open since the Stage 1 gate as
+"whether a settlement's economy reads clearly without debug numbers". The answer turned out to be
+that it read clearly but in the wrong place — the fix was placement, not wording.
+
+The steps below are kept as the regression check if the patch or the tab class is ever touched.
+
+### Original steps — kept as the regression check
+
+**Added 2026-08-21 with `713408b`.** Raised by Matteo during the Stage 1 tooltip look: clicking a
+settlement on the world map offers **Planet** and **Terrain**, and should offer **Economy** too,
+because that is where a player plans a colony and they will otherwise never find the mod's own tab.
+
+**What is already proven, so do not re-check it.** The full suite ran 968/0/14 after the change with
+a clean log, and **both ways this could fail silently do log an error**: a non-matching xpath makes
+`PatchOperationAdd` fail with a logged error, and a `WITab` type that cannot be resolved logs a type
+error at def load. Neither fired and the session log has zero errors. It was also verified from
+`reference/decompiled/Verse/XmlInheritance.cs` that the patch *merges* — `ApplyPatches()` runs before
+`XmlInheritance.Resolve()`, and `RecursiveNodeCopyOverwriteElements` appends `li` nodes into the
+inherited list — so vanilla's tabs are not replaced.
+
+**What remains, and it needs eyes.** None of that is the same as the button being there and the pane
+reading well.
+
+**Steps.** Open the world map, click any settlement of a real faction, and look for a third button
+beside Planet and Terrain.
+
+**Pass.**
+1. **Economy** appears as a third button, and Planet and Terrain both still work — if either vanilla
+   tab is now missing, the def patch replaced the inherited list instead of merging into it, and
+   that is a serious regression rather than a cosmetic one.
+2. The pane shows four labelled rows: economy, usually supplies, usually demands, quality
+   preference. They must match what the same settlement's tooltip says in the Market tab — they come
+   from one shared helper now, so a disagreement means the refactor lost something.
+3. Click a settlement with **no faction**, or an ancient ruin. A ruin must **not** have an Economy
+   tab at all; a factionless settlement should say it is not an economic participant rather than
+   drawing an empty pane.
+4. Shock a settlement (`Intercolony → Shock settlement economy`) and reopen its Economy tab: a
+   **Right now:** row appears naming the category and whether it is a shortage or a surplus. Then
+   open an *undisturbed* settlement and confirm there is **no** Right now row at all — its absence is
+   as much the design as its presence.
+5. Nothing overdraws anything else, and long category lists wrap rather than painting over the rows
+   beneath. The rows are measured with `Text.CalcHeight`, but that has been got wrong before in this
+   mod and is the reason rule 7 exists.
 
 ### The buy-only setting itself has never been seen
 

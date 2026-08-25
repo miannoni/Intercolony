@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Patch>
+  <!--
+    Settlement inherits the vanilla Planet, Terrain and Orbit tabs from
+    StaticWorldObjectBase. The patch loader runs before XML inheritance, so the inherited
+    inspectorTabs node does not exist on the concrete def yet. Adding a local list here lets
+    inheritance merge Economy into that list; patching the shared parent would wrongly put the
+    tab on ruins and every other static world object.
+  -->
+  <Operation Class="PatchOperationAdd">
+    <xpath>Defs/WorldObjectDef[defName="Settlement"]</xpath>
+    <value>
+      <inspectorTabs>
+        <li>Intercolony.WITab_Economy</li>
+      </inspectorTabs>
+    </value>
+  </Operation>
+</Patch>

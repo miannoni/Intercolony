@@ -43,11 +43,21 @@ namespace Intercolony
     /// </summary>
     public class PurchaseOrder : IExposable
     {
+        /// <summary>Sentinel meaning this order came from an RFQ, not a supplier listing.</summary>
+        public const int NoSupplierListing = 0;
+
         public int id;
 
         /// <summary>The request and quote this came from, for traceability.</summary>
         public int requestId;
         public int quotationId;
+
+        /// <summary>
+        /// Stable <see cref="SupplierListing.id"/> of the public listing that originated this
+        /// order. <see cref="NoSupplierListing"/> means the order came from an RFQ rather than
+        /// a supplier listing.
+        /// </summary>
+        public int supplierListingId = NoSupplierListing;
 
         public int settlementId;
         public string settlementName = "";
@@ -89,7 +99,7 @@ namespace Intercolony
         {
         }
 
-        public int TotalPrice => Mathf.RoundToInt(unitPrice * quantity);
+        public int TotalPrice => IntercolonyPricing.TotalPayment(unitPrice, quantity);
 
         public bool IsOpen => status == PurchaseOrderStatus.Confirmed ||
                               status == PurchaseOrderStatus.ReadyForPickup;
@@ -126,6 +136,7 @@ namespace Intercolony
             Scribe_Values.Look(ref id, "id", 0);
             Scribe_Values.Look(ref requestId, "requestId", 0);
             Scribe_Values.Look(ref quotationId, "quotationId", 0);
+            Scribe_Values.Look(ref supplierListingId, "supplierListingId", NoSupplierListing);
             Scribe_Values.Look(ref settlementId, "settlementId", -1);
             Scribe_Values.Look(ref settlementName, "settlementName", "");
             Scribe_Values.Look(ref factionName, "factionName", "");

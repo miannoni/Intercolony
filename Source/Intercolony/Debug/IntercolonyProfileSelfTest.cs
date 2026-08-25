@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
@@ -71,8 +71,8 @@ namespace Intercolony
 
                 foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
                 {
-                    float demand = p.DemandFor(category);
-                    float supply = p.SupplyFor(category);
+                    float demand = p.BaseDemandFor(category);
+                    float supply = p.BaseSupplyFor(category);
                     Check($"tech {tech} {category.Label()} weights finite",
                         !float.IsNaN(demand) && !float.IsInfinity(demand) &&
                         !float.IsNaN(supply) && !float.IsInfinity(supply),
@@ -116,8 +116,8 @@ namespace Intercolony
             bool weightsMatch = true;
             foreach (IntercolonyProductCategory category in IntercolonyProductCategoryUtility.All)
             {
-                if (Math.Abs(a.DemandFor(category) - b.DemandFor(category)) > 0.0001f ||
-                    Math.Abs(a.SupplyFor(category) - b.SupplyFor(category)) > 0.0001f)
+                if (Math.Abs(a.BaseDemandFor(category) - b.BaseDemandFor(category)) > 0.0001f ||
+                    Math.Abs(a.BaseSupplyFor(category) - b.BaseSupplyFor(category)) > 0.0001f)
                 {
                     weightsMatch = false;
                 }

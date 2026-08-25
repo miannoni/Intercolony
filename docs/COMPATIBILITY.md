@@ -14,6 +14,18 @@ Everything below was observed on one machine, in one load order. The installed g
   their interaction. This was ordinary play, not a systematic compatibility test.
 - **UI scale:** 1.75x. This is the scale at which the layout was judged. Other scales are untested.
 
+## Saves, language and required dependency
+
+- **Existing saves:** A 0.9.3 save at schema 42 upgrades through the migration chain to schema 56.
+  No existing obligation changes its price or quantity during that upgrade. The Stage 8B migration
+  matrix asserts this invariant and checks it rather than assuming it from the implementation.
+- **Within 1.0 development:** the mod is not save-breaking across the 1.0 development schemas.
+  However, a save opened at schema 56 cannot be taken back to 0.9.3, which expects schema 42. That
+  reverse direction loses data; keep a backup if you need to return to the released 0.9.3 branch.
+- **Language:** Intercolony is English-only. Localization was dropped, not deferred; the project is
+  not planning a later localization pass for this release line.
+- **Required dependency:** Harmony is a required item. Load Harmony before Intercolony.
+
 ## Content from DLC and mods
 
 Intercolony does not enumerate vanilla products. The entry point is

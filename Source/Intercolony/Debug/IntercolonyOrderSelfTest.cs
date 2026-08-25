@@ -267,6 +267,9 @@ namespace Intercolony
             Check("healthy order untouched", healthy.IsOpen);
             Check("already-closed order untouched", alreadyDone.status == SalesOrderStatus.Cancelled);
 
+            // --- Retention caps preserve live work and the newest removable history ---
+            RunOrderHistoryRetentionChecks(state, Check);
+
             // --- Accepting consumes the offer, so it cannot be taken twice (§76.1) ---
             int before = state.Opportunities.Count;
             MarketOpportunity offer = null;
@@ -302,7 +305,7 @@ namespace Intercolony
                     Check("accepted order is open", accepted.IsOpen);
                     Check("accepted order records the offer", accepted.opportunityId == offerId);
                     float expectedAcceptedPrice = IntercolonyPricing.RepriceForQuantity(
-                        offer,
+                        state, offer,
                         state.GetProfile(IntercolonyMarketAccess.FindSettlement(offer.settlementId)),
                         offer.quantity,
                         out _);
@@ -488,6 +491,243 @@ namespace Intercolony
                 deadlineTick = GenTicks.TicksGame + GenDate.TicksPerDay * 10,
                 status = SalesOrderStatus.Accepted,
                 settlementName = "TestTown"
+            };
+        }
+
+        private static void RunOrderHistoryRetentionChecks(
+            IntercolonyWorldComponent state,
+            Action<string, bool, string> check)
+        {
+            List<SalesOrder> savedSalesOrders = new List<SalesOrder>(state.Orders);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<PurchaseRequest> savedRequests = new List<PurchaseRequest>(state.Requests);
+
+            const int Excess = 3;
+            try
+            {
+                // Each phase empties all three collections. This makes a mutation of the wrong
+                // collection visible instead of letting Prune's summed return value hide the trap.
+                ClearOrderHistoryCollections(state);
+                for (int i = 0; i < OrderHistoryService.MaxClosedSalesOrders - 1; i++)
+                {
+                    state.Orders.Add(ClosedSalesHistoryFixture(i));
+                }
+                List<SalesOrder> underCapSales = new List<SalesOrder>(state.Orders);
+                int underCapSalesRemoved = OrderHistoryService.Prune(state);
+                check("sales history below its cap is untouched",
+                    underCapSalesRemoved == 0 && SameReferences(state.Orders, underCapSales),
+                    $"removed {underCapSalesRemoved}, remaining {state.Orders.Count}");
+
+                ClearOrderHistoryCollections(state);
+                SalesOrder oldestSale = null;
+                SalesOrder newestSale = null;
+                for (int i = 0; i < OrderHistoryService.MaxClosedSalesOrders + Excess; i++)
+                {
+                    SalesOrder fixture = ClosedSalesHistoryFixture(i);
+                    oldestSale = oldestSale ?? fixture;
+                    newestSale = fixture;
+                    state.Orders.Add(fixture);
+                }
+                OrderHistoryService.Prune(state);
+                check("sales history removes exactly the excess",
+                    state.Orders.Count == OrderHistoryService.MaxClosedSalesOrders,
+                    $"remaining {state.Orders.Count}");
+                check("sales history retains the newest records",
+                    !state.Orders.Contains(oldestSale) && state.Orders.Contains(newestSale),
+                    $"oldest={state.Orders.Contains(oldestSale)}, " +
+                    $"newest={state.Orders.Contains(newestSale)}");
+
+                ClearOrderHistoryCollections(state);
+                for (int i = 0; i < OrderHistoryService.MaxClosedSalesOrders + Excess; i++)
+                {
+                    state.Orders.Add(ClosedSalesHistoryFixture(i));
+                }
+                SalesOrder openSale = ClosedSalesHistoryFixture(int.MaxValue);
+                openSale.status = SalesOrderStatus.Accepted;
+                state.Orders.Add(openSale);
+                OrderHistoryService.Prune(state);
+                check("an open sales order is never pruned",
+                    state.Orders.Contains(openSale),
+                    $"remaining {state.Orders.Count}");
+
+                ClearOrderHistoryCollections(state);
+                for (int i = 0; i < OrderHistoryService.MaxClosedPurchaseOrders - 1; i++)
+                {
+                    state.PurchaseOrders.Add(ClosedPurchaseHistoryFixture(i));
+                }
+                List<PurchaseOrder> underCapPurchases =
+                    new List<PurchaseOrder>(state.PurchaseOrders);
+                int underCapPurchasesRemoved = OrderHistoryService.Prune(state);
+                check("purchase-order history below its cap is untouched",
+                    underCapPurchasesRemoved == 0 &&
+                    SameReferences(state.PurchaseOrders, underCapPurchases),
+                    $"removed {underCapPurchasesRemoved}, remaining {state.PurchaseOrders.Count}");
+
+                ClearOrderHistoryCollections(state);
+                PurchaseOrder oldestPurchase = null;
+                PurchaseOrder newestPurchase = null;
+                for (int i = 0; i < OrderHistoryService.MaxClosedPurchaseOrders + Excess; i++)
+                {
+                    PurchaseOrder fixture = ClosedPurchaseHistoryFixture(i);
+                    oldestPurchase = oldestPurchase ?? fixture;
+                    newestPurchase = fixture;
+                    state.PurchaseOrders.Add(fixture);
+                }
+                OrderHistoryService.Prune(state);
+                check("purchase-order history removes exactly the excess",
+                    state.PurchaseOrders.Count == OrderHistoryService.MaxClosedPurchaseOrders,
+                    $"remaining {state.PurchaseOrders.Count}");
+                check("purchase-order history retains the newest records",
+                    !state.PurchaseOrders.Contains(oldestPurchase) &&
+                    state.PurchaseOrders.Contains(newestPurchase),
+                    $"oldest={state.PurchaseOrders.Contains(oldestPurchase)}, " +
+                    $"newest={state.PurchaseOrders.Contains(newestPurchase)}");
+
+                ClearOrderHistoryCollections(state);
+                for (int i = 0; i < OrderHistoryService.MaxClosedPurchaseOrders + Excess; i++)
+                {
+                    state.PurchaseOrders.Add(ClosedPurchaseHistoryFixture(i));
+                }
+                PurchaseOrder openPurchase = ClosedPurchaseHistoryFixture(int.MaxValue);
+                openPurchase.status = PurchaseOrderStatus.Confirmed;
+                state.PurchaseOrders.Add(openPurchase);
+                OrderHistoryService.Prune(state);
+                check("an open purchase order is never pruned",
+                    state.PurchaseOrders.Contains(openPurchase),
+                    $"remaining {state.PurchaseOrders.Count}");
+
+                ClearOrderHistoryCollections(state);
+                for (int i = 0; i < OrderHistoryService.MaxConcludedPurchaseRequests - 1; i++)
+                {
+                    state.Requests.Add(ConcludedRequestHistoryFixture(i));
+                }
+                List<PurchaseRequest> underCapRequests =
+                    new List<PurchaseRequest>(state.Requests);
+                int underCapRequestsRemoved = OrderHistoryService.Prune(state);
+                check("purchase-request history below its cap is untouched",
+                    underCapRequestsRemoved == 0 &&
+                    SameReferences(state.Requests, underCapRequests),
+                    $"removed {underCapRequestsRemoved}, remaining {state.Requests.Count}");
+
+                ClearOrderHistoryCollections(state);
+                PurchaseRequest oldestRequest = null;
+                PurchaseRequest newestRequest = null;
+                for (int i = 0; i < OrderHistoryService.MaxConcludedPurchaseRequests + Excess; i++)
+                {
+                    PurchaseRequest fixture = ConcludedRequestHistoryFixture(i);
+                    oldestRequest = oldestRequest ?? fixture;
+                    newestRequest = fixture;
+                    state.Requests.Add(fixture);
+                }
+                OrderHistoryService.Prune(state);
+                check("purchase-request history removes exactly the excess",
+                    state.Requests.Count == OrderHistoryService.MaxConcludedPurchaseRequests,
+                    $"remaining {state.Requests.Count}");
+                check("purchase-request history retains the newest records",
+                    !state.Requests.Contains(oldestRequest) && state.Requests.Contains(newestRequest),
+                    $"oldest={state.Requests.Contains(oldestRequest)}, " +
+                    $"newest={state.Requests.Contains(newestRequest)}");
+
+                ClearOrderHistoryCollections(state);
+                for (int i = 0; i < OrderHistoryService.MaxConcludedPurchaseRequests + Excess; i++)
+                {
+                    state.Requests.Add(ConcludedRequestHistoryFixture(i));
+                }
+                PurchaseRequest openRequest = ConcludedRequestHistoryFixture(int.MaxValue);
+                openRequest.status = PurchaseRequestStatus.Open;
+                state.Requests.Add(openRequest);
+                OrderHistoryService.Prune(state);
+                check("an open purchase request is never pruned",
+                    state.Requests.Contains(openRequest),
+                    $"remaining {state.Requests.Count}");
+
+                ClearOrderHistoryCollections(state);
+                PurchaseRequest referencedRequest = null;
+                for (int i = 0; i < OrderHistoryService.MaxConcludedPurchaseRequests + Excess; i++)
+                {
+                    PurchaseRequest fixture = ConcludedRequestHistoryFixture(i);
+                    referencedRequest = referencedRequest ?? fixture;
+                    state.Requests.Add(fixture);
+                }
+                state.PurchaseOrders.Add(new PurchaseOrder
+                {
+                    id = -3_000_001,
+                    requestId = referencedRequest.id,
+                    status = PurchaseOrderStatus.Confirmed
+                });
+                OrderHistoryService.Prune(state);
+                check("a purchase-order reference protects its concluded request",
+                    state.Requests.Contains(referencedRequest),
+                    $"request {referencedRequest.id} present=" +
+                    state.Requests.Contains(referencedRequest));
+            }
+            finally
+            {
+                // Restore the player's actual records, not merely the old counts. Count-based
+                // cleanup can leave synthetic fixtures in place of real save data.
+                state.Orders.Clear();
+                state.Orders.AddRange(savedSalesOrders);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.Requests.Clear();
+                state.Requests.AddRange(savedRequests);
+            }
+        }
+
+        private static void ClearOrderHistoryCollections(IntercolonyWorldComponent state)
+        {
+            state.Orders.Clear();
+            state.PurchaseOrders.Clear();
+            state.Requests.Clear();
+        }
+
+        private static bool SameReferences<T>(List<T> actual, List<T> expected)
+        {
+            if (actual.Count != expected.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < actual.Count; i++)
+            {
+                if (!ReferenceEquals(actual[i], expected[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static SalesOrder ClosedSalesHistoryFixture(int recency)
+        {
+            return new SalesOrder
+            {
+                id = -1_000_000 + recency,
+                line = new OrderLine(ThingDefOf.Silver, 1),
+                completedTick = recency,
+                status = SalesOrderStatus.Cancelled
+            };
+        }
+
+        private static PurchaseOrder ClosedPurchaseHistoryFixture(int recency)
+        {
+            return new PurchaseOrder
+            {
+                id = -2_000_000 + recency,
+                orderedTick = recency,
+                status = PurchaseOrderStatus.Cancelled
+            };
+        }
+
+        private static PurchaseRequest ConcludedRequestHistoryFixture(int recency)
+        {
+            return new PurchaseRequest
+            {
+                id = -4_000_000 + recency,
+                createdTick = recency,
+                status = PurchaseRequestStatus.Cancelled
             };
         }
 

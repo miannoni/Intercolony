@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
@@ -505,6 +506,18 @@ namespace Intercolony
         /// </summary>
         public static int TakeFromColony(SalesOrder order, Map map, int wanted)
         {
+            return TakeFromColony(order, map, wanted, null);
+        }
+
+        /// <summary>
+        /// Takes units out of colony storage and optionally reports each exact Thing about to be
+        /// destroyed. The callback is invoked after any SplitOff but before Destroy, which gives
+        /// quality capture the only honest view of the goods the buyer actually received. The
+        /// three-argument overload above keeps existing callers on the same behavior.
+        /// </summary>
+        internal static int TakeFromColony(
+            SalesOrder order, Map map, int wanted, Action<Thing> beforeDestroy)
+        {
             if (order?.line?.thingDef == null || map == null || wanted <= 0)
             {
                 return 0;
@@ -530,13 +543,16 @@ namespace Intercolony
 
                 if (thing is MinifiedThing)
                 {
+                    beforeDestroy?.Invoke(thing);
                     thing.Destroy(DestroyMode.Vanish);
                     remaining -= 1;
                     continue;
                 }
 
                 int take = Mathf.Min(remaining, thing.stackCount);
-                thing.SplitOff(take).Destroy(DestroyMode.Vanish);
+                Thing split = thing.SplitOff(take);
+                beforeDestroy?.Invoke(split);
+                split.Destroy(DestroyMode.Vanish);
                 remaining -= take;
             }
 

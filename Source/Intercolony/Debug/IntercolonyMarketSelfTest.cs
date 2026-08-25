@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
@@ -22,6 +22,7 @@ namespace Intercolony
             StringBuilder sb = new StringBuilder();
             int passed = 0;
             int failed = 0;
+            int skipped = 0;
 
             void Check(string name, bool ok, string detail = null)
             {
@@ -34,6 +35,12 @@ namespace Intercolony
                     failed++;
                     sb.AppendLine($"  FAIL  {name}{(detail == null ? "" : " — " + detail)}");
                 }
+            }
+
+            void Skip(string name, string reason)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {name}  ({reason})");
             }
 
             sb.AppendLine("Market generation self-test");
@@ -156,20 +163,27 @@ namespace Intercolony
                 {
                     foreach (SettlementEconomicProfile candidateProfile in profiles)
                     {
-                        float categoryDemand = candidateProfile.DemandFor(demandProbeCategory);
-                        float first = candidateProfile.DemandFor(
+                        float categoryDemand = candidateProfile.BaseDemandFor(demandProbeCategory);
+                        float first = candidateProfile.BaseDemandFor(
                             sameCategoryGoods[0], demandProbeCategory);
                         float low = first;
                         float high = first;
                         for (int i = 0; i < 3; i++)
                         {
-                            float demand = candidateProfile.DemandFor(
+                            float demand = candidateProfile.BaseDemandFor(
                                 sameCategoryGoods[i], demandProbeCategory);
-                            float repeated = candidateProfile.DemandFor(
+                            float repeated = candidateProfile.BaseDemandFor(
                                 sameCategoryGoods[i], demandProbeCategory);
                             perGoodDemandStable &= Mathf.Abs(demand - repeated) < 0.0001f;
-                            perGoodDemandBounded &= demand >= categoryDemand * 0.55f - 0.0001f &&
-                                                    demand <= categoryDemand * 1.45f + 0.0001f;
+
+                            // Bounded by the standing affinity spread, not the old 0.55-1.45
+                            // cycle roll. Asserting the loose old range would let the band widen
+                            // back out unnoticed, and a wide standing affinity is a different
+                            // thing from the cycle noise Stage 1 removed.
+                            float spread = SettlementEconomicProfile.ExactGoodAffinitySpread;
+                            perGoodDemandBounded &=
+                                demand >= categoryDemand * (1f - spread) - 0.0001f &&
+                                demand <= categoryDemand * (1f + spread) + 0.0001f;
                             low = Mathf.Min(low, demand);
                             high = Mathf.Max(high, demand);
                         }
@@ -182,6 +196,47 @@ namespace Intercolony
                 Check("same-category goods have distinct demand", perGoodDemandDiffers,
                     sameCategoryGoods == null ? "no category had three goods" : null);
                 Check("per-good demand remains a bounded category perturbation", perGoodDemandBounded);
+
+                // Stage 1 acceptance criterion 2: the baseline profile must not depend on the
+                // current refresh count. Before Stage 1.2 it did — exact-good demand was rolled
+                // per cycle off IntercolonyWorldComponent.Current.RefreshCount.
+                //
+                // Proven as purity rather than by moving the clock: forcing a real refresh to
+                // observe the difference would advance the player's whole economy — generating
+                // offers, expiring listings, running contract cycles — for one assertion. Instead
+                // two profiles carrying the same seed but nothing else in common must agree, and
+                // two seeds must disagree. A function of (seed, def) alone cannot be reading the
+                // refresh count, and the affinity is the only per-good term left.
+                ThingDef purityGood = sameCategoryGoods?[0];
+                bool affinityIsPure = true;
+                bool affinityVariesBySeed = false;
+                if (purityGood != null)
+                {
+                    SettlementEconomicProfile twinA = new SettlementEconomicProfile
+                    {
+                        seed = 8191,
+                        archetype = IntercolonyArchetype.Agricultural,
+                        wealthTier = IntercolonyWealthTier.Destitute
+                    };
+                    SettlementEconomicProfile twinB = new SettlementEconomicProfile
+                    {
+                        seed = 8191,
+                        archetype = IntercolonyArchetype.Industrial,
+                        wealthTier = IntercolonyWealthTier.Wealthy
+                    };
+                    SettlementEconomicProfile other = new SettlementEconomicProfile { seed = 8192 };
+
+                    float a = twinA.ExactGoodAffinityFor(purityGood);
+                    float b = twinB.ExactGoodAffinityFor(purityGood);
+                    affinityIsPure = Mathf.Abs(a - b) < 0.0001f;
+                    affinityVariesBySeed =
+                        Mathf.Abs(a - other.ExactGoodAffinityFor(purityGood)) > 0.0001f;
+                }
+
+                Check("exact-good affinity depends only on seed and def", affinityIsPure,
+                    purityGood == null ? "no category had three goods" : null);
+                Check("exact-good affinity differs between settlements", affinityVariesBySeed,
+                    purityGood == null ? "no category had three goods" : null);
 
                 SettlementEconomicProfile[] demandProbes = new SettlementEconomicProfile[5];
                 bool[] seenInterested = new bool[demandProbes.Length];
@@ -204,7 +259,7 @@ namespace Intercolony
                     float bestDemand = float.MinValue;
                     for (int i = 0; i < demandProbes.Length; i++)
                     {
-                        float demand = demandProbes[i].DemandFor(good, demandProbeCategory);
+                        float demand = demandProbes[i].BaseDemandFor(good, demandProbeCategory);
                         seenInterested[i] |= demand >= FindBuyerService.InterestThreshold;
                         seenUninterested[i] |= demand < FindBuyerService.InterestThreshold;
                         if (demand > bestDemand)
@@ -235,7 +290,7 @@ namespace Intercolony
                 Check("per-good demand changes settlement ordering", demandRankingChanges);
 
                 float price = IntercolonyPricing.UnitPrice(
-                    sample, 500, profile, category, 25f, null, out List<PriceFactor> factors);
+                    null, sample, 500, profile, category, 25f, null, out List<PriceFactor> factors);
 
                 Check("unit price is positive", price > 0f, price.ToString("F3"));
                 Check("breakdown has factors", factors.Count >= 3, $"count {factors.Count}");
@@ -290,7 +345,8 @@ namespace Intercolony
 
                     IntercolonyProductCategory c =
                         IntercolonyProductClassifier.Classify(def) ?? IntercolonyProductCategory.Commodities;
-                    IntercolonyPricing.UnitPrice(def, 100, profile, c, 10f, null, out List<PriceFactor> defFactors);
+                    IntercolonyPricing.UnitPrice(
+                        null, def, 100, profile, c, 10f, null, out List<PriceFactor> defFactors);
                     foreach (PriceFactor factor in defFactors)
                     {
                         if (factor.label.Contains("Quality"))
@@ -401,6 +457,8 @@ namespace Intercolony
                         Check("a different refresh cycle changes the roll", anyDiffers,
                             "every cycle produced identical demand");
                     }
+
+                    CheckDemandConditionLotQuantities(state, sb, Check, Skip);
 
                     Check("respects the per-settlement cap",
                         MarketOpportunityGenerator.GenerateFor(
@@ -758,7 +816,7 @@ namespace Intercolony
                         if (offer.unitPrice <= 0f) badPrice++;
                         if (offer.quantity > offer.maxQuantity) overAppetite++;
                         float defaultRate = FindBuyerService.SellRateFor(
-                            offer, offer.quantity, FulfillmentMode.BuyerPickup);
+                            state, offer, offer.quantity, FulfillmentMode.BuyerPickup);
                         if (!Mathf.Approximately(offer.unitPrice, defaultRate)) wrongDefaultRate++;
                         if (offer.TotalPrice > previousTotal) sortedByValue = false;
                         previousTotal = offer.TotalPrice;
@@ -828,7 +886,7 @@ namespace Intercolony
                 Check("fallback repricing does not apply pickup logistics twice",
                     Mathf.Approximately(
                         FindBuyerService.SellRateFor(
-                            fallbackOffer, 1, FulfillmentMode.BuyerPickup),
+                            state, fallbackOffer, 1, FulfillmentMode.BuyerPickup),
                         fallbackOffer.unitPrice));
 
                 // Saturation must bite here too, or Find Buyer becomes a way to dodge §13 by
@@ -868,7 +926,7 @@ namespace Intercolony
             IntercolonyPricing.SaturationFactor(123);
             if (profiles.Count > 0 && tradable.Count > 0)
             {
-                IntercolonyPricing.UnitPrice(tradable[0], 100, profiles[0],
+                IntercolonyPricing.UnitPrice(null, tradable[0], 100, profiles[0],
                     IntercolonyProductCategory.Commodities, 10f, null, out _);
             }
 
@@ -877,8 +935,260 @@ namespace Intercolony
             Check("pricing leaves global RNG untouched", expected == actual,
                 $"got {actual}, expected {expected}");
 
-            sb.AppendLine($"  {passed} passed, {failed} failed.");
+            sb.AppendLine($"  {passed} passed, {failed} failed, {skipped} skipped.");
             return sb.ToString();
+        }
+
+        private static void CheckDemandConditionLotQuantities(
+            IntercolonyWorldComponent state,
+            StringBuilder sb,
+            Action<string, bool, string> check,
+            Action<string, string> skip)
+        {
+            const int MaxSampledSettlements = 12;
+            const int SyntheticCycles = 60;
+
+            List<Settlement> quantitySettlements = new List<Settlement>();
+            List<SettlementEconomicProfile> quantityProfiles =
+                new List<SettlementEconomicProfile>();
+            List<Settlement> worldSettlements = Find.WorldObjects?.Settlements;
+            if (worldSettlements != null)
+            {
+                foreach (Settlement candidate in worldSettlements)
+                {
+                    if (quantitySettlements.Count >= MaxSampledSettlements)
+                    {
+                        break;
+                    }
+
+                    if (!IntercolonyMarketAccess.IsAccessible(candidate))
+                    {
+                        continue;
+                    }
+
+                    SettlementEconomicProfile profile = state.GetProfile(candidate);
+                    if (profile == null)
+                    {
+                        continue;
+                    }
+
+                    quantitySettlements.Add(candidate);
+                    quantityProfiles.Add(profile);
+                }
+            }
+
+            Dictionary<int, SettlementMarketState> savedMarketStates =
+                new Dictionary<int, SettlementMarketState>();
+            foreach (Settlement sampledSettlement in quantitySettlements)
+            {
+                SettlementMarketState saved =
+                    state.MarketStateFor(sampledSettlement.ID, createIfMissing: false);
+                savedMarketStates.Add(sampledSettlement.ID, saved);
+            }
+
+            try
+            {
+                foreach (SettlementMarketState saved in savedMarketStates.Values)
+                {
+                    if (saved != null)
+                    {
+                        state.MarketStates.Remove(saved);
+                    }
+                }
+
+                state.RefreshMarketStateIndex();
+
+                float undisturbedDemand = TotalSampledDemandWeight(
+                    state, quantityProfiles);
+
+                // Quantity must read current demand without letting category selection muddy
+                // the comparison. Equal pressure on every category scales every category
+                // weight and the weighted roll together, leaving the chosen goods unchanged.
+                int quantityRefresh = -1;
+                int undisturbedTotal = 0;
+                int undisturbedLotCount = 0;
+                int producingSettlements = 0;
+                int mostProducingSettlements = 0;
+                int firstSyntheticRefresh = state.RefreshCount + 1000;
+                for (int r = firstSyntheticRefresh;
+                     r < firstSyntheticRefresh + SyntheticCycles && quantityRefresh < 0;
+                     r++)
+                {
+                    int candidateTotal = 0;
+                    int candidateLotCount = 0;
+                    int candidateProducingSettlements = 0;
+                    int candidateId = 3000;
+                    for (int i = 0; i < quantitySettlements.Count; i++)
+                    {
+                        List<MarketOpportunity> candidateLots =
+                            MarketOpportunityGenerator.GenerateFor(
+                                quantitySettlements[i], quantityProfiles[i], 4242, r, 0,
+                                () => candidateId++);
+                        if (candidateLots.Count > 0)
+                        {
+                            candidateProducingSettlements++;
+                        }
+
+                        candidateLotCount += candidateLots.Count;
+                        foreach (MarketOpportunity opportunity in candidateLots)
+                        {
+                            candidateTotal += opportunity.quantity;
+                        }
+                    }
+
+                    mostProducingSettlements = Mathf.Max(
+                        mostProducingSettlements, candidateProducingSettlements);
+                    if (candidateTotal > 0 && candidateProducingSettlements >= 4)
+                    {
+                        quantityRefresh = r;
+                        undisturbedTotal = candidateTotal;
+                        undisturbedLotCount = candidateLotCount;
+                        producingSettlements = candidateProducingSettlements;
+                    }
+                }
+
+                if (quantityRefresh < 0 || undisturbedTotal == 0 || producingSettlements < 4)
+                {
+                    skip(
+                        "demand condition sizes market lots",
+                        $"{quantitySettlements.Count} settlements sampled; at most " +
+                        $"{mostProducingSettlements} produced opportunities in one of " +
+                        $"{SyntheticCycles} synthetic cycles");
+                    return;
+                }
+
+                foreach (Settlement sampledSettlement in quantitySettlements)
+                {
+                    foreach (IntercolonyProductCategory pressureCategory in
+                             IntercolonyProductCategoryUtility.All)
+                    {
+                        MarketPressureService.ApplyDemandShock(
+                            state, sampledSettlement.ID, pressureCategory,
+                            MarketPressureService.MaxPressure);
+                    }
+                }
+
+                int shortageTotal = 0;
+                int shortageId = 3000;
+                for (int i = 0; i < quantitySettlements.Count; i++)
+                {
+                    List<MarketOpportunity> shortageLots =
+                        MarketOpportunityGenerator.GenerateFor(
+                            quantitySettlements[i], quantityProfiles[i], 4242, quantityRefresh, 0,
+                            () => shortageId++);
+                    foreach (MarketOpportunity opportunity in shortageLots)
+                    {
+                        shortageTotal += opportunity.quantity;
+                    }
+                }
+                float shortageDemand = TotalSampledDemandWeight(state, quantityProfiles);
+
+                foreach (Settlement sampledSettlement in quantitySettlements)
+                {
+                    state.MarketStates.RemoveAll(
+                        s => s != null && s.settlementId == sampledSettlement.ID);
+                }
+
+                state.RefreshMarketStateIndex();
+                foreach (Settlement sampledSettlement in quantitySettlements)
+                {
+                    foreach (IntercolonyProductCategory pressureCategory in
+                             IntercolonyProductCategoryUtility.All)
+                    {
+                        MarketPressureService.ApplyDemandShock(
+                            state, sampledSettlement.ID, pressureCategory,
+                            -MarketPressureService.MaxPressure);
+                    }
+                }
+
+                int glutTotal = 0;
+                int glutId = 3000;
+                for (int i = 0; i < quantitySettlements.Count; i++)
+                {
+                    List<MarketOpportunity> glutLots =
+                        MarketOpportunityGenerator.GenerateFor(
+                            quantitySettlements[i], quantityProfiles[i], 4242, quantityRefresh, 0,
+                            () => glutId++);
+                    foreach (MarketOpportunity opportunity in glutLots)
+                    {
+                        glutTotal += opportunity.quantity;
+                    }
+                }
+                float glutDemand = TotalSampledDemandWeight(state, quantityProfiles);
+
+                const float DemandMovementEpsilon = 0.0001f;
+                if (shortageDemand <= undisturbedDemand + DemandMovementEpsilon)
+                {
+                    skip(
+                        "a demand shortage increases total market lot quantity",
+                        $"sampled effective demand did not increase " +
+                        $"{undisturbedDemand:F4}->{shortageDemand:F4}");
+                }
+                else
+                {
+                    check("a demand shortage increases total market lot quantity",
+                        shortageTotal > undisturbedTotal,
+                        $"{undisturbedTotal} -> {shortageTotal} across " +
+                        $"{quantitySettlements.Count} settlements sampled; demand " +
+                        $"{undisturbedDemand:F4}->{shortageDemand:F4}");
+                }
+
+                if (glutDemand >= undisturbedDemand - DemandMovementEpsilon)
+                {
+                    skip(
+                        "a demand glut decreases total market lot quantity",
+                        $"sampled effective demand did not decrease " +
+                        $"{undisturbedDemand:F4}->{glutDemand:F4}");
+                }
+                else
+                {
+                    check("a demand glut decreases total market lot quantity",
+                        glutTotal < undisturbedTotal,
+                        $"{undisturbedTotal} -> {glutTotal} across " +
+                        $"{quantitySettlements.Count} settlements sampled; demand " +
+                        $"{undisturbedDemand:F4}->{glutDemand:F4}");
+                }
+                int roundingAllowance = undisturbedLotCount * 50;
+                check("demand-conditioned lot quantity stays within the economy bound",
+                    shortageTotal <=
+                        undisturbedTotal * EffectiveEconomyService.MaxCondition + roundingAllowance,
+                    $"{undisturbedTotal} -> {shortageTotal} across " +
+                    $"{quantitySettlements.Count} settlements sampled, allowance " +
+                    roundingAllowance);
+            }
+            finally
+            {
+                foreach (Settlement sampledSettlement in quantitySettlements)
+                {
+                    state.MarketStates.RemoveAll(
+                        s => s != null && s.settlementId == sampledSettlement.ID);
+                    SettlementMarketState saved = savedMarketStates[sampledSettlement.ID];
+                    if (saved != null)
+                    {
+                        state.MarketStates.Add(saved);
+                    }
+                }
+
+                state.RefreshMarketStateIndex();
+            }
+        }
+
+        private static float TotalSampledDemandWeight(
+            IntercolonyWorldComponent state,
+            List<SettlementEconomicProfile> profiles)
+        {
+            float total = 0f;
+            foreach (SettlementEconomicProfile profile in profiles)
+            {
+                foreach (IntercolonyProductCategory category in
+                         IntercolonyProductCategoryUtility.All)
+                {
+                    total += Mathf.Max(0.01f,
+                        EffectiveEconomyService.EffectiveDemand(state, profile, category));
+                }
+            }
+
+            return total;
         }
     }
 }

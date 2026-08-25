@@ -35,16 +35,65 @@ namespace Intercolony
         public static SalesOrder Accept(
             IntercolonyWorldComponent state, MarketOpportunity opportunity, int quantity)
         {
+            return AcceptInternal(
+                state, opportunity, quantity, null, acceptingFinalCounter: false);
+        }
+
+        /// <summary>
+        /// Creates a binding order from terms already accepted by the negotiation state machine.
+        /// The caller supplies a distinct term package; this method never rewrites the original
+        /// opportunity, and the final-counter flag prevents a stale caller from accepting an
+        /// arbitrary package after the one response has been recorded.
+        /// </summary>
+        internal static SalesOrder AcceptNegotiatedTerms(
+            IntercolonyWorldComponent state,
+            MarketOpportunity opportunity,
+            IntercolonyNegotiationTerms agreedTerms,
+            bool acceptingFinalCounter)
+        {
+            return AcceptInternal(
+                state, opportunity, 0, agreedTerms, acceptingFinalCounter);
+        }
+
+        private static SalesOrder AcceptInternal(
+            IntercolonyWorldComponent state,
+            MarketOpportunity opportunity,
+            int requestedQuantity,
+            IntercolonyNegotiationTerms agreedTerms,
+            bool acceptingFinalCounter)
+        {
+            bool negotiated = agreedTerms != null;
             if (state == null || opportunity == null)
             {
                 return null;
             }
 
-            quantity = Mathf.Clamp(quantity, 1, opportunity.quantity);
-
-            if (!opportunity.IsAvailable)
+            int quantity = negotiated
+                ? agreedTerms.quantity
+                : Mathf.Clamp(requestedQuantity, 1, opportunity.quantity);
+            if (quantity < 1 || quantity > opportunity.quantity)
             {
-                IntercolonyLog.Warning($"Opportunity {opportunity.id} is {opportunity.state}; cannot accept.");
+                IntercolonyLog.Warning(
+                    $"Cannot accept opportunity {opportunity.id}: quantity {quantity} is invalid.");
+                return null;
+            }
+
+            if (negotiated &&
+                (agreedTerms.unitPrice <= 0f || float.IsNaN(agreedTerms.unitPrice) ||
+                 float.IsInfinity(agreedTerms.unitPrice) || agreedTerms.deadlineDays < 0 ||
+                 (agreedTerms.fulfillment != FulfillmentMode.SellerDelivery &&
+                  agreedTerms.fulfillment != FulfillmentMode.BuyerPickup)))
+            {
+                IntercolonyLog.Warning(
+                    $"Cannot accept opportunity {opportunity.id}: negotiated terms are invalid.");
+                return null;
+            }
+
+            if (!negotiated && !opportunity.CanAcceptOriginalTerms)
+            {
+                IntercolonyLog.Warning(
+                    $"Opportunity {opportunity.id} is {opportunity.state}/" +
+                    $"{opportunity.NegotiationState}; cannot accept original terms.");
                 return null;
             }
 
@@ -62,13 +111,26 @@ namespace Intercolony
                 return null;
             }
 
+            float unitPrice = negotiated
+                ? agreedTerms.unitPrice
+                : IntercolonyPricing.RepriceForQuantity(
+                    state, opportunity, state.GetProfile(settlement), quantity, out _);
+            int deadlineDays = negotiated ? agreedTerms.deadlineDays : opportunity.deadlineDays;
+            FulfillmentMode fulfillment = negotiated
+                ? agreedTerms.fulfillment
+                : opportunity.fulfillment;
+
             // Claim the offer only once everything else has passed, so a transient refusal
             // (buyer gone, relations soured) leaves the listing intact instead of silently
             // consuming it. Nothing below this line can fail, and the claim itself is what
             // stops a second caller holding the same reference from producing a duplicate
             // order (§76.1) — removal from the world's list cannot, since the caller already
-            // has the object.
-            if (!opportunity.TryAccept())
+            // has the object. Negotiated acceptance uses its separate transition so a pending
+            // final counter cannot be bypassed by an ordinary accept.
+            bool claimed = negotiated
+                ? opportunity.TryAcceptNegotiated(agreedTerms, acceptingFinalCounter)
+                : opportunity.TryAccept();
+            if (!claimed)
             {
                 return null;
             }
@@ -88,18 +150,17 @@ namespace Intercolony
                     allowedStuff = opportunity.stuffDef,
                     minHitPointsPercent = opportunity.minHitPointsPercent
                 },
-                // Re-priced for the quantity actually accepted, so the order matches what the
-                // confirmation showed. A smaller lot earns a better rate (§13).
-                unitPrice = IntercolonyPricing.RepriceForQuantity(
-                    opportunity, state.GetProfile(settlement), quantity, out _),
+                // Normal acceptance reprices for a partial lot. Negotiated acceptance instead
+                // freezes the evaluator-approved price as the binding term.
+                unitPrice = unitPrice,
                 acceptedTick = GenTicks.TicksGame,
-                fulfillment = opportunity.fulfillment,
+                fulfillment = fulfillment,
                 buyerPickupDistanceTiles = opportunity.distanceTiles,
                 fulfillmentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap,
 
                 // The deadline starts counting at acceptance, which is what the market tab
                 // advertised as "Nd after accepting" (§17).
-                deadlineTick = GenTicks.TicksGame + opportunity.deadlineDays * GenDate.TicksPerDay,
+                deadlineTick = GenTicks.TicksGame + deadlineDays * GenDate.TicksPerDay,
                 status = SalesOrderStatus.Accepted
             };
 
@@ -108,20 +169,35 @@ namespace Intercolony
             // The offer is consumed: it must not remain available for a second acceptance.
             state.RemoveOpportunity(opportunity);
 
+            if (negotiated)
+            {
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.CounterofferAccepted,
+                    order.settlementId,
+                    order.settlementName,
+                    order.id,
+                    order.ThingDef,
+                    order.Quantity,
+                    compactDetail: acceptingFinalCounter
+                        ? $"Accepted final counter: {order.Quantity} units at {order.unitPrice:F2}"
+                        : $"Counterparty accepted {order.Quantity} units at {order.unitPrice:F2}");
+            }
+
             int pickupTravelDays = EstimateBuyerPickupTravelDays(opportunity.distanceTiles);
-            string deadlineAction = opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                ? $"{opportunity.deadlineDays}d to mark ready, then ~{pickupTravelDays}d pickup"
-                : $"{opportunity.deadlineDays}d to deliver";
+            string deadlineAction = fulfillment == FulfillmentMode.BuyerPickup
+                ? $"{deadlineDays}d to mark ready, then ~{pickupTravelDays}d pickup"
+                : $"{deadlineDays}d to deliver";
             IntercolonyLog.Message(
                 $"Accepted order {order.id}: {order.Quantity} of {opportunity.quantity}x " +
                 $"{order.ThingDef.label} for " +
                 $"{order.settlementName}, {order.TotalPayment} silver, " +
                 $"{deadlineAction}.");
 
-            string nextStep = opportunity.fulfillment == FulfillmentMode.BuyerPickup
-                ? $"Mark the goods ready within {opportunity.deadlineDays} days. " +
+            string nextStep = fulfillment == FulfillmentMode.BuyerPickup
+                ? $"Mark the goods ready within {deadlineDays} days. " +
                   $"Pickup is expected about {pickupTravelDays} days after that."
-                : $"Deliver within {opportunity.deadlineDays} days.";
+                : $"Deliver within {deadlineDays} days.";
             Messages.Message(
                 $"Order accepted: {order.Quantity}x {order.ThingDef.label} for {order.settlementName}. " +
                 nextStep,
@@ -172,6 +248,15 @@ namespace Intercolony
 
             SalesOrder order = BuildOrderFromOffer(
                 offer, quantity, deadlineDays, fulfillment, map);
+            if (!offer.IsAnimalOffer)
+            {
+                // The direct-sale boundary can still see the live stored item. Re-read its
+                // quality-aware value here so a stale UI quote cannot make a known Masterwork
+                // inventory item bind at a definition-only price.
+                order.unitPrice = FindBuyerService.SellRateFor(
+                    state, offer, quantity, fulfillment, map);
+                order.referenceUnitPrice = order.unitPrice;
+            }
             order.id = state.NextId();
 
             state.AddOrder(order);
@@ -250,9 +335,11 @@ namespace Intercolony
 
             // Branch before the item remover. A live pawn must never reach SplitOff/Destroy,
             // even though Pawn inherits Thing.
+            DeliveredQualityBatch qualityBatch = DeliveredQualityCapture.BeginBatch();
             int handedOver = order.IsAnimalOrder
                 ? RemoveAnimalsFromCaravan(order, caravan, result.matchedQuantity)
-                : RemoveFromCaravan(order, caravan, result.matchedQuantity);
+                : RemoveFromCaravan(
+                    order, caravan, result.matchedQuantity, qualityBatch);
             if (handedOver <= 0)
             {
                 result.failures.Add(order.IsAnimalOrder
@@ -286,7 +373,8 @@ namespace Intercolony
                     state,
                     order,
                     GenTicks.TicksGame,
-                    $"Delivered {order.deliveredQuantity} units for {order.paidSilver} silver.");
+                    $"Delivered {order.deliveredQuantity} units for {order.paidSilver} silver.",
+                    qualityBatch.Result);
                 IntercolonyLog.Message($"Order {order.id} completed. {order.outcomeNote}");
                 Messages.Message(
                     $"Order complete: {order.settlementName} paid {order.paidSilver} silver.",
@@ -406,8 +494,30 @@ namespace Intercolony
                    "animal had been sold to any other trader. Continue with the handoff?";
         }
 
-        private static void Complete(
+        /// <summary>
+        /// Internal so self-tests can drive the real completion transition; constructing an already
+        /// completed order would only demonstrate the test fixture's arithmetic.
+        /// </summary>
+        internal static void Complete(
             IntercolonyWorldComponent state, SalesOrder order, int completedTick, string outcomeNote)
+        {
+            Complete(
+                state, order, completedTick, outcomeNote,
+                DeliveredQualityResult.NoEvidence);
+        }
+
+        /// <summary>
+        /// Completes an order exactly once and carries the quality result captured by its
+        /// fulfillment path into the order before consuming that evidence for direct product
+        /// brand. The transition guard is the completion boundary: an order that never concludes
+        /// cannot move the brand record.
+        /// </summary>
+        internal static void Complete(
+            IntercolonyWorldComponent state,
+            SalesOrder order,
+            int completedTick,
+            string outcomeNote,
+            DeliveredQualityResult actualDeliveredQuality)
         {
             if (order == null || order.status == SalesOrderStatus.Completed)
             {
@@ -417,10 +527,56 @@ namespace Intercolony
             order.status = SalesOrderStatus.Completed;
             order.completedTick = completedTick;
             order.outcomeNote = outcomeNote;
+            order.SetActualDeliveredQuality(actualDeliveredQuality);
+            string crossedBrandBand;
+            bool crossedBrandUpward;
+            ProductBrandService.ApplyDeliveredQuality(
+                state, order.ThingDef, order.ActualDeliveredQuality,
+                out crossedBrandBand, out crossedBrandUpward);
+
+            // ProductBrandService derives the crossing from the score immediately before and
+            // after this update, so no saved band state or migration is needed. Keep the write
+            // here, after the exactly-once guard and with the real order context: constructing a
+            // ProductBrandRecord or running a score fixture cannot invent a commercial event.
+            if (!string.IsNullOrEmpty(crossedBrandBand))
+            {
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.BrandMilestone,
+                    order.settlementId,
+                    order.settlementName,
+                    order.id,
+                    order.ThingDef,
+                    order.deliveredQuantity,
+                    order.paidSilver,
+                    (crossedBrandUpward ? "Reached " : "Lost ") +
+                    crossedBrandBand + " brand milestone");
+            }
 
             // The transition guard above is the exactly-once boundary. Both seller delivery
-            // and buyer collection arrive here, and neither can record the same order twice.
+            // and buyer collection arrive here, and neither can record the same order twice. The
+            // migration path records old completed sales separately and has no actual quality to
+            // apply, so brand evidence is not fabricated during load.
             state?.RecordCompletedSale(order);
+
+            IntercolonyProductCategory? category = order.IsAnimalOrder
+                ? IntercolonyProductCategory.Commodities
+                : IntercolonyProductClassifier.Classify(order.ThingDef);
+            if (category.HasValue)
+            {
+                MarketPressureService.NudgeDemandDown(
+                    state, order.settlementId, category.Value, order.paidSilver);
+            }
+
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.SaleCompleted,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.ThingDef,
+                order.deliveredQuantity,
+                order.paidSilver);
 
             GrantDiscountGoodwill(order);
 
@@ -764,9 +920,10 @@ namespace Intercolony
 
                 // A live pawn must never reach TakeFromColony, which splits and destroys
                 // stacks. Collect the designated animals through the dedicated handoff.
+                DeliveredQualityBatch qualityBatch = DeliveredQualityCapture.BeginBatch();
                 int taken = order.IsAnimalOrder
                     ? CollectDesignatedAnimals(order, map, owed)
-                    : OrderValidator.TakeFromColony(order, map, owed);
+                    : OrderValidator.TakeFromColony(order, map, owed, qualityBatch.Add);
 
                 if (taken <= 0)
                 {
@@ -797,7 +954,8 @@ namespace Intercolony
                         order,
                         now,
                         $"Collected by the buyer. {order.deliveredQuantity} units for " +
-                        $"{order.paidSilver} silver.");
+                        $"{order.paidSilver} silver.",
+                        qualityBatch.Result);
                     IntercolonyLog.Message($"Order {order.id} completed by buyer pickup. {order.outcomeNote}");
                     IntercolonyLetters.Send(
                         IntercolonyLetterImportance.Chatty,
@@ -853,6 +1011,14 @@ namespace Intercolony
             order.status = SalesOrderStatus.Failed;
             order.outcomeNote = note;
             ReputationService.NoteOrderFailed(IntercolonyWorldComponent.Current, order);
+            CommercialTimelineService.Record(
+                CommercialEventType.SaleFailed,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.ThingDef,
+                order.Quantity,
+                compactDetail: note);
             IntercolonyLog.Message($"Order {order.id} failed: {note}");
             Messages.Message($"Order failed for {order.settlementName}: {note}",
                 MessageTypeDefOf.NegativeEvent, historical: true);
@@ -862,15 +1028,56 @@ namespace Intercolony
         /// <summary>Player-initiated withdrawal. Distinct from failure so later reputation work can treat them differently (§27).</summary>
         public static bool Cancel(SalesOrder order)
         {
+            return CancelInternal(
+                IntercolonyWorldComponent.Current, order, playerWithdrawal: true);
+        }
+
+        internal static bool CancelByMutualAgreement(
+            IntercolonyWorldComponent state, SalesOrder order)
+        {
+            return CancelInternal(state, order, playerWithdrawal: false);
+        }
+
+        private static bool CancelInternal(
+            IntercolonyWorldComponent state, SalesOrder order, bool playerWithdrawal)
+        {
             if (order == null || !order.IsOpen)
             {
                 return false;
             }
 
             order.status = SalesOrderStatus.Cancelled;
-            order.outcomeNote = "Cancelled by the player.";
-            ReputationService.NoteOrderCancelled(IntercolonyWorldComponent.Current, order);
-            IntercolonyLog.Message($"Order {order.id} cancelled by the player.");
+            order.outcomeNote = playerWithdrawal
+                ? "Cancelled by the player."
+                : "Cancelled by mutual agreement.";
+
+            if (playerWithdrawal)
+            {
+                ReputationService.NoteOrderCancelled(state, order);
+                CommercialTimelineService.Record(
+                    CommercialEventType.SaleCancelled,
+                    order.settlementId,
+                    order.settlementName,
+                    order.id,
+                    order.ThingDef,
+                    order.Quantity,
+                    compactDetail: "Withdrawn by the player");
+                IntercolonyLog.Message($"Order {order.id} cancelled by the player.");
+            }
+            else
+            {
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.SaleCancelledByAgreement,
+                    order.settlementId,
+                    order.settlementName,
+                    order.id,
+                    order.ThingDef,
+                    order.Quantity,
+                    compactDetail: "Cancelled by mutual agreement");
+                IntercolonyLog.Message($"Order {order.id} cancelled by mutual agreement.");
+            }
+
             return true;
         }
 
@@ -908,7 +1115,11 @@ namespace Intercolony
         /// Takes units out of caravan pawn inventories. Returns how many were actually taken,
         /// which can be less than requested if the caravan changed between validation and here.
         /// </summary>
-        private static int RemoveFromCaravan(SalesOrder order, Caravan caravan, int wanted)
+        private static int RemoveFromCaravan(
+            SalesOrder order,
+            Caravan caravan,
+            int wanted,
+            DeliveredQualityBatch qualityBatch)
         {
             int remaining = wanted;
             List<Thing> items = CaravanInventoryUtility.AllInventoryItems(caravan);
@@ -932,6 +1143,10 @@ namespace Intercolony
 
                 int take = Mathf.Min(remaining, thing.stackCount);
                 Thing split = thing.SplitOff(take);
+                // SplitOff preserves CompQuality on the handed-over piece. Capture it before
+                // Destroy(Vanish), because after this line the fulfillment path has no evidence
+                // left from which a later brand update could honestly read quality.
+                qualityBatch?.Add(split);
                 split.Destroy(DestroyMode.Vanish);
                 remaining -= take;
             }

@@ -121,6 +121,10 @@ namespace Intercolony
 
         public SalesOrderStatus status = SalesOrderStatus.Accepted;
 
+        private bool deadlineExtensionAttempted;
+        private bool quantityReductionAttempted;
+        private bool mutualCancellationAttempted;
+
         /// <summary>How the goods move (§25). Fixed at acceptance; the price already reflects it.</summary>
         public FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery;
 
@@ -142,6 +146,16 @@ namespace Intercolony
         /// <summary>Set when the order ends, for the orders list and any later dispute handling.</summary>
         public string outcomeNote = "";
 
+        private DeliveredQualityResult actualDeliveredQuality =
+            DeliveredQualityResult.NoEvidence;
+
+        /// <summary>
+        /// Quality evidence captured from the real Things at the exactly-once completion boundary.
+        /// This is intentionally transient: the completion boundary consumes it immediately,
+        /// while old completed orders cannot reconstruct actual quality from saved requirements.
+        /// </summary>
+        public DeliveredQualityResult ActualDeliveredQuality => actualDeliveredQuality;
+
         public SalesOrder()
         {
         }
@@ -153,11 +167,11 @@ namespace Intercolony
 
         public bool IsAnimalOrder => line?.IsAnimalOrder == true;
 
-        public int TotalPayment => Mathf.RoundToInt(unitPrice * Quantity);
+        public int TotalPayment => IntercolonyPricing.TotalPayment(unitPrice, Quantity);
 
         /// <summary>The silver actually due after applying the discount to the agreed value.</summary>
         public int DiscountedTotalPayment =>
-            Mathf.RoundToInt(unitPrice * Quantity * (1f - discountFraction));
+            IntercolonyPricing.TotalPayment(unitPrice * (1f - discountFraction), Quantity);
 
         public int RemainingQuantity => Mathf.Max(0, Quantity - deliveredQuantity);
 
@@ -188,6 +202,43 @@ namespace Intercolony
         public bool CanMarkReady => status == SalesOrderStatus.Accepted &&
                                     fulfillment == FulfillmentMode.BuyerPickup;
 
+        /// <summary>Whether this accepted order still permits one request of the given kind.</summary>
+        public bool CanRequest(RenegotiationRequestKind kind)
+        {
+            if (status != SalesOrderStatus.Accepted)
+            {
+                return false;
+            }
+
+            switch (kind)
+            {
+                case RenegotiationRequestKind.DeadlineExtension:
+                    return !deadlineExtensionAttempted;
+                case RenegotiationRequestKind.QuantityReduction:
+                    return !quantityReductionAttempted;
+                case RenegotiationRequestKind.MutualCancellation:
+                    return !mutualCancellationAttempted;
+                default:
+                    return false;
+            }
+        }
+
+        internal void MarkRenegotiationAttempted(RenegotiationRequestKind kind)
+        {
+            switch (kind)
+            {
+                case RenegotiationRequestKind.DeadlineExtension:
+                    deadlineExtensionAttempted = true;
+                    break;
+                case RenegotiationRequestKind.QuantityReduction:
+                    quantityReductionAttempted = true;
+                    break;
+                case RenegotiationRequestKind.MutualCancellation:
+                    mutualCancellationAttempted = true;
+                    break;
+            }
+        }
+
         public bool BuyerEnRoute => status == SalesOrderStatus.AwaitingCollection;
 
         public float DaysUntilBuyerArrives =>
@@ -198,6 +249,11 @@ namespace Intercolony
         public float DaysRemaining => TicksRemaining / (float)GenDate.TicksPerDay;
 
         public bool IsOverdue(int nowTick) => nowTick >= deadlineTick;
+
+        internal void SetActualDeliveredQuality(DeliveredQualityResult result)
+        {
+            actualDeliveredQuality = result;
+        }
 
         /// <summary>
         /// Payment for a partial hand-over, rounded down so the colony is never overpaid by
@@ -238,6 +294,12 @@ namespace Intercolony
             Scribe_Values.Look(ref deadlineTick, "deadlineTick", 0);
             Scribe_Values.Look(ref completedTick, "completedTick", NeverCompletedTick);
             Scribe_Values.Look(ref status, "status", SalesOrderStatus.Accepted);
+            Scribe_Values.Look(
+                ref deadlineExtensionAttempted, "deadlineExtensionAttempted", false);
+            Scribe_Values.Look(
+                ref quantityReductionAttempted, "quantityReductionAttempted", false);
+            Scribe_Values.Look(
+                ref mutualCancellationAttempted, "mutualCancellationAttempted", false);
             Scribe_Values.Look(ref fulfillment, "fulfillment", FulfillmentMode.SellerDelivery);
             Scribe_Values.Look(
                 ref buyerPickupDistanceTiles, "buyerPickupDistanceTiles", UnknownBuyerPickupDistance);
@@ -251,6 +313,12 @@ namespace Intercolony
                 if (settlementName == null) settlementName = "";
                 if (factionName == null) factionName = "";
                 if (outcomeNote == null) outcomeNote = "";
+
+                // Actual quality is captured from live Things during fulfillment and is not
+                // recoverable from a saved minimum-quality requirement. A loaded order therefore
+                // starts with no quality evidence instead of pretending its requested quality was
+                // delivered.
+                actualDeliveredQuality = DeliveredQualityResult.NoEvidence;
 
                 if (line == null || line.thingDef == null)
                 {

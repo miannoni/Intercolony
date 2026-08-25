@@ -245,6 +245,17 @@ namespace Intercolony
                     LetterDefOf.NeutralEvent);
             }
 
+            // Cancelled rather than failed, matching the letter above: a war voiding an order is
+            // explicitly not held against the player as a supplier.
+            CommercialTimelineService.Record(
+                CommercialEventType.SaleCancelled,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.ThingDef,
+                order.Quantity,
+                compactDetail: $"Void: war with {order.factionName}");
+
             IntercolonyLog.Message($"Sales order {order.id} cancelled by war with {order.factionName}.");
             return true;
         }
@@ -302,6 +313,18 @@ namespace Intercolony
                     LetterDefOf.NegativeEvent);
             }
 
+            // The silver is gone rather than refunded, so this is the supplier failing to deliver
+            // and not the player withdrawing. Recorded with what was lost, not what was returned.
+            CommercialTimelineService.Record(
+                CommercialEventType.PurchaseFailed,
+                order.settlementId,
+                order.settlementName,
+                order.id,
+                order.thingDef,
+                order.quantity,
+                order.paidSilver,
+                $"Lost to war with {order.factionName}; nothing recovered");
+
             IntercolonyLog.Message(
                 $"Purchase order {order.id} lost to war with {order.factionName}; " +
                 $"{order.paidSilver} silver forfeited.");
@@ -337,6 +360,28 @@ namespace Intercolony
                     Resume(state, contract);
                 }
             }
+
+            SweepProcurementContracts(state);
+        }
+
+        private static void SweepProcurementContracts(IntercolonyWorldComponent state)
+        {
+            foreach (ProcurementContract contract in state.ProcurementContracts)
+            {
+                Faction faction = FactionOf(contract.settlementId, null);
+
+                if (contract.status == ProcurementContractStatus.Active && IsAtWar(faction))
+                {
+                    SuspendProcurement(state, contract);
+                    continue;
+                }
+
+                if (contract.status == ProcurementContractStatus.Suspended &&
+                    faction != null && !IsAtWar(faction))
+                {
+                    ResumeProcurement(state, contract);
+                }
+            }
         }
 
         /// <summary>
@@ -357,6 +402,11 @@ namespace Intercolony
 
             // The cycle in flight is withdrawn rather than failed — the player cannot deliver to an
             // enemy, so counting it against them would be punishing them for the war.
+            //
+            // Deliberately not written to the commercial timeline. Suspension itself has no event
+            // type yet, so recording only its side effect would leave a cancelled order in the
+            // player's history with nothing to explain it, and the cycle is re-issued on resume
+            // anyway. Suspension and resume belong with the relationship work in Stage 5.
             if (contract.activeOrderId != 0)
             {
                 SalesOrder order = state?.FindOrder(contract.activeOrderId);
@@ -426,6 +476,104 @@ namespace Intercolony
                 LetterDefOf.PositiveEvent);
 
             IntercolonyLog.Message($"Contract {contract.id} resumed after war with {contract.factionName}.");
+            return true;
+        }
+
+        /// <summary>
+        /// Suspends a procurement agreement during war for the same reason the sales-side
+        /// relationship is suspended: no cycle should be consumed while the counterparty is an
+        /// enemy, but the remaining agreement should survive a recoverable disruption.
+        /// </summary>
+        public static bool SuspendProcurement(
+            IntercolonyWorldComponent state, ProcurementContract contract,
+            bool sendLetter = true)
+        {
+            if (contract == null || contract.status != ProcurementContractStatus.Active)
+            {
+                return false;
+            }
+
+            contract.status = ProcurementContractStatus.Suspended;
+            contract.suspendedTick = GenTicks.TicksGame;
+            contract.outcomeNote = "Suspended: the supplier went to war.";
+
+            // The in-flight purchase is a separate prepaid obligation. Apply the existing war
+            // policy to it first (the enemy keeps the silver), then withdraw the cycle exactly as
+            // the sales-side suspension does so it is re-issued after the outage rather than
+            // counted as a missed agreement cycle.
+            if (contract.activeOrderId != ProcurementContract.NoActiveOrderId)
+            {
+                PurchaseOrder order = state?.FindPurchaseOrder(contract.activeOrderId);
+                if (order != null && order.IsOpen)
+                {
+                    ApplyToPurchaseOrder(order);
+                }
+
+                contract.activeOrderId = ProcurementContract.NoActiveOrderId;
+            }
+
+            if (sendLetter)
+            {
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
+                    "Procurement agreement suspended",
+                    $"{contract.settlementName} is now at war with your colony.\n\n" +
+                    $"Your agreement — {contract.quantityPerCycle}x {contract.ItemLabel()} every " +
+                    $"{contract.cadenceDays:F0} days, {contract.cyclesCompleted} of " +
+                    $"{contract.totalCycles} delivered — is suspended, not broken.\n\n" +
+                    "No procurement cycles are due and none will count as missed. If relations " +
+                    "recover, the remaining deliveries resume with the schedule shifted by the " +
+                    "length of the outage.",
+                    LetterDefOf.NeutralEvent);
+            }
+
+            IntercolonyLog.Message(
+                $"Procurement contract {contract.id} suspended by war with {contract.settlementName}.");
+            return true;
+        }
+
+        /// <summary>
+        /// Resumes a war-suspended procurement agreement by shifting its next-cycle clock by the
+        /// outage duration, preserving every cycle that was not consumed by the suspension.
+        /// </summary>
+        public static bool ResumeProcurement(
+            IntercolonyWorldComponent state, ProcurementContract contract,
+            bool sendLetter = true)
+        {
+            if (contract == null || contract.status != ProcurementContractStatus.Suspended)
+            {
+                return false;
+            }
+
+            int suspendedFor = Mathf.Max(0, GenTicks.TicksGame - contract.suspendedTick);
+            contract.status = ProcurementContractStatus.Active;
+            contract.outcomeNote = "";
+            contract.nextCycleTick += suspendedFor;
+            contract.suspendedTick = 0;
+
+            if (sendLetter)
+            {
+                int remaining = Mathf.Max(
+                    0, contract.totalCycles - contract.cyclesCompleted - contract.cyclesFailed);
+                float daysUntilNextCycle = Mathf.Max(
+                    0f,
+                    (contract.nextCycleTick - GenTicks.TicksGame) /
+                    (float)GenDate.TicksPerDay);
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Chatty,
+                    "Procurement agreement resumed",
+                    $"Relations with {contract.settlementName} have recovered and your procurement " +
+                    "agreement is live again.\n\n" +
+                    $"{remaining} deliveries remain — {contract.quantityPerCycle}x " +
+                    $"{contract.ItemLabel()} every {contract.cadenceDays:F0} days. The next window " +
+                    $"opens in {daysUntilNextCycle:F0} days.\n\n" +
+                    $"It was suspended for {suspendedFor / (float)GenDate.TicksPerDay:F0} days, and " +
+                    "the schedule has been moved back by the same amount.",
+                    LetterDefOf.PositiveEvent);
+            }
+
+            IntercolonyLog.Message(
+                $"Procurement contract {contract.id} resumed after war with {contract.settlementName}.");
             return true;
         }
 

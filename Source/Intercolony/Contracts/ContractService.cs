@@ -151,6 +151,13 @@ namespace Intercolony
         private const float MinimumProposalAcceptanceChance = 0.10f;
         private const float MaximumProposalAcceptanceChance = 0.90f;
 
+        /// <summary>
+        /// Commercial reputation cost of voluntarily cancelling an active sales agreement.
+        /// Cancelling costs standing because walking away from a live commitment damages the
+        /// buyer relationship; cancellation while suspended by war is exempt below.
+        /// </summary>
+        private const float ContractCancellationReputationPenalty = -10f;
+
         /// <summary>Keeps proposal decisions in their own deterministic economy-seed stream.</summary>
         private const int ProposalDecisionSeedSalt = 0x0C0D;
 
@@ -428,7 +435,7 @@ namespace Intercolony
                 state, settlement, profile, thingDef, category, quantityPerCycle,
                 chosenUnitPrice, terms.referenceUnitPrice);
             contract.proposalAppeal = appeal;
-            contract.decisionDueTick = GenTicks.TicksGame + DecisionDelayTicks(appeal);
+            contract.decisionDueTick = GenTicks.TicksGame + ProposalDecisionDelayTicks(appeal);
 
             state.AddContract(contract);
             IntercolonyLog.Message(
@@ -454,7 +461,7 @@ namespace Intercolony
                 : unitPrice <= 0f ? 1f : 0f;
 
             int appetite = FindBuyerService.MaximumAppetite(
-                thingDef, null, profile, category);
+                state, thingDef, null, profile, category);
             float quantityAppeal = quantityPerCycle > 0
                 ? Mathf.Clamp01(appetite / (float)quantityPerCycle)
                 : 0f;
@@ -470,7 +477,11 @@ namespace Intercolony
                 reputationAppeal * ProposalReputationAppealWeight);
         }
 
-        private static int DecisionDelayTicks(float appeal)
+        /// <summary>
+        /// Uses the same bounded deliberation clock for every player-initiated standing proposal;
+        /// procurement reuses this instead of creating a second answer scheduler.
+        /// </summary>
+        internal static int ProposalDecisionDelayTicks(float appeal)
         {
             float distanceFromMiddle = Mathf.Abs(Mathf.Clamp01(appeal) * 2f - 1f);
             float days = Mathf.Lerp(
@@ -683,7 +694,7 @@ namespace Intercolony
         {
             float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
             float spot = IntercolonyPricing.UnitPrice(
-                thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
+                state, thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
             float unitPrice = agreedUnitPrice ?? spot * ContractPricePremium;
 
             // These inputs are durable across a reload, while the salt isolates this roll from
@@ -848,7 +859,7 @@ namespace Intercolony
         }
 
         /// <summary>Lets a settlement answer a player proposal once its deliberation ends.</summary>
-        private static void ResolvePlayerProposal(
+        internal static void ResolvePlayerProposal(
             IntercolonyWorldComponent state, RecurringContract contract)
         {
             float acceptanceChance = Mathf.Lerp(
@@ -876,6 +887,18 @@ namespace Intercolony
                 }
 
                 ClearPlayerProposalMarkers(contract);
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.ContractStarted,
+                    contract.settlementId,
+                    contract.settlementName,
+                    contract.id,
+                    contract.thingDef,
+                    contract.quantityPerCycle,
+                    contract.DiscountedTotalPayment,
+                    $"Your proposal accepted: {contract.quantityPerCycle}x every " +
+                    $"{contract.CadenceDays:F0}d x{contract.totalCycles}");
+
                 IntercolonyLetters.Send(
                     IntercolonyLetterImportance.Always,
                     "Supply agreement accepted",
@@ -894,6 +917,11 @@ namespace Intercolony
                 return;
             }
 
+            // A refusal is deliberately not written to the commercial timeline. No agreement began,
+            // so nothing commercial happened between the colonies, and the other two decline paths
+            // are the player clicking a button and an offer lapsing — exactly the button-press noise
+            // the timeline is meant to stay clear of. Stage 5 owns proposal and counteroffer
+            // outcomes and is where a refusal worth retaining would be added.
             const string refusalReason =
                 "The settlement declined the proposed terms. Improve the terms or build more " +
                 "trading trust before trying again.";
@@ -946,8 +974,19 @@ namespace Intercolony
 
             // §27 lists repeated business as a positive; seeing an agreement through
             // is the strongest version of that.
-            CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-            rep?.Adjust(8f);
+            ReputationService.ApplyAdjustment(
+                state, ReputationService.ForSettlement(state, contract.settlementId), 8f);
+
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.ContractCompleted,
+                contract.settlementId,
+                contract.settlementName,
+                contract.id,
+                contract.thingDef,
+                contract.quantityPerCycle * contract.totalCycles,
+                contract.DiscountedTotalPayment,
+                $"All {contract.totalCycles} deliveries met");
 
             OfferRenewal(state, contract);
         }
@@ -1036,8 +1075,21 @@ namespace Intercolony
             contract.renewalExpiryTick = 0;
             contract.renewals++;
 
-            CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-            rep?.Adjust(4f);
+            ReputationService.ApplyAdjustment(
+                state, ReputationService.ForSettlement(state, contract.settlementId), 4f);
+
+            // A renewal starts a fresh run of the same agreement, so it is a start rather than a
+            // separate event type. The detail is what distinguishes it in the timeline.
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.ContractStarted,
+                contract.settlementId,
+                contract.settlementName,
+                contract.id,
+                contract.thingDef,
+                contract.quantityPerCycle,
+                contract.DiscountedTotalPayment,
+                $"Renewed for {contract.totalCycles} more deliveries");
 
             Messages.Message(
                 $"Renewed the supply agreement with {contract.settlementName}: " +
@@ -1069,7 +1121,7 @@ namespace Intercolony
                 MessageTypeDefOf.NeutralEvent, historical: false);
         }
 
-        private static void ResolveCycle(
+        internal static void ResolveCycle(
             IntercolonyWorldComponent state, RecurringContract contract, SalesOrder order)
         {
             if (order.status == SalesOrderStatus.Completed)
@@ -1095,8 +1147,19 @@ namespace Intercolony
                 contract.outcomeNote =
                     $"Breached after {contract.consecutiveFailures} consecutive missed deliveries.";
 
-                CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-                rep?.Adjust(-20f);
+                ReputationService.ApplyAdjustment(
+                    state, ReputationService.ForSettlement(state, contract.settlementId), -20f);
+
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.ContractFailed,
+                    contract.settlementId,
+                    contract.settlementName,
+                    contract.id,
+                    contract.thingDef,
+                    contract.quantityPerCycle,
+                    compactDetail:
+                        $"Breached after {contract.consecutiveFailures} consecutive missed deliveries");
 
                 IntercolonyLetters.Send(
                     IntercolonyLetterImportance.Always,
@@ -1118,7 +1181,7 @@ namespace Intercolony
         }
 
         /// <summary>Creates the sales order for this cycle.</summary>
-        private static void RaiseCycleOrder(IntercolonyWorldComponent state, RecurringContract contract)
+        internal static void RaiseCycleOrder(IntercolonyWorldComponent state, RecurringContract contract)
         {
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(contract.settlementId);
             if (settlement == null || !IntercolonyMarketAccess.IsAccessible(settlement))
@@ -1127,6 +1190,15 @@ namespace Intercolony
                 // the player keep failing deliveries to someone who cannot receive them (§88).
                 contract.status = ContractStatus.Cancelled;
                 contract.outcomeNote = "The counterparty is no longer reachable.";
+                CommercialTimelineService.Record(
+                    state,
+                    CommercialEventType.ContractCancelled,
+                    contract.settlementId,
+                    contract.settlementName,
+                    contract.id,
+                    contract.thingDef,
+                    contract.quantityPerCycle,
+                    compactDetail: "Ended: the counterparty is no longer reachable");
                 return;
             }
 
@@ -1265,6 +1337,20 @@ namespace Intercolony
             contract.fulfillment = fulfillment;
             contract.unitPrice = agreedPrice;
 
+            // After the agreed terms are written back, never before: the record must carry what was
+            // actually signed rather than what was offered.
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.ContractStarted,
+                contract.settlementId,
+                contract.settlementName,
+                contract.id,
+                contract.thingDef,
+                contract.quantityPerCycle,
+                contract.DiscountedTotalPayment,
+                $"{contract.quantityPerCycle}x every {contract.CadenceDays:F0}d " +
+                $"x{contract.totalCycles}");
+
             IntercolonyLog.Message(
                 $"Contract {contract.id} accepted: {contract.quantityPerCycle}x " +
                 $"{contract.thingDef.label} every {contract.CadenceDays:F0}d x{contract.totalCycles} " +
@@ -1299,9 +1385,21 @@ namespace Intercolony
             // charging them for ending it would take that back.
             if (!suspended)
             {
-                CommercialReputation rep = ReputationService.ForSettlement(state, contract.settlementId);
-                rep?.Adjust(-10f);
+                ReputationService.ApplyAdjustment(
+                    state,
+                    ReputationService.ForSettlement(state, contract.settlementId),
+                    ContractCancellationReputationPenalty);
             }
+
+            CommercialTimelineService.Record(
+                state,
+                CommercialEventType.ContractCancelled,
+                contract.settlementId,
+                contract.settlementName,
+                contract.id,
+                contract.thingDef,
+                contract.quantityPerCycle,
+                compactDetail: contract.outcomeNote);
 
             IntercolonyLog.Message($"Contract {contract.id} cancelled by the player.");
             return true;

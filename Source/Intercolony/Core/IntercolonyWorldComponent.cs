@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 42;
+        public const int CurrentSaveVersion = 56;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -77,6 +77,16 @@ namespace Intercolony
         private List<MarketOpportunity> opportunities = new List<MarketOpportunity>();
 
         /// <summary>
+        /// Public finite procurement offers. These are separate from quotations because a
+        /// listing is a market origin, not an RFQ response, while both later produce a normal
+        /// purchase order.
+        /// </summary>
+        private List<SupplierListing> supplierListings = new List<SupplierListing>();
+
+        /// <summary>Live and persisted supplier-market listings.</summary>
+        public List<SupplierListing> SupplierListings => supplierListings;
+
+        /// <summary>
         /// Player's maximum acceptable haul, in world tiles, or <see cref="NoDistanceLimit"/>
         /// for no limit (DESIGN.md §53 filters, §66 "maximum market distance").
         ///
@@ -121,6 +131,138 @@ namespace Intercolony
 
         public List<CommercialHistoryEntry> CommercialHistory => commercialHistory;
 
+        /// <summary>
+        /// Sparse direct product-brand evidence for the colony (the 1.0 program Stage 4A/4B,
+        /// docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md §§4.1-4.2). A record exists only after
+        /// that exact product has actually been delivered. Brand inherited from a similar product
+        /// is derived on read later; persisting every possible target would put hundreds of empty
+        /// records in each save merely to say that no direct experience exists.
+        /// </summary>
+        private List<ProductBrandRecord> productBrandRecords = new List<ProductBrandRecord>();
+
+        public List<ProductBrandRecord> ProductBrandRecords => productBrandRecords;
+
+        /// <summary>
+        /// Detailed commercial timeline records (the 1.0 program Stage 0.3, docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 7).
+        /// Persisted and bounded by <see cref="CommercialTimelineService.MaxTimelineRecords"/>.
+        /// </summary>
+        private List<CommercialEventRecord> commercialTimeline =
+            new List<CommercialEventRecord>();
+
+        public List<CommercialEventRecord> CommercialTimeline => commercialTimeline;
+
+        /// <summary>
+        /// When the first commercial timeline entry was recorded, or <see cref="CommercialTimelineService.NoHistory"/> before any.
+        /// Allows distinguishing an unmigrated/fresh colony with no trade from a migrated save where recording began at upgrade
+        /// (docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 0.4, Stage 7.3).
+        /// </summary>
+        private int commercialTimelineStartTick = CommercialTimelineService.NoHistory;
+
+        public int CommercialTimelineStartTick
+        {
+            get => commercialTimelineStartTick;
+            set => commercialTimelineStartTick = value;
+        }
+
+        /// <summary>
+        /// Current market pressure, for the settlements that currently have any
+        /// (docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 2.1).
+        ///
+        /// Sparse on purpose: a settlement whose economy is undisturbed has no record, and one
+        /// that reverts to neutral loses its record again on the refresh. Absence means neutral,
+        /// so an untouched world persists nothing at all.
+        /// </summary>
+        private List<SettlementMarketState> marketStates = new List<SettlementMarketState>();
+
+        public List<SettlementMarketState> MarketStates => marketStates;
+
+        /// <summary>
+        /// Temporary economic disturbances that are still live or scheduled (the 1.0 program
+        /// Stage 3A). Ended events are discarded on load because their lasting effect is already
+        /// carried by sparse market pressure; retaining both would grow the save without preserving
+        /// any additional economic information.
+        /// </summary>
+        private List<EconomicEvent> economicEvents = new List<EconomicEvent>();
+
+        public List<EconomicEvent> EconomicEvents => economicEvents;
+
+        /// <summary>
+        /// Index over <see cref="marketStates"/>. Not persisted and not authoritative — the list
+        /// is. Rebuilt on load and maintained on insert, because effective demand is asked for
+        /// per settlement per good and a linear scan would be on that path.
+        /// </summary>
+        private Dictionary<int, SettlementMarketState> marketStateIndex;
+
+        /// <summary>
+        /// This settlement's current pressure, or null when it is undisturbed and
+        /// <paramref name="createIfMissing"/> is false. A null answer means neutral; it is never
+        /// an error.
+        /// </summary>
+        public SettlementMarketState MarketStateFor(int settlementId, bool createIfMissing = false)
+        {
+            if (settlementId < 0)
+            {
+                return null;
+            }
+
+            if (marketStateIndex == null)
+            {
+                RebuildMarketStateIndex();
+            }
+
+            if (marketStateIndex.TryGetValue(settlementId, out SettlementMarketState existing))
+            {
+                return existing;
+            }
+
+            if (!createIfMissing)
+            {
+                return null;
+            }
+
+            SettlementMarketState created = new SettlementMarketState(settlementId);
+            marketStates.Add(created);
+            marketStateIndex[settlementId] = created;
+            return created;
+        }
+
+        /// <summary>
+        /// Invalidates the lookup index after the list was replaced wholesale, which only a
+        /// diagnostic restoring a snapshot does.
+        /// </summary>
+        public void RefreshMarketStateIndex()
+        {
+            RebuildMarketStateIndex();
+        }
+
+        private void RebuildMarketStateIndex()
+        {
+            marketStateIndex = new Dictionary<int, SettlementMarketState>();
+            foreach (SettlementMarketState state in marketStates)
+            {
+                if (state != null && state.settlementId >= 0)
+                {
+                    marketStateIndex[state.settlementId] = state;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drops records that have settled back to neutral. Without this the sparse representation
+        /// would be sparse only until the first shock and then permanent.
+        /// </summary>
+        public int PruneNeutralMarketStates()
+        {
+            int removed = marketStates.RemoveAll(
+                state => state == null || state.settlementId < 0 || state.IsNeutral);
+            if (removed > 0)
+            {
+                RebuildMarketStateIndex();
+            }
+
+            return removed;
+        }
+
         public CommercialHistoryEntry FindCommercialHistory(int settlementId, ThingDef thingDef)
         {
             foreach (CommercialHistoryEntry entry in commercialHistory)
@@ -136,6 +278,11 @@ namespace Intercolony
 
         /// <summary>Records one completed order in the durable supply history.</summary>
         public void RecordCompletedSale(SalesOrder order)
+        {
+            RecordCompletedSale(order, recordTradeValue: true);
+        }
+
+        private void RecordCompletedSale(SalesOrder order, bool recordTradeValue)
         {
             ThingDef thingDef = order?.ThingDef;
             if (order == null || order.status != SalesOrderStatus.Completed || thingDef == null)
@@ -156,6 +303,37 @@ namespace Intercolony
 
             entry.completedSaleCount++;
             entry.totalQuantitySupplied += Mathf.Max(0, order.deliveredQuantity);
+            if (recordTradeValue)
+            {
+                entry.totalTradeValue += order.paidSilver;
+            }
+        }
+
+        /// <summary>
+        /// Records the silver actually paid for one completed purchase in the same durable
+        /// settlement/item aggregate as completed sales, so refunds and pruned order detail never
+        /// have to be replayed to answer the long-term trade-value question.
+        /// </summary>
+        public void RecordCompletedPurchase(PurchaseOrder order)
+        {
+            if (order == null || order.status != PurchaseOrderStatus.Completed ||
+                order.thingDef == null)
+            {
+                return;
+            }
+
+            CommercialHistoryEntry entry = FindCommercialHistory(order.settlementId, order.thingDef);
+            if (entry == null)
+            {
+                entry = new CommercialHistoryEntry
+                {
+                    settlementId = order.settlementId,
+                    thingDef = order.thingDef
+                };
+                commercialHistory.Add(entry);
+            }
+
+            entry.totalTradeValue += order.paidSilver;
         }
 
         /// <summary>
@@ -359,6 +537,64 @@ namespace Intercolony
             return false;
         }
 
+        /// <summary>
+        /// Whether this supplier and product already have a live standing agreement. The overload
+        /// keeps procurement's one-proposal-per-supplier-and-product rule beside the existing
+        /// sales relationship helper instead of scattering another lifecycle predicate.
+        /// </summary>
+        public bool HasContractWith(int settlementId, ThingDef thingDef)
+        {
+            if (thingDef == null)
+            {
+                return false;
+            }
+
+            foreach (RecurringContract contract in contracts)
+            {
+                bool hasPendingRenewal = contract.status == ContractStatus.Completed &&
+                                         contract.renewalOffered &&
+                                         contract.renewalExpiryTick > GenTicks.TicksGame;
+
+                if (contract.settlementId == settlementId && contract.thingDef == thingDef &&
+                    (contract.IsOffer || contract.IsPendingPlayerProposal || contract.IsActive ||
+                     contract.status == ContractStatus.Suspended || hasPendingRenewal))
+                {
+                    return true;
+                }
+            }
+
+            return FindProcurementContractWith(settlementId, thingDef) != null;
+        }
+
+        /// <summary>
+        /// Returns the live procurement agreement for one supplier/product pair, if any. Keeping
+        /// lookup and the boolean relationship check together ensures refusal text cannot drift
+        /// from the predicate that enforces the one-proposal rule.
+        /// </summary>
+        public ProcurementContract FindProcurementContractWith(
+            int settlementId, ThingDef thingDef)
+        {
+            if (thingDef == null)
+            {
+                return null;
+            }
+
+            foreach (ProcurementContract contract in procurementContracts)
+            {
+                if (contract != null && contract.settlementId == settlementId &&
+                    contract.thingDef == thingDef &&
+                    (contract.status == ProcurementContractStatus.Offered ||
+                     contract.status == ProcurementContractStatus.CounterpartyCountered ||
+                     contract.status == ProcurementContractStatus.Active ||
+                     contract.status == ProcurementContractStatus.Suspended))
+                {
+                    return contract;
+                }
+            }
+
+            return null;
+        }
+
         public int ActiveContractCount
         {
             get
@@ -373,6 +609,22 @@ namespace Intercolony
                 }
 
                 return count;
+            }
+        }
+
+        /// <summary>Player-proposed standing procurement agreements (§6.6, §6.8).</summary>
+        private List<ProcurementContract> procurementContracts =
+            new List<ProcurementContract>();
+
+        /// <summary>Live and persisted standing procurement agreements.</summary>
+        public List<ProcurementContract> ProcurementContracts => procurementContracts;
+
+        /// <summary>Adds a non-null procurement agreement to this world's authoritative state.</summary>
+        public void AddProcurementContract(ProcurementContract contract)
+        {
+            if (contract != null)
+            {
+                procurementContracts.Add(contract);
             }
         }
 
@@ -864,6 +1116,15 @@ namespace Intercolony
             return nextId++;
         }
 
+        /// <summary>
+        /// The ID that would be allocated next, without allocating it. For diagnostics that want
+        /// to report how many IDs something consumed.
+        /// </summary>
+        public int PeekNextId()
+        {
+            return nextId;
+        }
+
         public override void ExposeData()
         {
             base.ExposeData();
@@ -879,14 +1140,26 @@ namespace Intercolony
                 ref disabledContractProposalCategories,
                 "disabledContractProposalCategories", LookMode.Value);
             Scribe_Collections.Look(ref opportunities, "opportunities", LookMode.Deep);
+            Scribe_Collections.Look(ref supplierListings, "supplierListings", LookMode.Deep);
             Scribe_Collections.Look(ref orders, "orders", LookMode.Deep);
             Scribe_Collections.Look(ref commercialHistory, "commercialHistory", LookMode.Deep);
+            Scribe_Collections.Look(ref productBrandRecords, "productBrandRecords", LookMode.Deep);
+            Scribe_Collections.Look(
+                ref commercialTimeline, "commercialTimeline", LookMode.Deep);
+            Scribe_Collections.Look(ref marketStates, "marketStates", LookMode.Deep);
+            Scribe_Collections.Look(ref economicEvents, "economicEvents", LookMode.Deep);
+            Scribe_Values.Look(
+                ref commercialTimelineStartTick,
+                "commercialTimelineStartTick",
+                CommercialTimelineService.NoHistory);
             Scribe_Collections.Look(
                 ref supplierOfferConsumption, "supplierOfferConsumption", LookMode.Deep);
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
             Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
+            Scribe_Collections.Look(
+                ref procurementContracts, "procurementContracts", LookMode.Deep);
             Scribe_Collections.Look(ref employments, "employments", LookMode.Deep);
             Scribe_Collections.Look(ref postings, "postings", LookMode.Deep);
             Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
@@ -921,6 +1194,24 @@ namespace Intercolony
                         IntercolonyLog.Warning(
                             $"Dropped {nulls} null and {broken} unresolvable opportunit(ies) while loading. " +
                             "Unresolvable usually means a mod that supplied the item was removed.");
+                    }
+                }
+
+                if (supplierListings == null)
+                {
+                    supplierListings = new List<SupplierListing>();
+                }
+                else
+                {
+                    int nullListings = supplierListings.RemoveAll(listing => listing == null);
+                    int brokenListings = supplierListings.RemoveAll(
+                        listing => !listing.IsValidAfterLoad);
+                    if (nullListings > 0 || brokenListings > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullListings} null and {brokenListings} unresolvable " +
+                            "supplier listing(s) while loading. Unresolvable usually means a mod " +
+                            "that supplied the item was removed.");
                     }
                 }
 
@@ -979,6 +1270,68 @@ namespace Intercolony
                             "commercial-history entries while loading. Unresolvable usually means " +
                             "a mod supplying the item was removed.");
                     }
+                }
+
+                if (productBrandRecords == null)
+                {
+                    productBrandRecords = new List<ProductBrandRecord>();
+                }
+                else
+                {
+                    // Brand is keyed by exact ThingDef, so a child whose def no longer resolves
+                    // cannot be retained as a null-keyed record. Keep valid neighbours: removing
+                    // the whole sparse list would erase trustworthy direct evidence for products
+                    // whose supplying mods are still present.
+                    int brokenBrandRecords = PruneLoadedProductBrandRecords(productBrandRecords);
+                    if (brokenBrandRecords > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {brokenBrandRecords} null or unresolvable product-brand " +
+                            "record(s) while loading. Unresolvable usually means a mod that " +
+                            "supplied the item was removed.");
+                    }
+                }
+
+                if (commercialTimeline == null)
+                {
+                    commercialTimeline = new List<CommercialEventRecord>();
+                }
+                else
+                {
+                    // Deliberately drops null entries only and does NOT drop records with an unresolvable thingDef:
+                    // CommercialHistoryEntry records are keyed by ThingDef and are meaningless without one,
+                    // whereas a CommercialEventRecord still reads as a valid historical event even when the item's mod
+                    // has been removed.
+                    int nullTimelineEntries = commercialTimeline.RemoveAll(e => e == null);
+                    if (nullTimelineEntries > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullTimelineEntries} null commercial timeline record(s) while loading.");
+                    }
+                }
+
+                if (marketStates == null)
+                {
+                    marketStates = new List<SettlementMarketState>();
+                }
+                else
+                {
+                    // A record that survived to disk already neutral is dead weight; a null child
+                    // is a corrupt save. Dropping both here means the index below never has to
+                    // consider either case.
+                    marketStates.RemoveAll(
+                        s => s == null || s.settlementId < 0 || s.IsNeutral);
+                }
+
+                marketStateIndex = null;
+
+                if (economicEvents == null)
+                {
+                    economicEvents = new List<EconomicEvent>();
+                }
+                else
+                {
+                    PruneLoadedEconomicEvents(economicEvents, GenTicks.TicksGame);
                 }
 
                 if (supplierOfferConsumption == null)
@@ -1101,6 +1454,25 @@ namespace Intercolony
                         IntercolonyLog.Error(
                             $"Dropped {nullContracts} null and {brokenContracts} unresolvable contract(s) " +
                             "while loading.");
+                    }
+                }
+
+                if (procurementContracts == null)
+                {
+                    procurementContracts = new List<ProcurementContract>();
+                }
+                else
+                {
+                    int nullProcurementContracts = procurementContracts.RemoveAll(c => c == null);
+                    int brokenProcurementContracts = procurementContracts.RemoveAll(
+                        c => !c.IsValidAfterLoad);
+                    if (nullProcurementContracts > 0 || brokenProcurementContracts > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullProcurementContracts} null and " +
+                            $"{brokenProcurementContracts} unresolvable procurement " +
+                            "contract(s) while loading. Unresolvable usually means a mod " +
+                            "that supplied the item was removed.");
                     }
                 }
 
@@ -1306,6 +1678,17 @@ namespace Intercolony
 
             LedgerService.Prune(this);
             OrderHistoryService.Prune(this);
+            CommercialTimelineService.Prune(this);
+
+            EconomicEventService.AdvanceLifecycle(this, lastRefreshTick);
+
+            // Mean-revert before pruning, not after: a settlement whose pressure settles on this
+            // cycle should stop costing space on this cycle. Reversed, every record would survive
+            // one refresh past the point it stopped meaning anything.
+            MarketPressureService.AdvanceAll(this);
+            MarketPressureService.PropagateEconomicChains(this);
+            MarketPressureService.DiffuseRegionalPressure(this);
+            PruneNeutralMarketStates();
 
             int expired = ExpireStaleOpportunities();
             int withdrawn = DropInaccessibleOpportunities();
@@ -1320,8 +1703,12 @@ namespace Intercolony
                 performance.opportunitiesCreated = created;
             }
 
+            int supplierListingsCreated = SupplierListingService.Refresh(this);
+
             RfqService.ExpireStale(requests);
             ContractService.AdvanceContracts(this);
+            ProcurementContractService.AdvanceProposals(this);
+            ProcurementContractService.AdvanceCycles(this);
             ContractService.OfferContracts(this);
             PurchaseOrderService.AdvanceOrders(purchaseOrders);
 
@@ -1335,6 +1722,7 @@ namespace Intercolony
             IntercolonyLog.Verbose(
                 $"Refresh #{refreshCount} ({cause}) at tick {lastRefreshTick}: " +
                 $"{expired} expired, {withdrawn} withdrawn, {created} created, " +
+                $"{supplierListingsCreated} supplier listings created, " +
                 $"{ActiveOpportunityCount} active.");
         }
 
@@ -1541,7 +1929,7 @@ namespace Intercolony
         /// Brings loaded state up to <see cref="CurrentSaveVersion"/>. Migrations must
         /// use safe defaults and must never silently drop active obligations (DESIGN.md §62).
         /// </summary>
-        private void MigrateIfNeeded()
+        internal void MigrateIfNeeded()
         {
             if (saveVersion == CurrentSaveVersion)
             {
@@ -1898,7 +2286,10 @@ namespace Intercolony
                 {
                     if (order?.status == SalesOrderStatus.Completed && order.ThingDef != null)
                     {
-                        RecordCompletedSale(order);
+                        // This historical repair is allowed to rebuild the pre-existing count and
+                        // quantity aggregate, but D5 forbids inventing a past trade-value total
+                        // from retained orders that may already be incomplete or pruned.
+                        RecordCompletedSale(order, recordTradeValue: false);
                     }
                 }
 
@@ -2009,7 +2400,198 @@ namespace Intercolony
                     $"{initializedQuotes} live legacy quote(s) were assigned to it.");
             }
 
+            if (saveVersion < 43)
+            {
+                // 42 -> 43 added the detailed commercial timeline spine (the 1.0 program Stage 0.3).
+                // Purely additive: a save from schema 42 has no timeline records yet,
+                // which is the correct initial state. Existing compact cumulative
+                // commercial history (CommercialHistoryEntry) is preserved.
+                // Recording starts at upgrade time (docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md Stage 0.4, Stage 7.3).
+                commercialTimelineStartTick = GenTicks.TicksGame;
+                IntercolonyLog.Message(
+                    $"  schema 42 -> 43: commercial timeline record spine added; history starts recording at tick {commercialTimelineStartTick}.");
+            }
+
+            if (saveVersion < 44)
+            {
+                // 43 -> 44 added per-settlement market pressure. Nothing to write: pressure is
+                // sparse and absence means neutral, which is exactly the right starting state.
+                // The plan is explicit that a migrated save must not have historical shortages
+                // inferred for it from old random rolls - there were none, the old variation was
+                // noise, and inventing pressure here would fabricate an economy the player never
+                // traded through.
+                IntercolonyLog.Message(
+                    "  schema 43 -> 44: market pressure added; every settlement starts undisturbed.");
+            }
+
+            if (saveVersion < 45)
+            {
+                // 44 -> 45 added persisted economic events. Nothing to write: no events existed
+                // before this schema, so an empty list is exactly right. Backfilling one would
+                // fabricate a crisis the player never lived through.
+                IntercolonyLog.Message(
+                    "  schema 44 -> 45: economic events added; no historical events were created.");
+            }
+
+            if (saveVersion < 46)
+            {
+                // 45 -> 46 added sparse direct product-brand records. Nothing to write: old
+                // saves do not prove the quality that was actually delivered. Do not fabricate
+                // brand from minQuality — it records what the buyer asked for, not what arrived,
+                // so doing so would credit or blame craftsmanship nobody recorded.
+                IntercolonyLog.Message(
+                    "  schema 45 -> 46: product brand records added; no historical brand was fabricated.");
+            }
+
+            if (saveVersion < 47)
+            {
+                // 46 -> 47 added the bounded pre-acceptance negotiation state and one persisted
+                // final counter to MarketOpportunity. Missing nodes already load as None and
+                // empty terms, which is the only correct migration: older saves contain no fact
+                // that a player countered, so inventing an in-progress negotiation would present
+                // a response the player never made.
+                IntercolonyLog.Message(
+                    "  schema 46 -> 47: bounded opportunity negotiation added; " +
+                    "existing opportunities start with no negotiation in progress.");
+            }
+
+            if (saveVersion < 48)
+            {
+                // 47 -> 48 added one bounded post-acceptance request flag per kind to SalesOrder.
+                // Missing nodes load as false, which correctly leaves every existing order with
+                // all three concessions still available.
+                IntercolonyLog.Message(
+                    "  schema 47 -> 48: post-acceptance renegotiation attempts added; " +
+                    "existing orders start with no request attempted.");
+            }
+
+            if (saveVersion < 49)
+            {
+                // 48 -> 49 added the last tier that actually produced a relationship milestone.
+                // Seed it from each reputation's current score tier: the old save proves the
+                // score, but not a milestone that happened before this history existed, so the
+                // upgrade must not invent one on the first later nudge.
+                int seededReputations = 0;
+                foreach (CommercialReputation reputation in reputations.Values)
+                {
+                    if (reputation == null)
+                    {
+                        continue;
+                    }
+
+                    reputation.lastRecordedTier = reputation.Tier;
+                    seededReputations++;
+                }
+
+                IntercolonyLog.Message(
+                    $"  schema 48 -> 49: relationship milestone state added; seeded " +
+                    $"last-recorded tier from the current tier for {seededReputations} existing " +
+                    "reputation record(s).");
+            }
+
+            if (saveVersion < 50)
+            {
+                // 49 -> 50 added public supplier listings. Older saves contain no listing
+                // records, so the additive migration keeps the collection empty rather than
+                // fabricating offers from profiles, quotations, or historical purchases.
+                if (supplierListings == null)
+                {
+                    supplierListings = new List<SupplierListing>();
+                }
+
+                IntercolonyLog.Message(
+                    "  schema 49 -> 50: supplier listings added; existing saves start with no listings.");
+            }
+
+            if (saveVersion < 51)
+            {
+                // 50 -> 51 added the persisted supplier-listing origin on PurchaseOrder. The
+                // missing value loads as zero, which correctly identifies every existing order
+                // as an RFQ-origin order rather than inventing a listing relationship.
+                IntercolonyLog.Message(
+                    "  schema 50 -> 51: purchase-order supplier listing origins added; " +
+                    "existing orders remain RFQ-origin or unlinked.");
+            }
+
+            if (saveVersion < 52)
+            {
+                // 51 -> 52 added standing procurement agreements. Older saves contain no such
+                // agreements, so the correct migration is an empty collection rather than
+                // fabricating contracts from historical purchases or existing RFQs.
+                if (procurementContracts == null)
+                {
+                    procurementContracts = new List<ProcurementContract>();
+                }
+
+                IntercolonyLog.Message(
+                    "  schema 51 -> 52: procurement contracts added; existing saves start with " +
+                    "no procurement contracts.");
+            }
+
+            if (saveVersion < 53)
+            {
+                // 52 -> 53 added decisionDueTick, proposalAppeal, and proposalDecision to
+                // ProcurementContract. This is deliberately a no-op: all three fields have
+                // sentinel Scribe defaults, so a schema-52 save without those nodes already
+                // loads into the correct pending/unanswered shape.
+                IntercolonyLog.Message(
+                    "  schema 52 -> 53: procurement proposal answer fields added; " +
+                    "sentinel Scribe defaults make this migration a deliberate no-op.");
+            }
+
+            if (saveVersion < 54)
+            {
+                // 53 -> 54 added procurement suspension state. Existing agreements were not
+                // suspended by the previous schema, so the missing suspendedTick defaults to 0
+                // and no status is rewritten.
+                IntercolonyLog.Message(
+                    "  schema 53 -> 54: procurement suspension fields added; " +
+                    "existing agreements remain unsuspended.");
+            }
+
+            if (saveVersion < 55)
+            {
+                // 54 -> 55 added persisted procurement final-counter terms and two additive
+                // negotiation states. Existing contracts are in none of those states; missing
+                // counter fields therefore retain their safe zero/default values and require no
+                // backfill or status rewrite.
+                IntercolonyLog.Message(
+                    "  schema 54 -> 55: procurement final-counter terms and bounded negotiation " +
+                    "states added; existing contracts require no migration.");
+            }
+
+            if (saveVersion < 56)
+            {
+                // 55 -> 56 added the durable completed-trade silver total to commercial history.
+                // Missing Scribe nodes load as zero, and no old order or timeline record is
+                // replayed: the historical amount cannot be reconstructed honestly after detail
+                // pruning, so the aggregate starts accumulating only from this schema onward.
+                IntercolonyLog.Message(
+                    "  schema 55 -> 56: durable completed-trade value added; existing totals start " +
+                    "at zero because historical silver cannot be reconstructed honestly.");
+            }
+
             saveVersion = CurrentSaveVersion;
+        }
+
+        /// <summary>
+        /// Drops brand records that cannot name the exact product they describe. A null child is
+        /// corrupt, while a null ThingDef is the expected shape when a supplying mod was removed
+        /// between sessions. Valid direct evidence must survive beside either one.
+        /// </summary>
+        internal static int PruneLoadedProductBrandRecords(List<ProductBrandRecord> records)
+        {
+            return records?.RemoveAll(record => record == null || record.thingDef == null) ?? 0;
+        }
+
+        /// <summary>
+        /// Drops records that carry no information after load. A null child is corrupt, while an
+        /// ended event has already left any lasting mark in Stage 2's persisted pressure; retaining
+        /// either would make the sparse event list grow forever for nothing.
+        /// </summary>
+        internal static void PruneLoadedEconomicEvents(List<EconomicEvent> events, int currentTick)
+        {
+            events.RemoveAll(e => e == null || e.endTick <= currentTick);
         }
 
         /// <summary>
@@ -2029,6 +2611,14 @@ namespace Intercolony
                 }
             }
 
+            foreach (SupplierListing listing in supplierListings)
+            {
+                if (listing != null && listing.id > highest)
+                {
+                    highest = listing.id;
+                }
+            }
+
             foreach (SalesOrder order in orders)
             {
                 if (order.id > highest)
@@ -2040,6 +2630,14 @@ namespace Intercolony
             foreach (RecurringContract contract in contracts)
             {
                 if (contract.id > highest)
+                {
+                    highest = contract.id;
+                }
+            }
+
+            foreach (ProcurementContract contract in procurementContracts)
+            {
+                if (contract != null && contract.id > highest)
                 {
                     highest = contract.id;
                 }
@@ -2093,6 +2691,14 @@ namespace Intercolony
                 }
             }
 
+            foreach (CommercialEventRecord record in commercialTimeline)
+            {
+                if (record != null && record.id > highest)
+                {
+                    highest = record.id;
+                }
+            }
+
             if (highest >= nextId)
             {
                 IntercolonyLog.Warning(
@@ -2135,6 +2741,21 @@ namespace Intercolony
                 sb.AppendLine($"    {order}  {(order.IsOpen ? $"{order.DaysRemaining:F1}d left" : order.outcomeNote)}");
             }
 
+            sb.AppendLine($"  contracts    : {contracts.Count} ({ActiveContractCount} active)");
+            // Only plain values are printed here. RecurringContract has no equivalent of
+            // EmploymentContract's TermLabel/RemainingLabel, so every tick and duration field —
+            // cadenceTicks, nextCycleTick, offerExpiryTick, decisionDueTick, suspendedTick,
+            // renewalExpiryTick — plus referenceUnitPrice, proposalAppeal and activeOrderId stay
+            // out. Formatting one of those would be the sentinel mistake this project has now made
+            // five times: a value chosen to mean "none" printed as though it were a quantity.
+            int contractLimit = Mathf.Min(contracts.Count, 20);
+            for (int i = 0; i < contractLimit; i++)
+            {
+                RecurringContract contract = contracts[i];
+                sb.AppendLine($"    #{contract.id} {contract.settlementName}: " +
+                              $"{contract.quantityPerCycle}x {contract.ItemLabel()} [{contract.status}]");
+            }
+
             sb.AppendLine($"  employments  : {employments.Count} ({ActiveEmployeeCount} open)");
             foreach (EmploymentContract employment in employments)
             {
@@ -2152,6 +2773,10 @@ namespace Intercolony
                 }
             }
 
+            sb.AppendLine($"  timeline     : {commercialTimeline.Count} record(s)" +
+                          (commercialTimelineStartTick == CommercialTimelineService.NoHistory
+                              ? ", no history yet"
+                              : $", since tick {commercialTimelineStartTick}"));
             sb.AppendLine($"  ledger       : {ledger.Count} entr(ies)" +
                           (ledgerStartTick == LedgerService.NoHistory
                               ? ", no history yet"
