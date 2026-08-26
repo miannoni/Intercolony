@@ -171,6 +171,7 @@ namespace Intercolony
         private const float SupplierMarketRefreshIntervalSeconds = 0.5f;
         private List<SupplierMarketRow> supplierMarketRows;
         private List<float> supplierMarketRowHeights;
+        private float supplierMarketContentHeight = -1f;
         private float supplierMarketRowHeightsWidth = -1f;
         private int supplierMarketRowsListingCount = -1;
         private float supplierMarketRowsBuiltAtRealtime;
@@ -2406,22 +2407,23 @@ namespace Intercolony
             Widgets.DrawLineHorizontal(0f, y, inRect.width);
             y += 2f;
 
-            float contentHeight = 0f;
-            for (int i = 0; i < rows.Count; i++)
-            {
-                contentHeight += supplierMarketRowHeights[i];
-            }
-
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect viewRect = new Rect(0f, 0f, tableWidth, contentHeight);
+            Rect viewRect = new Rect(0f, 0f, tableWidth, supplierMarketContentHeight);
             BeginPageScrollView(outRect, ref supplierMarketScroll, viewRect);
 
+            float visibleTop = supplierMarketScroll.y;
+            float visibleBottom = visibleTop + outRect.height;
             float rowY = 0f;
             for (int i = 0; i < rows.Count; i++)
             {
                 float rowHeight = supplierMarketRowHeights[i];
-                DrawSupplierMarketRow(
-                    new Rect(0f, rowY, tableWidth, rowHeight), rows[i], i, state);
+                if (rowY + rowHeight >= visibleTop - rowHeight &&
+                    rowY <= visibleBottom + rowHeight)
+                {
+                    DrawSupplierMarketRow(
+                        new Rect(0f, rowY, tableWidth, rowHeight), rows[i], i, state);
+                }
+
                 rowY += rowHeight;
             }
 
@@ -2432,6 +2434,7 @@ namespace Intercolony
         {
             supplierMarketRows = null;
             supplierMarketRowHeights = null;
+            supplierMarketContentHeight = -1f;
             supplierMarketRowHeightsWidth = -1f;
             supplierMarketRowsListingCount = -1;
             supplierMarketRowsBuiltAtRealtime = 0f;
@@ -2452,6 +2455,7 @@ namespace Intercolony
             {
                 supplierMarketRows = SupplierMarketUiService.BuildRows(state);
                 supplierMarketRowHeights = null;
+                supplierMarketContentHeight = -1f;
                 supplierMarketRowHeightsWidth = -1f;
                 supplierMarketRowsListingCount = listingCount;
                 supplierMarketRowsBuiltAtRealtime = now;
@@ -2465,6 +2469,7 @@ namespace Intercolony
                 SupplierMarketUiService.SortRows(
                     supplierMarketRows, supplierMarketSortColumn, supplierMarketSortDescending);
                 supplierMarketRowHeights = null;
+                supplierMarketContentHeight = -1f;
                 supplierMarketRowHeightsWidth = -1f;
                 supplierMarketRowsSortColumn = supplierMarketSortColumn;
                 supplierMarketRowsSortDescending = supplierMarketSortDescending;
@@ -2473,13 +2478,16 @@ namespace Intercolony
 
             if (supplierMarketRowHeights == null ||
                 supplierMarketRowHeights.Count != supplierMarketRows.Count ||
-                supplierMarketRowHeightsWidth != tableWidth)
+                supplierMarketRowHeightsWidth != tableWidth ||
+                supplierMarketContentHeight < 0f)
             {
                 supplierMarketRowHeights = new List<float>(supplierMarketRows.Count);
+                supplierMarketContentHeight = 0f;
                 for (int i = 0; i < supplierMarketRows.Count; i++)
                 {
-                    supplierMarketRowHeights.Add(
-                        SupplierMarketRowHeight(supplierMarketRows[i], tableWidth));
+                    float rowHeight = SupplierMarketRowHeight(supplierMarketRows[i], tableWidth);
+                    supplierMarketRowHeights.Add(rowHeight);
+                    supplierMarketContentHeight += rowHeight;
                 }
 
                 supplierMarketRowHeightsWidth = tableWidth;
@@ -2554,7 +2562,7 @@ namespace Intercolony
             for (int i = 0; i < (int)SupplierMarketColumn.Reason + 1; i++)
             {
                 SupplierMarketColumn column = (SupplierMarketColumn)i;
-                DrawMeasuredSupplierLabel(
+                DrawSupplierLabel(
                     SupplierMarketCell(rect, column),
                     SupplierMarketUiService.CellLabel(row, column));
             }
@@ -2661,6 +2669,11 @@ namespace Intercolony
             float measuredHeight = Text.CalcHeight(value, Mathf.Max(1f, rect.width));
             Widgets.Label(
                 new Rect(rect.x, rect.y, rect.width, Mathf.Max(rect.height, measuredHeight)), value);
+        }
+
+        private static void DrawSupplierLabel(Rect rect, string text)
+        {
+            Widgets.Label(rect, text ?? "");
         }
 
         private void DrawFindSeller(Rect inRect, IntercolonyWorldComponent state)
