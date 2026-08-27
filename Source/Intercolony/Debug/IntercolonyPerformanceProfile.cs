@@ -106,6 +106,67 @@ namespace Intercolony
             {
                 using (IntercolonyLog.SuppressVerbose())
                 {
+                    if (map?.IsPlayerHome != true)
+                    {
+                        result.sb.AppendLine(
+                            "  FindBuyerService.ColonyStock(map)  unavailable " +
+                            "(the supplied map is not a player colony).");
+                        result.sb.AppendLine(
+                            "  FindBuyerService.AvailableColonyStock(state, map)  unavailable " +
+                            "(the supplied map is not a player colony).");
+                        result.sb.AppendLine(
+                            "  FindBuyerService.AvailableColonyAnimals(state, map)  unavailable " +
+                            "(the supplied map is not a player colony).");
+                    }
+                    else
+                    {
+                        int allThingsCount = map.listerThings.AllThings.Count;
+                        int storedThingsCount = StoredThingsCount(map);
+
+                        List<KeyValuePair<ThingDef, int>> stock = null;
+                        Timing colonyStock = Measure(
+                            null,
+                            () => stock = FindBuyerService.ColonyStock(map),
+                            1);
+                        result.Check(
+                            stock != null,
+                            "FindBuyerService.ColonyStock(map)",
+                            TimingDetail(colonyStock,
+                                $"all things={allThingsCount}; " +
+                                $"stored things={storedThingsCount}; " +
+                                $"distinct defs returned={stock?.Count ?? 0}"));
+
+                        List<KeyValuePair<ThingDef, int>> availableStockResult = null;
+                        Timing availableColonyStock = Measure(
+                            null,
+                            () => availableStockResult =
+                                FindBuyerService.AvailableColonyStock(state, map),
+                            1);
+                        result.Check(
+                            availableStockResult != null,
+                            "FindBuyerService.AvailableColonyStock(state, map)",
+                            TimingDetail(availableColonyStock,
+                                $"all things={allThingsCount}; " +
+                                $"stored things={storedThingsCount}; " +
+                                $"distinct defs returned={stock?.Count ?? 0}; " +
+                                $"available defs returned={availableStockResult?.Count ?? 0}"));
+
+                        List<AnimalStockGroup> availableAnimalsResult = null;
+                        Timing availableColonyAnimals = Measure(
+                            null,
+                            () => availableAnimalsResult =
+                                FindBuyerService.AvailableColonyAnimals(state, map),
+                            1);
+                        result.Check(
+                            availableAnimalsResult != null,
+                            "FindBuyerService.AvailableColonyAnimals(state, map)",
+                            TimingDetail(availableColonyAnimals,
+                                $"all things={allThingsCount}; " +
+                                $"stored things={storedThingsCount}; " +
+                                $"distinct defs returned={stock?.Count ?? 0}; " +
+                                $"animal groups returned={availableAnimalsResult?.Count ?? 0}"));
+                    }
+
                     // The detached state still points at the loaded World, so settlement count,
                     // world-grid geometry and definition availability are real. Its persisted
                     // collections start empty and are disposable benchmark fixtures.
@@ -447,6 +508,32 @@ namespace Intercolony
                    $"samples={timing.SampleCount} x {timing.CallsPerSample} calls; {workload}";
         }
 
+        private static string TimingDetail(Timing timing, string workload)
+        {
+            return $"median={timing.MedianMilliseconds:F3} ms/call; " +
+                   $"samples={timing.SampleCount} x {timing.CallsPerSample} calls; {workload}";
+        }
+
+        private static int StoredThingsCount(Map map)
+        {
+            if (map?.haulDestinationManager == null)
+            {
+                return 0;
+            }
+
+            List<SlotGroup> groups = map.haulDestinationManager.AllGroupsListForReading;
+            int count = 0;
+            for (int i = 0; i < groups.Count; i++)
+            {
+                if (groups[i] != null)
+                {
+                    count += groups[i].HeldThingsCount;
+                }
+            }
+
+            return count;
+        }
+
         private static int WorldSettlementCount()
         {
             return Find.WorldObjects?.Settlements?.Count ?? 0;
@@ -529,6 +616,12 @@ namespace Intercolony
                 "Source/Intercolony/UI/MainTabWindow_Intercolony.cs:3378 calls " +
                 "CommercialHistoryUiService.BuildRows. " +
                 "The measured fixture retains 1,000 records and presents 12.");
+            result.Info(
+                "Find Buyer stock paths: the tab refreshes at the real-time interval declared at " +
+                "Source/Intercolony/UI/MainTabWindow_Intercolony.cs:128; " +
+                "AvailableColonyAnimals is called at :1598 and AvailableColonyStock at :1603. " +
+                "Both enter FindBuyerService.ColonyStock through " +
+                "Source/Intercolony/Market/FindBuyerService.cs:684.");
         }
 
         private sealed class MarketFixture

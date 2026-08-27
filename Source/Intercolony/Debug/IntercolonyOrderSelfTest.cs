@@ -184,6 +184,8 @@ namespace Intercolony
             // --- B4: opt-in buy-only items remain deliverable after the option is disabled ---
             RunBuyOnlyTradeUnlockChecks(state, map, sb, Check);
 
+            RunColonyStockTraversalEquivalenceCheck(map, sb, Check, Skip);
+
             // --- Find Buyer availability: physical stock minus today's commitments ---
             RunAvailabilityChecks(state, map, sb, Check);
 
@@ -1500,6 +1502,165 @@ namespace Intercolony
                         }
                     }
                 }
+            }
+        }
+
+        private static void RunColonyStockTraversalEquivalenceCheck(
+            Map map,
+            StringBuilder sb,
+            Action<string, bool, string> check,
+            Action<string, string> skip)
+        {
+            sb.AppendLine("  Find Buyer stock traversal:");
+            const string assertionName = "Find Buyer stock storage walk matches whole-map walk";
+            if (map == null || map.listerThings == null || map.haulDestinationManager == null)
+            {
+                check(assertionName, false, "run while viewing a colony map");
+                return;
+            }
+
+            List<KeyValuePair<ThingDef, int>> storageWalk = FindBuyerService.ColonyStock(map);
+
+            Dictionary<ThingDef, int> wholeMapCounts = new Dictionary<ThingDef, int>();
+            foreach (Thing thing in map.listerThings.AllThings)
+            {
+                Thing inner = thing.GetInnerIfMinified();
+                if (inner?.def == null || !IntercolonyProductClassifier.IsFungibleTradeItem(inner.def))
+                {
+                    continue;
+                }
+
+                if (!OrderValidator.IsAvailableColonyStock(thing))
+                {
+                    continue;
+                }
+
+                int units = OrderValidator.CountableUnits(thing);
+                wholeMapCounts.TryGetValue(inner.def, out int existing);
+                wholeMapCounts[inner.def] = existing + units;
+            }
+
+            List<KeyValuePair<ThingDef, int>> wholeMapWalk =
+                new List<KeyValuePair<ThingDef, int>>();
+            foreach (KeyValuePair<ThingDef, int> entry in wholeMapCounts)
+            {
+                wholeMapWalk.Add(entry);
+            }
+
+            // Keep the reference walk on the same total order as ColonyStock so this assertion
+            // exercises the traversal rather than the sort.
+            wholeMapWalk.Sort((a, b) =>
+            {
+                int comparison = b.Value.CompareTo(a.Value);
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+
+                comparison = string.Compare(
+                    a.Key.LabelCap.ToString(), b.Key.LabelCap.ToString(),
+                    StringComparison.OrdinalIgnoreCase);
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+
+                return string.Compare(a.Key.defName, b.Key.defName, StringComparison.Ordinal);
+            });
+
+            Dictionary<ThingDef, int> storageCounts = new Dictionary<ThingDef, int>();
+            foreach (KeyValuePair<ThingDef, int> entry in storageWalk)
+            {
+                storageCounts.TryGetValue(entry.Key, out int existing);
+                storageCounts[entry.Key] = existing + entry.Value;
+            }
+
+            Dictionary<ThingDef, int> wholeMapWalkCounts =
+                new Dictionary<ThingDef, int>();
+            foreach (KeyValuePair<ThingDef, int> entry in wholeMapWalk)
+            {
+                wholeMapWalkCounts.TryGetValue(entry.Key, out int existing);
+                wholeMapWalkCounts[entry.Key] = existing + entry.Value;
+            }
+
+            HashSet<ThingDef> allDefs = new HashSet<ThingDef>();
+            foreach (ThingDef def in storageCounts.Keys)
+            {
+                allDefs.Add(def);
+            }
+
+            foreach (ThingDef def in wholeMapWalkCounts.Keys)
+            {
+                allDefs.Add(def);
+            }
+
+            List<string> contentDifferences = new List<string>();
+            foreach (ThingDef def in allDefs)
+            {
+                bool inStorage = storageCounts.TryGetValue(def, out int storageCount);
+                bool inWholeMap = wholeMapWalkCounts.TryGetValue(def, out int wholeMapCount);
+                if (inStorage && inWholeMap && storageCount == wholeMapCount)
+                {
+                    continue;
+                }
+
+                if (contentDifferences.Count < 5)
+                {
+                    contentDifferences.Add(
+                        $"{def?.defName ?? "<null>"}: " +
+                        $"storage={(inStorage ? storageCount.ToString() : "absent")} " +
+                        $"wholeMap={(inWholeMap ? wholeMapCount.ToString() : "absent")}");
+                }
+            }
+
+            bool contentMatches = contentDifferences.Count == 0;
+            string contentDetail = contentMatches
+                ? $"{storageCounts.Count} defs compared independent of order"
+                : string.Join("; ", contentDifferences);
+            check(
+                "Find Buyer stock storage walk matches whole-map content",
+                contentMatches,
+                contentDetail);
+
+            // This can fail if the traversals produce different content, or if the ordering is
+            // not total and therefore not reproducible.
+            bool orderMatches = storageWalk.Count == wholeMapWalk.Count;
+            int firstOrderDifference = -1;
+            int comparableCount = Mathf.Min(storageWalk.Count, wholeMapWalk.Count);
+            for (int i = 0; i < comparableCount; i++)
+            {
+                if (storageWalk[i].Key != wholeMapWalk[i].Key)
+                {
+                    orderMatches = false;
+                    firstOrderDifference = i;
+                    break;
+                }
+            }
+
+            if (!orderMatches && firstOrderDifference < 0)
+            {
+                firstOrderDifference = comparableCount;
+            }
+
+            string orderDetail = orderMatches
+                ? $"{storageWalk.Count} defs compared in sequence"
+                : $"storage={storageWalk.Count}, wholeMap={wholeMapWalk.Count}, " +
+                  $"first differing index {firstOrderDifference}: " +
+                  $"storage={(firstOrderDifference < storageWalk.Count
+                      ? storageWalk[firstOrderDifference].Key?.defName ?? "<null>"
+                      : "absent")} " +
+                  $"wholeMap={(firstOrderDifference < wholeMapWalk.Count
+                      ? wholeMapWalk[firstOrderDifference].Key?.defName ?? "<null>"
+                      : "absent")}";
+            check(
+                "Find Buyer stock storage walk matches whole-map order",
+                orderMatches,
+                orderDetail);
+
+            if (wholeMapWalk.Count == 0)
+            {
+                skip("Find Buyer stock traversal comparison has no stored stock evidence",
+                    "comparison ran against an empty colony");
             }
         }
 
