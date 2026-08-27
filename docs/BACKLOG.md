@@ -16,6 +16,45 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## The coarse economy refresh is over its budget on a large world.
+
+**Raised:** 2026-08-26, during the full self-test suite against a real 4.8-million-tick colony save
+through the dev bridge. PRE-EXISTING; not caused by the Find Buyer work committed that day.
+**Size:** unknown until the scaling path is addressed.
+**Status:** open.
+
+The performance suite asserts a 100 ms budget for the coarse economy refresh. On a generated test
+world with 92 settlements it measures 14.925 ms and passes. On the real colony with 252 settlements
+it measures 103.818 ms, 107.092 ms and 114.151 ms across three runs, and fails.
+
+Settlement count grew 2.7 times while the cost grew roughly 7 times. This is an observation from two
+data points, not a measured complexity. The refresh runs on the market refresh cycle rather than per
+frame, so this is an occasional hitch of about a tenth of a second rather than a sustained framerate
+drop — but it is on the main thread, grows with world size, and breaches a deliberately chosen budget.
+
+The profile entry is `Source/Intercolony/Debug/IntercolonyPerformanceProfile.cs:180`; it names the
+per-tick guard at `Source/Intercolony/Core/IntercolonyWorldComponent.cs:1569` and the `DoRefresh` body
+at `Source/Intercolony/Core/IntercolonyWorldComponent.cs:1672`.
+
+## The transition assertion reports a saturated fixture as a failure.
+
+**Raised:** 2026-08-26, during the full self-test suite against a real 4.8-million-tick colony save
+through the dev bridge. PRE-EXISTING; not caused by the Find Buyer work committed that day.
+**Size:** small — test-fixture fix.
+**Status:** open.
+
+The transition suite's **settling properly improves it** assertion reads `50 -> 60` on a fresh world
+and passes, but reads `100 -> 100` on the real colony and **FAILS** because the underlying value is
+already at its maximum and cannot improve.
+
+The defect is in the assertion, not the mechanic: an input already at its cap makes the claim
+untestable. An untestable assertion should **SKIP** with a stated reason; this project treats that as
+"not proof", not a pass or a failure. Reporting it as a failure makes a real regression
+indistinguishable from a saturated fixture.
+
+**Fix:** detect the saturated precondition and **SKIP** with a reason naming it, following the skip
+conventions already used elsewhere in the suite.
+
 ## Procurement agreements can never be renewed.
 
 **Raised:** 2026-08-25, while building the procurement agreements UI.
