@@ -16,6 +16,30 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## The negotiation evaluator does not price term length.
+
+**Raised:** 2026-08-28, during review of the selling-side cadence controls. **PRE-EXISTING:**
+procurement has shipped this way since standing procurement agreements were built; the selling
+side inherited it that day when the player gained the procurement dialog's cadence, deliveries and
+fulfilment controls.
+**Size:** medium — shared terms type and evaluator change, with balance moving on both sides.
+**Status:** open.
+
+`IntercolonyNegotiationTerms` in `Source/Intercolony/Contracts/` carries exactly four fields:
+`quantity`, `unitPrice`, `deadlineDays` and `fulfillment`; it has no field for the number of cycles
+or deliveries. Both `ProcurementContractService` and `ContractService` build `originalTerms` and
+`proposedTerms` from that type, so the counterparty's appraisal sees a single cycle's cadence but
+never how many cycles are committed to.
+
+A proposal for four deliveries and one for forty deliveries of the same goods at the same rate and
+cadence are therefore judged equally appealing. Appeal drives accept, counter or refuse, so term
+length is unpriced for both parties even though it changes the deal's total value and risk. Both
+services reject a package whose cadence multiplied by its cycle count exceeds 365 days, so no
+single agreement can run longer than a year.
+
+Fixing the shared type moves existing balance in both directions at once; do it deliberately, not
+as a side effect of another change.
+
 ## The coarse economy refresh is over its budget on a large world.
 
 **Raised:** 2026-08-26, during the full self-test suite against a real 4.8-million-tick colony save

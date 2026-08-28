@@ -521,6 +521,162 @@ namespace Intercolony
                                       $"@ {real.unitPrice:F2} vs spot {spot:F2}, " +
                                       $"{real.CycleValue} silver per cycle)");
                     }
+
+                    // Player proposals require the same reputation gate as settlement offers;
+                    // the fixture's completed history supplies the other commercial prerequisite.
+                    CommercialReputation proposalReputation = new CommercialReputation(
+                        subject.ID, subject.Label ?? "unnamed", subject.Faction?.Name ?? "");
+                    proposalReputation.Adjust(20f);
+                    state.Reputations[subject.ID] = proposalReputation;
+                    state.Contracts.Clear();
+
+                    const int namedQuantity = 100;
+                    const int namedCadenceDays = 7;
+                    const int namedTotalCycles = 4;
+                    const FulfillmentMode namedFulfillment = FulfillmentMode.BuyerPickup;
+                    ContractProposalResult namedProposal = ContractService.ProposeContract(
+                        state, subject, meat, namedQuantity, namedCadenceDays, namedTotalCycles,
+                        agreedUnitPrice: null, fulfillment: namedFulfillment);
+
+                    // This fails if any player-chosen cadence, cycle count or fulfillment mode is
+                    // dropped, defaulted or overwritten before the contract is created.
+                    Check("player-chosen selling terms reach the contract",
+                        namedProposal.Success && namedProposal.Contract != null &&
+                        namedProposal.Contract.cadenceTicks ==
+                        namedCadenceDays * GenDate.TicksPerDay &&
+                        namedProposal.Contract.totalCycles == namedTotalCycles &&
+                        namedProposal.Contract.fulfillment == namedFulfillment &&
+                        namedProposal.Evaluation != null &&
+                        namedProposal.Evaluation.ProposedTerms != null &&
+                        namedProposal.Evaluation.ProposedTerms.deadlineDays == namedCadenceDays &&
+                        namedProposal.Evaluation.ProposedTerms.fulfillment == namedFulfillment,
+                        $"success={namedProposal.Success}; failure={namedProposal.Failure}; " +
+                        $"cadence={namedProposal.Contract?.CadenceDays:F0}; " +
+                        $"cycles={namedProposal.Contract?.totalCycles}; " +
+                        $"fulfillment={namedProposal.Contract?.fulfillment}");
+
+                    ContractProposalResult ProposeTermFixture(
+                        int cadenceDays, int totalCycles,
+                        FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+                    {
+                        state.Contracts.Clear();
+                        return ContractService.ProposeContract(
+                            state, subject, meat, namedQuantity, cadenceDays, totalCycles,
+                            agreedUnitPrice: null, fulfillment: fulfillment);
+                    }
+
+                    ContractProposalResult cadenceBelow = ProposeTermFixture(
+                        ProcurementContractService.MinimumCadenceDays - 1, 1);
+                    // This fails if a cadence below the procurement lower bound is accepted or
+                    // reports anything other than the procurement refusal reason.
+                    Check("selling cadence below minimum is refused",
+                        !cadenceBelow.Success &&
+                        cadenceBelow.Failure == ContractProposalFailure.CadenceOutOfRange &&
+                        cadenceBelow.Reason ==
+                        $"Cadence must be between {ProcurementContractService.MinimumCadenceDays} and " +
+                        $"{ProcurementContractService.MaximumCadenceDays} days.",
+                        $"failure={cadenceBelow.Failure}; reason={cadenceBelow.Reason}");
+
+                    ContractProposalResult cadenceAbove = ProposeTermFixture(
+                        ProcurementContractService.MaximumCadenceDays + 1, 1);
+                    // This fails if a cadence above the procurement upper bound is accepted or
+                    // reports anything other than the procurement refusal reason.
+                    Check("selling cadence above maximum is refused",
+                        !cadenceAbove.Success &&
+                        cadenceAbove.Failure == ContractProposalFailure.CadenceOutOfRange &&
+                        cadenceAbove.Reason ==
+                        $"Cadence must be between {ProcurementContractService.MinimumCadenceDays} and " +
+                        $"{ProcurementContractService.MaximumCadenceDays} days.",
+                        $"failure={cadenceAbove.Failure}; reason={cadenceAbove.Reason}");
+
+                    ContractProposalResult cyclesBelow = ProposeTermFixture(1,
+                        ProcurementContractService.MinimumTotalCycles - 1);
+                    // This fails if a cycle count below the procurement lower bound is accepted or
+                    // reports anything other than the procurement refusal reason.
+                    Check("selling total cycles below minimum is refused",
+                        !cyclesBelow.Success &&
+                        cyclesBelow.Failure == ContractProposalFailure.TotalCyclesOutOfRange &&
+                        cyclesBelow.Reason ==
+                        $"Total cycles must be between {ProcurementContractService.MinimumTotalCycles} and " +
+                        $"{ProcurementContractService.MaximumTotalCycles}.",
+                        $"failure={cyclesBelow.Failure}; reason={cyclesBelow.Reason}");
+
+                    ContractProposalResult cyclesAbove = ProposeTermFixture(1,
+                        ProcurementContractService.MaximumTotalCycles + 1);
+                    // This fails if a cycle count above the procurement upper bound is accepted or
+                    // reports anything other than the procurement refusal reason.
+                    Check("selling total cycles above maximum is refused",
+                        !cyclesAbove.Success &&
+                        cyclesAbove.Failure == ContractProposalFailure.TotalCyclesOutOfRange &&
+                        cyclesAbove.Reason ==
+                        $"Total cycles must be between {ProcurementContractService.MinimumTotalCycles} and " +
+                        $"{ProcurementContractService.MaximumTotalCycles}.",
+                        $"failure={cyclesAbove.Failure}; reason={cyclesAbove.Reason}");
+
+                    ContractProposalResult termTooLong = ProposeTermFixture(
+                        ProcurementContractService.MaximumCadenceDays, 2);
+                    // This fails if a valid cadence/cycle pair whose product exceeds the maximum
+                    // term is accepted or reports anything other than the procurement reason.
+                    Check("selling term over maximum is refused",
+                        !termTooLong.Success &&
+                        termTooLong.Failure == ContractProposalFailure.TermTooLong &&
+                        termTooLong.Reason ==
+                        $"Cadence multiplied by total cycles must not exceed " +
+                        $"{ProcurementContractService.MaximumTermDays} days.",
+                        $"failure={termTooLong.Failure}; reason={termTooLong.Reason}");
+
+                    ContractProposalResult invalidFulfillment = ProposeTermFixture(
+                        1, 1, (FulfillmentMode)int.MaxValue);
+                    // This fails if an enum value outside the two legal fulfillment modes reaches
+                    // proposal construction instead of using the procurement refusal reason.
+                    Check("selling invalid fulfillment is refused",
+                        !invalidFulfillment.Success &&
+                        invalidFulfillment.Failure == ContractProposalFailure.InvalidFulfillment &&
+                        invalidFulfillment.Reason ==
+                        "Fulfillment must be supplier delivery or buyer pickup.",
+                        $"failure={invalidFulfillment.Failure}; reason={invalidFulfillment.Reason}");
+
+                    const int previewQuantity = 76;
+                    const int previewCadenceDays = 5;
+                    const int previewTotalCycles = 5;
+                    const FulfillmentMode previewFulfillment = FulfillmentMode.BuyerPickup;
+                    state.Contracts.Clear();
+                    ContractTerms preview = ContractService.PreviewContractTerms(
+                        state, subject, meat, previewQuantity, previewCadenceDays,
+                        previewTotalCycles, agreedUnitPrice: null,
+                        fulfillment: previewFulfillment);
+                    ContractProposalResult previewProposal = ContractService.ProposeContract(
+                        state, subject, meat, previewQuantity, previewCadenceDays,
+                        previewTotalCycles, agreedUnitPrice: null,
+                        fulfillment: previewFulfillment);
+
+                    // This fails if preview and proposal calculate their price or rounded
+                    // per-cycle payment independently.
+                    Check("selling preview matches the proposed package",
+                        preview != null && previewProposal.Success &&
+                        previewProposal.Contract != null &&
+                        preview.unitPrice == previewProposal.Contract.unitPrice &&
+                        preview.paymentPerDelivery == previewProposal.Contract.CyclePayment,
+                        $"preview unit={preview?.unitPrice.ToString("R") ?? "null"}; " +
+                        $"proposal unit={previewProposal.Contract?.unitPrice.ToString("R") ?? "null"}; " +
+                        $"preview payment={preview?.paymentPerDelivery}; " +
+                        $"proposal payment={previewProposal.Contract?.CyclePayment}; " +
+                        $"reason={previewProposal.Reason ?? "none"}");
+
+                    state.Contracts.Clear();
+                    ContractProposalResult legacyProposal = ContractService.ProposeContract(
+                        state, subject, meat, ContractService.MinimumQuantityPerCycle);
+                    // This fails if the untouched overload stops using its seeded 3-to-6 draw or
+                    // its one-quadrum cadence while delegating to the explicit-term path.
+                    Check("legacy selling proposal keeps seeded terms",
+                        legacyProposal.Success && legacyProposal.Contract != null &&
+                        legacyProposal.Contract.totalCycles >= 3 &&
+                        legacyProposal.Contract.totalCycles <= 6 &&
+                        legacyProposal.Contract.cadenceTicks == GenDate.TicksPerQuadrum,
+                        $"success={legacyProposal.Success}; failure={legacyProposal.Failure}; " +
+                        $"cycles={legacyProposal.Contract?.totalCycles}; " +
+                        $"cadence={legacyProposal.Contract?.CadenceDays:F0}; " +
+                        $"reason={legacyProposal.Reason ?? "none"}");
                 }
             }
             finally
