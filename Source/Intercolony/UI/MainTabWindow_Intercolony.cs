@@ -2428,13 +2428,32 @@ namespace Intercolony
         {
             float y = inRect.y;
 
+            List<PurchaseOrdersRow> rows = PurchaseOrdersUiService.BuildRows(state);
+            int clearableCount = rows.Any(row => !row.isLive)
+                ? OrderHistoryService.CountClearablePurchaseOrderHistory(state)
+                : 0;
+
             Text.Font = GameFont.Medium;
             DrawMeasuredPurchaseOrderLabel(
-                new Rect(0f, y, inRect.width, 34f), "Purchase orders");
+                new Rect(0f, y, Mathf.Max(1f, inRect.width - 200f), 34f), "Purchase orders");
             Text.Font = GameFont.Small;
+
+            if (clearableCount > 0)
+            {
+                Rect clearRect = new Rect(inRect.width - 190f, y + 2f, 190f, 30f);
+                if (Widgets.ButtonText(clearRect, "Clear completed history"))
+                {
+                    string orderWord = clearableCount == 1 ? "order" : "orders";
+                    Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                        $"Remove {clearableCount} concluded {orderWord} from this list?\n\n" +
+                        "Live purchase orders and your trading record will be kept.",
+                        () => OrderHistoryService.ClearPurchaseOrderHistory(state),
+                        destructive: true));
+                }
+            }
+
             y += 40f;
 
-            List<PurchaseOrdersRow> rows = PurchaseOrdersUiService.BuildRows(state);
             string emptyState = PurchaseOrdersUiService.EmptyState(rows);
             if (rows.Count == 0)
             {
@@ -2984,29 +3003,9 @@ namespace Intercolony
             if (concludedCount > 0)
             {
                 y += liveCount > 0 ? PurchaseOrderSectionGap : 0f;
-                const float buttonWidth = 190f;
-                int clearableCount =
-                    OrderHistoryService.CountClearablePurchaseOrderHistory(state);
-                float labelWidth = clearableCount > 0
-                    ? width - buttonWidth - 8f
-                    : width;
                 string header = $"Concluded orders ({concludedCount})";
                 DrawMeasuredPurchaseOrderLabel(
-                    new Rect(0f, y, labelWidth, PurchaseOrderSectionHeaderHeight), header);
-                if (clearableCount > 0)
-                {
-                    Rect clearRect = new Rect(
-                        width - buttonWidth, y + 2f, buttonWidth, 26f);
-                    if (Widgets.ButtonText(clearRect, "Clear completed history"))
-                    {
-                        string orderWord = clearableCount == 1 ? "order" : "orders";
-                        Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
-                            $"Remove {clearableCount} concluded {orderWord} from this list?\n\n" +
-                            "Live purchase orders and your trading record will be kept.",
-                            () => OrderHistoryService.ClearPurchaseOrderHistory(state),
-                            destructive: true));
-                    }
-                }
+                    new Rect(0f, y, width, PurchaseOrderSectionHeaderHeight), header);
 
                 y += PurchaseOrderSectionHeaderHeight;
                 int index = 0;
