@@ -80,6 +80,19 @@ SAVES            = %USERPROFILE%\AppData\LocalLow\Ludeon Studios\RimWorld by Lud
    sizes to its measured content, clamped to a fraction of `UI.screenHeight`, and
    scrolls past the clamp.
 
+8. **A summary never repeats what is already on the same screen.** A terms or
+   confirmation summary carries only what the player cannot otherwise see — derived
+   numbers and consequences — never values they just typed, the row they just selected,
+   or a label already beside a control. Set by Matteo on 2026-08-28 after reviewing the
+   two agreement proposal dialogs: both terms sections repeated the item, counterparty,
+   quantity, cadence, and cycle count already visible in a list or input box a few pixels
+   away. On the selling dialog, those rows pushed payment per delivery and the total —
+   the only figures unavailable elsewhere on that screen — entirely out of view, hiding
+   the number the decision turns on. For each summary row, ask whether the same value
+   appears elsewhere on that screen; if it does, delete the row rather than the other one,
+   because the control or list is where the player expects to read it and the summary is
+   where they expect the consequence.
+
 ---
 
 ## Build and test loop
