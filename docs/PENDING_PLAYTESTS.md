@@ -71,6 +71,39 @@ cannot observe framerate.
 normally. Sort a column and make a purchase, then confirm the table updates immediately rather than
 lagging up to half a second behind. This remains unproven until the fix is felt in play.
 
+### Selling Market framerate fix needs to be felt, not measured
+
+Added 2026-08-28 on branch `1.0.1`. Opening **Selling → Market** used to re-filter and re-sort the
+whole opportunity list every `OnGUI` pass, measure every row twice, and draw every row. Rows, heights
+and the summed height are now cached and only visible rows are drawn; self-tests exercise the read
+model but cannot observe framerate.
+
+**Steps.** On a mature colony with many offers, open the tab and confirm it runs normally. Change a
+filter, change the sort, and accept an offer; confirm the table updates immediately rather than
+lagging up to half a second behind. A stale cache is the specific risk, and this remains unproven
+until seen in play.
+
+### Supply agreement proposal dialog needs a readability pass
+
+Added 2026-08-28 on branch `1.0.1`. **Propose supply agreement** now has cadence in days, total
+deliveries, and a seller-side fulfilment choice. Self-tests cannot settle whether the three-column
+layout reads well at **1.75x UI scale**, whether the term-length clamp explains itself, or whether
+the labelled terms rows make the commitment legible before sending.
+
+**Steps.** At **1.75x**, send a proposal and inspect those controls and terms, then wait for the
+settlement's answer, accept it, and confirm the chosen fulfilment survives into the live agreement
+without being asked again at acceptance. This remains unproven until seen in play.
+
+### Procurement Orders history button needs a layout check
+
+Added 2026-08-28 on branch `1.0.1`. **Procurement → Orders** moved **Clear completed history** from
+the concluded-orders section header to the page heading row.
+
+**Steps.** At narrow window widths and **1.75x UI scale**, confirm it does not collide with the
+heading and disappears when there is nothing clearable. Compare **Selling → Orders**, where the
+equivalent button deliberately remains in its old position, and decide whether the difference is
+acceptable. This remains unproven until seen in play.
+
 ### 1.0 calibration sitting — Stage 8 remaining play
 
 Stage 8A's full save/load matrix, Stage 8B's 42 → 56 migration matrix, and Stage 8C's seven-path
