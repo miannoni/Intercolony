@@ -22,6 +22,7 @@ namespace Intercolony
 
         private const float MarketMinRowHeight = 30f;
         private const float HeaderHeight = 26f;
+        private const float MarketRefreshIntervalSeconds = 0.5f;
 
         /// <summary>Column indices, matching <see cref="ColumnLabels"/>.</summary>
         private enum Column
@@ -46,6 +47,20 @@ namespace Intercolony
         private Column sortColumn = Column.Expires;
 
         private bool sortDescending;
+
+        private List<MarketOpportunity> marketRows;
+        private List<float> marketRowHeights;
+        private float marketContentHeight = -1f;
+        private float marketRowHeightsWidth = -1f;
+        private int marketRowsOpportunityCount = -1;
+        private int marketTotalAvailable;
+        private float marketRowsBuiltAtRealtime;
+        private float marketRowsMaxMarketDistance;
+        private int marketRowsMinValueFilter;
+        private IntercolonyProductCategory? marketRowsCategoryFilter;
+        private Column marketRowsSortColumn;
+        private bool marketRowsSortDescending;
+        private bool marketRowsHaveSort;
 
         // The selling tables and Labor's stacked views both need more room than 920x560 allowed.
         public override Vector2 RequestedTabSize => new Vector2(1040f, 620f);
@@ -213,11 +228,13 @@ namespace Intercolony
             // result into the next visit.
             contractProposalSettlementCache = null;
             expandedRelationSettlementId = NoExpandedRelation;
+            ResetMarketCache();
             ResetSupplierMarketCache();
         }
 
         public override void PostClose()
         {
+            ResetMarketCache();
             ResetSupplierMarketCache();
             base.PostClose();
         }
@@ -708,6 +725,7 @@ namespace Intercolony
         {
             if (tab != which)
             {
+                ResetMarketCache();
                 ResetSupplierMarketCache();
             }
 
@@ -748,21 +766,9 @@ namespace Intercolony
 
         private void DrawMarket(Rect inRect, IntercolonyWorldComponent state)
         {
-            int totalAvailable = 0;
-            List<MarketOpportunity> live = new List<MarketOpportunity>();
-            foreach (MarketOpportunity opportunity in state.Opportunities)
-            {
-                if (!opportunity.IsAvailable)
-                {
-                    continue;
-                }
-
-                totalAvailable++;
-                if (PassesFilters(opportunity, state.MaxMarketDistance))
-                {
-                    live.Add(opportunity);
-                }
-            }
+            float viewWidth = Mathf.Max(1f, inRect.width - 16f);
+            List<MarketOpportunity> live = GetMarketRows(state, viewWidth);
+            int totalAvailable = marketTotalAvailable;
 
             // inRect starts below the tab selector, so y must too.
             float y = inRect.y;
@@ -787,33 +793,124 @@ namespace Intercolony
                 return;
             }
 
-            Sort(live);
-
-            DrawHeaderRow(new Rect(0f, y, inRect.width - 16f, HeaderHeight));
+            DrawHeaderRow(new Rect(0f, y, viewWidth, HeaderHeight));
             y += HeaderHeight;
             Widgets.DrawLineHorizontal(0f, y, inRect.width);
             y += 2f;
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            float viewWidth = inRect.width - 16f;
-            float contentHeight = 0f;
-            foreach (MarketOpportunity opportunity in live)
-            {
-                contentHeight += MarketRowHeight(opportunity, viewWidth);
-            }
-
-            Rect viewRect = new Rect(0f, 0f, viewWidth, contentHeight);
+            Rect viewRect = new Rect(0f, 0f, viewWidth, marketContentHeight);
 
             BeginPageScrollView(outRect, ref scrollPosition, viewRect);
+            float visibleTop = scrollPosition.y;
+            float visibleBottom = visibleTop + outRect.height;
             float rowY = 0f;
             for (int i = 0; i < live.Count; i++)
             {
-                float rowHeight = MarketRowHeight(live[i], viewRect.width);
-                DrawRow(new Rect(0f, rowY, viewRect.width, rowHeight), live[i], i);
+                float rowHeight = marketRowHeights[i];
+                if (rowY + rowHeight >= visibleTop - rowHeight &&
+                    rowY <= visibleBottom + rowHeight)
+                {
+                    DrawRow(new Rect(0f, rowY, viewRect.width, rowHeight), live[i], i);
+                }
+
                 rowY += rowHeight;
             }
 
             EndPageScrollView();
+        }
+
+        private void ResetMarketCache()
+        {
+            marketRows = null;
+            marketRowHeights = null;
+            marketContentHeight = -1f;
+            marketRowHeightsWidth = -1f;
+            marketRowsOpportunityCount = -1;
+            marketTotalAvailable = 0;
+            marketRowsBuiltAtRealtime = 0f;
+            marketRowsHaveSort = false;
+        }
+
+        private List<MarketOpportunity> GetMarketRows(
+            IntercolonyWorldComponent state, float tableWidth)
+        {
+            List<MarketOpportunity> opportunities = state?.Opportunities;
+            int opportunityCount = opportunities?.Count ?? 0;
+            float maxMarketDistance = state == null
+                ? IntercolonyWorldComponent.NoDistanceLimit
+                : state.MaxMarketDistance;
+            float now = Time.realtimeSinceStartup;
+            bool rebuild = marketRows == null ||
+                           marketRowsOpportunityCount != opportunityCount ||
+                           marketRowsMaxMarketDistance != maxMarketDistance ||
+                           marketRowsMinValueFilter != minValueFilter ||
+                           marketRowsCategoryFilter != categoryFilter ||
+                           now - marketRowsBuiltAtRealtime > MarketRefreshIntervalSeconds;
+
+            if (rebuild)
+            {
+                marketRows = new List<MarketOpportunity>();
+                marketTotalAvailable = 0;
+                if (opportunities != null)
+                {
+                    foreach (MarketOpportunity opportunity in opportunities)
+                    {
+                        if (!opportunity.IsAvailable)
+                        {
+                            continue;
+                        }
+
+                        marketTotalAvailable++;
+                        if (PassesFilters(opportunity, maxMarketDistance))
+                        {
+                            marketRows.Add(opportunity);
+                        }
+                    }
+                }
+
+                marketRowHeights = null;
+                marketContentHeight = -1f;
+                marketRowHeightsWidth = -1f;
+                marketRowsOpportunityCount = opportunityCount;
+                marketRowsMaxMarketDistance = maxMarketDistance;
+                marketRowsMinValueFilter = minValueFilter;
+                marketRowsCategoryFilter = categoryFilter;
+                marketRowsBuiltAtRealtime = now;
+                marketRowsHaveSort = false;
+            }
+
+            if (!marketRowsHaveSort ||
+                marketRowsSortColumn != sortColumn ||
+                marketRowsSortDescending != sortDescending)
+            {
+                Sort(marketRows);
+                marketRowHeights = null;
+                marketContentHeight = -1f;
+                marketRowHeightsWidth = -1f;
+                marketRowsSortColumn = sortColumn;
+                marketRowsSortDescending = sortDescending;
+                marketRowsHaveSort = true;
+            }
+
+            if (marketRowHeights == null ||
+                marketRowHeights.Count != marketRows.Count ||
+                marketRowHeightsWidth != tableWidth ||
+                marketContentHeight < 0f)
+            {
+                marketRowHeights = new List<float>(marketRows.Count);
+                marketContentHeight = 0f;
+                for (int i = 0; i < marketRows.Count; i++)
+                {
+                    float rowHeight = MarketRowHeight(marketRows[i], tableWidth);
+                    marketRowHeights.Add(rowHeight);
+                    marketContentHeight += rowHeight;
+                }
+
+                marketRowHeightsWidth = tableWidth;
+            }
+
+            return marketRows;
         }
 
         /// <summary>
@@ -1185,7 +1282,8 @@ namespace Intercolony
             {
                 float cellWidth = tableWidth * ColumnWidths[i] - 4f;
                 height = Mathf.Max(height,
-                    Text.CalcHeight(MarketCellLabel(opportunity, i), cellWidth) + 8f);
+                    Text.CalcHeight(
+                        MarketCellLabel(opportunity, i), Mathf.Max(1f, cellWidth)) + 8f);
             }
 
             return height;
@@ -1406,6 +1504,7 @@ namespace Intercolony
                     SalesOrder order = SalesOrderService.Accept(state, opportunity, qty);
                     if (order != null)
                     {
+                        ResetMarketCache();
                         tab = Tab.Orders;
                     }
                 }));
