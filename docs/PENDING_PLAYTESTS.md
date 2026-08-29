@@ -52,17 +52,26 @@ Added 2026-08-29 on branch `1.0.1`. The new five-day cash flow table on the **Bu
 passed its self-tests, but no person has looked at it in play. It sits between the **Where you stand**
 section above and the brand section below.
 
-**Steps.** Open **Business** at several window sizes and check that the section renders as five rows
-with four columns — **Day**, **Expected revenue**, **Expected expenses**, and **Net** — without
-overlapping the **Where you stand** section above it or the brand section below it at any window size.
+**Steps.** Open **Business** at several window sizes and check that the section renders as a transposed
+table: **Day 1** through **Day 5** are columns followed by a **Next 5 days** column, while
+**Expected revenue**, **Expected expenses**, and **Net** are rows, without overlapping the **Where you stand**
+section above it or the brand section below it at any window size.
 Hover the heading and confirm its tooltip appears and says the table counts commitments already made —
 open sales orders, agreement cycles falling due and scheduled payroll — and does not predict spot sales.
-Hover the **Day** column and confirm its tooltip explains that each row is a rolling 24-hour window from
-now rather than a calendar day, then judge whether that reading is clear and not confusing in play.
+Hover a **Day 1..Day 5** column and confirm its tooltip explains that each column is a rolling 24-hour
+window from now rather than a calendar day, then judge whether that reading is clear and not confusing in play.
+
+Leave the **Business** tab, change something that moves money, return to the tab, and confirm that the
+numbers moved. Repeat this after selecting **Business** again to verify that the table refreshes every time
+the tab is selected, not only when the window is opened.
 
 With a real colony that has an active sales agreement and an employee, check that the numbers are
 recognisable: payroll lands on the payday rather than being spread across every day, and a known contract
-delivery shows the payment it will really pay. Purchase orders deliberately contribute nothing because
+delivery shows the payment it will really pay. A sales order whose buyer is already collecting — shown as
+**En route — N.Nd** on the **Selling → Orders** screen — must appear in the revenue on the day the buyer
+arrives. Seven such orders worth 914, 1779, 480, 163, 536, 175 and 617 silver were invisible because the
+table booked them on their deadline instead; confirm that the revenue matches the orders the player can see
+arriving. Purchase orders deliberately contribute nothing because
 they are paid in full when the order is created, so an apparently missing purchase-order expense is
 correct behaviour and not a bug to report.
 

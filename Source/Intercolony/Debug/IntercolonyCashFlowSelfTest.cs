@@ -78,6 +78,9 @@ namespace Intercolony
                 CheckEmptyReport(r, state);
                 CheckNetArithmetic(r, state);
                 CheckOpenPurchaseOrder(r, state);
+                CheckCollectingOrderArrival(r, state);
+                CheckSellerDeliveryDeadline(r, state);
+                CheckUnscheduledCollectionDeadline(r, state);
                 CheckInvalidation(r, state);
             }
             catch (Exception ex)
@@ -482,6 +485,167 @@ namespace Intercolony
                 state.Orders.Remove(order);
                 CashFlowForecast.Invalidate();
             }
+        }
+
+        private static void CheckCollectingOrderArrival(
+            Results r, IntercolonyWorldComponent state)
+        {
+            int now = GenTicks.TicksGame;
+            SalesOrder order = new SalesOrder
+            {
+                id = -8111,
+                line = new OrderLine(ThingDefOf.WoodLog, 3),
+                unitPrice = 100f,
+                acceptedTick = now,
+                buyerArrivalTick = now + 2 * GenDate.TicksPerDay,
+                deadlineTick = now + 12 * GenDate.TicksPerDay,
+                status = SalesOrderStatus.AwaitingCollection,
+                fulfillment = FulfillmentMode.BuyerPickup
+            };
+            order.DiscountFraction = 0.25f;
+
+            try
+            {
+                state.AddOrder(order);
+                CashFlowReport report = CashFlowForecast.Compute(state);
+                int reportTick = report?.computedTick ?? -1;
+                int expectedDay = report == null
+                    ? -1
+                    : (order.buyerArrivalTick - reportTick) / GenDate.TicksPerDay;
+                int actualDay = FirstRevenueDay(report);
+                int expected = order.DiscountedTotalPayment;
+                int expectedDayRevenue = RevenueAt(report, expectedDay);
+                int totalRevenue = TotalRevenue(report);
+
+                // This must fail if a collecting order is still booked on deadlineTick, hiding
+                // a committed payment whose buyer is already en route from the five-day window.
+                r.Check(
+                    expectedDay >= 0 && expectedDay < CashFlowForecast.WindowDays &&
+                    actualDay == expectedDay && expectedDayRevenue == expected && totalRevenue > 0,
+                    "a collecting order is booked on the buyer-arrival day",
+                    $"reportTick={reportTick}, arrivalTick={order.buyerArrivalTick}, " +
+                    $"deadlineTick={order.deadlineTick}, expectedDay={expectedDay}, " +
+                    $"actualDay={actualDay}, expected={expected}, " +
+                    $"expectedDayRevenue={expectedDayRevenue}, totalRevenue={totalRevenue}; " +
+                    $"{DayValues(report)}");
+            }
+            finally
+            {
+                state.Orders.Remove(order);
+            }
+        }
+
+        private static void CheckSellerDeliveryDeadline(
+            Results r, IntercolonyWorldComponent state)
+        {
+            int now = GenTicks.TicksGame;
+            SalesOrder order = new SalesOrder
+            {
+                id = -8112,
+                line = new OrderLine(ThingDefOf.WoodLog, 2),
+                unitPrice = 140f,
+                acceptedTick = now,
+                buyerArrivalTick = -1,
+                deadlineTick = now + 2 * GenDate.TicksPerDay,
+                status = SalesOrderStatus.Accepted,
+                fulfillment = FulfillmentMode.SellerDelivery
+            };
+            order.DiscountFraction = 0.10f;
+
+            try
+            {
+                state.AddOrder(order);
+                CashFlowReport report = CashFlowForecast.Compute(state);
+                int reportTick = report?.computedTick ?? -1;
+                int expectedDay = report == null
+                    ? -1
+                    : (order.deadlineTick - reportTick) / GenDate.TicksPerDay;
+                int actualDay = FirstRevenueDay(report);
+                int expected = order.DiscountedTotalPayment;
+                int expectedDayRevenue = RevenueAt(report, expectedDay);
+
+                // This must fail if every open order is moved to buyerArrivalTick, because a
+                // seller-delivery order has no arrival day and must remain booked on its deadline.
+                r.Check(
+                    expectedDay >= 0 && expectedDay < CashFlowForecast.WindowDays &&
+                    actualDay == expectedDay && expectedDayRevenue == expected,
+                    "a seller-delivery order is booked on its deadline",
+                    $"reportTick={reportTick}, arrivalTick={order.buyerArrivalTick}, " +
+                    $"deadlineTick={order.deadlineTick}, expectedDay={expectedDay}, " +
+                    $"actualDay={actualDay}, expected={expected}, " +
+                    $"expectedDayRevenue={expectedDayRevenue}; {DayValues(report)}");
+            }
+            finally
+            {
+                state.Orders.Remove(order);
+            }
+        }
+
+        private static void CheckUnscheduledCollectionDeadline(
+            Results r, IntercolonyWorldComponent state)
+        {
+            int now = GenTicks.TicksGame;
+            SalesOrder order = new SalesOrder
+            {
+                id = -8113,
+                line = new OrderLine(ThingDefOf.WoodLog, 4),
+                unitPrice = 90f,
+                acceptedTick = now,
+                buyerArrivalTick = -1,
+                deadlineTick = now + 3 * GenDate.TicksPerDay,
+                status = SalesOrderStatus.AwaitingCollection,
+                fulfillment = FulfillmentMode.BuyerPickup
+            };
+            order.DiscountFraction = 0.20f;
+
+            try
+            {
+                state.AddOrder(order);
+                CashFlowReport report = CashFlowForecast.Compute(state);
+                int reportTick = report?.computedTick ?? -1;
+                int expectedDay = report == null
+                    ? -1
+                    : (order.deadlineTick - reportTick) / GenDate.TicksPerDay;
+                int actualDay = FirstRevenueDay(report);
+                int expected = order.DiscountedTotalPayment;
+                int expectedDayRevenue = RevenueAt(report, expectedDay);
+                int dayOneRevenue = RevenueAt(report, 1);
+
+                // This must fail if buyerArrivalTick == -1 is read as a real day or as "now or
+                // earlier" instead of the unscheduled sentinel that falls back to the deadline.
+                r.Check(
+                    expectedDay >= 0 && expectedDay < CashFlowForecast.WindowDays &&
+                    actualDay == expectedDay && expectedDayRevenue == expected &&
+                    dayOneRevenue == 0,
+                    "an unscheduled collecting order falls back to its deadline",
+                    $"reportTick={reportTick}, arrivalTick={order.buyerArrivalTick}, " +
+                    $"deadlineTick={order.deadlineTick}, expectedDay={expectedDay}, " +
+                    $"actualDay={actualDay}, expected={expected}, " +
+                    $"expectedDayRevenue={expectedDayRevenue}, day1Revenue={dayOneRevenue}; " +
+                    $"{DayValues(report)}");
+            }
+            finally
+            {
+                state.Orders.Remove(order);
+            }
+        }
+
+        private static int FirstRevenueDay(CashFlowReport report)
+        {
+            if (report?.days == null)
+            {
+                return -1;
+            }
+
+            for (int i = 0; i < report.days.Count; i++)
+            {
+                if (RevenueAt(report, i) != 0)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         private static int DayIndex(CashFlowReport report, long tick)

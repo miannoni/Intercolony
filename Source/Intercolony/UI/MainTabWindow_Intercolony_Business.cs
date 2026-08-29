@@ -89,7 +89,7 @@ namespace Intercolony
         private float DrawCashFlowForecast(Rect inRect, float y, CashFlowReport report)
         {
             Text.Font = GameFont.Medium;
-            string heading = "Cash flow — next 5 days";
+            string heading = $"Cash flow — next {CashFlowForecast.WindowDays} days";
             float headingWidth = Mathf.Max(1f, inRect.width - 12f);
             float headingHeight = Text.CalcHeight(heading, headingWidth);
             Rect headingRect = new Rect(0f, y, headingWidth, headingHeight);
@@ -103,74 +103,111 @@ namespace Intercolony
             y += headingHeight + 4f;
 
             float tableWidth = Mathf.Max(1f, inRect.width - 12f);
-            float dayWidth = Mathf.Min(110f, tableWidth * 0.2f);
-            float amountWidth = Mathf.Max(1f,
-                (tableWidth - dayWidth - 3f * CashFlowColumnGap) / 3f);
-            float dayX = 6f;
-            float revenueX = dayX + dayWidth + CashFlowColumnGap;
-            float expensesX = revenueX + amountWidth + CashFlowColumnGap;
-            float netX = expensesX + amountWidth + CashFlowColumnGap;
+            int dayCount = report.days.Count;
+            int numberColumnCount = dayCount + 1;
+            float labelWidth = tableWidth * 0.3f;
+            float numberWidth = Mathf.Max(1f,
+                (tableWidth - labelWidth - numberColumnCount * CashFlowColumnGap) /
+                numberColumnCount);
+            float labelX = 6f;
+            float numberX = labelX + labelWidth + CashFlowColumnGap;
 
-            string dayHeader = "Day";
-            string revenueHeader = "Expected revenue";
-            string expensesHeader = "Expected expenses";
-            string netHeader = "Net";
-            float dayHeaderHeight = Text.CalcHeight(dayHeader, dayWidth);
-            float revenueHeaderHeight = Text.CalcHeight(revenueHeader, amountWidth);
-            float expensesHeaderHeight = Text.CalcHeight(expensesHeader, amountWidth);
-            float netHeaderHeight = Text.CalcHeight(netHeader, amountWidth);
-            float headerHeight = Mathf.Max(LineHeight, dayHeaderHeight, revenueHeaderHeight,
-                expensesHeaderHeight, netHeaderHeight);
-
-            DrawMeasuredCashFlowLabel(
-                new Rect(dayX, y, dayWidth, dayHeaderHeight), dayHeader, TextAnchor.UpperLeft);
-            DrawMeasuredCashFlowLabel(
-                new Rect(revenueX, y, amountWidth, revenueHeaderHeight), revenueHeader,
-                TextAnchor.UpperRight);
-            DrawMeasuredCashFlowLabel(
-                new Rect(expensesX, y, amountWidth, expensesHeaderHeight), expensesHeader,
-                TextAnchor.UpperRight);
-            DrawMeasuredCashFlowLabel(
-                new Rect(netX, y, amountWidth, netHeaderHeight), netHeader, TextAnchor.UpperRight);
-            y += headerHeight + 2f;
-
-            for (int i = 0; i < report.days.Count; i++)
+            string totalHeader = $"Next {CashFlowForecast.WindowDays} days";
+            string[] dayHeaders = new string[dayCount];
+            float[] dayHeaderHeights = new float[dayCount];
+            float blankHeaderHeight = Text.CalcHeight(string.Empty, labelWidth);
+            float totalHeaderHeight = Text.CalcHeight(totalHeader, numberWidth);
+            float headerHeight = Mathf.Max(blankHeaderHeight, totalHeaderHeight);
+            for (int i = 0; i < dayCount; i++)
             {
-                CashFlowDay day = report.days[i];
-                int net = day.Net;
-                string dayLabel = $"Day {day.dayIndex + 1}";
-                string revenue = day.revenue.ToString("N0");
-                string expenses = day.expenses.ToString("N0");
-                string netLabel = net.ToString("N0");
-
-                float dayHeight = Text.CalcHeight(dayLabel, dayWidth);
-                float revenueHeight = Text.CalcHeight(revenue, amountWidth);
-                float expensesHeight = Text.CalcHeight(expenses, amountWidth);
-                float netHeight = Text.CalcHeight(netLabel, amountWidth);
-                float rowHeight = Mathf.Max(LineHeight, dayHeight, revenueHeight,
-                    expensesHeight, netHeight);
-
-                Rect dayRect = new Rect(dayX, y, dayWidth, dayHeight);
-                DrawMeasuredCashFlowLabel(dayRect, dayLabel, TextAnchor.UpperLeft);
-                Rect dayTooltipRect = new Rect(dayX, y, dayWidth, rowHeight);
-                if (ShouldBuildTooltip(dayTooltipRect))
-                {
-                    TooltipHandler.TipRegion(dayTooltipRect, CashFlowDayTooltip);
-                }
-
-                DrawMeasuredCashFlowLabel(
-                    new Rect(revenueX, y, amountWidth, revenueHeight), revenue,
-                    TextAnchor.UpperRight);
-                DrawMeasuredCashFlowLabel(
-                    new Rect(expensesX, y, amountWidth, expensesHeight), expenses,
-                    TextAnchor.UpperRight);
-                DrawCashFlowNet(
-                    new Rect(netX, y, amountWidth, netHeight), netLabel, net);
-
-                y += rowHeight;
+                dayHeaders[i] = $"Day {report.days[i].dayIndex + 1}";
+                dayHeaderHeights[i] = Text.CalcHeight(dayHeaders[i], numberWidth);
+                headerHeight = Mathf.Max(headerHeight, dayHeaderHeights[i]);
             }
 
+            for (int i = 0; i < dayCount; i++)
+            {
+                float dayX = numberX + i * (numberWidth + CashFlowColumnGap);
+                DrawMeasuredCashFlowLabel(
+                    new Rect(dayX, y, numberWidth, dayHeaderHeights[i]), dayHeaders[i],
+                    TextAnchor.UpperRight);
+
+                Rect dayHeaderRect = new Rect(dayX, y, numberWidth, headerHeight);
+                if (ShouldBuildTooltip(dayHeaderRect))
+                {
+                    TooltipHandler.TipRegion(dayHeaderRect, CashFlowDayTooltip);
+                }
+            }
+
+            float totalX = numberX + dayCount * (numberWidth + CashFlowColumnGap);
+            DrawMeasuredCashFlowLabel(
+                new Rect(totalX, y, numberWidth, totalHeaderHeight), totalHeader,
+                TextAnchor.UpperRight);
+            y += headerHeight + 2f;
+
+            List<int> revenue = new List<int>(numberColumnCount);
+            List<int> expenses = new List<int>(numberColumnCount);
+            List<int> net = new List<int>(numberColumnCount);
+            for (int i = 0; i < dayCount; i++)
+            {
+                CashFlowDay day = report.days[i];
+                revenue.Add(day.revenue);
+                expenses.Add(day.expenses);
+                net.Add(day.Net);
+            }
+
+            // The report owns these totals; the UI deliberately does not recompute a second summary.
+            revenue.Add(report.TotalRevenue);
+            expenses.Add(report.TotalExpenses);
+            net.Add(report.TotalNet);
+
+            y = DrawCashFlowRow(y, labelX, labelWidth, numberX, numberWidth,
+                "Expected revenue", revenue, colourNet: false);
+            y = DrawCashFlowRow(y, labelX, labelWidth, numberX, numberWidth,
+                "Expected expenses", expenses, colourNet: false);
+            y = DrawCashFlowRow(y, labelX, labelWidth, numberX, numberWidth,
+                "Net", net, colourNet: true);
             return y;
+        }
+
+        private static float DrawCashFlowRow(
+            float y,
+            float labelX,
+            float labelWidth,
+            float numberX,
+            float numberWidth,
+            string rowLabel,
+            List<int> amounts,
+            bool colourNet)
+        {
+            float rowLabelHeight = Text.CalcHeight(rowLabel, labelWidth);
+            string[] amountLabels = new string[amounts.Count];
+            float[] amountHeights = new float[amounts.Count];
+            float rowHeight = rowLabelHeight;
+            for (int i = 0; i < amounts.Count; i++)
+            {
+                amountLabels[i] = amounts[i].ToString("N0");
+                amountHeights[i] = Text.CalcHeight(amountLabels[i], numberWidth);
+                rowHeight = Mathf.Max(rowHeight, amountHeights[i]);
+            }
+
+            DrawMeasuredCashFlowLabel(
+                new Rect(labelX, y, labelWidth, rowLabelHeight), rowLabel, TextAnchor.UpperLeft);
+            for (int i = 0; i < amountLabels.Length; i++)
+            {
+                float x = numberX + i * (numberWidth + CashFlowColumnGap);
+                Rect amountRect = new Rect(x, y, numberWidth, amountHeights[i]);
+                if (colourNet)
+                {
+                    DrawCashFlowNet(amountRect, amountLabels[i], amounts[i]);
+                }
+                else
+                {
+                    DrawMeasuredCashFlowLabel(amountRect, amountLabels[i], TextAnchor.UpperRight);
+                }
+            }
+
+            return y + rowHeight;
         }
 
         private static void DrawMeasuredCashFlowLabel(Rect rect, string text, TextAnchor anchor)

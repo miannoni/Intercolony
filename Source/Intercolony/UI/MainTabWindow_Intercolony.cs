@@ -731,6 +731,13 @@ namespace Intercolony
 
             tab = which;
 
+            if (which == Tab.Business)
+            {
+                // The main-tab window survives being closed; switching sub-tabs is the real
+                // lifecycle boundary for anything drawn on one page.
+                CashFlowForecast.Invalidate();
+            }
+
             if (GroupFor(which) == TabGroup.Selling)
             {
                 sellingTab = which;

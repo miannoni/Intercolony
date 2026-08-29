@@ -141,9 +141,11 @@ namespace Intercolony
                 }
 
                 // SalesOrderService credits the player's silver from DiscountedTotalPayment at
-                // the completion boundary. The forecast uses that same property rather than the
-                // undiscounted total or the partial-delivery helper.
-                AddRevenue(days, now, order.deadlineTick, order.DiscountedTotalPayment);
+                // the completion boundary. When a buyer is already on the way, payment happens
+                // on arrival, so booking at the deadline hid seven committed sales from a player
+                // who could already see them on the Orders screen. ExpectedPaymentTick also
+                // falls back to the deadline when the buyer-arrival tick is not scheduled.
+                AddRevenue(days, now, order.ExpectedPaymentTick, order.DiscountedTotalPayment);
             }
         }
 
