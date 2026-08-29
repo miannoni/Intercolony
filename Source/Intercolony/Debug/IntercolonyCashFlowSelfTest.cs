@@ -19,7 +19,6 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
-            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -671,7 +670,7 @@ namespace Intercolony
         {
             r.sb.AppendLine();
             r.sb.AppendLine(
-                $"  {r.passed} passed, {r.failed} failed, {r.skipped} skipped.");
+                $"  {r.passed} passed, {r.failed} failed.");
             return r.sb.ToString();
         }
     }
