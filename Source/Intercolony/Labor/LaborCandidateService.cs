@@ -77,6 +77,12 @@ namespace Intercolony
         /// </summary>
         private static List<LaborProspect> census = new List<LaborProspect>();
 
+        /// <summary>
+        /// Test-visible instrumentation: one int counting synthetic prospect draws, so the
+        /// ordinary colony's no-extra-cost path is checkable rather than asserted in prose.
+        /// </summary>
+        internal static int CensusProspectDraws { get; private set; }
+
         /// <summary>Which refresh <see cref="census"/> belongs to; -1 when it has not been built.</summary>
         private static int censusRefreshCount = -1;
 
@@ -275,14 +281,17 @@ namespace Intercolony
             }
 
             census.Clear();
+            CensusProspectDraws = 0;
             censusRefreshCount = state.RefreshCount;
 
             float standing = EmployerReputationService.ScoreFor(state);
 
-            // Reputation gates reach as well as advertising (§39 step 9). A colony nobody wants to
-            // work for does not get to bypass that by posting a notice.
+            // Reputation reaches quality as well as reach (§39 step 9). A colony nobody wants to
+            // work for does not get to bypass that by posting a notice, while a mid-range standing
+            // still draws each prospect once so the common case is unchanged.
             float availability = EmployerReputationService.AvailabilityFactor(standing);
             int perSettlement = Mathf.Max(1, Mathf.RoundToInt(ProspectsPerSettlement * availability));
+            int qualityBias = EmployerReputationService.CandidateQualityBias(standing);
 
             List<Settlement> sources = EligibleSources(state);
             if (sources.Count == 0)
@@ -321,7 +330,8 @@ namespace Intercolony
 
                     for (int i = 0; i < perSettlement && census.Count < MaxCensus; i++)
                     {
-                        census.Add(GenerateProspect(settlement, profile, distance, travel, skills, skillCount));
+                        census.Add(GenerateProspectBiased(
+                            settlement, profile, distance, travel, skills, skillCount, qualityBias));
                     }
                 }
             }
@@ -348,6 +358,8 @@ namespace Intercolony
             Settlement settlement, SettlementEconomicProfile profile, float distance, int travel,
             List<SkillDef> skills, int skillCount)
         {
+            CensusProspectDraws++;
+
             int[] levels = new int[skillCount];
             Passion[] passions = new Passion[skillCount];
 
@@ -424,6 +436,38 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Draws a census prospect, and at the extremes of employer reputation draws twice and
+        /// keeps the better or worse record. In the middle it draws once, so the ordinary case
+        /// costs nothing extra — synthetic records are cheap, but the common path should still
+        /// consume the same random sequence.
+        /// </summary>
+        private static LaborProspect GenerateProspectBiased(
+            Settlement settlement, SettlementEconomicProfile profile, float distance, int travel,
+            List<SkillDef> skills, int skillCount, int bias)
+        {
+            LaborProspect first = GenerateProspect(settlement, profile, distance, travel, skills, skillCount);
+            if (bias == 0 || first == null)
+            {
+                return first;
+            }
+
+            LaborProspect second = GenerateProspect(settlement, profile, distance, travel, skills, skillCount);
+            if (second == null)
+            {
+                return first;
+            }
+
+            int firstBest = BestSkillLevel(first);
+            int secondBest = BestSkillLevel(second);
+
+            bool keepSecond = bias > 0 ? secondBest > firstBest : secondBest < firstBest;
+
+            // Census prospects are synthetic records, not pawns, so the discarded draw owns
+            // nothing that needs Discard().
+            return keepSecond ? second : first;
+        }
+
+        /// <summary>
         /// The census-record twin of <see cref="PricedSkillValue(Pawn)"/>. Same rule, same top-N,
         /// same passion weighting — the two must not drift or the advertised band stops matching
         /// the workers who arrive.
@@ -481,10 +525,11 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Resets only the derived census so cold-cache profiling does not discard the advertised
-        /// pawn pool. Rebuilding produces the same records for the current refresh.
+        /// Resets only the derived census without discarding the advertised pawn pool. The
+        /// performance profile and the job-posting self-test use it to rebuild the census for the
+        /// current refresh.
         /// </summary>
-        internal static void InvalidateCensusForPerformanceProfile()
+        internal static void InvalidateCensus()
         {
             // Clear retains capacity and would understate the first population of a 900-record
             // census. The empty-list construction remains outside the timed region.
@@ -583,6 +628,25 @@ namespace Intercolony
                 if (!skill.TotallyDisabled && skill.Level > best)
                 {
                     best = skill.Level;
+                }
+            }
+
+            return best;
+        }
+
+        private static int BestSkillLevel(LaborProspect prospect)
+        {
+            if (prospect?.skillLevels == null || prospect.skillLevels.Length == 0)
+            {
+                return 0;
+            }
+
+            int best = 0;
+            foreach (int level in prospect.skillLevels)
+            {
+                if (level >= 0 && level > best)
+                {
+                    best = level;
                 }
             }
 

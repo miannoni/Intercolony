@@ -83,6 +83,7 @@ namespace Intercolony
                 CheckResponseCurveIsSmooth(r, state);
                 CheckWageDrivesApplicants(r, state);
                 CheckReputationDrivesApplicants(r, state, rep);
+                CheckReputationDrivesCandidateQuality(r, state, rep);
                 CheckOnePersonOnePosting(r, state);
                 CheckSilenceIsExplained(r, state);
                 CheckLifecycle(r, state);
@@ -413,6 +414,88 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// The quality half of §114: a bad employer sees fewer prospects and worse ones, while a
+        /// middle-standing colony keeps the ordinary one-draw generation cost.
+        /// </summary>
+        private static void CheckReputationDrivesCandidateQuality(
+            Results r, IntercolonyWorldComponent state, EmployerReputation rep)
+        {
+            if (rep == null)
+            {
+                return;
+            }
+
+            rep.Adjust(EmployerReputation.MinScore - rep.Score);
+            LaborCandidateService.InvalidateCensus();
+            List<LaborProspect> atMinimum = new List<LaborProspect>(
+                LaborCandidateService.Census(state));
+            int minimumCount = atMinimum.Count;
+            float minimumMeanBestSkill = MeanBestProspectSkill(atMinimum);
+            int minimumDraws = LaborCandidateService.CensusProspectDraws;
+
+            rep.Adjust(EmployerReputation.MaxScore - rep.Score);
+            LaborCandidateService.InvalidateCensus();
+            List<LaborProspect> atMaximum = new List<LaborProspect>(
+                LaborCandidateService.Census(state));
+            int maximumCount = atMaximum.Count;
+            float maximumMeanBestSkill = MeanBestProspectSkill(atMaximum);
+            int maximumDraws = LaborCandidateService.CensusProspectDraws;
+
+            if (minimumCount == 0 && maximumCount == 0)
+            {
+                r.Info("reputation quality skipped: the census is empty at both standings.");
+                LaborCandidateService.InvalidateCensus();
+                return;
+            }
+
+            float middle = (EmployerReputation.MinScore + EmployerReputation.MaxScore) / 2;
+            rep.Adjust(middle - rep.Score);
+            LaborCandidateService.InvalidateCensus();
+            List<LaborProspect> atMiddle = new List<LaborProspect>(
+                LaborCandidateService.Census(state));
+            int middleCount = atMiddle.Count;
+            float middleMeanBestSkill = MeanBestProspectSkill(atMiddle);
+            int middleDraws = LaborCandidateService.CensusProspectDraws;
+            int middleBias = EmployerReputationService.CandidateQualityBias(middle);
+
+            // This fails if GenerateProspectBiased ignores its bias (returning the first draw
+            // always), or if the keep-better/keep-worse comparison is inverted.
+            r.Check(maximumMeanBestSkill >= minimumMeanBestSkill + 0.5f,
+                "a bad employer's census prospects are measurably worse than a good one's (§114)",
+                $"mean best skill {minimumMeanBestSkill:0.00} at MinScore vs " +
+                $"{maximumMeanBestSkill:0.00} at MaxScore; records {minimumCount} at MinScore vs " +
+                $"{maximumCount} at MaxScore");
+
+            // This fails if EnsureCensus drops AvailabilityFactor from perSettlement; the quality
+            // half must not replace or weaken the volume half.
+            r.Check(maximumCount > minimumCount,
+                "a bad employer's job-posting census is smaller than a good one's (§114)",
+                $"records {minimumCount} at MinScore vs {maximumCount} at MaxScore");
+
+            if (middleBias == 0)
+            {
+                // This fails if the biased path draws twice when bias is 0, making an ordinary
+                // colony pay an unnecessary generation cost, or draws once when bias is nonzero,
+                // making the bias inert.
+                r.Check(middleDraws == middleCount && minimumDraws == 2 * minimumCount,
+                    "census generation draws once at neutral standing and twice for a bad employer (§35.2)",
+                    $"middle: {middleDraws} draws for {middleCount} records " +
+                    $"(mean best skill {middleMeanBestSkill:0.00}); " +
+                    $"MinScore: {minimumDraws} draws for {minimumCount} records; " +
+                    $"MaxScore: {maximumDraws} draws for {maximumCount} records");
+            }
+            else
+            {
+                r.Info($"census draw-count check skipped: middle standing {middle:0.##} has " +
+                       $"candidate quality bias {middleBias}, not 0.");
+            }
+
+            // Leave no live census from the temporary minimum, maximum, or middle standing for
+            // the rest of the game; the suite restores the reputation in its outer teardown.
+            LaborCandidateService.InvalidateCensus();
+        }
+
+        /// <summary>
         /// Ten identical postings must behave exactly like one.
         ///
         /// This is the property that lets the feature have no cap and no fee: workers are the scarce
@@ -613,6 +696,36 @@ namespace Intercolony
             }
 
             return best;
+        }
+
+        private static float MeanBestProspectSkill(List<LaborProspect> prospects)
+        {
+            if (prospects == null || prospects.Count == 0)
+            {
+                return 0f;
+            }
+
+            // Keep this calculation independent from production grading, so a broken production
+            // helper cannot make its own quality statistic pass this assertion.
+            float total = 0f;
+            foreach (LaborProspect prospect in prospects)
+            {
+                int best = 0;
+                if (prospect?.skillLevels != null)
+                {
+                    foreach (int level in prospect.skillLevels)
+                    {
+                        if (level >= 0 && level > best)
+                        {
+                            best = level;
+                        }
+                    }
+                }
+
+                total += best;
+            }
+
+            return total / prospects.Count;
         }
 
         private static string Trim(string text)
