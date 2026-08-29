@@ -2327,3 +2327,22 @@ Known limitations:
 
 Manual test:
 - Testing reach was one machine, one load order, Biotech only, UI scale 1.75x.
+
+## 1.0.2 batch — reputation quality, cash flow, and the world-pawn investigation  (2026-08-29)
+
+Implemented:
+- **Reputation candidate quality on job postings** (commit `108b5af`): posting census now generates through the same draw-and-keep candidate quality bias the HIRE listing uses via `EmployerReputationService.CandidateQualityBias`. Measured on one fresh world: mean best skill 12.04 at an exploitative standing, 13.64 at mid, 15.20 at sought-after; census records 380 / 836 / 900; generation draws 760 / 836 / 1800, so a mid-range colony still draws once and pays nothing extra. Three mutations each reddened exactly their own assertion at 27/1/0.
+- **Five-day cash flow table on Business tab** (commit `7201c53`): added a five-day forward cash flow table for committed obligations (open sales orders, agreement cycles falling due, and scheduled payroll). Resolved two scope premises against the codebase: purchase orders are paid in full at creation (`PurchaseOrderService.TryTakeSilver`) and contribute nothing; payroll moves on paydays every `wageStructure.IntervalDays()`, not daily, so the table books it on the payday. Verified with eight assertions and seven mutations (six isolated their own assertion; the seventh, shortening the window, was caught by an earlier indexing fixture).
+- **World-pawn delta investigation and resolution** (commit `6a74a78`, harness work in `13ee1e5`): resolved the intermittent +1 world-pawn delta as NOT a leak. Named the extra pawn ("Verea Roiro", Tribal_HeavyArcher, faction The Gaalboir League, situation Free, not spawned) and attributed it to the payroll suite driving a real worker to walk out on the first run in a world. Measured across four fresh payroll runs: `WorldPawns.ForcefullyKeptPawns` remained 12 before and 12 after every time, with each pawn carrying `keptForever=False` (one run gained an identity at net delta zero due to GC collection while suites create). Added guards in the payroll suite asserting the departed worker is not in `ForcefullyKeptPawns` and that the pinned set did not grow, proven by mutation (40/2/0 when a departed worker is pinned in `EmploymentService.Release`).
+
+Not implemented:
+- Nothing was dropped from the queue.
+
+Known limitations:
+- The cash flow table has never been looked at by a person; its playtest is pending in `docs/PENDING_PLAYTESTS.md`.
+- The five-day window and the "Day 1..Day 5" labels are calibration questions deferred to the end-of-1.0 sitting.
+- The five-day assertion's day-count clause cannot be broken in isolation by mutation, which is recorded rather than hidden.
+
+Manual test:
+- Cash flow table inspection and verification is recorded as pending in `docs/PENDING_PLAYTESTS.md` ("The five-day cash flow table needs a human read").
+

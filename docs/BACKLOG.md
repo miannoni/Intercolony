@@ -16,11 +16,12 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
-## The full self-test run intermittently reports one extra world pawn.
+## ~~The full self-test run intermittently reports one extra world pawn~~ — NOT A LEAK, closed 2026-08-29 (`6a74a78`)
 
 **Raised:** 2026-08-29, during full self-test verification.
-**Size:** unknown until the extra pawn can be identified.
-**Status:** open; cause not identified.
+**Closed:** 2026-08-29 in commit `6a74a78`. The delta is a departing employee still legitimately in
+the world at measurement time, nothing is pinned and forgotten, and the guard that exists now
+watches the pinned count rather than the delta.
 
 On a fresh world, the whole suite reported a world-pawn delta of `1` on two of three runs and `0`
 on the third. All three runs passed `1377` assertions with a clean log, and the suite's own leak
