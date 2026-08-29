@@ -129,16 +129,19 @@ namespace Intercolony
     }
 
     /// <summary>
-    /// Shared vocabulary for how attractive a prospective negotiation package is. The first
-    /// three bands follow the evaluator's refusal, counter and acceptance boundaries; the fourth
-    /// separates a strong acceptance from a merely workable one.
+    /// Shared vocabulary for how attractive a prospective negotiation package is. The seven
+    /// levels are ordered from worst to best and are assigned from continuous proposal appeal.
     /// </summary>
     public enum IntercolonyNegotiationAcceptanceBand
     {
+        Hopeless,
+        VeryUnlikely,
         Unlikely,
-        Possible,
+        EvenOdds,
         Likely,
-        VeryLikely
+        VeryLikely,
+        NearCertain,
+
     }
 
     /// <summary>
@@ -151,13 +154,14 @@ namespace Intercolony
     {
         internal IntercolonyNegotiationAcceptancePreview(
             IntercolonyNegotiationResult evaluation,
-            float appeal,
+            float proposalAppeal,
             float? acceptanceChance)
         {
             Score = evaluation?.AcceptanceScore ?? -1.25f;
-            Appeal = appeal;
+            ProposalAppeal = Mathf.Clamp01(proposalAppeal);
             AcceptanceChance = acceptanceChance;
-            Band = IntercolonyNegotiationEvaluator.AcceptanceBandForScore(Score);
+            Band = IntercolonyNegotiationEvaluator.AcceptanceBandForAppeal(ProposalAppeal);
+            BandLabel = IntercolonyNegotiationEvaluator.AcceptanceBandLabel(Band);
             Factors = evaluation == null
                 ? new List<IntercolonyNegotiationFactor>()
                 : new List<IntercolonyNegotiationFactor>(evaluation.Factors);
@@ -167,10 +171,12 @@ namespace Intercolony
         public float Score { get; }
 
         /// <summary>
-        /// The normalized appeal used by the side's delayed-answer path, or the equivalent
-        /// appeal that would be stored when the package is sent.
+        /// Continuous normalized proposal appeal, not a probability of acceptance. This is the
+        /// shared value a UI may format as a percentage on either side. On the selling side the
+        /// delayed answer rolls against a chance derived from this value; on the procurement side
+        /// the answer is already determined at this level of appeal.
         /// </summary>
-        public float Appeal { get; }
+        public float ProposalAppeal { get; }
 
         /// <summary>
         /// Selling-side chance as a fraction from 0 to 1. Procurement has no random answer and
@@ -178,8 +184,11 @@ namespace Intercolony
         /// </summary>
         public float? AcceptanceChance { get; }
 
-        /// <summary>The shared four-level description of <see cref="Score"/>.</summary>
+        /// <summary>The shared seven-level description of <see cref="ProposalAppeal"/>.</summary>
         public IntercolonyNegotiationAcceptanceBand Band { get; }
+
+        /// <summary>The single display label for <see cref="Band"/>, shared by both markets.</summary>
+        public string BandLabel { get; }
 
         /// <summary>The evaluator's named contributions, copied into this read model.</summary>
         public IReadOnlyList<IntercolonyNegotiationFactor> Factors { get; }
@@ -226,6 +235,9 @@ namespace Intercolony
         /// reputation cannot become a universal permission to demand anything.
         /// </summary>
         private const float HardRefusalScore = -1.25f;
+
+        /// <summary>There are seven equally wide appeal bands from 0 through 1.</summary>
+        private const int AcceptanceBandCount = 7;
 
         /// <summary>
         /// The counterparty moves halfway toward its original terms. One named fraction gives the
@@ -663,25 +675,62 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Maps an evaluator score to the one acceptance vocabulary shared by selling and
-        /// procurement previews. Decision thresholds remain owned by this evaluator, so neither
-        /// market can invent a different meaning for a band.
+        /// Converts the evaluator's continuous score to the appeal shared by both markets.
+        /// HardRefusalScore and VeryLikelyScoreThreshold are the evaluator's existing meaningful
+        /// score anchors; values outside that range are deliberately clamped.
         /// </summary>
-        public static IntercolonyNegotiationAcceptanceBand AcceptanceBandForScore(float score)
+        public static float AppealForScore(float score)
         {
-            if (!IsFinite(score) || score < CounteredScoreThreshold)
+            if (!IsFinite(score))
             {
-                return IntercolonyNegotiationAcceptanceBand.Unlikely;
+                return 0f;
             }
 
-            if (score < AcceptedScoreThreshold)
+            return Mathf.Clamp01(Mathf.InverseLerp(
+                HardRefusalScore, VeryLikelyScoreThreshold, score));
+        }
+
+        /// <summary>
+        /// Maps continuous proposal appeal to the shared seven-level acceptance vocabulary.
+        /// Each band occupies one seventh of the appeal range, so this mapping never consults a
+        /// raw score or a decision enum.
+        /// </summary>
+        public static IntercolonyNegotiationAcceptanceBand AcceptanceBandForAppeal(float appeal)
+        {
+            if (!IsFinite(appeal))
             {
-                return IntercolonyNegotiationAcceptanceBand.Possible;
+                return IntercolonyNegotiationAcceptanceBand.Hopeless;
             }
 
-            return score < VeryLikelyScoreThreshold
-                ? IntercolonyNegotiationAcceptanceBand.Likely
-                : IntercolonyNegotiationAcceptanceBand.VeryLikely;
+            float normalizedAppeal = Mathf.Clamp01(appeal);
+            int bandIndex = Mathf.Min(
+                AcceptanceBandCount - 1,
+                Mathf.FloorToInt(normalizedAppeal * AcceptanceBandCount));
+            return (IntercolonyNegotiationAcceptanceBand)bandIndex;
+        }
+
+        /// <summary>Returns the one display string for every acceptance band.</summary>
+        public static string AcceptanceBandLabel(IntercolonyNegotiationAcceptanceBand band)
+        {
+            switch (band)
+            {
+                case IntercolonyNegotiationAcceptanceBand.Hopeless:
+                    return "Hopeless";
+                case IntercolonyNegotiationAcceptanceBand.VeryUnlikely:
+                    return "Very unlikely";
+                case IntercolonyNegotiationAcceptanceBand.Unlikely:
+                    return "Unlikely";
+                case IntercolonyNegotiationAcceptanceBand.EvenOdds:
+                    return "Even odds";
+                case IntercolonyNegotiationAcceptanceBand.Likely:
+                    return "Likely";
+                case IntercolonyNegotiationAcceptanceBand.VeryLikely:
+                    return "Very likely";
+                case IntercolonyNegotiationAcceptanceBand.NearCertain:
+                    return "Near certain";
+                default:
+                    return "Hopeless";
+            }
         }
 
         /// <summary>

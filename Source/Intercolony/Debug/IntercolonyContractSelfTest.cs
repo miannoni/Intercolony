@@ -49,6 +49,13 @@ namespace Intercolony
                 sb.AppendLine($"  SKIPPED  {name} — {reason}");
             }
 
+            bool IsLegacyAppealBucket(float appeal)
+            {
+                return Mathf.Approximately(appeal, 0f) ||
+                       Mathf.Approximately(appeal, 0.5f) ||
+                       Mathf.Approximately(appeal, 1f);
+            }
+
             string Summarize()
             {
                 if (skippedAssertions.Count == 0)
@@ -641,12 +648,32 @@ namespace Intercolony
                     const int previewTotalCycles = 5;
                     const FulfillmentMode previewFulfillment = FulfillmentMode.BuyerPickup;
                     state.Contracts.Clear();
+                    ContractTerms preview = ContractService.PreviewContractTerms(
+                        state, subject, meat, previewQuantity, previewCadenceDays,
+                        previewTotalCycles, agreedUnitPrice: null,
+                        fulfillment: previewFulfillment);
                     int nextIdBeforeAcceptancePreviews = state.PeekNextId();
                     int contractCountBeforeAcceptancePreviews = state.Contracts.Count;
                     IntercolonyNegotiationAcceptancePreview acceptancePreview =
                         ContractService.PreviewAcceptance(
                             state, subject, meat, previewQuantity, previewCadenceDays,
                             previewTotalCycles, agreedUnitPrice: null,
+                            fulfillment: previewFulfillment);
+                    float continuousPrice = preview == null
+                        ? -1f
+                        : preview.referenceUnitPrice * 1.20f;
+                    float slightlyDifferentPrice = preview == null
+                        ? -1f
+                        : preview.referenceUnitPrice * 1.21f;
+                    IntercolonyNegotiationAcceptancePreview continuousFirstPreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: continuousPrice,
+                            fulfillment: previewFulfillment);
+                    IntercolonyNegotiationAcceptancePreview continuousSecondPreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: slightlyDifferentPrice,
                             fulfillment: previewFulfillment);
                     IntercolonyNegotiationAcceptancePreview repeatedAcceptancePreview =
                         ContractService.PreviewAcceptance(
@@ -669,28 +696,25 @@ namespace Intercolony
                         $"next id {nextIdBeforeAcceptancePreviews}->{state.PeekNextId()}; " +
                         $"contracts {contractCountBeforeAcceptancePreviews}->{state.Contracts.Count}");
 
-                    ContractTerms preview = ContractService.PreviewContractTerms(
-                        state, subject, meat, previewQuantity, previewCadenceDays,
-                        previewTotalCycles, agreedUnitPrice: null,
-                        fulfillment: previewFulfillment);
                     ContractProposalResult previewProposal = ContractService.ProposeContract(
                         state, subject, meat, previewQuantity, previewCadenceDays,
                         previewTotalCycles, agreedUnitPrice: null,
                         fulfillment: previewFulfillment);
 
-                    // This fails if Refused is not Unlikely, Countered is not Possible, Accepted is
-                    // neither Likely nor VeryLikely, or the previewed score or factor count differs
-                    // from the proposal evaluation.
+                    // This fails if a Refused preview reaches Likely or stronger, an Accepted
+                    // preview falls at Unlikely or weaker, or the previewed score or factor count
+                    // differs from the proposal evaluation.
                     Check("selling acceptance preview matches the proposal band",
                         acceptancePreview != null && previewProposal.Success &&
                         previewProposal.Evaluation != null &&
-                        ((previewProposal.Evaluation.Decision == IntercolonyNegotiationDecision.Refused &&
-                          acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Unlikely) ||
-                         (previewProposal.Evaluation.Decision == IntercolonyNegotiationDecision.Countered &&
-                          acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Possible) ||
-                         (previewProposal.Evaluation.Decision == IntercolonyNegotiationDecision.Accepted &&
-                          (acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Likely ||
-                           acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.VeryLikely))) &&
+                        (previewProposal.Evaluation.Decision !=
+                             IntercolonyNegotiationDecision.Refused ||
+                         (int)acceptancePreview.Band <
+                             (int)IntercolonyNegotiationAcceptanceBand.Likely) &&
+                        (previewProposal.Evaluation.Decision !=
+                             IntercolonyNegotiationDecision.Accepted ||
+                         (int)acceptancePreview.Band >
+                             (int)IntercolonyNegotiationAcceptanceBand.Unlikely) &&
                         acceptancePreview.Score == previewProposal.Evaluation.AcceptanceScore &&
                         acceptancePreview.Factors.Count == previewProposal.Evaluation.Factors.Count,
                         $"preview band={acceptancePreview?.Band.ToString() ?? "null"}; " +
@@ -705,14 +729,35 @@ namespace Intercolony
                         : ContractService.AcceptanceChanceForAppeal(
                             previewProposal.Contract.proposalAppeal);
                     // This fails if the preview or the delayed answer path grows its own appeal
-                    // to chance mapping, or if the preview does not use the stored appeal.
+                    // to chance mapping, if the preview does not use the stored appeal, or if the
+                    // shared appeal property diverges from the value stored for the roll.
                     Check("selling acceptance preview exposes the answer chance",
                         previewProposal.Contract != null &&
                         acceptancePreview?.AcceptanceChance.HasValue == true &&
+                        Mathf.Abs(
+                            acceptancePreview.ProposalAppeal -
+                            previewProposal.Contract.proposalAppeal) <= 0.000001f &&
                         Mathf.Abs(acceptancePreview.AcceptanceChance.Value - answerChance) <= 0.000001f,
                         $"preview chance={acceptancePreview?.AcceptanceChance?.ToString("R") ?? "null"}; " +
+                        $"preview appeal={acceptancePreview?.ProposalAppeal.ToString("R") ?? "null"}; " +
                         $"stored appeal={previewProposal.Contract?.proposalAppeal.ToString("R") ?? "null"}; " +
                         $"answer chance={answerChance:R}");
+
+                    // This must fail if anyone reintroduces a bucketed appeal: two packages that
+                    // differ only by a slight price change must retain different appeal values,
+                    // and neither value may be one of the old 0, 0.5, or 1 buckets.
+                    Check("selling proposal appeal remains continuous",
+                        preview != null &&
+                        continuousFirstPreview != null && continuousSecondPreview != null &&
+                        Mathf.Abs(slightlyDifferentPrice - continuousPrice) > 0f &&
+                        Mathf.Abs(
+                            continuousFirstPreview.ProposalAppeal -
+                            continuousSecondPreview.ProposalAppeal) > 0.000001f &&
+                        !IsLegacyAppealBucket(continuousFirstPreview.ProposalAppeal) &&
+                        !IsLegacyAppealBucket(continuousSecondPreview.ProposalAppeal),
+                        $"prices={continuousPrice:R}/{slightlyDifferentPrice:R}; " +
+                        $"appeals={continuousFirstPreview?.ProposalAppeal.ToString("R") ?? "null"}/" +
+                        $"{continuousSecondPreview?.ProposalAppeal.ToString("R") ?? "null"}");
 
                     // This fails if preview and proposal calculate their price or rounded
                     // per-cycle payment independently.

@@ -49,6 +49,8 @@ namespace Intercolony
         /// This is only a per-dialog starting value; the player can change it for each sale.
         /// </summary>
         public bool markReadyNowByDefault = true;
+        /// <summary>Whether proposal screens show the continuous appeal percentage beside its band.</summary>
+        public bool showProposalAppealPercentage = false;
         public float laborCostMultiplier = DefaultLaborCostMultiplier;
 
         public override void ExposeData()
@@ -71,6 +73,8 @@ namespace Intercolony
                 ref allowBuyingUnsoldAnimals, "allowBuyingUnsoldAnimals", false);
             Scribe_Values.Look(
                 ref markReadyNowByDefault, "markReadyNowByDefault", true);
+            Scribe_Values.Look(
+                ref showProposalAppealPercentage, "showProposalAppealPercentage", false);
             Scribe_Values.Look(
                 ref laborCostMultiplier, "laborCostMultiplierV2", DefaultLaborCostMultiplier);
 

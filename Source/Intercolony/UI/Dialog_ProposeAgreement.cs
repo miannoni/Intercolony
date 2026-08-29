@@ -386,7 +386,7 @@ namespace Intercolony
             float rowsHeight = MeasureRows(rows, detailsRect.width);
             if (rowsHeight <= detailsRect.height)
             {
-                DrawRows(rows, detailsRect.width, detailsRect.y);
+                DrawRows(rows, detailsRect.width, detailsRect.x, detailsRect.y);
                 return;
             }
 
@@ -394,7 +394,7 @@ namespace Intercolony
             float viewHeight = MeasureRows(rows, viewWidth);
             Rect viewRect = new Rect(0f, 0f, viewWidth, viewHeight);
             Widgets.BeginScrollView(detailsRect, ref termsScroll, viewRect);
-            DrawRows(rows, viewWidth, 0f);
+            DrawRows(rows, viewWidth, 0f, 0f);
             Widgets.EndScrollView();
         }
 
@@ -464,33 +464,21 @@ namespace Intercolony
         private static string AcceptanceLabel(
             IntercolonyNegotiationAcceptancePreview preview)
         {
-            string band;
-            switch (preview.Band)
+            string band = IntercolonyNegotiationEvaluator.AcceptanceBandLabel(preview.Band);
+            if (!IntercolonyMod.Settings.showProposalAppealPercentage)
             {
-                case IntercolonyNegotiationAcceptanceBand.Unlikely:
-                    band = "Unlikely";
-                    break;
-                case IntercolonyNegotiationAcceptanceBand.Possible:
-                    band = "Possible";
-                    break;
-                case IntercolonyNegotiationAcceptanceBand.Likely:
-                    band = "Likely";
-                    break;
-                default:
-                    band = "Very likely";
-                    break;
+                return band;
             }
 
-            string chance = preview.AcceptanceChance.HasValue
-                ? preview.AcceptanceChance.Value.ToStringPercent("F0")
-                : "unknown";
-            return $"{band} ({chance})";
+            return $"{band} ({preview.ProposalAppeal.ToStringPercent("F0")})";
         }
 
         private static string AcceptanceTooltip(
             IntercolonyNegotiationAcceptancePreview preview)
         {
-            StringBuilder tooltip = new StringBuilder("What drives this estimate:");
+            StringBuilder tooltip = new StringBuilder(
+                "The settlement's answer is rolled against a chance derived from this appeal.\n\n" +
+                "What drives this estimate:");
             if (preview.Factors == null || preview.Factors.Count == 0)
             {
                 tooltip.Append("\n- No named factors are available.");
@@ -528,7 +516,8 @@ namespace Intercolony
             return height;
         }
 
-        private static void DrawRows(List<TermRow> rows, float width, float startY)
+        private static void DrawRows(
+            List<TermRow> rows, float width, float startX, float startY)
         {
             float y = startY;
             for (int i = 0; i < rows.Count; i++)
@@ -536,15 +525,15 @@ namespace Intercolony
                 TermRow row = rows[i];
                 float valueWidth = ValueWidthForTerm(row, width);
                 float rowHeight = RowHeightForTerm(row, width);
-                Rect rowRect = new Rect(0f, y, width, rowHeight);
+                Rect rowRect = new Rect(startX, y, width, rowHeight);
 
-                float valueX = 0f;
+                float valueX = startX;
                 if (!row.label.NullOrEmpty())
                 {
                     GUI.color = new Color(1f, 1f, 1f, 0.65f);
-                    Widgets.Label(new Rect(0f, y, TermLabelWidth, rowHeight), row.label);
+                    Widgets.Label(new Rect(startX, y, TermLabelWidth, rowHeight), row.label);
                     GUI.color = Color.white;
-                    valueX = TermLabelWidth + TermColumnGap;
+                    valueX = startX + TermLabelWidth + TermColumnGap;
                 }
                 Widgets.Label(new Rect(valueX, y, valueWidth, rowHeight), row.value ?? "");
 
@@ -554,7 +543,7 @@ namespace Intercolony
                     Widgets.DrawHighlightIfMouseover(rowRect);
                     GUI.color = new Color(0.6f, 0.85f, 1f, 0.65f);
                     Text.Anchor = TextAnchor.UpperCenter;
-                    Widgets.Label(new Rect(width - TooltipAffordanceWidth, y,
+                    Widgets.Label(new Rect(startX + width - TooltipAffordanceWidth, y,
                         TooltipAffordanceWidth, rowHeight), "?");
                     Text.Anchor = TextAnchor.UpperLeft;
                     GUI.color = Color.white;

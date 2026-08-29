@@ -164,10 +164,6 @@ namespace Intercolony
         public const int MinimumQuantityPerCycle = 10;
         public const int MaximumQuantityPerCycle = 4000;
 
-        private const float ProposalPriceAppealWeight = 0.60f;
-        private const float ProposalQuantityAppealWeight = 0.25f;
-        private const float ProposalReputationAppealWeight = 0.15f;
-
         /// <summary>
         /// Even the weakest proposal has a small chance, and even the strongest can be refused.
         /// Appeal is mapped linearly between these bounds when the settlement answers.
@@ -383,7 +379,6 @@ namespace Intercolony
             if (!TryPrepareLegacyProposal(
                     state, settlement, thingDef, quantityPerCycle, agreedUnitPrice,
                     out PreparedContractProposal prepared,
-                    out float appeal,
                     out ContractProposalFailure failure,
                     out string reason,
                     cacheProfile: true))
@@ -393,6 +388,7 @@ namespace Intercolony
 
             IntercolonyNegotiationResult evaluation =
                 IntercolonyNegotiationEvaluator.Evaluate(prepared.negotiationProposal);
+            float appeal = DelayAppeal(evaluation);
             RecurringContract contract = BuildExplicitContract(
                 state, settlement, thingDef, quantityPerCycle, prepared.terms,
                 FulfillmentMode.SellerDelivery);
@@ -450,37 +446,6 @@ namespace Intercolony
             return ContractProposalResult.Sent(contract, evaluation);
         }
 
-        private static float CalculateProposalAppeal(
-            IntercolonyWorldComponent state,
-            Settlement settlement,
-            SettlementEconomicProfile profile,
-            ThingDef thingDef,
-            IntercolonyProductCategory category,
-            int quantityPerCycle,
-            float unitPrice,
-            float referenceUnitPrice)
-        {
-            float priceAppeal = referenceUnitPrice > 0f
-                ? Mathf.Clamp01(1f - unitPrice / (2f * referenceUnitPrice))
-                : unitPrice <= 0f ? 1f : 0f;
-
-            int appetite = FindBuyerService.MaximumAppetite(
-                state, thingDef, null, profile, category);
-            float quantityAppeal = quantityPerCycle > 0
-                ? Mathf.Clamp01(appetite / (float)quantityPerCycle)
-                : 0f;
-
-            float reputationAppeal = Mathf.InverseLerp(
-                MinimumReputation,
-                CommercialReputation.MaxScore,
-                ReputationService.ScoreFor(state, settlement));
-
-            return Mathf.Clamp01(
-                priceAppeal * ProposalPriceAppealWeight +
-                quantityAppeal * ProposalQuantityAppealWeight +
-                reputationAppeal * ProposalReputationAppealWeight);
-        }
-
         private static float DelayAppeal(IntercolonyNegotiationResult evaluation)
         {
             if (evaluation == null)
@@ -488,9 +453,8 @@ namespace Intercolony
                 return 0f;
             }
 
-            return evaluation.Decision == IntercolonyNegotiationDecision.Accepted
-                ? 1f
-                : evaluation.Decision == IntercolonyNegotiationDecision.Refused ? 0f : 0.5f;
+            return IntercolonyNegotiationEvaluator.AppealForScore(
+                evaluation.AcceptanceScore);
         }
 
         /// <summary>
@@ -534,7 +498,7 @@ namespace Intercolony
             return TryPrepareLegacyProposal(
                     state, settlement, thingDef, quantityPerCycle, agreedUnitPrice,
                     out PreparedContractProposal prepared,
-                    out _, out _, out _,
+                    out _, out _,
                     cacheProfile: false)
                 ? prepared.terms
                 : null;
@@ -555,7 +519,6 @@ namespace Intercolony
             if (!TryPrepareLegacyProposal(
                     state, settlement, thingDef, quantityPerCycle, agreedUnitPrice,
                     out PreparedContractProposal prepared,
-                    out float appeal,
                     out _, out _,
                     cacheProfile: false))
             {
@@ -564,6 +527,7 @@ namespace Intercolony
 
             IntercolonyNegotiationResult evaluation =
                 IntercolonyNegotiationEvaluator.Evaluate(prepared.negotiationProposal);
+            float appeal = DelayAppeal(evaluation);
             return new IntercolonyNegotiationAcceptancePreview(
                 evaluation, appeal, AcceptanceChanceForAppeal(appeal));
         }
@@ -631,18 +595,16 @@ namespace Intercolony
             int quantityPerCycle,
             float? agreedUnitPrice,
             out PreparedContractProposal prepared,
-            out float appeal,
             out ContractProposalFailure failure,
             out string reason,
             bool cacheProfile)
         {
             prepared = null;
-            appeal = 0f;
             if (!TryPrepareLegacyInputs(
                     state, settlement, thingDef, quantityPerCycle, agreedUnitPrice,
                     out SettlementEconomicProfile profile,
                     out IntercolonyProductCategory category,
-                    out ContractTerms initialTerms,
+                    out _,
                     out float chosenUnitPrice,
                     out failure,
                     out reason,
@@ -685,10 +647,6 @@ namespace Intercolony
             {
                 return false;
             }
-
-            appeal = CalculateProposalAppeal(
-                state, settlement, profile, thingDef, category, quantityPerCycle,
-                chosenUnitPrice, initialTerms.referenceUnitPrice);
             return true;
         }
 

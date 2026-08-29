@@ -135,6 +135,26 @@ namespace Intercolony
             y += markReadyHeight + 2f;
 
             SectionGap(ref y);
+            SectionTitle("Proposal previews", width, ref y, draw);
+            bool showProposalAppealPercentage = Settings.showProposalAppealPercentage;
+            float proposalAppealPercentageHeight = Mathf.Max(
+                24f, Text.CalcHeight(
+                    ShowProposalAppealPercentageLabel, Mathf.Max(1f, width - 28f)));
+            Rect proposalAppealPercentageRect = new Rect(
+                0f, y, width, proposalAppealPercentageHeight);
+            if (draw)
+            {
+                Widgets.CheckboxLabeled(
+                    proposalAppealPercentageRect,
+                    ShowProposalAppealPercentageLabel,
+                    ref showProposalAppealPercentage);
+                TooltipHandler.TipRegion(
+                    proposalAppealPercentageRect, ShowProposalAppealPercentageTooltip);
+                Settings.showProposalAppealPercentage = showProposalAppealPercentage;
+            }
+            y += proposalAppealPercentageHeight + 2f;
+
+            SectionGap(ref y);
             SectionTitle("Economy difficulty", width, ref y, draw);
             float difficulty = Settings.economyDifficulty;
             Paragraph(
@@ -247,6 +267,11 @@ namespace Intercolony
             "Mark buyer-pickup sales ready immediately by default";
         private const string MarkReadyByDefaultTooltip =
             "Sets the initial state of Mark ready now in Find Buyer sale dialogs.";
+        private const string ShowProposalAppealPercentageLabel =
+            "Show proposal appeal percentage alongside the acceptance band";
+        private const string ShowProposalAppealPercentageTooltip =
+            "Shows the continuous proposal appeal percentage on both the selling and procurement " +
+            "proposal screens.";
 
         private static string RefreshDaysLabel(float refreshDays)
         {

@@ -26,6 +26,13 @@ namespace Intercolony
         private const int SupplyProbeSettlementId = 971_102;
         private const int PurchaseFixtureSilver = 4;
 
+        private static bool IsLegacyAppealBucket(float appeal)
+        {
+            return Mathf.Approximately(appeal, 0f) ||
+                   Mathf.Approximately(appeal, 0.5f) ||
+                   Mathf.Approximately(appeal, 1f);
+        }
+
         public static string Run(IntercolonyWorldComponent state)
         {
             StringBuilder sb = new StringBuilder();
@@ -3665,6 +3672,7 @@ namespace Intercolony
             skip("E13 procurement acceptance preview matches the proposal band", reason);
             skip("E14 procurement acceptance preview leaves state untouched", reason);
             skip("E15 procurement acceptance preview refuses an out-of-range package", reason);
+            skip("E16 procurement proposal appeal remains continuous", reason);
         }
 
         private static void CheckProcurementContractPreview(
@@ -3677,12 +3685,33 @@ namespace Intercolony
             const int cadenceDays = 1;
             const int totalCycles = 2;
             state.ProcurementContracts.Clear();
+            ProcurementContractTerms preview =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
             int nextIdBeforeAcceptancePreviews = state.PeekNextId();
             int contractCountBeforeAcceptancePreviews = state.ProcurementContracts.Count;
             IntercolonyNegotiationAcceptancePreview acceptancePreview =
                 ProcurementContractService.PreviewAcceptance(
                     state, settlement, product, null, null, quantity, cadenceDays,
                     totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            // Keep both probes near the reference rate so this exercises the responsive part
+            // of the appeal curve rather than two prices that both clamp at its ceiling.
+            float continuousPrice = preview == null
+                ? -1f
+                : preview.referenceUnitPrice * 0.95f;
+            float slightlyDifferentPrice = preview == null
+                ? -1f
+                : preview.referenceUnitPrice * 0.96f;
+            IntercolonyNegotiationAcceptancePreview continuousFirstPreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: continuousPrice,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            IntercolonyNegotiationAcceptancePreview continuousSecondPreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: slightlyDifferentPrice,
                     fulfillment: FulfillmentMode.SellerDelivery);
             IntercolonyNegotiationAcceptancePreview repeatedAcceptancePreview =
                 ProcurementContractService.PreviewAcceptance(
@@ -3707,9 +3736,6 @@ namespace Intercolony
                 $"contracts {contractCountBeforeAcceptancePreviews}->" +
                 $"{state.ProcurementContracts.Count}");
 
-            ProcurementContractTerms preview =
-                ProcurementContractService.PreviewContractTerms(
-                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
             ProcurementContractProposalResult proposal =
                 ProcurementContractService.ProposeContract(
                     state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
@@ -3724,28 +3750,55 @@ namespace Intercolony
                 $"preview reference={preview?.referenceUnitPrice.ToString("R") ?? "null"}; " +
                 $"reason={proposal.Reason ?? "none"}");
 
-            // This fails if Refused is not Unlikely, Countered is not Possible, Accepted is
-            // neither Likely nor VeryLikely, or the previewed score or factor count differs from
+            // This fails if a Refused preview reaches Likely or stronger, an Accepted preview
+            // falls at Unlikely or weaker, or the previewed score or factor count differs from
             // the proposal evaluation.
             check(
                 "E13 procurement acceptance preview matches the proposal band",
                 acceptancePreview != null && proposal.Success &&
                 proposal.Evaluation != null &&
-                ((proposal.Evaluation.Decision == IntercolonyNegotiationDecision.Refused &&
-                  acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Unlikely) ||
-                 (proposal.Evaluation.Decision == IntercolonyNegotiationDecision.Countered &&
-                  acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Possible) ||
-                 (proposal.Evaluation.Decision == IntercolonyNegotiationDecision.Accepted &&
-                  (acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Likely ||
-                   acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.VeryLikely))) &&
+                (proposal.Evaluation.Decision !=
+                     IntercolonyNegotiationDecision.Refused ||
+                 (int)acceptancePreview.Band <
+                     (int)IntercolonyNegotiationAcceptanceBand.Likely) &&
+                (proposal.Evaluation.Decision !=
+                     IntercolonyNegotiationDecision.Accepted ||
+                 (int)acceptancePreview.Band >
+                     (int)IntercolonyNegotiationAcceptanceBand.Unlikely) &&
                 acceptancePreview.Score == proposal.Evaluation.AcceptanceScore &&
-                acceptancePreview.Factors.Count == proposal.Evaluation.Factors.Count,
+                acceptancePreview.Factors.Count == proposal.Evaluation.Factors.Count &&
+                acceptancePreview.AcceptanceChance == null &&
+                proposal.Contract != null &&
+                Mathf.Abs(
+                    acceptancePreview.ProposalAppeal - proposal.Contract.proposalAppeal) <=
+                    0.000001f,
                 $"preview band={acceptancePreview?.Band.ToString() ?? "null"}; " +
                 $"proposal decision={proposal.Evaluation?.Decision.ToString() ?? "null"}; " +
                 $"preview score={acceptancePreview?.Score.ToString("R") ?? "null"}; " +
                 $"proposal score={proposal.Evaluation?.AcceptanceScore.ToString("R") ?? "null"}; " +
                 $"preview factors={acceptancePreview?.Factors.Count.ToString() ?? "null"}; " +
-                $"proposal factors={proposal.Evaluation?.Factors.Count.ToString() ?? "null"}");
+                $"proposal factors={proposal.Evaluation?.Factors.Count.ToString() ?? "null"}; " +
+                $"preview appeal={acceptancePreview?.ProposalAppeal.ToString("R") ?? "null"}; " +
+                $"stored appeal={proposal.Contract?.proposalAppeal.ToString("R") ?? "null"}; " +
+                $"preview chance={(acceptancePreview?.AcceptanceChance.HasValue == true
+                    ? acceptancePreview.AcceptanceChance.Value.ToString("R") : "null")}");
+
+            // This must fail if anyone reintroduces a bucketed appeal: two near-reference
+            // packages that differ only by a slight price change must retain different appeal
+            // values, and neither value may be one of the old 0, 0.5, or 1 buckets.
+            check(
+                "E16 procurement proposal appeal remains continuous",
+                preview != null &&
+                continuousFirstPreview != null && continuousSecondPreview != null &&
+                Mathf.Abs(slightlyDifferentPrice - continuousPrice) > 0f &&
+                Mathf.Abs(
+                    continuousFirstPreview.ProposalAppeal -
+                    continuousSecondPreview.ProposalAppeal) > 0.000001f &&
+                !IsLegacyAppealBucket(continuousFirstPreview.ProposalAppeal) &&
+                !IsLegacyAppealBucket(continuousSecondPreview.ProposalAppeal),
+                $"prices={continuousPrice:R}/{slightlyDifferentPrice:R}; " +
+                $"appeals={continuousFirstPreview?.ProposalAppeal.ToString("R") ?? "null"}/" +
+                $"{continuousSecondPreview?.ProposalAppeal.ToString("R") ?? "null"}");
 
             state.ProcurementContracts.Clear();
             const int outOfRangeQuantity = 0;

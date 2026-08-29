@@ -381,7 +381,7 @@ namespace Intercolony
             float rowsHeight = MeasureRows(rows, detailsRect.width);
             if (rowsHeight <= detailsRect.height)
             {
-                DrawRows(rows, detailsRect.width, detailsRect.y);
+                DrawRows(rows, detailsRect.x, detailsRect.width, detailsRect.y);
                 return;
             }
 
@@ -389,7 +389,7 @@ namespace Intercolony
             float viewHeight = MeasureRows(rows, viewWidth);
             Rect viewRect = new Rect(0f, 0f, viewWidth, viewHeight);
             Widgets.BeginScrollView(detailsRect, ref termsScroll, viewRect);
-            DrawRows(rows, viewWidth, 0f);
+            DrawRows(rows, 0f, viewWidth, 0f);
             Widgets.EndScrollView();
         }
 
@@ -412,17 +412,13 @@ namespace Intercolony
         private static string AcceptanceLabel(
             IntercolonyNegotiationAcceptancePreview preview)
         {
-            switch (preview.Band)
+            string label = IntercolonyNegotiationEvaluator.AcceptanceBandLabel(preview.Band);
+            if (IntercolonyMod.Settings.showProposalAppealPercentage)
             {
-                case IntercolonyNegotiationAcceptanceBand.Unlikely:
-                    return "Unlikely";
-                case IntercolonyNegotiationAcceptanceBand.Possible:
-                    return "Possible";
-                case IntercolonyNegotiationAcceptanceBand.Likely:
-                    return "Likely";
-                default:
-                    return "Very likely";
+                label += $" ({preview.ProposalAppeal:P0})";
             }
+
+            return label;
         }
 
         private static string BuildAcceptanceTooltip(
@@ -433,7 +429,9 @@ namespace Intercolony
                 return "The supplier acceptance preview is unavailable.";
             }
 
-            StringBuilder tooltip = new StringBuilder("What drives this estimate:");
+            StringBuilder tooltip = new StringBuilder(
+                "On the procurement side, the supplier's answer is already determined at this " +
+                "level of appeal rather than rolled later.\n\nWhat drives this estimate:");
             if (acceptance.Factors == null || acceptance.Factors.Count == 0)
             {
                 tooltip.Append("\n- No named factors are available.");
@@ -471,7 +469,8 @@ namespace Intercolony
             return height;
         }
 
-        private static void DrawRows(List<TermRow> rows, float width, float startY)
+        private static void DrawRows(
+            List<TermRow> rows, float originX, float width, float startY)
         {
             float y = startY;
             for (int i = 0; i < rows.Count; i++)
@@ -479,17 +478,18 @@ namespace Intercolony
                 TermRow row = rows[i];
                 float valueWidth = ValueWidthForTerm(row, width);
                 float rowHeight = RowHeightForTerm(row, width);
-                Rect rowRect = new Rect(0f, y, width, rowHeight);
+                Rect rowRect = new Rect(originX, y, width, rowHeight);
 
                 float valueX = 0f;
                 if (!row.label.NullOrEmpty())
                 {
                     GUI.color = new Color(1f, 1f, 1f, 0.65f);
-                    Widgets.Label(new Rect(0f, y, TermLabelWidth, rowHeight), row.label);
+                    Widgets.Label(new Rect(originX, y, TermLabelWidth, rowHeight), row.label);
                     GUI.color = Color.white;
                     valueX = TermLabelWidth + TermColumnGap;
                 }
-                Widgets.Label(new Rect(valueX, y, valueWidth, rowHeight), row.value ?? "");
+                Widgets.Label(
+                    new Rect(originX + valueX, y, valueWidth, rowHeight), row.value ?? "");
 
                 if (!row.tooltip.NullOrEmpty())
                 {
@@ -497,7 +497,7 @@ namespace Intercolony
                     Widgets.DrawHighlightIfMouseover(rowRect);
                     GUI.color = new Color(0.6f, 0.85f, 1f, 0.65f);
                     Text.Anchor = TextAnchor.UpperCenter;
-                    Widgets.Label(new Rect(width - TooltipAffordanceWidth, y,
+                    Widgets.Label(new Rect(originX + width - TooltipAffordanceWidth, y,
                         TooltipAffordanceWidth, rowHeight), "?");
                     Text.Anchor = TextAnchor.UpperLeft;
                     GUI.color = Color.white;

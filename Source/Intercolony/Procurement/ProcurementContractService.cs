@@ -1191,9 +1191,8 @@ namespace Intercolony
                 return 0f;
             }
 
-            return evaluation.Decision == IntercolonyNegotiationDecision.Accepted
-                ? 1f
-                : evaluation.Decision == IntercolonyNegotiationDecision.Refused ? 0f : 0.5f;
+            return IntercolonyNegotiationEvaluator.AppealForScore(
+                evaluation.AcceptanceScore);
         }
 
         private static void ClearPendingAnswer(ProcurementContract contract)
