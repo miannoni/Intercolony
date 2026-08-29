@@ -56,6 +56,42 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Computes what one scheduled payday owes, including arrears and any final partial period.
+        ///
+        /// The live payroll path passes the scheduled payday tick, so this keeps the old
+        /// end-of-term calculation while allowing a caller to ask about a future payday without
+        /// borrowing the current game tick. Open-ended employment has no end tick and therefore
+        /// always owes a full period.
+        /// </summary>
+        public static int PeriodDue(EmploymentContract contract, int paydayTick, int arrears)
+        {
+            if (contract == null)
+            {
+                return 0;
+            }
+
+            int due = contract.PeriodPayment + arrears;
+            if (contract.endTick < 0)
+            {
+                return due;
+            }
+
+            // At a live payday, paydayTick is contract.nextPaymentTick and the expression below
+            // is the old contract.DaysRemaining calculation with "now" made explicit. That is
+            // what keeps the live result unchanged while making future paydays answerable.
+            int daysLeftInTerm = Mathf.CeilToInt(Mathf.Max(
+                0f, (contract.endTick - paydayTick) / (float)GenDate.TicksPerDay));
+            int interval = contract.wageStructure.IntervalDays();
+            if (daysLeftInTerm < interval && daysLeftInTerm >= 0)
+            {
+                int served = Mathf.Clamp(interval - daysLeftInTerm, 0, interval);
+                due = contract.dailyWage * served + arrears;
+            }
+
+            return due;
+        }
+
+        /// <summary>
         /// Settles one pay period. Pays what the colony has, records the rest as arrears, and
         /// escalates if this is not the first miss.
         /// </summary>
@@ -66,17 +102,7 @@ namespace Intercolony
 
             // Wages for the period, plus anything still owed from previous periods: a worker who
             // was short-changed last quadrum is owed that too, not just this quadrum's wage.
-            int due = contract.PeriodPayment + contract.arrearsSilver;
-
-            // A term shorter than the pay period, or a final partial period, is paid pro rata
-            // rather than rounded up to a whole period the worker did not serve.
-            int daysLeftInTerm = Mathf.CeilToInt(Mathf.Max(0f, contract.DaysRemaining));
-            if (daysLeftInTerm < contract.wageStructure.IntervalDays() && daysLeftInTerm >= 0)
-            {
-                int interval = contract.wageStructure.IntervalDays();
-                int served = Mathf.Clamp(interval - daysLeftInTerm, 0, interval);
-                due = contract.dailyWage * served + contract.arrearsSilver;
-            }
+            int due = PeriodDue(contract, contract.nextPaymentTick, contract.arrearsSilver);
 
             int available = PurchaseOrderService.CountColonySilver(map);
             int paid = Mathf.Min(due, available);

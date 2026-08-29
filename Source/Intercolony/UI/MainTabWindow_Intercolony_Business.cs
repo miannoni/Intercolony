@@ -36,6 +36,18 @@ namespace Intercolony
         private float businessContentHeight = 400f;
 
         private const float LineHeight = 24f;
+        private const float CashFlowColumnGap = 8f;
+        private const string CashFlowHeadingTooltip =
+            "This table counts commitments already made: open sales orders, agreement cycles falling due, and scheduled payroll. " +
+            "It does not predict spot sales or opportunities you have not accepted.";
+        private const string CashFlowDayTooltip =
+            "Each bucket is a rolling 24-hour window from now, not a calendar day.";
+
+        public override void PostOpen()
+        {
+            base.PostOpen();
+            CashFlowForecast.Invalidate();
+        }
 
         private void DrawBusiness(Rect inRect, IntercolonyWorldComponent state)
         {
@@ -60,6 +72,9 @@ namespace Intercolony
             float y = 0f;
             y = DrawCashPosition(viewRect, y, state);
             y += 12f;
+            CashFlowReport cashFlow = CashFlowForecast.Current(state);
+            y = DrawCashFlowForecast(viewRect, y, cashFlow);
+            y += 12f;
             y = DrawBrandSummary(viewRect, y, state);
             y += 12f;
             y = DrawPeriodReport(viewRect, y, state);
@@ -69,6 +84,123 @@ namespace Intercolony
             EndPageScrollView();
 
             businessContentHeight = y + 12f;
+        }
+
+        private float DrawCashFlowForecast(Rect inRect, float y, CashFlowReport report)
+        {
+            Text.Font = GameFont.Medium;
+            string heading = "Cash flow — next 5 days";
+            float headingWidth = Mathf.Max(1f, inRect.width - 12f);
+            float headingHeight = Text.CalcHeight(heading, headingWidth);
+            Rect headingRect = new Rect(0f, y, headingWidth, headingHeight);
+            Widgets.Label(headingRect, heading);
+            if (ShouldBuildTooltip(headingRect))
+            {
+                TooltipHandler.TipRegion(headingRect, CashFlowHeadingTooltip);
+            }
+
+            Text.Font = GameFont.Small;
+            y += headingHeight + 4f;
+
+            float tableWidth = Mathf.Max(1f, inRect.width - 12f);
+            float dayWidth = Mathf.Min(110f, tableWidth * 0.2f);
+            float amountWidth = Mathf.Max(1f,
+                (tableWidth - dayWidth - 3f * CashFlowColumnGap) / 3f);
+            float dayX = 6f;
+            float revenueX = dayX + dayWidth + CashFlowColumnGap;
+            float expensesX = revenueX + amountWidth + CashFlowColumnGap;
+            float netX = expensesX + amountWidth + CashFlowColumnGap;
+
+            string dayHeader = "Day";
+            string revenueHeader = "Expected revenue";
+            string expensesHeader = "Expected expenses";
+            string netHeader = "Net";
+            float dayHeaderHeight = Text.CalcHeight(dayHeader, dayWidth);
+            float revenueHeaderHeight = Text.CalcHeight(revenueHeader, amountWidth);
+            float expensesHeaderHeight = Text.CalcHeight(expensesHeader, amountWidth);
+            float netHeaderHeight = Text.CalcHeight(netHeader, amountWidth);
+            float headerHeight = Mathf.Max(LineHeight, dayHeaderHeight, revenueHeaderHeight,
+                expensesHeaderHeight, netHeaderHeight);
+
+            DrawMeasuredCashFlowLabel(
+                new Rect(dayX, y, dayWidth, dayHeaderHeight), dayHeader, TextAnchor.UpperLeft);
+            DrawMeasuredCashFlowLabel(
+                new Rect(revenueX, y, amountWidth, revenueHeaderHeight), revenueHeader,
+                TextAnchor.UpperRight);
+            DrawMeasuredCashFlowLabel(
+                new Rect(expensesX, y, amountWidth, expensesHeaderHeight), expensesHeader,
+                TextAnchor.UpperRight);
+            DrawMeasuredCashFlowLabel(
+                new Rect(netX, y, amountWidth, netHeaderHeight), netHeader, TextAnchor.UpperRight);
+            y += headerHeight + 2f;
+
+            for (int i = 0; i < report.days.Count; i++)
+            {
+                CashFlowDay day = report.days[i];
+                int net = day.Net;
+                string dayLabel = $"Day {day.dayIndex + 1}";
+                string revenue = day.revenue.ToString("N0");
+                string expenses = day.expenses.ToString("N0");
+                string netLabel = net.ToString("N0");
+
+                float dayHeight = Text.CalcHeight(dayLabel, dayWidth);
+                float revenueHeight = Text.CalcHeight(revenue, amountWidth);
+                float expensesHeight = Text.CalcHeight(expenses, amountWidth);
+                float netHeight = Text.CalcHeight(netLabel, amountWidth);
+                float rowHeight = Mathf.Max(LineHeight, dayHeight, revenueHeight,
+                    expensesHeight, netHeight);
+
+                Rect dayRect = new Rect(dayX, y, dayWidth, dayHeight);
+                DrawMeasuredCashFlowLabel(dayRect, dayLabel, TextAnchor.UpperLeft);
+                Rect dayTooltipRect = new Rect(dayX, y, dayWidth, rowHeight);
+                if (ShouldBuildTooltip(dayTooltipRect))
+                {
+                    TooltipHandler.TipRegion(dayTooltipRect, CashFlowDayTooltip);
+                }
+
+                DrawMeasuredCashFlowLabel(
+                    new Rect(revenueX, y, amountWidth, revenueHeight), revenue,
+                    TextAnchor.UpperRight);
+                DrawMeasuredCashFlowLabel(
+                    new Rect(expensesX, y, amountWidth, expensesHeight), expenses,
+                    TextAnchor.UpperRight);
+                DrawCashFlowNet(
+                    new Rect(netX, y, amountWidth, netHeight), netLabel, net);
+
+                y += rowHeight;
+            }
+
+            return y;
+        }
+
+        private static void DrawMeasuredCashFlowLabel(Rect rect, string text, TextAnchor anchor)
+        {
+            TextAnchor previousAnchor = Text.Anchor;
+            Text.Anchor = anchor;
+            try
+            {
+                Widgets.Label(rect, text);
+            }
+            finally
+            {
+                Text.Anchor = previousAnchor;
+            }
+        }
+
+        private static void DrawCashFlowNet(Rect rect, string text, int net)
+        {
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = net >= 0
+                    ? new Color(0.6f, 0.9f, 0.6f) // Match the existing positive money colour.
+                    : new Color(1f, 0.75f, 0.75f); // Match the existing negative contract-margin colour.
+                DrawMeasuredCashFlowLabel(rect, text, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
         }
 
         /// <summary>

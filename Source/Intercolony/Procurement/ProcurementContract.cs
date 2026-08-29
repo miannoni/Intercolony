@@ -276,6 +276,14 @@ namespace Intercolony
         public bool CanDeclineFinalCounter => HasPendingCounterpartyCounter;
 
         /// <summary>
+        /// Silver charged for one cycle by <see cref="PurchaseOrderService"/> when it creates the
+        /// paid order. Every display of this figure must use the same calculation rather than a
+        /// second copy; the counter-terms record above carries the same property for the terms
+        /// the player is still negotiating.
+        /// </summary>
+        public int paymentPerCycle => IntercolonyPricing.TotalPayment(unitPrice, quantityPerCycle);
+
+        /// <summary>
         /// Returns the exact persisted counter terms for a later read model and acceptance path.
         /// Reconstructing this package from the original proposal would make the displayed and
         /// charged terms diverge.

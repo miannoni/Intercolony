@@ -46,6 +46,29 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### The five-day cash flow table needs a human read
+
+Added 2026-08-29 on branch `1.0.1`. The new five-day cash flow table on the **Business** tab has
+passed its self-tests, but no person has looked at it in play. It sits between the **Where you stand**
+section above and the brand section below.
+
+**Steps.** Open **Business** at several window sizes and check that the section renders as five rows
+with four columns — **Day**, **Expected revenue**, **Expected expenses**, and **Net** — without
+overlapping the **Where you stand** section above it or the brand section below it at any window size.
+Hover the heading and confirm its tooltip appears and says the table counts commitments already made —
+open sales orders, agreement cycles falling due and scheduled payroll — and does not predict spot sales.
+Hover the **Day** column and confirm its tooltip explains that each row is a rolling 24-hour window from
+now rather than a calendar day, then judge whether that reading is clear and not confusing in play.
+
+With a real colony that has an active sales agreement and an employee, check that the numbers are
+recognisable: payroll lands on the payday rather than being spread across every day, and a known contract
+delivery shows the payment it will really pay. Purchase orders deliberately contribute nothing because
+they are paid in full when the order is created, so an apparently missing purchase-order expense is
+correct behaviour and not a bug to report.
+
+Finally, decide whether five days is the right window and whether **Day 1..Day 5** is the right label.
+Those are calibration questions for the end-of-1.0 sitting, not defects.
+
 ### Procurement Contracts has never been used by a human
 
 Added 2026-08-25 on branch `1.0.1`. In 1.0 this tab was an **Under development** placeholder,

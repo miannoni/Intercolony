@@ -145,6 +145,8 @@ namespace Intercolony
                 (s, m) => IntercolonyReputationSelfTest.Run(s)),
             new SelfTestDefinition("contract", "contract", false,
                 (s, m) => IntercolonyContractSelfTest.Run(s)),
+            new SelfTestDefinition("cash-flow", "cash flow", false,
+                (s, m) => IntercolonyCashFlowSelfTest.Run(s)),
             new SelfTestDefinition("rfq", "rfq", false,
                 (s, m) => IntercolonyRfqSelfTest.Run(s)),
 
