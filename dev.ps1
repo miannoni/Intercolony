@@ -886,6 +886,36 @@ function Get-WorldPawnCount {
         @("count", "allPawnsAliveOrDead", "allPawnsAliveOrDeadCount") 0)
 }
 
+function Get-WorldPawnList {
+    try {
+        $response = Invoke-Bridge "world_pawns.list" @{} 15
+        $missing = "__INTERCOLONY_WORLD_PAWNS_LIST_MISSING__"
+        $pawns = @(Get-BridgeField $response.result @("pawns") $missing)
+        if ($pawns.Count -eq 1 -and $pawns[0] -eq $missing) { return $null }
+        return ,@($pawns)
+    } catch {
+        return $null
+    }
+}
+
+function Format-WorldPawnIdentityLine($Change, $Pawn) {
+    $id = [int](Get-BridgeField $Pawn @("id") 0)
+    $label = [string](Get-BridgeField $Pawn @("label") "")
+    $kind = [string](Get-BridgeField $Pawn @("kind") "-")
+    $race = [string](Get-BridgeField $Pawn @("race") "-")
+    $faction = [string](Get-BridgeField $Pawn @("faction") "-")
+    $situation = [string](Get-BridgeField $Pawn @("situation") "-")
+    $dead = [bool](Get-BridgeField $Pawn @("dead") $false)
+    $spawned = [bool](Get-BridgeField $Pawn @("spawned") $false)
+    $humanlike = [bool](Get-BridgeField $Pawn @("humanlike") $false)
+
+    # Keep each pawn on one line while preserving the complete label.
+    $label = $label -replace '[\r\n]+', ' '
+    $label = $label.Replace('"', '\"')
+    return ('World pawn {0}: id {1}  "{2}"  kind={3} race={4} faction={5} situation={6} dead={7} spawned={8} humanlike={9}' -f `
+        $Change, $id, $label, $kind, $race, $faction, $situation, $dead, $spawned, $humanlike)
+}
+
 function Get-OpenPostingCount {
     $response = Invoke-Bridge "postings.count" @{} 15
     return [int](Get-BridgeField $response.result `
@@ -944,6 +974,13 @@ function Invoke-DevTest($Name) {
         return 2
     }
 
+    $worldPawnsBefore = $null
+    try {
+        $worldPawnsBefore = Get-WorldPawnList
+    } catch {
+        $worldPawnsBefore = $null
+    }
+
     if ($Fresh -and $Name -eq "job-posting" -and $postingsBefore -ne 0) {
         Write-Host "ENVIRONMENT SETUP FAILURE: fresh world has $postingsBefore open postings; expected 0. Test not run." -ForegroundColor Red
         & $archiveFailure $Name "ENVIRONMENT SETUP FAILURE: fresh world has $postingsBefore open postings; expected 0. Test not run." $null
@@ -976,6 +1013,73 @@ function Invoke-DevTest($Name) {
         if (-not $infrastructureError) { $infrastructureError = $_.Exception.Message }
     }
 
+    $worldPawnsAfter = $null
+    try {
+        $worldPawnsAfter = Get-WorldPawnList
+    } catch {
+        $worldPawnsAfter = $null
+    }
+
+    $worldPawnIdentityLines = @()
+    $pawnDelta = $pawnsAfter - $pawnsBefore
+    if ($null -ne $worldPawnsBefore -and $null -ne $worldPawnsAfter) {
+        try {
+            $beforeById = @{}
+            foreach ($pawn in @($worldPawnsBefore)) {
+                $pawnId = Get-BridgeField $pawn @("id") $null
+                if ($null -eq $pawnId) { throw "world_pawns.list returned a pawn without an id." }
+                $beforeById[[string]([int]$pawnId)] = $pawn
+            }
+
+            $afterById = @{}
+            $addedPawns = New-Object System.Collections.Generic.List[object]
+            foreach ($pawn in @($worldPawnsAfter)) {
+                $pawnId = Get-BridgeField $pawn @("id") $null
+                if ($null -eq $pawnId) { throw "world_pawns.list returned a pawn without an id." }
+                $idKey = [string]([int]$pawnId)
+                $afterById[$idKey] = $pawn
+                if (-not $beforeById.ContainsKey($idKey)) { [void]$addedPawns.Add($pawn) }
+            }
+
+            $removedPawns = New-Object System.Collections.Generic.List[object]
+            foreach ($pawn in @($worldPawnsBefore)) {
+                $pawnId = Get-BridgeField $pawn @("id") $null
+                $idKey = [string]([int]$pawnId)
+                if (-not $afterById.ContainsKey($idKey)) { [void]$removedPawns.Add($pawn) }
+            }
+
+            $addedCount = $addedPawns.Count
+            $addedShown = [Math]::Min(25, $addedCount)
+            for ($i = 0; $i -lt $addedShown; $i++) {
+                $worldPawnIdentityLines += Format-WorldPawnIdentityLine "ADDED" $addedPawns[$i]
+            }
+            if ($addedCount -gt $addedShown) {
+                $worldPawnIdentityLines += "... and $($addedCount - $addedShown) more"
+            }
+
+            $removedCount = $removedPawns.Count
+            $removedShown = [Math]::Min(25, $removedCount)
+            for ($i = 0; $i -lt $removedShown; $i++) {
+                $worldPawnIdentityLines += Format-WorldPawnIdentityLine "REMOVED" $removedPawns[$i]
+            }
+            if ($removedCount -gt $removedShown) {
+                $worldPawnIdentityLines += "... and $($removedCount - $removedShown) more"
+            }
+        } catch {
+            $worldPawnIdentityLines = @()
+            if ($pawnDelta -ne 0) {
+                $worldPawnIdentityLines += "World pawn identities unavailable (bridge has no world_pawns.list); delta is unexplained."
+            }
+        }
+    } elseif ($pawnDelta -ne 0) {
+        $worldPawnIdentityLines += "World pawn identities unavailable (bridge has no world_pawns.list); delta is unexplained."
+    }
+    $worldPawnIdentityText = $worldPawnIdentityLines -join "`r`n"
+    $worldPawnArchiveSuffix = ""
+    if ($worldPawnIdentityLines.Count -gt 0) {
+        $worldPawnArchiveSuffix = "`r`n`r`n--- world pawn identity changes ---`r`n$worldPawnIdentityText"
+    }
+
     $afterLines = Get-AllLines
     $logInterval = @()
     if ($null -ne $afterLines -and $logOffset -lt $afterLines.Count) {
@@ -989,6 +1093,9 @@ function Invoke-DevTest($Name) {
     if ($infrastructureError) {
         Write-Host "TEST INFRASTRUCTURE FAILED: $infrastructureError" -ForegroundColor Red
         Write-Host "World pawns: $pawnsBefore -> $pawnsAfter (delta $($pawnsAfter - $pawnsBefore))" -ForegroundColor Yellow
+        if ($worldPawnIdentityLines.Count -gt 0) {
+            $worldPawnIdentityLines | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+        }
         Write-Host "Postings: $postingsBefore -> $postingsAfter" -ForegroundColor Yellow
         $failureOutput = "TEST INFRASTRUCTURE FAILED: $infrastructureError"
         if ($null -ne $response) {
@@ -997,6 +1104,7 @@ function Invoke-DevTest($Name) {
                 $failureOutput = "$bridgeOutput`r`n`r`n--- infrastructure failure ---`r`n$failureOutput"
             }
         }
+        $failureOutput = "$failureOutput$worldPawnArchiveSuffix"
         & $archiveFailure $Name $failureOutput $logInterval
         return 2
     }
@@ -1016,6 +1124,9 @@ function Invoke-DevTest($Name) {
     Write-Host "Success: $success"
     Write-Host "Duration: $duration ms"
     Write-Host "World pawns: $pawnsBefore -> $pawnsAfter (delta $($pawnsAfter - $pawnsBefore))" -ForegroundColor Yellow
+    if ($worldPawnIdentityLines.Count -gt 0) {
+        $worldPawnIdentityLines | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+    }
     Write-Host "Postings: $postingsBefore -> $postingsAfter"
     Write-Host "Test signal: $(if ($success -and $failed -eq 0) { 'PASS' } else { 'FAIL' })" `
         -ForegroundColor $(if ($success -and $failed -eq 0) { 'Green' } else { 'Red' })
@@ -1040,6 +1151,8 @@ function Invoke-DevTest($Name) {
         $failureLines | ForEach-Object { Write-Host $_ -ForegroundColor Red }
     }
 
+    $failureArchiveOutput = "$rawOutput$worldPawnArchiveSuffix"
+
     # The bridge carries the suite's complete report in result.output, but the test console only
     # surfaces FAIL lines here. Keep skipped assertion names and reasons visible on both the
     # single-suite and aggregate paths without changing the pass/fail or exit-code rules.
@@ -1053,12 +1166,12 @@ function Invoke-DevTest($Name) {
     Write-Host "Full test output: $TestOutput"
 
     if ($failed -gt 0 -or -not $success) {
-        & $archiveFailure $Name $rawOutput $logInterval
+        & $archiveFailure $Name $failureArchiveOutput $logInterval
         return 1
     }
     if ($logHasExceptions) {
         Write-Host "Assertions passed, but new log exceptions mean this was NOT a clean run." -ForegroundColor Red
-        & $archiveFailure $Name $rawOutput $logInterval
+        & $archiveFailure $Name $failureArchiveOutput $logInterval
         return 2
     }
     return 0

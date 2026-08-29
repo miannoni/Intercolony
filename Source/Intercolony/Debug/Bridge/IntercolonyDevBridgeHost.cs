@@ -380,6 +380,8 @@ namespace Intercolony
                     return TestsRunAll();
                 case "state.summary":
                     return StateSummary();
+                case "world_pawns.list":
+                    return WorldPawnList();
                 case "world_pawns.count":
                     return WorldPawnCount();
                 case "postings.count":
@@ -512,6 +514,94 @@ namespace Intercolony
             return new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["summary"] = state.DebugStateSummary()
+            };
+        }
+
+        /// <summary>
+        /// Lists the same world-pawn collection as WorldPawnCount, because a changed total proves a
+        /// leak but does not identify the pawn that needs investigation.
+        ///
+        /// Each record is isolated so one damaged pawn cannot hide the rest of the snapshot. Null
+        /// entries are counted separately because they explain why the record count can be lower
+        /// than the source collection count.
+        /// </summary>
+        private static object WorldPawnList()
+        {
+            if (Find.World == null)
+            {
+                throw new InvalidOperationException("no world loaded - load a colony first");
+            }
+
+            // The client cross-checks this list against world_pawns.count, so both commands must
+            // read the same accessor rather than reconstructing a list from another collection.
+            List<Pawn> pawns = Find.WorldPawns?.AllPawnsAliveOrDead;
+            List<object> records = new List<object>();
+            int nulls = 0;
+            if (pawns != null)
+            {
+                foreach (Pawn pawn in pawns)
+                {
+                    if (pawn == null)
+                    {
+                        // A null source entry is not a pawn record, but its count explains an
+                        // otherwise confusing difference between count and the returned list.
+                        nulls++;
+                        continue;
+                    }
+
+                    try
+                    {
+                        records.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["id"] = pawn.thingIDNumber,
+                            ["label"] = pawn.Name?.ToStringFull
+                                ?? pawn.LabelShortCap
+                                ?? pawn.KindLabel
+                                ?? "-",
+                            ["kind"] = pawn.kindDef?.defName ?? "-",
+                            ["race"] = pawn.def?.defName ?? "-",
+                            ["faction"] = pawn.Faction?.Name ?? "-",
+                            ["situation"] = Find.WorldPawns.GetSituation(pawn).ToString(),
+                            ["dead"] = pawn.Dead,
+                            ["spawned"] = pawn.Spawned,
+                            ["humanlike"] = pawn.RaceProps?.Humanlike ?? false
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        // A damaged pawn must remain visible as damaged; dropping it would make
+                        // the very leak this command is meant to name disappear from the report.
+                        int id = -1;
+                        try
+                        {
+                            id = pawn.thingIDNumber;
+                        }
+                        catch (Exception)
+                        {
+                            // The fallback id is deliberately best effort for a malformed pawn.
+                        }
+
+                        records.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["id"] = id,
+                            ["label"] = $"(unreadable: {ex.GetType().Name})",
+                            ["kind"] = "-",
+                            ["race"] = "-",
+                            ["faction"] = "-",
+                            ["situation"] = "-",
+                            ["dead"] = false,
+                            ["spawned"] = false,
+                            ["humanlike"] = false
+                        });
+                    }
+                }
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["count"] = pawns?.Count ?? 0,
+                ["nulls"] = nulls,
+                ["pawns"] = records
             };
         }
 
