@@ -104,6 +104,36 @@ heading and disappears when there is nothing clearable. Compare **Selling → Or
 equivalent button deliberately remains in its old position, and decide whether the difference is
 acceptable. This remains unproven until seen in play.
 
+### Proposal acceptance read-out needs campaign calibration
+
+Added 2026-08-28 on branch `1.0.1`. **Selling** and **Procurement** propose screens now show one of
+seven bands — **Hopeless**, **Very unlikely**, **Unlikely**, **Even odds**, **Likely**, **Very likely**,
+**Near certain** — computed from continuous proposal appeal. The band is shown by default; a new
+mod setting reveals the numeric appeal percentage on both screens. A test fixture spread them
+sensibly: `0.80x` the reference price read **Very unlikely**, the reference rate **Even odds**, `1.05x`
+**Likely**, and `1.20x` **Near certain**. Play must settle whether the bands feel right across real
+settlements with varying reputation and brand, whether the names scan instantly, and whether the
+percentage setting is discoverable. Continuous appeal changed real Selling acceptance odds because
+the delayed answer now rolls against it, so a satisfying success rate is a calibration question for
+play, not a self-test result.
+
+**Steps.** On a real campaign, propose from both screens across settlements with different reputation
+and brand. Read the band at a glance, find and toggle the percentage setting, and let delayed answers
+resolve. Judge whether the names and resulting success rate feel right. This remains unproven until
+seen in play.
+
+### Agreement terms layout needs a two-dialog scroll check
+
+Added 2026-08-28 on branch `1.0.1`. On both **Selling** and **Procurement** proposal dialogs, the
+terms rows used to render at the far left over the settlement list because their hardcoded x was only
+correct inside a scroll view; they now render under their own heading in the right column.
+
+**Steps.** At **1.75x UI scale**, open both propose screens and confirm the terms sit under the heading.
+Use long item labels and settlement names, and check that the rows do not collide with the controls
+above. Add enough rows to require the section's scrollbar and confirm it still behaves. That scrolling
+branch was deliberately left untouched and has not been seen since the change, so this remains
+unproven until seen in play.
+
 ### 1.0 calibration sitting — Stage 8 remaining play
 
 Stage 8A's full save/load matrix, Stage 8B's 42 → 56 migration matrix, and Stage 8C's seven-path
