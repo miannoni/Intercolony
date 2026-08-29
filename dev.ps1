@@ -892,7 +892,10 @@ function Get-WorldPawnList {
         $missing = "__INTERCOLONY_WORLD_PAWNS_LIST_MISSING__"
         $pawns = @(Get-BridgeField $response.result @("pawns") $missing)
         if ($pawns.Count -eq 1 -and $pawns[0] -eq $missing) { return $null }
-        return ,@($pawns)
+        return [PSCustomObject]@{
+            Pawns = @($pawns)
+            KeptForeverCount = Get-BridgeField $response.result @("keptForeverCount") $null
+        }
     } catch {
         return $null
     }
@@ -908,12 +911,13 @@ function Format-WorldPawnIdentityLine($Change, $Pawn) {
     $dead = [bool](Get-BridgeField $Pawn @("dead") $false)
     $spawned = [bool](Get-BridgeField $Pawn @("spawned") $false)
     $humanlike = [bool](Get-BridgeField $Pawn @("humanlike") $false)
+    $keptForever = [bool](Get-BridgeField $Pawn @("keptForever") $false)
 
     # Keep each pawn on one line while preserving the complete label.
     $label = $label -replace '[\r\n]+', ' '
     $label = $label.Replace('"', '\"')
-    return ('World pawn {0}: id {1}  "{2}"  kind={3} race={4} faction={5} situation={6} dead={7} spawned={8} humanlike={9}' -f `
-        $Change, $id, $label, $kind, $race, $faction, $situation, $dead, $spawned, $humanlike)
+    return ('World pawn {0}: id {1}  "{2}"  kind={3} race={4} faction={5} situation={6} dead={7} spawned={8} humanlike={9} keptForever={10}' -f `
+        $Change, $id, $label, $kind, $race, $faction, $situation, $dead, $spawned, $humanlike, $keptForever)
 }
 
 function Get-OpenPostingCount {
@@ -975,10 +979,16 @@ function Invoke-DevTest($Name) {
     }
 
     $worldPawnsBefore = $null
+    $worldPawnsKeptForeverBefore = $null
     try {
-        $worldPawnsBefore = Get-WorldPawnList
+        $worldPawnSnapshotBefore = Get-WorldPawnList
+        if ($null -ne $worldPawnSnapshotBefore) {
+            $worldPawnsBefore = @($worldPawnSnapshotBefore.Pawns)
+            $worldPawnsKeptForeverBefore = $worldPawnSnapshotBefore.KeptForeverCount
+        }
     } catch {
         $worldPawnsBefore = $null
+        $worldPawnsKeptForeverBefore = $null
     }
 
     if ($Fresh -and $Name -eq "job-posting" -and $postingsBefore -ne 0) {
@@ -1014,10 +1024,16 @@ function Invoke-DevTest($Name) {
     }
 
     $worldPawnsAfter = $null
+    $worldPawnsKeptForeverAfter = $null
     try {
-        $worldPawnsAfter = Get-WorldPawnList
+        $worldPawnSnapshotAfter = Get-WorldPawnList
+        if ($null -ne $worldPawnSnapshotAfter) {
+            $worldPawnsAfter = @($worldPawnSnapshotAfter.Pawns)
+            $worldPawnsKeptForeverAfter = $worldPawnSnapshotAfter.KeptForeverCount
+        }
     } catch {
         $worldPawnsAfter = $null
+        $worldPawnsKeptForeverAfter = $null
     }
 
     $worldPawnIdentityLines = @()
@@ -1075,9 +1091,24 @@ function Invoke-DevTest($Name) {
         $worldPawnIdentityLines += "World pawn identities unavailable (bridge has no world_pawns.list); delta is unexplained."
     }
     $worldPawnIdentityText = $worldPawnIdentityLines -join "`r`n"
+    $worldPawnsKeptForeverGrowthLine = $null
+    if ($null -ne $worldPawnsKeptForeverBefore -and $null -ne $worldPawnsKeptForeverAfter -and
+        $worldPawnsKeptForeverAfter -gt $worldPawnsKeptForeverBefore) {
+        $worldPawnsKeptForeverGrowthLine = "World pawns kept forever GREW by $($worldPawnsKeptForeverAfter - $worldPawnsKeptForeverBefore): a pinned pawn can never be collected. See the identity lines above."
+    }
+
     $worldPawnArchiveSuffix = ""
+    $worldPawnArchiveSections = @()
+    if ($null -ne $worldPawnsKeptForeverGrowthLine) {
+        $worldPawnArchiveSections += $worldPawnsKeptForeverGrowthLine
+    }
     if ($worldPawnIdentityLines.Count -gt 0) {
-        $worldPawnArchiveSuffix = "`r`n`r`n--- world pawn identity changes ---`r`n$worldPawnIdentityText"
+        $worldPawnArchiveSections += "--- world pawn identity changes ---"
+        $worldPawnArchiveSections += $worldPawnIdentityText
+    }
+    if ($worldPawnArchiveSections.Count -gt 0) {
+        $worldPawnArchiveText = $worldPawnArchiveSections -join "`r`n"
+        $worldPawnArchiveSuffix = "`r`n`r`n$worldPawnArchiveText"
     }
 
     $afterLines = Get-AllLines
@@ -1093,6 +1124,12 @@ function Invoke-DevTest($Name) {
     if ($infrastructureError) {
         Write-Host "TEST INFRASTRUCTURE FAILED: $infrastructureError" -ForegroundColor Red
         Write-Host "World pawns: $pawnsBefore -> $pawnsAfter (delta $($pawnsAfter - $pawnsBefore))" -ForegroundColor Yellow
+        if ($null -ne $worldPawnsKeptForeverBefore -and $null -ne $worldPawnsKeptForeverAfter) {
+            Write-Host "World pawns kept forever: $worldPawnsKeptForeverBefore -> $worldPawnsKeptForeverAfter" -ForegroundColor Yellow
+            if ($null -ne $worldPawnsKeptForeverGrowthLine) {
+                Write-Host $worldPawnsKeptForeverGrowthLine -ForegroundColor Red
+            }
+        }
         if ($worldPawnIdentityLines.Count -gt 0) {
             $worldPawnIdentityLines | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
         }
@@ -1124,6 +1161,12 @@ function Invoke-DevTest($Name) {
     Write-Host "Success: $success"
     Write-Host "Duration: $duration ms"
     Write-Host "World pawns: $pawnsBefore -> $pawnsAfter (delta $($pawnsAfter - $pawnsBefore))" -ForegroundColor Yellow
+    if ($null -ne $worldPawnsKeptForeverBefore -and $null -ne $worldPawnsKeptForeverAfter) {
+        Write-Host "World pawns kept forever: $worldPawnsKeptForeverBefore -> $worldPawnsKeptForeverAfter" -ForegroundColor Yellow
+        if ($null -ne $worldPawnsKeptForeverGrowthLine) {
+            Write-Host $worldPawnsKeptForeverGrowthLine -ForegroundColor Red
+        }
+    }
     if ($worldPawnIdentityLines.Count -gt 0) {
         $worldPawnIdentityLines | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
     }

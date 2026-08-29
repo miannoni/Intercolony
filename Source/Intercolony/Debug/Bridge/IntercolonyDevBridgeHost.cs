@@ -534,7 +534,27 @@ namespace Intercolony
 
             // The client cross-checks this list against world_pawns.count, so both commands must
             // read the same accessor rather than reconstructing a list from another collection.
-            List<Pawn> pawns = Find.WorldPawns?.AllPawnsAliveOrDead;
+            RimWorld.Planet.WorldPawns worldPawns = Find.WorldPawns;
+            List<Pawn> pawns = worldPawns?.AllPawnsAliveOrDead;
+
+            // This is the distinction that matters for the leak: the world-pawn GC may collect an
+            // ordinary pawn, but not one the mod pinned with PawnDiscardDecideMode.KeepForever and
+            // never unpinned. Read the set once so every record and the total describe one snapshot.
+            HashSet<Pawn> forcefullyKeptPawns = null;
+            int keptForeverCount = 0;
+            try
+            {
+                forcefullyKeptPawns = worldPawns?.ForcefullyKeptPawns;
+                keptForeverCount = forcefullyKeptPawns?.Count ?? 0;
+            }
+            catch (Exception)
+            {
+                // A missing or unreadable pin set is diagnostic uncertainty, not a reason for the
+                // list verb to fail. The record-level fallback below is false as well.
+                forcefullyKeptPawns = null;
+                keptForeverCount = 0;
+            }
+
             List<object> records = new List<object>();
             int nulls = 0;
             if (pawns != null)
@@ -549,6 +569,23 @@ namespace Intercolony
                         continue;
                     }
 
+                    bool keptForever = false;
+                    try
+                    {
+                        keptForever = forcefullyKeptPawns?.Contains(pawn) ?? false;
+                    }
+                    catch (Exception)
+                    {
+                        // A throwing membership test makes the whole pin snapshot untrustworthy.
+                        // Reset records already visited too, so false and zero remain consistent.
+                        forcefullyKeptPawns = null;
+                        keptForeverCount = 0;
+                        foreach (Dictionary<string, object> record in records)
+                        {
+                            record["keptForever"] = false;
+                        }
+                    }
+
                     try
                     {
                         records.Add(new Dictionary<string, object>(StringComparer.Ordinal)
@@ -561,10 +598,11 @@ namespace Intercolony
                             ["kind"] = pawn.kindDef?.defName ?? "-",
                             ["race"] = pawn.def?.defName ?? "-",
                             ["faction"] = pawn.Faction?.Name ?? "-",
-                            ["situation"] = Find.WorldPawns.GetSituation(pawn).ToString(),
+                            ["situation"] = worldPawns.GetSituation(pawn).ToString(),
                             ["dead"] = pawn.Dead,
                             ["spawned"] = pawn.Spawned,
-                            ["humanlike"] = pawn.RaceProps?.Humanlike ?? false
+                            ["humanlike"] = pawn.RaceProps?.Humanlike ?? false,
+                            ["keptForever"] = keptForever
                         });
                     }
                     catch (Exception ex)
@@ -591,7 +629,8 @@ namespace Intercolony
                             ["situation"] = "-",
                             ["dead"] = false,
                             ["spawned"] = false,
-                            ["humanlike"] = false
+                            ["humanlike"] = false,
+                            ["keptForever"] = false
                         });
                     }
                 }
@@ -601,6 +640,7 @@ namespace Intercolony
             {
                 ["count"] = pawns?.Count ?? 0,
                 ["nulls"] = nulls,
+                ["keptForeverCount"] = keptForeverCount,
                 ["pawns"] = records
             };
         }

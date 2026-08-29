@@ -151,6 +151,12 @@ namespace Intercolony
         /// </summary>
         private static void CheckEscalation(Results r, IntercolonyWorldComponent state, Map map)
         {
+            int? forcefullyKeptBefore = null;
+            if (Find.WorldPawns != null)
+            {
+                forcefullyKeptBefore = Find.WorldPawns.ForcefullyKeptPawns.Count;
+            }
+
             List<LaborCandidate> pool = LaborCandidateService.Refresh(state, force: true);
             r.Check(pool.Count > 0, "candidate pool is not empty", $"{pool.Count} workers offered");
             if (pool.Count == 0)
@@ -182,6 +188,8 @@ namespace Intercolony
             {
                 return;
             }
+
+            Pawn worker = contract.pawn;
 
             // A periodic hire takes the signing fee up front and nothing else — not the term.
             // This asserted `paidSilver == 0`, which stopped being true when daily and per-quadrum
@@ -345,6 +353,47 @@ namespace Intercolony
                 $"{debtsBefore} -> {state.LaborDebts.Count}");
             r.Check(contract.pawn == null,
                 "the closed record still holds no live references");
+
+            int? forcefullyKeptAfter = null;
+            if (Find.WorldPawns != null)
+            {
+                forcefullyKeptAfter = Find.WorldPawns.ForcefullyKeptPawns.Count;
+            }
+
+            if (worker == null)
+            {
+                r.Info("worker kept-forever assertion skipped: the hired worker is null.");
+            }
+            else if (Find.WorldPawns == null)
+            {
+                r.Info("worker kept-forever assertion skipped: Find.WorldPawns is null.");
+            }
+            else
+            {
+                // This fails if EmploymentService.TryHire pins a hired worker with
+                // PawnDiscardDecideMode.KeepForever (EmploymentService.cs:187) so they survive
+                // the journey; arrival unpins by going through WorldPawns.RemovePawn before spawning
+                // (EmploymentService.cs:810), and WorldPawns.RemovePawn drops the pawn from
+                // pawnsForcefullyKeptAsWorldPawns at reference/decompiled/RimWorld.Planet/WorldPawns.cs:257).
+                // If either half changes, every hire leaves a pawn the GC has been told never to
+                // collect, and this assertion is what says so.
+                r.Check(!Find.WorldPawns.ForcefullyKeptPawns.Contains(worker),
+                    "the worker who walked out is not kept forever");
+            }
+
+            if (!forcefullyKeptBefore.HasValue || !forcefullyKeptAfter.HasValue)
+            {
+                r.Info("forcefully kept world-pawn count assertion skipped: Find.WorldPawns was null during the check.");
+            }
+            else
+            {
+                // This fails on any path in the employment lifecycle that pins and forgets. It
+                // deliberately checks "did not grow", rather than "is unchanged", because a
+                // legitimate unpin elsewhere in the same window is not a fault.
+                r.Check(forcefullyKeptAfter.Value <= forcefullyKeptBefore.Value,
+                    "forcefully kept world pawns did not grow across the check",
+                    $"{forcefullyKeptBefore.Value} -> {forcefullyKeptAfter.Value}");
+            }
 
             if (state.LaborDebts.Count > debtsBefore)
             {
