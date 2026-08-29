@@ -109,6 +109,8 @@ namespace Intercolony
             List<SalesOrder> savedStateOrders = new List<SalesOrder>(state.Orders);
             List<CommercialHistoryEntry> savedCommercialHistory =
                 new List<CommercialHistoryEntry>(state.CommercialHistory);
+            List<ProductBrandRecord> savedProductBrandRecords =
+                new List<ProductBrandRecord>(state.ProductBrandRecords);
             bool hadSubjectReputation = state.Reputations.TryGetValue(
                 subject.ID, out CommercialReputation savedSubjectReputation);
             state.Contracts.Clear();
@@ -537,6 +539,170 @@ namespace Intercolony
                     state.Reputations[subject.ID] = proposalReputation;
                     state.Contracts.Clear();
 
+                    ThingDef minifiableFurniture = ThingDefOf.DiningChair;
+                    bool furnitureFixtureValid = minifiableFurniture != null &&
+                        DefDatabase<ThingDef>.GetNamedSilentFail(minifiableFurniture.defName) ==
+                        minifiableFurniture &&
+                        minifiableFurniture.stackLimit == 1 &&
+                        minifiableFurniture.category == ThingCategory.Building &&
+                        minifiableFurniture.Minifiable &&
+                        IntercolonyTradeBlacklist.ExclusionReason(minifiableFurniture) == null &&
+                        IntercolonyProductClassifier.IsFungibleTradeItem(minifiableFurniture) &&
+                        IntercolonyProductClassifier.Classify(minifiableFurniture).HasValue;
+                    // This fails if RimWorld's furniture fixture is missing or if the shared
+                    // classifier stops recognizing a stack-one minifiable building as tradable.
+                    Check("dining chair is a valid minifiable furniture fixture",
+                        furnitureFixtureValid,
+                        $"def={minifiableFurniture?.defName ?? "<missing>"}; " +
+                        $"category={minifiableFurniture?.category.ToString() ?? "<missing>"}; " +
+                        $"stack={minifiableFurniture?.stackLimit.ToString() ?? "<missing>"}; " +
+                        $"minifiable={minifiableFurniture?.Minifiable.ToString() ?? "<missing>"}; " +
+                        $"fungible={IntercolonyProductClassifier.IsFungibleTradeItem(
+                            minifiableFurniture)}");
+
+                    if (furnitureFixtureValid)
+                    {
+                        ClearHistory();
+                        for (int i = 0;
+                             i < ContractService.MinimumCompletedOrdersForAgreement;
+                             i++)
+                        {
+                            PlantHistoryOrder(
+                                subject.ID, minifiableFurniture, SalesOrderStatus.Completed);
+                        }
+
+                        ContractProposalResult furnitureProposal =
+                            ContractService.ProposeContract(
+                                state,
+                                subject,
+                                minifiableFurniture,
+                                ContractService.MinimumQuantityPerCycle,
+                                ProcurementContractService.MinimumCadenceDays,
+                                ProcurementContractService.MinimumTotalCycles,
+                                agreedUnitPrice: null,
+                                fulfillment: FulfillmentMode.SellerDelivery);
+                        // This fails if either removed contract-only gate still rejects a
+                        // stackLimit-1 ThingDef or a ThingCategory.Building, or if the agreement
+                        // grows an unrequested quality/material specification.
+                        Check("stack-one minifiable furniture reaches a plain selling agreement",
+                            furnitureProposal.Success && furnitureProposal.Contract != null &&
+                            furnitureProposal.Contract.thingDef == minifiableFurniture &&
+                            furnitureProposal.Contract.minQuality == null &&
+                            furnitureProposal.Contract.stuffDef == null,
+                            $"success={furnitureProposal.Success}; " +
+                            $"failure={furnitureProposal.Failure}; " +
+                            $"reason={furnitureProposal.Reason ?? "none"}; " +
+                            $"item={furnitureProposal.Contract?.thingDef?.defName ?? "<none>"}");
+
+                        state.Contracts.Clear();
+                        temporarilyBlacklistedDef = minifiableFurniture;
+                        IntercolonyTradeBlacklist.AddRuntimeExclusion(
+                            minifiableFurniture, "contract eligibility self-test");
+                        ContractProposalResult blacklistedFurnitureProposal =
+                            ContractService.ProposeContract(
+                                state,
+                                subject,
+                                minifiableFurniture,
+                                ContractService.MinimumQuantityPerCycle,
+                                ProcurementContractService.MinimumCadenceDays,
+                                ProcurementContractService.MinimumTotalCycles,
+                                agreedUnitPrice: null,
+                                fulfillment: FulfillmentMode.SellerDelivery);
+                        // This fails if widening eligibility bypasses the existing blacklist
+                        // check and lets an otherwise eligible minifiable building through.
+                        Check("blacklisted minifiable furniture remains refused",
+                            !blacklistedFurnitureProposal.Success &&
+                            blacklistedFurnitureProposal.Failure ==
+                                ContractProposalFailure.InvalidItem,
+                            $"success={blacklistedFurnitureProposal.Success}; " +
+                            $"failure={blacklistedFurnitureProposal.Failure}; " +
+                            $"reason={blacklistedFurnitureProposal.Reason ?? "none"}");
+                        IntercolonyTradeBlacklist.RemoveRuntimeExclusion(minifiableFurniture);
+                        temporarilyBlacklistedDef = null;
+                    }
+
+                    state.Contracts.Clear();
+                    ClearHistory();
+                    for (int i = 0;
+                         i < ContractService.MinimumCompletedOrdersForAgreement;
+                         i++)
+                    {
+                        PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    }
+
+                    List<ProductBrandRecord> savedBrandRecordsForPricing =
+                        new List<ProductBrandRecord>(state.ProductBrandRecords);
+                    state.ProductBrandRecords.Clear();
+                    try
+                    {
+                        IntercolonyProductCategory brandCategory =
+                            IntercolonyProductClassifier.Classify(meat) ??
+                            IntercolonyProductCategory.Commodities;
+                        float brandDistance = MarketOpportunityGenerator.DistanceToPlayer(subject);
+                        ContractTerms noEvidenceTerms = ContractService.PreviewContractTerms(
+                            state,
+                            subject,
+                            meat,
+                            ContractService.MinimumQuantityPerCycle,
+                            agreedUnitPrice: null);
+                        float noEvidencePrice = IntercolonyPricing.UnitPrice(
+                            state,
+                            meat,
+                            null,
+                            ContractService.MinimumQuantityPerCycle,
+                            profile,
+                            brandCategory,
+                            brandDistance,
+                            null,
+                            out _);
+
+                        state.ProductBrandRecords.Add(new ProductBrandRecord(
+                            meat,
+                            ProductBrandRecord.MaxScore,
+                            EffectiveBrandService.DirectEvidenceConfidenceScale,
+                            ContractService.MinimumQuantityPerCycle));
+                        ContractTerms evidenceTerms = ContractService.PreviewContractTerms(
+                            state,
+                            subject,
+                            meat,
+                            ContractService.MinimumQuantityPerCycle,
+                            agreedUnitPrice: null);
+                        float evidencePrice = IntercolonyPricing.UnitPrice(
+                            state,
+                            meat,
+                            null,
+                            ContractService.MinimumQuantityPerCycle,
+                            profile,
+                            brandCategory,
+                            brandDistance,
+                            null,
+                            out _);
+                        float effectiveBrand = EffectiveBrandService.GetEffectiveBrand(state, meat);
+
+                        // This fails if a contract reference price stops using the pricing
+                        // service, omits its brand factor, or applies that factor a second time.
+                        Check("contract reference price carries product brand evidence",
+                            noEvidenceTerms != null && evidenceTerms != null &&
+                            Mathf.Approximately(
+                                noEvidenceTerms.referenceUnitPrice, noEvidencePrice) &&
+                            Mathf.Approximately(
+                                evidenceTerms.referenceUnitPrice, evidencePrice) &&
+                            !Mathf.Approximately(
+                                noEvidenceTerms.referenceUnitPrice,
+                                evidenceTerms.referenceUnitPrice) &&
+                            !Mathf.Approximately(effectiveBrand, ProductBrandRecord.Neutral),
+                            $"no evidence={noEvidenceTerms?.referenceUnitPrice.ToString("R") ??
+                                "null"}/{noEvidencePrice:R}; " +
+                            $"with evidence={evidenceTerms?.referenceUnitPrice.ToString("R") ??
+                                "null"}/{evidencePrice:R}; " +
+                            $"effective brand={effectiveBrand:R}");
+                    }
+                    finally
+                    {
+                        state.ProductBrandRecords.Clear();
+                        state.ProductBrandRecords.AddRange(savedBrandRecordsForPricing);
+                    }
+
                     const int namedQuantity = 100;
                     const int namedCadenceDays = 7;
                     const int namedTotalCycles = 4;
@@ -833,6 +999,8 @@ namespace Intercolony
                 state.Orders.AddRange(savedStateOrders);
                 state.CommercialHistory.Clear();
                 state.CommercialHistory.AddRange(savedCommercialHistory);
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedProductBrandRecords);
             }
 
             return Summarize();

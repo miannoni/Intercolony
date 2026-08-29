@@ -16,6 +16,37 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## The full self-test run intermittently reports one extra world pawn.
+
+**Raised:** 2026-08-29, during full self-test verification.
+**Size:** unknown until the extra pawn can be identified.
+**Status:** open; cause not identified.
+
+On a fresh world, the whole suite reported a world-pawn delta of `1` on two of three runs and `0`
+on the third. All three runs passed `1377` assertions with a clean log, and the suite's own leak
+guards for the commercial timeline and market pressure read `OK` on every run. With that day's
+uncommitted batch stashed, three consecutive full runs all reported delta `0`. With the batch
+restored, the individual suites reported contract `57` assertions / delta `0`, job posting `25` /
+delta `0`, and labor `36` / delta `0`. No individual suite reproduces it. The job posting suite
+also asserts that postings opened and closed leak no world pawns, and it passes.
+
+The delta appears only in a full run, only sometimes, and correlates with the batch on samples of
+three against three. That is a correlation on small numbers, **not an identified mechanism**.
+
+Unverified hypotheses, not findings: `LaborCandidateService` keeps a static census pool whose
+prospects are generated pawns; a census rebuilt mid-run could hold a pawn when the harness takes
+its closing count, before its `Abandon` path releases it. The labor suite also completes an
+employment and leaves the worker walking off the map; a pawn still departing when the run ends may
+still be counted.
+
+This matters because the project has a documented history of exactly this static pool leaking pawns
+and faction objects between games, unnoticed for four phases. A single stray world pawn per run is
+small, but the same mechanism at play scale bloats saves; the harness reports the delta precisely
+because of that history.
+
+**To settle it:** capture the world pawn list before and after a full run and diff identities, so the
+extra pawn can be named and traced to its creator.
+
 ## The negotiation evaluator does not price term length.
 
 **Raised:** 2026-08-28, during review of the selling-side cadence controls. **PRE-EXISTING:**

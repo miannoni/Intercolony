@@ -297,6 +297,8 @@ namespace Intercolony
             }
             y += SliderRowHeight;
 
+            float rateAdviceHeight = RateAdviceHeight(width - controlsX);
+            DrawRowLabel("Going rate", y, rateAdviceHeight);
             y = DrawRateAdvice(controlsX, width - controlsX, y);
 
             y = DrawSectionDivider(width, y);
@@ -314,7 +316,11 @@ namespace Intercolony
                 CombatClause captured = option;
                 clauseY = LaborOptionRows.Draw(columnWidth, clauseY,
                     CombatClauseUtility.Summary(option, wageOffered), option.Explain(),
-                    clause == option, () => clause = captured);
+                    clause == option, () =>
+                    {
+                        clause = captured;
+                        rateKey = int.MinValue;
+                    });
             }
             GUI.EndGroup();
 
@@ -497,96 +503,53 @@ namespace Intercolony
 
         private float RateAdviceHeight(float width)
         {
-            if (!rateValid)
-            {
-                string advice = skill == null
-                    ? "Nobody is reachable for work at all right now. Check the Hire tab."
-                    : $"Nobody reachable has {skill.skillLabel.CapitalizeFirst()} {minLevel}+. " +
-                      "You can still post — the market changes — but expect a wait.";
-                return Text.CalcHeight(advice, width);
-            }
-
-            string marketGuidance =
-                $"{qualified} reachable worker{(qualified == 1 ? "" : "s")} can do this. " +
-                $"For {termDays} days as a {clause.Label()} they ask " +
-                $"{rateLow} to {rateHigh} silver a day.";
-            string verdict = wageOffered < rateLow
-                ? $"Your offer is below all of them. Expect no replies until the market changes — the cheapest wants {rateLow}."
-                : wageOffered >= rateHigh
-                    ? "Your offer clears everyone who qualifies. Expect the best of them."
-                    : Mathf.InverseLerp(rateLow, rateHigh, wageOffered) < 0.34f
-                        ? "Your offer sits low in that band — expect few replies, and not the strongest."
-                        : Mathf.InverseLerp(rateLow, rateHigh, wageOffered) < 0.67f
-                            ? "Your offer sits mid-band — expect a reasonable choice."
-                            : "Your offer sits high in the band — expect most of them to be interested.";
-            return Text.CalcHeight(marketGuidance, width) + RowGap +
-                   Text.CalcHeight(verdict, width);
+            string advice = GoingRateText();
+            float valueHeight = Text.CalcHeight(advice, width);
+            float labelHeight = Text.CalcHeight("Going rate", LabelColumnWidth);
+            return Mathf.Max(valueHeight, labelHeight);
         }
 
-
         /// <summary>
-        /// The going rate, and a plain sentence about where the offer sits in it.
-        ///
-        /// The sentence matters more than the numbers. "34 to 46" tells a player who already
-        /// understands the market what to do; "your offer is below what anyone will take" tells a
-        /// player who does not. Drawn starting at the controls column x so it aligns under the
-        /// wage controls above it.
+        /// The going rate is a labelled value; the tooltip explains why it moves.
+        /// Drawn starting at the controls column x so it aligns under the wage controls above it.
         /// </summary>
         private float DrawRateAdvice(float x, float width, float y)
         {
+            string advice = GoingRateText();
+            float valueHeight = Text.CalcHeight(advice, width);
+            float rowHeight = Mathf.Max(valueHeight,
+                Text.CalcHeight("Going rate", LabelColumnWidth));
+            Rect valueRect = new Rect(x, y, width, valueHeight);
+            Widgets.Label(valueRect, advice);
+            TooltipHandler.TipRegion(valueRect, GoingRateTooltip());
+            return y + rowHeight;
+        }
+
+        private string GoingRateText()
+        {
+            string workers = $"{qualified} reachable worker{(qualified == 1 ? "" : "s")}";
             if (!rateValid)
             {
-                string advice = skill == null
-                    ? "Nobody is reachable for work at all right now. Check the Hire tab."
-                    : $"Nobody reachable has {skill.skillLabel.CapitalizeFirst()} {minLevel}+. " +
-                      "You can still post — the market changes — but expect a wait.";
-                float adviceHeight = Text.CalcHeight(advice, width);
-                GUI.color = new Color(1f, 0.8f, 0.5f);
-                Widgets.Label(new Rect(x, y, width, adviceHeight), advice);
-                GUI.color = Color.white;
-                return y + adviceHeight;
+                return $"{workers} can do this job; no daily ask is available.";
             }
 
-            string marketGuidance =
-                $"{qualified} reachable worker{(qualified == 1 ? "" : "s")} can do this. " +
-                $"For {termDays} days as a {clause.Label()} they ask " +
-                $"{rateLow} to {rateHigh} silver a day.";
-            float marketGuidanceHeight = Text.CalcHeight(marketGuidance, width);
-            GUI.color = new Color(1f, 1f, 1f, 0.75f);
-            Widgets.Label(new Rect(x, y, width, marketGuidanceHeight), marketGuidance);
-            GUI.color = Color.white;
-            y += marketGuidanceHeight + RowGap;
+            string ask = rateLow == rateHigh
+                ? $"{rateLow} silver"
+                : $"{rateLow}–{rateHigh} silver";
+            return $"{workers} can do this job; they ask {ask} per day.";
+        }
 
-            string verdict;
-            Color colour;
+        private string GoingRateTooltip()
+        {
+            string standing = EmployerStandingLabel();
+            return $"Employer standing: {standing}. Workers' daily asks include your standing " +
+                   "as an employer, so this rate moves with your record.";
+        }
 
-            if (wageOffered < rateLow)
-            {
-                verdict = $"Your offer is below all of them. Expect no replies until the market " +
-                          $"changes — the cheapest wants {rateLow}.";
-                colour = new Color(1f, 0.55f, 0.55f);
-            }
-            else if (wageOffered >= rateHigh)
-            {
-                verdict = "Your offer clears everyone who qualifies. Expect the best of them.";
-                colour = new Color(0.6f, 0.9f, 0.6f);
-            }
-            else
-            {
-                float through = Mathf.InverseLerp(rateLow, rateHigh, wageOffered);
-                verdict = through < 0.34f
-                    ? "Your offer sits low in that band — expect few replies, and not the strongest."
-                    : through < 0.67f
-                        ? "Your offer sits mid-band — expect a reasonable choice."
-                        : "Your offer sits high in the band — expect most of them to be interested.";
-                colour = new Color(1f, 0.9f, 0.6f);
-            }
-
-            GUI.color = colour;
-            float verdictHeight = Text.CalcHeight(verdict, width);
-            Widgets.Label(new Rect(x, y, width, verdictHeight), verdict);
-            GUI.color = Color.white;
-            return y + verdictHeight;
+        private string EmployerStandingLabel()
+        {
+            EmployerReputation reputation = EmployerReputationService.For(state);
+            return reputation == null ? "unknown" : reputation.TierLabel();
         }
 
         /// <summary>
@@ -598,12 +561,8 @@ namespace Intercolony
         /// </summary>
         private void RefreshRate()
         {
-            // The structure belongs in the key now that it changes the band: without it,
-            // switching to daily would keep showing the per-quadrum rate until something else
-            // happened to invalidate the cache.
             int key = Gen.HashCombineInt(
-                Gen.HashCombineInt(skill?.shortHash ?? 0, minLevel, termDays, (int)clause),
-                (int)structure);
+                skill?.shortHash ?? 0, minLevel, termDays, (int)clause);
             if (key == rateKey)
             {
                 return;
@@ -611,7 +570,7 @@ namespace Intercolony
 
             rateKey = key;
             rateValid = JobPostingService.GoingRate(
-                state, skill, minLevel, termDays, clause, structure,
+                state, skill, minLevel, termDays, clause,
                 out rateLow, out rateHigh, out qualified);
         }
 

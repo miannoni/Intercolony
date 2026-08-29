@@ -40,12 +40,17 @@ namespace Intercolony
         private readonly IntercolonyWorldComponent state;
         private readonly List<Settlement> qualifyingSettlements;
         private readonly Dictionary<int, List<ThingDef>> qualifyingItemsBySettlement;
+        private readonly Dictionary<ThingDef, List<Settlement>> qualifyingSettlementsByItem;
+        private readonly List<ThingDef> qualifyingItems;
 
         private Vector2 settlementScroll;
         private Vector2 itemScroll;
         private Vector2 termsScroll;
         private Settlement selectedSettlement;
-        private List<ThingDef> qualifyingItems = new List<ThingDef>();
+        private readonly List<Settlement> selectedItemSettlements =
+            new List<Settlement>();
+        private readonly Dictionary<int, ContractTerms> selectedItemSettlementTerms =
+            new Dictionary<int, ContractTerms>();
         private ThingDef selectedItem;
         private int quantity = ContractService.MinimumQuantityPerCycle;
         private string quantityBuffer = ContractService.MinimumQuantityPerCycle.ToString();
@@ -64,6 +69,9 @@ namespace Intercolony
             qualifyingItemsBySettlement = new Dictionary<int, List<ThingDef>>();
             qualifyingSettlements = FindQualifyingSettlements(
                 state, qualifyingItemsBySettlement);
+            qualifyingSettlementsByItem = InvertQualifyingItemsBySettlement(
+                qualifyingSettlements, qualifyingItemsBySettlement);
+            qualifyingItems = FindQualifyingItems(qualifyingSettlementsByItem);
             doCloseX = true;
             forcePause = true;
             absorbInputAroundWindow = true;
@@ -86,31 +94,32 @@ namespace Intercolony
             float itemX = columnWidth + ColumnGap;
             float controlsX = itemX + columnWidth + ColumnGap;
             float controlsWidth = inRect.width - controlsX;
-            Widgets.Label(new Rect(0f, y, columnWidth, SectionLabelHeight), "Settlement");
-            Widgets.Label(new Rect(itemX, y, columnWidth, SectionLabelHeight), "Item");
+            Widgets.Label(new Rect(0f, y, columnWidth, SectionLabelHeight), "Item");
+            Widgets.Label(new Rect(itemX, y, columnWidth, SectionLabelHeight), "Settlement");
             Widgets.Label(new Rect(controlsX, y, controlsWidth, SectionLabelHeight),
                 "Controls");
             y += SectionLabelHeight;
 
-            Rect settlementRect = new Rect(0f, y, columnWidth, contentBottom - y);
-            if (qualifyingSettlements.Count == 0)
+            Rect itemRect = new Rect(0f, y, columnWidth, contentBottom - y);
+            if (qualifyingItems.Count == 0)
             {
-                Widgets.Label(settlementRect,
-                    "No settlements are eligible for a supply agreement.");
-            }
-            else
-            {
-                DrawSettlements(settlementRect);
-            }
-
-            Rect itemRect = new Rect(itemX, y, columnWidth, contentBottom - y);
-            if (selectedSettlement == null)
-            {
-                Widgets.Label(itemRect, "Select a settlement to see eligible items.");
+                Widgets.Label(itemRect,
+                    "No items are eligible for a supply agreement.");
             }
             else
             {
                 DrawItems(itemRect);
+            }
+
+            Rect settlementRect = new Rect(itemX, y, columnWidth, contentBottom - y);
+            if (selectedItem == null)
+            {
+                Widgets.Label(settlementRect,
+                    "Select an item to see eligible settlements.");
+            }
+            else
+            {
+                DrawSettlements(settlementRect);
             }
 
             DrawQuantityAndPrice(new Rect(
@@ -149,11 +158,11 @@ namespace Intercolony
         {
             Rect viewRect = new Rect(
                 0f, 0f, rect.width - ScrollbarWidth,
-                Mathf.Max(rect.height, qualifyingSettlements.Count * RowHeight));
+                Mathf.Max(rect.height, selectedItemSettlements.Count * RowHeight));
 
             Widgets.BeginScrollView(rect, ref settlementScroll, viewRect);
             float rowY = 0f;
-            foreach (Settlement settlement in qualifyingSettlements)
+            foreach (Settlement settlement in selectedItemSettlements)
             {
                 Rect row = new Rect(0f, rowY, viewRect.width, RowHeight);
                 if (selectedSettlement == settlement)
@@ -167,9 +176,14 @@ namespace Intercolony
                     row.y + RowVerticalPadding,
                     row.width - RowHorizontalPadding * 2f,
                     RowHeight - RowVerticalPadding * 2f);
-                string label = settlement.Label ?? "";
+                ContractTerms preview = selectedItemSettlementTerms[settlement.ID];
+                string settlementLabel = settlement.Label ?? "";
+                string label = $"{settlementLabel}: " +
+                               $"{preview.referenceUnitPrice:F2} silver/unit";
+                float labelHeight = Text.CalcHeight(label, labelRect.width);
                 Widgets.LabelEllipses(labelRect, label);
-                if (Text.CalcSize(label).x > labelRect.width)
+                if (labelHeight > labelRect.height ||
+                    Text.CalcSize(label).x > labelRect.width)
                 {
                     TooltipHandler.TipRegion(labelRect, label);
                 }
@@ -621,16 +635,7 @@ namespace Intercolony
             }
 
             selectedSettlement = settlement;
-            selectedItem = null;
-            selectedTerms = null;
-            selectedAcceptancePreview = null;
-            selectedUnitPrice = 0f;
-            itemScroll = Vector2.zero;
-            if (!qualifyingItemsBySettlement.TryGetValue(
-                    settlement.ID, out qualifyingItems))
-            {
-                qualifyingItems = new List<ThingDef>();
-            }
+            ApplyCachedTermsForSelectedSettlement();
         }
 
         private void SelectItem(ThingDef thingDef)
@@ -641,25 +646,25 @@ namespace Intercolony
             }
 
             selectedItem = thingDef;
-            RefreshTerms(resetPrice: true);
+            selectedSettlement = null;
+            ClearSelectedTerms();
+            settlementScroll = Vector2.zero;
+            RefreshSettlementPreviews();
         }
 
         private void RefreshTerms(bool resetPrice)
         {
+            RefreshSettlementPreviews();
             if (selectedSettlement == null || selectedItem == null)
             {
-                selectedTerms = null;
-                selectedAcceptancePreview = null;
-                selectedUnitPrice = 0f;
+                ClearSelectedTerms();
                 return;
             }
 
-            ContractTerms bounds = PreviewTerms();
-            if (bounds == null)
+            if (!selectedItemSettlementTerms.TryGetValue(
+                    selectedSettlement.ID, out ContractTerms bounds))
             {
-                selectedTerms = null;
-                selectedAcceptancePreview = null;
-                selectedUnitPrice = 0f;
+                ClearSelectedTerms();
                 return;
             }
 
@@ -670,8 +675,75 @@ namespace Intercolony
             RefreshTermsForChosenPrice();
         }
 
+        private void RefreshSettlementPreviews()
+        {
+            selectedItemSettlements.Clear();
+            selectedItemSettlementTerms.Clear();
+            if (selectedItem == null ||
+                !qualifyingSettlementsByItem.TryGetValue(
+                    selectedItem, out List<Settlement> settlements))
+            {
+                return;
+            }
+
+            foreach (Settlement settlement in settlements)
+            {
+                ContractTerms preview = ContractService.PreviewContractTerms(
+                    state, settlement, selectedItem, quantity, cadenceDays,
+                    totalDeliveries, agreedUnitPrice: null, fulfillment: fulfillment);
+                if (preview == null)
+                {
+                    continue;
+                }
+
+                selectedItemSettlementTerms.Add(settlement.ID, preview);
+                selectedItemSettlements.Add(settlement);
+            }
+
+            selectedItemSettlements.Sort((a, b) =>
+            {
+                ContractTerms aTerms = selectedItemSettlementTerms[a.ID];
+                ContractTerms bTerms = selectedItemSettlementTerms[b.ID];
+                int rateComparison = bTerms.referenceUnitPrice.CompareTo(
+                    aTerms.referenceUnitPrice);
+                return rateComparison != 0
+                    ? rateComparison
+                    : string.Compare(
+                        a.Label, b.Label, StringComparison.CurrentCultureIgnoreCase);
+            });
+        }
+
+        private void ApplyCachedTermsForSelectedSettlement()
+        {
+            if (selectedSettlement == null || selectedItem == null ||
+                !selectedItemSettlementTerms.TryGetValue(
+                    selectedSettlement.ID, out selectedTerms))
+            {
+                ClearSelectedTerms();
+                return;
+            }
+
+            selectedUnitPrice = selectedTerms.referenceUnitPrice;
+            selectedAcceptancePreview = ContractService.PreviewAcceptance(
+                state, selectedSettlement, selectedItem, quantity, cadenceDays,
+                totalDeliveries, selectedUnitPrice, fulfillment);
+        }
+
+        private void ClearSelectedTerms()
+        {
+            selectedTerms = null;
+            selectedAcceptancePreview = null;
+            selectedUnitPrice = 0f;
+        }
+
         private void RefreshTermsForChosenPrice()
         {
+            if (selectedSettlement == null || selectedItem == null)
+            {
+                ClearSelectedTerms();
+                return;
+            }
+
             selectedTerms = PreviewTerms(selectedUnitPrice);
             if (selectedTerms == null)
             {
@@ -720,6 +792,53 @@ namespace Intercolony
             return mode == FulfillmentMode.BuyerPickup
                 ? "They collect"
                 : "You deliver";
+        }
+
+        private static Dictionary<ThingDef, List<Settlement>>
+            InvertQualifyingItemsBySettlement(
+                List<Settlement> settlements,
+                Dictionary<int, List<ThingDef>> qualifyingItemsBySettlement)
+        {
+            Dictionary<ThingDef, List<Settlement>> result =
+                new Dictionary<ThingDef, List<Settlement>>();
+            foreach (Settlement settlement in settlements)
+            {
+                if (!qualifyingItemsBySettlement.TryGetValue(
+                        settlement.ID, out List<ThingDef> items))
+                {
+                    continue;
+                }
+
+                foreach (ThingDef thingDef in items)
+                {
+                    if (thingDef == null)
+                    {
+                        continue;
+                    }
+
+                    if (!result.TryGetValue(
+                            thingDef, out List<Settlement> itemSettlements))
+                    {
+                        itemSettlements = new List<Settlement>();
+                        result.Add(thingDef, itemSettlements);
+                    }
+
+                    itemSettlements.Add(settlement);
+                }
+            }
+
+            return result;
+        }
+
+        private static List<ThingDef> FindQualifyingItems(
+            Dictionary<ThingDef, List<Settlement>> qualifyingSettlementsByItem)
+        {
+            List<ThingDef> result = new List<ThingDef>(
+                qualifyingSettlementsByItem.Keys);
+            result.Sort((a, b) => string.Compare(
+                a.LabelCap.ToString(), b.LabelCap.ToString(),
+                StringComparison.CurrentCultureIgnoreCase));
+            return result;
         }
 
         private static List<Settlement> FindQualifyingSettlements(

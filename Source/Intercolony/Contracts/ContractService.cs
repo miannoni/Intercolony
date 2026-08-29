@@ -297,9 +297,9 @@ namespace Intercolony
             Rand.PushState(seed);
             try
             {
-                // Contracts are for things a colony can produce repeatedly, so stick to
-                // stackable goods; a standing order for one masterwork chair a quadrum is not
-                // the strategic commitment §29 is describing.
+                // Contracts are for goods the shared classifier can trade and whose completed
+                // supply history proves repeatability. Minifiable furniture is a valid recurring
+                // good even though its ThingDef is a Building with stackLimit 1.
                 List<KeyValuePair<ThingDef, int>> candidates =
                     new List<KeyValuePair<ThingDef, int>>();
                 if (completedOrders != null)
@@ -936,17 +936,9 @@ namespace Intercolony
                 return false;
             }
 
-            if (def.stackLimit <= 1)
-            {
-                reason = $"{def.label} is not stackable.";
-                return false;
-            }
-
-            if (def.category != ThingCategory.Item)
-            {
-                reason = $"{def.label} is not a physical item.";
-                return false;
-            }
+            // Do not add stack/category gates here. Contracts were the only surface refusing
+            // minifiable goods, contradicting both the shared classifier and the mod's own
+            // promise of recurring furniture sales.
 
             IntercolonyProductCategory? classified = IntercolonyProductClassifier.Classify(def);
             if (!classified.HasValue)

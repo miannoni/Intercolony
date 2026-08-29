@@ -199,8 +199,14 @@ namespace Intercolony
                 GUI.color = positive
                     ? new Color(0.6f, 0.9f, 0.6f)
                     : new Color(1f, 0.75f, 0.75f);
-                Widgets.Label(new Rect(valueX, y, valueWidth, valueHeight), row.bandName);
+                Rect valueRect = new Rect(valueX, y, valueWidth, valueHeight);
+                Widgets.Label(valueRect, row.bandName);
                 GUI.color = Color.white;
+
+                if (ShouldBuildTooltip(valueRect) && !row.tooltip.NullOrEmpty())
+                {
+                    TooltipHandler.TipRegion(valueRect, row.tooltip);
+                }
 
                 y += rowHeight + 4f;
             }
