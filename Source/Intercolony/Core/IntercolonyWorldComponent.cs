@@ -936,19 +936,30 @@ namespace Intercolony
             {
                 if (economySeed == 0)
                 {
-                    economySeed = Gen.HashCombineInt(world?.info?.Seed ?? 0, EconomySeedSalt);
-
-                    // 0 is the "unassigned" sentinel, so a hash that lands on it must move.
-                    if (economySeed == 0)
-                    {
-                        economySeed = EconomySeedSalt;
-                    }
+                    economySeed = DerivedEconomySeed();
 
                     IntercolonyLog.Message($"Derived economy seed {economySeed} from the world seed.");
                 }
 
                 return economySeed;
             }
+        }
+
+        /// <summary>
+        /// Returns the same seed as <see cref="EconomySeed"/> without assigning the lazy
+        /// persisted field. Read-only proposal previews use this so asking for a preview cannot
+        /// change the save merely because the economy seed had not been touched yet.
+        /// </summary>
+        internal int EconomySeedForReadOnly => economySeed != 0
+            ? economySeed
+            : DerivedEconomySeed();
+
+        private int DerivedEconomySeed()
+        {
+            int derived = Gen.HashCombineInt(world?.info?.Seed ?? 0, EconomySeedSalt);
+
+            // 0 is the "unassigned" sentinel, so a hash that lands on it must move.
+            return derived == 0 ? EconomySeedSalt : derived;
         }
 
         /// <summary>
@@ -979,6 +990,28 @@ namespace Intercolony
             SettlementEconomicProfile profile = SettlementProfileGenerator.Generate(EconomySeed, settlement);
             profileCache[settlement.ID] = profile;
             return profile;
+        }
+
+        /// <summary>
+        /// Reads the same deterministic profile as <see cref="GetProfile"/> without populating
+        /// the cache or lazily assigning the persisted economy seed. This is intentionally
+        /// internal: service previews need a pure read path, while normal callers should keep the
+        /// cached <see cref="GetProfile"/> behavior.
+        /// </summary>
+        internal SettlementEconomicProfile GetProfileForReadOnly(Settlement settlement)
+        {
+            if (!SettlementProfileGenerator.IsEligible(settlement))
+            {
+                return null;
+            }
+
+            if (profileCache.TryGetValue(settlement.ID, out SettlementEconomicProfile cached) &&
+                cached.factionLoadId == (settlement.Faction?.loadID ?? -1))
+            {
+                return cached;
+            }
+
+            return SettlementProfileGenerator.Generate(EconomySeedForReadOnly, settlement);
         }
 
         /// <summary>Every eligible settlement's profile, in world-object order.</summary>

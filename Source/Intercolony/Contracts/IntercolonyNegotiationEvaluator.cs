@@ -129,6 +129,63 @@ namespace Intercolony
     }
 
     /// <summary>
+    /// Shared vocabulary for how attractive a prospective negotiation package is. The first
+    /// three bands follow the evaluator's refusal, counter and acceptance boundaries; the fourth
+    /// separates a strong acceptance from a merely workable one.
+    /// </summary>
+    public enum IntercolonyNegotiationAcceptanceBand
+    {
+        Unlikely,
+        Possible,
+        Likely,
+        VeryLikely
+    }
+
+    /// <summary>
+    /// Read model for a prospective package. It contains the evaluator score and the appeal used
+    /// by the delayed-answer path, when one exists. Selling previews also expose the actual
+    /// acceptance chance; procurement is decided by the stored evaluator result, so its chance
+    /// is null. No value in this model is persisted.
+    /// </summary>
+    public sealed class IntercolonyNegotiationAcceptancePreview
+    {
+        internal IntercolonyNegotiationAcceptancePreview(
+            IntercolonyNegotiationResult evaluation,
+            float appeal,
+            float? acceptanceChance)
+        {
+            Score = evaluation?.AcceptanceScore ?? -1.25f;
+            Appeal = appeal;
+            AcceptanceChance = acceptanceChance;
+            Band = IntercolonyNegotiationEvaluator.AcceptanceBandForScore(Score);
+            Factors = evaluation == null
+                ? new List<IntercolonyNegotiationFactor>()
+                : new List<IntercolonyNegotiationFactor>(evaluation.Factors);
+        }
+
+        /// <summary>The deterministic score returned by the shared evaluator.</summary>
+        public float Score { get; }
+
+        /// <summary>
+        /// The normalized appeal used by the side's delayed-answer path, or the equivalent
+        /// appeal that would be stored when the package is sent.
+        /// </summary>
+        public float Appeal { get; }
+
+        /// <summary>
+        /// Selling-side chance as a fraction from 0 to 1. Procurement has no random answer and
+        /// leaves this null.
+        /// </summary>
+        public float? AcceptanceChance { get; }
+
+        /// <summary>The shared four-level description of <see cref="Score"/>.</summary>
+        public IntercolonyNegotiationAcceptanceBand Band { get; }
+
+        /// <summary>The evaluator's named contributions, copied into this read model.</summary>
+        public IReadOnlyList<IntercolonyNegotiationFactor> Factors { get; }
+    }
+
+    /// <summary>
     /// Central Stage 5A negotiation read model.
     ///
     /// The service is deliberately a pure decision layer. It reads the existing effective
@@ -151,6 +208,12 @@ namespace Intercolony
         /// needs to protect one of its terms.
         /// </summary>
         private const float AcceptedScoreThreshold = 0.10f;
+
+        /// <summary>
+        /// A score above this point is comfortably beyond the acceptance boundary. It gives the
+        /// shared preview vocabulary a fourth level without changing the evaluator decision.
+        /// </summary>
+        private const float VeryLikelyScoreThreshold = 0.50f;
 
         /// <summary>
         /// This is the lowest score that can produce one final counter. Below it the proposed
@@ -597,6 +660,28 @@ namespace Intercolony
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Maps an evaluator score to the one acceptance vocabulary shared by selling and
+        /// procurement previews. Decision thresholds remain owned by this evaluator, so neither
+        /// market can invent a different meaning for a band.
+        /// </summary>
+        public static IntercolonyNegotiationAcceptanceBand AcceptanceBandForScore(float score)
+        {
+            if (!IsFinite(score) || score < CounteredScoreThreshold)
+            {
+                return IntercolonyNegotiationAcceptanceBand.Unlikely;
+            }
+
+            if (score < AcceptedScoreThreshold)
+            {
+                return IntercolonyNegotiationAcceptanceBand.Possible;
+            }
+
+            return score < VeryLikelyScoreThreshold
+                ? IntercolonyNegotiationAcceptanceBand.Likely
+                : IntercolonyNegotiationAcceptanceBand.VeryLikely;
         }
 
         /// <summary>

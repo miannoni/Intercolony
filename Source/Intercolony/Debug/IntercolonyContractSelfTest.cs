@@ -641,6 +641,34 @@ namespace Intercolony
                     const int previewTotalCycles = 5;
                     const FulfillmentMode previewFulfillment = FulfillmentMode.BuyerPickup;
                     state.Contracts.Clear();
+                    int nextIdBeforeAcceptancePreviews = state.PeekNextId();
+                    int contractCountBeforeAcceptancePreviews = state.Contracts.Count;
+                    IntercolonyNegotiationAcceptancePreview acceptancePreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: null,
+                            fulfillment: previewFulfillment);
+                    IntercolonyNegotiationAcceptancePreview repeatedAcceptancePreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: null,
+                            fulfillment: previewFulfillment);
+                    IntercolonyNegotiationAcceptancePreview thirdAcceptancePreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: null,
+                            fulfillment: previewFulfillment);
+
+                    // This fails if a preview consumes an ID, records a contract, or mutates the
+                    // contract collection while it is only answering a read-only question.
+                    Check("selling acceptance preview leaves state untouched",
+                        acceptancePreview != null && repeatedAcceptancePreview != null &&
+                        thirdAcceptancePreview != null &&
+                        state.PeekNextId() == nextIdBeforeAcceptancePreviews &&
+                        state.Contracts.Count == contractCountBeforeAcceptancePreviews,
+                        $"next id {nextIdBeforeAcceptancePreviews}->{state.PeekNextId()}; " +
+                        $"contracts {contractCountBeforeAcceptancePreviews}->{state.Contracts.Count}");
+
                     ContractTerms preview = ContractService.PreviewContractTerms(
                         state, subject, meat, previewQuantity, previewCadenceDays,
                         previewTotalCycles, agreedUnitPrice: null,
@@ -649,6 +677,42 @@ namespace Intercolony
                         state, subject, meat, previewQuantity, previewCadenceDays,
                         previewTotalCycles, agreedUnitPrice: null,
                         fulfillment: previewFulfillment);
+
+                    // This fails if Refused is not Unlikely, Countered is not Possible, Accepted is
+                    // neither Likely nor VeryLikely, or the previewed score or factor count differs
+                    // from the proposal evaluation.
+                    Check("selling acceptance preview matches the proposal band",
+                        acceptancePreview != null && previewProposal.Success &&
+                        previewProposal.Evaluation != null &&
+                        ((previewProposal.Evaluation.Decision == IntercolonyNegotiationDecision.Refused &&
+                          acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Unlikely) ||
+                         (previewProposal.Evaluation.Decision == IntercolonyNegotiationDecision.Countered &&
+                          acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Possible) ||
+                         (previewProposal.Evaluation.Decision == IntercolonyNegotiationDecision.Accepted &&
+                          (acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Likely ||
+                           acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.VeryLikely))) &&
+                        acceptancePreview.Score == previewProposal.Evaluation.AcceptanceScore &&
+                        acceptancePreview.Factors.Count == previewProposal.Evaluation.Factors.Count,
+                        $"preview band={acceptancePreview?.Band.ToString() ?? "null"}; " +
+                        $"proposal decision={previewProposal.Evaluation?.Decision.ToString() ?? "null"}; " +
+                        $"preview score={acceptancePreview?.Score.ToString("R") ?? "null"}; " +
+                        $"proposal score={previewProposal.Evaluation?.AcceptanceScore.ToString("R") ?? "null"}; " +
+                        $"preview factors={acceptancePreview?.Factors.Count.ToString() ?? "null"}; " +
+                        $"proposal factors={previewProposal.Evaluation?.Factors.Count.ToString() ?? "null"}");
+
+                    float answerChance = previewProposal.Contract == null
+                        ? -1f
+                        : ContractService.AcceptanceChanceForAppeal(
+                            previewProposal.Contract.proposalAppeal);
+                    // This fails if the preview or the delayed answer path grows its own appeal
+                    // to chance mapping, or if the preview does not use the stored appeal.
+                    Check("selling acceptance preview exposes the answer chance",
+                        previewProposal.Contract != null &&
+                        acceptancePreview?.AcceptanceChance.HasValue == true &&
+                        Mathf.Abs(acceptancePreview.AcceptanceChance.Value - answerChance) <= 0.000001f,
+                        $"preview chance={acceptancePreview?.AcceptanceChance?.ToString("R") ?? "null"}; " +
+                        $"stored appeal={previewProposal.Contract?.proposalAppeal.ToString("R") ?? "null"}; " +
+                        $"answer chance={answerChance:R}");
 
                     // This fails if preview and proposal calculate their price or rounded
                     // per-cycle payment independently.
@@ -664,6 +728,19 @@ namespace Intercolony
                         $"reason={previewProposal.Reason ?? "none"}");
 
                     state.Contracts.Clear();
+                    IntercolonyNegotiationAcceptancePreview outOfRangeAcceptancePreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat,
+                            ContractService.MinimumQuantityPerCycle - 1,
+                            previewCadenceDays, previewTotalCycles,
+                            agreedUnitPrice: null, fulfillment: previewFulfillment);
+                    // This fails if a package outside the service's quantity bound receives a
+                    // band instead of the null used for a package that cannot be proposed.
+                    Check("selling acceptance preview refuses an out-of-range package",
+                        outOfRangeAcceptancePreview == null,
+                        $"preview={(outOfRangeAcceptancePreview == null
+                            ? "null" : outOfRangeAcceptancePreview.Band.ToString())}");
+
                     ContractProposalResult legacyProposal = ContractService.ProposeContract(
                         state, subject, meat, ContractService.MinimumQuantityPerCycle);
                     // This fails if the untouched overload stops using its seeded 3-to-6 draw or

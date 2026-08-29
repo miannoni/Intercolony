@@ -166,6 +166,17 @@ namespace Intercolony
     /// </summary>
     public static class ProcurementContractService
     {
+        /// <summary>
+        /// Pure inputs prepared for either evaluation or contract construction. The proposal is
+        /// assembled here so procurement previews and sends cannot drift apart.
+        /// </summary>
+        private sealed class PreparedProcurementProposal
+        {
+            public float unitPrice;
+            public ProcurementContractTerms terms;
+            public IntercolonyNegotiationProposal negotiationProposal;
+        }
+
         /// <summary>Procurement reuses the sell-side quantity bounds.</summary>
         public const int MinimumQuantityPerCycle = ContractService.MinimumQuantityPerCycle;
 
@@ -233,130 +244,20 @@ namespace Intercolony
             float? agreedUnitPrice = null,
             FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
         {
-            if (state == null)
+            if (!TryPrepareProcurementProposal(
+                    state, settlement, thingDef, stuffDef, quality, quantityPerCycle,
+                    cadenceDays, totalCycles, agreedUnitPrice, fulfillment,
+                    out PreparedProcurementProposal prepared,
+                    out ProcurementContractProposalFailure failure,
+                    out string reason,
+                    cacheProfile: true))
             {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.InvalidState,
-                    "No Intercolony world state is available.");
+                return ProcurementContractProposalResult.Refused(failure, reason);
             }
 
-            string accessReason = null;
-            bool accessible = settlement != null && IntercolonyMarketAccess.IsAccessible(
-                settlement, out accessReason);
-            if (!accessible)
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.InaccessibleSettlement,
-                    settlement == null
-                        ? "A supplier settlement is required."
-                        : "The supplier settlement is inaccessible: " + accessReason + ".");
-            }
-
-            SettlementEconomicProfile profile = state.GetProfile(settlement);
-            if (profile == null)
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.MissingEconomicProfile,
-                    "The supplier settlement has no economic profile.");
-            }
-
-            if (!TryGetCategory(thingDef, out IntercolonyProductCategory category, out string itemReason))
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.InvalidItem, itemReason);
-            }
-
-            if (quantityPerCycle < MinimumQuantityPerCycle ||
-                quantityPerCycle > MaximumQuantityPerCycle)
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.QuantityOutOfRange,
-                    $"Quantity per cycle must be between {MinimumQuantityPerCycle} and " +
-                    $"{MaximumQuantityPerCycle}.");
-            }
-
-            if (cadenceDays < MinimumCadenceDays || cadenceDays > MaximumCadenceDays)
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.CadenceOutOfRange,
-                    $"Cadence must be between {MinimumCadenceDays} and {MaximumCadenceDays} days.");
-            }
-
-            if (totalCycles < MinimumTotalCycles || totalCycles > MaximumTotalCycles)
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.TotalCyclesOutOfRange,
-                    $"Total cycles must be between {MinimumTotalCycles} and {MaximumTotalCycles}.");
-            }
-
-            if ((long)cadenceDays * totalCycles > MaximumTermDays)
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.TermTooLong,
-                    $"Cadence multiplied by total cycles must not exceed {MaximumTermDays} days.");
-            }
-
-            if (fulfillment != FulfillmentMode.SellerDelivery &&
-                fulfillment != FulfillmentMode.BuyerPickup)
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.InvalidFulfillment,
-                    "Fulfillment must be supplier delivery or buyer pickup.");
-            }
-
-            float referenceUnitPrice;
-            if (!TryCalculateReferenceUnitPrice(
-                    state, settlement, thingDef, stuffDef, quality, profile, category,
-                    quantityPerCycle, cadenceDays, totalCycles, fulfillment,
-                    out referenceUnitPrice))
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.SupplierCannotSupply,
-                    $"{settlement.Label} cannot technically supply {thingDef.label}.");
-            }
-
-            float unitPrice = agreedUnitPrice ?? referenceUnitPrice;
-            if (unitPrice < MinimumUnitPrice ||
-                float.IsNaN(unitPrice) ||
-                float.IsInfinity(unitPrice) ||
-                unitPrice > referenceUnitPrice * MaximumUnitPriceMultiplier)
-            {
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.UnitPriceOutOfRange,
-                    $"Unit price must be at least {MinimumUnitPrice:F2} and no more than " +
-                    $"{referenceUnitPrice * MaximumUnitPriceMultiplier:F2} " +
-                    $"(twice the current supplier rate of {referenceUnitPrice:F2}).");
-            }
-
-            if (state.HasContractWith(settlement.ID, thingDef))
-            {
-                ProcurementContract existing = state.FindProcurementContractWith(
-                    settlement.ID, thingDef);
-                string existingDescription = existing == null
-                    ? "an existing standing relationship"
-                    : $"procurement proposal #{existing.id} ({existing.status})";
-                return ProcurementContractProposalResult.Refused(
-                    ProcurementContractProposalFailure.ExistingContract,
-                    $"A standing agreement already exists for {settlement.Label} and " +
-                    $"{thingDef.label}: {existingDescription}.");
-            }
-
-            IntercolonyNegotiationProposal proposal = new IntercolonyNegotiationProposal
-            {
-                state = state,
-                profile = profile,
-                thingDef = thingDef,
-                category = category,
-                direction = IntercolonyNegotiationDirection.Purchase,
-                originalTerms = new IntercolonyNegotiationTerms(
-                    quantityPerCycle, referenceUnitPrice, cadenceDays, fulfillment),
-                proposedTerms = new IntercolonyNegotiationTerms(
-                    quantityPerCycle, unitPrice, cadenceDays, fulfillment),
-                fulfillmentModeChangeAllowed = true,
-                counterAllowed = true
-            };
             IntercolonyNegotiationResult evaluation =
-                IntercolonyNegotiationEvaluator.Evaluate(proposal);
+                IntercolonyNegotiationEvaluator.Evaluate(prepared.negotiationProposal);
+            float appeal = DelayAppeal(evaluation);
 
             ProcurementContract contract = new ProcurementContract
             {
@@ -367,7 +268,7 @@ namespace Intercolony
                 stuffDef = stuffDef,
                 quality = quality,
                 quantityPerCycle = quantityPerCycle,
-                unitPrice = unitPrice,
+                unitPrice = prepared.unitPrice,
                 cadenceDays = cadenceDays,
                 totalCycles = totalCycles,
                 fulfillment = fulfillment,
@@ -375,8 +276,8 @@ namespace Intercolony
                 createdTick = GenTicks.TicksGame,
                 offerExpiryTick = ProcurementContract.NoExpiryTick,
                 decisionDueTick = GenTicks.TicksGame +
-                    ContractService.ProposalDecisionDelayTicks(DelayAppeal(evaluation)),
-                proposalAppeal = DelayAppeal(evaluation),
+                    ContractService.ProposalDecisionDelayTicks(appeal),
+                proposalAppeal = appeal,
                 proposalDecision = (int)evaluation.Decision
             };
 
@@ -418,9 +319,71 @@ namespace Intercolony
             float? agreedUnitPrice = null,
             FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
         {
-            if (state == null)
+            return TryPrepareProcurementProposal(
+                    state, settlement, thingDef, stuffDef, quality, quantityPerCycle,
+                    cadenceDays, totalCycles, agreedUnitPrice, fulfillment,
+                    out PreparedProcurementProposal prepared,
+                    out _, out _,
+                    cacheProfile: false)
+                ? prepared.terms
+                : null;
+        }
+
+        /// <summary>
+        /// Previews the likely supplier response without constructing or recording a procurement
+        /// contract. The negotiation proposal is built by the same pure preparation path used by
+        /// <see cref="ProposeContract(IntercolonyWorldComponent, Settlement, ThingDef, ThingDef, QualityCategory?, int, int, int, float?, FulfillmentMode)"/>.
+        /// </summary>
+        public static IntercolonyNegotiationAcceptancePreview PreviewAcceptance(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            float? agreedUnitPrice = null,
+            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+        {
+            if (!TryPrepareProcurementProposal(
+                    state, settlement, thingDef, stuffDef, quality, quantityPerCycle,
+                    cadenceDays, totalCycles, agreedUnitPrice, fulfillment,
+                    out PreparedProcurementProposal prepared,
+                    out _, out _,
+                    cacheProfile: false))
             {
                 return null;
+            }
+
+            IntercolonyNegotiationResult evaluation =
+                IntercolonyNegotiationEvaluator.Evaluate(prepared.negotiationProposal);
+            return new IntercolonyNegotiationAcceptancePreview(
+                evaluation, DelayAppeal(evaluation), acceptanceChance: null);
+        }
+
+        private static bool TryPrepareProcurementProposal(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            float? agreedUnitPrice,
+            FulfillmentMode fulfillment,
+            out PreparedProcurementProposal prepared,
+            out ProcurementContractProposalFailure failure,
+            out string reason,
+            bool cacheProfile)
+        {
+            prepared = null;
+            if (state == null)
+            {
+                failure = ProcurementContractProposalFailure.InvalidState;
+                reason = "No Intercolony world state is available.";
+                return false;
             }
 
             string accessReason = null;
@@ -428,53 +391,82 @@ namespace Intercolony
                 settlement, out accessReason);
             if (!accessible)
             {
-                return null;
+                failure = ProcurementContractProposalFailure.InaccessibleSettlement;
+                reason = settlement == null
+                    ? "A supplier settlement is required."
+                    : "The supplier settlement is inaccessible: " + accessReason + ".";
+                return false;
             }
 
-            SettlementEconomicProfile profile = state.GetProfile(settlement);
+            SettlementEconomicProfile profile = cacheProfile
+                ? state.GetProfile(settlement)
+                : state.GetProfileForReadOnly(settlement);
             if (profile == null)
             {
-                return null;
+                failure = ProcurementContractProposalFailure.MissingEconomicProfile;
+                reason = "The supplier settlement has no economic profile.";
+                return false;
             }
 
-            if (!TryGetCategory(thingDef, out IntercolonyProductCategory category, out _))
+            if (!TryGetCategory(
+                    thingDef, out IntercolonyProductCategory category, out reason))
             {
-                return null;
+                failure = ProcurementContractProposalFailure.InvalidItem;
+                return false;
             }
 
             if (quantityPerCycle < MinimumQuantityPerCycle ||
                 quantityPerCycle > MaximumQuantityPerCycle)
             {
-                return null;
+                failure = ProcurementContractProposalFailure.QuantityOutOfRange;
+                reason =
+                    $"Quantity per cycle must be between {MinimumQuantityPerCycle} and " +
+                    $"{MaximumQuantityPerCycle}.";
+                return false;
             }
 
             if (cadenceDays < MinimumCadenceDays || cadenceDays > MaximumCadenceDays)
             {
-                return null;
+                failure = ProcurementContractProposalFailure.CadenceOutOfRange;
+                reason =
+                    $"Cadence must be between {MinimumCadenceDays} and {MaximumCadenceDays} days.";
+                return false;
             }
 
             if (totalCycles < MinimumTotalCycles || totalCycles > MaximumTotalCycles)
             {
-                return null;
+                failure = ProcurementContractProposalFailure.TotalCyclesOutOfRange;
+                reason =
+                    $"Total cycles must be between {MinimumTotalCycles} and " +
+                    $"{MaximumTotalCycles}.";
+                return false;
             }
 
             if ((long)cadenceDays * totalCycles > MaximumTermDays)
             {
-                return null;
+                failure = ProcurementContractProposalFailure.TermTooLong;
+                reason =
+                    $"Cadence multiplied by total cycles must not exceed {MaximumTermDays} days.";
+                return false;
             }
 
             if (fulfillment != FulfillmentMode.SellerDelivery &&
                 fulfillment != FulfillmentMode.BuyerPickup)
             {
-                return null;
+                failure = ProcurementContractProposalFailure.InvalidFulfillment;
+                reason = "Fulfillment must be supplier delivery or buyer pickup.";
+                return false;
             }
 
             if (!TryCalculateReferenceUnitPrice(
                     state, settlement, thingDef, stuffDef, quality, profile, category,
                     quantityPerCycle, cadenceDays, totalCycles, fulfillment,
-                    out float referenceUnitPrice))
+                    out float referenceUnitPrice,
+                    cacheProfile ? (int?)null : state.EconomySeedForReadOnly))
             {
-                return null;
+                failure = ProcurementContractProposalFailure.SupplierCannotSupply;
+                reason = $"{settlement.Label} cannot technically supply {thingDef.label}.";
+                return false;
             }
 
             float unitPrice = agreedUnitPrice ?? referenceUnitPrice;
@@ -483,26 +475,61 @@ namespace Intercolony
                 float.IsInfinity(unitPrice) ||
                 unitPrice > referenceUnitPrice * MaximumUnitPriceMultiplier)
             {
-                return null;
+                failure = ProcurementContractProposalFailure.UnitPriceOutOfRange;
+                reason =
+                    $"Unit price must be at least {MinimumUnitPrice:F2} and no more than " +
+                    $"{referenceUnitPrice * MaximumUnitPriceMultiplier:F2} " +
+                    $"(twice the current supplier rate of {referenceUnitPrice:F2}).";
+                return false;
             }
 
             if (state.HasContractWith(settlement.ID, thingDef))
             {
-                return null;
+                ProcurementContract existing = state.FindProcurementContractWith(
+                    settlement.ID, thingDef);
+                string existingDescription = existing == null
+                    ? "an existing standing relationship"
+                    : $"procurement proposal #{existing.id} ({existing.status})";
+                failure = ProcurementContractProposalFailure.ExistingContract;
+                reason =
+                    $"A standing agreement already exists for {settlement.Label} and " +
+                    $"{thingDef.label}: {existingDescription}.";
+                return false;
             }
 
             int paymentPerCycle = IntercolonyPricing.TotalPayment(
                 unitPrice, quantityPerCycle);
             int totalPayment = IntercolonyPricing.TotalPayment(
                 paymentPerCycle, totalCycles);
-            return new ProcurementContractTerms(
-                referenceUnitPrice,
-                unitPrice,
-                MinimumUnitPrice,
-                referenceUnitPrice * MaximumUnitPriceMultiplier,
-                paymentPerCycle,
-                totalCycles,
-                totalPayment);
+            prepared = new PreparedProcurementProposal
+            {
+                unitPrice = unitPrice,
+                terms = new ProcurementContractTerms(
+                    referenceUnitPrice,
+                    unitPrice,
+                    MinimumUnitPrice,
+                    referenceUnitPrice * MaximumUnitPriceMultiplier,
+                    paymentPerCycle,
+                    totalCycles,
+                    totalPayment),
+                negotiationProposal = new IntercolonyNegotiationProposal
+                {
+                    state = state,
+                    profile = profile,
+                    thingDef = thingDef,
+                    category = category,
+                    direction = IntercolonyNegotiationDirection.Purchase,
+                    originalTerms = new IntercolonyNegotiationTerms(
+                        quantityPerCycle, referenceUnitPrice, cadenceDays, fulfillment),
+                    proposedTerms = new IntercolonyNegotiationTerms(
+                        quantityPerCycle, unitPrice, cadenceDays, fulfillment),
+                    fulfillmentModeChangeAllowed = true,
+                    counterAllowed = true
+                }
+            };
+            failure = ProcurementContractProposalFailure.None;
+            reason = null;
+            return true;
         }
 
         private static bool TryCalculateReferenceUnitPrice(
@@ -517,11 +544,13 @@ namespace Intercolony
             int cadenceDays,
             int totalCycles,
             FulfillmentMode fulfillment,
-            out float referenceUnitPrice)
+            out float referenceUnitPrice,
+            int? economySeedOverride = null)
         {
             referenceUnitPrice = 0f;
             int seed = Gen.HashCombineInt(
-                state.EconomySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
+                economySeedOverride ?? state.EconomySeed,
+                settlement.ID, thingDef.shortHash, quantityPerCycle);
             seed = Gen.HashCombineInt(seed, cadenceDays, totalCycles, DecisionSeedSalt);
             Rand.PushState(seed);
             try

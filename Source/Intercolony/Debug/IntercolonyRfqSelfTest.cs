@@ -3662,6 +3662,9 @@ namespace Intercolony
             skip("E10 procurement preview refuses out-of-range quantity with proposal", reason);
             skip("E11 procurement preview refuses an existing settlement-item agreement", reason);
             skip("E12 procurement preview total payment uses shared pricing", reason);
+            skip("E13 procurement acceptance preview matches the proposal band", reason);
+            skip("E14 procurement acceptance preview leaves state untouched", reason);
+            skip("E15 procurement acceptance preview refuses an out-of-range package", reason);
         }
 
         private static void CheckProcurementContractPreview(
@@ -3674,6 +3677,36 @@ namespace Intercolony
             const int cadenceDays = 1;
             const int totalCycles = 2;
             state.ProcurementContracts.Clear();
+            int nextIdBeforeAcceptancePreviews = state.PeekNextId();
+            int contractCountBeforeAcceptancePreviews = state.ProcurementContracts.Count;
+            IntercolonyNegotiationAcceptancePreview acceptancePreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            IntercolonyNegotiationAcceptancePreview repeatedAcceptancePreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            IntercolonyNegotiationAcceptancePreview thirdAcceptancePreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+
+            // This fails if a procurement preview consumes an ID, records a contract, or mutates
+            // the contract collection while it is only answering a read-only question.
+            check(
+                "E14 procurement acceptance preview leaves state untouched",
+                acceptancePreview != null && repeatedAcceptancePreview != null &&
+                thirdAcceptancePreview != null &&
+                state.PeekNextId() == nextIdBeforeAcceptancePreviews &&
+                state.ProcurementContracts.Count == contractCountBeforeAcceptancePreviews,
+                $"next id {nextIdBeforeAcceptancePreviews}->{state.PeekNextId()}; " +
+                $"contracts {contractCountBeforeAcceptancePreviews}->" +
+                $"{state.ProcurementContracts.Count}");
+
             ProcurementContractTerms preview =
                 ProcurementContractService.PreviewContractTerms(
                     state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
@@ -3691,8 +3724,36 @@ namespace Intercolony
                 $"preview reference={preview?.referenceUnitPrice.ToString("R") ?? "null"}; " +
                 $"reason={proposal.Reason ?? "none"}");
 
+            // This fails if Refused is not Unlikely, Countered is not Possible, Accepted is
+            // neither Likely nor VeryLikely, or the previewed score or factor count differs from
+            // the proposal evaluation.
+            check(
+                "E13 procurement acceptance preview matches the proposal band",
+                acceptancePreview != null && proposal.Success &&
+                proposal.Evaluation != null &&
+                ((proposal.Evaluation.Decision == IntercolonyNegotiationDecision.Refused &&
+                  acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Unlikely) ||
+                 (proposal.Evaluation.Decision == IntercolonyNegotiationDecision.Countered &&
+                  acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Possible) ||
+                 (proposal.Evaluation.Decision == IntercolonyNegotiationDecision.Accepted &&
+                  (acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.Likely ||
+                   acceptancePreview.Band == IntercolonyNegotiationAcceptanceBand.VeryLikely))) &&
+                acceptancePreview.Score == proposal.Evaluation.AcceptanceScore &&
+                acceptancePreview.Factors.Count == proposal.Evaluation.Factors.Count,
+                $"preview band={acceptancePreview?.Band.ToString() ?? "null"}; " +
+                $"proposal decision={proposal.Evaluation?.Decision.ToString() ?? "null"}; " +
+                $"preview score={acceptancePreview?.Score.ToString("R") ?? "null"}; " +
+                $"proposal score={proposal.Evaluation?.AcceptanceScore.ToString("R") ?? "null"}; " +
+                $"preview factors={acceptancePreview?.Factors.Count.ToString() ?? "null"}; " +
+                $"proposal factors={proposal.Evaluation?.Factors.Count.ToString() ?? "null"}");
+
             state.ProcurementContracts.Clear();
             const int outOfRangeQuantity = 0;
+            IntercolonyNegotiationAcceptancePreview outOfRangeAcceptancePreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, outOfRangeQuantity,
+                    cadenceDays, totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
             ProcurementContractTerms outOfRangePreview =
                 ProcurementContractService.PreviewContractTerms(
                     state, settlement, product, null, null, outOfRangeQuantity,
@@ -3705,7 +3766,8 @@ namespace Intercolony
             // This fails if preview accepts a quantity that ProposeContract rejects at its bounds.
             check(
                 "E10 procurement preview refuses out-of-range quantity with proposal",
-                outOfRangePreview == null && !outOfRangeProposal.Success &&
+                outOfRangePreview == null && outOfRangeAcceptancePreview == null &&
+                !outOfRangeProposal.Success &&
                 outOfRangeProposal.Contract == null &&
                 outOfRangeProposal.Failure == ProcurementContractProposalFailure.QuantityOutOfRange,
                 $"quantity={outOfRangeQuantity}; preview=" +
@@ -3713,6 +3775,14 @@ namespace Intercolony
                 $"proposal success={outOfRangeProposal.Success}; " +
                 $"failure={outOfRangeProposal.Failure}; " +
                 $"reason={outOfRangeProposal.Reason ?? "none"}");
+
+            // This fails if the acceptance preview returns a band for a package that violates a
+            // service bound, instead of returning null like the terms preview.
+            check(
+                "E15 procurement acceptance preview refuses an out-of-range package",
+                outOfRangeAcceptancePreview == null,
+                $"preview={(outOfRangeAcceptancePreview == null
+                    ? "null" : outOfRangeAcceptancePreview.Band.ToString())}");
 
             state.ProcurementContracts.Clear();
             ProcurementContractProposalResult existingProposal =

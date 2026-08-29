@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -34,7 +35,7 @@ namespace Intercolony
         // Mirror the selling side's quadrum rhythm; service minimums are permitted bounds, not sensible opening defaults.
         private const int DefaultCadenceDays = 15;
         private const int DefaultTotalDeliveries = 4;
-        private const FulfillmentMode DefaultFulfillment = FulfillmentMode.SellerDelivery;
+        private const FulfillmentMode DefaultFulfillment = FulfillmentMode.BuyerPickup;
 
         private readonly IntercolonyWorldComponent state;
         private readonly List<Settlement> qualifyingSettlements;
@@ -55,6 +56,7 @@ namespace Intercolony
         private float selectedUnitPrice;
         private FulfillmentMode fulfillment = DefaultFulfillment;
         private ContractTerms selectedTerms;
+        private IntercolonyNegotiationAcceptancePreview selectedAcceptancePreview;
 
         public Dialog_ProposeAgreement(IntercolonyWorldComponent state)
         {
@@ -301,15 +303,11 @@ namespace Intercolony
                 pickupRect, "They collect", FulfillmentMode.BuyerPickup);
             TooltipHandler.TipRegion(
                 deliveryRect,
-                "You deliver each delivery by caravan.");
+                "You take the goods to the buyer each delivery, so your caravan is needed.");
             TooltipHandler.TipRegion(
                 pickupRect,
-                "They collect each delivery, so no caravan is needed.");
+                "The buyer collects the goods each delivery, so no caravan of yours is needed.");
             y += ControlRowHeight + 4f;
-
-            Widgets.Label(new Rect(rect.x, y, rect.width, ControlRowHeight), "Unit price:");
-            // The slider's endpoint labels are drawn just above its rail.
-            y += ControlRowHeight + 16f;
 
             if (selectedSettlement == null || selectedItem == null || selectedTerms == null)
             {
@@ -320,20 +318,23 @@ namespace Intercolony
                 return;
             }
 
+            string priceLabel = $"Unit price: {selectedTerms.unitPrice:F2} silver";
+            float priceLabelHeight = Text.CalcHeight(priceLabel, rect.width);
+            float priceControlHeight = Mathf.Max(SliderHeight, priceLabelHeight + 10f);
             float slidPrice = Widgets.HorizontalSlider(
-                new Rect(rect.x, y, rect.width, SliderHeight),
+                new Rect(rect.x, y, rect.width, priceControlHeight),
                 selectedTerms.unitPrice,
                 selectedTerms.minimumUnitPrice,
                 selectedTerms.maximumUnitPrice,
                 middleAlignment: false,
-                label: null,
+                label: priceLabel,
                 leftAlignedLabel: selectedTerms.minimumUnitPrice.ToString("F2"),
                 rightAlignedLabel: selectedTerms.maximumUnitPrice.ToString("F2"),
                 roundTo: 0.01f);
             slidPrice = Mathf.Clamp(
                 slidPrice, selectedTerms.minimumUnitPrice, selectedTerms.maximumUnitPrice);
             TooltipHandler.TipRegion(
-                new Rect(rect.x, y, rect.width, SliderHeight),
+                new Rect(rect.x, y, rect.width, priceControlHeight),
                 $"Agreed silver per unit. The previewed range is " +
                 $"{selectedTerms.minimumUnitPrice:F2} to {selectedTerms.maximumUnitPrice:F2}; " +
                 $"the reference rate is {selectedTerms.referenceUnitPrice:F2}.");
@@ -343,7 +344,7 @@ namespace Intercolony
                 RefreshTermsForChosenPrice();
             }
 
-            y += SliderHeight + 20f;
+            y += priceControlHeight + 20f;
             string advice = PriceAdvice();
             float adviceHeight = Mathf.Max(1f, Text.CalcHeight(advice, rect.width));
             Widgets.Label(new Rect(rect.x, y, rect.width, adviceHeight), advice);
@@ -399,31 +400,118 @@ namespace Intercolony
 
         private List<TermRow> BuildTermsRows()
         {
-            float daysBetweenDeliveries =
-                selectedTerms.cadenceTicks / (float)GenDate.TicksPerDay;
-            return new List<TermRow>
+            List<TermRow> rows = new List<TermRow>
             {
-                new TermRow("Item", selectedItem.LabelCap.ToString()),
-                new TermRow("Settlement", selectedSettlement.Label),
-                new TermRow("Quantity per delivery", quantity.ToString("N0"),
-                    "Units sold to the settlement in each delivery."),
-                new TermRow("Cadence", $"{daysBetweenDeliveries:F0} days",
-                    $"Days between deliveries. The full term is capped at " +
-                    $"{ProcurementContractService.MaximumTermDays} days."),
-                new TermRow("Deliveries", selectedTerms.deliveryCount.ToString("N0"),
-                    "Number of deliveries promised by this agreement."),
-                new TermRow("Unit price", $"{selectedTerms.unitPrice:F2} silver",
-                    "The agreed silver price for one unit."),
                 new TermRow("Payment per delivery",
                     $"{selectedTerms.paymentPerDelivery:N0} silver",
                     "The shared payment calculation for one delivery."),
                 new TermRow("Total", $"{selectedTerms.totalPayment:N0} silver",
-                    "The shared payment calculation across every promised delivery."),
-                new TermRow("Fulfilment", FulfillmentLabel(fulfillment),
-                    fulfillment == FulfillmentMode.BuyerPickup
-                        ? "They collect each delivery, so no caravan is needed."
-                        : "You deliver each delivery by caravan.")
+                    "The shared payment calculation across every promised delivery.")
             };
+
+            EffectiveBrandService.EffectiveBrandDetails brandDetails =
+                EffectiveBrandService.GetEffectiveBrandDetails(state, selectedItem);
+            if (brandDetails.hasDirectRecord || brandDetails.inheritedFrom != null)
+            {
+                rows.Add(new TermRow(
+                    "Brand",
+                    BrandStrengthLabel(brandDetails.effectiveBrand),
+                    BrandTooltip(brandDetails, selectedItem)));
+            }
+
+            if (selectedAcceptancePreview != null)
+            {
+                rows.Add(new TermRow(
+                    "Acceptance",
+                    AcceptanceLabel(selectedAcceptancePreview),
+                    AcceptanceTooltip(selectedAcceptancePreview)));
+            }
+
+            return rows;
+        }
+
+        private static string BrandStrengthLabel(float effectiveBrand)
+        {
+            int rounded = Mathf.RoundToInt(effectiveBrand);
+            return rounded > 0 ? $"+{rounded}" : rounded.ToString();
+        }
+
+        private static string BrandTooltip(
+            EffectiveBrandService.EffectiveBrandDetails details, ThingDef product)
+        {
+            if (details.hasDirectRecord && details.inheritedFrom == null)
+            {
+                return "Based on your colony's own delivered-quality record for this product.";
+            }
+
+            if (!details.hasDirectRecord)
+            {
+                string sourceLabel = details.inheritedFrom.LabelCap.ToString();
+                return $"Inherited from your colony's delivered-quality record for related " +
+                       $"{sourceLabel} goods. Product similarity connects that standing to " +
+                       $"{product.LabelCap}.";
+            }
+
+            string inheritedLabel = details.inheritedFrom.LabelCap.ToString();
+            return details.mostlyInherited
+                ? $"Mostly inherited from your colony's delivered-quality record for related " +
+                  $"{inheritedLabel} goods; your colony also has its own record for this " +
+                  $"product."
+                : $"Based mainly on your colony's own delivered-quality record for this " +
+                  $"product; related {inheritedLabel} evidence also contributes.";
+        }
+
+        private static string AcceptanceLabel(
+            IntercolonyNegotiationAcceptancePreview preview)
+        {
+            string band;
+            switch (preview.Band)
+            {
+                case IntercolonyNegotiationAcceptanceBand.Unlikely:
+                    band = "Unlikely";
+                    break;
+                case IntercolonyNegotiationAcceptanceBand.Possible:
+                    band = "Possible";
+                    break;
+                case IntercolonyNegotiationAcceptanceBand.Likely:
+                    band = "Likely";
+                    break;
+                default:
+                    band = "Very likely";
+                    break;
+            }
+
+            string chance = preview.AcceptanceChance.HasValue
+                ? preview.AcceptanceChance.Value.ToStringPercent("F0")
+                : "unknown";
+            return $"{band} ({chance})";
+        }
+
+        private static string AcceptanceTooltip(
+            IntercolonyNegotiationAcceptancePreview preview)
+        {
+            StringBuilder tooltip = new StringBuilder("What drives this estimate:");
+            if (preview.Factors == null || preview.Factors.Count == 0)
+            {
+                tooltip.Append("\n- No named factors are available.");
+                return tooltip.ToString();
+            }
+
+            foreach (IntercolonyNegotiationFactor factor in preview.Factors)
+            {
+                if (factor.label.NullOrEmpty())
+                {
+                    continue;
+                }
+
+                tooltip.Append("\n- ").Append(factor.label);
+                if (!factor.detail.NullOrEmpty())
+                {
+                    tooltip.Append(": ").Append(factor.detail);
+                }
+            }
+
+            return tooltip.ToString();
         }
 
         private static float MeasureRows(List<TermRow> rows, float width)
@@ -546,6 +634,7 @@ namespace Intercolony
             selectedSettlement = settlement;
             selectedItem = null;
             selectedTerms = null;
+            selectedAcceptancePreview = null;
             selectedUnitPrice = 0f;
             itemScroll = Vector2.zero;
             if (!qualifyingItemsBySettlement.TryGetValue(
@@ -571,6 +660,7 @@ namespace Intercolony
             if (selectedSettlement == null || selectedItem == null)
             {
                 selectedTerms = null;
+                selectedAcceptancePreview = null;
                 selectedUnitPrice = 0f;
                 return;
             }
@@ -579,6 +669,7 @@ namespace Intercolony
             if (bounds == null)
             {
                 selectedTerms = null;
+                selectedAcceptancePreview = null;
                 selectedUnitPrice = 0f;
                 return;
             }
@@ -593,10 +684,16 @@ namespace Intercolony
         private void RefreshTermsForChosenPrice()
         {
             selectedTerms = PreviewTerms(selectedUnitPrice);
-            if (selectedTerms != null)
+            if (selectedTerms == null)
             {
-                selectedUnitPrice = selectedTerms.unitPrice;
+                selectedAcceptancePreview = null;
+                return;
             }
+
+            selectedUnitPrice = selectedTerms.unitPrice;
+            selectedAcceptancePreview = ContractService.PreviewAcceptance(
+                state, selectedSettlement, selectedItem, quantity, cadenceDays,
+                totalDeliveries, selectedTerms.unitPrice, fulfillment);
         }
 
         private ContractTerms PreviewTerms(float? agreedUnitPrice = null)

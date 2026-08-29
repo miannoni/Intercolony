@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -55,6 +56,8 @@ namespace Intercolony
         private float selectedUnitPrice;
         private FulfillmentMode fulfillment = DefaultFulfillment;
         private ProcurementContractTerms selectedTerms;
+        private IntercolonyNegotiationAcceptancePreview selectedAcceptance;
+        private string acceptanceTooltip;
 
         public Dialog_ProposeProcurementAgreement(IntercolonyWorldComponent state)
         {
@@ -288,19 +291,18 @@ namespace Intercolony
             Rect pickupRect = new Rect(
                 rect.x + choiceWidth + ColumnGap, y, choiceWidth, ControlRowHeight);
             DrawFulfillmentChoice(
-                deliveryRect, "Supplier delivers", FulfillmentMode.SellerDelivery);
+                deliveryRect, FulfillmentLabel(FulfillmentMode.SellerDelivery),
+                FulfillmentMode.SellerDelivery);
             DrawFulfillmentChoice(
-                pickupRect, "Buyer pickup", FulfillmentMode.BuyerPickup);
+                pickupRect, FulfillmentLabel(FulfillmentMode.BuyerPickup),
+                FulfillmentMode.BuyerPickup);
             TooltipHandler.TipRegion(
                 deliveryRect,
-                "The supplier sends each cycle's goods to the colony.");
+                "The supplier brings the goods to your colony each cycle, so no caravan of yours is needed.");
             TooltipHandler.TipRegion(
                 pickupRect,
-                "The colony collects each cycle's goods from the supplier.");
+                "You collect the goods each cycle, so your caravan is needed.");
             y += ControlRowHeight + 4f;
-
-            Widgets.Label(new Rect(rect.x, y, rect.width, ControlRowHeight), "Unit price:");
-            y += ControlRowHeight + 16f;
 
             if (selectedTerms == null)
             {
@@ -311,29 +313,37 @@ namespace Intercolony
                 return;
             }
 
-            Rect priceRect = new Rect(rect.x, y, rect.width, SliderHeight);
+            string priceLabel = $"Unit price: {selectedTerms.unitPrice:F2} silver";
+            float priceLabelHeight = Text.CalcHeight(priceLabel, rect.width);
+            float priceControlHeight = Mathf.Max(SliderHeight, priceLabelHeight + 10f);
             float slidPrice = Widgets.HorizontalSlider(
-                priceRect,
+                new Rect(rect.x, y, rect.width, priceControlHeight),
                 selectedTerms.unitPrice,
                 selectedTerms.minimumUnitPrice,
                 selectedTerms.maximumUnitPrice,
                 middleAlignment: false,
-                label: null,
+                label: priceLabel,
                 leftAlignedLabel: selectedTerms.minimumUnitPrice.ToString("F2"),
                 rightAlignedLabel: selectedTerms.maximumUnitPrice.ToString("F2"),
                 roundTo: 0.01f);
             slidPrice = Mathf.Clamp(
                 slidPrice, selectedTerms.minimumUnitPrice, selectedTerms.maximumUnitPrice);
-            TooltipHandler.TipRegion(
-                priceRect,
-                $"Agreed silver per unit. The previewed range is " +
-                $"{selectedTerms.minimumUnitPrice:F2} to {selectedTerms.maximumUnitPrice:F2}; " +
-                $"the reference rate is {selectedTerms.referenceUnitPrice:F2}.");
             if (!Mathf.Approximately(slidPrice, selectedTerms.unitPrice))
             {
                 selectedUnitPrice = slidPrice;
                 RefreshTermsForChosenPrice();
             }
+
+            if (selectedTerms == null)
+            {
+                return;
+            }
+
+            TooltipHandler.TipRegion(
+                new Rect(rect.x, y, rect.width, priceControlHeight),
+                $"Agreed silver per unit. The previewed range is " +
+                $"{selectedTerms.minimumUnitPrice:F2} to {selectedTerms.maximumUnitPrice:F2}; " +
+                $"the reference rate is {selectedTerms.referenceUnitPrice:F2}.");
         }
 
         private void DrawFulfillmentChoice(Rect rect, string label, FulfillmentMode mode)
@@ -387,19 +397,64 @@ namespace Intercolony
         {
             return new List<TermRow>
             {
-                new TermRow("Item", selectedItem.LabelCap.ToString()),
-                new TermRow("Supplier", selectedSettlement.Label),
-                new TermRow("Quantity per cycle", quantity.ToString("N0")),
-                new TermRow("Cadence", $"{cadenceDays:N0} days"),
-                new TermRow("Cycles", selectedTerms.totalCycles.ToString("N0")),
-                new TermRow("Unit price", $"{selectedTerms.unitPrice:F2} silver",
-                    "The agreed silver price for one unit."),
                 new TermRow("Payment per cycle", $"{selectedTerms.paymentPerCycle:N0} silver",
                     "The shared payment calculation for one procurement cycle."),
                 new TermRow("Total", $"{selectedTerms.totalPayment:N0} silver",
                     "The shared payment calculation across every scheduled cycle."),
-                new TermRow("Fulfilment", FulfillmentLabel(fulfillment))
+                new TermRow("Acceptance",
+                    selectedAcceptance == null
+                        ? "Unavailable"
+                        : AcceptanceLabel(selectedAcceptance),
+                    acceptanceTooltip ?? "The supplier acceptance preview is unavailable.")
             };
+        }
+
+        private static string AcceptanceLabel(
+            IntercolonyNegotiationAcceptancePreview preview)
+        {
+            switch (preview.Band)
+            {
+                case IntercolonyNegotiationAcceptanceBand.Unlikely:
+                    return "Unlikely";
+                case IntercolonyNegotiationAcceptanceBand.Possible:
+                    return "Possible";
+                case IntercolonyNegotiationAcceptanceBand.Likely:
+                    return "Likely";
+                default:
+                    return "Very likely";
+            }
+        }
+
+        private static string BuildAcceptanceTooltip(
+            IntercolonyNegotiationAcceptancePreview acceptance)
+        {
+            if (acceptance == null)
+            {
+                return "The supplier acceptance preview is unavailable.";
+            }
+
+            StringBuilder tooltip = new StringBuilder("What drives this estimate:");
+            if (acceptance.Factors == null || acceptance.Factors.Count == 0)
+            {
+                tooltip.Append("\n- No named factors are available.");
+                return tooltip.ToString();
+            }
+
+            foreach (IntercolonyNegotiationFactor factor in acceptance.Factors)
+            {
+                if (factor.label.NullOrEmpty())
+                {
+                    continue;
+                }
+
+                tooltip.Append("\n- ").Append(factor.label);
+                if (!factor.detail.NullOrEmpty())
+                {
+                    tooltip.Append(": ").Append(factor.detail);
+                }
+            }
+
+            return tooltip.ToString();
         }
 
         private static float MeasureRows(List<TermRow> rows, float width)
@@ -500,6 +555,8 @@ namespace Intercolony
             selectedItem = null;
             selectedTerms = null;
             selectedUnitPrice = 0f;
+            selectedAcceptance = null;
+            acceptanceTooltip = null;
             itemScroll = Vector2.zero;
             termsScroll = Vector2.zero;
             if (!qualifyingItemsBySettlement.TryGetValue(
@@ -527,6 +584,8 @@ namespace Intercolony
             {
                 selectedTerms = null;
                 selectedUnitPrice = 0f;
+                selectedAcceptance = null;
+                acceptanceTooltip = null;
                 return;
             }
 
@@ -535,6 +594,8 @@ namespace Intercolony
             {
                 selectedTerms = null;
                 selectedUnitPrice = 0f;
+                selectedAcceptance = null;
+                acceptanceTooltip = null;
                 return;
             }
 
@@ -548,15 +609,27 @@ namespace Intercolony
         private void RefreshTermsForChosenPrice()
         {
             selectedTerms = PreviewTerms(selectedUnitPrice);
+            selectedAcceptance = null;
+            acceptanceTooltip = null;
             if (selectedTerms != null)
             {
                 selectedUnitPrice = selectedTerms.unitPrice;
+                selectedAcceptance = PreviewAcceptance(selectedUnitPrice);
+                acceptanceTooltip = BuildAcceptanceTooltip(selectedAcceptance);
             }
         }
 
         private ProcurementContractTerms PreviewTerms(float? agreedUnitPrice = null)
         {
             return ProcurementContractService.PreviewContractTerms(
+                state, selectedSettlement, selectedItem, null, null, quantity, cadenceDays,
+                totalCycles, agreedUnitPrice, fulfillment);
+        }
+
+        private IntercolonyNegotiationAcceptancePreview PreviewAcceptance(
+            float? agreedUnitPrice = null)
+        {
+            return ProcurementContractService.PreviewAcceptance(
                 state, selectedSettlement, selectedItem, null, null, quantity, cadenceDays,
                 totalCycles, agreedUnitPrice, fulfillment);
         }
@@ -587,8 +660,8 @@ namespace Intercolony
         private static string FulfillmentLabel(FulfillmentMode mode)
         {
             return mode == FulfillmentMode.BuyerPickup
-                ? "Buyer pickup"
-                : "Supplier delivery";
+                ? "You collect"
+                : "They deliver";
         }
 
         private static List<Settlement> FindQualifyingSettlements(
