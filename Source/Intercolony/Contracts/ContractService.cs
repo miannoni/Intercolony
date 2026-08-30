@@ -1285,6 +1285,10 @@ namespace Intercolony
                 }
 
                 SalesOrder order = state.FindOrder(contract.activeOrderId);
+                // Early-out only: the load-bearing gate is SalesOrder.CanMarkReady,
+                // which is what makes seller-delivery unreachable. CanMarkReadyNow
+                // re-checks it, so removing this line is not behaviourally observable.
+                // A mutation test established this.
                 if (order == null || !order.CanMarkReady)
                 {
                     continue;
