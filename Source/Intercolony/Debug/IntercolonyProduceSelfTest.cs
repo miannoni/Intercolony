@@ -293,7 +293,7 @@ namespace Intercolony
                     "the blueprint carries the recorded material",
                     "the empty-cell placement assertion did not create the expected blueprint");
                 r.Skip(
-                    "an occupied cell is left alone",
+                    "a cell with work under way gains no second blueprint",
                     "the empty-cell placement assertion did not create the expected blueprint");
                 r.Skip(
                     "Disable stops the next repetition",
@@ -315,7 +315,7 @@ namespace Intercolony
             }
 
             ProduceLoopRecord record = loops.Find(cell);
-            CheckSafely(r, "an occupied cell is left alone", () =>
+            CheckSafely(r, "a cell with work under way gains no second blueprint", () =>
             {
                 int before = CountBlueprintsAndFramesAt(map, cell);
                 if (record == null)
@@ -1010,7 +1010,7 @@ namespace Intercolony
             r.Skip("re-blueprints an empty cell", reason);
             r.Skip("the blueprint carries the recorded material", reason);
             r.Skip("the blueprint carries the recorded rotation", reason);
-            r.Skip("an occupied cell is left alone", reason);
+            r.Skip("a cell with work under way gains no second blueprint", reason);
             r.Skip("Disable stops the next repetition", reason);
             r.Skip("Disable does not cancel work under way", reason);
         }
@@ -1019,7 +1019,7 @@ namespace Intercolony
         {
             r.Skip("re-blueprints an empty cell", reason);
             r.Skip("the blueprint carries the recorded material", reason);
-            r.Skip("an occupied cell is left alone", reason);
+            r.Skip("a cell with work under way gains no second blueprint", reason);
             r.Skip("Disable stops the next repetition", reason);
         }
 

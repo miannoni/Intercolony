@@ -45,6 +45,10 @@ namespace Intercolony
                 return;
             }
 
+            // This guard is a performance early-out: in steady state, most loops have work under way,
+            // and it avoids a full CanPlaceBlueprintAt evaluation every pass. Removing it is not
+            // behaviourally observable, because CanPlaceBlueprintAt refuses the duplicate anyway.
+            // The M7 mutation test confirmed this.
             List<Thing> thingsAtCell = map.thingGrid.ThingsListAt(loop.cell);
             for (int i = 0; i < thingsAtCell.Count; i++)
             {
