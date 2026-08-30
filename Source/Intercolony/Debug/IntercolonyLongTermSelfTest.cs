@@ -83,6 +83,7 @@ namespace Intercolony
                 CheckRenewalGating(r, state);
                 CheckAutoRenewal(r, state);
                 CheckSupplyAutoReady(r, state, map);
+                CheckProcurementWaitForSilver(r, state, map);
                 CheckNothingLapsesSilently(r);
             }
             catch (System.Exception ex)
@@ -536,6 +537,583 @@ namespace Intercolony
                 }
 
                 RemoveGeneratedLetters(existingLetters, existingArchivables);
+            }
+        }
+
+        private static void CheckProcurementWaitForSilver(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const string FundableAssertion = "a fundable procurement cycle creates its order";
+            const string WaitAssertion = "an unaffordable cycle waits instead of failing";
+            const string ToggleOffAssertion =
+                "with the toggle off an unaffordable cycle still fails immediately";
+            const string DeadlineAssertion = "waiting ends when the grace window closes";
+            const string NoticeAssertion = "the wait notice is sent once, not every refresh";
+            const string SilverOnlyAssertion = "only silver is waited for";
+
+            void SkipAll(string reason)
+            {
+                r.Skip(FundableAssertion, reason);
+                r.Skip(WaitAssertion, reason);
+                r.Skip(ToggleOffAssertion, reason);
+                r.Skip(DeadlineAssertion, reason);
+                r.Skip(NoticeAssertion, reason);
+                r.Skip(SilverOnlyAssertion, reason);
+            }
+
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            List<ProcurementContract> savedContracts = state?.ProcurementContracts == null
+                ? null
+                : new List<ProcurementContract>(state.ProcurementContracts);
+            List<PurchaseOrder> savedOrders = state?.PurchaseOrders == null
+                ? null
+                : new List<PurchaseOrder>(state.PurchaseOrders);
+            List<LedgerEntry> savedLedger = state?.Ledger == null
+                ? null
+                : new List<LedgerEntry>(state.Ledger);
+            int savedLedgerStartTick = state?.LedgerStartTick ?? LedgerService.NoHistory;
+
+            System.Reflection.FieldInfo consumptionField = typeof(IntercolonyWorldComponent)
+                .GetField(
+                    "supplierOfferConsumption",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+            System.Reflection.FieldInfo profileCacheField = typeof(IntercolonyWorldComponent)
+                .GetField(
+                    "profileCache",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+            System.Reflection.FieldInfo economySeedField = typeof(IntercolonyWorldComponent)
+                .GetField(
+                    "economySeed",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+            List<SupplierOfferConsumption> liveConsumption = consumptionField?.GetValue(state)
+                as List<SupplierOfferConsumption>;
+            Dictionary<int, SettlementEconomicProfile> liveProfileCache = profileCacheField?
+                .GetValue(state) as Dictionary<int, SettlementEconomicProfile>;
+            List<SupplierOfferConsumption> savedConsumption = liveConsumption == null
+                ? null
+                : new List<SupplierOfferConsumption>(liveConsumption);
+            Dictionary<int, SettlementEconomicProfile> savedProfileCache = liveProfileCache == null
+                ? null
+                : new Dictionary<int, SettlementEconomicProfile>(liveProfileCache);
+            int savedEconomySeed = economySeedField == null
+                ? 0
+                : (int)economySeedField.GetValue(state);
+            int savedSilver = paymentMap == null || ThingDefOf.Silver == null
+                ? 0
+                : PurchaseOrderService.CountColonySilver(paymentMap);
+            List<IntVec3> savedSilverCells = new List<IntVec3>();
+            if (paymentMap != null && ThingDefOf.Silver != null)
+            {
+                foreach (Thing silver in paymentMap.listerThings.ThingsOfDef(ThingDefOf.Silver))
+                {
+                    if (silver != null && !silver.Destroyed && silver.IsInAnyStorage())
+                    {
+                        savedSilverCells.Add(silver.Position);
+                    }
+                }
+            }
+
+            List<Zone_Stockpile> silverZones = new List<Zone_Stockpile>();
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+
+            try
+            {
+                if (paymentMap == null || ThingDefOf.Silver == null)
+                {
+                    SkipAll("no player-home payment map or silver definition");
+                    return;
+                }
+
+                if (savedContracts == null || savedOrders == null || savedLedger == null ||
+                    liveConsumption == null || liveProfileCache == null ||
+                    consumptionField == null || profileCacheField == null ||
+                    economySeedField == null)
+                {
+                    SkipAll("the live fields needed for complete procurement cleanup are inaccessible");
+                    return;
+                }
+
+                if (savedSilver == int.MaxValue)
+                {
+                    SkipAll("stored silver count cannot be increased by one for the wait fixture");
+                    return;
+                }
+
+                int fundableSilverTarget = savedSilver > 0 ? savedSilver : 1;
+                if (!TrySetStoredSilver(
+                        paymentMap, fundableSilverTarget, savedSilverCells, silverZones,
+                        out string silverFailure) ||
+                    PurchaseOrderService.CountColonySilver(paymentMap) != fundableSilverTarget)
+                {
+                    SkipAll(
+                        silverFailure ??
+                        "the payment map did not reach the stored-silver fixture amount");
+                    return;
+                }
+
+                Settlement supplier = null;
+                ThingDef product = null;
+                List<Settlement> settlements = Find.WorldObjects?.Settlements;
+                List<ThingDef> tradableDefs = IntercolonyProductClassifier.TradableDefs;
+                if (settlements != null && tradableDefs != null)
+                {
+                    foreach (Settlement candidateSettlement in settlements)
+                    {
+                        if (candidateSettlement == null ||
+                            !IntercolonyMarketAccess.IsAccessible(candidateSettlement))
+                        {
+                            continue;
+                        }
+
+                        SettlementEconomicProfile profile =
+                            state.GetProfileForReadOnly(candidateSettlement);
+                        if (profile == null)
+                        {
+                            continue;
+                        }
+
+                        foreach (ThingDef candidateDef in tradableDefs)
+                        {
+                            if (candidateDef == null || candidateDef == ThingDefOf.Silver ||
+                                candidateDef.category != ThingCategory.Item ||
+                                candidateDef.stackLimit < 1 || candidateDef.MadeFromStuff ||
+                                (candidateDef.techLevel != TechLevel.Undefined &&
+                                 candidateDef.techLevel > profile.techTier))
+                            {
+                                continue;
+                            }
+
+                            if (!IntercolonyProductClassifier.TryGetTradableCategory(
+                                    candidateDef, out IntercolonyProductCategory category))
+                            {
+                                continue;
+                            }
+
+                            float effectiveSupply = EffectiveEconomyService.EffectiveSupply(
+                                state, profile, category);
+                            if (!RfqService.CanTechnicallySupply(candidateDef, profile) ||
+                                effectiveSupply <= 0f ||
+                                RfqService.SupplierOfferQuantity(
+                                    candidateDef, null, profile, effectiveSupply) < 1)
+                            {
+                                continue;
+                            }
+
+                            supplier = candidateSettlement;
+                            product = candidateDef;
+                            break;
+                        }
+
+                        if (supplier != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                if (supplier == null || product == null)
+                {
+                    SkipAll("no accessible supplier has positive current capacity for a tradable item");
+                    return;
+                }
+
+                state.ProcurementContracts.Clear();
+                state.PurchaseOrders.Clear();
+                state.Ledger.Clear();
+                liveConsumption.Clear();
+
+                ProcurementContract AddFixture(
+                    int id, bool autoReadyOrders, int quantity, float unitPrice, int nextCycleTick)
+                {
+                    ProcurementContract contract = new ProcurementContract
+                    {
+                        id = id,
+                        settlementId = supplier.ID,
+                        settlementName = supplier.Label ?? "Procurement self-test supplier",
+                        thingDef = product,
+                        quantityPerCycle = quantity,
+                        unitPrice = unitPrice,
+                        cadenceDays = 1,
+                        totalCycles = 2,
+                        status = ProcurementContractStatus.Active,
+                        activeOrderId = ProcurementContract.NoActiveOrderId,
+                        nextCycleTick = nextCycleTick,
+                        autoReadyOrders = autoReadyOrders
+                    };
+                    state.AddProcurementContract(contract);
+                    return contract;
+                }
+
+                int now = GenTicks.TicksGame;
+                ProcurementContract fundable = AddFixture(
+                    -89201, autoReadyOrders: true, quantity: 1, unitPrice: 1f, nextCycleTick: now);
+                int fundableFailuresBefore = fundable.cyclesFailed;
+                ProcurementContractService.AdvanceCycles(state);
+                bool fundableOrderCreated =
+                    fundable.activeOrderId != ProcurementContract.NoActiveOrderId;
+                bool fundableFailuresUnchanged = fundable.cyclesFailed == fundableFailuresBefore;
+                r.Check(
+                    fundableOrderCreated && fundableFailuresUnchanged,
+                    FundableAssertion,
+                    $"orderCreated={fundableOrderCreated}, " +
+                    $"failuresUnchanged={fundableFailuresUnchanged}");
+                state.ProcurementContracts.Remove(fundable);
+
+                int silverBeforeWait = PurchaseOrderService.CountColonySilver(paymentMap);
+                if (silverBeforeWait == int.MaxValue)
+                {
+                    r.Skip(
+                        WaitAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    r.Skip(
+                        ToggleOffAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    r.Skip(
+                        DeadlineAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    r.Skip(
+                        NoticeAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    r.Skip(
+                        SilverOnlyAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    return;
+                }
+
+                int waitingPrice = silverBeforeWait + 1;
+                ProcurementContract waiting = AddFixture(
+                    -89202, autoReadyOrders: true, quantity: 1,
+                    unitPrice: waitingPrice, nextCycleTick: now);
+                int waitingFailuresBefore = waiting.cyclesFailed;
+                int waitingDueTick = waiting.nextCycleTick;
+                ProcurementContractService.AdvanceCycles(state);
+                bool waitingFailuresUnchanged = waiting.cyclesFailed == waitingFailuresBefore;
+                bool waitingHasNoOrder =
+                    waiting.activeOrderId == ProcurementContract.NoActiveOrderId;
+                bool waitingDueUnchanged = waiting.nextCycleTick == waitingDueTick;
+                r.Check(
+                    waitingFailuresUnchanged && waitingHasNoOrder && waitingDueUnchanged,
+                    WaitAssertion,
+                    $"failuresUnchanged={waitingFailuresUnchanged}, " +
+                    $"noOrder={waitingHasNoOrder}, dueUnchanged={waitingDueUnchanged}");
+                state.ProcurementContracts.Remove(waiting);
+
+                ProcurementContract toggleOff = AddFixture(
+                    -89203, autoReadyOrders: false, quantity: 1,
+                    unitPrice: waitingPrice, nextCycleTick: now);
+                int toggleOffFailuresBefore = toggleOff.cyclesFailed;
+                int toggleOffDueTick = toggleOff.nextCycleTick;
+                ProcurementContractService.AdvanceCycles(state);
+                bool toggleOffFailed = toggleOff.cyclesFailed > toggleOffFailuresBefore;
+                bool toggleOffAdvancedOneCadence = toggleOff.nextCycleTick ==
+                    toggleOffDueTick + toggleOff.cadenceDays * GenDate.TicksPerDay;
+                r.Check(
+                    toggleOffFailed && toggleOffAdvancedOneCadence,
+                    ToggleOffAssertion,
+                    $"failuresIncreased={toggleOffFailed}, " +
+                    $"advancedOneCadence={toggleOffAdvancedOneCadence}");
+                state.ProcurementContracts.Remove(toggleOff);
+
+                ProcurementContract deadline = AddFixture(
+                    -89204, autoReadyOrders: true, quantity: 1,
+                    unitPrice: waitingPrice,
+                    nextCycleTick: now - GenDate.TicksPerDay);
+                int deadlineFailuresBefore = deadline.cyclesFailed;
+                int deadlineDueTick = deadline.nextCycleTick;
+                ProcurementContractService.AdvanceCycles(state);
+                bool deadlineFailed = deadline.cyclesFailed > deadlineFailuresBefore;
+                bool deadlineAdvancedOneCadence = deadline.nextCycleTick ==
+                    deadlineDueTick + deadline.cadenceDays * GenDate.TicksPerDay;
+                r.Check(
+                    deadlineFailed && deadlineAdvancedOneCadence,
+                    DeadlineAssertion,
+                    $"failuresIncreased={deadlineFailed}, " +
+                    $"advancedOneCadence={deadlineAdvancedOneCadence}");
+                state.ProcurementContracts.Remove(deadline);
+
+                ProcurementContract notice = AddFixture(
+                    -89205, autoReadyOrders: true, quantity: 1,
+                    unitPrice: waitingPrice, nextCycleTick: now);
+                int noticeFailuresBefore = notice.cyclesFailed;
+                int noticeDueTick = notice.nextCycleTick;
+                ProcurementContractService.AdvanceCycles(state);
+                bool notifiedAfterFirstPass = notice.autoReadyWaitNotified;
+                ProcurementContractService.AdvanceCycles(state);
+                bool notifiedAfterSecondPass = notice.autoReadyWaitNotified;
+                bool noticeStillWaiting = notice.cyclesFailed == noticeFailuresBefore &&
+                    notice.activeOrderId == ProcurementContract.NoActiveOrderId &&
+                    notice.nextCycleTick == noticeDueTick;
+                r.Check(
+                    notifiedAfterFirstPass && notifiedAfterSecondPass && noticeStillWaiting,
+                    NoticeAssertion,
+                    $"notified={notifiedAfterFirstPass}/{notifiedAfterSecondPass}, " +
+                    $"stillWaiting={noticeStillWaiting}");
+                state.ProcurementContracts.Remove(notice);
+
+                bool invalidSilverReady = PurchaseOrderService.CountColonySilver(paymentMap) > 0;
+                string invalidSilverFailure = null;
+                if (!invalidSilverReady)
+                {
+                    invalidSilverReady = TrySetStoredSilver(
+                        paymentMap, 1, savedSilverCells, silverZones, out invalidSilverFailure);
+                    invalidSilverReady = invalidSilverReady &&
+                        PurchaseOrderService.CountColonySilver(paymentMap) > 0;
+                }
+
+                if (!invalidSilverReady)
+                {
+                    r.Skip(
+                        SilverOnlyAssertion,
+                        invalidSilverFailure ??
+                        "the payment map could not reach at least one stored silver");
+                }
+                else
+                {
+                    ProcurementContract invalidTerms = AddFixture(
+                        -89206, autoReadyOrders: true, quantity: 1,
+                        unitPrice: 0f, nextCycleTick: now);
+                    int invalidFailuresBefore = invalidTerms.cyclesFailed;
+                    int invalidDueTick = invalidTerms.nextCycleTick;
+                    ProcurementContractService.AdvanceCycles(state);
+                    bool invalidFailed = invalidTerms.cyclesFailed > invalidFailuresBefore;
+                    bool invalidAdvancedOneCadence = invalidTerms.nextCycleTick ==
+                        invalidDueTick + invalidTerms.cadenceDays * GenDate.TicksPerDay;
+                    r.Check(
+                        invalidFailed && invalidAdvancedOneCadence,
+                        SilverOnlyAssertion,
+                        $"failuresIncreased={invalidFailed}, " +
+                        $"advancedOneCadence={invalidAdvancedOneCadence}");
+                    state.ProcurementContracts.Remove(invalidTerms);
+                }
+            }
+            finally
+            {
+                if (paymentMap != null && ThingDefOf.Silver != null &&
+                    !TrySetStoredSilver(
+                        paymentMap, savedSilver, savedSilverCells, silverZones,
+                        out string restoreFailure))
+                {
+                    r.Info($"stored silver restoration failed: {restoreFailure}");
+                }
+
+                DeleteTestZones(silverZones);
+
+                if (paymentMap != null && ThingDefOf.Silver != null &&
+                    PurchaseOrderService.CountColonySilver(paymentMap) != savedSilver)
+                {
+                    r.Info("stored silver restoration did not reach the saved count.");
+                }
+
+                if (state?.ProcurementContracts != null && savedContracts != null)
+                {
+                    state.ProcurementContracts.Clear();
+                    state.ProcurementContracts.AddRange(savedContracts);
+                }
+
+                if (state?.PurchaseOrders != null && savedOrders != null)
+                {
+                    state.PurchaseOrders.Clear();
+                    state.PurchaseOrders.AddRange(savedOrders);
+                }
+
+                if (state?.Ledger != null && savedLedger != null)
+                {
+                    state.Ledger.Clear();
+                    state.Ledger.AddRange(savedLedger);
+                    state.LedgerStartTick = savedLedgerStartTick;
+                }
+
+                if (liveConsumption != null && savedConsumption != null)
+                {
+                    liveConsumption.Clear();
+                    liveConsumption.AddRange(savedConsumption);
+                }
+
+                if (liveProfileCache != null && savedProfileCache != null)
+                {
+                    liveProfileCache.Clear();
+                    foreach (KeyValuePair<int, SettlementEconomicProfile> entry in savedProfileCache)
+                    {
+                        liveProfileCache[entry.Key] = entry.Value;
+                    }
+                }
+
+                if (economySeedField != null)
+                {
+                    economySeedField.SetValue(state, savedEconomySeed);
+                }
+
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+                r.Info("procurement wait fixtures, orders, letters, and stored silver restored.");
+            }
+        }
+
+        private static bool TrySetStoredSilver(
+            Map map, int target, List<IntVec3> preferredCells,
+            List<Zone_Stockpile> testZones, out string failure)
+        {
+            failure = null;
+            if (map == null || ThingDefOf.Silver == null || target < 0 ||
+                preferredCells == null || testZones == null)
+            {
+                failure = "the payment map or stored-silver fixture inputs were unavailable";
+                return false;
+            }
+
+            int current = PurchaseOrderService.CountColonySilver(map);
+            if (current > target)
+            {
+                int amountToRemove = current - target;
+                if (!PurchaseOrderService.TryTakeSilver(map, amountToRemove))
+                {
+                    failure = "the real silver-removal helper could not reduce stored silver";
+                    return false;
+                }
+
+                current = PurchaseOrderService.CountColonySilver(map);
+            }
+
+            int missing = target - current;
+            while (missing > 0)
+            {
+                IntVec3 storageCell = FindSilverStorageCell(map, preferredCells);
+                if (!storageCell.IsValid)
+                {
+                    storageCell = FindEmptySilverStorageCell(map);
+                    if (!storageCell.IsValid)
+                    {
+                        failure = "no valid storage cell was available for spawned silver";
+                        return false;
+                    }
+
+                    Zone_Stockpile zone = new Zone_Stockpile(
+                        StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+                    map.zoneManager.RegisterZone(zone);
+                    testZones.Add(zone);
+                    zone.AddCell(storageCell);
+                }
+
+                int before = PurchaseOrderService.CountColonySilver(map);
+                int amount = missing > ThingDefOf.Silver.stackLimit
+                    ? ThingDefOf.Silver.stackLimit
+                    : missing;
+                Thing silver = null;
+                try
+                {
+                    silver = ThingMaker.MakeThing(ThingDefOf.Silver);
+                    silver.stackCount = amount;
+                    Thing spawned = GenSpawn.Spawn(silver, storageCell, map);
+                    if (spawned == null || spawned.Destroyed || !spawned.IsInAnyStorage())
+                    {
+                        if (silver != null && !silver.Destroyed)
+                        {
+                            silver.Destroy(DestroyMode.Vanish);
+                        }
+
+                        failure =
+                            "spawned silver was not genuinely available in colony storage";
+                        return false;
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    if (silver != null && !silver.Destroyed)
+                    {
+                        silver.Destroy(DestroyMode.Vanish);
+                    }
+
+                    failure = $"could not create stored silver: {ex.Message}";
+                    return false;
+                }
+
+                int added = PurchaseOrderService.CountColonySilver(map) - before;
+                if (added <= 0)
+                {
+                    failure = "stored silver did not increase after a real spawn";
+                    return false;
+                }
+
+                missing -= added;
+            }
+
+            if (PurchaseOrderService.CountColonySilver(map) != target)
+            {
+                failure = "the payment map did not reach the requested stored-silver count";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static IntVec3 FindSilverStorageCell(
+            Map map, List<IntVec3> preferredCells)
+        {
+            foreach (IntVec3 cell in preferredCells)
+            {
+                if (IsUsableSilverStorageCell(map, cell))
+                {
+                    return cell;
+                }
+            }
+
+            return IntVec3.Invalid;
+        }
+
+        private static IntVec3 FindEmptySilverStorageCell(Map map)
+        {
+            if (map?.zoneManager == null)
+            {
+                return IntVec3.Invalid;
+            }
+
+            IntVec3 root = DropCellFinder.TradeDropSpot(map);
+            foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+            {
+                if (candidate.InBounds(map) && candidate.Standable(map) &&
+                    candidate.GetFirstItem(map) == null &&
+                    map.zoneManager.ZoneAt(candidate) == null)
+                {
+                    return candidate;
+                }
+            }
+
+            return IntVec3.Invalid;
+        }
+
+        private static bool IsUsableSilverStorageCell(Map map, IntVec3 cell)
+        {
+            if (map?.zoneManager == null || !cell.InBounds(map) || !cell.Standable(map))
+            {
+                return false;
+            }
+
+            Thing probe = ThingMaker.MakeThing(ThingDefOf.Silver);
+            if (probe == null)
+            {
+                return false;
+            }
+
+            return StoreUtility.IsGoodStoreCell(
+                cell, map, probe, null, Faction.OfPlayer);
+        }
+
+        private static void DeleteTestZones(List<Zone_Stockpile> testZones)
+        {
+            if (testZones == null)
+            {
+                return;
+            }
+
+            foreach (Zone_Stockpile zone in testZones)
+            {
+                if (zone != null)
+                {
+                    zone.Delete(playSound: false);
+                }
             }
         }
 
