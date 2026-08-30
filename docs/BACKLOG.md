@@ -943,6 +943,37 @@ and debug and self-test files do not ship.
 
 ---
 
+## The "only silver is waited for" assertion is an open, unexplained intermittent failure
+
+**Raised:** 2026-08-30, during `dev.ps1 test all -Fresh`.
+**Size:** unknown — the cause is not established.
+**Status:** open, unexplained, intermittent test failure — not a known-good test and not a known
+product defect.
+
+The self-test assertion **"only silver is waited for"**, in
+`IntercolonyLongTermSelfTest.CheckProcurementWaitForSilver`, failed on four consecutive fresh worlds
+under `dev.ps1 test all -Fresh`, reporting `failuresIncreased=False, advancedOneCadence=False`.
+The same assertion passed every time under `dev.ps1 test long-term -Fresh` in isolation, so it is
+sensitive to something the other suites leave behind.
+
+After the diagnostic-only change in commit `07b6bb7`, it then passed five consecutive times under
+`test all`. That change is non-mutating and therefore cannot be the fix. The cause is **not
+established**.
+
+Two hypotheses were checked by reading the source and eliminated. No production code removes from
+`state.ProcurementContracts`, so `AdvanceCycles` cannot abort mid-`foreach` on a modified collection.
+`Complete` only sets status, so a leftover contract from an earlier suite cannot cut the pass short.
+
+The assertion is now instrumented. On the next failure, its detail line reports the contract's
+status, unit price, quantity, cycle counters, active order id, next-cycle tick as an offset,
+wait-notice marker, outcome note, colony silver, the `CanPayForPurchase` verdict and reason, the
+procurement-contract counts, and whether any **OTHER** contract's counters moved across the same
+`AdvanceCycles` call — naming the first one that did.
+
+When it recurs, read that detail line rather than re-deriving the problem. The
+`otherContractChanged` / `firstOtherChangedId` fields are the ones that will identify a cross-suite
+leak.
+
 ## Rejected or superseded
 
 *(nothing yet)*

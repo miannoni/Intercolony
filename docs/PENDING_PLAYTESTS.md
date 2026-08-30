@@ -1509,6 +1509,40 @@ work tab replacements, roster mods. A deliberate test wants one of those install
 on the map, looking at whether the employee appears where a colonist would and whether the mod
 tries to assign them work.
 
+### The Produce, auto-renew and auto-ready batch has never been seen working by a human
+
+Added 2026-08-30. These four features shipped in this batch are visual, interactive, or about feel,
+so a self-test cannot settle them. None has been seen working by a human.
+
+**Produce toggle.** A **Produce** gizmo, using the vanilla Uninstall icon, appears on minifiable
+player buildings and on build blueprints and frames for them. Turning it on should uninstall the
+object, place an identical blueprint in the same cell with the same material and rotation, rebuild
+it, and repeat. This has never been seen working by a human.
+
+**Steps.** Check that the loop actually runs end to end in real time with colonists doing the work;
+that a batch multi-select shows **ONE** merged **Produce** button and enabling it starts all of them;
+that turning it off stops the next repetition without cancelling work under way; and that the
+accumulating minified furniture does not jam the cell permanently when there is nowhere to haul it.
+The last check is the likeliest real-play problem and no self-test can see it.
+
+**Auto-renew.** The per-worker **Auto-renew** toggle in the employee row's **...** menu, and the
+letter that arrives when a worker renews by itself, have never been seen working by a human.
+
+**Steps.** Check that the menu only offers what applies to that worker and that the letter reads
+correctly for a fixed-term contract.
+
+**Auto-ready orders, selling side.** The toggle on an active buyer-pickup agreement in **Selling →
+Contracts**, the cycle order readying itself when the goods are present, and the single **Agreement
+delivery needs attention** letter when they are not have never been seen working by a human.
+
+**Auto-ready orders, procurement side.** The toggle on an active agreement in **Procurement →
+Contracts**, a cycle waiting rather than failing when the colony is short of silver, and the
+**Procurement cycle waiting on silver** letter have never been seen working by a human.
+
+**UI check for the whole batch.** Confirm that the **Business** tab no longer lists individual
+agreements, and that the per-agreement margin estimate now appears on the **Selling → Contracts** row
+instead, with the row growing to fit it and not overlapping the row's buttons or the row beneath.
+
 ---
 
 ## Proven in play
