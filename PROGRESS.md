@@ -2346,3 +2346,62 @@ Known limitations:
 Manual test:
 - Cash flow table inspection and verification is recorded as pending in `docs/PENDING_PLAYTESTS.md` ("The five-day cash flow table needs a human read").
 
+## Playtest batch — four features from the 2026-08-30 session  (2026-08-30)
+
+Implemented:
+- Continuous production. A "Produce" toggle gizmo, using vanilla's Uninstall icon, on
+  minifiable player buildings and on build blueprints and frames for them. While on, the
+  object is uninstalled, an identical blueprint is placed in the same cell with the same
+  material, style and rotation, rebuilt, and uninstalled again. State lives in a
+  `ProduceLoopMapComponent` keyed by cell, because `MinifyUtility.Uninstall` destroys the
+  Thing identity every iteration. The loop advances by polling the cell every 60 ticks,
+  not by hooking construction completion, so it is correct after a save/load, a cancelled
+  job or a manual deconstruct. Multi-select merges into one control via
+  `groupKeyIgnoreContent`.
+- Per-worker auto-renew, plus a "..." contract-actions menu on each employee row carrying
+  Renew, "Let them go at the end of the term", and the Auto-renew toggle. Auto-renew
+  answers an offer the worker actually makes; it never bypasses `WouldRenew`.
+- Auto-ready orders on supply agreements: an active buyer-pickup agreement readies its own
+  cycle order through the same `MarkReadyForPickup` path the button uses, preflighted by
+  `CanMarkReadyNow`, with one throttled letter on failure.
+- Auto-ready orders on procurement agreements: a cycle that cannot be paid for waits for
+  one cadence instead of counting as failed, with one throttled letter. Only affordability
+  is waited for.
+- The Business tab no longer lists individual agreements; the per-agreement margin
+  estimate moved onto the Selling -> Contracts row.
+- Save schema 56 -> 57, adding `EmploymentContract.autoRenew` and `autoReadyOrders` on
+  both contract kinds. The migration logs and advances only; false is both the C# and the
+  Scribe default.
+
+Not implemented:
+- Employment renegotiation. It does not exist in this codebase —
+  `PostAcceptanceRenegotiationService` handles `SalesOrder` only — and Matteo decided on
+  2026-08-30 to leave it off the "..." menu rather than build it now.
+- Auto-ready for seller-delivery supply agreements. Those need a hand-formed caravan and
+  cannot be automated; the toggle is deliberately not offered on such a row.
+
+Known limitations:
+- The Produce loop leaves minified furniture on the floor. If there is nowhere to haul it,
+  the cell can stay blocked and the loop stalls. No self-test can see this.
+- "only silver is waited for" is an open, unexplained intermittent self-test failure; see
+  docs/BACKLOG.md.
+
+Manual test:
+- Point at docs/PENDING_PLAYTESTS.md, which lists the five checks this batch added.
+
+Verification actually performed:
+- New `produce` suite: 11 assertions, 11 passed, log clean.
+- `long-term` suite grew to 46 assertions covering auto-renew, supply auto-ready and
+  procurement wait-for-silver; 46 passed, 0 skipped, log clean.
+- Mutation batteries: produce 11 mutations, 8 GOOD, 3 NOISY, 0 hollow; long-term 10
+  mutations, 7 GOOD, 3 NOISY, 0 hollow; procurement 6 mutations, 5 GOOD, 1 NOISY, 0
+  hollow. Every NOISY row is a downstream assertion that legitimately depends on the
+  mutated step.
+- Two assertions were found hollow by mutation and neither was papered over: the produce
+  occupancy guard turned out to be a performance early-out that `CanPlaceBlueprintAt`
+  already covers, so its assertion was renamed to the property it actually proves; and the
+  seller-delivery mutation was moved to `SalesOrder.CanMarkReady`, the gate that actually
+  does the work.
+- `dev.ps1 test all -Fresh`: nine consecutive fresh worlds, 1420-1422 passed, 0 failed,
+  15-16 skipped, log clean every time.
+
