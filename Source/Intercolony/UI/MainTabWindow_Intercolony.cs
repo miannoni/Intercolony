@@ -3712,15 +3712,45 @@ namespace Intercolony
                 return rank != 0 ? rank : b.id.CompareTo(a.id);
             });
 
-            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contracts.Count * 74f);
+            List<BusinessReportService.ContractEstimate> activeEstimates =
+                BusinessReportService.ActiveEstimates(state);
+            Dictionary<int, BusinessReportService.ContractEstimate> estimatesByContractId =
+                new Dictionary<int, BusinessReportService.ContractEstimate>();
+            foreach (BusinessReportService.ContractEstimate estimate in activeEstimates)
+            {
+                if (estimate != null && estimate.contract != null)
+                {
+                    estimatesByContractId[estimate.contract.id] = estimate;
+                }
+            }
+
+            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
+            List<float> rowHeights = new List<float>(contracts.Count);
+            List<BusinessReportService.ContractEstimate> rowEstimates =
+                new List<BusinessReportService.ContractEstimate>(contracts.Count);
+            float contentHeight = 0f;
+            foreach (RecurringContract contract in contracts)
+            {
+                BusinessReportService.ContractEstimate estimate;
+                estimatesByContractId.TryGetValue(contract.id, out estimate);
+                rowEstimates.Add(estimate);
+
+                float rowHeight = ContractRowHeight(contract, estimate, tableWidth);
+                rowHeights.Add(rowHeight);
+                contentHeight += rowHeight;
+            }
+
+            Rect outRect = new Rect(0f, y, inRect.width, Mathf.Max(0f, inRect.yMax - y));
+            Rect viewRect = new Rect(0f, 0f, tableWidth, Mathf.Max(contentHeight, outRect.height));
 
             BeginPageScrollView(outRect, ref contractsScroll, viewRect);
             float rowY = 0f;
             for (int i = 0; i < contracts.Count; i++)
             {
-                DrawContractRow(new Rect(0f, rowY, viewRect.width, 74f), contracts[i], i, state);
-                rowY += 74f;
+                DrawContractRow(
+                    new Rect(0f, rowY, tableWidth, rowHeights[i]),
+                    contracts[i], i, state, rowEstimates[i]);
+                rowY += rowHeights[i];
             }
 
             EndPageScrollView();
@@ -3797,21 +3827,14 @@ namespace Intercolony
             return 3;
         }
 
-        private void DrawContractRow(
-            Rect rect, RecurringContract contract, int index, IntercolonyWorldComponent state)
+        private static string ContractIdentity(RecurringContract contract)
         {
-            if (index % 2 == 1)
-            {
-                Widgets.DrawLightHighlight(rect);
-            }
+            return $"#{contract.id}  {contract.settlementName} — {contract.quantityPerCycle}x " +
+                   $"{contract.ItemLabel()} every {contract.CadenceDays:F0}d";
+        }
 
-            Widgets.DrawHighlightIfMouseover(rect);
-
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width - 220f, 22f),
-                $"#{contract.id}  {contract.settlementName} — {contract.quantityPerCycle}x " +
-                $"{contract.ItemLabel()} every {contract.CadenceDays:F0}d");
-
-            GUI.color = new Color(1f, 1f, 1f, 0.7f);
+        private static string ContractPaymentSummary(RecurringContract contract)
+        {
             string paymentSummary =
                 $"{contract.totalCycles} deliveries   " +
                 $"{contract.DiscountedCyclePayment} silver each   " +
@@ -3823,62 +3846,344 @@ namespace Intercolony
                     $"{contract.DiscountFraction.ToStringPercent("F0")} waived";
             }
 
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 26f, rect.width - 220f, 22f),
-                paymentSummary);
-            GUI.color = Color.white;
+            return paymentSummary;
+        }
 
-            string status;
-            Color colour = Color.white;
+        private static string ContractStatusText(RecurringContract contract)
+        {
             if (contract.IsPendingPlayerProposal)
             {
-                status = "awaiting the settlement's answer";
-                colour = new Color(0.6f, 0.9f, 1f);
+                return "awaiting the settlement's answer";
             }
-            else if (contract.IsOffer)
+
+            if (contract.IsOffer)
             {
-                status = $"offer expires in {contract.DaysUntilOfferExpires:F1}d";
-                colour = new Color(0.6f, 0.9f, 1f);
+                return $"offer expires in {contract.DaysUntilOfferExpires:F1}d";
             }
-            else if (contract.IsActive)
+
+            if (contract.IsActive)
             {
-                status = contract.activeOrderId != 0
+                string status = contract.activeOrderId != 0
                     ? $"delivery {contract.cyclesCompleted + contract.cyclesFailed + 1} in progress"
                     : $"next delivery in {contract.DaysUntilNextCycle:F1}d";
                 if (contract.consecutiveFailures > 0)
                 {
                     status += "  — one more miss ends it";
+                }
+
+                return status;
+            }
+
+            if (contract.renewalOffered)
+            {
+                return $"they would sign again — {contract.DaysUntilRenewalExpires:F1}d to answer";
+            }
+
+            if (contract.status == ContractStatus.Suspended)
+            {
+                return $"suspended by war with {contract.factionName} — " +
+                       $"{contract.CyclesRemaining} deliveries still to come";
+            }
+
+            string terminalStatus = contract.status.ToString();
+            if (!string.IsNullOrEmpty(contract.outcomeNote))
+            {
+                terminalStatus += $": {contract.outcomeNote}";
+            }
+
+            return terminalStatus;
+        }
+
+        private static float ContractMeasuredHeight(string text, float width)
+        {
+            return Mathf.Max(Text.LineHeight, Text.CalcHeight(text ?? "", Mathf.Max(1f, width)));
+        }
+
+        private static float DrawMeasuredContractLabel(
+            Rect rect, string text, TextAnchor anchor)
+        {
+            string value = text ?? "";
+            float measuredHeight = ContractMeasuredHeight(value, rect.width);
+            TextAnchor previousAnchor = Text.Anchor;
+            Text.Anchor = anchor;
+            try
+            {
+                Widgets.Label(
+                    new Rect(rect.x, rect.y, rect.width, measuredHeight), value);
+            }
+            finally
+            {
+                Text.Anchor = previousAnchor;
+            }
+
+            return measuredHeight;
+        }
+
+        private static float ContractBaseRowHeight(
+            RecurringContract contract, float tableWidth)
+        {
+            float contentWidth = Mathf.Max(1f, tableWidth - 220f);
+            float height = 4f;
+            height += ContractMeasuredHeight(ContractIdentity(contract), contentWidth);
+            height += ContractMeasuredHeight(ContractPaymentSummary(contract), contentWidth);
+            height += ContractMeasuredHeight(
+                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
+                ContractStatusText(contract), contentWidth);
+            return Mathf.Max(74f, height + 4f);
+        }
+
+        private static float ContractEstimateLabelWidth(
+            float tableWidth, out float contentWidth, out float numberWidth)
+        {
+            contentWidth = Mathf.Max(1f, tableWidth - 220f);
+            numberWidth = Mathf.Min(140f, contentWidth);
+            return Mathf.Max(1f, contentWidth - numberWidth - 8f);
+        }
+
+        private static float ContractEstimateLineHeight(
+            string label, int amount, float labelWidth, float numberWidth)
+        {
+            return Mathf.Max(
+                ContractMeasuredHeight(label, labelWidth),
+                ContractMeasuredHeight(amount.ToString("N0"), numberWidth));
+        }
+
+        private static string ContractEstimateInterpretation(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate.Margin >= 0
+                ? $"about {estimate.MarginPerDay:0} silver a day; making the goods rather than " +
+                  $"buying them is worth {estimate.MakingSaves:N0} a cycle"
+                : "the wage bill alone outweighs this agreement";
+        }
+
+        private static float ContractEstimateBlockHeight(
+            BusinessReportService.ContractEstimate estimate, float tableWidth)
+        {
+            float contentWidth;
+            float numberWidth;
+            float labelWidth = ContractEstimateLabelWidth(
+                tableWidth, out contentWidth, out numberWidth);
+            float height = 4f;
+            height += ContractEstimateLineHeight(
+                "Revenue, payable", estimate.revenue, labelWidth, numberWidth);
+            height += ContractEstimateLineHeight(
+                "If you bought the goods instead", estimate.inputsIfBought, labelWidth, numberWidth);
+            height += ContractEstimateLineHeight(
+                "Wage bill over the cycle", estimate.payroll, labelWidth, numberWidth);
+            height += ContractEstimateLineHeight(
+                "Delivery premium earned, and hauled for", estimate.transport,
+                labelWidth, numberWidth);
+
+            height += 8f;
+            height += ContractEstimateLineHeight(
+                "Estimated margin", estimate.Margin, labelWidth, numberWidth);
+            height += 4f;
+            height += ContractMeasuredHeight(
+                ContractEstimateInterpretation(estimate), contentWidth);
+            return height + 12f;
+        }
+
+        private static float ContractRowHeight(
+            RecurringContract contract,
+            BusinessReportService.ContractEstimate estimate,
+            float tableWidth)
+        {
+            float height = ContractBaseRowHeight(contract, tableWidth);
+            return estimate == null
+                ? height
+                : height + ContractEstimateBlockHeight(estimate, tableWidth);
+        }
+
+        private static float DrawContractEstimateLine(
+            Rect rect,
+            float y,
+            string label,
+            int amount,
+            float labelWidth,
+            float numberX,
+            float numberWidth)
+        {
+            string amountLabel = amount.ToString("N0");
+            float labelHeight = 0f;
+            float amountHeight = 0f;
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.85f);
+                labelHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
+                    label, TextAnchor.UpperLeft);
+
+                GUI.color = amount >= 0
+                    ? new Color(0.6f, 0.9f, 0.6f)
+                    : new Color(1f, 0.75f, 0.75f);
+                amountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
+                    amountLabel, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+
+            return Mathf.Max(labelHeight, amountHeight);
+        }
+
+        private static float DrawContractEstimateMargin(
+            Rect rect,
+            float y,
+            float labelWidth,
+            float numberX,
+            float numberWidth,
+            BusinessReportService.ContractEstimate estimate)
+        {
+            string amountLabel = estimate.Margin.ToString("N0");
+            float labelHeight = 0f;
+            float amountHeight = 0f;
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = Color.white;
+                labelHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
+                    "Estimated margin", TextAnchor.UpperLeft);
+
+                GUI.color = estimate.Margin >= 0
+                    ? new Color(0.6f, 0.9f, 0.6f)
+                    : new Color(1f, 0.55f, 0.55f);
+                amountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
+                    amountLabel, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+
+            return Mathf.Max(labelHeight, amountHeight);
+        }
+
+        private static void DrawContractEstimate(
+            Rect rect, float y, BusinessReportService.ContractEstimate estimate)
+        {
+            float contentWidth;
+            float numberWidth;
+            float labelWidth = ContractEstimateLabelWidth(
+                rect.width, out contentWidth, out numberWidth);
+            float numberX = 6f + Mathf.Max(0f, contentWidth - numberWidth);
+            float lineY = y + 4f;
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "Revenue, payable", estimate.revenue,
+                labelWidth, numberX, numberWidth);
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "If you bought the goods instead", estimate.inputsIfBought,
+                labelWidth, numberX, numberWidth);
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "Wage bill over the cycle", estimate.payroll,
+                labelWidth, numberX, numberWidth);
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "Delivery premium earned, and hauled for", estimate.transport,
+                labelWidth, numberX, numberWidth);
+
+            Widgets.DrawLineHorizontal(rect.x + 6f, lineY + 2f, contentWidth);
+            lineY += 8f;
+
+            lineY += DrawContractEstimateMargin(
+                rect, lineY, labelWidth, numberX, numberWidth, estimate);
+            lineY += 4f;
+
+            // The sentence that turns four numbers into a decision (§45), below the number column.
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.6f);
+                lineY += DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                    ContractEstimateInterpretation(estimate), TextAnchor.UpperLeft);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+        }
+
+        private void DrawContractRow(
+            Rect rect,
+            RecurringContract contract,
+            int index,
+            IntercolonyWorldComponent state,
+            BusinessReportService.ContractEstimate estimate)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            float contentWidth = Mathf.Max(1f, rect.width - 220f);
+            float lineY = rect.y + 4f;
+            lineY += DrawMeasuredContractLabel(
+                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                ContractIdentity(contract), TextAnchor.UpperLeft);
+
+            GUI.color = new Color(1f, 1f, 1f, 0.7f);
+            lineY += DrawMeasuredContractLabel(
+                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                ContractPaymentSummary(contract), TextAnchor.UpperLeft);
+            GUI.color = Color.white;
+
+            string status = ContractStatusText(contract);
+            Color colour;
+            if (contract.IsPendingPlayerProposal)
+            {
+                colour = new Color(0.6f, 0.9f, 1f);
+            }
+            else if (contract.IsOffer)
+            {
+                colour = new Color(0.6f, 0.9f, 1f);
+            }
+            else if (contract.IsActive)
+            {
+                if (contract.consecutiveFailures > 0)
+                {
                     colour = Color.yellow;
+                }
+                else
+                {
+                    colour = Color.white;
                 }
             }
             else if (contract.renewalOffered)
             {
-                status = $"they would sign again — {contract.DaysUntilRenewalExpires:F1}d to answer";
                 colour = new Color(0.65f, 0.95f, 0.65f);
             }
             else if (contract.status == ContractStatus.Suspended)
             {
                 // Amber, not red. §88's suspension is not a failure and the colour has to say so —
                 // the agreement is intact and the remaining deliveries are still owed to the player.
-                status = $"suspended by war with {contract.factionName} — " +
-                         $"{contract.CyclesRemaining} deliveries still to come";
                 colour = new Color(1f, 0.8f, 0.4f);
             }
             else
             {
-                status = contract.status.ToString();
-                if (!string.IsNullOrEmpty(contract.outcomeNote))
-                {
-                    status += $": {contract.outcomeNote}";
-                }
                 colour = contract.status == ContractStatus.Completed
                     ? new Color(0.6f, 0.9f, 0.6f)
                     : new Color(0.9f, 0.6f, 0.6f);
             }
 
             GUI.color = colour;
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 48f, rect.width - 220f, 22f),
-                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — {status}");
+            lineY += DrawMeasuredContractLabel(
+                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — {status}",
+                TextAnchor.UpperLeft);
             GUI.color = Color.white;
+
+            float baseRowHeight = Mathf.Max(74f, lineY - rect.y + 4f);
+            if (estimate != null)
+            {
+                DrawContractEstimate(rect, rect.y + baseRowHeight, estimate);
+            }
 
             if (ShouldBuildTooltip(rect))
             {

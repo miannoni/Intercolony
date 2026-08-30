@@ -78,8 +78,6 @@ namespace Intercolony
             y = DrawBrandSummary(viewRect, y, state);
             y += 12f;
             y = DrawPeriodReport(viewRect, y, state);
-            y += 12f;
-            y = DrawContractEstimates(viewRect, y, state);
 
             EndPageScrollView();
 
@@ -466,95 +464,5 @@ namespace Intercolony
             return y + LineHeight + 4f;
         }
 
-        /// <summary>
-        /// §45's screen: each standing agreement, and whether it is worth having.
-        /// </summary>
-        private float DrawContractEstimates(Rect inRect, float y, IntercolonyWorldComponent state)
-        {
-            Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, 400f, 32f), "Standing agreements");
-            Text.Font = GameFont.Small;
-            y += 36f;
-
-            List<BusinessReportService.ContractEstimate> estimates =
-                BusinessReportService.ActiveEstimates(state);
-
-            if (estimates.Count == 0)
-            {
-                GUI.color = new Color(1f, 1f, 1f, 0.6f);
-                string emptyMessage = "No standing agreements. Build a trading record and settlements will propose them.";
-                float emptyMessageWidth = inRect.width - 12f;
-                float emptyMessageHeight = Text.CalcHeight(emptyMessage, emptyMessageWidth);
-                Widgets.Label(new Rect(6f, y, emptyMessageWidth, emptyMessageHeight), emptyMessage);
-                GUI.color = Color.white;
-                return y + emptyMessageHeight;
-            }
-
-            GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(6f, y, inRect.width, LineHeight),
-                "Per delivery cycle. Everything below the revenue line is an estimate.");
-            GUI.color = Color.white;
-            y += LineHeight + 4f;
-
-            foreach (BusinessReportService.ContractEstimate estimate in estimates)
-            {
-                y = DrawEstimate(new Rect(0f, y, inRect.width, 126f), estimate);
-            }
-
-            return y;
-        }
-
-        private float DrawEstimate(Rect rect, BusinessReportService.ContractEstimate estimate)
-        {
-            RecurringContract contract = estimate.contract;
-            float y = rect.y;
-
-            Widgets.Label(new Rect(6f, y, rect.width - 12f, LineHeight),
-                $"{contract.settlementName} — {contract.quantityPerCycle}x {contract.ItemLabel()} " +
-                $"every {contract.CadenceDays:F0} days" +
-                (contract.status == ContractStatus.Suspended ? "   (suspended by war)" : ""));
-            y += LineHeight;
-
-            y = EstimateLine(rect, y, "Revenue, payable", estimate.revenue);
-            y = EstimateLine(rect, y, "If you bought the goods instead", estimate.inputsIfBought);
-            y = EstimateLine(rect, y, "Wage bill over the cycle", estimate.payroll);
-            y = EstimateLine(rect, y, "Delivery premium earned, and hauled for", estimate.transport);
-
-            Widgets.DrawLineHorizontal(20f, y + 2f, 400f);
-            y += 8f;
-
-            Widgets.Label(new Rect(20f, y, 260f, LineHeight), "Estimated margin");
-
-            GUI.color = estimate.Margin >= 0 ? new Color(0.6f, 0.9f, 0.6f) : new Color(1f, 0.55f, 0.55f);
-            Text.Anchor = TextAnchor.UpperRight;
-            Widgets.Label(new Rect(280f, y, 140f, LineHeight), estimate.Margin.ToString("N0"));
-            Text.Anchor = TextAnchor.UpperLeft;
-            GUI.color = Color.white;
-
-            // The sentence that turns four numbers into a decision (§45).
-            GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(440f, y, rect.width - 450f, LineHeight),
-                estimate.Margin >= 0
-                    ? $"about {estimate.MarginPerDay:0} silver a day; making the goods rather than " +
-                      $"buying them is worth {estimate.MakingSaves:N0} a cycle"
-                    : "the wage bill alone outweighs this agreement");
-            GUI.color = Color.white;
-
-            return y + LineHeight + 12f;
-        }
-
-        private static float EstimateLine(Rect rect, float y, string label, int amount)
-        {
-            GUI.color = new Color(1f, 1f, 1f, 0.85f);
-            Widgets.Label(new Rect(20f, y, 400f, LineHeight), label);
-
-            GUI.color = amount >= 0 ? new Color(0.6f, 0.9f, 0.6f) : new Color(1f, 0.75f, 0.75f);
-            Text.Anchor = TextAnchor.UpperRight;
-            Widgets.Label(new Rect(420f, y, 140f, LineHeight), amount.ToString("N0"));
-            Text.Anchor = TextAnchor.UpperLeft;
-            GUI.color = Color.white;
-
-            return y + LineHeight;
-        }
     }
 }
