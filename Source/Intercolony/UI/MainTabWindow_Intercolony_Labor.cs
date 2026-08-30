@@ -705,9 +705,13 @@ namespace Intercolony
         private struct EmployeeRowLayout
         {
             public const float ActionWidth = 110f;
+            public const float MenuWidth = 28f;
 
             /// <summary>Width available for labels *and* the click-to-jump region.</summary>
             public float textWidth;
+
+            /// <summary>Where the contract-actions menu button goes.</summary>
+            public Rect contractActions;
 
             /// <summary>Where a second-from-right button goes, when the row draws two.</summary>
             public Rect leftAction;
@@ -717,16 +721,18 @@ namespace Intercolony
 
             public static EmployeeRowLayout For(Rect rect)
             {
+                Rect leftAction = new Rect(rect.xMax - ActionWidth * 2f - 8f, rect.y + 11f, ActionWidth, 30f);
                 EmployeeRowLayout layout = new EmployeeRowLayout
                 {
+                    contractActions = new Rect(leftAction.x - MenuWidth - 6f, rect.y + 11f, MenuWidth, 30f),
                     rightAction = new Rect(rect.xMax - ActionWidth - 4f, rect.y + 11f, ActionWidth, 30f),
-                    leftAction = new Rect(rect.xMax - ActionWidth * 2f - 8f, rect.y + 11f, ActionWidth, 30f)
+                    leftAction = leftAction
                 };
 
                 // Always reserved for two, even on rows that draw one. A row that reserved space
                 // conditionally would put the click region back under a button the moment a new
-                // state added a second one.
-                layout.textWidth = layout.leftAction.x - rect.x - 6f;
+                // state added a second one. The menu button is reserved on every row for the same reason.
+                layout.textWidth = layout.contractActions.x - rect.x - 6f;
                 return layout;
             }
         }
@@ -779,6 +785,54 @@ namespace Intercolony
                 Widgets.ButtonInvisible(new Rect(rect.x, rect.y, textWidth, rect.height)))
             {
                 CameraJumper.TryJumpAndSelect(contract.pawn);
+            }
+
+            bool hasLiveRenewalOffer = RenewalService.HasLiveOffer(contract);
+            bool canAutoRenew = contract.status == EmploymentStatus.Active &&
+                                !contract.IsOpenEnded && !contract.ServingNotice;
+
+            if (ShouldBuildTooltip(layout.contractActions))
+            {
+                TooltipHandler.TipRegion(
+                    layout.contractActions,
+                    "Contract actions for this worker.\n" +
+                    "Auto-renew accepts a renewal the worker offers and cannot make a worker stay " +
+                    "who does not want to.");
+            }
+
+            if (Widgets.ButtonText(layout.contractActions, "...",
+                    active: hasLiveRenewalOffer || canAutoRenew))
+            {
+                List<FloatMenuOption> options = new List<FloatMenuOption>();
+
+                if (hasLiveRenewalOffer)
+                {
+                    options.Add(new FloatMenuOption(
+                        $"Renew — {RenewalService.RenewalWage(contract)} silver a day",
+                        () =>
+                        {
+                            if (!RenewalService.Accept(contract, out string failReason))
+                            {
+                                Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                            }
+                        }));
+
+                    options.Add(new FloatMenuOption(
+                        "Let them go at the end of the term",
+                        () => RenewalService.Decline(contract)));
+                }
+
+                if (canAutoRenew)
+                {
+                    options.Add(new FloatMenuOption(
+                        contract.autoRenew ? "Auto-renew: on" : "Auto-renew: off",
+                        () => contract.autoRenew = !contract.autoRenew));
+                }
+
+                if (options.Count > 0)
+                {
+                    Find.WindowStack.Add(new FloatMenu(options));
+                }
             }
 
             // Paying what is owed takes priority over dismissing: it is the action that fixes
