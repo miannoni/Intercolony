@@ -1268,6 +1268,62 @@ namespace Intercolony
                     RaiseCycleOrder(state, contract);
                 }
             }
+
+            AdvanceAutoReady(state);
+        }
+
+        public static int AdvanceAutoReady(IntercolonyWorldComponent state)
+        {
+            int readied = 0;
+
+            foreach (RecurringContract contract in state.Contracts)
+            {
+                if (!contract.IsActive || !contract.autoReadyOrders ||
+                    contract.activeOrderId == 0)
+                {
+                    continue;
+                }
+
+                SalesOrder order = state.FindOrder(contract.activeOrderId);
+                if (order == null || !order.CanMarkReady)
+                {
+                    continue;
+                }
+
+                Map map = SalesOrderService.GetFulfillmentMapForReady(order);
+                if (!SalesOrderService.CanMarkReadyNow(
+                        order, map, out string reason))
+                {
+                    if (!string.IsNullOrWhiteSpace(reason) &&
+                        !order.autoReadyFailureNotified)
+                    {
+                        IntercolonyLetters.Send(
+                            IntercolonyLetterImportance.Important,
+                            "Agreement delivery needs attention",
+                            AutoReadyFailureLetterText(order, reason),
+                            LetterDefOf.NeutralEvent);
+                        order.autoReadyFailureNotified = true;
+                    }
+
+                    continue;
+                }
+
+                if (SalesOrderService.MarkReadyForPickup(order, map))
+                {
+                    readied++;
+                }
+            }
+
+            return readied;
+        }
+
+        private static string AutoReadyFailureLetterText(SalesOrder order, string reason)
+        {
+            string itemLabel = order.line?.ShortLabel() ?? "<missing item>";
+            return $"{order.settlementName}'s order #{order.id} for " +
+                   $"{order.RemainingQuantity:N0}x {itemLabel} could not be marked ready automatically.\n\n" +
+                   $"{reason}\n\n" +
+                   "The order is still open and can be marked ready by hand in Selling -> Orders.";
         }
 
         /// <summary>Lets a settlement answer a player proposal once its deliberation ends.</summary>

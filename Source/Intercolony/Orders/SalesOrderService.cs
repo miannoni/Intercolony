@@ -731,6 +731,8 @@ namespace Intercolony
                 return false;
             }
 
+            order.autoReadyFailureNotified = false;
+
             int travelDays = EstimateBuyerPickupTravelDays(order.buyerPickupDistanceTiles);
 
             // Goods are fungible, so a head count is the whole promise. Animals are not: the
@@ -758,12 +760,37 @@ namespace Intercolony
             return true;
         }
 
+        internal static Map GetFulfillmentMapForReady(SalesOrder order)
+        {
+            return ResolveFulfillmentMapForReady(order);
+        }
+
+        private static Map ResolveFulfillmentMapForReady(SalesOrder order)
+        {
+            if (order == null)
+            {
+                return null;
+            }
+
+            if (order.fulfillmentMap != null)
+            {
+                return Find.Maps?.Contains(order.fulfillmentMap) == true
+                    ? order.fulfillmentMap
+                    : null;
+            }
+
+            Map currentMap = Find.CurrentMap;
+            return currentMap?.IsPlayerHome == true
+                ? currentMap
+                : Find.AnyPlayerHomeMap;
+        }
+
         /// <summary>
         /// Applies the complete, non-mutating decision used before declaring pickup goods ready.
         /// The returned reason omits the order prefix so pre-creation callers can present the
         /// same detail without pretending that an order already exists.
         /// </summary>
-        internal static bool CanMarkReadyNow(SalesOrder order, Map map, out string reason)
+        public static bool CanMarkReadyNow(SalesOrder order, Map map, out string reason)
         {
             return CanMarkReadyNow(order, map, out reason, out _);
         }

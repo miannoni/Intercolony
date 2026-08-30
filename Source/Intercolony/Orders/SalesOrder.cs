@@ -146,6 +146,9 @@ namespace Intercolony
         /// <summary>Set when the order ends, for the orders list and any later dispute handling.</summary>
         public string outcomeNote = "";
 
+        // Deliberately unsaved: this reminder resets on load.
+        public bool autoReadyFailureNotified;
+
         private DeliveredQualityResult actualDeliveredQuality =
             DeliveredQualityResult.NoEvidence;
 

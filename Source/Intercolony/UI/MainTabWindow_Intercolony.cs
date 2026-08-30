@@ -5087,23 +5087,7 @@ namespace Intercolony
             // Buyer pickup: the player declares the goods ready and the buyer travels (§25.2).
             if (order.CanMarkReady)
             {
-                // A recorded colony remains authoritative and may not be redirected if it is
-                // gone. Legacy cycle orders with no record can adopt the colony the player is
-                // acting from; the service persists that choice after validation succeeds.
-                Map map;
-                if (order.fulfillmentMap != null)
-                {
-                    map = Find.Maps?.Contains(order.fulfillmentMap) == true
-                        ? order.fulfillmentMap
-                        : null;
-                }
-                else
-                {
-                    Map currentMap = Find.CurrentMap;
-                    map = currentMap?.IsPlayerHome == true
-                        ? currentMap
-                        : Find.AnyPlayerHomeMap;
-                }
+                Map map = SalesOrderService.GetFulfillmentMapForReady(order);
                 OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
                 bool enough = validation.Success;
 

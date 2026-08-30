@@ -1628,6 +1628,8 @@ namespace Intercolony
                     SalesOrderService.FailOverdue(orders);
                 }
 
+                ContractService.AdvanceAutoReady(this);
+
                 // Purchases become ready on their own schedule; checking hourly means the
                 // "ready to collect" letter lands near the moment it describes (§17).
                 if (purchaseOrders.Count > 0)
