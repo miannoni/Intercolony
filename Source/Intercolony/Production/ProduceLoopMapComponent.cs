@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using RimWorld;
 using Verse;
 
 namespace Intercolony
@@ -13,6 +14,121 @@ namespace Intercolony
 
         public ProduceLoopMapComponent(Map map) : base(map)
         {
+        }
+
+        public override void MapComponentTick()
+        {
+            base.MapComponentTick();
+
+            if (!map.IsHashIntervalTick(60))
+            {
+                return;
+            }
+
+            List<ProduceLoopRecord> snapshot = new List<ProduceLoopRecord>(loops);
+            for (int i = 0; i < snapshot.Count; i++)
+            {
+                TickLoop(snapshot[i]);
+            }
+        }
+
+        private void TickLoop(ProduceLoopRecord loop)
+        {
+            if (loop.thingDef == null || !loop.cell.InBounds(map) || !loop.thingDef.Minifiable)
+            {
+                Disable(loop.cell);
+                return;
+            }
+
+            List<Thing> thingsAtCell = map.thingGrid.ThingsListAt(loop.cell);
+            for (int i = 0; i < thingsAtCell.Count; i++)
+            {
+                Thing thing = thingsAtCell[i];
+                if (thing is Blueprint blueprint && blueprint.def.entityDefToBuild == loop.thingDef)
+                {
+                    return;
+                }
+
+                if (thing is Frame frame && frame.def.entityDefToBuild == loop.thingDef)
+                {
+                    return;
+                }
+            }
+
+            Building finishedBuilding = null;
+            for (int i = 0; i < thingsAtCell.Count; i++)
+            {
+                if (thingsAtCell[i] is Building building && building.def == loop.thingDef)
+                {
+                    finishedBuilding = building;
+                    break;
+                }
+            }
+
+            if (finishedBuilding != null)
+            {
+                if (map.designationManager.DesignationOn(finishedBuilding, DesignationDefOf.Uninstall) != null ||
+                    map.designationManager.DesignationOn(finishedBuilding, DesignationDefOf.Deconstruct) != null ||
+                    !PassesVanillaUninstallEligibility(finishedBuilding))
+                {
+                    return;
+                }
+
+                if (finishedBuilding.Faction != Faction.OfPlayer)
+                {
+                    finishedBuilding.SetFaction(Faction.OfPlayer);
+                }
+
+                if (finishedBuilding.GetStatValue(StatDefOf.WorkToBuild) == 0f || finishedBuilding.def.IsFrame)
+                {
+                    finishedBuilding.Uninstall();
+                }
+                else
+                {
+                    map.designationManager.AddDesignation(
+                        new Designation(finishedBuilding, DesignationDefOf.Uninstall));
+                }
+
+                return;
+            }
+
+            if (!GenConstruct.CanPlaceBlueprintAt(
+                    loop.thingDef,
+                    loop.cell,
+                    loop.rotation,
+                    map,
+                    stuffDef: loop.stuffDef).Accepted)
+            {
+                return;
+            }
+
+            GenConstruct.PlaceBlueprintForBuild(
+                loop.thingDef,
+                loop.cell,
+                map,
+                loop.rotation,
+                Faction.OfPlayer,
+                loop.stuffDef,
+                styleDef: loop.styleDef);
+        }
+
+        private static bool PassesVanillaUninstallEligibility(Building building)
+        {
+            if (building.def.category != ThingCategory.Building || !building.def.Minifiable)
+            {
+                return false;
+            }
+
+            if (!DebugSettings.godMode && building.Faction != Faction.OfPlayer &&
+                !building.def.building.alwaysUninstallable)
+            {
+                if (building.Faction != null || !building.ClaimableBy(Faction.OfPlayer).Accepted)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         public static ProduceLoopMapComponent For(Map map)
