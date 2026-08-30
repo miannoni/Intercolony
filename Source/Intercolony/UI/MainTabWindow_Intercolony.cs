@@ -3984,15 +3984,42 @@ namespace Intercolony
             return height + 12f;
         }
 
+        private const string ContractAutoReadyLabel = "Auto-ready orders";
+
+        private static bool CanShowContractAutoReady(RecurringContract contract)
+        {
+            return contract.IsActive &&
+                   contract.fulfillment == FulfillmentMode.BuyerPickup;
+        }
+
+        private static float ContractAutoReadyRowHeight(
+            RecurringContract contract, float tableWidth)
+        {
+            if (!CanShowContractAutoReady(contract))
+            {
+                return 0f;
+            }
+
+            float contentWidth = Mathf.Max(1f, tableWidth - 220f);
+            return Mathf.Max(
+                24f,
+                Text.CalcHeight(
+                    ContractAutoReadyLabel, Mathf.Max(1f, contentWidth - 28f)));
+        }
+
         private static float ContractRowHeight(
             RecurringContract contract,
             BusinessReportService.ContractEstimate estimate,
             float tableWidth)
         {
             float height = ContractBaseRowHeight(contract, tableWidth);
-            return estimate == null
-                ? height
-                : height + ContractEstimateBlockHeight(estimate, tableWidth);
+            if (estimate != null)
+            {
+                height += ContractEstimateBlockHeight(estimate, tableWidth);
+            }
+
+            height += ContractAutoReadyRowHeight(contract, tableWidth);
+            return height;
         }
 
         private static float DrawContractEstimateLine(
@@ -4179,10 +4206,36 @@ namespace Intercolony
                 TextAnchor.UpperLeft);
             GUI.color = Color.white;
 
-            float baseRowHeight = Mathf.Max(74f, lineY - rect.y + 4f);
+            float baseRowHeight = ContractBaseRowHeight(contract, rect.width);
+            float contentY = rect.y + baseRowHeight;
             if (estimate != null)
             {
-                DrawContractEstimate(rect, rect.y + baseRowHeight, estimate);
+                DrawContractEstimate(rect, contentY, estimate);
+                contentY += ContractEstimateBlockHeight(estimate, rect.width);
+            }
+
+            float autoReadyRowHeight = ContractAutoReadyRowHeight(contract, rect.width);
+            if (autoReadyRowHeight > 0f)
+            {
+                Rect autoReadyRect = new Rect(
+                    rect.x + 6f, contentY, contentWidth, autoReadyRowHeight);
+                Widgets.CheckboxLabeled(
+                    autoReadyRect, ContractAutoReadyLabel, ref contract.autoReadyOrders);
+
+                if (ShouldBuildTooltip(autoReadyRect))
+                {
+                    TooltipHandler.TipRegion(
+                        autoReadyRect,
+                        "Each delivery cycle raises an order. With this on, the order is " +
+                        "marked ready by itself as soon as the goods are actually in the colony.\n\n" +
+                        "It never marks an order ready without the stock, never redirects to a " +
+                        "different colony, and applies exactly the same checks as the Mark ready " +
+                        "button.\n\n" +
+                        "If marking ready fails, the order stays open and needs marking by hand, " +
+                        "and you get one letter saying why.");
+                }
+
+                contentY += autoReadyRowHeight;
             }
 
             if (ShouldBuildTooltip(rect))

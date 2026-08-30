@@ -762,11 +762,6 @@ namespace Intercolony
 
         internal static Map GetFulfillmentMapForReady(SalesOrder order)
         {
-            return ResolveFulfillmentMapForReady(order);
-        }
-
-        private static Map ResolveFulfillmentMapForReady(SalesOrder order)
-        {
             if (order == null)
             {
                 return null;
