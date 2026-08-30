@@ -30,6 +30,7 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -48,6 +49,12 @@ namespace Intercolony
             public void Info(string line)
             {
                 sb.AppendLine($"        {line}");
+            }
+
+            public void Skip(string label, string detail)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {label} — {detail}");
             }
         }
 
@@ -74,6 +81,8 @@ namespace Intercolony
                 CheckOpenEndedContract(r);
                 CheckNoticeRules(r);
                 CheckRenewalGating(r, state);
+                CheckAutoRenewal(r, state);
+                CheckSupplyAutoReady(r, state, map);
                 CheckNothingLapsesSilently(r);
             }
             catch (System.Exception ex)
@@ -308,6 +317,451 @@ namespace Intercolony
                 "a renewal cannot be accepted twice");
         }
 
+        private static void CheckAutoRenewal(Results r, IntercolonyWorldComponent state)
+        {
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+
+            try
+            {
+                EmploymentContract good = Synthetic(CombatClause.Civilian, 40, 30);
+                good.autoRenew = true;
+                bool wouldRenew = RenewalService.WouldRenew(
+                    state, good, out string goodWhy);
+                int oldEndTick = good.endTick;
+                int oldWage = good.dailyWage;
+
+                RenewalService.Advance(good);
+                RenewalService.AdvanceAutoRenew(good);
+
+                r.Check(
+                    wouldRenew && good.renewals == 1 && !good.renewalOffered,
+                    "auto-renew accepts a live offer",
+                    $"eligible={wouldRenew}, renewals={good.renewals}, " +
+                    $"offer={good.renewalOffered}, reason={Trim(goodWhy)}");
+                r.Check(
+                    good.endTick > oldEndTick && good.dailyWage > oldWage,
+                    "the renewed term restarts and the wage rises",
+                    $"end {oldEndTick}->{good.endTick}, wage {oldWage}->{good.dailyWage}");
+
+                EmploymentContract off = Synthetic(CombatClause.Civilian, 40, 30);
+                off.autoRenew = false;
+                RenewalService.Advance(off);
+                RenewalService.AdvanceAutoRenew(off);
+                r.Check(
+                    RenewalService.HasLiveOffer(off) && off.renewals == 0,
+                    "auto-renew off leaves the offer standing",
+                    $"liveOffer={RenewalService.HasLiveOffer(off)}, renewals={off.renewals}");
+
+                EmploymentContract refused = Synthetic(CombatClause.Civilian, 40, 30);
+                refused.arrearsSilver = 200;
+                refused.autoRenew = true;
+                RenewalService.Advance(refused);
+                RenewalService.AdvanceAutoRenew(refused);
+                r.Check(
+                    refused.renewals == 0 && refused.renewalDeclinedByWorker,
+                    "auto-renew cannot overrule a worker who refuses",
+                    $"renewals={refused.renewals}, declinedByWorker={refused.renewalDeclinedByWorker}");
+
+                EmploymentContract open = Synthetic(CombatClause.Civilian, 40, 30);
+                open.termDays = 0;
+                open.endTick = -1;
+                open.autoRenew = true;
+                RenewalService.Advance(open);
+                RenewalService.AdvanceAutoRenew(open);
+                r.Check(
+                    open.renewals == 0 && !open.renewalOffered,
+                    "auto-renew does not touch an open-ended contract",
+                    $"renewals={open.renewals}, offer={open.renewalOffered}");
+            }
+            finally
+            {
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+            }
+        }
+
+        private static void CheckSupplyAutoReady(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const string ReadyAssertion = "auto-ready marks a ready cycle order ready";
+            const string AutoReadyOffAssertion = "auto-ready off leaves the order alone";
+            const string MissingGoodsAssertion = "auto-ready refuses when the goods are not there";
+            const string FailureThrottleAssertion = "the failure letter is sent once, not every pass";
+            const string SellerDeliveryAssertion =
+                "a seller-delivery cycle order is never auto-readied";
+
+            Map fulfillmentMap = map?.IsPlayerHome == true ? map : Find.AnyPlayerHomeMap;
+            ThingDef probeDef = FindAutoReadyProbeDef(state, fulfillmentMap);
+            List<RecurringContract> testContracts = new List<RecurringContract>();
+            List<SalesOrder> testOrders = new List<SalesOrder>();
+            List<Zone_Stockpile> testZones = new List<Zone_Stockpile>();
+            List<Thing> testThings = new List<Thing>();
+            List<RecurringContract> existingAutoReady = new List<RecurringContract>();
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+
+            foreach (RecurringContract existing in state.Contracts)
+            {
+                if (existing != null && existing.autoReadyOrders)
+                {
+                    existingAutoReady.Add(existing);
+                    existing.autoReadyOrders = false;
+                }
+            }
+
+            try
+            {
+                if (probeDef == null || fulfillmentMap == null)
+                {
+                    string missingFixture = fulfillmentMap == null
+                        ? "no player-home fulfillment map"
+                        : "no isolated valid tradable item definition";
+                    r.Skip(ReadyAssertion, missingFixture);
+                    r.Skip(AutoReadyOffAssertion, missingFixture);
+                    r.Skip(MissingGoodsAssertion, missingFixture);
+                    r.Skip(FailureThrottleAssertion, missingFixture);
+                    r.Skip(SellerDeliveryAssertion, missingFixture);
+                    return;
+                }
+
+                string stockFailure = null;
+                bool storedStock = TrySpawnStoredStock(
+                    fulfillmentMap, probeDef, testZones, testThings, out stockFailure);
+
+                if (!storedStock)
+                {
+                    r.Skip(
+                        ReadyAssertion,
+                        stockFailure ?? "no isolated tradable item and player-home map");
+                    r.Skip(
+                        AutoReadyOffAssertion,
+                        "the shared real-stock fixture could not be placed");
+                }
+                else
+                {
+                    RecurringContract readyContract = AddAutoReadyFixture(
+                        state, fulfillmentMap, probeDef, autoReadyOrders: true,
+                        FulfillmentMode.BuyerPickup, -89101, -89102,
+                        testContracts, testOrders, out SalesOrder readyOrder);
+                    int readied = ContractService.AdvanceAutoReady(state);
+                    r.Check(
+                        readied == 1 && readyOrder.status == SalesOrderStatus.AwaitingCollection,
+                        ReadyAssertion,
+                        $"readied={readied}, status={readyOrder.status}");
+                    state.Contracts.Remove(readyContract);
+                    state.Orders.Remove(readyOrder);
+
+                    RecurringContract offContract = AddAutoReadyFixture(
+                        state, fulfillmentMap, probeDef, autoReadyOrders: false,
+                        FulfillmentMode.BuyerPickup, -89103, -89104,
+                        testContracts, testOrders, out SalesOrder offOrder);
+                    int readiedWithAutoReadyOff = ContractService.AdvanceAutoReady(state);
+                    r.Check(
+                        readiedWithAutoReadyOff == 0 && offOrder.status == SalesOrderStatus.Accepted,
+                        AutoReadyOffAssertion,
+                        $"readied={readiedWithAutoReadyOff}, status={offOrder.status}");
+                    state.Contracts.Remove(offContract);
+                    state.Orders.Remove(offOrder);
+                }
+
+                DestroyTestThings(testThings);
+
+                RecurringContract absentContract = AddAutoReadyFixture(
+                    state, fulfillmentMap, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.BuyerPickup, -89105, -89106,
+                    testContracts, testOrders, out SalesOrder absentOrder);
+                int absentReadied = ContractService.AdvanceAutoReady(state);
+                r.Check(
+                    absentReadied == 0 && absentOrder.status == SalesOrderStatus.Accepted &&
+                    absentOrder.IsOpen && absentOrder.autoReadyFailureNotified,
+                    MissingGoodsAssertion,
+                    $"readied={absentReadied}, status={absentOrder.status}, " +
+                    $"open={absentOrder.IsOpen}, notified={absentOrder.autoReadyFailureNotified}");
+                state.Contracts.Remove(absentContract);
+                state.Orders.Remove(absentOrder);
+
+                RecurringContract throttledContract = AddAutoReadyFixture(
+                    state, fulfillmentMap, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.BuyerPickup, -89107, -89108,
+                    testContracts, testOrders, out SalesOrder throttledOrder);
+                int firstFailurePass = ContractService.AdvanceAutoReady(state);
+                bool notifiedAfterFirstPass = throttledOrder.autoReadyFailureNotified;
+                int secondFailurePass = ContractService.AdvanceAutoReady(state);
+                bool notifiedAfterSecondPass = throttledOrder.autoReadyFailureNotified;
+                r.Check(
+                    firstFailurePass == 0 && secondFailurePass == 0 &&
+                    notifiedAfterFirstPass && notifiedAfterSecondPass,
+                    FailureThrottleAssertion,
+                    $"passes={firstFailurePass}/{secondFailurePass}, " +
+                    $"notified={notifiedAfterFirstPass}/{notifiedAfterSecondPass}");
+                state.Contracts.Remove(throttledContract);
+                state.Orders.Remove(throttledOrder);
+
+                RecurringContract sellerDeliveryContract = AddAutoReadyFixture(
+                    state, fulfillmentMap, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.SellerDelivery, -89109, -89110,
+                    testContracts, testOrders, out SalesOrder sellerDeliveryOrder);
+                int sellerDeliveryReadied = ContractService.AdvanceAutoReady(state);
+                r.Check(
+                    sellerDeliveryReadied == 0 &&
+                    sellerDeliveryOrder.status == SalesOrderStatus.Accepted &&
+                    !sellerDeliveryOrder.CanMarkReady,
+                    SellerDeliveryAssertion,
+                    $"readied={sellerDeliveryReadied}, status={sellerDeliveryOrder.status}, " +
+                    $"canMarkReady={sellerDeliveryOrder.CanMarkReady}");
+                state.Contracts.Remove(sellerDeliveryContract);
+                state.Orders.Remove(sellerDeliveryOrder);
+            }
+            finally
+            {
+                foreach (RecurringContract contract in testContracts)
+                {
+                    state.Contracts.Remove(contract);
+                }
+
+                foreach (SalesOrder order in testOrders)
+                {
+                    state.Orders.Remove(order);
+                }
+
+                DestroyTestThings(testThings);
+                foreach (Zone_Stockpile zone in testZones)
+                {
+                    zone?.Delete(playSound: false);
+                }
+
+                foreach (RecurringContract existing in existingAutoReady)
+                {
+                    existing.autoReadyOrders = true;
+                }
+
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+            }
+        }
+
+        private static ThingDef FindAutoReadyProbeDef(
+            IntercolonyWorldComponent state, Map fulfillmentMap)
+        {
+            if (state == null || fulfillmentMap == null || Find.Maps == null)
+            {
+                return null;
+            }
+
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null || candidate.category != ThingCategory.Item ||
+                    candidate.stackLimit < 1 || candidate.MadeFromStuff)
+                {
+                    continue;
+                }
+
+                bool alreadyStocked = false;
+                foreach (Map loadedMap in Find.Maps)
+                {
+                    foreach (KeyValuePair<ThingDef, int> entry in
+                             FindBuyerService.ColonyStock(loadedMap))
+                    {
+                        if (entry.Key == candidate && entry.Value > 0)
+                        {
+                            alreadyStocked = true;
+                            break;
+                        }
+                    }
+
+                    if (alreadyStocked)
+                    {
+                        break;
+                    }
+                }
+
+                if (alreadyStocked)
+                {
+                    continue;
+                }
+
+                bool alreadyOrdered = false;
+                foreach (SalesOrder existing in state.Orders)
+                {
+                    if (existing?.ThingDef == candidate)
+                    {
+                        alreadyOrdered = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyOrdered)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TrySpawnStoredStock(
+            Map map, ThingDef def, List<Zone_Stockpile> testZones,
+            List<Thing> testThings, out string failure)
+        {
+            failure = null;
+            if (map == null || def == null || map.zoneManager == null)
+            {
+                failure = "no player-home map, isolated tradable item, or zone manager";
+                return false;
+            }
+
+            IntVec3 storageCell = IntVec3.Invalid;
+            IntVec3 root = DropCellFinder.TradeDropSpot(map);
+            foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+            {
+                if (candidate.InBounds(map) && candidate.Standable(map) &&
+                    candidate.GetFirstItem(map) == null && map.zoneManager.ZoneAt(candidate) == null)
+                {
+                    storageCell = candidate;
+                    break;
+                }
+            }
+
+            if (!storageCell.IsValid)
+            {
+                failure = "no empty unzoned cell near the trade drop spot";
+                return false;
+            }
+
+            Zone_Stockpile zone = new Zone_Stockpile(
+                StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+            map.zoneManager.RegisterZone(zone);
+            testZones.Add(zone);
+            zone.AddCell(storageCell);
+
+            try
+            {
+                Thing stack = ThingMaker.MakeThing(def);
+                stack.stackCount = 1;
+                testThings.Add(stack);
+                Thing spawned = GenSpawn.Spawn(stack, storageCell, map);
+                if (spawned != null && spawned != stack)
+                {
+                    testThings.Add(spawned);
+                }
+
+                if (spawned == null || spawned.Destroyed ||
+                    !OrderValidator.IsAvailableColonyStock(spawned))
+                {
+                    failure = "the spawned item was not genuinely available in colony storage";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                failure = $"could not create stored test stock: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static RecurringContract AddAutoReadyFixture(
+            IntercolonyWorldComponent state, Map fulfillmentMap, ThingDef def,
+            bool autoReadyOrders, FulfillmentMode fulfillment, int contractId, int orderId,
+            List<RecurringContract> testContracts, List<SalesOrder> testOrders,
+            out SalesOrder order)
+        {
+            RecurringContract contract = new RecurringContract
+            {
+                id = contractId,
+                settlementId = -1,
+                settlementName = "Auto-ready self-test buyer",
+                factionName = "Auto-ready self-test faction",
+                thingDef = def,
+                quantityPerCycle = 1,
+                cadenceTicks = GenDate.TicksPerDay,
+                totalCycles = 1,
+                unitPrice = 1f,
+                fulfillment = fulfillment,
+                status = ContractStatus.Active,
+                nextCycleTick = GenTicks.TicksGame + GenDate.TicksPerDay,
+                autoReadyOrders = autoReadyOrders
+            };
+
+            order = new SalesOrder
+            {
+                id = orderId,
+                contractId = contractId,
+                settlementId = -1,
+                settlementName = "Auto-ready self-test buyer",
+                factionName = "Auto-ready self-test faction",
+                line = new OrderLine(def, 1),
+                unitPrice = 1f,
+                acceptedTick = GenTicks.TicksGame,
+                deadlineTick = GenTicks.TicksGame + 10 * GenDate.TicksPerDay,
+                fulfillment = fulfillment,
+                fulfillmentMap = fulfillmentMap,
+                status = SalesOrderStatus.Accepted
+            };
+
+            contract.activeOrderId = order.id;
+            state.AddContract(contract);
+            state.AddOrder(order);
+            testContracts.Add(contract);
+            testOrders.Add(order);
+            return contract;
+        }
+
+        private static List<Letter> SnapshotLetters()
+        {
+            return Find.LetterStack == null
+                ? new List<Letter>()
+                : new List<Letter>(Find.LetterStack.LettersListForReading);
+        }
+
+        private static List<IArchivable> SnapshotArchivables()
+        {
+            return Find.Archive == null
+                ? new List<IArchivable>()
+                : new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+        }
+
+        private static void RemoveGeneratedLetters(
+            List<Letter> existingLetters, List<IArchivable> existingArchivables)
+        {
+            if (Find.LetterStack != null)
+            {
+                List<Letter> currentLetters =
+                    new List<Letter>(Find.LetterStack.LettersListForReading);
+                foreach (Letter letter in currentLetters)
+                {
+                    if (!existingLetters.Contains(letter))
+                    {
+                        Find.LetterStack.RemoveLetter(letter);
+                    }
+                }
+            }
+
+            if (Find.Archive != null)
+            {
+                List<IArchivable> currentArchivables =
+                    new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+                foreach (IArchivable archivable in currentArchivables)
+                {
+                    if (!existingArchivables.Contains(archivable) && archivable is Letter)
+                    {
+                        Find.Archive.Remove(archivable);
+                    }
+                }
+            }
+        }
+
+        private static void DestroyTestThings(List<Thing> testThings)
+        {
+            foreach (Thing thing in testThings)
+            {
+                if (thing != null && !thing.Destroyed)
+                {
+                    thing.Destroy(DestroyMode.Vanish);
+                }
+            }
+        }
+
         // --- §115's second acceptance criterion --------------------------------------------
 
         /// <summary>
@@ -394,7 +848,9 @@ namespace Intercolony
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine(
+                $"  {r.passed} passed, {r.failed} failed" +
+                (r.skipped == 0 ? "." : $", {r.skipped} skipped."));
             return r.sb.ToString();
         }
     }
