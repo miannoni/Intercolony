@@ -25,6 +25,11 @@ namespace Intercolony
                 return;
             }
 
+            RunPass();
+        }
+
+        internal void RunPass()
+        {
             List<ProduceLoopRecord> snapshot = new List<ProduceLoopRecord>(loops);
             for (int i = 0; i < snapshot.Count; i++)
             {

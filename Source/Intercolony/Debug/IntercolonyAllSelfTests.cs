@@ -171,7 +171,9 @@ namespace Intercolony
             new SelfTestDefinition("employer-reputation", "employer reputation", true,
                 (s, m) => IntercolonyEmployerReputationSelfTest.Run(s, m)),
             new SelfTestDefinition("long-term", "long term", true,
-                (s, m) => IntercolonyLongTermSelfTest.Run(s, m))
+                (s, m) => IntercolonyLongTermSelfTest.Run(s, m)),
+            new SelfTestDefinition("produce", "produce", true,
+                (s, m) => IntercolonyProduceSelfTest.Run(s, m))
         };
 
         /// <summary>Every suite this runner knows about, in the order it runs them.</summary>

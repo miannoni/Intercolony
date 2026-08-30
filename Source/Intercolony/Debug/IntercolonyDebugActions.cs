@@ -1911,6 +1911,13 @@ namespace Intercolony
                 IntercolonyLongTermSelfTest.Run(state, Find.CurrentMap)));
         }
 
+        [DebugAction(Category, "Run produce self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 68)]
+        private static void RunProduceSelfTest()
+        {
+            WithGuardedState(state => IntercolonyLog.Message(
+                IntercolonyProduceSelfTest.Run(state, Find.CurrentMap)));
+        }
+
         [DebugAction(Category, "Run job posting self-test", allowedGameStates = AllowedGameStates.PlayingOnMap, displayPriority = 63)]
         private static void RunJobPostingSelfTest()
         {
