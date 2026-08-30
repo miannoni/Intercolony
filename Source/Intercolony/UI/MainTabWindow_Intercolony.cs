@@ -3354,6 +3354,26 @@ namespace Intercolony
             return new Color(0.9f, 0.6f, 0.6f);
         }
 
+        private static bool CanShowProcurementAutoReady(ProcurementContract contract)
+        {
+            return contract.status == ProcurementContractStatus.Active;
+        }
+
+        private static float ProcurementAutoReadyRowHeight(
+            ProcurementContract contract, float tableWidth)
+        {
+            if (!CanShowProcurementAutoReady(contract))
+            {
+                return 0f;
+            }
+
+            float contentWidth = Mathf.Max(1f, tableWidth - 220f);
+            return Mathf.Max(
+                24f,
+                Text.CalcHeight(
+                    ContractAutoReadyLabel, Mathf.Max(1f, contentWidth - 28f)));
+        }
+
         private static float ProcurementContractRowHeight(
             ProcurementContract contract, float rowWidth)
         {
@@ -3367,6 +3387,7 @@ namespace Intercolony
             height += Mathf.Max(Text.LineHeight, Text.CalcHeight(identity, contentWidth));
             height += Mathf.Max(Text.LineHeight, Text.CalcHeight(payment, contentWidth));
             height += Mathf.Max(Text.LineHeight, Text.CalcHeight(status, contentWidth));
+            height += ProcurementAutoReadyRowHeight(contract, rowWidth);
             return Mathf.Max(74f, height + 4f);
         }
 
@@ -3410,9 +3431,33 @@ namespace Intercolony
             string status =
                 $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
                 ProcurementContractStatusText(contract);
-            DrawMeasuredProcurementLabel(
+            lineY += DrawMeasuredProcurementLabel(
                 new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight), status);
             GUI.color = Color.white;
+
+            float autoReadyRowHeight = ProcurementAutoReadyRowHeight(contract, rect.width);
+            if (autoReadyRowHeight > 0f)
+            {
+                Rect autoReadyRect = new Rect(
+                    rect.x + 6f, lineY, contentWidth, autoReadyRowHeight);
+                Widgets.CheckboxLabeled(
+                    autoReadyRect, ContractAutoReadyLabel, ref contract.autoReadyOrders);
+
+                if (ShouldBuildTooltip(autoReadyRect))
+                {
+                    TooltipHandler.TipRegion(
+                        autoReadyRect,
+                        "Cycles are paid automatically either way; this only changes what happens " +
+                        "when the colony cannot afford one.\n\n" +
+                        "When this is on, a cycle that cannot be paid for waits instead of " +
+                        "counting as a failed delivery. If the silver arrives within one cadence, " +
+                        "the cycle goes through by itself.\n\n" +
+                        "It only waits on money: a supplier that is gone or invalid terms still " +
+                        "fails the cycle straight away, and you get one letter either way.");
+                }
+
+                lineY += autoReadyRowHeight;
+            }
 
             if (contract.status == ProcurementContractStatus.Offered &&
                 contract.IsPendingProposal)
