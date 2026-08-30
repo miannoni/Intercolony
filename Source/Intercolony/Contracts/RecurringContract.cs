@@ -127,6 +127,12 @@ namespace Intercolony
         /// <summary>Runs of this agreement beyond the first.</summary>
         public int renewals;
 
+        /// <summary>
+        /// When set, a cycle order whose goods are actually present is marked ready without the
+        /// player clicking Mark ready.
+        /// </summary>
+        public bool autoReadyOrders;
+
         public float DaysUntilRenewalExpires =>
             (renewalExpiryTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
 
@@ -286,6 +292,7 @@ namespace Intercolony
             Scribe_Values.Look(ref renewalOffered, "renewalOffered", false);
             Scribe_Values.Look(ref renewalExpiryTick, "renewalExpiryTick", 0);
             Scribe_Values.Look(ref renewals, "renewals", 0);
+            Scribe_Values.Look(ref autoReadyOrders, "autoReadyOrders", false);
             Scribe_Values.Look(ref activeOrderId, "activeOrderId", 0);
             Scribe_Values.Look(ref consecutiveFailures, "consecutiveFailures", 0);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");

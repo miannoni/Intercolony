@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 56;
+        public const int CurrentSaveVersion = 57;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -2602,6 +2602,16 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     "  schema 55 -> 56: durable completed-trade value added; existing totals start " +
                     "at zero because historical silver cannot be reconstructed honestly.");
+            }
+
+            if (saveVersion < 57)
+            {
+                // 56 -> 57 added per-contract auto-renew and auto-ready flags. Both C# and
+                // Scribe defaults are false, so existing agreements and employments need no
+                // field initialisation.
+                IntercolonyLog.Message(
+                    "  schema 56 -> 57: per-contract auto-renew and auto-ready flags added; " +
+                    "existing agreements and employments keep them off.");
             }
 
             saveVersion = CurrentSaveVersion;

@@ -244,6 +244,12 @@ namespace Intercolony
         /// <summary>Number of completed renewal runs beyond the first agreement.</summary>
         public int renewals;
 
+        /// <summary>
+        /// When set, a cycle whose payment cannot be met waits and retries until its deadline
+        /// instead of being counted as a failed cycle immediately.
+        /// </summary>
+        public bool autoReadyOrders;
+
         /// <summary>Why a terminal proposal did not become an active agreement.</summary>
         public string outcomeNote = "";
 
@@ -503,6 +509,7 @@ namespace Intercolony
             Scribe_Values.Look(ref renewalOffered, "renewalOffered", false);
             Scribe_Values.Look(ref renewalExpiryTick, "renewalExpiryTick", 0);
             Scribe_Values.Look(ref renewals, "renewals", 0);
+            Scribe_Values.Look(ref autoReadyOrders, "autoReadyOrders", false);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit && settlementName == null)

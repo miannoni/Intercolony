@@ -226,6 +226,12 @@ namespace Intercolony
         /// <summary>How many terms this worker has signed on for beyond the first.</summary>
         public int renewals;
 
+        /// <summary>
+        /// When set, a renewal offer the worker actually makes is accepted without the player
+        /// clicking Renew. It does not bypass eligibility — the worker still has to offer.
+        /// </summary>
+        public bool autoRenew;
+
         // --- Attachment (§44, §116) ---------------------------------------------------------
 
         /// <summary>A live offer to stay permanently is waiting on the player.</summary>
@@ -459,6 +465,7 @@ namespace Intercolony
             Scribe_Values.Look(ref renewalDeclinedByPlayer, "renewalDeclinedByPlayer", false);
             Scribe_Values.Look(ref renewalWage, "renewalWage", 0);
             Scribe_Values.Look(ref renewals, "renewals", 0);
+            Scribe_Values.Look(ref autoRenew, "autoRenew", false);
             Scribe_Values.Look(ref transitionOffered, "transitionOffered", false);
             Scribe_Values.Look(ref transitionOfferedTick, "transitionOfferedTick", -1);
             Scribe_Values.Look(ref transitionResolved, "transitionResolved", false);
