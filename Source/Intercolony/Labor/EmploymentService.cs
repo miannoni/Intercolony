@@ -408,6 +408,7 @@ namespace Intercolony
                 // Renewal is offered before expiry, not at it (§115): a worker who would stay says
                 // so while there is still time to answer.
                 RenewalService.Advance(contract);
+                RenewalService.AdvanceAutoRenew(contract);
 
                 // §44's larger sibling: a worker who has been here long enough, and been treated
                 // well enough, asks to stay for good rather than just for another term.

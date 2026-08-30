@@ -101,6 +101,30 @@ namespace Intercolony
                 LetterDefOf.PositiveEvent, contract.pawn);
         }
 
+        public static bool AdvanceAutoRenew(EmploymentContract contract)
+        {
+            if (contract == null || !contract.autoRenew || !HasLiveOffer(contract))
+            {
+                return false;
+            }
+
+            bool renewed = Accept(contract, out string failReason);
+            if (!renewed)
+            {
+                return false;
+            }
+
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
+                $"{contract.workerName} renewed automatically",
+                $"{contract.workerName} renewed automatically at {contract.dailyWage} silver a day " +
+                $"for another {contract.TermLabel} term.\n\n" +
+                "Auto-renew is on for this worker and can be turned off in the Labor tab.",
+                LetterDefOf.PositiveEvent, contract.pawn);
+
+            return renewed;
+        }
+
         /// <summary>
         /// Whether this worker wants to come back, and if not, what stopped them.
         ///
