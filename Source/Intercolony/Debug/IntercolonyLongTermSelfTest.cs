@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
@@ -56,6 +57,34 @@ namespace Intercolony
                 skipped++;
                 sb.AppendLine($"  SKIPPED  {label} — {detail}");
             }
+        }
+
+        private sealed class ProcurementContractDiagnosticSnapshot
+        {
+            public ProcurementContract contract;
+            public ProcurementContractStatus status;
+            public float unitPrice;
+            public int quantityPerCycle;
+            public int cyclesCompleted;
+            public int cyclesFailed;
+            public int totalCycles;
+            public int activeOrderId;
+            public int nextCycleTick;
+            public int nextCycleTickOffset;
+            public bool autoReadyWaitNotified;
+            public string outcomeNote;
+        }
+
+        private sealed class ProcurementDiagnosticSnapshot
+        {
+            public ProcurementContractDiagnosticSnapshot target;
+            public int silverCount;
+            public bool canPayForPurchase;
+            public string paymentReason;
+            public int contractCount;
+            public int activeContractCount;
+            public readonly List<ProcurementContractDiagnosticSnapshot> contracts =
+                new List<ProcurementContractDiagnosticSnapshot>();
         }
 
         public static string Run(IntercolonyWorldComponent state, Map map)
@@ -752,15 +781,25 @@ namespace Intercolony
                 ProcurementContract fundable = AddFixture(
                     -89201, autoReadyOrders: true, quantity: 1, unitPrice: 1f, nextCycleTick: now);
                 int fundableFailuresBefore = fundable.cyclesFailed;
+                ProcurementDiagnosticSnapshot fundableBefore = CaptureProcurementDiagnostics(
+                    state, paymentMap, fundable);
                 ProcurementContractService.AdvanceCycles(state);
+                ProcurementDiagnosticSnapshot fundableAfter = CaptureProcurementDiagnostics(
+                    state, paymentMap, fundable);
                 bool fundableOrderCreated =
                     fundable.activeOrderId != ProcurementContract.NoActiveOrderId;
                 bool fundableFailuresUnchanged = fundable.cyclesFailed == fundableFailuresBefore;
+                bool fundablePassed = fundableOrderCreated && fundableFailuresUnchanged;
                 r.Check(
-                    fundableOrderCreated && fundableFailuresUnchanged,
+                    fundablePassed,
                     FundableAssertion,
-                    $"orderCreated={fundableOrderCreated}, " +
-                    $"failuresUnchanged={fundableFailuresUnchanged}");
+                    fundablePassed
+                        ? $"orderCreated={fundableOrderCreated}, " +
+                          $"failuresUnchanged={fundableFailuresUnchanged}"
+                        : $"orderCreated={fundableOrderCreated}, " +
+                          $"failuresUnchanged={fundableFailuresUnchanged}, " +
+                          BuildProcurementDiagnosticDetail(
+                              "fundable", fundableBefore, fundableAfter));
                 state.ProcurementContracts.Remove(fundable);
 
                 int silverBeforeWait = PurchaseOrderService.CountColonySilver(paymentMap);
@@ -878,15 +917,25 @@ namespace Intercolony
                         unitPrice: 0f, nextCycleTick: now);
                     int invalidFailuresBefore = invalidTerms.cyclesFailed;
                     int invalidDueTick = invalidTerms.nextCycleTick;
+                    ProcurementDiagnosticSnapshot invalidBefore = CaptureProcurementDiagnostics(
+                        state, paymentMap, invalidTerms);
                     ProcurementContractService.AdvanceCycles(state);
+                    ProcurementDiagnosticSnapshot invalidAfter = CaptureProcurementDiagnostics(
+                        state, paymentMap, invalidTerms);
                     bool invalidFailed = invalidTerms.cyclesFailed > invalidFailuresBefore;
                     bool invalidAdvancedOneCadence = invalidTerms.nextCycleTick ==
                         invalidDueTick + invalidTerms.cadenceDays * GenDate.TicksPerDay;
+                    bool invalidPassed = invalidFailed && invalidAdvancedOneCadence;
                     r.Check(
-                        invalidFailed && invalidAdvancedOneCadence,
+                        invalidPassed,
                         SilverOnlyAssertion,
-                        $"failuresIncreased={invalidFailed}, " +
-                        $"advancedOneCadence={invalidAdvancedOneCadence}");
+                        invalidPassed
+                            ? $"failuresIncreased={invalidFailed}, " +
+                              $"advancedOneCadence={invalidAdvancedOneCadence}"
+                            : $"failuresIncreased={invalidFailed}, " +
+                              $"advancedOneCadence={invalidAdvancedOneCadence}, " +
+                              BuildProcurementDiagnosticDetail(
+                                  "invalidTerms", invalidBefore, invalidAfter));
                     state.ProcurementContracts.Remove(invalidTerms);
                 }
             }
@@ -950,6 +999,154 @@ namespace Intercolony
                 RemoveGeneratedLetters(existingLetters, existingArchivables);
                 r.Info("procurement wait fixtures, orders, letters, and stored silver restored.");
             }
+        }
+
+        private static ProcurementDiagnosticSnapshot CaptureProcurementDiagnostics(
+            IntercolonyWorldComponent state, Map paymentMap, ProcurementContract target)
+        {
+            int now = GenTicks.TicksGame;
+            bool canPayForPurchase = PurchaseOrderService.CanPayForPurchase(
+                paymentMap,
+                target.unitPrice,
+                target.quantityPerCycle,
+                out string paymentReason);
+            ProcurementDiagnosticSnapshot snapshot = new ProcurementDiagnosticSnapshot
+            {
+                target = CaptureProcurementContractSnapshot(target, now),
+                silverCount = paymentMap == null
+                    ? 0
+                    : PurchaseOrderService.CountColonySilver(paymentMap),
+                canPayForPurchase = canPayForPurchase,
+                paymentReason = paymentReason,
+                contractCount = state?.ProcurementContracts?.Count ?? 0
+            };
+
+            if (state?.ProcurementContracts != null)
+            {
+                foreach (ProcurementContract contract in state.ProcurementContracts)
+                {
+                    if (contract == null)
+                    {
+                        continue;
+                    }
+
+                    if (contract.status == ProcurementContractStatus.Active)
+                    {
+                        snapshot.activeContractCount++;
+                    }
+
+                    snapshot.contracts.Add(CaptureProcurementContractSnapshot(contract, now));
+                }
+            }
+
+            return snapshot;
+        }
+
+        private static ProcurementContractDiagnosticSnapshot CaptureProcurementContractSnapshot(
+            ProcurementContract contract, int now)
+        {
+            return new ProcurementContractDiagnosticSnapshot
+            {
+                contract = contract,
+                status = contract.status,
+                unitPrice = contract.unitPrice,
+                quantityPerCycle = contract.quantityPerCycle,
+                cyclesCompleted = contract.cyclesCompleted,
+                cyclesFailed = contract.cyclesFailed,
+                totalCycles = contract.totalCycles,
+                activeOrderId = contract.activeOrderId,
+                nextCycleTick = contract.nextCycleTick,
+                nextCycleTickOffset = contract.nextCycleTick - now,
+                autoReadyWaitNotified = contract.autoReadyWaitNotified,
+                outcomeNote = contract.outcomeNote
+            };
+        }
+
+        private static string BuildProcurementDiagnosticDetail(
+            string targetName,
+            ProcurementDiagnosticSnapshot before,
+            ProcurementDiagnosticSnapshot after)
+        {
+            bool otherContractChanged = false;
+            int firstOtherChangedId = 0;
+            foreach (ProcurementContractDiagnosticSnapshot afterContract in after.contracts)
+            {
+                if (afterContract.contract == before.target.contract)
+                {
+                    continue;
+                }
+
+                ProcurementContractDiagnosticSnapshot beforeContract =
+                    FindProcurementContractSnapshot(before.contracts, afterContract.contract);
+                if (beforeContract != null &&
+                    (beforeContract.cyclesFailed != afterContract.cyclesFailed ||
+                     beforeContract.nextCycleTick != afterContract.nextCycleTick))
+                {
+                    otherContractChanged = true;
+                    firstOtherChangedId = afterContract.contract.id;
+                    break;
+                }
+            }
+
+            string firstOtherChangedIdText = otherContractChanged
+                ? firstOtherChangedId.ToString(CultureInfo.InvariantCulture)
+                : "none";
+            return BuildProcurementDiagnosticPhase("before", targetName, before) + ", " +
+                   BuildProcurementDiagnosticPhase("after", targetName, after) + ", " +
+                   $"otherContractChanged={otherContractChanged}, " +
+                   $"firstOtherChangedId={firstOtherChangedIdText}";
+        }
+
+        private static ProcurementContractDiagnosticSnapshot FindProcurementContractSnapshot(
+            List<ProcurementContractDiagnosticSnapshot> snapshots,
+            ProcurementContract contract)
+        {
+            foreach (ProcurementContractDiagnosticSnapshot snapshot in snapshots)
+            {
+                if (snapshot.contract == contract)
+                {
+                    return snapshot;
+                }
+            }
+
+            return null;
+        }
+
+        private static string BuildProcurementDiagnosticPhase(
+            string phase, string targetName, ProcurementDiagnosticSnapshot snapshot)
+        {
+            ProcurementContractDiagnosticSnapshot target = snapshot.target;
+            return
+                $"{phase}.{targetName}.status={target.status}, " +
+                $"{phase}.{targetName}.unitPrice={FormatDiagnosticFloat(target.unitPrice)}, " +
+                $"{phase}.{targetName}.quantityPerCycle={target.quantityPerCycle}, " +
+                $"{phase}.{targetName}.cyclesCompleted={target.cyclesCompleted}, " +
+                $"{phase}.{targetName}.cyclesFailed={target.cyclesFailed}, " +
+                $"{phase}.{targetName}.totalCycles={target.totalCycles}, " +
+                $"{phase}.{targetName}.activeOrderId={target.activeOrderId}, " +
+                $"{phase}.{targetName}.nextCycleTickOffset={target.nextCycleTickOffset}, " +
+                $"{phase}.{targetName}.autoReadyWaitNotified={target.autoReadyWaitNotified}, " +
+                $"{phase}.{targetName}.outcomeNote={DiagnosticText(target.outcomeNote)}, " +
+                $"{phase}.silverCount={snapshot.silverCount}, " +
+                $"{phase}.canPayForPurchase={snapshot.canPayForPurchase}, " +
+                $"{phase}.paymentReason={DiagnosticText(snapshot.paymentReason)}, " +
+                $"{phase}.procurementContractCount={snapshot.contractCount}, " +
+                $"{phase}.activeProcurementContractCount={snapshot.activeContractCount}";
+        }
+
+        private static string FormatDiagnosticFloat(float value)
+        {
+            return value.ToString("R", CultureInfo.InvariantCulture);
+        }
+
+        private static string DiagnosticText(string value)
+        {
+            return value == null
+                ? "<null>"
+                : value.Replace("\r", "\\r")
+                       .Replace("\n", "\\n")
+                       .Replace(",", ";")
+                       .Replace("=", ":");
         }
 
         private static bool TrySetStoredSilver(
