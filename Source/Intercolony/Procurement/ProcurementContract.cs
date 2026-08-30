@@ -250,6 +250,11 @@ namespace Intercolony
         /// </summary>
         public bool autoReadyOrders;
 
+        /// <summary>
+        /// Deliberately unsaved so the insufficient-silver reminder resets on load.
+        /// </summary>
+        public bool autoReadyWaitNotified;
+
         /// <summary>Why a terminal proposal did not become an active agreement.</summary>
         public string outcomeNote = "";
 

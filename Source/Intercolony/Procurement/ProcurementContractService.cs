@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
@@ -912,8 +911,63 @@ namespace Intercolony
                 }
 
                 int cycleNumber = contract.cyclesCompleted + contract.cyclesFailed + 1;
+                if (contract.autoReadyOrders)
+                {
+                    Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+                    if (!PurchaseOrderService.CanPayForPurchase(
+                            paymentMap,
+                            contract.unitPrice,
+                            contract.quantityPerCycle,
+                            out string preflightFailureReason))
+                    {
+                        // CanPayForPurchase owns the affordability calculation; recognize only
+                        // its insufficient-silver result so invalid terms remain immediate.
+                        if (IsPaymentBlockedOnlyBySilver(paymentMap, contract))
+                        {
+                            int waitDeadline = AutoReadyWaitDeadline(contract);
+                            if (now < waitDeadline)
+                            {
+                                if (!contract.autoReadyWaitNotified)
+                                {
+                                    int daysRemaining = Mathf.CeilToInt(Mathf.Max(
+                                        0f,
+                                        (waitDeadline - now) / (float)GenDate.TicksPerDay));
+                                    IntercolonyLetters.Send(
+                                        IntercolonyLetterImportance.Important,
+                                        "Procurement cycle waiting on silver",
+                                        $"{contract.settlementName} cycle {cycleNumber} for " +
+                                        $"{contract.quantityPerCycle}x {contract.ItemLabel()} is waiting " +
+                                        "for silver.\n\n" +
+                                        $"{preflightFailureReason}\n\n" +
+                                        "The cycle is still scheduled and will go through by itself " +
+                                        $"if the silver arrives before {daysRemaining} days.",
+                                        LetterDefOf.NeutralEvent);
+                                    contract.autoReadyWaitNotified = true;
+                                }
+
+                                continue;
+                            }
+
+                            // The derived deadline has passed; let the existing failure path
+                            // count this cycle and advance the schedule.
+                            contract.autoReadyWaitNotified = false;
+                        }
+                        else
+                        {
+                            // This cycle is ending immediately for a non-affordability reason.
+                            contract.autoReadyWaitNotified = false;
+                        }
+                    }
+                    else
+                    {
+                        // Any previous reminder belonged to a wait that has now ended.
+                        contract.autoReadyWaitNotified = false;
+                    }
+                }
+
                 if (TryCreateCycleOrder(state, contract, out string failureReason))
                 {
+                    contract.autoReadyWaitNotified = false;
                     // Keep the order ID tied to the cycle that was actually paid for. The next
                     // due tick is derived from the scheduled tick, not from a late refresh.
                     contract.nextCycleTick += contract.cadenceDays * GenDate.TicksPerDay;
@@ -1003,6 +1057,26 @@ namespace Intercolony
 
             contract.activeOrderId = order.id;
             return true;
+        }
+
+        private static bool IsPaymentBlockedOnlyBySilver(
+            Map paymentMap, ProcurementContract contract)
+        {
+            // Probe with int.MaxValue rather than matching the refusal text: this stays correct
+            // when the message is reworded and identifies whether silver is the only blocker.
+            return PurchaseOrderService.CanPayForPurchase(
+                paymentMap,
+                contract.unitPrice,
+                contract.quantityPerCycle,
+                availableSilver: int.MaxValue,
+                out _);
+        }
+
+        private static int AutoReadyWaitDeadline(ProcurementContract contract)
+        {
+            // nextCycleTick remains the due tick while waiting, so derive this deadline rather
+            // than storing another field; the same expression remains valid after loading.
+            return contract.nextCycleTick + contract.cadenceDays * GenDate.TicksPerDay;
         }
 
         /// <summary>
