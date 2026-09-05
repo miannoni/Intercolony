@@ -414,6 +414,10 @@ namespace Intercolony
             Results r, IntercolonyWorldComponent state, Map map)
         {
             const string ReadyAssertion = "auto-ready marks a ready cycle order ready";
+            const string QuietSuccessAssertion =
+                "a successful auto-ready cycle adds no success letter";
+            const string ManualReadyAssertion =
+                "manual ready still sends the existing success letter";
             const string AutoReadyOffAssertion = "auto-ready off leaves the order alone";
             const string MissingGoodsAssertion = "auto-ready refuses when the goods are not there";
             const string FailureThrottleAssertion = "the failure letter is sent once, not every pass";
@@ -429,6 +433,11 @@ namespace Intercolony
             List<RecurringContract> existingAutoReady = new List<RecurringContract>();
             List<Letter> existingLetters = SnapshotLetters();
             List<IArchivable> existingArchivables = SnapshotArchivables();
+            IntercolonyLetterVolume savedLetterVolume = IntercolonyMod.Settings.letterVolume;
+            // Failure letters are Important and the normal default intentionally keeps them out
+            // of the visible stack. Observe the real letter path under Everything, then restore
+            // the player's setting in finally so this self-test cannot change notification volume.
+            IntercolonyMod.Settings.letterVolume = IntercolonyLetterVolume.Everything;
 
             foreach (RecurringContract existing in state.Contracts)
             {
@@ -447,6 +456,8 @@ namespace Intercolony
                         ? "no player-home fulfillment map"
                         : "no isolated valid tradable item definition";
                     r.Skip(ReadyAssertion, missingFixture);
+                    r.Skip(QuietSuccessAssertion, missingFixture);
+                    r.Skip(ManualReadyAssertion, missingFixture);
                     r.Skip(AutoReadyOffAssertion, missingFixture);
                     r.Skip(MissingGoodsAssertion, missingFixture);
                     r.Skip(FailureThrottleAssertion, missingFixture);
@@ -464,6 +475,12 @@ namespace Intercolony
                         ReadyAssertion,
                         stockFailure ?? "no isolated tradable item and player-home map");
                     r.Skip(
+                        QuietSuccessAssertion,
+                        stockFailure ?? "no isolated tradable item and player-home map");
+                    r.Skip(
+                        ManualReadyAssertion,
+                        stockFailure ?? "no isolated tradable item and player-home map");
+                    r.Skip(
                         AutoReadyOffAssertion,
                         "the shared real-stock fixture could not be placed");
                 }
@@ -473,11 +490,21 @@ namespace Intercolony
                         state, fulfillmentMap, probeDef, autoReadyOrders: true,
                         FulfillmentMode.BuyerPickup, -89101, -89102,
                         testContracts, testOrders, out SalesOrder readyOrder);
+                    List<Letter> readyLettersBefore = SnapshotLetters();
                     int readied = ContractService.AdvanceAutoReady(state);
+                    List<Letter> readyLettersAfter = SnapshotLetters();
+                    int automatedSuccessLetters = CountNewLettersWithLabel(
+                        readyLettersBefore, readyLettersAfter, "Order ready");
                     r.Check(
                         readied == 1 && readyOrder.status == SalesOrderStatus.AwaitingCollection,
                         ReadyAssertion,
                         $"readied={readied}, status={readyOrder.status}");
+                    r.Check(
+                        automatedSuccessLetters == 0,
+                        QuietSuccessAssertion,
+                        $"newOrderReadyLetters={automatedSuccessLetters}, " +
+                        $"letterStackBefore={readyLettersBefore.Count}, " +
+                        $"letterStackAfter={readyLettersAfter.Count}");
                     state.Contracts.Remove(readyContract);
                     state.Orders.Remove(readyOrder);
 
@@ -492,6 +519,26 @@ namespace Intercolony
                         $"readied={readiedWithAutoReadyOff}, status={offOrder.status}");
                     state.Contracts.Remove(offContract);
                     state.Orders.Remove(offOrder);
+
+                    RecurringContract manualContract = AddAutoReadyFixture(
+                        state, fulfillmentMap, probeDef, autoReadyOrders: false,
+                        FulfillmentMode.BuyerPickup, -89111, -89112,
+                        testContracts, testOrders, out SalesOrder manualOrder);
+                    List<Letter> manualLettersBefore = SnapshotLetters();
+                    bool manuallyReadied = SalesOrderService.MarkReadyForPickup(
+                        manualOrder, fulfillmentMap);
+                    List<Letter> manualLettersAfter = SnapshotLetters();
+                    int manualSuccessLetters = CountNewLettersWithLabel(
+                        manualLettersBefore, manualLettersAfter, "Order ready");
+                    r.Check(
+                        manuallyReadied &&
+                        manualOrder.status == SalesOrderStatus.AwaitingCollection &&
+                        manualSuccessLetters == 1,
+                        ManualReadyAssertion,
+                        $"readied={manuallyReadied}, status={manualOrder.status}, " +
+                        $"newOrderReadyLetters={manualSuccessLetters}");
+                    state.Contracts.Remove(manualContract);
+                    state.Orders.Remove(manualOrder);
                 }
 
                 DestroyTestThings(testThings);
@@ -500,13 +547,37 @@ namespace Intercolony
                     state, fulfillmentMap, probeDef, autoReadyOrders: true,
                     FulfillmentMode.BuyerPickup, -89105, -89106,
                     testContracts, testOrders, out SalesOrder absentOrder);
+                bool absentCanMarkReady = SalesOrderService.CanMarkReadyNow(
+                    absentOrder, fulfillmentMap, out string absentReason);
+                List<Letter> absentLettersBefore = SnapshotLetters();
                 int absentReadied = ContractService.AdvanceAutoReady(state);
+                List<Letter> absentLettersAfterFirstPass = SnapshotLetters();
+                int failureLettersAfterFirstPass = CountNewLettersWithLabel(
+                    absentLettersBefore, absentLettersAfterFirstPass,
+                    "Agreement delivery needs attention");
+                ChoiceLetter failureLetter = FindNewChoiceLetter(
+                    absentLettersBefore, absentLettersAfterFirstPass,
+                    "Agreement delivery needs attention");
+                bool failureNamesReason = !absentCanMarkReady &&
+                    !absentReason.NullOrEmpty() && failureLetter != null &&
+                    failureLetter.Text.ToString().Contains(absentReason);
+                int absentSecondReadied = ContractService.AdvanceAutoReady(state);
+                List<Letter> absentLettersAfterSecondPass = SnapshotLetters();
+                int duplicateFailureLetters = CountNewLettersWithLabel(
+                    absentLettersAfterFirstPass, absentLettersAfterSecondPass,
+                    "Agreement delivery needs attention");
                 r.Check(
-                    absentReadied == 0 && absentOrder.status == SalesOrderStatus.Accepted &&
-                    absentOrder.IsOpen && absentOrder.autoReadyFailureNotified,
+                    absentReadied == 0 && absentSecondReadied == 0 &&
+                    absentOrder.status == SalesOrderStatus.Accepted && absentOrder.IsOpen &&
+                    absentOrder.autoReadyFailureNotified && failureLettersAfterFirstPass == 1 &&
+                    duplicateFailureLetters == 0 && failureNamesReason,
                     MissingGoodsAssertion,
-                    $"readied={absentReadied}, status={absentOrder.status}, " +
-                    $"open={absentOrder.IsOpen}, notified={absentOrder.autoReadyFailureNotified}");
+                    $"readied={absentReadied}/{absentSecondReadied}, " +
+                    $"status={absentOrder.status}, open={absentOrder.IsOpen}, " +
+                    $"notified={absentOrder.autoReadyFailureNotified}, " +
+                    $"firstFailureLetters={failureLettersAfterFirstPass}, " +
+                    $"duplicateFailureLetters={duplicateFailureLetters}, " +
+                    $"reason={Trim(absentReason)}, reasonNamed={failureNamesReason}");
                 state.Contracts.Remove(absentContract);
                 state.Orders.Remove(absentOrder);
 
@@ -564,6 +635,8 @@ namespace Intercolony
                 {
                     existing.autoReadyOrders = true;
                 }
+
+                IntercolonyMod.Settings.letterVolume = savedLetterVolume;
 
                 RemoveGeneratedLetters(existingLetters, existingArchivables);
             }
@@ -1487,6 +1560,37 @@ namespace Intercolony
             return Find.LetterStack == null
                 ? new List<Letter>()
                 : new List<Letter>(Find.LetterStack.LettersListForReading);
+        }
+
+        private static int CountNewLettersWithLabel(
+            List<Letter> before, List<Letter> after, string label)
+        {
+            int count = 0;
+            foreach (Letter letter in after)
+            {
+                if (letter != null && !before.Contains(letter) &&
+                    letter.Label.ToString() == label)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static ChoiceLetter FindNewChoiceLetter(
+            List<Letter> before, List<Letter> after, string label)
+        {
+            foreach (Letter letter in after)
+            {
+                if (letter != null && !before.Contains(letter) &&
+                    letter.Label.ToString() == label && letter is ChoiceLetter choiceLetter)
+                {
+                    return choiceLetter;
+                }
+            }
+
+            return null;
         }
 
         private static List<IArchivable> SnapshotArchivables()

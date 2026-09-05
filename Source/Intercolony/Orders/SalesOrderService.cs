@@ -720,6 +720,17 @@ namespace Intercolony
         /// </summary>
         public static bool MarkReadyForPickup(SalesOrder order, Map map)
         {
+            return MarkReadyForPickup(order, map, notifyPlayer: true);
+        }
+
+        /// <summary>
+        /// Declares a buyer-pickup order ready, optionally notifying the player. Automated
+        /// contract cycles use the same readiness transition without repeating the manual
+        /// success letter; direct player actions retain that existing notification.
+        /// </summary>
+        internal static bool MarkReadyForPickup(
+            SalesOrder order, Map map, bool notifyPlayer)
+        {
             if (!CanMarkReadyNow(order, map, out string reason, out List<Pawn> designatedAnimals))
             {
                 if (!reason.NullOrEmpty())
@@ -750,12 +761,16 @@ namespace Intercolony
             IntercolonyLog.Message(
                 $"Order {order.id}: goods declared ready; {order.settlementName} arriving in {travelDays}d.");
 
-            // §25.2's worked example is exactly this letter.
-            IntercolonyLetters.Send(
-                IntercolonyLetterImportance.Always,
-                "Order ready",
-                BuyerPickupDispatchLetterText(order, travelDays),
-                LetterDefOf.PositiveEvent);
+            // §25.2's worked example is exactly this letter. Routine automated cycles are quiet;
+            // the public player action passes notifyPlayer=true and keeps the existing letter.
+            if (notifyPlayer)
+            {
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
+                    "Order ready",
+                    BuyerPickupDispatchLetterText(order, travelDays),
+                    LetterDefOf.PositiveEvent);
+            }
 
             return true;
         }

@@ -1312,7 +1312,7 @@ namespace Intercolony
                     continue;
                 }
 
-                if (SalesOrderService.MarkReadyForPickup(order, map))
+                if (SalesOrderService.MarkReadyForPickup(order, map, notifyPlayer: false))
                 {
                     readied++;
                 }
