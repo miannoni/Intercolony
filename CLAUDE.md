@@ -322,6 +322,27 @@ handoff runs through `DISPATCH_NOTES.md` — append-only, timestamped, game outp
 Code does not read it automatically; Matteo nudges with "read DISPATCH_NOTES.md and continue". Write
 requests there with exact steps, and reply in the same file.
 
+### Foreman Runs and the delegated-game boundary
+
+When work is executed by a Foreman Run, a delegated Worker or Evaluator cannot start RimWorld. The
+delegated process runs under a Codex sandbox account with no Steam session, so the game deactivates
+Harmony and the dev bridge never opens. `docs/FOREMAN_DELEGATED_ENVIRONMENT.md` records the
+measurement and must be read before writing any game-dependent job.
+
+A decomposition must not break these rules:
+
+- The operator side owns the game's lifecycle. `tools/foreman/delegated-game-check.ps1` provisions
+  the bridge and stops it; a delegate only drives a bridge that is already running.
+- A delegate is never given `-Fresh`, `dev.ps1 stop` or `dev.ps1 bridge`. Those three all start or
+  kill the game, and two jobs touching it destroy each other's run.
+- Every game-dependent job declares both the `rimworld` and `dev-bridge` resources, so the launcher
+  serialises them.
+- A delegate's own claim is never the evidence. The verdict arrives as structured JSON through
+  `codex exec --output-schema`, and is cross-checked against the suite's raw output artifact.
+
+This boundary is what the readiness gate proves, so a job that breaks it is not merely risky, it
+invalidates the thing readiness established.
+
 ### Documentation pointers and animal-trade invariants
 
 `docs/PENDING_PLAYTESTS.md` lists what has shipped but has never been seen working — the things a
