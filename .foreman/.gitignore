@@ -1,0 +1,3 @@
+# Launcher scratch: prompts, turn logs, breaker counters, locks.
+# Never Foreman state. The Run reconstructs without it.
+.launcher/

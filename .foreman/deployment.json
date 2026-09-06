@@ -1,0 +1,99 @@
+{
+  "runId": "run-2026-09-06-intercolony",
+  "branch": "foreman/playtest-batch-run2",
+  "record": ".foreman",
+  "plan": "../INTERCOLONY_PLAYTEST_BATCH_SOURCE_PLAN.md",
+  "supervisorPrompt": ".foreman/SUPERVISOR_PROMPT.md",
+  "roles": {
+    "supervisor": {
+      "harness": "claude",
+      "model": "opus",
+      "permissionMode": "acceptEdits",
+      "addDirs": [
+        "C:/dev/agent-foreman"
+      ]
+    },
+    "worker": {
+      "harness": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "max",
+      "sandbox": "workspace-write"
+    },
+    "evaluator": {
+      "harness": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "max",
+      "sandbox": "workspace-write"
+    }
+  },
+  "cadence": {
+    "jobTimeoutMs": 900000,
+    "jobStallTimeoutMs": 300000,
+    "jobMinRuntimeMs": 3000,
+    "heartbeatMs": 1200000,
+    "idleBackoffMs": 60000,
+    "idleBackoffCapMs": 900000,
+    "afterEventMs": 1000,
+    "supervisorTimeoutMs": 1800000,
+    "supervisorStallTimeoutMs": 600000,
+    "supervisorMinRuntimeMs": 3000
+  },
+  "breaker": {
+    "maxLaunchFailures": 3,
+    "maxJobFailures": 3,
+    "maxConsecutiveBlocked": 5,
+    "maxNoProgressTurns": 5,
+    "maxTurns": 500
+  },
+  "resources": {
+    "rimworld":   { "assertFree": { "type": "no-process",  "image": "RimWorldWin64.exe" } },
+    "dev-bridge": { "assertFree": { "type": "no-listener", "port": 34117 } }
+  },
+  "readiness": {
+    "checks": [
+      {
+        "id": "target.git",
+        "description": "the target is a git work tree",
+        "command": "git",
+        "args": [
+          "-C",
+          "C:\\dev\\Intercolony",
+          "rev-parse",
+          "--is-inside-work-tree"
+        ]
+      },
+      {
+        "id": "record.writable",
+        "description": "the Durable Execution Record directory can be written",
+        "command": "node",
+        "args": [
+          "-e",
+          "require('fs').writeFileSync(\"C:\\\\dev\\\\Intercolony\\\\.foreman\\\\.write-probe\",'ok');require('fs').unlinkSync(\"C:\\\\dev\\\\Intercolony\\\\.foreman\\\\.write-probe\")"
+        ]
+      },
+      {
+        "id": "target.build",
+        "description": "the target's own build succeeds",
+        "command": "dotnet",
+        "args": ["build", "C:\\dev\\Intercolony\\Source\\Intercolony\\Intercolony.csproj"],
+        "timeoutMs": 600000
+      },
+      {
+        "id": "target.bound-tree",
+        "description": "the Mods junction resolves to this repo, so the game loads the assembly this repo builds",
+        "command": "powershell",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\dev\\Intercolony\\tools\\foreman\\bound-tree-check.ps1"],
+        "expectContains": "BOUND_TREE_CHECK: PASS",
+        "timeoutMs": 120000
+      },
+      {
+        "id": "target.delegated-game",
+        "description": "a delegated Codex job runs Intercolony's real in-game suite against an operator-provisioned bridge and passes",
+        "command": "powershell",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\dev\\Intercolony\\tools\\foreman\\delegated-game-check.ps1", "job-posting"],
+        "expectContains": "DELEGATED_GAME_CHECK: PASS",
+        "timeoutMs": 1800000
+      }
+    ]
+  }
+}

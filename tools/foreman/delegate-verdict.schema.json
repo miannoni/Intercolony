@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["result", "exitCode", "passed", "failed", "skipped", "reason"],
+  "properties": {
+    "result": {
+      "type": "string",
+      "enum": ["OK", "FAILED"],
+      "description": "OK only if the suite reported no failures and dev.ps1 exited 0."
+    },
+    "exitCode": {
+      "type": "integer",
+      "description": "The exit code dev.ps1 returned."
+    },
+    "passed": {
+      "type": "integer",
+      "description": "Assertions passed, from the Passed/failed/skipped line."
+    },
+    "failed": {
+      "type": "integer",
+      "description": "Assertions failed, from the Passed/failed/skipped line."
+    },
+    "skipped": {
+      "type": "integer",
+      "description": "Assertions skipped, from the Passed/failed/skipped line."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Empty when result is OK; a short failure reason otherwise."
+    }
+  }
+}
