@@ -1,0 +1,8 @@
+{
+  "id": "R01-PLAN-INGEST",
+  "role": "worker",
+  "promptFile": ".foreman/dispatch/prompts/R01-PLAN-INGEST.md",
+  "locks": [],
+  "timeoutMs": 300000,
+  "candidateJobId": null
+}
