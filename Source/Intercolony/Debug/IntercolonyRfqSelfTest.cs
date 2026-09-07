@@ -3131,6 +3131,7 @@ namespace Intercolony
 
             try
             {
+                CheckProcurementAgreementProgression(check);
                 CheckProcurementContractSentinels(check);
                 CheckProcurementContractStatuses(check);
                 CheckProcurementContractValidity(check, skip);
@@ -3182,6 +3183,107 @@ namespace Intercolony
                     nextIdField.SetValue(state, savedNextId);
                 }
             }
+        }
+
+        private static void CheckProcurementAgreementProgression(
+            Action<string, bool, string> check)
+        {
+            bool strangerAllowed = ProcurementContractService.TryValidateAgreementProgression(
+                0f, 0, out ProcurementContractProposalFailure strangerFailure,
+                out string strangerReason);
+            check(
+                "a stranger cannot open a standing purchase agreement",
+                !strangerAllowed &&
+                strangerFailure == ProcurementContractProposalFailure.ReputationTooLow,
+                $"reputation=0; completedPurchases=0; returned={strangerAllowed}; " +
+                $"failure={strangerFailure}; reason=\"{strangerReason}\"");
+
+            bool reputationOnlyAllowed =
+                ProcurementContractService.TryValidateAgreementProgression(
+                    ProcurementContractService.MinimumReputation, 0,
+                    out ProcurementContractProposalFailure reputationOnlyFailure,
+                    out string reputationOnlyReason);
+            check(
+                "reputation alone does not earn a standing purchase agreement",
+                !reputationOnlyAllowed &&
+                reputationOnlyFailure == ProcurementContractProposalFailure.InsufficientTradeHistory,
+                $"reputation={ProcurementContractService.MinimumReputation}; " +
+                $"completedPurchases=0; returned={reputationOnlyAllowed}; " +
+                $"failure={reputationOnlyFailure}; reason=\"{reputationOnlyReason}\"");
+
+            bool purchasesOnlyAllowed =
+                ProcurementContractService.TryValidateAgreementProgression(
+                    0f, ProcurementContractService.MinimumCompletedPurchasesForAgreement,
+                    out ProcurementContractProposalFailure purchasesOnlyFailure,
+                    out string purchasesOnlyReason);
+            check(
+                "purchases alone do not earn a standing purchase agreement",
+                !purchasesOnlyAllowed &&
+                purchasesOnlyFailure == ProcurementContractProposalFailure.ReputationTooLow,
+                $"reputation=0; completedPurchases=" +
+                $"{ProcurementContractService.MinimumCompletedPurchasesForAgreement}; " +
+                $"returned={purchasesOnlyAllowed}; failure={purchasesOnlyFailure}; " +
+                $"reason=\"{purchasesOnlyReason}\"");
+
+            bool bothAllowed = ProcurementContractService.TryValidateAgreementProgression(
+                ProcurementContractService.MinimumReputation,
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement,
+                out ProcurementContractProposalFailure bothFailure,
+                out string bothReason);
+            check(
+                "meeting both earns a standing purchase agreement",
+                bothAllowed && bothFailure == ProcurementContractProposalFailure.None,
+                $"reputation={ProcurementContractService.MinimumReputation}; " +
+                $"completedPurchases={ProcurementContractService.MinimumCompletedPurchasesForAgreement}; " +
+                $"returned={bothAllowed}; failure={bothFailure}; reason=\"{bothReason}\"");
+
+            bool atThresholds = ProcurementContractService.TryValidateAgreementProgression(
+                ProcurementContractService.MinimumReputation,
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement,
+                out ProcurementContractProposalFailure atThresholdsFailure,
+                out string atThresholdsReason);
+            float oneBelowReputation = ProcurementContractService.MinimumReputation - 1f;
+            bool belowReputation = ProcurementContractService.TryValidateAgreementProgression(
+                oneBelowReputation,
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement,
+                out ProcurementContractProposalFailure belowReputationFailure,
+                out string belowReputationReason);
+            int oneBelowPurchases =
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement - 1;
+            bool belowPurchases = ProcurementContractService.TryValidateAgreementProgression(
+                ProcurementContractService.MinimumReputation,
+                oneBelowPurchases,
+                out ProcurementContractProposalFailure belowPurchasesFailure,
+                out string belowPurchasesReason);
+            bool bothBelow = ProcurementContractService.TryValidateAgreementProgression(
+                oneBelowReputation,
+                oneBelowPurchases,
+                out ProcurementContractProposalFailure bothBelowFailure,
+                out string bothBelowReason);
+            check(
+                "the gate sits exactly on its thresholds",
+                atThresholds && atThresholdsFailure == ProcurementContractProposalFailure.None &&
+                !belowReputation &&
+                belowReputationFailure == ProcurementContractProposalFailure.ReputationTooLow &&
+                !belowPurchases &&
+                belowPurchasesFailure ==
+                    ProcurementContractProposalFailure.InsufficientTradeHistory &&
+                !bothBelow &&
+                bothBelowFailure == ProcurementContractProposalFailure.ReputationTooLow,
+                $"at reputation={ProcurementContractService.MinimumReputation}, " +
+                $"completedPurchases={ProcurementContractService.MinimumCompletedPurchasesForAgreement}, " +
+                $"returned={atThresholds}, failure={atThresholdsFailure}, " +
+                $"reason=\"{atThresholdsReason}\"; " +
+                $"below reputation={oneBelowReputation}, " +
+                $"completedPurchases={ProcurementContractService.MinimumCompletedPurchasesForAgreement}, " +
+                $"returned={belowReputation}, failure={belowReputationFailure}, " +
+                $"reason=\"{belowReputationReason}\"; " +
+                $"reputation={ProcurementContractService.MinimumReputation}, " +
+                $"below completedPurchases={oneBelowPurchases}, returned={belowPurchases}, " +
+                $"failure={belowPurchasesFailure}, reason=\"{belowPurchasesReason}\"; " +
+                $"below reputation={oneBelowReputation}, " +
+                $"below completedPurchases={oneBelowPurchases}, returned={bothBelow}, " +
+                $"failure={bothBelowFailure}, reason=\"{bothBelowReason}\"");
         }
 
         private static void CheckProcurementContractSentinels(
@@ -3640,6 +3742,7 @@ namespace Intercolony
                 return;
             }
 
+            EstablishEarnedProcurementRelationship(state, settlement);
             CheckProcurementProposalPending(check, state, settlement, product);
             CheckProcurementProposalAnswersOnce(check, state, settlement, product);
             CheckProcurementProposalSaveLoad(check, state, settlement, product, profile);
@@ -3681,6 +3784,7 @@ namespace Intercolony
             Settlement settlement,
             ThingDef product)
         {
+            EstablishEarnedProcurementRelationship(state, settlement);
             const int quantity = 10;
             const int cadenceDays = 1;
             const int totalCycles = 2;
@@ -4038,6 +4142,7 @@ namespace Intercolony
                             harmony.Patch(
                                 evaluatorMethod,
                                 postfix: new HarmonyLib.HarmonyMethod(evaluatorPostfix));
+                            EstablishEarnedProcurementRelationship(state, exchangeSettlement);
                             exchangeProposal = ProcurementContractService.ProposeContract(
                                 state,
                                 exchangeSettlement,
@@ -4160,6 +4265,7 @@ namespace Intercolony
                 return false;
             }
 
+            EstablishEarnedProcurementRelationship(state, settlement);
             float[] priceMultipliers =
             {
                 0.50f, 0.55f, 0.60f, 0.65f, 0.70f, 0.75f, 0.80f, 0.85f,
@@ -4734,6 +4840,7 @@ namespace Intercolony
             int totalCycles = 2,
             float? agreedUnitPrice = null)
         {
+            EstablishEarnedProcurementRelationship(state, settlement);
             return ProcurementContractService.ProposeContract(
                 state, settlement, product, quantity, cadenceDays, totalCycles,
                 agreedUnitPrice, FulfillmentMode.SellerDelivery);
@@ -4906,7 +5013,8 @@ namespace Intercolony
 
             IntercolonyNegotiationDecision decision =
                 (IntercolonyNegotiationDecision)capturedDecision;
-            ProcurementContractStatus expectedStatus;
+            ProcurementContractStatus expectedStatus = ProcurementContractStatus.Cancelled;
+            bool recognizedDecision = true;
             switch (decision)
             {
                 case IntercolonyNegotiationDecision.Accepted:
@@ -4919,16 +5027,16 @@ namespace Intercolony
                     expectedStatus = ProcurementContractStatus.CounterpartyCountered;
                     break;
                 default:
-                    throw new InvalidOperationException(
-                        $"Unhandled procurement proposal decision: {decision}");
+                    recognizedDecision = false;
+                    break;
             }
             check(
                 "E3 persisted procurement decision survives save/load",
-                failure == null && result.Success && original != null &&
+                recognizedDecision && failure == null && result.Success && original != null &&
                 loaded != null && loaded.proposalDecision == capturedDecision &&
                 answer != null && answer.Applied && answer.Decision == decision &&
                 loaded.status == expectedStatus,
-                $"captured decision={decision}; loaded decision=" +
+                $"captured decision={decision}; recognized={recognizedDecision}; loaded decision=" +
                 $"{(loaded == null ? "null" : ((IntercolonyNegotiationDecision)loaded.proposalDecision).ToString())}; " +
                 $"loaded status={(loaded == null ? "null" : loaded.status.ToString())}; " +
                 $"expected status={expectedStatus}; answer={answer?.Decision.ToString() ?? "null"}; " +
@@ -5158,7 +5266,8 @@ namespace Intercolony
                     {
                         // A favourable relationship makes the reachability probe independent of
                         // whatever reputation the live world happened to give this settlement.
-                        SetProcurementReputation(state, candidateProfile);
+                        EstablishEarnedProcurementRelationship(
+                            state, candidateSettlement);
                         reputationPinnedCandidates++;
                         ProcurementContractProposalResult candidateResult =
                             ProposeProcurementFixture(
@@ -8759,15 +8868,18 @@ namespace Intercolony
             return "[" + string.Join(",", details.ToArray()) + "]";
         }
 
-        private static void SetProcurementReputation(
+        private static void EstablishEarnedProcurementRelationship(
             IntercolonyWorldComponent state,
-            SettlementEconomicProfile profile)
+            Settlement settlement)
         {
             CommercialReputation reputation = new CommercialReputation(
-                profile.settlementId, profile.settlementName, profile.factionName);
+                settlement.ID, settlement.Label ?? "unnamed", settlement.Faction?.Name ?? "");
             reputation.Adjust(
-                CommercialReputation.MaxScore - CommercialReputation.StartingScore);
-            state.Reputations[profile.settlementId] = reputation;
+                ProcurementContractService.MinimumReputation -
+                CommercialReputation.StartingScore);
+            reputation.purchasesCompleted =
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement;
+            state.Reputations[settlement.ID] = reputation;
         }
 
         private static void CheckProcurementProposalPriceDirection(

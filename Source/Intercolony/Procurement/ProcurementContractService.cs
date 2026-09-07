@@ -12,8 +12,10 @@ namespace Intercolony
         None,
         InvalidState,
         InaccessibleSettlement,
+        ReputationTooLow,
         MissingEconomicProfile,
         InvalidItem,
+        InsufficientTradeHistory,
         SupplierCannotSupply,
         ExistingContract,
         QuantityOutOfRange,
@@ -165,6 +167,12 @@ namespace Intercolony
     /// </summary>
     public static class ProcurementContractService
     {
+        /// <summary>Minimum reputation before a settlement will accept a standing procurement agreement.</summary>
+        public const float MinimumReputation = 62f;
+
+        /// <summary>Completed purchases from one settlement needed before it trusts a repeat procurement agreement.</summary>
+        public const int MinimumCompletedPurchasesForAgreement = 2;
+
         /// <summary>
         /// Pure inputs prepared for either evaluation or contract construction. The proposal is
         /// assembled here so procurement previews and sends cannot drift apart.
@@ -207,6 +215,39 @@ namespace Intercolony
         /// supplier relationship; an agreement suspended by war remains exempt in the path below.
         /// </summary>
         private const float ContractCancellationReputationPenalty = -10f;
+
+        /// <summary>
+        /// Validates the earned prerequisites for a standing procurement agreement without
+        /// requiring a map or world state. The proposal path supplies the settlement's current
+        /// reputation score and completed-purchase count.
+        /// </summary>
+        public static bool TryValidateAgreementProgression(
+            float reputation,
+            int completedPurchases,
+            out ProcurementContractProposalFailure failure,
+            out string reason)
+        {
+            if (reputation < MinimumReputation)
+            {
+                failure = ProcurementContractProposalFailure.ReputationTooLow;
+                reason =
+                    $"Commercial reputation is {reputation:F0}; {MinimumReputation:F0} is required.";
+                return false;
+            }
+
+            if (completedPurchases < MinimumCompletedPurchasesForAgreement)
+            {
+                failure = ProcurementContractProposalFailure.InsufficientTradeHistory;
+                reason =
+                    $"Only {completedPurchases} completed purchase(s) from that settlement; " +
+                    $"{MinimumCompletedPurchasesForAgreement} are required.";
+                return false;
+            }
+
+            failure = ProcurementContractProposalFailure.None;
+            reason = null;
+            return true;
+        }
 
         /// <summary>
         /// Sends a standing purchase proposal using the supplier's reference price when the
@@ -479,6 +520,18 @@ namespace Intercolony
                     $"Unit price must be at least {MinimumUnitPrice:F2} and no more than " +
                     $"{referenceUnitPrice * MaximumUnitPriceMultiplier:F2} " +
                     $"(twice the current supplier rate of {referenceUnitPrice:F2}).";
+                return false;
+            }
+
+            // CommercialReputation persists completed purchases per settlement, not per product.
+            // Use that settlement-wide count here; a per-product refinement is not possible with
+            // the data on hand without adding a persisted field.
+            float reputation = ReputationService.ScoreFor(state, settlement);
+            CommercialReputation reputationRecord = state.FindReputation(settlement.ID);
+            int completedPurchases = reputationRecord?.purchasesCompleted ?? 0;
+            if (!TryValidateAgreementProgression(
+                    reputation, completedPurchases, out failure, out reason))
+            {
                 return false;
             }
 
