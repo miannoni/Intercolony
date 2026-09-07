@@ -3279,7 +3279,8 @@ namespace Intercolony
             int paymentPerCycle = ProcurementContractPaymentPerCycle(contract);
             int totalPayment = IntercolonyPricing.TotalPayment(
                 paymentPerCycle, contract.totalCycles);
-            return $"{contract.totalCycles} cycles   {paymentPerCycle} silver each   " +
+            return $"{contract.totalCycles} cycles   {contract.unitPrice:0.##} silver/unit   " +
+                   $"{paymentPerCycle} silver per cycle   " +
                    $"{totalPayment} total";
         }
 
