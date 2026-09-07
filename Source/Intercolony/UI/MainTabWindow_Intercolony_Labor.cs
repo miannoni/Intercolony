@@ -748,6 +748,8 @@ namespace Intercolony
 
             EmployeeRowLayout layout = EmployeeRowLayout.For(rect);
             float textWidth = layout.textWidth;
+            bool canAutoRenew = contract.status == EmploymentStatus.Active &&
+                                !contract.IsOpenEnded && !contract.ServingNotice;
 
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 3f, textWidth, 22f),
                 $"{contract.workerName}  —  {contract.workerSkills}");
@@ -767,10 +769,15 @@ namespace Intercolony
             GUI.color = Color.white;
 
             GUI.color = StatusColour(contract);
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, 22f),
-                $"{contract.settlementName} ({contract.factionName})   " +
+            string detail = $"{contract.settlementName} ({contract.factionName})   " +
                 $"{contract.dailyWage}/day × {contract.TermLabel} {contract.wageStructure.Label()}, " +
-                $"{contract.paidSilver} paid   — {contract.StatusLine()}");
+                $"{contract.paidSilver} paid   — {contract.StatusLine()}";
+            if (canAutoRenew)
+            {
+                detail += contract.autoRenew ? "   auto-renew: on" : "   auto-renew: off";
+            }
+
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, 22f), detail);
             GUI.color = Color.white;
 
             if (ShouldBuildTooltip(rect))
@@ -788,8 +795,6 @@ namespace Intercolony
             }
 
             bool hasLiveRenewalOffer = RenewalService.HasLiveOffer(contract);
-            bool canAutoRenew = contract.status == EmploymentStatus.Active &&
-                                !contract.IsOpenEnded && !contract.ServingNotice;
 
             if (ShouldBuildTooltip(layout.contractActions))
             {
