@@ -85,6 +85,7 @@ namespace Intercolony
                         r, map, loops, subject, reservedCells, testRects, addedDesignations);
                     CheckBlueprintPlacement(
                         r, map, loops, subject, reservedCells, testRects);
+                    CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
                     CheckBlueprintRotation(r, map, loops, subject, reservedCells, testRects);
                 }
 
@@ -345,6 +346,239 @@ namespace Intercolony
                 loops.RunPass();
                 return CountBlueprintsAndFramesAt(map, cell) == 0;
             });
+        }
+
+        private static void CheckDesignatorCancel(
+            Results r,
+            Map map,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string matchingLabel = "vanilla Cancel ends the loop for that cell";
+            const string elsewhereLabel = "cancelling elsewhere leaves the loop alone";
+
+            if (Find.CurrentMap != map)
+            {
+                const string reason =
+                    "Designator_Cancel.Map uses Find.CurrentMap, which is not the self-test map";
+                r.Skip(matchingLabel, reason);
+                r.Skip(elsewhereLabel, reason);
+                return;
+            }
+
+            // The ordinary self-test fixture is detached. The cancellation prefix resolves the
+            // map-owned component, so this check must use that component to exercise the patch.
+            ProduceLoopMapComponent loops = ProduceLoopMapComponent.For(map);
+            if (loops == null)
+            {
+                const string reason = "the current map has no ProduceLoopMapComponent";
+                r.Skip(matchingLabel, reason);
+                r.Skip(elsewhereLabel, reason);
+                return;
+            }
+
+            bool matchingRecordSurvived = false;
+            bool matchingBlueprintAfterPass = false;
+            bool elsewhereRecordSurvived = false;
+            bool elsewhereBlueprintAfterPass = false;
+            IntVec3 matchingCell = IntVec3.Invalid;
+            IntVec3 loopCell = IntVec3.Invalid;
+            IntVec3 elsewhereCell = IntVec3.Invalid;
+            bool matchingCellRemembered = false;
+            bool loopCellRemembered = false;
+            bool elsewhereCellRemembered = false;
+
+            try
+            {
+                Designator_Cancel cancel = new Designator_Cancel();
+
+                if (!TryFindBuildCell(
+                        map, loops, subject, Rot4.North, reservedCells, out matchingCell))
+                {
+                    const string reason = "no empty valid cell for the matching-cancel scenario";
+                    r.Skip(matchingLabel, reason);
+                    r.Skip(elsewhereLabel, reason);
+                    return;
+                }
+
+                RememberCell(
+                    matchingCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+                matchingCellRemembered = true;
+                try
+                {
+                    loops.Enable(
+                        matchingCell,
+                        Rot4.North,
+                        subject.thingDef,
+                        subject.stuffDef,
+                        null);
+                    loops.RunPass();
+                    Blueprint_Build blueprint = FindBlueprint(
+                        map, matchingCell, subject.thingDef);
+                    if (blueprint == null)
+                    {
+                        const string reason =
+                            "the matching-cancel scenario did not create the expected blueprint";
+                        r.Skip(matchingLabel, reason);
+                        r.Skip(elsewhereLabel, reason);
+                        return;
+                    }
+
+                    cancel.DesignateThing(blueprint);
+                    loops.RunPass();
+                    matchingRecordSurvived = loops.Find(matchingCell) != null;
+                    matchingBlueprintAfterPass =
+                        FindBlueprint(map, matchingCell, subject.thingDef) != null;
+                }
+                finally
+                {
+                    if (matchingCellRemembered)
+                    {
+                        try
+                        {
+                            loops.Disable(matchingCell);
+                        }
+                        finally
+                        {
+                            DestroyThingsInRect(map, GenAdj.OccupiedRect(
+                                matchingCell, Rot4.North, subject.thingDef.Size));
+                        }
+                    }
+                }
+
+                if (!TryFindBuildCell(
+                        map, loops, subject, Rot4.North, reservedCells, out loopCell))
+                {
+                    const string reason = "no empty valid cell for the loop-preservation scenario";
+                    r.Skip(matchingLabel, reason);
+                    r.Skip(elsewhereLabel, reason);
+                    return;
+                }
+
+                RememberCell(
+                    loopCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+                loopCellRemembered = true;
+                try
+                {
+                    loops.Enable(
+                        loopCell,
+                        Rot4.North,
+                        subject.thingDef,
+                        subject.stuffDef,
+                        null);
+                    loops.RunPass();
+                    if (FindBlueprint(map, loopCell, subject.thingDef) == null)
+                    {
+                        const string reason =
+                            "the loop-preservation scenario did not create the loop blueprint";
+                        r.Skip(matchingLabel, reason);
+                        r.Skip(elsewhereLabel, reason);
+                        return;
+                    }
+
+                    if (!TryFindBuildCell(
+                            map, loops, subject, Rot4.North, reservedCells, out elsewhereCell))
+                    {
+                        const string reason =
+                            "no different empty valid cell for the cancelled blueprint";
+                        r.Skip(matchingLabel, reason);
+                        r.Skip(elsewhereLabel, reason);
+                        return;
+                    }
+
+                    RememberCell(
+                        elsewhereCell,
+                        subject.thingDef,
+                        Rot4.North,
+                        reservedCells,
+                        testRects);
+                    elsewhereCellRemembered = true;
+                    GenConstruct.PlaceBlueprintForBuild(
+                        subject.thingDef,
+                        elsewhereCell,
+                        map,
+                        Rot4.North,
+                        Faction.OfPlayer,
+                        subject.stuffDef);
+                    Blueprint_Build elsewhereBlueprint = FindBlueprint(
+                        map, elsewhereCell, subject.thingDef);
+                    if (elsewhereBlueprint == null)
+                    {
+                        const string reason =
+                            "the separate cancelled cell did not create the expected blueprint";
+                        r.Skip(matchingLabel, reason);
+                        r.Skip(elsewhereLabel, reason);
+                        return;
+                    }
+
+                    cancel.DesignateThing(elsewhereBlueprint);
+                    loops.RunPass();
+                    elsewhereRecordSurvived = loops.Find(loopCell) != null;
+                    elsewhereBlueprintAfterPass =
+                        FindBlueprint(map, loopCell, subject.thingDef) != null;
+                }
+                finally
+                {
+                    if (loopCellRemembered)
+                    {
+                        try
+                        {
+                            loops.Disable(loopCell);
+                        }
+                        finally
+                        {
+                            try
+                            {
+                                DestroyThingsInRect(map, GenAdj.OccupiedRect(
+                                    loopCell, Rot4.North, subject.thingDef.Size));
+                            }
+                            finally
+                            {
+                                if (elsewhereCellRemembered)
+                                {
+                                    DestroyThingsInRect(map, GenAdj.OccupiedRect(
+                                        elsewhereCell, Rot4.North, subject.thingDef.Size));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                string reason =
+                    $"Designator_Cancel could not be constructed or driven: " +
+                    $"{ex.GetType().Name}: {ex.Message}";
+                r.Skip(matchingLabel, reason);
+                r.Skip(elsewhereLabel, reason);
+                return;
+            }
+
+            CheckSafely(
+                r,
+                matchingLabel,
+                () => !matchingRecordSurvived && !matchingBlueprintAfterPass,
+                $"loop cell {matchingCell}, cancelled cell {matchingCell}, " +
+                $"record survived {(matchingRecordSurvived ? "yes" : "no")}, " +
+                $"blueprint present after pass " +
+                $"{(matchingBlueprintAfterPass ? "yes" : "no")}");
+            CheckSafely(
+                r,
+                elsewhereLabel,
+                () => elsewhereRecordSurvived && elsewhereBlueprintAfterPass,
+                $"loop cell {loopCell}, cancelled cell {elsewhereCell}, " +
+                $"record survived {(elsewhereRecordSurvived ? "yes" : "no")}, " +
+                $"blueprint present after pass " +
+                $"{(elsewhereBlueprintAfterPass ? "yes" : "no")}");
         }
 
         private static void CheckBlueprintRotation(
@@ -1013,6 +1247,8 @@ namespace Intercolony
             r.Skip("a cell with work under way gains no second blueprint", reason);
             r.Skip("Disable stops the next repetition", reason);
             r.Skip("Disable does not cancel work under way", reason);
+            r.Skip("vanilla Cancel ends the loop for that cell", reason);
+            r.Skip("cancelling elsewhere leaves the loop alone", reason);
         }
 
         private static void SkipBlueprintAssertions(Results r, string reason)
