@@ -4770,6 +4770,12 @@ namespace Intercolony
                 $"current tick={currentTick}; due tick={contract?.decisionDueTick.ToString() ?? "null"}; " +
                 $"status={(contract == null ? "null" : contract.status.ToString())}; " +
                 $"active={(!noActiveContract)}; reason={result.Reason ?? "none"}");
+            check(
+                "a new procurement agreement starts with auto-ready on",
+                result.Success && contract != null && contract.autoReadyOrders,
+                $"autoReadyOrders={(contract == null ? "null" : contract.autoReadyOrders.ToString())}; " +
+                "construction path=ProposeProcurementFixture -> " +
+                "ProcurementContractService.ProposeContract");
             state.ProcurementContracts.Clear();
         }
 
@@ -5650,6 +5656,8 @@ namespace Intercolony
                 int g4OldNextTick = GenTicks.TicksGame;
                 int g4FailedBefore = acceptedContract.cyclesFailed;
                 acceptedContract.nextCycleTick = g4OldNextTick;
+                // G4 tests the non-automated failure path; automated agreements wait for silver instead.
+                acceptedContract.autoReadyOrders = false;
                 ProcurementContractService.AdvanceCycles(state);
                 int g4NewNextTick = acceptedContract.nextCycleTick;
                 check(

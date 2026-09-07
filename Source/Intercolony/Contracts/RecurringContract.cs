@@ -129,9 +129,10 @@ namespace Intercolony
 
         /// <summary>
         /// When set, a cycle order whose goods are actually present is marked ready without the
-        /// player clicking Mark ready.
+        /// player clicking Mark ready. New agreements default to this automation; loaded
+        /// agreements keep the setting saved by the player.
         /// </summary>
-        public bool autoReadyOrders;
+        public bool autoReadyOrders = true;
 
         public float DaysUntilRenewalExpires =>
             (renewalExpiryTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;

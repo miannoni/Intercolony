@@ -727,6 +727,14 @@ namespace Intercolony
                         $"cadence={namedProposal.Contract?.CadenceDays:F0}; " +
                         $"cycles={namedProposal.Contract?.totalCycles}; " +
                         $"fulfillment={namedProposal.Contract?.fulfillment}");
+                    Check(
+                        "a new selling agreement starts with auto-ready on",
+                        namedProposal.Success && namedProposal.Contract != null &&
+                        namedProposal.Contract.autoReadyOrders,
+                        $"autoReadyOrders={(namedProposal.Contract == null
+                            ? "null" : namedProposal.Contract.autoReadyOrders.ToString())}; " +
+                        "construction path=ContractService.ProposeContract -> " +
+                        "BuildExplicitContract");
 
                     ContractProposalResult ProposeTermFixture(
                         int cadenceDays, int totalCycles,

@@ -246,9 +246,10 @@ namespace Intercolony
 
         /// <summary>
         /// When set, a cycle whose payment cannot be met waits and retries until its deadline
-        /// instead of being counted as a failed cycle immediately.
+        /// instead of being counted as a failed cycle immediately. New agreements default to
+        /// this automation; loaded agreements keep the setting saved by the player.
         /// </summary>
-        public bool autoReadyOrders;
+        public bool autoReadyOrders = true;
 
         /// <summary>
         /// Deliberately unsaved so the insufficient-silver reminder resets on load.
