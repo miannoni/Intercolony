@@ -14,6 +14,7 @@ namespace Intercolony
     {
         // Stable Intercolony key so Produce toggles group across different things.
         private const int ProduceGroupKey = 104729;
+        private const int PauseGroupKey = 104730;
 
         public static IEnumerable<Gizmo> Postfix(IEnumerable<Gizmo> values, Thing __instance)
         {
@@ -22,10 +23,10 @@ namespace Intercolony
                 yield return gizmo;
             }
 
-            Command_Toggle produceGizmo = null;
+            IEnumerable<Gizmo> produceGizmos = null;
             try
             {
-                produceGizmo = CreateProduceGizmo(__instance);
+                produceGizmos = CreateProduceGizmos(__instance);
             }
             catch (System.Exception ex)
             {
@@ -33,13 +34,18 @@ namespace Intercolony
                 IntercolonyLog.Error("Failed to build produce gizmo: " + ex);
             }
 
-            if (produceGizmo != null)
+            if (produceGizmos == null)
             {
-                yield return produceGizmo;
+                yield break;
+            }
+
+            foreach (Gizmo gizmo in produceGizmos)
+            {
+                yield return gizmo;
             }
         }
 
-        private static Command_Toggle CreateProduceGizmo(Thing thing)
+        private static IEnumerable<Gizmo> CreateProduceGizmos(Thing thing)
         {
             if (thing == null || !thing.Spawned || thing.Map == null || thing.Faction != Faction.OfPlayer)
             {
@@ -111,26 +117,59 @@ namespace Intercolony
                 return null;
             }
 
-            return new Command_Toggle
+            List<Gizmo> gizmos = new List<Gizmo>
             {
-                defaultLabel = "Produce",
-                defaultDesc = "While on, this object is uninstalled and an identical one is queued in the same place using the same material; the cycle repeats after each replacement. Turning it off stops the next repetition, while work already under way is allowed to finish.",
-                icon = ContentFinder<Texture2D>.Get("UI/Designators/Uninstall"),
-                groupKeyIgnoreContent = ProduceGroupKey,
-                activateIfAmbiguous = true,
-                isActive = () => loopComponent.IsEnabled(cell),
-                toggleAction = () =>
+                new Command_Toggle
                 {
-                    if (loopComponent.IsEnabled(cell))
+                    defaultLabel = "Produce",
+                    defaultDesc = "While on, this object is uninstalled and an identical one is queued in the same place using the same material; the cycle repeats after each replacement. Turning it off ends the production program. Pause temporarily stops new cycles while work already under way finishes.",
+                    icon = ContentFinder<Texture2D>.Get("UI/Designators/Uninstall"),
+                    groupKeyIgnoreContent = ProduceGroupKey,
+                    activateIfAmbiguous = true,
+                    isActive = () => loopComponent.IsEnabled(cell),
+                    toggleAction = () =>
                     {
-                        loopComponent.Disable(cell);
-                    }
-                    else
-                    {
-                        loopComponent.Enable(cell, rotation, thingDef, stuffDef, styleDef);
+                        if (loopComponent.IsEnabled(cell))
+                        {
+                            loopComponent.Disable(cell);
+                        }
+                        else
+                        {
+                            loopComponent.Enable(cell, rotation, thingDef, stuffDef, styleDef);
+                        }
                     }
                 }
             };
+
+            if (loopComponent.Find(cell) != null)
+            {
+                gizmos.Add(new Command_Toggle
+                {
+                    defaultLabel = "Pause production",
+                    defaultDesc = "Pauses this production program: work already under way finishes, this object stays installed, and the program continues when resumed.",
+                    icon = ContentFinder<Texture2D>.Get("UI/Designators/Uninstall"),
+                    groupKeyIgnoreContent = PauseGroupKey,
+                    isActive = () =>
+                    {
+                        ProduceLoopRecord loop = loopComponent.Find(cell);
+                        return loop != null && loop.paused;
+                    },
+                    toggleAction = () =>
+                    {
+                        ProduceLoopRecord loop = loopComponent.Find(cell);
+                        if (loop != null && loop.paused)
+                        {
+                            loopComponent.Resume(cell);
+                        }
+                        else
+                        {
+                            loopComponent.Pause(cell);
+                        }
+                    }
+                });
+            }
+
+            return gizmos;
         }
     }
 }
