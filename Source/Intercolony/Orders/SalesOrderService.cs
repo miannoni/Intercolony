@@ -796,6 +796,25 @@ namespace Intercolony
             return CanMarkReadyNow(order, map, out reason, out _);
         }
 
+        /// <summary>
+        /// Reports the matching quantity currently free for an order and the quantity it still
+        /// needs. F12's programmed recurring caravan must wait rather than leave short, and that
+        /// waiting/reporting caller needs counts instead of only the boolean readiness answer.
+        /// Animals use the same available-animal count as the readiness decision; this method does
+        /// not designate or reserve individual animals.
+        /// </summary>
+        public static OrderAvailability GetAvailability(SalesOrder order, Map map)
+        {
+            if (order == null)
+            {
+                return OrderAvailability.NotApplicable;
+            }
+
+            OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
+            return CalculateAvailability(
+                order, map, validation, IntercolonyWorldComponent.Current);
+        }
+
         private static bool CanMarkReadyNow(
             SalesOrder order, Map map, out string reason, out List<Pawn> designatedAnimals)
         {
@@ -842,14 +861,9 @@ namespace Intercolony
             }
 
             IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
-            int available = order.IsAnimalOrder
-                ? FindBuyerService.AvailableAnimalQuantity(
-                    state, map, order.ThingDef, order.line.animalSpec, order.id)
-                // Validate against all physical stock matching this accepted order's locked line,
-                // without reapplying current trade eligibility. A disabled buy-only category must
-                // not strand the obligation; only other open-order commitments reduce this total.
-                : Mathf.Max(0, validation.totalPhysicalMatchingQuantity -
-                    FindBuyerService.CommittedQuantity(state, order.ThingDef, order.id));
+            OrderAvailability availability = CalculateAvailability(
+                order, map, validation, state);
+            int available = availability.AvailableQuantity;
             if (available < order.RemainingQuantity)
             {
                 int committedElsewhere = FindBuyerService.CommittedQuantity(
@@ -877,6 +891,29 @@ namespace Intercolony
             }
 
             return true;
+        }
+
+        private static OrderAvailability CalculateAvailability(
+            SalesOrder order,
+            Map map,
+            OrderValidationResult validation,
+            IntercolonyWorldComponent state)
+        {
+            if (order?.line?.thingDef == null || map == null || !order.IsOpen || validation == null)
+            {
+                return OrderAvailability.NotApplicable;
+            }
+
+            int available = order.IsAnimalOrder
+                ? FindBuyerService.AvailableAnimalQuantity(
+                    state, map, order.ThingDef, order.line.animalSpec, order.id)
+                // Validate against all physical stock matching this accepted order's locked line,
+                // without reapplying current trade eligibility. A disabled buy-only category must
+                // not strand the obligation; only other open-order commitments reduce this total.
+                : Mathf.Max(0, validation.totalPhysicalMatchingQuantity -
+                    FindBuyerService.CommittedQuantity(state, order.ThingDef, order.id));
+
+            return new OrderAvailability(available, order.RemainingQuantity);
         }
 
         private static string ReadyRefusal(SalesOrder order, string reason)
