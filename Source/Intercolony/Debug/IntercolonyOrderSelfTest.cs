@@ -189,6 +189,7 @@ namespace Intercolony
 
             // --- Find Buyer availability: physical stock minus today's commitments ---
             RunAvailabilityChecks(state, map, sb, Check);
+            CheckOrderAvailability(state, map, sb, Check, Skip);
 
             // --- Buyer-pickup orders stay bound to the colony that declared them ready ---
             RunBuyerPickupMapChecks(state, map, sb, Check, Skip);
@@ -2220,6 +2221,280 @@ namespace Intercolony
                             Find.Archive.Remove(archivable);
                         }
                     }
+                }
+            }
+        }
+
+        private static void CheckOrderAvailability(
+            IntercolonyWorldComponent state,
+            Map map,
+            StringBuilder sb,
+            Action<string, bool, string> check,
+            Action<string, string> skip)
+        {
+            const string FullyStockedAssertion =
+                "a fully stocked order reports enough available";
+            const string ShortOrderAssertion =
+                "a short order reports how many are actually available";
+            const string NoStockAssertion =
+                "an order with no stock reports zero available, not not-applicable";
+            const string ReadinessAgreementAssertion =
+                "availability and the readiness decision agree";
+            const string NotApplicableAssertion =
+                "an order that cannot be measured says so rather than reporting zero";
+
+            void SkipAssertions(string reason)
+            {
+                skip(FullyStockedAssertion, reason);
+                skip(ShortOrderAssertion, reason);
+                skip(NoStockAssertion, reason);
+                skip(ReadinessAgreementAssertion, reason);
+                skip(NotApplicableAssertion, reason);
+            }
+
+            sb.AppendLine("  F12 order availability:");
+            if (state == null || map == null || map.zoneManager == null ||
+                map.listerThings == null || map.haulDestinationManager == null)
+            {
+                SkipAssertions("the test needs a live world state and a map with storage services");
+                return;
+            }
+
+            if (Find.Maps?.Contains(map) != true)
+            {
+                SkipAssertions(
+                    "the test map is not loaded, so the readiness decision cannot be evaluated");
+                return;
+            }
+
+            List<KeyValuePair<ThingDef, int>> existingStock =
+                FindBuyerService.ColonyStock(map);
+            ThingDef probeDef = null;
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null || candidate.category != ThingCategory.Item ||
+                    candidate.stackLimit < 10 || candidate.MadeFromStuff ||
+                    ListedQuantity(existingStock, candidate) > 0)
+                {
+                    continue;
+                }
+
+                bool alreadyOrdered = false;
+                foreach (SalesOrder existing in state.Orders)
+                {
+                    if (existing?.ThingDef == candidate)
+                    {
+                        alreadyOrdered = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyOrdered)
+                {
+                    probeDef = candidate;
+                    break;
+                }
+            }
+
+            if (probeDef == null)
+            {
+                SkipAssertions(
+                    "every suitable stackable trade item is already stocked or ordered");
+                return;
+            }
+
+            const int PhysicalStock = 10;
+            const int CommittedStock = 5;
+            int expectedAvailable = PhysicalStock - CommittedStock;
+            Zone_Stockpile testZone = null;
+            Thing testStock = null;
+            Thing unspawnedStock = null;
+            IntVec3 storageCell = IntVec3.Invalid;
+            HashSet<IntVec3> reservedCells = new HashSet<IntVec3>();
+            Area_Home homeArea = null;
+            Dictionary<IntVec3, bool> previousHomeArea =
+                new Dictionary<IntVec3, bool>();
+            List<SalesOrder> fixtureOrders = new List<SalesOrder>();
+
+            try
+            {
+                IntVec3 root = DropCellFinder.TradeDropSpot(map);
+                IntVec3 FindEmptyCell(IntVec3 center)
+                {
+                    if (center.IsValid)
+                    {
+                        foreach (IntVec3 candidate in GenRadial.RadialCellsAround(
+                                     center, 30f, useCenter: true))
+                        {
+                            if (candidate.InBounds(map) && candidate.Standable(map) &&
+                                !reservedCells.Contains(candidate) &&
+                                map.zoneManager.ZoneAt(candidate) == null &&
+                                map.thingGrid.ThingsListAt(candidate).Count == 0)
+                            {
+                                return candidate;
+                            }
+                        }
+                    }
+
+                    foreach (IntVec3 candidate in map.AllCells)
+                    {
+                        if (candidate.Standable(map) &&
+                            !reservedCells.Contains(candidate) &&
+                            map.zoneManager.ZoneAt(candidate) == null &&
+                            map.thingGrid.ThingsListAt(candidate).Count == 0)
+                        {
+                            return candidate;
+                        }
+                    }
+
+                    return IntVec3.Invalid;
+                }
+
+                storageCell = FindEmptyCell(root);
+
+                if (!storageCell.IsValid)
+                {
+                    SkipAssertions("no empty unzoned storage cell near the trade drop spot");
+                    return;
+                }
+
+                reservedCells.Add(storageCell);
+                homeArea = map.areaManager?.Home;
+                if (homeArea != null)
+                {
+                    foreach (IntVec3 cell in CellRect.CenteredOn(storageCell, 4).ClipInsideMap(map))
+                    {
+                        previousHomeArea[cell] = homeArea[cell];
+                    }
+                }
+
+                testZone = new Zone_Stockpile(
+                    StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+                map.zoneManager.RegisterZone(testZone);
+                testZone.AddCell(storageCell);
+                if (!testZone.ContainsCell(storageCell))
+                {
+                    testZone.GetSlotGroup()?.Notify_LostCell(storageCell);
+                    SkipAssertions("the temporary stockpile could not claim its empty storage cell");
+                    return;
+                }
+
+                unspawnedStock = ThingMaker.MakeThing(probeDef);
+                unspawnedStock.stackCount = PhysicalStock;
+                testStock = GenSpawn.Spawn(unspawnedStock, storageCell, map);
+                if (testStock == null)
+                {
+                    SkipAssertions("the temporary stored stack could not be spawned");
+                    return;
+                }
+
+                unspawnedStock = null;
+
+                SalesOrder committedOrder = NewOrder(probeDef, CommittedStock, 1f);
+                committedOrder.id = 93051;
+                fixtureOrders.Add(committedOrder);
+                state.Orders.Add(committedOrder);
+
+                SalesOrder NewPickupOrder(int id, int quantity)
+                {
+                    SalesOrder order = NewOrder(probeDef, quantity, 1f);
+                    order.id = id;
+                    order.fulfillment = FulfillmentMode.BuyerPickup;
+                    order.fulfillmentMap = map;
+                    fixtureOrders.Add(order);
+                    return order;
+                }
+
+                SalesOrder fullyStockedOrder = NewPickupOrder(93052, expectedAvailable);
+                OrderAvailability fullyStocked = SalesOrderService.GetAvailability(
+                    fullyStockedOrder, map);
+                check(FullyStockedAssertion,
+                    fullyStocked.IsApplicable &&
+                    fullyStocked.AvailableQuantity == expectedAvailable &&
+                    fullyStocked.RequiredQuantity == fullyStockedOrder.RemainingQuantity &&
+                    fullyStocked.CanBeFullySatisfied,
+                    $"available={fullyStocked.AvailableQuantity}, " +
+                    $"required={fullyStocked.RequiredQuantity}, " +
+                    $"expected={expectedAvailable}");
+
+                SalesOrder shortOrder = NewPickupOrder(93053, 12);
+                shortOrder.deliveredQuantity = 2;
+                OrderAvailability shortAvailability = SalesOrderService.GetAvailability(
+                    shortOrder, map);
+                check(ShortOrderAssertion,
+                    shortAvailability.IsApplicable &&
+                    shortAvailability.AvailableQuantity == expectedAvailable &&
+                    shortAvailability.RequiredQuantity == shortOrder.RemainingQuantity &&
+                    !shortAvailability.CanBeFullySatisfied,
+                    $"available={shortAvailability.AvailableQuantity}, " +
+                    $"required={shortAvailability.RequiredQuantity}, " +
+                    $"expected={expectedAvailable}");
+
+                bool canMarkShortReady = SalesOrderService.CanMarkReadyNow(
+                    shortOrder, map, out string readinessReason);
+                check(ReadinessAgreementAssertion,
+                    shortAvailability.IsApplicable &&
+                    shortAvailability.CanBeFullySatisfied == canMarkShortReady,
+                    $"availability={shortAvailability.CanBeFullySatisfied}, " +
+                    $"ready={canMarkShortReady}, reason={readinessReason ?? "none"}");
+
+                if (!testStock.Destroyed)
+                {
+                    testStock.Destroy(DestroyMode.Vanish);
+                }
+
+                SalesOrder noStockOrder = NewPickupOrder(93054, 7);
+                noStockOrder.deliveredQuantity = 2;
+                OrderAvailability noStock = SalesOrderService.GetAvailability(noStockOrder, map);
+                check(NoStockAssertion,
+                    noStock.IsApplicable && noStock.AvailableQuantity == 0 &&
+                    noStock.RequiredQuantity == noStockOrder.RemainingQuantity &&
+                    !noStock.CanBeFullySatisfied,
+                    $"applicable={noStock.IsApplicable}, available={noStock.AvailableQuantity}, " +
+                    $"required={noStock.RequiredQuantity}");
+
+                SalesOrder unmeasurableOrder = NewPickupOrder(93055, 3);
+                unmeasurableOrder.deliveredQuantity = 1;
+                OrderAvailability notApplicable = SalesOrderService.GetAvailability(
+                    unmeasurableOrder, null);
+                check(NotApplicableAssertion,
+                    !notApplicable.IsApplicable,
+                    $"applicable={notApplicable.IsApplicable}, " +
+                    $"available={notApplicable.AvailableQuantity}, " +
+                    $"required={notApplicable.RequiredQuantity}");
+            }
+            finally
+            {
+                foreach (SalesOrder fixtureOrder in fixtureOrders)
+                {
+                    state.Orders.Remove(fixtureOrder);
+                }
+
+                if (testStock != null && !testStock.Destroyed)
+                {
+                    testStock.Destroy(DestroyMode.Vanish);
+                }
+
+                if (unspawnedStock != null && !unspawnedStock.Destroyed)
+                {
+                    unspawnedStock.Destroy(DestroyMode.Vanish);
+                }
+
+                try
+                {
+                    testZone?.Delete(playSound: false);
+                }
+                finally
+                {
+                    if (homeArea != null)
+                    {
+                        foreach (KeyValuePair<IntVec3, bool> entry in previousHomeArea)
+                        {
+                            homeArea[entry.Key] = entry.Value;
+                        }
+                    }
+
+                    reservedCells.Clear();
                 }
             }
         }
