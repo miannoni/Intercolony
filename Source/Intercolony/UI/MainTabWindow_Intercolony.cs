@@ -227,6 +227,10 @@ namespace Intercolony
             // hidden as orders complete and reputation moves, so do not carry an old proposal
             // result into the next visit.
             contractProposalSettlementCache = null;
+            // Main-tab windows survive being closed, so stale choices would accumulate for
+            // contracts that no longer exist. F14 asks selling entries to begin collapsed: each
+            // visit to the tab is a beginning.
+            contractExpansionChoices.Clear();
             expandedRelationSettlementId = NoExpandedRelation;
             ResetMarketCache();
             ResetSupplierMarketCache();
@@ -3162,6 +3166,11 @@ namespace Intercolony
         private Vector2 procurementContractsScroll;
         private Vector2 contractsScroll;
         private List<Settlement> contractProposalSettlementCache;
+        // An absent key means no player choice: use ContractStartsExpanded for this entry's
+        // current default. This is a dictionary, not a set of expanded or collapsed ids, because
+        // an explicit "closed" choice must stay distinct from an untouched entry whose default is
+        // currently closed; that default can change while the row remains on screen.
+        private readonly Dictionary<int, bool> contractExpansionChoices = new Dictionary<int, bool>();
 
         /// <summary>
         /// Recurring procurement agreements. Offers and final supplier counters come first because
@@ -3774,6 +3783,7 @@ namespace Intercolony
             List<float> rowHeights = new List<float>(contracts.Count);
             List<BusinessReportService.ContractEstimate> rowEstimates =
                 new List<BusinessReportService.ContractEstimate>(contracts.Count);
+            List<bool> rowExpansions = new List<bool>(contracts.Count);
             float contentHeight = 0f;
             foreach (RecurringContract contract in contracts)
             {
@@ -3781,7 +3791,9 @@ namespace Intercolony
                 estimatesByContractId.TryGetValue(contract.id, out estimate);
                 rowEstimates.Add(estimate);
 
-                float rowHeight = ContractRowHeight(contract, estimate, tableWidth);
+                bool expanded = IsContractExpanded(contract);
+                rowExpansions.Add(expanded);
+                float rowHeight = ContractRowHeight(contract, estimate, tableWidth, expanded);
                 rowHeights.Add(rowHeight);
                 contentHeight += rowHeight;
             }
@@ -3795,7 +3807,7 @@ namespace Intercolony
             {
                 DrawContractRow(
                     new Rect(0f, rowY, tableWidth, rowHeights[i]),
-                    contracts[i], i, state, rowEstimates[i]);
+                    contracts[i], i, state, rowEstimates[i], rowExpansions[i]);
                 rowY += rowHeights[i];
             }
 
@@ -3879,6 +3891,12 @@ namespace Intercolony
                    $"{contract.ItemLabel()} every {contract.CadenceDays:F0}d";
         }
 
+        private static string ContractIdentityWithExpansionMarker(
+            RecurringContract contract, bool expanded)
+        {
+            return $"{(expanded ? "v" : ">")} {ContractIdentity(contract)}";
+        }
+
         private static string ContractPaymentSummary(RecurringContract contract)
         {
             string paymentSummary =
@@ -3929,6 +3947,29 @@ namespace Intercolony
             return contract.status == ContractStatus.Suspended;
         }
 
+        private bool IsContractExpanded(RecurringContract contract)
+        {
+            if (contract == null)
+            {
+                return false;
+            }
+
+            bool expanded;
+            return contractExpansionChoices.TryGetValue(contract.id, out expanded)
+                ? expanded
+                : ContractStartsExpanded(contract);
+        }
+
+        private void SetContractExpanded(RecurringContract contract, bool expanded)
+        {
+            if (contract == null)
+            {
+                return;
+            }
+
+            contractExpansionChoices[contract.id] = expanded;
+        }
+
         private static string ContractStatusText(RecurringContract contract)
         {
             if (contract.IsPendingPlayerProposal)
@@ -3974,6 +4015,12 @@ namespace Intercolony
             return terminalStatus;
         }
 
+        private static string ContractDeliveryStatus(RecurringContract contract)
+        {
+            return $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
+                   ContractStatusText(contract);
+        }
+
         private static float ContractMeasuredHeight(string text, float width)
         {
             return Mathf.Max(Text.LineHeight, Text.CalcHeight(text ?? "", Mathf.Max(1f, width)));
@@ -4000,16 +4047,20 @@ namespace Intercolony
         }
 
         private static float ContractBaseRowHeight(
-            RecurringContract contract, float tableWidth)
+            RecurringContract contract, float tableWidth, bool expanded)
         {
             float contentWidth = Mathf.Max(1f, tableWidth - 220f);
             float height = 4f;
-            height += ContractMeasuredHeight(ContractIdentity(contract), contentWidth);
-            height += ContractMeasuredHeight(ContractPaymentSummary(contract), contentWidth);
             height += ContractMeasuredHeight(
-                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
-                ContractStatusText(contract), contentWidth);
-            return Mathf.Max(74f, height + 4f);
+                ContractIdentityWithExpansionMarker(contract, expanded), contentWidth);
+            if (expanded)
+            {
+                height += ContractMeasuredHeight(ContractPaymentSummary(contract), contentWidth);
+            }
+
+            height += ContractMeasuredHeight(ContractDeliveryStatus(contract), contentWidth);
+            height += 4f;
+            return expanded ? Mathf.Max(74f, height) : height;
         }
 
         private static float ContractEstimateLabelWidth(
@@ -4090,9 +4141,15 @@ namespace Intercolony
         private static float ContractRowHeight(
             RecurringContract contract,
             BusinessReportService.ContractEstimate estimate,
-            float tableWidth)
+            float tableWidth,
+            bool expanded)
         {
-            float height = ContractBaseRowHeight(contract, tableWidth);
+            float height = ContractBaseRowHeight(contract, tableWidth, expanded);
+            if (!expanded)
+            {
+                return height;
+            }
+
             if (estimate != null)
             {
                 height += ContractEstimateBlockHeight(estimate, tableWidth);
@@ -4220,7 +4277,8 @@ namespace Intercolony
             RecurringContract contract,
             int index,
             IntercolonyWorldComponent state,
-            BusinessReportService.ContractEstimate estimate)
+            BusinessReportService.ContractEstimate estimate,
+            bool expanded)
         {
             if (index % 2 == 1)
             {
@@ -4231,17 +4289,27 @@ namespace Intercolony
 
             float contentWidth = Mathf.Max(1f, rect.width - 220f);
             float lineY = rect.y + 4f;
+            string identity = ContractIdentityWithExpansionMarker(contract, expanded);
+            Rect identityRect = new Rect(
+                rect.x + 6f, lineY, contentWidth,
+                ContractMeasuredHeight(identity, contentWidth));
             lineY += DrawMeasuredContractLabel(
-                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
-                ContractIdentity(contract), TextAnchor.UpperLeft);
+                identityRect, identity, TextAnchor.UpperLeft);
 
-            GUI.color = new Color(1f, 1f, 1f, 0.7f);
-            lineY += DrawMeasuredContractLabel(
-                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
-                ContractPaymentSummary(contract), TextAnchor.UpperLeft);
-            GUI.color = Color.white;
+            if (Widgets.ButtonInvisible(identityRect))
+            {
+                SetContractExpanded(contract, !IsContractExpanded(contract));
+            }
 
-            string status = ContractStatusText(contract);
+            if (expanded)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.7f);
+                lineY += DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                    ContractPaymentSummary(contract), TextAnchor.UpperLeft);
+                GUI.color = Color.white;
+            }
+
             Color colour;
             if (contract.IsPendingPlayerProposal)
             {
@@ -4282,11 +4350,16 @@ namespace Intercolony
             GUI.color = colour;
             lineY += DrawMeasuredContractLabel(
                 new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
-                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — {status}",
+                ContractDeliveryStatus(contract),
                 TextAnchor.UpperLeft);
             GUI.color = Color.white;
 
-            float baseRowHeight = ContractBaseRowHeight(contract, rect.width);
+            if (!expanded)
+            {
+                return;
+            }
+
+            float baseRowHeight = ContractBaseRowHeight(contract, rect.width, expanded);
             float contentY = rect.y + baseRowHeight;
             if (estimate != null)
             {
