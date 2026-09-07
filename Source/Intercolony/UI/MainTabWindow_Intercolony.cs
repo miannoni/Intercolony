@@ -3895,6 +3895,40 @@ namespace Intercolony
             return paymentSummary;
         }
 
+        /// <summary>
+        /// Starts a row open only when the player has a decision to make or the agreement is
+        /// warning that something is going wrong. A settlement offer needs an answer, a live
+        /// renewal needs a renew-or-let-it-end decision, a missed active cycle warns that one
+        /// more miss ends the agreement, and war suspension is an abnormal interruption.
+        /// A pending player proposal is not exceptional: the player already acted and is waiting
+        /// on the settlement, so there is nothing for them to decide. Terminal history stays
+        /// collapsed.
+        /// </summary>
+        internal static bool ContractStartsExpanded(RecurringContract contract)
+        {
+            if (contract == null || contract.IsPendingPlayerProposal)
+            {
+                return false;
+            }
+
+            if (contract.IsOffer)
+            {
+                return true;
+            }
+
+            if (contract.renewalOffered && contract.DaysUntilRenewalExpires > 0f)
+            {
+                return true;
+            }
+
+            if (contract.IsActive && contract.consecutiveFailures > 0)
+            {
+                return true;
+            }
+
+            return contract.status == ContractStatus.Suspended;
+        }
+
         private static string ContractStatusText(RecurringContract contract)
         {
             if (contract.IsPendingPlayerProposal)

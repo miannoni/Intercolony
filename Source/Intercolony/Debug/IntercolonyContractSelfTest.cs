@@ -79,6 +79,7 @@ namespace Intercolony
             sb.AppendLine("Recurring contract self-test");
 
             CheckAutoReadySerialization(Check);
+            CheckContractStartsExpanded(Check);
 
             List<RecurringContract> created = new List<RecurringContract>();
             List<SalesOrder> createdOrders = new List<SalesOrder>();
@@ -1096,6 +1097,150 @@ namespace Intercolony
                 $"loaded autoReadyOrders={procurementOnValue?.ToString() ?? "null"}; " +
                 $"autoReadyOrders node present={procurementOnNodePresent}; " +
                 $"failure={procurementOnFailure ?? "none"}");
+        }
+
+        private static void CheckContractStartsExpanded(
+            Action<string, bool, string> check)
+        {
+            string Describe(RecurringContract contract, bool returned)
+            {
+                return $"status={contract.status}; " +
+                       $"IsOffer={contract.IsOffer}; " +
+                       $"IsPendingPlayerProposal={contract.IsPendingPlayerProposal}; " +
+                       $"consecutiveFailures={contract.consecutiveFailures}; " +
+                       $"renewalOffered={contract.renewalOffered}; " +
+                       $"DaysUntilRenewalExpires={contract.DaysUntilRenewalExpires:F2}; " +
+                       $"returned={returned}";
+            }
+
+            RecurringContract settlementOffer = new RecurringContract
+            {
+                status = ContractStatus.Offered
+            };
+            bool settlementOfferExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(settlementOffer);
+            check(
+                "a settlement's offer starts expanded",
+                settlementOfferExpanded,
+                Describe(settlementOffer, settlementOfferExpanded));
+
+            RecurringContract pendingPlayerProposal = new RecurringContract
+            {
+                status = ContractStatus.Offered,
+                decisionDueTick = GenTicks.TicksGame + GenDate.TicksPerDay,
+                proposalAppeal = 0.5f,
+                renewalOffered = true,
+                renewalExpiryTick = GenTicks.TicksGame + GenDate.TicksPerDay * 8
+            };
+            bool pendingPlayerProposalExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(pendingPlayerProposal);
+            check(
+                "a proposal awaiting the settlement starts collapsed",
+                !pendingPlayerProposalExpanded,
+                Describe(pendingPlayerProposal, pendingPlayerProposalExpanded));
+
+            RecurringContract routineActive = new RecurringContract
+            {
+                status = ContractStatus.Active
+            };
+            bool routineActiveExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(routineActive);
+            check(
+                "a routine active agreement starts collapsed",
+                !routineActiveExpanded,
+                Describe(routineActive, routineActiveExpanded));
+
+            RecurringContract missedActive = new RecurringContract
+            {
+                status = ContractStatus.Active,
+                consecutiveFailures = 1
+            };
+            bool missedActiveExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(missedActive);
+
+            RecurringContract missedBreached = new RecurringContract
+            {
+                status = ContractStatus.Breached,
+                consecutiveFailures = 1
+            };
+            bool missedBreachedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(missedBreached);
+            check(
+                "an active agreement that has missed starts expanded",
+                missedActiveExpanded && !missedBreachedExpanded,
+                $"{Describe(missedActive, missedActiveExpanded)}; " +
+                Describe(missedBreached, missedBreachedExpanded));
+
+            RecurringContract liveRenewal = new RecurringContract
+            {
+                status = ContractStatus.Completed,
+                renewalOffered = true,
+                renewalExpiryTick = GenTicks.TicksGame + GenDate.TicksPerDay * 8
+            };
+            bool liveRenewalExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(liveRenewal);
+
+            RecurringContract expiredRenewal = new RecurringContract
+            {
+                status = ContractStatus.Completed,
+                renewalOffered = true,
+                renewalExpiryTick = GenTicks.TicksGame - GenDate.TicksPerDay
+            };
+            bool expiredRenewalExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(expiredRenewal);
+            check(
+                "a live renewal decision starts expanded",
+                liveRenewalExpanded && !expiredRenewalExpanded,
+                $"{Describe(liveRenewal, liveRenewalExpanded)}; " +
+                Describe(expiredRenewal, expiredRenewalExpanded));
+
+            RecurringContract suspended = new RecurringContract
+            {
+                status = ContractStatus.Suspended
+            };
+            bool suspendedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(suspended);
+            check(
+                "a suspended agreement starts expanded",
+                suspendedExpanded,
+                Describe(suspended, suspendedExpanded));
+
+            RecurringContract completed = new RecurringContract
+            {
+                status = ContractStatus.Completed,
+                renewalOffered = false
+            };
+            RecurringContract breached = new RecurringContract
+            {
+                status = ContractStatus.Breached,
+                renewalOffered = false
+            };
+            RecurringContract cancelled = new RecurringContract
+            {
+                status = ContractStatus.Cancelled,
+                renewalOffered = false
+            };
+            RecurringContract declined = new RecurringContract
+            {
+                status = ContractStatus.Declined,
+                renewalOffered = false
+            };
+            bool completedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(completed);
+            bool breachedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(breached);
+            bool cancelledExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(cancelled);
+            bool declinedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(declined);
+            check(
+                "terminal history starts collapsed",
+                !completedExpanded && !breachedExpanded &&
+                !cancelledExpanded && !declinedExpanded,
+                $"{Describe(completed, completedExpanded)}; " +
+                $"{Describe(breached, breachedExpanded)}; " +
+                $"{Describe(cancelled, cancelledExpanded)}; " +
+                Describe(declined, declinedExpanded));
         }
 
         private static ContractAutoReadyRoundTripProbe RoundTripContractAutoReady(
