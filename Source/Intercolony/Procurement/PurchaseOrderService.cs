@@ -908,13 +908,66 @@ namespace Intercolony
 
         private static int SpawnGoods(PurchaseOrder order, Map map, IntVec3 cell)
         {
-            int placed = 0;
+            ReceivingLocationMapComponent receiving = ReceivingLocationMapComponent.For(map);
+            // F05 is opt-in: with no receiving marker, preserve the original trade-drop loop
+            // verbatim. Once a marker exists, only those marked destinations are eligible;
+            // do not turn delivery into a map-wide storage search.
+            if (receiving == null || !receiving.AnyConfigured)
+            {
+                int placed = 0;
+                foreach (Thing thing in MakeGoods(order))
+                {
+                    int units = OrderValidator.CountableUnits(thing);
+                    if (GenPlace.TryPlaceThing(thing, cell, map, ThingPlaceMode.Near))
+                    {
+                        placed += units;
+                    }
+                    else
+                    {
+                        thing.Destroy(DestroyMode.Vanish);
+                    }
+                }
+
+                return placed;
+            }
+
+            int placedUnits = 0;
             foreach (Thing thing in MakeGoods(order))
             {
                 int units = OrderValidator.CountableUnits(thing);
-                if (GenPlace.TryPlaceThing(thing, cell, map, ThingPlaceMode.Near))
+                bool placedInReceiving = false;
+                foreach (ISlotGroupParent destination in receiving.ReceivingDestinations)
                 {
-                    placed += units;
+                    if (!destination.HaulDestinationEnabled || !destination.Accepts(thing))
+                    {
+                        continue;
+                    }
+
+                    foreach (IntVec3 destinationCell in destination.AllSlotCells())
+                    {
+                        if (!destinationCell.IsValidStorageFor(map, thing))
+                        {
+                            continue;
+                        }
+
+                        if (GenPlace.TryPlaceThing(
+                                thing, destinationCell, map, ThingPlaceMode.Direct))
+                        {
+                            placedInReceiving = true;
+                            break;
+                        }
+                    }
+
+                    if (placedInReceiving)
+                    {
+                        break;
+                    }
+                }
+
+                if (placedInReceiving ||
+                    GenPlace.TryPlaceThing(thing, cell, map, ThingPlaceMode.Near))
+                {
+                    placedUnits += units;
                 }
                 else
                 {
@@ -922,7 +975,7 @@ namespace Intercolony
                 }
             }
 
-            return placed;
+            return placedUnits;
         }
 
         /// <summary>Silver held in colony storage. Loose silver on the ground does not count.</summary>
