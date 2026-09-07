@@ -88,6 +88,7 @@ namespace Intercolony
                     CheckPauseBehavior(
                         r, map, loops, subject, reservedCells, testRects);
                     CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
+                    CheckProduceDesignators(r, map, subject, reservedCells, testRects);
                     CheckBlueprintRotation(r, map, loops, subject, reservedCells, testRects);
                 }
 
@@ -828,6 +829,683 @@ namespace Intercolony
                 $"record survived {(elsewhereRecordSurvived ? "yes" : "no")}, " +
                 $"blueprint present after pass " +
                 $"{(elsewhereBlueprintAfterPass ? "yes" : "no")}");
+        }
+
+        private static void CheckProduceDesignators(
+            Results r,
+            Map map,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string resumeEnableLabel =
+                "the area resume command starts a program on an eligible cell";
+            const string resumePausedLabel = "the area resume command resumes a paused program";
+            const string pauseLabel = "the area pause command pauses a running program";
+            const string stopLabel = "the area stop command deletes the record";
+            const string refusalLabel = "an area command refuses a cell it cannot act on";
+            const string dragLabel = "a drag applies the command to every eligible cell it covers";
+
+            if (Find.CurrentMap != map)
+            {
+                const string reason =
+                    "Produce designators.Map uses Find.CurrentMap, which is not the self-test map";
+                r.Skip(resumeEnableLabel, reason);
+                r.Skip(resumePausedLabel, reason);
+                r.Skip(pauseLabel, reason);
+                r.Skip(stopLabel, reason);
+                r.Skip(refusalLabel, reason);
+                r.Skip(dragLabel, reason);
+                return;
+            }
+
+            ProduceLoopMapComponent designatorLoops = ProduceLoopMapComponent.For(map);
+            if (designatorLoops == null)
+            {
+                const string reason = "the current map has no ProduceLoopMapComponent";
+                r.Skip(resumeEnableLabel, reason);
+                r.Skip(resumePausedLabel, reason);
+                r.Skip(pauseLabel, reason);
+                r.Skip(stopLabel, reason);
+                r.Skip(refusalLabel, reason);
+                r.Skip(dragLabel, reason);
+                return;
+            }
+
+            List<IntVec3> fixtureCells = new List<IntVec3>();
+            IntVec3 startCell = IntVec3.Invalid;
+            IntVec3 pausedResumeCell = IntVec3.Invalid;
+            IntVec3 pauseCell = IntVec3.Invalid;
+            IntVec3 stopCell = IntVec3.Invalid;
+            IntVec3 refusalPauseCell = IntVec3.Invalid;
+            IntVec3 refusalResumeCell = IntVec3.Invalid;
+            IntVec3 dragFirstCell = IntVec3.Invalid;
+            IntVec3 dragSecondCell = IntVec3.Invalid;
+            IntVec3 dragIneligibleCell = IntVec3.Invalid;
+
+            bool startRecordBefore = false;
+            bool startPausedBefore = false;
+            bool startCanDesignate = false;
+            bool startRecordAfter = false;
+            bool startPausedAfter = false;
+            bool startThingDefAfter = false;
+            bool startStuffDefAfter = false;
+
+            bool pausedResumeRecordBefore = false;
+            bool pausedResumePausedBefore = false;
+            bool pausedResumeCanDesignate = false;
+            bool pausedResumeRecordAfter = false;
+            bool pausedResumePausedAfter = false;
+
+            bool pauseRecordBefore = false;
+            bool pausePausedBefore = false;
+            bool pauseCanDesignate = false;
+            bool pauseRecordAfter = false;
+            bool pausePausedAfter = false;
+
+            bool stopRecordBefore = false;
+            bool stopPausedBefore = false;
+            bool stopCanDesignate = false;
+            bool stopRecordAfter = false;
+            bool stopPausedAfter = false;
+
+            bool refusalPauseRecordBefore = false;
+            bool refusalPausePausedBefore = false;
+            bool refusalPauseCanDesignate = false;
+            bool refusalPauseRecordAfter = false;
+            bool refusalPausePausedAfter = false;
+            bool refusalResumeRecordBefore = false;
+            bool refusalResumePausedBefore = false;
+            bool refusalResumeCanDesignate = false;
+            bool refusalResumeRecordAfter = false;
+            bool refusalResumePausedAfter = false;
+
+            bool dragFirstRecordBefore = false;
+            bool dragFirstPausedBefore = false;
+            bool dragFirstCanDesignate = false;
+            bool dragFirstRecordAfter = false;
+            bool dragFirstPausedAfter = false;
+            bool dragSecondRecordBefore = false;
+            bool dragSecondPausedBefore = false;
+            bool dragSecondCanDesignate = false;
+            bool dragSecondRecordAfter = false;
+            bool dragSecondPausedAfter = false;
+            ProduceLoopRecord dragIneligibleRecordBefore = null;
+            bool dragIneligibleRecordBeforeExists = false;
+            bool dragIneligiblePausedBefore = false;
+            bool dragIneligibleCanDesignate = false;
+            ProduceLoopRecord dragIneligibleRecordAfter = null;
+            bool dragIneligibleRecordAfterExists = false;
+            bool dragIneligiblePausedAfter = false;
+
+            try
+            {
+                Designator_ProduceResume resumeDesignator = new Designator_ProduceResume();
+                Designator_ProducePause pauseDesignator = new Designator_ProducePause();
+                Designator_ProduceStop stopDesignator = new Designator_ProduceStop();
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out startCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(startCell);
+                RememberCell(
+                    startCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+                GenConstruct.PlaceBlueprintForBuild(
+                    subject.thingDef,
+                    startCell,
+                    map,
+                    Rot4.North,
+                    Faction.OfPlayer,
+                    subject.stuffDef);
+                if (FindBlueprint(map, startCell, subject.thingDef) == null)
+                {
+                    const string reason =
+                        "the eligible-cell fixture did not create the expected blueprint";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out pausedResumeCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(pausedResumeCell);
+                RememberCell(
+                    pausedResumeCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out pauseCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(pauseCell);
+                RememberCell(
+                    pauseCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out stopCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(stopCell);
+                RememberCell(
+                    stopCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out refusalPauseCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(refusalPauseCell);
+                RememberCell(
+                    refusalPauseCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out refusalResumeCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(refusalResumeCell);
+                RememberCell(
+                    refusalResumeCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out dragFirstCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(dragFirstCell);
+                RememberCell(
+                    dragFirstCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out dragSecondCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(dragSecondCell);
+                RememberCell(
+                    dragSecondCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+
+                if (!TryFindBuildCell(
+                        map,
+                        designatorLoops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out dragIneligibleCell))
+                {
+                    const string reason = "not enough empty valid cells for the area-designator fixtures";
+                    r.Skip(resumeEnableLabel, reason);
+                    r.Skip(resumePausedLabel, reason);
+                    r.Skip(pauseLabel, reason);
+                    r.Skip(stopLabel, reason);
+                    r.Skip(refusalLabel, reason);
+                    r.Skip(dragLabel, reason);
+                    return;
+                }
+
+                fixtureCells.Add(dragIneligibleCell);
+                RememberCell(
+                    dragIneligibleCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+
+                designatorLoops.Enable(
+                    pausedResumeCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                designatorLoops.Pause(pausedResumeCell);
+                designatorLoops.Enable(
+                    pauseCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                designatorLoops.Enable(
+                    stopCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                designatorLoops.Enable(
+                    refusalResumeCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                designatorLoops.Enable(
+                    dragFirstCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                designatorLoops.Enable(
+                    dragSecondCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                designatorLoops.Enable(
+                    dragIneligibleCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                designatorLoops.Pause(dragIneligibleCell);
+
+                CheckSafely(
+                    r,
+                    resumeEnableLabel,
+                    () =>
+                    {
+                        ProduceLoopRecord before = designatorLoops.Find(startCell);
+                        startRecordBefore = before != null;
+                        startPausedBefore = before != null && before.paused;
+                        startCanDesignate = resumeDesignator.CanDesignateCell(startCell).Accepted;
+                        resumeDesignator.DesignateSingleCell(startCell);
+                        ProduceLoopRecord after = designatorLoops.Find(startCell);
+                        startRecordAfter = after != null;
+                        startPausedAfter = after != null && after.paused;
+                        startThingDefAfter = after != null && after.thingDef == subject.thingDef;
+                        startStuffDefAfter = after != null && after.stuffDef == subject.stuffDef;
+                        return !startRecordBefore &&
+                               startCanDesignate &&
+                               startRecordAfter &&
+                               !startPausedAfter &&
+                               startThingDefAfter &&
+                               startStuffDefAfter;
+                    },
+                    () => $"cell {startCell}; record before {(startRecordBefore ? "yes" : "no")}, " +
+                    $"paused before {(startRecordBefore ? (startPausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(startCanDesignate ? "accepted" : "rejected")}; " +
+                    $"record after {(startRecordAfter ? "yes" : "no")}, " +
+                    $"paused after {(startRecordAfter ? (startPausedAfter ? "yes" : "no") : "n/a")}; " +
+                    $"def recorded {(startThingDefAfter ? "yes" : "no")}, " +
+                    $"stuff recorded {(startStuffDefAfter ? "yes" : "no")}");
+
+                CheckSafely(
+                    r,
+                    resumePausedLabel,
+                    () =>
+                    {
+                        ProduceLoopRecord before = designatorLoops.Find(pausedResumeCell);
+                        pausedResumeRecordBefore = before != null;
+                        pausedResumePausedBefore = before != null && before.paused;
+                        pausedResumeCanDesignate =
+                            resumeDesignator.CanDesignateCell(pausedResumeCell).Accepted;
+                        resumeDesignator.DesignateSingleCell(pausedResumeCell);
+                        ProduceLoopRecord after = designatorLoops.Find(pausedResumeCell);
+                        pausedResumeRecordAfter = after != null;
+                        pausedResumePausedAfter = after != null && after.paused;
+                        return pausedResumeRecordBefore &&
+                               pausedResumePausedBefore &&
+                               pausedResumeCanDesignate &&
+                               pausedResumeRecordAfter &&
+                               !pausedResumePausedAfter;
+                    },
+                    () => $"cell {pausedResumeCell}; record before " +
+                    $"{(pausedResumeRecordBefore ? "yes" : "no")}, paused before " +
+                    $"{(pausedResumeRecordBefore ? (pausedResumePausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(pausedResumeCanDesignate ? "accepted" : "rejected")}; " +
+                    $"record after {(pausedResumeRecordAfter ? "yes" : "no")}, paused after " +
+                    $"{(pausedResumeRecordAfter ? (pausedResumePausedAfter ? "yes" : "no") : "n/a")}");
+
+                CheckSafely(
+                    r,
+                    pauseLabel,
+                    () =>
+                    {
+                        ProduceLoopRecord before = designatorLoops.Find(pauseCell);
+                        pauseRecordBefore = before != null;
+                        pausePausedBefore = before != null && before.paused;
+                        pauseCanDesignate = pauseDesignator.CanDesignateCell(pauseCell).Accepted;
+                        pauseDesignator.DesignateSingleCell(pauseCell);
+                        ProduceLoopRecord after = designatorLoops.Find(pauseCell);
+                        pauseRecordAfter = after != null;
+                        pausePausedAfter = after != null && after.paused;
+                        return pauseRecordBefore &&
+                               !pausePausedBefore &&
+                               pauseCanDesignate &&
+                               pauseRecordAfter &&
+                               pausePausedAfter;
+                    },
+                    () => $"cell {pauseCell}; record before {(pauseRecordBefore ? "yes" : "no")}, " +
+                    $"paused before {(pauseRecordBefore ? (pausePausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(pauseCanDesignate ? "accepted" : "rejected")}; " +
+                    $"record after {(pauseRecordAfter ? "yes" : "no")}, paused after " +
+                    $"{(pauseRecordAfter ? (pausePausedAfter ? "yes" : "no") : "n/a")}");
+
+                CheckSafely(
+                    r,
+                    stopLabel,
+                    () =>
+                    {
+                        ProduceLoopRecord before = designatorLoops.Find(stopCell);
+                        stopRecordBefore = before != null;
+                        stopPausedBefore = before != null && before.paused;
+                        stopCanDesignate = stopDesignator.CanDesignateCell(stopCell).Accepted;
+                        stopDesignator.DesignateSingleCell(stopCell);
+                        ProduceLoopRecord after = designatorLoops.Find(stopCell);
+                        stopRecordAfter = after != null;
+                        stopPausedAfter = after != null && after.paused;
+                        return stopRecordBefore &&
+                               !stopPausedBefore &&
+                               stopCanDesignate &&
+                               !stopRecordAfter;
+                    },
+                    () => $"cell {stopCell}; record before {(stopRecordBefore ? "yes" : "no")}, " +
+                    $"paused before {(stopRecordBefore ? (stopPausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(stopCanDesignate ? "accepted" : "rejected")}; " +
+                    $"record after {(stopRecordAfter ? "yes" : "no")}, paused after " +
+                    $"{(stopRecordAfter ? (stopPausedAfter ? "yes" : "no") : "n/a")}");
+
+                CheckSafely(
+                    r,
+                    refusalLabel,
+                    () =>
+                    {
+                        ProduceLoopRecord pauseBefore = designatorLoops.Find(refusalPauseCell);
+                        refusalPauseRecordBefore = pauseBefore != null;
+                        refusalPausePausedBefore = pauseBefore != null && pauseBefore.paused;
+                        refusalPauseCanDesignate =
+                            pauseDesignator.CanDesignateCell(refusalPauseCell).Accepted;
+                        ProduceLoopRecord resumeBefore = designatorLoops.Find(refusalResumeCell);
+                        refusalResumeRecordBefore = resumeBefore != null;
+                        refusalResumePausedBefore = resumeBefore != null && resumeBefore.paused;
+                        refusalResumeCanDesignate =
+                            resumeDesignator.CanDesignateCell(refusalResumeCell).Accepted;
+                        ProduceLoopRecord pauseAfter = designatorLoops.Find(refusalPauseCell);
+                        refusalPauseRecordAfter = pauseAfter != null;
+                        refusalPausePausedAfter = pauseAfter != null && pauseAfter.paused;
+                        ProduceLoopRecord resumeAfter = designatorLoops.Find(refusalResumeCell);
+                        refusalResumeRecordAfter = resumeAfter != null;
+                        refusalResumePausedAfter = resumeAfter != null && resumeAfter.paused;
+                        return !refusalPauseRecordBefore &&
+                               !refusalPauseCanDesignate &&
+                               refusalResumeRecordBefore &&
+                               !refusalResumePausedBefore &&
+                               !refusalResumeCanDesignate &&
+                               !refusalPauseRecordAfter &&
+                               refusalResumeRecordAfter &&
+                               !refusalResumePausedAfter;
+                    },
+                    () => $"Pause cell {refusalPauseCell}; record before " +
+                    $"{(refusalPauseRecordBefore ? "yes" : "no")}, paused before " +
+                    $"{(refusalPauseRecordBefore ? (refusalPausePausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(refusalPauseCanDesignate ? "accepted" : "rejected")}, " +
+                    $"record after {(refusalPauseRecordAfter ? "yes" : "no")}, paused after " +
+                    $"{(refusalPauseRecordAfter ? (refusalPausePausedAfter ? "yes" : "no") : "n/a")}; " +
+                    $"Resume cell {refusalResumeCell}; record before " +
+                    $"{(refusalResumeRecordBefore ? "yes" : "no")}, paused before " +
+                    $"{(refusalResumeRecordBefore ? (refusalResumePausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(refusalResumeCanDesignate ? "accepted" : "rejected")}, " +
+                    $"record after {(refusalResumeRecordAfter ? "yes" : "no")}, paused after " +
+                    $"{(refusalResumeRecordAfter ? (refusalResumePausedAfter ? "yes" : "no") : "n/a")}");
+
+                CheckSafely(
+                    r,
+                    dragLabel,
+                    () =>
+                    {
+                        ProduceLoopRecord firstBefore = designatorLoops.Find(dragFirstCell);
+                        dragFirstRecordBefore = firstBefore != null;
+                        dragFirstPausedBefore = firstBefore != null && firstBefore.paused;
+                        dragFirstCanDesignate = pauseDesignator.CanDesignateCell(dragFirstCell).Accepted;
+                        ProduceLoopRecord secondBefore = designatorLoops.Find(dragSecondCell);
+                        dragSecondRecordBefore = secondBefore != null;
+                        dragSecondPausedBefore = secondBefore != null && secondBefore.paused;
+                        dragSecondCanDesignate =
+                            pauseDesignator.CanDesignateCell(dragSecondCell).Accepted;
+                        dragIneligibleRecordBefore = designatorLoops.Find(dragIneligibleCell);
+                        dragIneligibleRecordBeforeExists = dragIneligibleRecordBefore != null;
+                        dragIneligiblePausedBefore =
+                            dragIneligibleRecordBefore != null && dragIneligibleRecordBefore.paused;
+                        dragIneligibleCanDesignate =
+                            pauseDesignator.CanDesignateCell(dragIneligibleCell).Accepted;
+
+                        pauseDesignator.DesignateMultiCell(new List<IntVec3>
+                        {
+                            dragFirstCell,
+                            dragSecondCell,
+                            dragIneligibleCell
+                        });
+
+                        ProduceLoopRecord firstAfter = designatorLoops.Find(dragFirstCell);
+                        dragFirstRecordAfter = firstAfter != null;
+                        dragFirstPausedAfter = firstAfter != null && firstAfter.paused;
+                        ProduceLoopRecord secondAfter = designatorLoops.Find(dragSecondCell);
+                        dragSecondRecordAfter = secondAfter != null;
+                        dragSecondPausedAfter = secondAfter != null && secondAfter.paused;
+                        dragIneligibleRecordAfter = designatorLoops.Find(dragIneligibleCell);
+                        dragIneligibleRecordAfterExists = dragIneligibleRecordAfter != null;
+                        dragIneligiblePausedAfter =
+                            dragIneligibleRecordAfter != null && dragIneligibleRecordAfter.paused;
+
+                        return dragFirstRecordBefore &&
+                               !dragFirstPausedBefore &&
+                               dragFirstCanDesignate &&
+                               dragFirstRecordAfter &&
+                               dragFirstPausedAfter &&
+                               dragSecondRecordBefore &&
+                               !dragSecondPausedBefore &&
+                               dragSecondCanDesignate &&
+                               dragSecondRecordAfter &&
+                               dragSecondPausedAfter &&
+                               dragIneligibleRecordBeforeExists &&
+                               dragIneligiblePausedBefore &&
+                               !dragIneligibleCanDesignate &&
+                               dragIneligibleRecordAfterExists &&
+                               dragIneligibleRecordAfter == dragIneligibleRecordBefore &&
+                               dragIneligiblePausedAfter == dragIneligiblePausedBefore;
+                    },
+                    () => $"Pause drag; eligible cell {dragFirstCell}; record before " +
+                    $"{(dragFirstRecordBefore ? "yes" : "no")}, paused before " +
+                    $"{(dragFirstRecordBefore ? (dragFirstPausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(dragFirstCanDesignate ? "accepted" : "rejected")}; " +
+                    $"record after {(dragFirstRecordAfter ? "yes" : "no")}, paused after " +
+                    $"{(dragFirstRecordAfter ? (dragFirstPausedAfter ? "yes" : "no") : "n/a")}; " +
+                    $"eligible cell {dragSecondCell}; record before " +
+                    $"{(dragSecondRecordBefore ? "yes" : "no")}, paused before " +
+                    $"{(dragSecondRecordBefore ? (dragSecondPausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(dragSecondCanDesignate ? "accepted" : "rejected")}; " +
+                    $"record after {(dragSecondRecordAfter ? "yes" : "no")}, paused after " +
+                    $"{(dragSecondRecordAfter ? (dragSecondPausedAfter ? "yes" : "no") : "n/a")}; " +
+                    $"ineligible cell {dragIneligibleCell}; record before " +
+                    $"{(dragIneligibleRecordBeforeExists ? "yes" : "no")}, paused before " +
+                    $"{(dragIneligibleRecordBeforeExists ? (dragIneligiblePausedBefore ? "yes" : "no") : "n/a")}; " +
+                    $"CanDesignateCell {(dragIneligibleCanDesignate ? "accepted" : "rejected")}; " +
+                    $"record after {(dragIneligibleRecordAfterExists ? "yes" : "no")}, paused after " +
+                    $"{(dragIneligibleRecordAfterExists ? (dragIneligiblePausedAfter ? "yes" : "no") : "n/a")}");
+            }
+            catch (Exception ex)
+            {
+                string reason =
+                    $"Produce area designators could not be constructed or driven: " +
+                    $"{ex.GetType().Name}: {ex.Message}";
+                r.Skip(resumeEnableLabel, reason);
+                r.Skip(resumePausedLabel, reason);
+                r.Skip(pauseLabel, reason);
+                r.Skip(stopLabel, reason);
+                r.Skip(refusalLabel, reason);
+                r.Skip(dragLabel, reason);
+            }
+            finally
+            {
+                for (int i = fixtureCells.Count - 1; i >= 0; i--)
+                {
+                    IntVec3 cell = fixtureCells[i];
+                    try
+                    {
+                        designatorLoops.Disable(cell);
+                    }
+                    catch (Exception ex)
+                    {
+                        r.sb.AppendLine($"  CLEANUP EXCEPTION: {ex}");
+                        r.failed++;
+                    }
+
+                    try
+                    {
+                        DestroyThingsInRect(
+                            map,
+                            GenAdj.OccupiedRect(cell, Rot4.North, subject.thingDef.Size));
+                    }
+                    catch (Exception ex)
+                    {
+                        r.sb.AppendLine($"  CLEANUP EXCEPTION: {ex}");
+                        r.failed++;
+                    }
+                }
+            }
         }
 
         private static void CheckBlueprintRotation(
@@ -1608,6 +2286,14 @@ namespace Intercolony
             r.Skip("pausing leaves work already under way alone", reason);
             r.Skip("vanilla Cancel ends the loop for that cell", reason);
             r.Skip("cancelling elsewhere leaves the loop alone", reason);
+            r.Skip(
+                "the area resume command starts a program on an eligible cell",
+                reason);
+            r.Skip("the area resume command resumes a paused program", reason);
+            r.Skip("the area pause command pauses a running program", reason);
+            r.Skip("the area stop command deletes the record", reason);
+            r.Skip("an area command refuses a cell it cannot act on", reason);
+            r.Skip("a drag applies the command to every eligible cell it covers", reason);
             r.Skip(
                 "a paused loop reloads paused, and an old record reloads running",
                 reason);
