@@ -46,6 +46,55 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### F05 receiving locations need a warehouse-arrival and overflow check
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A stockpile zone or a storage
+building such as a shelf can now be marked **Receive deliveries**. When at least one destination is
+marked, an arriving supplier delivery goes to a marked destination that accepts the goods and has
+room. The storage's own filters decide what it accepts; there is no separate Intercolony filter. A
+delivery that fits nowhere marked falls back to the old behaviour near the trade drop spot, and a
+colony with nothing marked keeps that old behaviour. Assertions cover marker persistence, pruning
+deleted zones and destroyed shelves, and goods landing in a marked stockpile rather than one that
+refuses them.
+
+**Steps.** In a real colony, mark a stockpile and a shelf with **Receive deliveries** and confirm the
+toggle appears on both and reads clearly. Arrange a supplier delivery and watch the goods arrive in
+the warehouse the player marked, rather than beside the comms console. Fill a marked receiving
+destination so that only part of a delivery can fit, and judge whether the remainder overflows
+sensibly instead of disappearing. Finally, use a colony that marks nothing and confirm that delivery
+behaviour is unchanged from the old trade-drop path.
+
+### F12 availability count is a deliberate stopping point
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. The first F12 slice can report how
+many of an order's required goods are actually available, as a count rather than a yes/no answer.
+That count comes from the same calculation used by the readiness decision, so the two cannot
+disagree. It is the foundation for F12's rule that an order must not leave with a knowingly partial
+quantity. Assertions and mutation evidence cover this slice.
+
+Nothing else of F12 exists yet: there is no preconfigured caravan, pawn or animal selection,
+recurring caravan, or waiting behaviour, and the mod has no caravan formation of its own at all.
+This is a deliberate stop, not an oversight. The remaining work is a feature, not a finding-sized
+change. Nothing about F12 is player-visible yet, so this entry records where the work stopped rather
+than asking for a play-test of something that cannot be seen.
+
+### Partial supplier deliveries can complete short and still charge full price
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A pre-existing defect in
+`PurchaseOrderService.DeliverToColony` refunds only when zero goods were placed. With any non-zero
+count, it completes the order with what was placed. A delivery that can fit only part of the order
+can therefore silently complete short while the player pays in full for goods that never arrived.
+This predates the branch and was not fixed. F05 makes it easier to reach because a marked receiving
+destination can fill up. Fixing it requires a design decision: hold the order, refund the difference,
+or overflow elsewhere. There are no assertions or mutation checks for this defect because it was not
+touched.
+
+**Steps.** Use a deliberately constrained colony with very little free storage and a small marked
+receiving destination. Arrange a large delivery and record the ordered quantity, the quantity that
+lands, and the silver paid. Confirm whether goods and silver are actually lost, then judge how bad
+the outcome is in practice. That evidence is needed before choosing whether the order should be held,
+the difference refunded, or the goods sent elsewhere.
+
 ### The five-day cash flow table needs a human read
 
 Added 2026-08-29 on branch `1.0.1`. The new five-day cash flow table on the **Business** tab has
