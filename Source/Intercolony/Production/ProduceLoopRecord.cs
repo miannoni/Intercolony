@@ -10,6 +10,9 @@ namespace Intercolony
         public ThingDef stuffDef;
         public ThingStyleDef styleDef;
 
+        // Pause retains the program so work already under way can finish without starting another cycle.
+        public bool paused;
+
         public void ExposeData()
         {
             Scribe_Values.Look(ref cell, "cell");
@@ -17,6 +20,7 @@ namespace Intercolony
             Scribe_Defs.Look(ref thingDef, "thingDef");
             Scribe_Defs.Look(ref stuffDef, "stuffDef");
             Scribe_Defs.Look(ref styleDef, "styleDef");
+            Scribe_Values.Look(ref paused, "paused", false);
         }
     }
 }

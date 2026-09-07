@@ -39,6 +39,13 @@ namespace Intercolony
 
         private void TickLoop(ProduceLoopRecord loop)
         {
+            // Pause leaves an in-flight blueprint, frame, or uninstall designation for vanilla to finish,
+            // while preventing a replacement blueprint and the next cycle; Stop remains Disable.
+            if (loop.paused)
+            {
+                return;
+            }
+
             if (loop.thingDef == null || !loop.cell.InBounds(map) || !loop.thingDef.Minifiable)
             {
                 Disable(loop.cell);
@@ -181,9 +188,31 @@ namespace Intercolony
             });
         }
 
+        public void Pause(IntVec3 cell)
+        {
+            ProduceLoopRecord loop = Find(cell);
+            if (loop == null)
+            {
+                return;
+            }
+
+            loop.paused = true;
+        }
+
         public void Disable(IntVec3 cell)
         {
             loops.RemoveAll(loop => loop.cell == cell);
+        }
+
+        public void Resume(IntVec3 cell)
+        {
+            ProduceLoopRecord loop = Find(cell);
+            if (loop == null)
+            {
+                return;
+            }
+
+            loop.paused = false;
         }
 
         public IReadOnlyList<ProduceLoopRecord> Loops
