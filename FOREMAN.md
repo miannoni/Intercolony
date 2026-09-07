@@ -1,11 +1,14 @@
 # Foreman state — Intercolony
 
 Stage: 1 — Quiet automation and vanilla-command correctness
-Unit: 1.1 — F01 production: the automatic auto-ready caller sends no "Order ready" letter
-Worker: running — `C:\Users\matte\AppData\Local\Temp\claude\C--dev\0e66c849-e19d-4229-9f25-19e3ad1f4bf6\scratchpad\unit-1-1.out`
-Last done: 1.0 — recon; 16 cited file:line spot-checked, all resolve (`RECON_STAGE1.md`)
-Updated: 2026-09-07 02:00
-Foreman: d68bd37 · source C:\dev\agent-foreman · registered junction OK
+Unit: 1.3 — F15 production: both agreement types default auto-ready on for new agreements
+Worker: running — `C:\Users\matte\AppData\Local\Temp\claude\C--dev\0e66c849-e19d-4229-9f25-19e3ad1f4bf6\scratchpad\unit-1-3.out`
+Last done: 1.2 — three letter assertions, committed db9627a; 49/0/0 and all three mutations red
+Updated: 2026-09-07 03:35
+Wakes: 0 · last full load at wake 0
+Foreman: 10ee860 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
+Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md`, follow it,
+then re-run its section 0.
 
 <!-- Everything above this line is the header. A fresh session reads only the header. -->
 
@@ -30,9 +33,9 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | | Unit | Status |
 |---|---|---|
 | ✅ | 1.0 — recon: name the file:line seams for F01, F02, F13, F15 | done, citations verified |
-| 🔨 | 1.1 — F01 production: automatic caller sends no "Order ready" letter; failure stays loud | worker running |
-| ⬜ | 1.2 — F01 tests | not started |
-| ⬜ | 1.3 — F15: a newly created selling or procurement agreement has auto-ready on | not started |
+| ✅ | 1.1 — F01 production: automatic caller sends no "Order ready" letter; failure stays loud | 4f2f319 |
+| ✅ | 1.2 — F01 tests: no letter on auto success, letter on auto failure, letter on manual | mutation-verified |
+| 🔨 | 1.3 — F15: a newly created selling or procurement agreement has auto-ready on | worker running |
 | ⬜ | 1.4 — F15 tests, including the schema-57 default and load of an older save | not started |
 | ⬜ | 1.5 — F13: the employee row shows auto-renew state without opening the `…` menu | not started |
 | ⬜ | 1.6 — F02: cancelling a produce-loop blueprint ends the loop for that cell | not started |
@@ -59,4 +62,14 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 
 ## Open for the operator
 
-- none
+- **2026-09-07** — The wake loop was paused by the operator for maintenance and re-armed on
+  resume. The run adopted Foreman `10ee860` mid-run at the operator's request; the plan and its
+  stage/unit decomposition were carried over untouched. Wake counters restart at 0 because the
+  cadence they drive was introduced by that version.
+- **2026-09-07** — F15 changes only the two C# field initializers to true and deliberately leaves
+  both `Scribe_Values.Look` defaults at false. A true Scribe default would switch automation on
+  inside saves the player already has, including agreements they had turned off by hand. New
+  agreements default on; loaded ones keep what was saved.
+- **2026-09-07** — Local `letterVolume` is `Minimal`, so `Important` letters do not reach the
+  letter stack in this environment. The self-test now pins the setting rather than depending on
+  it; a future letter assertion must do the same or it measures the preference, not the code.
