@@ -85,6 +85,8 @@ namespace Intercolony
                         r, map, loops, subject, reservedCells, testRects, addedDesignations);
                     CheckBlueprintPlacement(
                         r, map, loops, subject, reservedCells, testRects);
+                    CheckPauseBehavior(
+                        r, map, loops, subject, reservedCells, testRects);
                     CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
                     CheckBlueprintRotation(r, map, loops, subject, reservedCells, testRects);
                 }
@@ -95,6 +97,9 @@ namespace Intercolony
                 {
                     r.Skip(
                         "a record survives a save/load round trip",
+                        "no loaded minifiable stuff-built building");
+                    r.Skip(
+                        "a paused loop reloads paused, and an old record reloads running",
                         "no loaded minifiable stuff-built building");
                 }
                 else
@@ -346,6 +351,250 @@ namespace Intercolony
                 loops.RunPass();
                 return CountBlueprintsAndFramesAt(map, cell) == 0;
             });
+        }
+
+        private static void CheckPauseBehavior(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string pausedPlacementLabel = "a paused loop places no blueprint";
+            const string pauseStopLabel = "a paused loop keeps its record, unlike Stop";
+            const string resumeLabel = "resuming places a blueprint again";
+            const string inFlightLabel = "pausing leaves work already under way alone";
+
+            IntVec3 pausedCell;
+            if (!TryFindBuildCell(
+                    map, loops, subject, Rot4.North, reservedCells, out pausedCell))
+            {
+                const string reason = "no empty valid cell for the pause fixture";
+                r.Skip(pausedPlacementLabel, reason);
+                r.Skip(pauseStopLabel, reason);
+                r.Skip(resumeLabel, reason);
+                r.Skip(inFlightLabel, reason);
+                return;
+            }
+
+            RememberCell(
+                pausedCell,
+                subject.thingDef,
+                Rot4.North,
+                reservedCells,
+                testRects);
+
+            bool pauseScenarioReady = false;
+            bool pausedBlueprintPresent = false;
+            bool pausedRecordSurvived = false;
+            bool resumedBlueprintPresent = false;
+            bool resumedRecordSurvived = false;
+            try
+            {
+                CheckSafely(
+                    r,
+                    pausedPlacementLabel,
+                    () =>
+                    {
+                        loops.Enable(
+                            pausedCell,
+                            Rot4.North,
+                            subject.thingDef,
+                            subject.stuffDef,
+                            null);
+                        loops.Pause(pausedCell);
+                        loops.RunPass();
+                        pauseScenarioReady = true;
+                        pausedBlueprintPresent =
+                            FindBlueprint(map, pausedCell, subject.thingDef) != null;
+                        pausedRecordSurvived = loops.Find(pausedCell) != null;
+                        return !pausedBlueprintPresent && pausedRecordSurvived;
+                    },
+                    () => $"cell {pausedCell}; blueprint present " +
+                    $"{(pausedBlueprintPresent ? "yes" : "no")}; record survived " +
+                    $"{(pausedRecordSurvived ? "yes" : "no")}");
+
+                IntVec3 stopCell;
+                if (!TryFindBuildCell(
+                        map, loops, subject, Rot4.North, reservedCells, out stopCell))
+                {
+                    r.Skip(
+                        pauseStopLabel,
+                        "no equivalent empty valid cell for the Stop comparison");
+                }
+                else
+                {
+                    RememberCell(
+                        stopCell,
+                        subject.thingDef,
+                        Rot4.North,
+                        reservedCells,
+                        testRects);
+                    try
+                    {
+                        bool stopBlueprintPresent = false;
+                        bool stopRecordSurvived = false;
+                        CheckSafely(
+                            r,
+                            pauseStopLabel,
+                            () =>
+                            {
+                                if (!pauseScenarioReady)
+                                {
+                                    return false;
+                                }
+
+                                loops.Enable(
+                                    stopCell,
+                                    Rot4.North,
+                                    subject.thingDef,
+                                    subject.stuffDef,
+                                    null);
+                                loops.Disable(stopCell);
+                                pausedBlueprintPresent =
+                                    FindBlueprint(map, pausedCell, subject.thingDef) != null;
+                                pausedRecordSurvived = loops.Find(pausedCell) != null;
+                                stopBlueprintPresent =
+                                    FindBlueprint(map, stopCell, subject.thingDef) != null;
+                                stopRecordSurvived = loops.Find(stopCell) != null;
+                                return pausedRecordSurvived && !stopRecordSurvived;
+                            },
+                            () => $"cell {pausedCell}; blueprint present " +
+                            $"{(pausedBlueprintPresent ? "yes" : "no")}; record survived " +
+                            $"{(pausedRecordSurvived ? "yes" : "no")}; " +
+                            $"Stop cell {stopCell}; blueprint present " +
+                            $"{(stopBlueprintPresent ? "yes" : "no")}; record survived " +
+                            $"{(stopRecordSurvived ? "yes" : "no")}");
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            loops.Disable(stopCell);
+                        }
+                        finally
+                        {
+                            DestroyThingsInRect(
+                                map,
+                                GenAdj.OccupiedRect(
+                                    stopCell,
+                                    Rot4.North,
+                                    subject.thingDef.Size));
+                        }
+                    }
+                }
+
+                CheckSafely(
+                    r,
+                    resumeLabel,
+                    () =>
+                    {
+                        if (!pauseScenarioReady)
+                        {
+                            return false;
+                        }
+
+                        loops.Resume(pausedCell);
+                        loops.RunPass();
+                        resumedBlueprintPresent =
+                            FindBlueprint(map, pausedCell, subject.thingDef) != null;
+                        resumedRecordSurvived = loops.Find(pausedCell) != null;
+                        return !pausedBlueprintPresent &&
+                               pausedRecordSurvived &&
+                               resumedBlueprintPresent &&
+                               resumedRecordSurvived;
+                    },
+                    () => $"cell {pausedCell}; blueprint present while paused " +
+                    $"{(pausedBlueprintPresent ? "yes" : "no")}; blueprint present after resume " +
+                    $"{(resumedBlueprintPresent ? "yes" : "no")}; record survived while paused " +
+                    $"{(pausedRecordSurvived ? "yes" : "no")}; record survived after resume " +
+                    $"{(resumedRecordSurvived ? "yes" : "no")}");
+
+                IntVec3 inFlightCell;
+                if (!TryFindBuildCell(
+                        map, loops, subject, Rot4.North, reservedCells, out inFlightCell))
+                {
+                    r.Skip(inFlightLabel, "no empty valid cell for the in-flight blueprint fixture");
+                }
+                else
+                {
+                    RememberCell(
+                        inFlightCell,
+                        subject.thingDef,
+                        Rot4.North,
+                        reservedCells,
+                        testRects);
+                    try
+                    {
+                        bool blueprintBeforePausePresent = false;
+                        bool blueprintAfterPausePresent = false;
+                        bool inFlightRecordSurvived = false;
+                        CheckSafely(
+                            r,
+                            inFlightLabel,
+                            () =>
+                            {
+                                loops.Enable(
+                                    inFlightCell,
+                                    Rot4.North,
+                                    subject.thingDef,
+                                    subject.stuffDef,
+                                    null);
+                                loops.RunPass();
+                                blueprintBeforePausePresent =
+                                    FindBlueprint(map, inFlightCell, subject.thingDef) != null;
+                                if (!blueprintBeforePausePresent)
+                                {
+                                    return false;
+                                }
+
+                                loops.Pause(inFlightCell);
+                                loops.RunPass();
+                                blueprintAfterPausePresent =
+                                    FindBlueprint(map, inFlightCell, subject.thingDef) != null;
+                                inFlightRecordSurvived = loops.Find(inFlightCell) != null;
+                                return blueprintAfterPausePresent && inFlightRecordSurvived;
+                            },
+                            () => $"cell {inFlightCell}; blueprint present before pause " +
+                            $"{(blueprintBeforePausePresent ? "yes" : "no")}; blueprint present after pause " +
+                            $"{(blueprintAfterPausePresent ? "yes" : "no")}; record survived " +
+                            $"{(inFlightRecordSurvived ? "yes" : "no")}");
+                    }
+                    finally
+                    {
+                        try
+                        {
+                            loops.Disable(inFlightCell);
+                        }
+                        finally
+                        {
+                            DestroyThingsInRect(
+                                map,
+                                GenAdj.OccupiedRect(
+                                    inFlightCell,
+                                    Rot4.North,
+                                    subject.thingDef.Size));
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                try
+                {
+                    loops.Disable(pausedCell);
+                }
+                finally
+                {
+                    DestroyThingsInRect(
+                        map,
+                        GenAdj.OccupiedRect(
+                            pausedCell,
+                            Rot4.North,
+                            subject.thingDef.Size));
+                }
+            }
         }
 
         private static void CheckDesignatorCancel(
@@ -663,10 +912,25 @@ namespace Intercolony
                 subject.thingDef,
                 subject.stuffDef,
                 null);
+            ProduceLoopMapComponent pausedSaved = new ProduceLoopMapComponent(map);
+            pausedSaved.Enable(
+                expectedCell,
+                expectedRotation,
+                subject.thingDef,
+                subject.stuffDef,
+                null);
+            pausedSaved.Pause(expectedCell);
 
             ProduceLoopMapComponent loaded = null;
+            ProduceLoopMapComponent pausedLoaded = null;
             string failure = null;
+            string pausedFailure = null;
             bool recordFound = false;
+            bool pausedRecordFound = false;
+            bool pausedLoadedPaused = false;
+            bool pausedXmlHasPausedNode = false;
+            bool oldXmlHasPausedNode = false;
+            bool loadedPaused = false;
             IntVec3 loadedCell = default(IntVec3);
             Rot4 loadedRotation = default(Rot4);
             ThingDef loadedThingDef = null;
@@ -676,9 +940,43 @@ namespace Intercolony
 
             try
             {
+                Scribe.saver.InitSaving(path, "intercolonyProduceLoopPausedTest");
+                Scribe_Deep.Look(ref pausedSaved, "produceLoopMapComponent");
+                Scribe.saver.FinalizeSaving();
+                pausedXmlHasPausedNode =
+                    File.ReadAllText(path).IndexOf("<paused", StringComparison.Ordinal) >= 0;
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref pausedLoaded, "produceLoopMapComponent", map);
+                Scribe.loader.FinalizeLoading();
+
+                ProduceLoopRecord pausedRecord = pausedLoaded?.Find(expectedCell);
+                pausedRecordFound = pausedRecord != null;
+                if (pausedRecordFound)
+                {
+                    pausedLoadedPaused = pausedRecord.paused;
+                }
+            }
+            catch (Exception ex)
+            {
+                pausedFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            try
+            {
                 Scribe.saver.InitSaving(path, "intercolonyProduceLoopTest");
                 Scribe_Deep.Look(ref saved, "produceLoopMapComponent");
                 Scribe.saver.FinalizeSaving();
+                oldXmlHasPausedNode =
+                    File.ReadAllText(path).IndexOf("<paused", StringComparison.Ordinal) >= 0;
 
                 Scribe.loader.InitLoading(path);
                 Scribe_Deep.Look(ref loaded, "produceLoopMapComponent", map);
@@ -692,6 +990,7 @@ namespace Intercolony
                     loadedRotation = record.rotation;
                     loadedThingDef = record.thingDef;
                     loadedStuffDef = record.stuffDef;
+                    loadedPaused = record.paused;
                 }
             }
             catch (Exception ex)
@@ -707,7 +1006,9 @@ namespace Intercolony
                 }
 
                 saved?.Disable(expectedCell);
+                pausedSaved?.Disable(expectedCell);
                 loaded?.Disable(expectedCell);
+                pausedLoaded?.Disable(expectedCell);
             }
 
             bool ok = failure == null &&
@@ -734,6 +1035,30 @@ namespace Intercolony
                 ok,
                 "a record survives a save/load round trip",
                 detail);
+
+            bool pausePersistenceOk = pausedFailure == null &&
+                                      failure == null &&
+                                      pausedRecordFound &&
+                                      pausedLoadedPaused &&
+                                      pausedXmlHasPausedNode &&
+                                      recordFound &&
+                                      !oldXmlHasPausedNode &&
+                                      !loadedPaused;
+            string pausePersistenceDetail =
+                $"cell {expectedCell}; blueprint present paused=no, old=no; " +
+                $"record survived paused {(pausedRecordFound ? "yes" : "no")}, " +
+                $"old {(recordFound ? "yes" : "no")}; " +
+                $"paused save loaded paused {(pausedLoadedPaused ? "yes" : "no")}; " +
+                $"paused XML paused node present " +
+                $"{(pausedXmlHasPausedNode ? "yes" : "no")}; " +
+                $"old XML paused node present {(oldXmlHasPausedNode ? "yes" : "no")}; " +
+                $"old save loaded paused {(loadedPaused ? "yes" : "no")}" +
+                $"{(pausedFailure == null ? "" : $"; paused failure {pausedFailure}")}" +
+                $"{(failure == null ? "" : $"; old-save failure {failure}")}";
+            r.Check(
+                pausePersistenceOk,
+                "a paused loop reloads paused, and an old record reloads running",
+                pausePersistenceDetail);
         }
 
         private static Subject FindSubject()
@@ -1074,6 +1399,36 @@ namespace Intercolony
             }
         }
 
+        private static void CheckSafely(
+            Results r,
+            string label,
+            Func<bool> assertion,
+            Func<string> detailFactory)
+        {
+            try
+            {
+                r.Check(assertion(), label, detailFactory == null ? null : detailFactory());
+            }
+            catch (Exception ex)
+            {
+                string detail = $"{ex.GetType().Name}: {ex.Message}";
+                if (detailFactory != null)
+                {
+                    try
+                    {
+                        detail = $"{detailFactory()}; {detail}";
+                    }
+                    catch (Exception detailException)
+                    {
+                        detail = $"{detail}; detail exception " +
+                                 $"{detailException.GetType().Name}: {detailException.Message}";
+                    }
+                }
+
+                r.Check(false, label, detail);
+            }
+        }
+
         private static void CleanupDesignations(
             Map map,
             List<Designation> addedDesignations,
@@ -1247,8 +1602,15 @@ namespace Intercolony
             r.Skip("a cell with work under way gains no second blueprint", reason);
             r.Skip("Disable stops the next repetition", reason);
             r.Skip("Disable does not cancel work under way", reason);
+            r.Skip("a paused loop places no blueprint", reason);
+            r.Skip("a paused loop keeps its record, unlike Stop", reason);
+            r.Skip("resuming places a blueprint again", reason);
+            r.Skip("pausing leaves work already under way alone", reason);
             r.Skip("vanilla Cancel ends the loop for that cell", reason);
             r.Skip("cancelling elsewhere leaves the loop alone", reason);
+            r.Skip(
+                "a paused loop reloads paused, and an old record reloads running",
+                reason);
         }
 
         private static void SkipBlueprintAssertions(Results r, string reason)
