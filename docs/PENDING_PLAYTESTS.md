@@ -141,6 +141,51 @@ part-built **Frame**, not a fresh **Blueprint**, and confirm cancellation also s
 cancel an unrelated construction beside a loop cell and watch another poll cycle; judge that the
 unrelated cancellation leaves the Produce loop running.
 
+### Produce controls and area orders need distinct-action play
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. A Produce object with a running
+program now shows **Produce** as an on/off control, **Pause production**, and **Set target**;
+turning **Produce** off ends the program. **Architect > Orders** now has **Produce / resume**,
+**Pause production**, and **Stop production** commands for dragging over an area. Assertions cover
+the state transitions and the drag wiring, but no person has watched the controls or the mixed-area
+cases.
+
+**Steps.** Select a Produce object with a running program and use its three buttons, then judge
+whether they read as three different actions rather than three ways to stop. Open **Architect >
+Orders** and drag each of the three commands over an area containing a mixture of relevant and
+irrelevant cells; confirm that each command changes only the cells it should and highlights only
+those cells. Use **Pause production** on an object whose replacement is a part-built **Frame**,
+let the frame finish, and confirm it stays in place while production remains paused. Use **Stop
+production** on an object mid-uninstall and confirm that the uninstall finishes without starting
+another cycle.
+
+### Produce-until-target needs a colony read
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. **Set target** opens a slider from
+0 to 100, where 0 means no limit. While the colony has at least the target amount in stock, the
+program waits and resumes on its own when stock falls below it because the count is read again on
+each pass. The self-test covers that state machine; a person still needs to judge the control and
+whether it behaves usefully in a real colony.
+
+**Steps.** Open **Set target** and judge whether the slider reads well and can be landed on an exact
+number. Before opening the dialog, read the Produce description and confirm that it explains what
+the target number means. Set a target in a real colony and confirm that production actually stops
+when stock reaches it. Sell or consume some of that stock without touching the Produce control and
+confirm that production resumes by itself. Finally, judge whether 100 is a useful ceiling for play,
+or an arbitrary one that needs changing.
+
+### Architect Orders needs a presence check before area play
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. The three area commands for F03 are
+registered by an XML patch that appends them to the vanilla **Orders** category. The game loads
+patches from the **Patches** folder, but the self-test suite cannot confirm that the commands made it
+into the in-game menu, so this is a precondition for testing the area actions above.
+
+**Steps.** Before any F03 area test, open **Architect > Orders** and confirm that **Produce / resume**,
+**Pause production**, and **Stop production** are present with sensible labels. If they are absent,
+stop the area play-test and inspect the XML patch first; the drag behaviour cannot be judged until
+the commands are actually in the menu.
+
 ### Procurement Contracts has never been used by a human
 
 Added 2026-08-25 on branch `1.0.1`. In 1.0 this tab was an **Under development** placeholder,
