@@ -769,15 +769,13 @@ namespace Intercolony
             GUI.color = Color.white;
 
             GUI.color = StatusColour(contract);
-            string detail = $"{contract.settlementName} ({contract.factionName})   " +
-                $"{contract.dailyWage}/day × {contract.TermLabel} {contract.wageStructure.Label()}, " +
-                $"{contract.paidSilver} paid   — {contract.StatusLine()}";
+            string detail = $"{contract.dailyWage}/day × {contract.TermLabel} — {contract.StatusLine()}";
             if (canAutoRenew)
             {
                 detail += contract.autoRenew ? "   auto-renew: on" : "   auto-renew: off";
             }
 
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, 22f), detail);
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, Text.CalcHeight(detail, textWidth)), detail);
             GUI.color = Color.white;
 
             if (ShouldBuildTooltip(rect))
@@ -943,6 +941,7 @@ namespace Intercolony
                 $"Home settlement: {contract.settlementName}\n" +
                 $"Skills at hire: {contract.workerSkills}\n\n" +
                 $"Term: {contract.TermLabel} at {contract.dailyWage} silver/day\n" +
+                $"Wage structure: {contract.wageStructure.Label()}\n" +
                 $"Paid in advance: {contract.paidSilver} silver\n\n" +
 
                 // §42 and §43 in the tooltip, together, because they are one decision: what you may
