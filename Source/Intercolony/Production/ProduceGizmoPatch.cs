@@ -47,69 +47,22 @@ namespace Intercolony
 
         private static IEnumerable<Gizmo> CreateProduceGizmos(Thing thing)
         {
-            if (thing == null || !thing.Spawned || thing.Map == null || thing.Faction != Faction.OfPlayer)
+            Rot4 rotation;
+            ThingDef thingDef;
+            ThingDef stuffDef;
+            ThingStyleDef styleDef;
+            if (!ProduceSubjectUtility.TryGetProduceSubject(
+                    thing,
+                    out rotation,
+                    out thingDef,
+                    out stuffDef,
+                    out styleDef))
             {
                 return null;
             }
 
             Map map = thing.Map;
             IntVec3 cell = thing.Position;
-            Rot4 rotation = thing.Rotation;
-            ThingDef thingDef;
-            ThingDef stuffDef;
-            ThingStyleDef styleDef;
-
-            // Frame derives from Building, so this case must be checked first.
-            if (thing is Frame frame)
-            {
-                thingDef = frame.def.entityDefToBuild as ThingDef;
-                if (thingDef == null || !thingDef.Minifiable)
-                {
-                    return null;
-                }
-
-                stuffDef = frame.Stuff;
-                styleDef = frame.StyleDef;
-            }
-            else if (thing is Blueprint blueprint)
-            {
-                // An install blueprint restores an existing minified thing; it does not
-                // represent production of a new thing at this cell.
-                if (blueprint is Blueprint_Install)
-                {
-                    return null;
-                }
-
-                thingDef = blueprint.def.entityDefToBuild as ThingDef;
-                if (thingDef == null || !thingDef.Minifiable)
-                {
-                    return null;
-                }
-
-                Blueprint_Build blueprintBuild = blueprint as Blueprint_Build;
-                if (blueprintBuild == null)
-                {
-                    return null;
-                }
-
-                stuffDef = blueprintBuild.stuffToUse;
-                styleDef = blueprintBuild.StyleDef;
-            }
-            else if (thing is Building building)
-            {
-                thingDef = building.def;
-                if (!thingDef.Minifiable)
-                {
-                    return null;
-                }
-
-                stuffDef = building.Stuff;
-                styleDef = building.StyleDef;
-            }
-            else
-            {
-                return null;
-            }
 
             ProduceLoopMapComponent loopComponent = ProduceLoopMapComponent.For(map);
             if (loopComponent == null)
@@ -170,6 +123,84 @@ namespace Intercolony
             }
 
             return gizmos;
+        }
+    }
+
+    internal static class ProduceSubjectUtility
+    {
+        internal static bool TryGetProduceSubject(
+            Thing thing,
+            out Rot4 rotation,
+            out ThingDef thingDef,
+            out ThingDef stuffDef,
+            out ThingStyleDef styleDef)
+        {
+            rotation = default(Rot4);
+            thingDef = null;
+            stuffDef = null;
+            styleDef = null;
+
+            if (thing == null || !thing.Spawned || thing.Map == null || thing.Faction != Faction.OfPlayer)
+            {
+                return false;
+            }
+
+            rotation = thing.Rotation;
+
+            // Frame derives from Building, so this case must be checked first.
+            if (thing is Frame frame)
+            {
+                thingDef = frame.def.entityDefToBuild as ThingDef;
+                if (thingDef == null || !thingDef.Minifiable)
+                {
+                    return false;
+                }
+
+                stuffDef = frame.Stuff;
+                styleDef = frame.StyleDef;
+                return true;
+            }
+
+            if (thing is Blueprint blueprint)
+            {
+                // An install blueprint restores an existing minified thing; it does not
+                // represent production of a new thing at this cell.
+                if (blueprint is Blueprint_Install)
+                {
+                    return false;
+                }
+
+                thingDef = blueprint.def.entityDefToBuild as ThingDef;
+                if (thingDef == null || !thingDef.Minifiable)
+                {
+                    return false;
+                }
+
+                Blueprint_Build blueprintBuild = blueprint as Blueprint_Build;
+                if (blueprintBuild == null)
+                {
+                    return false;
+                }
+
+                stuffDef = blueprintBuild.stuffToUse;
+                styleDef = blueprintBuild.StyleDef;
+                return true;
+            }
+
+            if (thing is Building building)
+            {
+                thingDef = building.def;
+                if (!thingDef.Minifiable)
+                {
+                    return false;
+                }
+
+                stuffDef = building.Stuff;
+                styleDef = building.StyleDef;
+                return true;
+            }
+
+            return false;
         }
     }
 }
