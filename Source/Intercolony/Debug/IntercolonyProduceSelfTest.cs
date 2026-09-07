@@ -19,6 +19,8 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            // A printed skip is not proof; count it so the aggregator cannot turn it into a pass.
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -41,6 +43,7 @@ namespace Intercolony
 
             public void Skip(string label, string reason)
             {
+                skipped++;
                 sb.AppendLine($"SKIPPED {label} — {reason}");
             }
         }
@@ -67,6 +70,7 @@ namespace Intercolony
             ProduceLoopMapComponent loops = new ProduceLoopMapComponent(map);
             HashSet<IntVec3> reservedCells = new HashSet<IntVec3>();
             List<CellRect> testRects = new List<CellRect>();
+            List<Zone_Stockpile> testZones = new List<Zone_Stockpile>();
             List<Designation> addedDesignations = new List<Designation>();
 
             try
@@ -87,6 +91,8 @@ namespace Intercolony
                         r, map, loops, subject, reservedCells, testRects);
                     CheckPauseBehavior(
                         r, map, loops, subject, reservedCells, testRects);
+                    CheckTargetBehavior(
+                        r, map, loops, subject, reservedCells, testRects, testZones);
                     CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
                     CheckProduceDesignators(r, map, subject, reservedCells, testRects);
                     CheckBlueprintRotation(r, map, loops, subject, reservedCells, testRects);
@@ -96,11 +102,15 @@ namespace Intercolony
 
                 if (subject == null)
                 {
+                    SkipTargetAssertions(r, "no loaded minifiable stuff-built building");
                     r.Skip(
                         "a record survives a save/load round trip",
                         "no loaded minifiable stuff-built building");
                     r.Skip(
                         "a paused loop reloads paused, and an old record reloads running",
+                        "no loaded minifiable stuff-built building");
+                    r.Skip(
+                        "a target survives a save and a load, and an old record loads unlimited",
                         "no loaded minifiable stuff-built building");
                 }
                 else
@@ -117,6 +127,7 @@ namespace Intercolony
             {
                 CleanupDesignations(map, addedDesignations, testRects, r);
                 CleanupThings(map, testRects, r);
+                CleanupZones(testZones, r);
                 ClearLoops(loops, r);
             }
 
@@ -597,6 +608,288 @@ namespace Intercolony
                 }
             }
         }
+
+        private static void CheckTargetBehavior(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects,
+            List<Zone_Stockpile> testZones)
+        {
+            const string metTargetLabel = "a met target stops the next cycle";
+            const string aboveStockLabel = "a target above stock still produces";
+            const string zeroTargetLabel = "a zero target produces without limit";
+            const string spendingLabel = "spending stock below the target resumes production";
+
+            IntVec3 cell;
+            if (!TryFindBuildCell(
+                    map, loops, subject, Rot4.North, reservedCells, out cell))
+            {
+                const string reason = "no empty valid cell for the target fixture";
+                SkipTargetAssertions(r, reason);
+                return;
+            }
+
+            RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+
+            IntVec3 storageCell;
+            string storageFailure;
+            if (!TryCreateTargetStorage(
+                    map, reservedCells, testZones, out storageCell, out storageFailure))
+            {
+                SkipTargetAssertions(r, storageFailure);
+                return;
+            }
+
+            RememberCell(storageCell, null, Rot4.North, reservedCells, testRects);
+            CellRect buildRect = GenAdj.OccupiedRect(
+                cell, Rot4.North, subject.thingDef.Size);
+            CellRect storageRect = new CellRect(storageCell.x, storageCell.z, 1, 1);
+
+            List<Thing> fixtureStock = null;
+            try
+            {
+                int target = 0;
+                int countedStock = 0;
+                bool blueprintAppeared = false;
+                string stockFailure;
+                if (!TrySpawnStoredTargetStock(
+                        map,
+                        subject,
+                        storageCell,
+                        1,
+                        out fixtureStock,
+                        out countedStock,
+                        out stockFailure))
+                {
+                    r.Skip(metTargetLabel, stockFailure);
+                }
+                else
+                {
+                    target = countedStock;
+                    CheckSafely(
+                        r,
+                        metTargetLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            loops.SetTargetCount(cell, target);
+                            loops.RunPass();
+                            countedStock = CountStoredTargetStock(map, subject.thingDef);
+                            blueprintAppeared =
+                                FindBlueprint(map, cell, subject.thingDef) != null;
+                            return target > 0 &&
+                                   countedStock >= target &&
+                                   !blueprintAppeared;
+                        },
+                        () => TargetDetail(
+                            cell, target, countedStock, blueprintAppeared));
+                }
+            }
+            finally
+            {
+                DestroyStoredTargetStock(fixtureStock);
+                DestroyThingsInRect(map, storageRect);
+                loops.Disable(cell);
+                DestroyThingsInRect(map, buildRect);
+            }
+
+            fixtureStock = null;
+            try
+            {
+                int target = 0;
+                int countedStock = 0;
+                bool blueprintAppeared = false;
+                string stockFailure;
+                if (!TrySpawnStoredTargetStock(
+                        map,
+                        subject,
+                        storageCell,
+                        1,
+                        out fixtureStock,
+                        out countedStock,
+                        out stockFailure))
+                {
+                    r.Skip(aboveStockLabel, stockFailure);
+                }
+                else
+                {
+                    target = countedStock + 1;
+                    CheckSafely(
+                        r,
+                        aboveStockLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            loops.SetTargetCount(cell, target);
+                            loops.RunPass();
+                            countedStock = CountStoredTargetStock(map, subject.thingDef);
+                            blueprintAppeared =
+                                FindBlueprint(map, cell, subject.thingDef) != null;
+                            return target > countedStock && blueprintAppeared;
+                        },
+                        () => TargetDetail(
+                            cell, target, countedStock, blueprintAppeared));
+                }
+            }
+            finally
+            {
+                DestroyStoredTargetStock(fixtureStock);
+                DestroyThingsInRect(map, storageRect);
+                loops.Disable(cell);
+                DestroyThingsInRect(map, buildRect);
+            }
+
+            fixtureStock = null;
+            try
+            {
+                const int target = 0;
+                int countedStock = 0;
+                bool blueprintAppeared = false;
+                string stockFailure;
+                if (!TrySpawnStoredTargetStock(
+                        map,
+                        subject,
+                        storageCell,
+                        1,
+                        out fixtureStock,
+                        out countedStock,
+                        out stockFailure))
+                {
+                    r.Skip(zeroTargetLabel, stockFailure);
+                }
+                else
+                {
+                    CheckSafely(
+                        r,
+                        zeroTargetLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            loops.SetTargetCount(cell, target);
+                            loops.RunPass();
+                            countedStock = CountStoredTargetStock(map, subject.thingDef);
+                            blueprintAppeared =
+                                FindBlueprint(map, cell, subject.thingDef) != null;
+                            return countedStock > 0 && blueprintAppeared;
+                        },
+                        () => TargetDetail(
+                            cell, target, countedStock, blueprintAppeared));
+                }
+            }
+            finally
+            {
+                DestroyStoredTargetStock(fixtureStock);
+                DestroyThingsInRect(map, storageRect);
+                loops.Disable(cell);
+                DestroyThingsInRect(map, buildRect);
+            }
+
+            fixtureStock = null;
+            try
+            {
+                int target = 0;
+                int countedStockBefore = 0;
+                int countedStockAfter = 0;
+                bool blueprintBefore = false;
+                bool blueprintAppeared = false;
+                bool stockRemoved = false;
+                string stockFailure;
+                if (!TrySpawnStoredTargetStock(
+                        map,
+                        subject,
+                        storageCell,
+                        1,
+                        out fixtureStock,
+                        out countedStockBefore,
+                        out stockFailure))
+                {
+                    r.Skip(spendingLabel, stockFailure);
+                }
+                else
+                {
+                    target = countedStockBefore;
+                    string failure = null;
+                    try
+                    {
+                        loops.Enable(
+                            cell,
+                            Rot4.North,
+                            subject.thingDef,
+                            subject.stuffDef,
+                            null);
+                        loops.SetTargetCount(cell, target);
+                        loops.RunPass();
+                        blueprintBefore =
+                            FindBlueprint(map, cell, subject.thingDef) != null;
+                        countedStockBefore =
+                            CountStoredTargetStock(map, subject.thingDef);
+                        stockRemoved = DestroyStoredTargetStock(fixtureStock);
+                        countedStockAfter = CountStoredTargetStock(map, subject.thingDef);
+                        loops.RunPass();
+                        blueprintAppeared =
+                            FindBlueprint(map, cell, subject.thingDef) != null;
+                    }
+                    catch (Exception ex)
+                    {
+                        failure = $"{ex.GetType().Name}: {ex.Message}";
+                    }
+
+                    string detail = TargetDetail(
+                        cell,
+                        target,
+                        countedStockAfter,
+                        blueprintAppeared) +
+                        $"; counted stock before {countedStockBefore}; stock removed " +
+                        $"{(stockRemoved ? "yes" : "no")}; blueprint before " +
+                        $"{(blueprintBefore ? "yes" : "no")}";
+                    if (failure != null)
+                    {
+                        r.Check(false, spendingLabel, $"{detail}; {failure}");
+                    }
+                    else if (!stockRemoved)
+                    {
+                        r.Skip(
+                            spendingLabel,
+                            "the stored target fixture could not be removed cleanly");
+                    }
+                    else
+                    {
+                        r.Check(
+                            !blueprintBefore &&
+                            countedStockAfter < target &&
+                            blueprintAppeared,
+                            spendingLabel,
+                            detail);
+                    }
+                }
+            }
+            finally
+            {
+                DestroyStoredTargetStock(fixtureStock);
+                DestroyThingsInRect(map, storageRect);
+                loops.Disable(cell);
+                DestroyThingsInRect(map, buildRect);
+            }
+        }
+
 
         private static void CheckDesignatorCancel(
             Results r,
@@ -1583,6 +1876,7 @@ namespace Intercolony
         {
             IntVec3 expectedCell = map.Center;
             Rot4 expectedRotation = Rot4.West;
+            const int expectedTarget = 3;
             ProduceLoopMapComponent saved = new ProduceLoopMapComponent(map);
             saved.Enable(
                 expectedCell,
@@ -1598,6 +1892,7 @@ namespace Intercolony
                 subject.stuffDef,
                 null);
             pausedSaved.Pause(expectedCell);
+            pausedSaved.SetTargetCount(expectedCell, expectedTarget);
 
             ProduceLoopMapComponent loaded = null;
             ProduceLoopMapComponent pausedLoaded = null;
@@ -1607,8 +1902,12 @@ namespace Intercolony
             bool pausedRecordFound = false;
             bool pausedLoadedPaused = false;
             bool pausedXmlHasPausedNode = false;
+            bool pausedXmlHasTargetCountNode = false;
             bool oldXmlHasPausedNode = false;
+            bool oldXmlHasTargetCountNode = false;
             bool loadedPaused = false;
+            int pausedLoadedTargetCount = 0;
+            int loadedTargetCount = 0;
             IntVec3 loadedCell = default(IntVec3);
             Rot4 loadedRotation = default(Rot4);
             ThingDef loadedThingDef = null;
@@ -1623,6 +1922,9 @@ namespace Intercolony
                 Scribe.saver.FinalizeSaving();
                 pausedXmlHasPausedNode =
                     File.ReadAllText(path).IndexOf("<paused", StringComparison.Ordinal) >= 0;
+                pausedXmlHasTargetCountNode =
+                    File.ReadAllText(path).IndexOf(
+                        "<targetCount", StringComparison.Ordinal) >= 0;
 
                 Scribe.loader.InitLoading(path);
                 Scribe_Deep.Look(ref pausedLoaded, "produceLoopMapComponent", map);
@@ -1633,6 +1935,7 @@ namespace Intercolony
                 if (pausedRecordFound)
                 {
                     pausedLoadedPaused = pausedRecord.paused;
+                    pausedLoadedTargetCount = pausedRecord.targetCount;
                 }
             }
             catch (Exception ex)
@@ -1655,6 +1958,9 @@ namespace Intercolony
                 Scribe.saver.FinalizeSaving();
                 oldXmlHasPausedNode =
                     File.ReadAllText(path).IndexOf("<paused", StringComparison.Ordinal) >= 0;
+                oldXmlHasTargetCountNode =
+                    File.ReadAllText(path).IndexOf(
+                        "<targetCount", StringComparison.Ordinal) >= 0;
 
                 Scribe.loader.InitLoading(path);
                 Scribe_Deep.Look(ref loaded, "produceLoopMapComponent", map);
@@ -1669,6 +1975,7 @@ namespace Intercolony
                     loadedThingDef = record.thingDef;
                     loadedStuffDef = record.stuffDef;
                     loadedPaused = record.paused;
+                    loadedTargetCount = record.targetCount;
                 }
             }
             catch (Exception ex)
@@ -1737,6 +2044,28 @@ namespace Intercolony
                 pausePersistenceOk,
                 "a paused loop reloads paused, and an old record reloads running",
                 pausePersistenceDetail);
+
+            bool targetPersistenceOk = pausedFailure == null &&
+                                       failure == null &&
+                                       pausedRecordFound &&
+                                       pausedLoadedTargetCount == expectedTarget &&
+                                       pausedXmlHasTargetCountNode &&
+                                       recordFound &&
+                                       !oldXmlHasTargetCountNode &&
+                                       loadedTargetCount == 0;
+            string targetPersistenceDetail =
+                $"cell {expectedCell}; target {expectedTarget}; counted stock n/a; " +
+                $"blueprint appeared n/a; target loaded " +
+                $"{pausedLoadedTargetCount}; target XML node present " +
+                $"{(pausedXmlHasTargetCountNode ? "yes" : "no")}; old target XML " +
+                $"node present {(oldXmlHasTargetCountNode ? "yes" : "no")}; " +
+                $"old target loaded {loadedTargetCount}" +
+                $"{(pausedFailure == null ? "" : $"; paused failure {pausedFailure}")}" +
+                $"{(failure == null ? "" : $"; old-save failure {failure}")}";
+            r.Check(
+                targetPersistenceOk,
+                "a target survives a save and a load, and an old record loads unlimited",
+                targetPersistenceDetail);
         }
 
         private static Subject FindSubject()
@@ -1949,6 +2278,266 @@ namespace Intercolony
             return map.thingGrid.ThingsListAt(cell).Count == 0 &&
                    map.designationManager.AllDesignationsAt(cell).Count == 0;
         }
+
+        private static bool TryCreateTargetStorage(
+            Map map,
+            HashSet<IntVec3> reservedCells,
+            List<Zone_Stockpile> testZones,
+            out IntVec3 storageCell,
+            out string failure)
+        {
+            storageCell = IntVec3.Invalid;
+            failure = null;
+            if (map == null || map.zoneManager == null)
+            {
+                failure = "the map has no zone manager for the target stock fixture";
+                return false;
+            }
+
+            IntVec3 root = DropCellFinder.TradeDropSpot(map);
+            if (root.IsValid)
+            {
+                foreach (IntVec3 candidate in GenRadial.RadialCellsAround(
+                    root, 12f, useCenter: true))
+                {
+                    if (IsTargetStorageCellAvailable(map, candidate, reservedCells))
+                    {
+                        storageCell = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (!storageCell.IsValid)
+            {
+                foreach (IntVec3 candidate in map.AllCells)
+                {
+                    if (IsTargetStorageCellAvailable(map, candidate, reservedCells))
+                    {
+                        storageCell = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (!storageCell.IsValid)
+            {
+                failure = "no empty unzoned cell for the target stock fixture";
+                return false;
+            }
+
+            Zone_Stockpile zone = new Zone_Stockpile(
+                StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+            try
+            {
+                map.zoneManager.RegisterZone(zone);
+                testZones.Add(zone);
+                zone.AddCell(storageCell);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure = $"could not create target stock storage: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static bool IsTargetStorageCellAvailable(
+            Map map, IntVec3 candidate, HashSet<IntVec3> reservedCells)
+        {
+            return candidate.InBounds(map) &&
+                   candidate.Standable(map) &&
+                   (reservedCells == null || !reservedCells.Contains(candidate)) &&
+                   map.zoneManager.ZoneAt(candidate) == null &&
+                   IsCellEmpty(map, candidate);
+        }
+
+        private static bool TrySpawnStoredTargetStock(
+            Map map,
+            Subject subject,
+            IntVec3 storageCell,
+            int amount,
+            out List<Thing> spawnedStock,
+            out int countedStock,
+            out string failure)
+        {
+            spawnedStock = new List<Thing>();
+            countedStock = 0;
+            failure = null;
+            if (map == null || subject?.thingDef == null || !storageCell.IsValid || amount <= 0)
+            {
+                failure = "the target stock fixture inputs were unavailable";
+                return false;
+            }
+
+            int before;
+            try
+            {
+                before = CountStoredTargetStock(map, subject.thingDef);
+            }
+            catch (Exception ex)
+            {
+                failure = $"could not inspect target stock before spawning: {ex.Message}";
+                return false;
+            }
+
+            for (int i = 0; i < amount; i++)
+            {
+                Thing original = null;
+                Thing minified = null;
+                try
+                {
+                    original = ThingMaker.MakeThing(subject.thingDef, subject.stuffDef);
+                    minified = original.TryMakeMinified();
+                    if (minified != null)
+                    {
+                        original = null;
+                    }
+
+                    if (minified == null ||
+                        minified.GetInnerIfMinified()?.def != subject.thingDef)
+                    {
+                        failure = "the subject building could not be minified for storage";
+                        return false;
+                    }
+
+                    Thing spawned = GenSpawn.Spawn(minified, storageCell, map);
+                    if (spawned != null && !spawned.Destroyed)
+                    {
+                        spawnedStock.Add(spawned);
+                    }
+
+                    if (spawned == null ||
+                        spawned.Destroyed ||
+                        !(spawned is MinifiedThing) ||
+                        !OrderValidator.IsAvailableColonyStock(spawned))
+                    {
+                        failure =
+                            "the spawned subject building was not genuinely available in colony storage";
+                        return false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failure = $"could not create stored target stock: {ex.Message}";
+                    return false;
+                }
+                finally
+                {
+                    if (original != null && !original.Destroyed)
+                    {
+                        original.Destroy(DestroyMode.Vanish);
+                    }
+
+                    if (minified != null &&
+                        !minified.Destroyed &&
+                        !spawnedStock.Contains(minified))
+                    {
+                        minified.Destroy(DestroyMode.Vanish);
+                    }
+                }
+            }
+
+            try
+            {
+                countedStock = CountStoredTargetStock(map, subject.thingDef);
+            }
+            catch (Exception ex)
+            {
+                failure = $"could not inspect target stock after spawning: {ex.Message}";
+                return false;
+            }
+
+            if (countedStock - before < amount)
+            {
+                failure =
+                    $"stored target stock increased by {countedStock - before}, expected {amount}";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool DestroyStoredTargetStock(List<Thing> spawnedStock)
+        {
+            bool removed = true;
+            if (spawnedStock == null)
+            {
+                return true;
+            }
+
+            for (int i = 0; i < spawnedStock.Count; i++)
+            {
+                Thing thing = spawnedStock[i];
+                if (thing == null || thing.Destroyed)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    thing.Destroy(DestroyMode.Vanish);
+                }
+                catch
+                {
+                    removed = false;
+                }
+            }
+
+            for (int i = 0; i < spawnedStock.Count; i++)
+            {
+                if (spawnedStock[i] != null && !spawnedStock[i].Destroyed)
+                {
+                    removed = false;
+                }
+            }
+
+            return removed;
+        }
+
+        private static int CountStoredTargetStock(Map map, ThingDef thingDef)
+        {
+            if (map?.haulDestinationManager == null || thingDef == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            HashSet<Thing> seenThings = new HashSet<Thing>();
+            List<SlotGroup> groups = map.haulDestinationManager.AllGroupsListForReading;
+            for (int groupIndex = 0; groupIndex < groups.Count; groupIndex++)
+            {
+                SlotGroup group = groups[groupIndex];
+                if (group == null)
+                {
+                    continue;
+                }
+
+                foreach (Thing thing in group.HeldThings)
+                {
+                    if (!seenThings.Add(thing))
+                    {
+                        continue;
+                    }
+
+                    Thing inner = thing.GetInnerIfMinified();
+                    if (inner?.def == thingDef)
+                    {
+                        count += inner.stackCount;
+                    }
+                }
+            }
+
+            return count;
+        }
+
+        private static string TargetDetail(
+            IntVec3 cell, int target, int countedStock, bool blueprintAppeared)
+        {
+            return $"cell {cell}; target {target}; counted stock {countedStock}; " +
+                   $"blueprint appeared {(blueprintAppeared ? "yes" : "no")}";
+        }
+
 
         private static Building SpawnFinishedBuilding(
             Map map, Subject subject, IntVec3 cell, Rot4 rotation)
@@ -2225,6 +2814,35 @@ namespace Intercolony
             }
         }
 
+        private static void CleanupZones(List<Zone_Stockpile> testZones, Results r)
+        {
+            if (testZones == null)
+            {
+                return;
+            }
+
+            for (int i = testZones.Count - 1; i >= 0; i--)
+            {
+                Zone_Stockpile zone = testZones[i];
+                if (zone == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    zone.Delete(playSound: false);
+                }
+                catch (Exception ex)
+                {
+                    r.sb.AppendLine($"  CLEANUP EXCEPTION: {ex}");
+                    r.failed++;
+                }
+            }
+
+            testZones.Clear();
+        }
+
         private static void ClearLoops(ProduceLoopMapComponent loops, Results r)
         {
             List<IntVec3> cells = new List<IntVec3>();
@@ -2266,6 +2884,14 @@ namespace Intercolony
             return $"cell {record.cell}, rotation {record.rotation}, " +
                    $"def {record.thingDef?.defName ?? "null"}, " +
                    $"stuff {record.stuffDef?.defName ?? "null"}";
+        }
+
+        private static void SkipTargetAssertions(Results r, string reason)
+        {
+            r.Skip("a met target stops the next cycle", reason);
+            r.Skip("a target above stock still produces", reason);
+            r.Skip("a zero target produces without limit", reason);
+            r.Skip("spending stock below the target resumes production", reason);
         }
 
         private static void SkipSubjectAssertions(Results r)
@@ -2310,7 +2936,7 @@ namespace Intercolony
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed, {r.skipped} skipped.");
             return r.sb.ToString();
         }
     }
