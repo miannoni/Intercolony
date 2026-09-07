@@ -231,6 +231,7 @@ namespace Intercolony
             // contracts that no longer exist. F14 asks selling entries to begin collapsed: each
             // visit to the tab is a beginning.
             contractExpansionChoices.Clear();
+            procurementExpansionChoices.Clear();
             expandedRelationSettlementId = NoExpandedRelation;
             ResetMarketCache();
             ResetSupplierMarketCache();
@@ -3171,6 +3172,8 @@ namespace Intercolony
         // an explicit "closed" choice must stay distinct from an untouched entry whose default is
         // currently closed; that default can change while the row remains on screen.
         private readonly Dictionary<int, bool> contractExpansionChoices = new Dictionary<int, bool>();
+        private readonly Dictionary<int, bool> procurementExpansionChoices =
+            new Dictionary<int, bool>();
 
         /// <summary>
         /// Recurring procurement agreements. Offers and final supplier counters come first because
@@ -3228,10 +3231,13 @@ namespace Intercolony
 
             float tableWidth = Mathf.Max(1f, inRect.width - 16f);
             List<float> rowHeights = new List<float>(contracts.Count);
+            List<bool> rowExpansions = new List<bool>(contracts.Count);
             float contentHeight = 0f;
             foreach (ProcurementContract contract in contracts)
             {
-                float rowHeight = ProcurementContractRowHeight(contract, tableWidth);
+                bool expanded = IsProcurementContractExpanded(contract);
+                rowExpansions.Add(expanded);
+                float rowHeight = ProcurementContractRowHeight(contract, tableWidth, expanded);
                 rowHeights.Add(rowHeight);
                 contentHeight += rowHeight;
             }
@@ -3244,7 +3250,8 @@ namespace Intercolony
             for (int i = 0; i < contracts.Count; i++)
             {
                 DrawProcurementContractRow(
-                    new Rect(0f, rowY, tableWidth, rowHeights[i]), contracts[i], i, state);
+                    new Rect(0f, rowY, tableWidth, rowHeights[i]),
+                    contracts[i], i, state, rowExpansions[i]);
                 rowY += rowHeights[i];
             }
 
@@ -3281,6 +3288,12 @@ namespace Intercolony
         {
             return $"#{contract.id}  {contract.settlementName} — {contract.quantityPerCycle}x " +
                    $"{contract.ItemLabel()} every {contract.cadenceDays}d";
+        }
+
+        private static string ProcurementContractIdentityWithExpansionMarker(
+            ProcurementContract contract, bool expanded)
+        {
+            return $"{(expanded ? "v" : ">")} {ProcurementContractIdentity(contract)}";
         }
 
         private static string ProcurementContractPaymentSummary(ProcurementContract contract)
@@ -3385,20 +3398,29 @@ namespace Intercolony
         }
 
         private static float ProcurementContractRowHeight(
-            ProcurementContract contract, float rowWidth)
+            ProcurementContract contract, float rowWidth, bool expanded)
         {
             float contentWidth = Mathf.Max(1f, rowWidth - 220f);
-            string identity = ProcurementContractIdentity(contract);
+            string identity = ProcurementContractIdentityWithExpansionMarker(contract, expanded);
             string payment = ProcurementContractPaymentSummary(contract);
             string status =
                 $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
                 ProcurementContractStatusText(contract);
             float height = 4f;
             height += Mathf.Max(Text.LineHeight, Text.CalcHeight(identity, contentWidth));
-            height += Mathf.Max(Text.LineHeight, Text.CalcHeight(payment, contentWidth));
+            if (expanded)
+            {
+                height += Mathf.Max(Text.LineHeight, Text.CalcHeight(payment, contentWidth));
+            }
+
             height += Mathf.Max(Text.LineHeight, Text.CalcHeight(status, contentWidth));
-            height += ProcurementAutoReadyRowHeight(contract, rowWidth);
-            return Mathf.Max(74f, height + 4f);
+            if (expanded)
+            {
+                height += ProcurementAutoReadyRowHeight(contract, rowWidth);
+            }
+
+            height += 4f;
+            return expanded ? Mathf.Max(74f, height) : height;
         }
 
         private static float DrawMeasuredProcurementLabel(
@@ -3416,7 +3438,8 @@ namespace Intercolony
             Rect rect,
             ProcurementContract contract,
             int index,
-            IntercolonyWorldComponent state)
+            IntercolonyWorldComponent state,
+            bool expanded)
         {
             if (index % 2 == 1)
             {
@@ -3427,15 +3450,27 @@ namespace Intercolony
 
             float contentWidth = Mathf.Max(1f, rect.width - 220f);
             float lineY = rect.y + 4f;
+            string identity =
+                ProcurementContractIdentityWithExpansionMarker(contract, expanded);
+            Rect identityRect = new Rect(
+                rect.x + 6f, lineY, contentWidth,
+                Mathf.Max(Text.LineHeight, Text.CalcHeight(identity, contentWidth)));
             lineY += DrawMeasuredProcurementLabel(
-                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
-                ProcurementContractIdentity(contract));
+                identityRect, identity);
 
-            GUI.color = new Color(1f, 1f, 1f, 0.7f);
-            lineY += DrawMeasuredProcurementLabel(
-                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
-                ProcurementContractPaymentSummary(contract));
-            GUI.color = Color.white;
+            if (Widgets.ButtonInvisible(identityRect))
+            {
+                SetProcurementContractExpanded(contract, !IsProcurementContractExpanded(contract));
+            }
+
+            if (expanded)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.7f);
+                lineY += DrawMeasuredProcurementLabel(
+                    new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                    ProcurementContractPaymentSummary(contract));
+                GUI.color = Color.white;
+            }
 
             GUI.color = ProcurementContractStatusColour(contract);
             string status =
@@ -3444,6 +3479,11 @@ namespace Intercolony
             lineY += DrawMeasuredProcurementLabel(
                 new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight), status);
             GUI.color = Color.white;
+
+            if (!expanded)
+            {
+                return;
+            }
 
             float autoReadyRowHeight = ProcurementAutoReadyRowHeight(contract, rect.width);
             if (autoReadyRowHeight > 0f)
@@ -3968,6 +4008,54 @@ namespace Intercolony
             }
 
             contractExpansionChoices[contract.id] = expanded;
+        }
+
+        /// <summary>
+        /// Starts a procurement row open only when the player has a decision to make or a live
+        /// abnormal state needs immediate attention. A supplier final counter needs an answer and
+        /// war suspension is an abnormal interruption. Procurement has no consecutive-miss signal,
+        /// so it cannot express the selling side's "one more miss ends it" warning; cumulative
+        /// failures are history rather than an alarm. That asymmetry is known and deliberate.
+        /// Proposals awaiting the supplier, routine activity, and terminal history stay collapsed.
+        /// Procurement agreements currently have no renewal decision path.
+        /// </summary>
+        internal static bool ProcurementContractStartsExpanded(ProcurementContract contract)
+        {
+            if (contract == null || contract.IsPendingProposal)
+            {
+                return false;
+            }
+
+            if (contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                return true;
+            }
+
+            return contract.status == ProcurementContractStatus.Suspended;
+        }
+
+        private bool IsProcurementContractExpanded(ProcurementContract contract)
+        {
+            if (contract == null)
+            {
+                return false;
+            }
+
+            bool expanded;
+            return procurementExpansionChoices.TryGetValue(contract.id, out expanded)
+                ? expanded
+                : ProcurementContractStartsExpanded(contract);
+        }
+
+        private void SetProcurementContractExpanded(
+            ProcurementContract contract, bool expanded)
+        {
+            if (contract == null)
+            {
+                return;
+            }
+
+            procurementExpansionChoices[contract.id] = expanded;
         }
 
         private static string ContractStatusText(RecurringContract contract)
