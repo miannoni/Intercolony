@@ -186,6 +186,87 @@ into the in-game menu, so this is a precondition for testing the area actions ab
 stop the area play-test and inspect the XML patch first; the drag behaviour cannot be judged until
 the commands are actually in the menu.
 
+### F14 contract rows need a collapse and attention check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. Both the **Selling** and
+**Procurement** contract lists now collapse each entry to its identity and status. The identity line
+carries a `>` or `v` marker and is itself the click target. An entry starts open only when it needs
+attention: on the selling side, a settlement's offer, a live renewal decision, an active agreement
+that has missed a delivery, or a war suspension; on the procurement side, a supplier's counteroffer
+or a war suspension. Everything else starts closed, including terminal history. The player's own
+open/close choices reset when the tab is reopened. Assertions and mutation evidence cover the shipped
+rules; what remains is whether the result works as a screen.
+
+**Steps.** On a colony with a long trading history, open both contract tabs and inspect collapsed rows
+before expanding them. Confirm that the identity and status still tell you which agreement is which,
+that the `>` and `v` markers are legible, and that clicking the identity line expands and closes the
+row without making the buttons inside the expanded row hard to reach. Exercise or load examples of
+the selling-side offer, live renewal decision, missed delivery and war suspension, and the
+procurement-side counteroffer and war suspension. Confirm that those entries open while ordinary
+entries and all terminal history start closed. Close and reopen each tab after changing several rows'
+states, then check whether the choices reset as described.
+
+Judge whether a collapsed row still identifies its agreement, whether the marker and click target
+feel right given the expanded row's buttons, whether the intended entries are open on a long history,
+and whether resetting the choices on tab reopen is welcome or annoying in play.
+
+### F16/F17 and F13 employee rows need a density check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. The employee detail line now carries
+only the daily wage, the term, the status and the auto-renew token. Settlement, faction, wage
+structure and paid silver moved to the row's tooltip. The measured worst case fell from about 1367
+units to about 620 against 720 available, so the overflow that could overdraw the row beneath should
+be gone. Assertions and mutation evidence cover the shipped change; a very long worker **NAME** still
+crowding the combat clause on the line above was left untouched and remains a known risk.
+
+**Steps.** Open **Labor** with active employees and inspect the shortened detail line, then hover the
+row and confirm that the settlement, faction, wage structure and paid silver are available in the
+tooltip. Use long settlement and faction names, long statuses and a very long worker **NAME** at
+more than one window width. Check the line against the row beneath and inspect the combat clause on
+the line above rather than treating the shorter detail line as proof that the whole card is safe.
+
+Judge whether the shorter row is easier to read or feels too sparse, whether anything moved to the
+tooltip is missed at a glance, and whether a very long worker **NAME** still crowds the untouched
+combat clause.
+
+### F18 procurement price labels need a reading check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. A procurement agreement row now
+reads cycles, silver per unit, silver per cycle, then the total. The old **silver each** wording is
+now **silver per cycle**, so the two figures cannot be confused. There are no assertions or mutation
+checks for this display string: it is built in the UI, so a reading is the only check there is.
+
+**Steps.** Open **Procurement → Contracts** with a procurement agreement that shows non-trivial
+cycles, per-unit and per-cycle amounts, and read the row at a narrow and a wide window width. Follow
+the figures through to the total rather than checking the labels in isolation.
+
+Judge whether the per-unit and per-cycle figures are unmistakable side by side, and whether the
+line remains comfortable to read at more than one window width.
+
+### F10 standing procurement agreements need an earned-unlock play check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. A settlement now accepts a standing
+procurement agreement only when commercial reputation is at least 62 and at least two purchases
+from that settlement have completed. A refusal names whichever number is short. A new colony can no
+longer buy a standing agreement from a stranger; that is the intended change. Assertions and mutation
+evidence cover the threshold and refusal paths, but not whether earning the access feels reasonable.
+
+**Steps.** In a new-colony or otherwise unqualified state, try to buy a standing procurement
+agreement from a stranger and confirm that the refusal identifies the missing reputation, purchase
+count, or both. Continue playing until the thresholds are earned, then try again and confirm that a
+standing agreement is accepted. Judge the amount of play needed to get there rather than treating the
+refusal itself as the test.
+
+**Settlement-wide count.** Load an existing save with established suppliers and find a settlement
+from which the colony has completed at least two purchases. Propose a standing agreement for a
+product the colony has never bought from that settlement, while reputation is at least 62, and
+confirm that it qualifies immediately. The count is settlement-wide, not per product; this is a
+separate check that buying anything from a settlement can qualify a new product.
+
+Judge whether earning the agreement takes a reasonable amount of play rather than feeling like a
+wall, whether the refusal makes the next step obvious, and whether established suppliers in an
+existing save still behave correctly under the settlement-wide count.
+
 ### Procurement Contracts has never been used by a human
 
 Added 2026-08-25 on branch `1.0.1`. In 1.0 this tab was an **Under development** placeholder,
