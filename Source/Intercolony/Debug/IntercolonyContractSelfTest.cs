@@ -78,6 +78,8 @@ namespace Intercolony
 
             sb.AppendLine("Recurring contract self-test");
 
+            CheckAutoReadySerialization(Check);
+
             List<RecurringContract> created = new List<RecurringContract>();
             List<SalesOrder> createdOrders = new List<SalesOrder>();
 
@@ -1014,6 +1016,128 @@ namespace Intercolony
             return Summarize();
         }
 
+        private static void CheckAutoReadySerialization(
+            Action<string, bool, string> check)
+        {
+            ContractAutoReadyRoundTripProbe sellingOffLoaded =
+                RoundTripContractAutoReady(
+                    new ContractAutoReadyRoundTripProbe
+                    {
+                        sellingAgreement = new RecurringContract { autoReadyOrders = false }
+                    },
+                    "intercolonySellingAgreementAutoReadyOffTest",
+                    out bool sellingOffNodePresent,
+                    out string sellingOffFailure);
+            bool? sellingOffValue = sellingOffLoaded?.sellingAgreement?.autoReadyOrders;
+            check(
+                "a selling agreement with auto-ready off loads off",
+                sellingOffFailure == null && sellingOffValue == false && !sellingOffNodePresent,
+                $"loaded autoReadyOrders={sellingOffValue?.ToString() ?? "null"}; " +
+                $"autoReadyOrders node present={sellingOffNodePresent}; " +
+                $"failure={sellingOffFailure ?? "none"}");
+
+            ContractAutoReadyRoundTripProbe sellingOnLoaded =
+                RoundTripContractAutoReady(
+                    new ContractAutoReadyRoundTripProbe
+                    {
+                        sellingAgreement = new RecurringContract { autoReadyOrders = true }
+                    },
+                    "intercolonySellingAgreementAutoReadyOnTest",
+                    out bool sellingOnNodePresent,
+                    out string sellingOnFailure);
+            bool? sellingOnValue = sellingOnLoaded?.sellingAgreement?.autoReadyOrders;
+            check(
+                "a selling agreement with auto-ready on loads on",
+                sellingOnFailure == null && sellingOnValue == true && sellingOnNodePresent,
+                $"loaded autoReadyOrders={sellingOnValue?.ToString() ?? "null"}; " +
+                $"autoReadyOrders node present={sellingOnNodePresent}; " +
+                $"failure={sellingOnFailure ?? "none"}");
+
+            ContractAutoReadyRoundTripProbe procurementOffLoaded =
+                RoundTripContractAutoReady(
+                    new ContractAutoReadyRoundTripProbe
+                    {
+                        procurementAgreement = new ProcurementContract
+                        {
+                            autoReadyOrders = false
+                        }
+                    },
+                    "intercolonyProcurementAgreementAutoReadyOffTest",
+                    out bool procurementOffNodePresent,
+                    out string procurementOffFailure);
+            bool? procurementOffValue =
+                procurementOffLoaded?.procurementAgreement?.autoReadyOrders;
+            check(
+                "a procurement agreement with auto-ready off loads off",
+                procurementOffFailure == null && procurementOffValue == false &&
+                !procurementOffNodePresent,
+                $"loaded autoReadyOrders={procurementOffValue?.ToString() ?? "null"}; " +
+                $"autoReadyOrders node present={procurementOffNodePresent}; " +
+                $"failure={procurementOffFailure ?? "none"}");
+
+            ContractAutoReadyRoundTripProbe procurementOnLoaded =
+                RoundTripContractAutoReady(
+                    new ContractAutoReadyRoundTripProbe
+                    {
+                        procurementAgreement = new ProcurementContract
+                        {
+                            autoReadyOrders = true
+                        }
+                    },
+                    "intercolonyProcurementAgreementAutoReadyOnTest",
+                    out bool procurementOnNodePresent,
+                    out string procurementOnFailure);
+            bool? procurementOnValue =
+                procurementOnLoaded?.procurementAgreement?.autoReadyOrders;
+            check(
+                "a procurement agreement with auto-ready on loads on",
+                procurementOnFailure == null && procurementOnValue == true &&
+                procurementOnNodePresent,
+                $"loaded autoReadyOrders={procurementOnValue?.ToString() ?? "null"}; " +
+                $"autoReadyOrders node present={procurementOnNodePresent}; " +
+                $"failure={procurementOnFailure ?? "none"}");
+        }
+
+        private static ContractAutoReadyRoundTripProbe RoundTripContractAutoReady(
+            ContractAutoReadyRoundTripProbe saved,
+            string saveLabel,
+            out bool autoReadyNodePresent,
+            out string failure)
+        {
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ContractAutoReady-{Guid.NewGuid():N}.xml");
+            ContractAutoReadyRoundTripProbe loaded = null;
+            autoReadyNodePresent = false;
+            failure = null;
+            try
+            {
+                Scribe.saver.InitSaving(path, saveLabel);
+                Scribe_Deep.Look(ref saved, "probe");
+                Scribe.saver.FinalizeSaving();
+
+                string savedXml = File.ReadAllText(path);
+                autoReadyNodePresent = savedXml.Contains("autoReadyOrders");
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loaded, "probe");
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception exception)
+            {
+                failure = $"{exception.GetType().Name}: {exception.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            return loaded;
+        }
+
         /// <summary>Leaves a live multi-cycle contract in the save for the reload check (§107).</summary>
         public static string PlantSaveLoadProbe(IntercolonyWorldComponent state)
         {
@@ -1132,6 +1256,18 @@ namespace Intercolony
                 }
 
                 candidate++;
+            }
+        }
+
+        public class ContractAutoReadyRoundTripProbe : IExposable
+        {
+            public RecurringContract sellingAgreement;
+            public ProcurementContract procurementAgreement;
+
+            public void ExposeData()
+            {
+                Scribe_Deep.Look(ref sellingAgreement, "sellingAgreement");
+                Scribe_Deep.Look(ref procurementAgreement, "procurementAgreement");
             }
         }
     }
