@@ -1,11 +1,11 @@
 # Foreman state — Intercolony
 
-Stage: 2 — Produce becomes programmable
-Unit: 2.0 — Read-only recon: the seams for F03 (area Produce/Pause/Stop) and F04 (programmable)
-Worker: running — `C:\Users\matte\AppData\Local\Temp\claude\C--dev\0e66c849-e19d-4229-9f25-19e3ad1f4bf6\scratchpad\unit-2-0.out`
-Last done: STAGE 1 CLOSED — F01, F02, F13, F15 all shipped with mutation evidence; last commit cd69b9c
-Updated: 2026-09-07 07:25
-Wakes: 11 · last full load at wake 10
+Stage: 3 — Agreement and employee UX
+Unit: 3.0 — Read-only recon: the seams for F14, F16/F17, F18 and F10
+Worker: running — `C:\Users\matte\AppData\Local\Temp\claude\C--dev\0e66c849-e19d-4229-9f25-19e3ad1f4bf6\scratchpad\unit-3-0.out`
+Last done: STAGE 2 CLOSED — F03 and F04 shipped with mutation evidence; last commit 48057f4
+Updated: 2026-09-07 16:30
+Wakes: 33 · last full load at wake 30
 Owed: four stage-1 playtests are recorded in `docs/PENDING_PLAYTESTS.md` and outstanding. The F15
 save-compatibility one is the one that matters — it is the only stage-1 change that touches saves
 that already exist.
@@ -23,19 +23,37 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | | Stage | Findings | Status |
 |---|---|---|---|
 | ✅ | 1 — Quiet automation and vanilla-command correctness | F01, F02, F13, F15 | closed 2026-09-07 |
-| 🔨 | 2 — Produce becomes programmable | F03, F04 | in progress |
-| ⬜ | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | not started |
+| ✅ | 2 — Produce becomes programmable | F03, F04 | closed 2026-09-07 |
+| 🔨 | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | in progress |
 | ⬜ | 4 — Player-side logistics | F05, F12 | not started |
 | ⬜ | 5 — Market geography | F21, F11 | not started |
 | ⬜ | 6 — Business intelligence and costing | F07, F19, F20 | not started |
 | ⬜ | 7 — Two-sided labor market | F25, F23, F24, F22 | not started |
 | ⬜ | 8 — Commercial relationships | F08, F09 | not started |
 
-## Units — stage 2
+## Units — stage 3
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | 2.0 — recon: the seams for F03 (area orders) and F04 (programmable produce) | worker running |
+| 🔨 | 3.0 — recon: the seams for F14, F16/F17, F18 and F10 | worker running |
+
+## Units — stage 2 (closed)
+
+| | Unit | Status |
+|---|---|---|
+| ✅ | 2.0 — recon: the seams for F03 (area orders) and F04 (programmable produce) | done, citations verified |
+| ✅ | 2.1 — F03 state: `paused` on the record, early return in the poll | ece7083 |
+| ✅ | 2.2 — F03 state tests, including that an old save loads unpaused | f49db5a |
+| ✅ | 2.3 — F03 per-object: Pause/Resume/Stop as distinct commands, not one toggle | e0ada0d |
+| ✅ | 2.4 — F03 area designators driving the same transitions | 16411e5 |
+| ✅ | 2.4b — register the three designators in the Architect menu (XML) | c01d7db |
+| ✅ | 2.5 — F03 area tests | 57e0981 |
+| ✅ | 2.6 — F04 target-count mode: record fields and the poll's stop condition | 4b14abb |
+| ✅ | 2.6b — F04 UI: set the target from the produce object | 5656c75, two corrections |
+| ✅ | 2.7a — the produce suite counts and reports its skips | 30b784e |
+| ✅ | 2.7b — fix the below-stock fixture: one cell cannot hold two minified items | 30b784e |
+| ✅ | 2.7 — F04 tests | 30b784e, all five mutation-proven |
+| ✅ | 2.8 — record the stage-2 playtests owed | 48057f4 |
 
 ## Units — stage 1 (closed)
 
@@ -73,10 +91,41 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 
 ## Open for the operator
 
+- **2026-09-07 — RELEASE DEFECT, pre-existing, needs a decision before the next release.**
+  `package.ps1` builds a release from `$ReleaseDirectories = @("About", "Assemblies", "Defs")`
+  (`package.ps1:45`). `Patches/` is not in that list, so no release zip has ever contained
+  `Patches/WorldObjectDefs.xml` — the patch that puts the Economy tab on the Settlement world
+  object — and the new designator registration would not ship either. The shipped 1.0.0 is
+  therefore missing that tab. Found by the 2.4b worker while confirming its own file would ship;
+  verified against `package.ps1` directly. Not fixed here: it is outside the playtest batch and
+  changing what a release contains is the operator's call.
+
 - **2026-09-07** — The wake loop was paused by the operator for maintenance and re-armed on
   resume. The run adopted Foreman `10ee860` mid-run at the operator's request; the plan and its
   stage/unit decomposition were carried over untouched. Wake counters restart at 0 because the
   cadence they drive was introduced by that version.
+- **2026-09-07** — Stage 2 is cut around what the produce loop can actually own. Recon established
+  that `Disable` already means Stop, that Pause needs a new persisted field because the record has
+  no state to express it, and that the poll is the only decision seam. So F03 splits into state,
+  per-object commands, and area designators, each with its own tests.
+- **2026-09-07** — The produce self-test's `Results.Skip` counted nothing and `Summarize` printed
+  only passed/failed, so skipped assertions were reported as `0 skipped` and read as passes. Fixed
+  in 30b784e. The lesson for the rest of this run: a green suite line is not evidence an assertion
+  ran — only a mutation that turns it red is. Where a stage-1 or stage-2 commit message says "0
+  skipped", the claim that everything ran rests on the mutation results in that same message, not
+  on the count.
+- **2026-09-07** — F04's target mode counts colony STOCK, not cycles produced, matching a RimWorld
+  bill's "do until you have X". So it is self-clearing: sell or consume the stock and the program
+  resumes on its own, with no latch and no finished flag. `targetCount <= 0` means indefinite, which
+  is what every existing save and every new program gets, so no migration is needed. It cannot
+  reuse `FindBuyerService.ColonyStock` — that filters to fungible trade items and a minified
+  workbench is exactly what this has to count.
+- **2026-09-07** — F04's worker-eligibility, skill and quality controls are NOT owned by the produce
+  loop. Recon put them in vanilla's construction job — `JobDriver_ConstructFinishFrame` and
+  `Frame.CompleteConstruction(Pawn worker)` decide who builds and what quality results. F04 itself
+  says the goal is not to recreate every bill field, so stage 2 implements the modes the loop can
+  own — indefinite and produce-until-target — and records the rest as deliberately not built rather
+  than half-building them through the construction system. Raised with the operator.
 - **2026-09-07** — F02's cancel seam is a Harmony prefix on `Designator_Cancel.DesignateThing`,
   not `Thing.Destroy`. `Thing.Destroy` would catch every cancellation route but sits on the hot
   path for every destroyed thing in the game, against the mod's standing rule to keep patches few
