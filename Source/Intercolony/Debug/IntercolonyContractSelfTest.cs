@@ -80,6 +80,7 @@ namespace Intercolony
 
             CheckAutoReadySerialization(Check);
             CheckContractStartsExpanded(Check);
+            CheckProcurementContractStartsExpanded(Check);
 
             List<RecurringContract> created = new List<RecurringContract>();
             List<SalesOrder> createdOrders = new List<SalesOrder>();
@@ -1241,6 +1242,109 @@ namespace Intercolony
                 $"{Describe(breached, breachedExpanded)}; " +
                 $"{Describe(cancelled, cancelledExpanded)}; " +
                 Describe(declined, declinedExpanded));
+        }
+
+        private static void CheckProcurementContractStartsExpanded(
+            Action<string, bool, string> check)
+        {
+            string Describe(ProcurementContract contract, bool returned)
+            {
+                return $"status={contract.status}; " +
+                       $"IsPendingProposal={contract.IsPendingProposal}; " +
+                       $"cyclesFailed={contract.cyclesFailed}; " +
+                       $"returned={returned}";
+            }
+
+            ProcurementContract supplierCounteroffer = new ProcurementContract
+            {
+                status = ProcurementContractStatus.CounterpartyCountered
+            };
+            bool supplierCounterofferExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(supplierCounteroffer);
+
+            ProcurementContract suspended = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Suspended
+            };
+            bool suspendedExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(suspended);
+            check(
+                "a supplier counteroffer starts expanded",
+                supplierCounterofferExpanded && suspendedExpanded,
+                $"{Describe(supplierCounteroffer, supplierCounterofferExpanded)}; " +
+                Describe(suspended, suspendedExpanded));
+
+            ProcurementContract pendingSupplierProposal = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Offered,
+                decisionDueTick = 1,
+                proposalAppeal = 0.5f
+            };
+            bool pendingSupplierProposalExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(
+                    pendingSupplierProposal);
+            check(
+                "a proposal awaiting the supplier starts collapsed",
+                pendingSupplierProposal.IsPendingProposal && !pendingSupplierProposalExpanded,
+                Describe(pendingSupplierProposal, pendingSupplierProposalExpanded));
+
+            ProcurementContract routineActive = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Active
+            };
+            bool routineActiveExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(routineActive);
+            check(
+                "a routine active procurement agreement starts collapsed",
+                !routineActiveExpanded,
+                Describe(routineActive, routineActiveExpanded));
+
+            ProcurementContract counterpartyRefused = new ProcurementContract
+            {
+                status = ProcurementContractStatus.CounterpartyRefused
+            };
+            ProcurementContract completed = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Completed
+            };
+            ProcurementContract cancelled = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Cancelled
+            };
+            ProcurementContract supplierDefault = new ProcurementContract
+            {
+                status = ProcurementContractStatus.SupplierDefault
+            };
+            bool counterpartyRefusedExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(counterpartyRefused);
+            bool completedExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(completed);
+            bool cancelledExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(cancelled);
+            bool supplierDefaultExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(supplierDefault);
+            check(
+                "procurement terminal history starts collapsed",
+                !counterpartyRefusedExpanded && !completedExpanded &&
+                !cancelledExpanded && !supplierDefaultExpanded,
+                $"{Describe(counterpartyRefused, counterpartyRefusedExpanded)}; " +
+                $"{Describe(completed, completedExpanded)}; " +
+                $"{Describe(cancelled, cancelledExpanded)}; " +
+                Describe(supplierDefault, supplierDefaultExpanded));
+
+            // cyclesFailed is cumulative, so treating it as an alarm would leave a long-running
+            // agreement open forever.
+            ProcurementContract pastMiss = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Active,
+                cyclesFailed = 1
+            };
+            bool pastMissExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(pastMiss);
+            check(
+                "a past procurement miss does not keep the row open",
+                !pastMissExpanded,
+                Describe(pastMiss, pastMissExpanded));
         }
 
         private static ContractAutoReadyRoundTripProbe RoundTripContractAutoReady(
