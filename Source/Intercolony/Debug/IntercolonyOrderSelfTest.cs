@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
@@ -192,6 +193,9 @@ namespace Intercolony
             // --- Buyer-pickup orders stay bound to the colony that declared them ready ---
             RunBuyerPickupMapChecks(state, map, sb, Check, Skip);
 
+            // --- F05: marked receiving locations and the unchanged unmarked delivery path ---
+            CheckReceivingLocationDelivery(map, Check, Skip);
+
             // --- Validation contract (§18, §74) ---
             OrderValidationResult nullOrder = OrderValidator.ValidateCaravan(null, null);
             Check("null order fails validation", !nullOrder.Success);
@@ -362,6 +366,721 @@ namespace Intercolony
                 }
             }
             return sb.ToString();
+        }
+
+        private static void CheckReceivingLocationDelivery(
+            Map map, Action<string, bool, string> check, Action<string, string> skip)
+        {
+            const string ZonePersistenceAssertion =
+                "a marked stockpile is remembered across a save and load";
+            const string BuildingPersistenceAssertion =
+                "a destroyed receiving building is dropped on FinalizeInit";
+            const string MarkedDeliveryAssertion = "goods arrive in a marked stockpile";
+            const string RefusingDeliveryAssertion =
+                "a marked stockpile that refuses the goods does not receive them";
+            const string UnmarkedDeliveryAssertion =
+                "with nothing marked, goods arrive where they always did";
+
+            void SkipDeliveryAssertions(string reason)
+            {
+                skip(ZonePersistenceAssertion, reason);
+                skip(BuildingPersistenceAssertion, reason);
+                skip(MarkedDeliveryAssertion, reason);
+                skip(RefusingDeliveryAssertion, reason);
+                skip(UnmarkedDeliveryAssertion, reason);
+            }
+
+            Map deliveryMap = map?.IsPlayerHome == true ? map : Find.AnyPlayerHomeMap;
+            ThingDef deliveredDef = ThingDefOf.WoodLog;
+            ReceivingLocationMapComponent receiving =
+                ReceivingLocationMapComponent.For(deliveryMap);
+            if (deliveryMap == null || deliveryMap.zoneManager == null ||
+                deliveryMap.thingGrid == null || deliveryMap.listerThings == null ||
+                deliveredDef == null || receiving == null)
+            {
+                string reason = deliveryMap == null
+                    ? "no player-home delivery map"
+                    : receiving == null
+                        ? "the delivery map has no receiving-location component"
+                        : deliveryMap.zoneManager == null
+                            ? "the delivery map has no zone manager"
+                            : deliveredDef == null
+                                ? "WoodLog is unavailable"
+                                : "the delivery map has no item grid or lister";
+                SkipDeliveryAssertions(reason);
+                return;
+            }
+
+            IntVec3 tradeDropSpot = DropCellFinder.TradeDropSpot(deliveryMap);
+            HashSet<IntVec3> reservedCells = new HashSet<IntVec3>();
+
+            IntVec3 FindEmptyCell(
+                IntVec3 center, int minimumDistanceSquared, HashSet<IntVec3> reserved)
+            {
+                if (center.IsValid)
+                {
+                    foreach (IntVec3 candidate in GenRadial.RadialCellsAround(
+                                 center, 30f, useCenter: true))
+                    {
+                        int dx = candidate.x - center.x;
+                        int dz = candidate.z - center.z;
+                        if (minimumDistanceSquared > 0 && dx * dx + dz * dz < minimumDistanceSquared)
+                        {
+                            continue;
+                        }
+
+                        if (candidate.InBounds(deliveryMap) && candidate.Standable(deliveryMap) &&
+                            (reserved == null || !reserved.Contains(candidate)) &&
+                            deliveryMap.zoneManager.ZoneAt(candidate) == null &&
+                            deliveryMap.thingGrid.ThingsListAt(candidate).Count == 0)
+                        {
+                            return candidate;
+                        }
+                    }
+                }
+
+                foreach (IntVec3 candidate in deliveryMap.AllCells)
+                {
+                    int dx = center.x - candidate.x;
+                    int dz = center.z - candidate.z;
+                    if (minimumDistanceSquared > 0 && dx * dx + dz * dz < minimumDistanceSquared)
+                    {
+                        continue;
+                    }
+
+                    if (candidate.InBounds(deliveryMap) && candidate.Standable(deliveryMap) &&
+                        (reserved == null || !reserved.Contains(candidate)) &&
+                        deliveryMap.zoneManager.ZoneAt(candidate) == null &&
+                        deliveryMap.thingGrid.ThingsListAt(candidate).Count == 0)
+                    {
+                        return candidate;
+                    }
+                }
+
+                return IntVec3.Invalid;
+            }
+
+            int CountMapUnits()
+            {
+                int count = 0;
+                foreach (Thing thing in deliveryMap.listerThings.ThingsOfDef(deliveredDef))
+                {
+                    if (thing != null && !thing.Destroyed)
+                    {
+                        count += thing.stackCount;
+                    }
+                }
+
+                return count;
+            }
+
+            int CountZoneUnits(Zone_Stockpile zone)
+            {
+                int count = 0;
+                SlotGroup group = zone?.GetSlotGroup();
+                if (group == null)
+                {
+                    return count;
+                }
+
+                foreach (Thing thing in group.HeldThings)
+                {
+                    if (thing?.GetInnerIfMinified()?.def == deliveredDef)
+                    {
+                        count += thing.stackCount;
+                    }
+                }
+
+                return count;
+            }
+
+            Dictionary<Thing, int> SnapshotGoods()
+            {
+                Dictionary<Thing, int> snapshot = new Dictionary<Thing, int>();
+                foreach (Thing thing in deliveryMap.listerThings.ThingsOfDef(deliveredDef))
+                {
+                    if (thing != null && !thing.Destroyed)
+                    {
+                        snapshot[thing] = thing.stackCount;
+                    }
+                }
+
+                return snapshot;
+            }
+
+            string NewGoodsLocations(Dictionary<Thing, int> before)
+            {
+                List<string> locations = new List<string>();
+                foreach (Thing thing in deliveryMap.listerThings.ThingsOfDef(deliveredDef))
+                {
+                    if (thing == null || thing.Destroyed)
+                    {
+                        continue;
+                    }
+
+                    if (!before.TryGetValue(thing, out int previous))
+                    {
+                        locations.Add($"{thing.stackCount}@{thing.Position}");
+                    }
+                    else if (thing.stackCount > previous)
+                    {
+                        locations.Add($"+{thing.stackCount - previous}@{thing.Position}");
+                    }
+                }
+
+                return locations.Count == 0
+                    ? "none"
+                    : string.Join(", ", locations.ToArray());
+            }
+
+            IntVec3 storageCell = FindEmptyCell(tradeDropSpot, 225, reservedCells);
+            if (!storageCell.IsValid)
+            {
+                SkipDeliveryAssertions(
+                    "no empty standable unzoned cell at least 15 cells from the trade-drop spot");
+                return;
+            }
+
+            reservedCells.Add(storageCell);
+            Zone_Stockpile testZone = null;
+            Building_Storage testBuilding = null;
+            Thing buildingThing = null;
+            Building_Storage controlBuilding = null;
+            Thing controlBuildingThing = null;
+            List<PurchaseOrder> testOrders = new List<PurchaseOrder>();
+            Dictionary<Thing, int> originalGoods = SnapshotGoods();
+            List<Zone_Stockpile> previousReceivingZones = new List<Zone_Stockpile>();
+            List<Building_Storage> previousReceivingBuildings =
+                new List<Building_Storage>();
+
+            void RestoreGoods()
+            {
+                List<Thing> current = new List<Thing>(
+                    deliveryMap.listerThings.ThingsOfDef(deliveredDef));
+                foreach (Thing thing in current)
+                {
+                    if (originalGoods.TryGetValue(thing, out int originalCount))
+                    {
+                        if (!thing.Destroyed)
+                        {
+                            thing.stackCount = originalCount;
+                        }
+                    }
+                    else if (!thing.Destroyed)
+                    {
+                        thing.Destroy(DestroyMode.Vanish);
+                    }
+                }
+
+                foreach (KeyValuePair<Thing, int> saved in originalGoods)
+                {
+                    if (saved.Key != null && !saved.Key.Destroyed)
+                    {
+                        saved.Key.stackCount = saved.Value;
+                    }
+                }
+            }
+
+            PurchaseOrder DeliverOrder(int id, int quantity)
+            {
+                PurchaseOrder order = new PurchaseOrder
+                {
+                    id = id,
+                    settlementId = -1,
+                    settlementName = "receiving-location self-test supplier",
+                    thingDef = deliveredDef,
+                    quantity = quantity,
+                    paidSilver = 0,
+                    destinationMap = deliveryMap,
+                    supplierDelivers = true,
+                    readyTick = GenTicks.TicksGame,
+                    status = PurchaseOrderStatus.Confirmed
+                };
+                testOrders.Add(order);
+
+                // This is the production clock path: AdvanceOrders reaches DeliverToColony and
+                // SpawnGoods; the private delivery helper is deliberately not called directly.
+                PurchaseOrderService.AdvanceOrders(new List<PurchaseOrder> { order });
+                return order;
+            }
+
+            string DeliveryDetail(
+                PurchaseOrder order,
+                int requested,
+                int beforeMap,
+                int afterMap,
+                int beforeZone,
+                int afterZone,
+                string locations)
+            {
+                return $"zone {testZone.ID}, delivered {requested}x {deliveredDef.defName}, " +
+                       $"order={order?.status.ToString() ?? "none"}, " +
+                       $"landed {afterMap - beforeMap} on map, " +
+                       $"zone units {beforeZone}->{afterZone}, where={locations}";
+            }
+
+            try
+            {
+                try
+                {
+                    testZone = new Zone_Stockpile(
+                        StorageSettingsPreset.DefaultStockpile, deliveryMap.zoneManager);
+                    deliveryMap.zoneManager.RegisterZone(testZone);
+                    testZone.AddCell(storageCell);
+                }
+                catch (Exception exception)
+                {
+                    SkipDeliveryAssertions(
+                        $"could not create the real stockpile fixture: {exception.Message}");
+                    return;
+                }
+
+                string buildingFixtureFailure = null;
+                if (ThingDefOf.Shelf == null)
+                {
+                    buildingFixtureFailure = "Shelf is unavailable in this install";
+                }
+                else
+                {
+                    IntVec3 buildingCell = FindEmptyCell(tradeDropSpot, 0, reservedCells);
+                    if (!buildingCell.IsValid)
+                    {
+                        buildingFixtureFailure =
+                            "no empty standable unzoned cell for the storage-building fixture";
+                    }
+                    else
+                    {
+                        reservedCells.Add(buildingCell);
+                        try
+                        {
+                            buildingThing = ThingMaker.MakeThing(ThingDefOf.Shelf);
+                            testBuilding = buildingThing as Building_Storage;
+                            if (testBuilding == null)
+                            {
+                                buildingFixtureFailure =
+                                    "ThingDefOf.Shelf did not make a Building_Storage";
+                            }
+                            else
+                            {
+                                testBuilding = GenSpawn.Spawn(
+                                    testBuilding, buildingCell, deliveryMap) as Building_Storage;
+                                if (testBuilding == null || testBuilding.Destroyed ||
+                                    !testBuilding.Spawned || testBuilding.MapHeld != deliveryMap)
+                                {
+                                    buildingFixtureFailure =
+                                        "the storage-building fixture did not spawn on the test map";
+                                    if (testBuilding != null && !testBuilding.Destroyed)
+                                    {
+                                        testBuilding.Destroy(DestroyMode.Vanish);
+                                    }
+
+                                    testBuilding = null;
+                                }
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            buildingFixtureFailure =
+                                $"could not create the storage-building fixture: {exception.Message}";
+                            if (testBuilding != null && !testBuilding.Destroyed)
+                            {
+                                testBuilding.Destroy(DestroyMode.Vanish);
+                            }
+
+                            testBuilding = null;
+                        }
+
+                        if (testBuilding == null && buildingThing != null &&
+                            !buildingThing.Destroyed)
+                        {
+                            buildingThing.Destroy(DestroyMode.Vanish);
+                        }
+
+                        if (testBuilding != null)
+                        {
+                            IntVec3 controlBuildingCell = FindEmptyCell(
+                                tradeDropSpot, 0, reservedCells);
+                            if (!controlBuildingCell.IsValid)
+                            {
+                                buildingFixtureFailure =
+                                    "no empty standable unzoned cell for the live storage-building control";
+                            }
+                            else
+                            {
+                                reservedCells.Add(controlBuildingCell);
+                                try
+                                {
+                                    controlBuildingThing =
+                                        ThingMaker.MakeThing(ThingDefOf.Shelf);
+                                    controlBuilding = controlBuildingThing as Building_Storage;
+                                    if (controlBuilding == null)
+                                    {
+                                        buildingFixtureFailure =
+                                            "ThingDefOf.Shelf did not make a Building_Storage control";
+                                    }
+                                    else
+                                    {
+                                        controlBuilding = GenSpawn.Spawn(
+                                            controlBuilding,
+                                            controlBuildingCell,
+                                            deliveryMap) as Building_Storage;
+                                        if (controlBuilding == null || controlBuilding.Destroyed ||
+                                            !controlBuilding.Spawned ||
+                                            controlBuilding.MapHeld != deliveryMap)
+                                        {
+                                            buildingFixtureFailure =
+                                                "the live storage-building control did not spawn on the test map";
+                                            if (controlBuilding != null && !controlBuilding.Destroyed)
+                                            {
+                                                controlBuilding.Destroy(DestroyMode.Vanish);
+                                            }
+
+                                            controlBuilding = null;
+                                        }
+                                    }
+                                }
+                                catch (Exception exception)
+                                {
+                                    buildingFixtureFailure =
+                                        $"could not create the live storage-building control: " +
+                                        exception.Message;
+                                    if (controlBuilding != null && !controlBuilding.Destroyed)
+                                    {
+                                        controlBuilding.Destroy(DestroyMode.Vanish);
+                                    }
+
+                                    controlBuilding = null;
+                                }
+
+                                if (controlBuilding == null && controlBuildingThing != null &&
+                                    !controlBuildingThing.Destroyed)
+                                {
+                                    controlBuildingThing.Destroy(DestroyMode.Vanish);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ReceivingLocationMapComponent savedZoneComponent =
+                    new ReceivingLocationMapComponent(deliveryMap);
+                savedZoneComponent.SetReceiving(testZone, true);
+                ReceivingLocationMapComponent loadedZoneComponent = null;
+                string zoneRoundTripFailure = null;
+                bool zoneNodePresent = false;
+                string zonePath = Path.Combine(
+                    Path.GetTempPath(), $"Intercolony-ReceivingZone-{Guid.NewGuid():N}.xml");
+                try
+                {
+                    Scribe.saver.InitSaving(zonePath, "intercolonyReceivingZoneTest");
+                    Scribe_Deep.Look(ref savedZoneComponent, "receivingLocationMapComponent");
+                    Scribe.saver.FinalizeSaving();
+                    zoneNodePresent = File.ReadAllText(zonePath).IndexOf(
+                        "<receivingZoneIds", StringComparison.Ordinal) >= 0;
+
+                    Scribe.loader.InitLoading(zonePath);
+                    Scribe_Deep.Look(
+                        ref loadedZoneComponent, "receivingLocationMapComponent", deliveryMap);
+                    Scribe.loader.FinalizeLoading();
+                    loadedZoneComponent?.FinalizeInit();
+                }
+                catch (Exception exception)
+                {
+                    zoneRoundTripFailure = $"{exception.GetType().Name}: {exception.Message}";
+                }
+                finally
+                {
+                    Scribe.ForceStop();
+                    if (File.Exists(zonePath))
+                    {
+                        File.Delete(zonePath);
+                    }
+                }
+
+                check(
+                    ZonePersistenceAssertion,
+                    zoneRoundTripFailure == null && zoneNodePresent &&
+                    loadedZoneComponent != null && loadedZoneComponent.IsReceiving(testZone),
+                    zoneRoundTripFailure ??
+                    $"zone {testZone.ID}, saved node={zoneNodePresent}, " +
+                    $"loaded marked={loadedZoneComponent?.IsReceiving(testZone) ?? false}");
+
+                if (testBuilding == null)
+                {
+                    skip(BuildingPersistenceAssertion, buildingFixtureFailure);
+                }
+                else if (controlBuilding == null)
+                {
+                    skip(BuildingPersistenceAssertion,
+                        buildingFixtureFailure ?? "the live storage-building control is unavailable");
+                }
+                else
+                {
+                    ReceivingLocationMapComponent buildingComponent =
+                        new ReceivingLocationMapComponent(deliveryMap);
+                    buildingComponent.SetReceiving(testBuilding, true);
+                    buildingComponent.SetReceiving(controlBuilding, true);
+                    bool markedBeforeDestroy = buildingComponent.IsReceiving(testBuilding) &&
+                        buildingComponent.IsReceiving(controlBuilding);
+                    bool destroyedBeforeFinalize = false;
+                    bool controlReportedAfterFinalize = false;
+                    bool destroyedBuildingDropped = false;
+                    string buildingFinalizeFailure = null;
+                    try
+                    {
+                        testBuilding.Destroy(DestroyMode.Vanish);
+                        destroyedBeforeFinalize = testBuilding.Destroyed;
+                        buildingComponent.FinalizeInit();
+                        controlReportedAfterFinalize =
+                            buildingComponent.IsReceiving(controlBuilding);
+
+                        // Remove the live control after proving it survived. If FinalizeInit did
+                        // not prune the destroyed reference, it is the only marker left and
+                        // AnyConfigured exposes that stale entry.
+                        buildingComponent.SetReceiving(controlBuilding, false);
+                        destroyedBuildingDropped = !buildingComponent.AnyConfigured;
+                    }
+                    catch (Exception exception)
+                    {
+                        buildingFinalizeFailure =
+                            $"{exception.GetType().Name}: {exception.Message}";
+                    }
+
+                    check(
+                        BuildingPersistenceAssertion,
+                        buildingFinalizeFailure == null && markedBeforeDestroy &&
+                        destroyedBeforeFinalize && controlReportedAfterFinalize &&
+                        destroyedBuildingDropped,
+                        buildingFinalizeFailure ??
+                        $"marked before destroy={markedBeforeDestroy}, " +
+                        $"destroyed before FinalizeInit={destroyedBeforeFinalize}, " +
+                        $"control reported after FinalizeInit={controlReportedAfterFinalize}, " +
+                        $"destroyed marker dropped={destroyedBuildingDropped}");
+                }
+
+                foreach (ISlotGroupParent destination in receiving.ReceivingDestinations)
+                {
+                    if (destination is Zone_Stockpile existingZone)
+                    {
+                        previousReceivingZones.Add(existingZone);
+                    }
+                    else if (destination is Building_Storage existingBuilding)
+                    {
+                        previousReceivingBuildings.Add(existingBuilding);
+                    }
+                }
+
+                foreach (Zone_Stockpile existingZone in previousReceivingZones)
+                {
+                    receiving.SetReceiving(existingZone, false);
+                }
+
+                foreach (Building_Storage existingBuilding in previousReceivingBuildings)
+                {
+                    receiving.SetReceiving(existingBuilding, false);
+                }
+
+                if (receiving.AnyConfigured)
+                {
+                    string reason =
+                        "existing receiving markers could not be cleared through SetReceiving";
+                    skip(MarkedDeliveryAssertion, reason);
+                    skip(RefusingDeliveryAssertion, reason);
+                    skip(UnmarkedDeliveryAssertion, reason);
+                    return;
+                }
+
+                const int quantity = 3;
+                receiving.SetReceiving(testZone, true);
+                Dictionary<Thing, int> markedBeforeGoods = SnapshotGoods();
+                int markedBeforeMap = CountMapUnits();
+                int markedBeforeZone = CountZoneUnits(testZone);
+                PurchaseOrder markedOrder = null;
+                string markedDeliveryFailure = null;
+                try
+                {
+                    markedOrder = DeliverOrder(-95001, quantity);
+                }
+                catch (Exception exception)
+                {
+                    markedDeliveryFailure =
+                        $"{exception.GetType().Name}: {exception.Message}";
+                }
+
+                int markedAfterMap = CountMapUnits();
+                int markedAfterZone = CountZoneUnits(testZone);
+                check(
+                    MarkedDeliveryAssertion,
+                    markedDeliveryFailure == null && receiving.IsReceiving(testZone) &&
+                    markedOrder?.status == PurchaseOrderStatus.Completed &&
+                    markedAfterMap - markedBeforeMap == quantity &&
+                    markedAfterZone - markedBeforeZone == quantity,
+                    (markedDeliveryFailure == null ? string.Empty : markedDeliveryFailure + "; ") +
+                    DeliveryDetail(
+                        markedOrder,
+                        quantity,
+                        markedBeforeMap,
+                        markedAfterMap,
+                        markedBeforeZone,
+                        markedAfterZone,
+                        NewGoodsLocations(markedBeforeGoods)));
+                RestoreGoods();
+
+                bool filterConfigured = false;
+                string filterFailure = null;
+                try
+                {
+                    if (testZone.settings == null || testZone.settings.filter == null)
+                    {
+                        filterFailure = "the real stockpile has no storage filter";
+                    }
+                    else
+                    {
+                        testZone.settings.filter.SetDisallowAll();
+                        filterConfigured = true;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    filterFailure =
+                        $"SetDisallowAll could not configure the stockpile filter: {exception.Message}";
+                }
+
+                if (!filterConfigured)
+                {
+                    skip(RefusingDeliveryAssertion, filterFailure);
+                }
+                else
+                {
+                    bool filterRefuses = !testZone.settings.AllowedToAccept(deliveredDef);
+                    Dictionary<Thing, int> refusingBeforeGoods = SnapshotGoods();
+                    int refusingBeforeMap = CountMapUnits();
+                    int refusingBeforeZone = CountZoneUnits(testZone);
+                    PurchaseOrder refusingOrder = null;
+                    string refusingDeliveryFailure = null;
+                    try
+                    {
+                        refusingOrder = DeliverOrder(-95002, quantity);
+                    }
+                    catch (Exception exception)
+                    {
+                        refusingDeliveryFailure =
+                            $"{exception.GetType().Name}: {exception.Message}";
+                    }
+
+                    int refusingAfterMap = CountMapUnits();
+                    int refusingAfterZone = CountZoneUnits(testZone);
+                    check(
+                        RefusingDeliveryAssertion,
+                        filterRefuses && refusingDeliveryFailure == null &&
+                        receiving.IsReceiving(testZone) &&
+                        refusingOrder?.status == PurchaseOrderStatus.Completed &&
+                        refusingAfterMap - refusingBeforeMap == quantity &&
+                        refusingAfterZone - refusingBeforeZone == 0,
+                        (refusingDeliveryFailure == null
+                            ? string.Empty
+                            : refusingDeliveryFailure + "; ") +
+                        $"filter refuses={filterRefuses}; " + DeliveryDetail(
+                            refusingOrder,
+                            quantity,
+                            refusingBeforeMap,
+                            refusingAfterMap,
+                            refusingBeforeZone,
+                            refusingAfterZone,
+                            NewGoodsLocations(refusingBeforeGoods)));
+                    RestoreGoods();
+                }
+
+                if (testZone.settings != null)
+                {
+                    testZone.settings.SetFromPreset(StorageSettingsPreset.DefaultStockpile);
+                }
+
+                receiving.SetReceiving(testZone, false);
+                Dictionary<Thing, int> unmarkedBeforeGoods = SnapshotGoods();
+                int unmarkedBeforeMap = CountMapUnits();
+                int unmarkedBeforeZone = CountZoneUnits(testZone);
+                PurchaseOrder unmarkedOrder = null;
+                string unmarkedDeliveryFailure = null;
+                try
+                {
+                    unmarkedOrder = DeliverOrder(-95003, quantity);
+                }
+                catch (Exception exception)
+                {
+                    unmarkedDeliveryFailure =
+                        $"{exception.GetType().Name}: {exception.Message}";
+                }
+
+                int unmarkedAfterMap = CountMapUnits();
+                int unmarkedAfterZone = CountZoneUnits(testZone);
+                check(
+                    UnmarkedDeliveryAssertion,
+                    !receiving.AnyConfigured && unmarkedDeliveryFailure == null &&
+                    unmarkedOrder?.status == PurchaseOrderStatus.Completed &&
+                    unmarkedAfterMap - unmarkedBeforeMap == quantity,
+                    (unmarkedDeliveryFailure == null ? string.Empty : unmarkedDeliveryFailure + "; ") +
+                    DeliveryDetail(
+                        unmarkedOrder,
+                        quantity,
+                        unmarkedBeforeMap,
+                        unmarkedAfterMap,
+                        unmarkedBeforeZone,
+                        unmarkedAfterZone,
+                        NewGoodsLocations(unmarkedBeforeGoods)) +
+                    $", AnyConfigured={receiving.AnyConfigured}");
+                RestoreGoods();
+            }
+            finally
+            {
+                RestoreGoods();
+                // These orders were advanced through a private one-item list, never registered
+                // in the world's durable purchase-order collection. Clearing our references is
+                // the complete order cleanup; the goods and map fixtures are restored below.
+                testOrders.Clear();
+
+                if (receiving != null && testZone != null)
+                {
+                    receiving.SetReceiving(testZone, false);
+                }
+
+                if (testZone != null)
+                {
+                    testZone.settings?.SetFromPreset(StorageSettingsPreset.DefaultStockpile);
+                    testZone.Delete(playSound: false);
+                }
+
+                if (testBuilding != null && !testBuilding.Destroyed)
+                {
+                    testBuilding.Destroy(DestroyMode.Vanish);
+                }
+
+                if (buildingThing != null && !buildingThing.Destroyed && testBuilding == null)
+                {
+                    buildingThing.Destroy(DestroyMode.Vanish);
+                }
+
+                if (controlBuilding != null && !controlBuilding.Destroyed)
+                {
+                    controlBuilding.Destroy(DestroyMode.Vanish);
+                }
+
+                if (controlBuildingThing != null && !controlBuildingThing.Destroyed &&
+                    controlBuilding == null)
+                {
+                    controlBuildingThing.Destroy(DestroyMode.Vanish);
+                }
+
+                foreach (Zone_Stockpile existingZone in previousReceivingZones)
+                {
+                    receiving.SetReceiving(existingZone, true);
+                }
+
+                foreach (Building_Storage existingBuilding in previousReceivingBuildings)
+                {
+                    receiving.SetReceiving(existingBuilding, true);
+                }
+            }
         }
 
         /// <summary>
