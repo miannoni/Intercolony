@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Patch>
+  <!--
+    The production controls are special orders, so append them to the vanilla Orders category
+    rather than redefining the category. The conditional wrapper treats a missing Orders list as
+    a no-op, which keeps this patch compatible with loadouts where that vanilla node is unavailable.
+  -->
+  <Operation Class="PatchOperationConditional">
+    <xpath>Defs/DesignationCategoryDef[defName="Orders"]/specialDesignatorClasses</xpath>
+    <match Class="PatchOperationAdd">
+      <xpath>Defs/DesignationCategoryDef[defName="Orders"]/specialDesignatorClasses</xpath>
+      <value>
+        <li>Intercolony.Designator_ProduceResume</li>
+        <li>Intercolony.Designator_ProducePause</li>
+        <li>Intercolony.Designator_ProduceStop</li>
+      </value>
+    </match>
+  </Operation>
+</Patch>
