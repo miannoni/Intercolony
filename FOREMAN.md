@@ -1,11 +1,22 @@
 # Foreman state — Intercolony
 
-Stage: 3 — Agreement and employee UX
-Unit: 3.0 — Read-only recon: the seams for F14, F16/F17, F18 and F10
-Worker: running — `C:\Users\matte\AppData\Local\Temp\claude\C--dev\0e66c849-e19d-4229-9f25-19e3ad1f4bf6\scratchpad\unit-3-0.out`
-Last done: STAGE 2 CLOSED — F03 and F04 shipped with mutation evidence; last commit 48057f4
-Updated: 2026-09-07 16:30
-Wakes: 33 · last full load at wake 30
+Stage: 4 — Player-side logistics
+Unit: 4.0 — Read-only recon: the seams for F05 (receiving locations) and F12 (programmed caravans)
+Worker: running — `…\scratchpad\unit-4-0.out`
+Last done: STAGE 3 CLOSED — F14, F16/F17, F18 and F10 shipped; last commit fe345dd; suite 1464/0/17
+Updated: 2026-09-08 01:00
+
+RESOLVED, kept for the record. The F10 gate made the rfq suite report 0/0/0: it correctly refused
+fixture settlements that had never been given reputation or purchase history, so no proposal
+existed, `capturedDecision` kept its -1 sentinel, and a switch threw instead of failing — taking all
+216 assertions with it. Fixtures now establish the relationship first, and that switch reports
+rather than throws.
+Two corrections on the record. My first diagnosis blamed the two new enum members being inserted
+mid-enum and shifting ordinals; they are inserted mid-enum, but nothing persists or casts that enum
+and it was not the cause. And 3.7b was dispatched while `verify-3-8.ps1` was still mutating
+`ProcurementContractService.cs`, breaking the one-worker-at-a-time rule — the tree survived, and
+3.8's evidence from that window was void and has since been redone against the working suite.
+Wakes: 48 · last full load at wake 40
 Owed: four stage-1 playtests are recorded in `docs/PENDING_PLAYTESTS.md` and outstanding. The F15
 save-compatibility one is the one that matters — it is the only stage-1 change that touches saves
 that already exist.
@@ -24,18 +35,35 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 |---|---|---|---|
 | ✅ | 1 — Quiet automation and vanilla-command correctness | F01, F02, F13, F15 | closed 2026-09-07 |
 | ✅ | 2 — Produce becomes programmable | F03, F04 | closed 2026-09-07 |
-| 🔨 | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | in progress |
-| ⬜ | 4 — Player-side logistics | F05, F12 | not started |
+| ✅ | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | closed 2026-09-08 |
+| 🔨 | 4 — Player-side logistics | F05, F12 | in progress |
 | ⬜ | 5 — Market geography | F21, F11 | not started |
 | ⬜ | 6 — Business intelligence and costing | F07, F19, F20 | not started |
 | ⬜ | 7 — Two-sided labor market | F25, F23, F24, F22 | not started |
 | ⬜ | 8 — Commercial relationships | F08, F09 | not started |
 
-## Units — stage 3
+## Units — stage 4
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | 3.0 — recon: the seams for F14, F16/F17, F18 and F10 | worker running |
+| 🔨 | 4.0 — recon: the seams for F05 and F12 | worker running |
+
+## Units — stage 3 (closed)
+
+| | Unit | Status |
+|---|---|---|
+| ✅ | 3.0 — recon: the seams for F14, F16/F17, F18 and F10 | done, citations verified |
+| ✅ | 3.1 — F18: the procurement row shows the price per unit | 8d533bc |
+| ➖ | 3.2 — F18 tests | dropped deliberately, see Decisions |
+| ✅ | 3.3 — F14: the predicate for which selling entries start expanded | 02d5710 |
+| ✅ | 3.4 — F14 tests: seven assertions over the predicate | 02d5710, six mutations red |
+| ✅ | 3.3b — F14: the per-entry expansion state and its resolver | 275577a |
+| ✅ | 3.3c — F14: the collapsed row and its height | 275577a |
+| ✅ | 3.4b — F14 on the procurement list | c67cece, one correction |
+| ✅ | 3.4c — F14 tests for the procurement predicate | 7571391 |
+| ✅ | 3.5 — F16/F17 content cull, which is also the F13 overflow fix | b1b5c7f |
+| ✅ | 3.7 + 3.7b + 3.8 — F10 gate, fixture repair, five assertions | 799d673, five mutations red |
+| ✅ | 3.9 — record the stage-3 playtests owed | fe345dd |
 
 ## Units — stage 2 (closed)
 
@@ -108,6 +136,47 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
   that `Disable` already means Stop, that Pause needs a new persisted field because the record has
   no state to express it, and that the poll is the only decision seam. So F03 splits into state,
   per-object commands, and area designators, each with its own tests.
+- **2026-09-07** — No assertions were written for F18 and that is deliberate.
+  `ProcurementContractPaymentSummary` is a private method of the UI window returning a display
+  string; asserting it would mean widening production visibility purely for a test, and the thing
+  actually worth checking — that the row reads clearly and the per-unit and per-cycle figures cannot
+  be confused — is a reading, not a value. It goes to the stage-3 playtest entry instead. Writing a
+  test that restates the constructor would be exactly the hollowness this run keeps catching.
+- **2026-09-07** — F10 is implemented as a GATE, not a new vocabulary. Recon established that
+  purchases already move `CommercialReputation`, which already has tiers and player-facing labels,
+  and that the finding explicitly asks for integration rather than duplication. What procurement
+  actually lacked was selling's earned threshold — reputation plus a completed-trade count — so a
+  standing purchase agreement was available to a total stranger. It reuses selling's 62 rather than
+  choosing its own number: one relationship meter should not imply two opinions.
+- **2026-09-07** — F16/F17 and the employee-row overflow deferred by F13 are one unit, not two. The
+  segments the finding calls secondary — settlement, faction, wage structure, paid silver — are
+  exactly the long ones, so culling them to leave pay/day, term, status and auto-renew is both the
+  content change the finding asks for and the measurement fix rule 7 requires. Doing them
+  separately would mean measuring twice and changing the same line twice.
+- **2026-09-07** — Procurement's collapse rule deliberately has NO failure case, unlike selling's.
+  `ProcurementContract` carries only a cumulative `cyclesFailed`; there is no consecutive-miss
+  counter and no breach threshold, so it cannot express "one more miss ends it". Expanding on the
+  cumulative count would keep every long-running agreement that ever missed permanently open, which
+  is the opposite of what F14 asks. The asymmetry is known, and giving procurement a
+  consecutive-miss signal is a separate change with its own persistence question.
+- **2026-09-07** — F14's per-entry state is a dictionary of explicit player choices, not a set of
+  collapsed ids. A set cannot distinguish "the player closed this" from "the default closed this",
+  and the default is not fixed — a delivery missed or a renewal arriving changes it under a row
+  that is already on screen. It clears in `PreOpen` for two reasons: the window survives being
+  closed, so ids would accumulate for contracts that no longer exist, and F14 asks selling entries
+  to BEGIN collapsed, which makes each visit to the tab a beginning.
+- **2026-09-07** — F14's "exceptional" is defined as: the player has something to DECIDE, or
+  something is going WRONG. That makes four states start expanded — a settlement's offer, a live
+  renewal decision, a consecutive-miss warning, and war suspension — and everything else start
+  collapsed, including a routine active agreement, a proposal the player has already sent and is
+  waiting on, and all four terminal states. Terminal history is what makes the list long and is
+  never urgent.
+- **2026-09-07** — Stage 3 is cut smallest-risk-first: F18 is a one-string change over a figure the
+  model already holds, F14 spans two list renderers plus lifecycle-bound UI state, F16/F17 needs
+  both a card restructure and the geometry work that F13 deliberately deferred, and F10 is a
+  behaviour slice rather than a label change — recon found `ReputationService.NotePurchaseCompleted`
+  already feeding reputation from purchases, so what F10 lacks is the progression's thresholds and
+  labels on the procurement side, not the plumbing.
 - **2026-09-07** — The produce self-test's `Results.Skip` counted nothing and `Summarize` printed
   only passed/failed, so skipped assertions were reported as `0 skipped` and read as passes. Fixed
   in 30b784e. The lesson for the rest of this run: a green suite line is not evidence an assertion
