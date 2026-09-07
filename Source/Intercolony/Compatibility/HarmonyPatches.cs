@@ -161,4 +161,44 @@ namespace Intercolony
             }
         }
     }
+
+    /// <summary>
+    /// Ends a produce loop when vanilla Cancel removes its current blueprint or frame.
+    ///
+    /// The polling pass cannot distinguish a player cancellation from a blueprint that has not
+    /// been placed yet, so this narrow command patch observes the cancellation before vanilla
+    /// destroys the thing.
+    /// </summary>
+    [HarmonyPatch(typeof(Designator_Cancel), nameof(Designator_Cancel.DesignateThing))]
+    public static class Designator_Cancel_DesignateThing_Patch
+    {
+        public static void Prefix(Thing t)
+        {
+            try
+            {
+                if (!(t is Blueprint) && !(t is Frame) || t.Map == null)
+                {
+                    return;
+                }
+
+                ProduceLoopMapComponent component = ProduceLoopMapComponent.For(t.Map);
+                if (component == null)
+                {
+                    return;
+                }
+
+                ProduceLoopRecord loop = component.Find(t.Position);
+                if (loop == null || loop.thingDef == null || t.def.entityDefToBuild != loop.thingDef)
+                {
+                    return;
+                }
+
+                component.Disable(loop.cell);
+            }
+            catch (System.Exception ex)
+            {
+                IntercolonyLog.Error("Failed to stop produce loop when cancelling blueprint: " + ex);
+            }
+        }
+    }
 }
