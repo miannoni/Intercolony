@@ -15,6 +15,8 @@ namespace Intercolony
         // Stable Intercolony key so Produce toggles group across different things.
         private const int ProduceGroupKey = 104729;
         private const int PauseGroupKey = 104730;
+        private const int TargetGroupKey = 104731;
+        private const int MaxTargetCount = 100;
 
         public static IEnumerable<Gizmo> Postfix(IEnumerable<Gizmo> values, Thing __instance)
         {
@@ -118,6 +120,39 @@ namespace Intercolony
                         {
                             loopComponent.Pause(cell);
                         }
+                    }
+                });
+
+                ProduceLoopRecord loop = loopComponent.Find(cell);
+                string currentTarget = loop.targetCount <= 0
+                    ? "0 (no limit)"
+                    : loop.targetCount.ToString();
+                gizmos.Add(new Command_Action
+                {
+                    defaultLabel = "Set target",
+                    defaultDesc = "Current target: " + currentTarget + ". While the colony holds at least this many, the program waits, and it starts again when stock falls below. Zero means produce without limit. Maximum: " + MaxTargetCount + ".",
+                    icon = ContentFinder<Texture2D>.Get("UI/Designators/Uninstall"),
+                    groupKeyIgnoreContent = TargetGroupKey,
+                    action = () =>
+                    {
+                        ProduceLoopRecord currentLoop = loopComponent.Find(cell);
+                        if (currentLoop == null)
+                        {
+                            return;
+                        }
+
+                        int startingValue = currentLoop.targetCount <= 0 ? 0 : currentLoop.targetCount;
+                        if (startingValue > MaxTargetCount)
+                        {
+                            startingValue = MaxTargetCount;
+                        }
+
+                        Find.WindowStack.Add(new Dialog_Slider(
+                            "Target count: {0}",
+                            0,
+                            MaxTargetCount,
+                            value => loopComponent.SetTargetCount(cell, value),
+                            startingValue));
                     }
                 });
             }
