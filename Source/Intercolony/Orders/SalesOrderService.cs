@@ -717,8 +717,11 @@ namespace Intercolony
         /// The player must actually have the goods. Letting them announce readiness on an
         /// empty stockpile would just move the failure to the arrival, which §17 warns
         /// against — a player should not discover a problem at the deadline.
+        /// `announce` controls the player-facing readiness notice. The automatic contract pass
+        /// leaves it false because a successful hourly background check should not interrupt play;
+        /// manual readiness still uses the notice.
         /// </summary>
-        public static bool MarkReadyForPickup(SalesOrder order, Map map)
+        public static bool MarkReadyForPickup(SalesOrder order, Map map, bool announce = true)
         {
             if (!CanMarkReadyNow(order, map, out string reason, out List<Pawn> designatedAnimals))
             {
@@ -750,12 +753,15 @@ namespace Intercolony
             IntercolonyLog.Message(
                 $"Order {order.id}: goods declared ready; {order.settlementName} arriving in {travelDays}d.");
 
-            // §25.2's worked example is exactly this letter.
-            IntercolonyLetters.Send(
-                IntercolonyLetterImportance.Always,
-                "Order ready",
-                BuyerPickupDispatchLetterText(order, travelDays),
-                LetterDefOf.PositiveEvent);
+            if (announce)
+            {
+                // §25.2's worked example is exactly this letter.
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
+                    "Order ready",
+                    BuyerPickupDispatchLetterText(order, travelDays),
+                    LetterDefOf.PositiveEvent);
+            }
 
             return true;
         }
