@@ -1,25 +1,16 @@
 # Foreman state — Intercolony
 
-Stage: 4 — Player-side logistics
-Unit: 4.0 — Read-only recon: the seams for F05 (receiving locations) and F12 (programmed caravans)
-Worker: running — `…\scratchpad\unit-4-0.out`
-Last done: STAGE 3 CLOSED — F14, F16/F17, F18 and F10 shipped; last commit fe345dd; suite 1464/0/17
-Updated: 2026-09-08 01:00
+Stage: 5 — Market geography
+Unit: 5.0 — Read-only recon: the seams for F21 and F11
+Worker: running — `…\scratchpad\unit-5-0.out`
+Last done: STAGE 4 CLOSED — F05 complete, F12 first slice only. Last commit 58656a9; suite 1475/0/15.
+Updated: 2026-09-08 06:00
+Wakes: 65 · last full load at wake 60
 
-RESOLVED, kept for the record. The F10 gate made the rfq suite report 0/0/0: it correctly refused
-fixture settlements that had never been given reputation or purchase history, so no proposal
-existed, `capturedDecision` kept its -1 sentinel, and a switch threw instead of failing — taking all
-216 assertions with it. Fixtures now establish the relationship first, and that switch reports
-rather than throws.
-Two corrections on the record. My first diagnosis blamed the two new enum members being inserted
-mid-enum and shifting ordinals; they are inserted mid-enum, but nothing persists or casts that enum
-and it was not the cause. And 3.7b was dispatched while `verify-3-8.ps1` was still mutating
-`ProcurementContractService.cs`, breaking the one-worker-at-a-time rule — the tree survived, and
-3.8's evidence from that window was void and has since been redone against the working suite.
-Wakes: 48 · last full load at wake 40
-Owed: four stage-1 playtests are recorded in `docs/PENDING_PLAYTESTS.md` and outstanding. The F15
-save-compatibility one is the one that matters — it is the only stage-1 change that touches saves
-that already exist.
+Owed to the operator, all recorded in `docs/PENDING_PLAYTESTS.md`: fourteen play observations across
+stages 1-4. Two matter more than the rest — the F15 save-compatibility check, the only change
+touching saves that already exist, and the partial-delivery defect in `DeliverToColony`, which costs
+the player silver and needs a design decision before it can be fixed.
 Foreman: 10ee860 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md`, follow it,
 then re-run its section 0.
@@ -36,17 +27,30 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 1 — Quiet automation and vanilla-command correctness | F01, F02, F13, F15 | closed 2026-09-07 |
 | ✅ | 2 — Produce becomes programmable | F03, F04 | closed 2026-09-07 |
 | ✅ | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | closed 2026-09-08 |
-| 🔨 | 4 — Player-side logistics | F05, F12 | in progress |
-| ⬜ | 5 — Market geography | F21, F11 | not started |
+| ✅ | 4 — Player-side logistics | F05, F12 | closed 2026-09-08, F12 part-built |
+| 🔨 | 5 — Market geography | F21, F11 | in progress |
 | ⬜ | 6 — Business intelligence and costing | F07, F19, F20 | not started |
 | ⬜ | 7 — Two-sided labor market | F25, F23, F24, F22 | not started |
 | ⬜ | 8 — Commercial relationships | F08, F09 | not started |
 
-## Units — stage 4
+## Units — stage 5
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | 4.0 — recon: the seams for F05 and F12 | worker running |
+| 🔨 | 5.0 — recon: the seams for F21 and F11 | worker running |
+
+## Units — stage 4 (closed)
+
+| | Unit | Status |
+|---|---|---|
+| ✅ | 4.0 — recon: the seams for F05 and F12 | done, citations verified |
+| ✅ | 4.1 — F05: the receiving marker and its persistence | 231df04 |
+| ✅ | 4.2 — F05: the gizmo that marks a stockpile or shelf | caf4340 |
+| ✅ | 4.3 — F05: delivery prefers a receiving destination, via vanilla StoreUtility | 74aff0f |
+| ✅ | 4.4 — F05 tests | 912a5fe, four mutations red |
+| ✅ | 4.5 — F12 first slice: availability as available/required, not yes/no | c19b9cb |
+| ✅ | 4.6 — F12 first-slice tests, with 4.6b's fixture fix | 8cb06a9, three mutations red |
+| ✅ | 4.7 — record the stage-4 playtests owed | 58656a9 |
 
 ## Units — stage 3 (closed)
 
@@ -118,6 +122,25 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
   whole-agreement outcome and stays.
 
 ## Open for the operator
+
+- **2026-09-08 — a pre-existing defect found next to F05, deliberately not fixed.**
+  `PurchaseOrderService.DeliverToColony` refunds only when ZERO goods were placed; with any
+  non-zero count it calls `Complete` with what was placed, so a delivery that could only fit part
+  of the order silently completes it short and the player pays in full for goods they did not get.
+  It predates this branch and F05 makes it easier to hit, since a receiving destination can fill.
+  Fixing it means deciding what SHOULD happen — hold the order, partial refund, or overflow
+  elsewhere — which is your call, not a side effect of a logistics unit.
+
+- **2026-09-08 — F12 is bigger than this batch, and needs a decision.** Recon found the mod has NO
+  caravan formation or dispatch of its own at all: auto-ready is buyer-pickup only
+  (`SalesOrder.cs:204`), and forming a caravan would mean going through vanilla's
+  `CaravanFormingUtility.StartFormingCaravan`. A full "preprogrammed recurring caravan" therefore
+  needs persisted pawn and animal selection, a configuration surface on the agreement, caravan
+  formation, recurring re-formation, and multi-map routing — a feature, not a finding-sized change.
+  What I am building in this stage is the half that is genuinely useful and testable on its own:
+  the order's availability expressed as available/required, and the rule that a short order WAITS
+  and says so rather than leaving partial. The caravan formation itself is not being attempted
+  here. Say if you would rather it were, or would rather stage 4 stop after F05.
 
 - **2026-09-07 — RELEASE DEFECT, pre-existing, needs a decision before the next release.**
   `package.ps1` builds a release from `$ReleaseDirectories = @("About", "Assemblies", "Defs")`
