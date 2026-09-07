@@ -78,6 +78,69 @@ correct behaviour and not a bug to report.
 Finally, decide whether five days is the right window and whether **Day 1..Day 5** is the right label.
 Those are calibration questions for the end-of-1.0 sitting, not defects.
 
+### Automatic ready needs a quiet-log check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. A long-term selling agreement
+with auto-ready enabled now readies a cycle without adding an **Order ready** letter. Missing goods
+still produce the failure warning, payment still produces the **Order collected** letter, and
+marking an order ready by hand from the **Contracts** tab still produces its letter. An automatic
+cycle's remaining trace is the `IntercolonyLog` line. The mod's `letterVolume` setting is a separate
+gate: at **Minimal**, even the missing-goods warning stays out of the letter stack.
+
+**Steps.** In a real colony, turn on auto-ready for a long-term selling agreement and let it run
+through several cycles. Confirm that an automatic cycle leaves no **Order ready** letter, while the
+`IntercolonyLog` still makes it possible to tell what happened. Let one cycle encounter missing
+goods and confirm the failure warning appears at a normal letter volume; let another reach payment
+and confirm **Order collected** appears. Mark a cycle ready by hand from **Contracts** and confirm
+that the manual action still writes its letter. Repeat the missing-goods case at **Minimal** and
+confirm that the warning is suppressed from the letter stack by that setting. Judge whether the
+quiet automatic cycles remain trackable without the player losing sight of them.
+
+### New agreements need a save-compatibility check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. Newly proposed selling and
+procurement agreements now begin with auto-ready on. This changes the default for new agreements,
+not the saved setting of agreements that already exist.
+
+**Steps.** Use a save made before this branch that contains existing selling and procurement
+agreements, including at least one whose auto-ready setting was switched off by hand. Load it and
+inspect every agreement in the relevant **Contracts** tabs. Confirm that old agreements keep their
+previous setting, especially that a deliberately disabled one stays off. Then propose one new
+selling agreement and one new procurement agreement and confirm that each starts with auto-ready
+on. Judge the result against the pre-branch save: loading it must not silently enable automation on
+anything the player already had.
+
+### Auto-renew wording needs a Labor-row fit check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. In the **Labor** tab, an employee
+row now ends with **auto-renew: on** or **auto-renew: off** when the worker is active, fixed term,
+and not serving notice. The setting is still changed from that worker's **...** menu; workers for
+whom the setting does not apply should not get the detail line.
+
+**Steps.** Open **Labor** with several workers and inspect active fixed-term rows that are not
+serving notice, then toggle auto-renew from **...** and confirm the ending text changes with it.
+Also inspect open-ended, inactive, and notice-serving workers and confirm the line is not offered
+where the setting does not apply. Use a colony with long settlement and faction names and a long
+status, and check the rows at more than one window size. Judge whether the detail line remains
+readable and inside its row without over-drawing the worker below. A deliberately extreme case has
+measured the line at about 1367 units against 720 available; `Widgets.Label` does not clip, so note
+any overflow explicitly. This remains a known unfixed risk for F16/F17 in stage 3, where these cards
+will be restructured.
+
+### Cancelling a Produce blueprint needs area-and-frame play
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. Cancelling the blueprint belonging
+to an active **Produce** loop now ends that loop instead of letting the poll put the blueprint back.
+Single-target cancellation and the loop-cell match are covered by assertions; the area and
+part-built cases still need a person to watch them.
+
+**Steps.** Start an active **Produce** loop and drag **Cancel** over an area containing its
+blueprint, rather than clicking only that one blueprint. Wait through the next poll and confirm the
+loop stays stopped and the blueprint does not return. Repeat while the loop's replacement is a
+part-built **Frame**, not a fresh **Blueprint**, and confirm cancellation also stops the loop. Then
+cancel an unrelated construction beside a loop cell and watch another poll cycle; judge that the
+unrelated cancellation leaves the Produce loop running.
+
 ### Procurement Contracts has never been used by a human
 
 Added 2026-08-25 on branch `1.0.1`. In 1.0 this tab was an **Under development** placeholder,
