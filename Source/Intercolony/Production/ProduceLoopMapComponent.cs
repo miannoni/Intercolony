@@ -46,6 +46,13 @@ namespace Intercolony
                 return;
             }
 
+            // Reaching the target only stops a new cycle: in-flight work is left alone, and the
+            // count is deliberately not latched so consumption or sale below the target resumes it.
+            if (loop.targetCount > 0 && CountStoredThings(loop.thingDef) >= loop.targetCount)
+            {
+                return;
+            }
+
             if (loop.thingDef == null || !loop.cell.InBounds(map) || !loop.thingDef.Minifiable)
             {
                 Disable(loop.cell);
@@ -170,6 +177,39 @@ namespace Intercolony
             return null;
         }
 
+        private int CountStoredThings(ThingDef thingDef)
+        {
+            // Storage groups are the relevant source, not ColonyStock: its trade-item filter would
+            // discard minified buildings even though their inner thing is exactly what we count.
+            int count = 0;
+            HashSet<Thing> seenThings = new HashSet<Thing>();
+            List<SlotGroup> groups = map.haulDestinationManager.AllGroupsListForReading;
+            for (int groupIndex = 0; groupIndex < groups.Count; groupIndex++)
+            {
+                SlotGroup group = groups[groupIndex];
+                if (group == null)
+                {
+                    continue;
+                }
+
+                foreach (Thing thing in group.HeldThings)
+                {
+                    if (!seenThings.Add(thing))
+                    {
+                        continue;
+                    }
+
+                    Thing inner = thing.GetInnerIfMinified();
+                    if (inner?.def == thingDef)
+                    {
+                        count += inner.stackCount;
+                    }
+                }
+            }
+
+            return count;
+        }
+
         public void Enable(
             IntVec3 cell,
             Rot4 rotation,
@@ -213,6 +253,17 @@ namespace Intercolony
             }
 
             loop.paused = false;
+        }
+
+        public void SetTargetCount(IntVec3 cell, int targetCount)
+        {
+            ProduceLoopRecord loop = Find(cell);
+            if (loop == null)
+            {
+                return;
+            }
+
+            loop.targetCount = targetCount < 0 ? 0 : targetCount;
         }
 
         public IReadOnlyList<ProduceLoopRecord> Loops
