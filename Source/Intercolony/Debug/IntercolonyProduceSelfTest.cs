@@ -75,6 +75,8 @@ namespace Intercolony
 
             try
             {
+                CheckProductionLedger(r, state);
+
                 Subject subject = FindSubject();
                 if (subject == null)
                 {
@@ -132,6 +134,148 @@ namespace Intercolony
             }
 
             return Summarize(r);
+        }
+
+        private static void CheckProductionLedger(Results r, IntercolonyWorldComponent state)
+        {
+            const string recordingAssertion =
+                "a production record reads back over the rolling window";
+            const string bucketAssertion =
+                "same-day production records share one bucket";
+            const string pruningAssertion =
+                "production pruning keeps the oldest in-window day and drops the newest out-of-window day";
+
+            List<ProductionBucket> buckets = state.ProductionLedger;
+            ThingDef product = ThingDefOf.Steel;
+            if (buckets == null || product == null)
+            {
+                string reason = buckets == null
+                    ? "the world production ledger is unavailable"
+                    : "vanilla ThingDefOf.Steel is unavailable";
+                r.Skip(recordingAssertion, reason);
+                r.Skip(bucketAssertion, reason);
+                r.Skip(pruningAssertion, reason);
+                return;
+            }
+
+            List<ProductionBucket> savedBuckets = new List<ProductionBucket>(buckets);
+            try
+            {
+                buckets.Clear();
+
+                const int recordedQuantity = 20;
+                // Independently known: 20 units over the five-day WindowDays contract is 4/day.
+                const float expectedPerDay = 4f;
+                ProductionLedgerService.Record(state, product, recordedQuantity);
+                float reportedPerDay = ProductionLedgerService.CompletedPerDay(state, product);
+                r.Check(
+                    reportedPerDay == expectedPerDay,
+                    recordingAssertion,
+                    $"recorded {recordedQuantity} units; reported {reportedPerDay:0.###} per day, " +
+                    $"expected {expectedPerDay:0.###}");
+
+                buckets.Clear();
+
+                const int firstRecording = 7;
+                const int secondRecording = 11;
+                int currentDay = GenDate.DaysPassedAt(GenTicks.TicksGame);
+                ProductionLedgerService.Record(state, product, firstRecording);
+                ProductionLedgerService.Record(state, product, secondRecording);
+                int sameDayTotal = 0;
+                for (int i = 0; i < buckets.Count; i++)
+                {
+                    ProductionBucket bucket = buckets[i];
+                    if (bucket != null && bucket.thingDef == product && bucket.day == currentDay)
+                    {
+                        sameDayTotal += bucket.count;
+                    }
+                }
+
+                bool oneBucketWithBothRecordings = buckets.Count == 1 &&
+                    buckets[0] != null &&
+                    buckets[0].thingDef == product &&
+                    buckets[0].day == currentDay &&
+                    buckets[0].count == firstRecording + secondRecording;
+                r.Check(
+                    oneBucketWithBothRecordings,
+                    bucketAssertion,
+                    $"{buckets.Count} bucket(s) on day {currentDay}; " +
+                    $"{sameDayTotal} units, " +
+                    $"expected {firstRecording + secondRecording}");
+
+                buckets.Clear();
+
+                int today = GenDate.DaysPassedAt(GenTicks.TicksGame);
+                int oldestSurvivingDay = today - (ProductionLedgerService.WindowDays - 1);
+                int newestOutsideDay = today - ProductionLedgerService.WindowDays;
+                int olderOutsideDay = newestOutsideDay - 1;
+                const int currentCount = 5;
+                const int oldestCount = 7;
+                const int newestOutsideCount = 11;
+                const int olderOutsideCount = 13;
+                buckets.Add(new ProductionBucket
+                {
+                    thingDef = product,
+                    day = today,
+                    count = currentCount
+                });
+                buckets.Add(new ProductionBucket
+                {
+                    thingDef = product,
+                    day = oldestSurvivingDay,
+                    count = oldestCount
+                });
+                buckets.Add(new ProductionBucket
+                {
+                    thingDef = product,
+                    day = newestOutsideDay,
+                    count = newestOutsideCount
+                });
+                buckets.Add(new ProductionBucket
+                {
+                    thingDef = product,
+                    day = olderOutsideDay,
+                    count = olderOutsideCount
+                });
+
+                int removed = ProductionLedgerService.Prune(state);
+                bool currentSurvived = HasProductionBucket(buckets, product, today, currentCount);
+                bool oldestSurvived = HasProductionBucket(
+                    buckets, product, oldestSurvivingDay, oldestCount);
+                bool newestOutsideDropped = !HasProductionBucket(
+                    buckets, product, newestOutsideDay, newestOutsideCount);
+                bool olderOutsideDropped = !HasProductionBucket(
+                    buckets, product, olderOutsideDay, olderOutsideCount);
+                r.Check(
+                    removed == 2 && buckets.Count == 2 && currentSurvived && oldestSurvived &&
+                    newestOutsideDropped && olderOutsideDropped,
+                    pruningAssertion,
+                    $"day {today} kept; oldest surviving day {oldestSurvivingDay} kept; " +
+                    $"newest outside day {newestOutsideDay} dropped; older outside day " +
+                    $"{olderOutsideDay} dropped; removed {removed}, left {buckets.Count}");
+            }
+            finally
+            {
+                buckets.Clear();
+                buckets.AddRange(savedBuckets);
+                r.Info($"production ledger restored to {buckets.Count} bucket(s).");
+            }
+        }
+
+        private static bool HasProductionBucket(
+            List<ProductionBucket> buckets, ThingDef product, int day, int count)
+        {
+            for (int i = 0; i < buckets.Count; i++)
+            {
+                ProductionBucket bucket = buckets[i];
+                if (bucket != null && bucket.thingDef == product &&
+                    bucket.day == day && bucket.count == count)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void CheckFinishedBuilding(
