@@ -68,6 +68,25 @@ namespace Intercolony
             public int bestSkill;
         }
 
+        private struct ApplicantValues
+        {
+            public int settlementId;
+            public string settlementName;
+            public string factionName;
+            public int travelDays;
+            public int openMarketAsk;
+            public string skillLevels;
+        }
+
+        private struct ApplicantDraw
+        {
+            public int qualified;
+            public List<ApplicantValues> values;
+            public bool fixtureBuilt;
+        }
+
+        private const float WaitingListSpreadMargin = 1f;
+
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
             Results r = new Results();
@@ -82,17 +101,25 @@ namespace Intercolony
             EmployerReputation rep = state.EmployerStanding;
             float savedScore = rep?.Score ?? 0f;
             int savedPostings = state.Postings.Count;
+            int savedEmployments = state.Employments.Count;
+            int savedLedger = state.Ledger.Count;
+            int savedLedgerStartTick = state.LedgerStartTick;
             int worldPawnsBefore = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
+
+            IntercolonyLaborSelfTestSupport.ResetLedger();
 
             try
             {
                 CheckPoolSplit(r, state);
                 CheckRequirementsDriveApplicants(r, state);
+                CheckWaitingListIsSpread(r, state);
+                CheckMarketReproduces(r, state);
                 CheckReputationDrivesApplicants(r, state, rep);
                 CheckReputationDrivesCandidateQuality(r, state, rep);
                 CheckOnePersonOnePosting(r, state);
                 CheckSilenceIsExplained(r, state);
                 CheckLifecycle(r, state);
+                CheckApplicantOwnAsk(r, state, map);
             }
             catch (System.Exception ex)
             {
@@ -101,6 +128,20 @@ namespace Intercolony
             }
             finally
             {
+                // A successful applicant hire creates a travelling employment rather than a
+                // posting-owned pawn. End and remove any test employment before the outer leak
+                // check, even if the hire assertion itself threw during cleanup.
+                for (int i = state.Employments.Count - 1; i >= savedEmployments; i--)
+                {
+                    EmploymentContract contract = state.Employments[i];
+                    if (contract?.IsOpen == true)
+                    {
+                        EmploymentService.End(contract, EmploymentStatus.Failed, "self-test cleanup");
+                    }
+
+                    state.Employments.RemoveAt(i);
+                }
+
                 // Every posting this test made must go, and closing is what discards its applicants.
                 for (int i = state.Postings.Count - 1; i >= savedPostings; i--)
                 {
@@ -112,6 +153,19 @@ namespace Intercolony
                 {
                     rep.Adjust(savedScore - rep.Score);
                 }
+
+                int returned = IntercolonyLaborSelfTestSupport.RestoreLedger(map);
+                if (returned > 0)
+                {
+                    r.Info($"returned {returned} silver the test had consumed.");
+                }
+
+                while (state.Ledger.Count > savedLedger)
+                {
+                    state.Ledger.RemoveAt(state.Ledger.Count - 1);
+                }
+
+                state.LedgerStartTick = savedLedgerStartTick;
 
                 LaborCandidateService.Clear();
 
@@ -312,6 +366,339 @@ namespace Intercolony
                 "posted wage does not change interested-worker count (§114)",
                 $"{lowWage}/day -> {lowOffer.interested} interested, {lowOffer.applicants} queued; " +
                 $"{highWage}/day -> {highOffer.interested} interested, {highOffer.applicants} queued");
+        }
+
+        /// <summary>
+        /// F25's queue is intentionally a spread of the qualified pool, not a leaderboard. The
+        /// assertion reads the applicants that MatchAll actually materialised and compares their
+        /// whole-queue mean with the mean of the same pool's strongest six records.
+        /// </summary>
+        private static void CheckWaitingListIsSpread(Results r, IntercolonyWorldComponent state)
+        {
+            const int term = 20;
+            const int probeWage = 1;
+            int cap = JobPostingService.MaxWaitingApplicants;
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                    "Find.WorldPawns was null, so the real applicant path could not run");
+                return;
+            }
+
+            LaborCandidateService.Clear();
+            JobPosting posting = MakePosting(
+                state, SkillDefOf.Construction, 0, term, probeWage);
+            if (posting == null)
+            {
+                r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                    "the real posting fixture could not be created");
+                return;
+            }
+
+            try
+            {
+                List<LaborProspect> census = LaborCandidateService.Census(state);
+                List<LaborProspect> qualified = new List<LaborProspect>();
+                foreach (LaborProspect prospect in census)
+                {
+                    if (prospect != null && posting.MeetsRequirement(prospect))
+                    {
+                        qualified.Add(prospect);
+                    }
+                }
+
+                JobPostingService.MatchAll(state);
+
+                if (qualified.Count <= cap)
+                {
+                    r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                        $"qualified pool had {qualified.Count} records; more than cap {cap} is needed");
+                    return;
+                }
+
+                if (posting.Applicants.Count != cap)
+                {
+                    r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                        $"real matcher queued {posting.Applicants.Count} of cap {cap}; " +
+                        $"qualified pool had {qualified.Count}");
+                    return;
+                }
+
+                List<int> qualifiedBestSkills = new List<int>();
+                float queuedTotal = 0f;
+                bool allApplicantsHavePawns = true;
+                foreach (LaborProspect prospect in qualified)
+                {
+                    qualifiedBestSkills.Add(BestSkillLevel(prospect));
+                }
+
+                foreach (JobApplicant applicant in posting.Applicants)
+                {
+                    if (applicant?.pawn == null)
+                    {
+                        allApplicantsHavePawns = false;
+                        break;
+                    }
+
+                    queuedTotal += BestSkillLevel(applicant.pawn);
+                }
+
+                if (!allApplicantsHavePawns)
+                {
+                    r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                        $"one of {posting.Applicants.Count} queued applicants had no pawn to measure");
+                    return;
+                }
+
+                qualifiedBestSkills.Sort((a, b) => b.CompareTo(a));
+                float topTotal = 0f;
+                for (int i = 0; i < cap; i++)
+                {
+                    topTotal += qualifiedBestSkills[i];
+                }
+
+                float queuedMean = queuedTotal / posting.Applicants.Count;
+                float topMean = topTotal / cap;
+                float gap = topMean - queuedMean;
+
+                r.Check(gap >= WaitingListSpreadMargin,
+                    "the waiting list is a spread, not the strongest workers alive (§35.2, F25)",
+                    $"queued mean best skill {queuedMean:0.00}; top {cap} qualified mean " +
+                    $"{topMean:0.00}; gap {gap:0.00}; margin {WaitingListSpreadMargin:0.00}; " +
+                    $"qualified {qualified.Count}, queued {posting.Applicants.Count}");
+            }
+            finally
+            {
+                JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test spread");
+                state.Postings.Remove(posting);
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the same refresh twice and compares the selected applicants' market attributes
+        /// in order. This proves the draw is a pure function of EconomySeed and RefreshCount. It
+        /// does not prove a Scribe round-trip, and it does not prove pawn identity: pawn
+        /// materialisation is outside the seeded stream, so the same inputs regenerate the same
+        /// records, not necessarily the same people. The comparison uses attributes rather than
+        /// record identity because records sharing all of those market attributes are
+        /// interchangeable to the market.
+        /// </summary>
+        private static void CheckMarketReproduces(Results r, IntercolonyWorldComponent state)
+        {
+            const int term = 20;
+            const int probeWage = 1;
+            int cap = JobPostingService.MaxWaitingApplicants;
+            const string label = "the same seed and refresh count reproduce the same applicants " +
+                                 "in the same order (§35.2, F25)";
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(label, "Find.WorldPawns was null, so the real applicant path could not run");
+                return;
+            }
+
+            ApplicantDraw first = new ApplicantDraw
+            {
+                values = new List<ApplicantValues>()
+            };
+
+            // Matching generates pawns, and pawn generation draws from the current RNG frame,
+            // so the stream is expected to move; "it came back to where it was" is not a true
+            // statement about correct code.
+            Rand.PushState(0x7F25_2D);
+            try
+            {
+                first = CaptureApplicants(state, SkillDefOf.Construction, 0, term, probeWage);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            if (!first.fixtureBuilt)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                    "the real posting fixture could not be created");
+                return;
+            }
+
+            if (first.values == null || first.values.Count == 0)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                    $"the first real draw was empty with {first.qualified} qualified records");
+                return;
+            }
+
+            if (first.qualified <= cap || first.values.Count != cap)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; first real draw had " +
+                    $"{first.values.Count} queued from " +
+                    $"{first.qualified} qualified records; need {cap} queued and more than {cap} " +
+                    "qualified to compare a full capped market");
+                return;
+            }
+
+            ApplicantDraw second = CaptureApplicants(
+                state, SkillDefOf.Construction, 0, term, probeWage);
+
+            if (!second.fixtureBuilt)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                    "the second real posting fixture could not be created");
+                return;
+            }
+
+            if (second.values == null || second.values.Count == 0)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                    $"the second real draw was empty with {second.qualified} qualified records");
+                return;
+            }
+
+            bool sameSet = SameApplicantSet(first.values, second.values);
+            bool sameOrder = SameApplicantOrder(first.values, second.values);
+
+            r.Check(sameSet && sameOrder,
+                label,
+                $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                $"set {(sameSet ? "same" : "different")}; order {(sameOrder ? "same" : "different")}; " +
+                $"first differing position {FirstApplicantDifference(first.values, second.values)}");
+        }
+
+        /// <summary>F25's contract rate must carry the quote the applicant brought with them.</summary>
+        private static void CheckApplicantOwnAsk(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const int term = 20;
+            const int postedWage = 1;
+            const string label = "a hired applicant is paid their own ask (§35.2, F25)";
+
+            if (map == null)
+            {
+                r.Skip(label, "the current map was null, so colony payment could not be staged");
+                return;
+            }
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(label, "Find.WorldPawns was null, so a travelling hire could not be cleaned up");
+                return;
+            }
+
+            int savedSilver = PurchaseOrderService.CountColonySilver(map);
+            LaborCandidateService.Clear();
+            JobPosting posting = MakePosting(
+                state, SkillDefOf.Construction, 0, term, postedWage);
+            JobApplicant applicant = null;
+            EmploymentContract contract = null;
+
+            try
+            {
+                if (posting == null)
+                {
+                    r.Skip(label, "the real posting fixture could not be created");
+                    return;
+                }
+
+                JobPostingService.MatchAll(state);
+                if (posting.Applicants.Count == 0)
+                {
+                    r.Skip(label, "the real posting produced no applicant to hire");
+                    return;
+                }
+
+                applicant = posting.Applicants[0];
+                if (applicant == null || applicant.pawn == null)
+                {
+                    r.Skip(label, "the first queued applicant had no pawn to pass through hiring");
+                    return;
+                }
+
+                int applicantAsk = applicant.openMarketAsk;
+                if (applicantAsk == postedWage)
+                {
+                    r.Skip(label,
+                        $"the fixture applicant happened to ask the deliberately low posted wage " +
+                        $"of {postedWage}/day");
+                    return;
+                }
+
+                // This calculation only stages enough silver for the real payment path. The
+                // expected contract rate below is read directly from applicant.openMarketAsk.
+                int upFront = WageStructureUtility.UpFrontCost(
+                    posting.wageStructure, applicantAsk, posting.termDays);
+                IntercolonyLaborSelfTestSupport.EnsureSilver(map, upFront);
+                int available = PurchaseOrderService.CountColonySilver(map);
+                if (available < upFront)
+                {
+                    r.Skip(label,
+                        $"could not stage the up-front cost: {available} silver available, " +
+                        $"{upFront} needed for the applicant ask of {applicantAsk}/day");
+                    return;
+                }
+
+                contract = EmploymentService.TryHireApplicant(
+                    state, applicant, posting, map, out string failReason);
+                if (contract == null)
+                {
+                    r.Skip(label,
+                        $"the real applicant hire could not be arranged: {failReason ?? "no reason"}");
+                    return;
+                }
+
+                r.Check(contract.dailyWage == applicantAsk,
+                    label,
+                    $"posted {postedWage}/day; applicant ask {applicantAsk}/day; " +
+                    $"contract daily wage {contract.dailyWage}/day");
+            }
+            finally
+            {
+                if (posting != null && applicant != null)
+                {
+                    posting.Applicants.Remove(applicant);
+                }
+
+                if (contract != null)
+                {
+                    EmploymentService.End(contract, EmploymentStatus.Failed, "self-test hire");
+                    state.Employments.Remove(contract);
+                }
+                else
+                {
+                    applicant?.Discard();
+                }
+
+                if (posting != null)
+                {
+                    JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test hire");
+                    state.Postings.Remove(posting);
+                }
+
+                int silverAfter = PurchaseOrderService.CountColonySilver(map);
+                if (silverAfter < savedSilver)
+                {
+                    int returned = IntercolonyLaborSelfTestSupport.EnsureSilver(
+                        map, savedSilver);
+                    if (returned > 0)
+                    {
+                        r.Info($"returned {returned} silver to restore the hire fixture.");
+                    }
+                }
+                else if (silverAfter > savedSilver)
+                {
+                    PurchaseOrderService.TryTakeSilver(map, silverAfter - savedSilver);
+                }
+
+                // The amount was restored explicitly above, so do not let this fixture's silver
+                // bookkeeping affect the outer labor/payroll self-tests.
+                IntercolonyLaborSelfTestSupport.ResetLedger();
+            }
         }
 
         /// <summary>
@@ -575,6 +962,164 @@ namespace Intercolony
 
         // --- Helpers -----------------------------------------------------------------------
 
+        private static ApplicantDraw CaptureApplicants(
+            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage)
+        {
+            ApplicantDraw draw = new ApplicantDraw
+            {
+                values = new List<ApplicantValues>()
+            };
+
+            LaborCandidateService.Clear();
+            JobPosting posting = MakePosting(state, skill, minLevel, term, wage);
+            if (posting == null)
+            {
+                return draw;
+            }
+
+            draw.fixtureBuilt = true;
+            try
+            {
+                draw.qualified = JobPostingService.CountInterested(
+                    state, skill, minLevel, term, wage, CombatClause.Civilian);
+                JobPostingService.MatchAll(state);
+
+                foreach (JobApplicant applicant in posting.Applicants)
+                {
+                    draw.values.Add(CaptureApplicantValues(applicant));
+                }
+            }
+            finally
+            {
+                JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test reproduction");
+                state.Postings.Remove(posting);
+            }
+
+            return draw;
+        }
+
+        private static ApplicantValues CaptureApplicantValues(JobApplicant applicant)
+        {
+            ApplicantValues values = new ApplicantValues
+            {
+                settlementId = applicant?.settlementId ?? -1,
+                settlementName = applicant?.settlementName ?? "null",
+                factionName = applicant?.factionName ?? "null",
+                travelDays = applicant?.travelDays ?? -1,
+                openMarketAsk = applicant?.openMarketAsk ?? -1,
+                skillLevels = "none"
+            };
+
+            if (applicant?.pawn?.skills?.skills == null)
+            {
+                return values;
+            }
+
+            StringBuilder skills = new StringBuilder();
+            foreach (SkillRecord skill in applicant.pawn.skills.skills)
+            {
+                if (skills.Length > 0)
+                {
+                    skills.Append(',');
+                }
+
+                skills.Append(skill.def.index).Append('=')
+                      .Append(skill.TotallyDisabled ? -1 : skill.Level);
+            }
+
+            values.skillLevels = skills.ToString();
+            return values;
+        }
+
+        private static bool SameApplicant(
+            ApplicantValues first, ApplicantValues second)
+        {
+            return first.settlementId == second.settlementId &&
+                   first.settlementName == second.settlementName &&
+                   first.factionName == second.factionName &&
+                   first.travelDays == second.travelDays &&
+                   first.openMarketAsk == second.openMarketAsk &&
+                   first.skillLevels == second.skillLevels;
+        }
+
+        private static bool SameApplicantSet(
+            List<ApplicantValues> first, List<ApplicantValues> second)
+        {
+            if (first == null || second == null || first.Count != second.Count)
+            {
+                return false;
+            }
+
+            bool[] matched = new bool[second.Count];
+            for (int i = 0; i < first.Count; i++)
+            {
+                bool found = false;
+                for (int j = 0; j < second.Count; j++)
+                {
+                    if (!matched[j] && SameApplicant(first[i], second[j]))
+                    {
+                        matched[j] = true;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool SameApplicantOrder(
+            List<ApplicantValues> first, List<ApplicantValues> second)
+        {
+            if (first == null || second == null || first.Count != second.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < first.Count; i++)
+            {
+                if (!SameApplicant(first[i], second[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string FirstApplicantDifference(
+            List<ApplicantValues> first, List<ApplicantValues> second)
+        {
+            int firstCount = first?.Count ?? 0;
+            int secondCount = second?.Count ?? 0;
+            int count = firstCount > secondCount ? firstCount : secondCount;
+
+            for (int i = 0; i < count; i++)
+            {
+                bool hasFirst = i < firstCount;
+                bool hasSecond = i < secondCount;
+                if (!hasFirst || !hasSecond || !SameApplicant(first[i], second[i]))
+                {
+                    return $"{i}: first {(hasFirst ? FormatApplicant(first[i]) : "absent")}; " +
+                           $"second {(hasSecond ? FormatApplicant(second[i]) : "absent")}";
+                }
+            }
+
+            return "none";
+        }
+
+        private static string FormatApplicant(ApplicantValues values)
+        {
+            return $"settlement {values.settlementId}/{values.settlementName}; " +
+                   $"faction {values.factionName}; travel {values.travelDays}d; " +
+                   $"ask {values.openMarketAsk}/day; skills {values.skillLevels}";
+        }
+
         /// <summary>
         /// Posts a job, runs the real matcher against a freshly rebuilt pool, measures the result
         /// and cleans up.
@@ -640,6 +1185,25 @@ namespace Intercolony
                 if (!skill.TotallyDisabled && skill.Level > best)
                 {
                     best = skill.Level;
+                }
+            }
+
+            return best;
+        }
+
+        private static int BestSkillLevel(LaborProspect prospect)
+        {
+            int best = 0;
+            if (prospect?.skillLevels == null)
+            {
+                return best;
+            }
+
+            foreach (int level in prospect.skillLevels)
+            {
+                if (level >= 0 && level > best)
+                {
+                    best = level;
                 }
             }
 
