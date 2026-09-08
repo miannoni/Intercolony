@@ -46,6 +46,67 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### F07 committed output needs an early-warning read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. For each good with an active
+production commitment, the **Business** view now shows the committed quantity per day beside what
+the colony actually completed per day over a five-day rolling window. The completed side is real
+observation: a Harmony postfix on vanilla's bill-completion records every finished product, so selling
+twenty chairs does not read as negative chair production. Where nothing has been recorded, the row
+says so in words rather than showing **0.0/day**.
+
+**Steps.** In a real colony with active production commitments, open **Business** and watch the
+committed and completed figures for several goods. Judge whether a shortfall is visible early enough
+to act on: F07's product intent is that **the player should see capacity shortfalls before a contract
+fails**, and only play can say whether five days of history warns in time or only confirms the failure
+afterwards. Judge whether five days is the right window at all.
+
+There is an open product question deliberately not decided in code. The committed figure counts
+**SUSPENDED** agreements, because every other figure in that view does. The argument against is real:
+a suspended agreement will not fail while suspended, so counting it shows a shortfall the player
+cannot act on. Ask which reading is better in play.
+
+### F19 direct-input cost needs a supply-chain read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. Beside the existing **If you bought
+the goods instead**, the view now shows a second figure: what the good's **DIRECT** ingredients would
+have cost to buy. It is priced from the mod's own market value times the supplier margin, so it is
+stable rather than a live supplier quote that changes between draws.
+
+There is **NO RECURSIVE DECOMPOSITION**. Steel for a chair is priced; the ore behind the steel is not,
+and the tooltip says so.
+
+**Steps.** In **Business**, inspect goods whose direct ingredients are themselves made from other
+goods, and compare the two **if you bought it** figures side by side. Judge whether the direct-input
+number is useful in a decision given that limit, or whether stopping at direct inputs makes it
+misleading for goods with deep supply chains. Read the tooltip and judge whether it actually conveys
+the limit, rather than letting the figure be read as full cost. Finally, judge whether the two figures
+side by side confuse rather than inform.
+
+### F20 relevant-workforce labour needs a fairness read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A good's labour cost now counts only
+employees who could actually have made it, so Cooking employees no longer inflate chair labour. When
+one employee could make several goods, their wage is shared between those goods rather than counted
+in full against each. Profitability now uses this narrower figure instead of the whole wage bill.
+
+This is F20's authorised **RELEVANT-WORKFORCE APPROXIMATION**, not its preferred measured-time model.
+The reason is specific: the only completion seam the mod has carries who finished a bill and what came
+out, and no time at all.
+
+**Steps.** In a real colony, compare profitability for goods that different employees can make. Judge
+the sharp question: the wage is split **EQUALLY** between the goods an employee could make, regardless
+of what they actually spent their time on. An employee who in practice only ever makes chairs still
+has half their wage charged to tables. Ask whether that reads as fair or as obviously wrong when
+looking at the colony's real numbers. Watch how often **no eligible employees** appears and whether it
+reads as useful — it means colonists rather than employees are making the good. Finally, judge whether
+the profitability figures look more believable than before, which is the whole point of the change.
+
+The save schema moved from **57 to 58** in this stage. The migration was verified by loading the real
+pre-58 save **Edithor Alliance**, saved at version 57, and it migrated in one step with no exceptions.
+This does **NOT** remove the need for the F15 save-compatibility check already listed in this file,
+because that check is about a different change.
+
 ### F25's buyer-side labour market needs a market read
 
 Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. F25's labour market is now two-sided
