@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -23,12 +24,17 @@ namespace Intercolony
     {
         private const float OptionsHeaderHeight = 26f;
         private const float OptionsSectionGap = 6f;
+        private const float CostLabelWidth = 150f;
+        private const float CostColumnGap = 8f;
+        private const float CostRowGap = 4f;
+        private const float CostTooltipWidth = 18f;
 
         private readonly LaborCandidate candidate;
         private readonly SettlementEconomicProfile profile;
         private readonly Map map;
-        private readonly Action<int, WageStructure, CombatClause> onConfirm;
+        private readonly Action<int, WageStructure, CombatClause, EmploymentHireCostQuote> onConfirm;
         private readonly int maxTermDays;
+        private readonly EmploymentEquipmentQuote equipmentQuote;
 
         private int termDays;
         private string termBuffer;
@@ -51,13 +57,14 @@ namespace Intercolony
 
         public Dialog_HireWorker(
             LaborCandidate candidate, SettlementEconomicProfile profile, Map map, int maxTermDays,
-            Action<int, WageStructure, CombatClause> onConfirm)
+            Action<int, WageStructure, CombatClause, EmploymentHireCostQuote> onConfirm)
         {
             this.candidate = candidate;
             this.profile = profile;
             this.map = map;
             this.maxTermDays = Mathf.Max(candidate.minTermDays, maxTermDays);
             this.onConfirm = onConfirm;
+            equipmentQuote = EmploymentEquipmentService.Quote(candidate.pawn);
 
             // Open at the minimum term: the cheapest commitment, so spending more is a choice the
             // player makes rather than a default they have to notice and undo.
@@ -84,15 +91,18 @@ namespace Intercolony
         private int DailyWage => WageFor(clause);
 
         private int WageFor(CombatClause option) => LaborCandidateService.DailyWage(
-            candidate.pawn, profile, candidate.distanceTiles, termDays, EmployerStanding, option);
+            candidate.pawn, profile, candidate.distanceTiles,
+            openEnded ? maxTermDays : termDays, EmployerStanding, option);
 
         public override void DoWindowContents(Rect inRect)
         {
             float y = 0f;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, inRect.width, 32f), $"Hire {candidate.Name}");
-            y += 36f;
+            string title = $"Hire {candidate.Name}";
+            float titleHeight = Text.CalcHeight(title, inRect.width);
+            Widgets.Label(new Rect(0f, y, inRect.width, titleHeight), title);
+            y += titleHeight + 4f;
             Text.Font = GameFont.Small;
 
             string candidateSummary =
@@ -103,8 +113,6 @@ namespace Intercolony
             Widgets.Label(new Rect(0f, y, inRect.width, candidateSummaryHeight), candidateSummary);
             GUI.color = Color.white;
             y += candidateSummaryHeight + 4f;
-
-            int wage = DailyWage;
 
             // --- Term ---
             Widgets.Label(new Rect(0f, y, 60f, 28f), "Days:");
@@ -159,6 +167,8 @@ namespace Intercolony
             }
             y += openEndedHeight + 2f;
 
+            int wage = DailyWage;
+
             string wageSummary = openEnded
                 ? $"{wage} silver/day, open-ended \u2014 they stay until one of you ends it."
                 : $"{wage} silver/day for {termDays} days.";
@@ -192,11 +202,17 @@ namespace Intercolony
             }
 
             int upFront = WageStructureUtility.UpFrontCost(structure, wage, termDays);
+            EmploymentHireCostQuote hireCostQuote = EmploymentEquipmentService.QuoteHireCost(
+                upFront, equipmentQuote);
+            long totalDue = hireCostQuote.totalDue;
             int available = PurchaseOrderService.CountColonySilver(map);
-            bool affordable = available >= upFront;
+            bool affordable = totalDue <= int.MaxValue && available >= totalDue;
+            List<TermRow> costRows = BuildCostRows(
+                structure, hireCostQuote, available);
+            float costHeight = CostRowsHeight(costRows, inRect.width);
 
             float bottom = inRect.height - 40f;
-            float optionsBottom = bottom - 34f;
+            float optionsBottom = bottom - costHeight - 6f;
             Rect optionsRect = new Rect(0f, y, inRect.width, Mathf.Max(1f, optionsBottom - y));
             float optionsWidth = optionsRect.width - 16f;
             float optionsHeight = OptionsHeight(optionsWidth, wage);
@@ -225,24 +241,109 @@ namespace Intercolony
             DrawStructureOption(optionsWidth, optionY, WageStructure.Daily, wage);
             Widgets.EndScrollView();
 
-            GUI.color = affordable ? new Color(1f, 1f, 1f, 0.7f) : new Color(1f, 0.6f, 0.6f);
-            Widgets.Label(new Rect(0f, bottom - 26f, inRect.width, 24f),
-                structure.IsPeriodic()
-                    ? (upFront > 0
-                        ? $"Signing fee: {upFront} silver.  In storage: {available}."
-                        : $"No signing fee.  In storage: {available}.")
-                    : $"Prepaid wages: {upFront} silver.  In storage: {available}.");
-            GUI.color = Color.white;
+            DrawCostRows(costRows, inRect.width, bottom - costHeight, affordable);
 
+            bool guiEnabled = GUI.enabled;
+            GUI.enabled = guiEnabled && affordable;
             if (Widgets.ButtonText(new Rect(0f, bottom, 170f, 36f), "Hire"))
             {
-                onConfirm?.Invoke(openEnded ? 0 : termDays, structure, clause);
+                onConfirm?.Invoke(openEnded ? 0 : termDays, structure, clause, hireCostQuote);
                 Close();
             }
+            GUI.enabled = guiEnabled;
 
             if (Widgets.ButtonText(new Rect(inRect.width - 130f, bottom, 120f, 36f), "Cancel"))
             {
                 Close();
+            }
+        }
+
+        private static List<TermRow> BuildCostRows(
+            WageStructure structure, EmploymentHireCostQuote hireCostQuote, int available)
+        {
+            return new List<TermRow>
+            {
+                new TermRow(
+                    structure.IsPeriodic() ? "Signing fee" : "Prepaid wages",
+                    $"{hireCostQuote.upfrontWages:N0} silver"),
+                new TermRow(
+                    "Equipment bond",
+                    EmploymentEquipmentService.BondLabel(hireCostQuote.equipment.bond),
+                    EmploymentEquipmentService.BondTooltip),
+                new TermRow("Due at hire", $"{hireCostQuote.totalDue:N0} silver"),
+                new TermRow("In storage", $"{available:N0} silver")
+            };
+        }
+
+        private static float CostRowsHeight(List<TermRow> rows, float width)
+        {
+            float height = 0f;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                height += CostRowHeight(rows[i], width);
+                if (i < rows.Count - 1)
+                {
+                    height += CostRowGap;
+                }
+            }
+
+            return height;
+        }
+
+        private static float CostRowHeight(TermRow row, float width)
+        {
+            return Mathf.Max(
+                Text.CalcHeight(row.label ?? "", CostLabelWidth),
+                Text.CalcHeight(row.value ?? "", CostValueWidth(row, width)));
+        }
+
+        private static float CostValueWidth(TermRow row, float width)
+        {
+            float valueWidth = row.label.NullOrEmpty()
+                ? width
+                : width - CostLabelWidth - CostColumnGap;
+            return Mathf.Max(1f, valueWidth - CostTooltipWidth);
+        }
+
+        private static void DrawCostRows(
+            List<TermRow> rows, float width, float startY, bool affordable)
+        {
+            float y = startY;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                TermRow row = rows[i];
+                float rowHeight = CostRowHeight(row, width);
+                Rect rowRect = new Rect(0f, y, width, rowHeight);
+                float valueX = 0f;
+
+                if (!row.label.NullOrEmpty())
+                {
+                    GUI.color = new Color(1f, 1f, 1f, 0.65f);
+                    Widgets.Label(new Rect(0f, y, CostLabelWidth, rowHeight), row.label);
+                    GUI.color = Color.white;
+                    valueX = CostLabelWidth + CostColumnGap;
+                }
+
+                GUI.color = affordable
+                    ? Color.white
+                    : new Color(1f, 0.6f, 0.6f);
+                Widgets.Label(new Rect(valueX, y, CostValueWidth(row, width), rowHeight),
+                    row.value ?? "");
+                GUI.color = Color.white;
+
+                if (!row.tooltip.NullOrEmpty())
+                {
+                    TooltipHandler.TipRegion(rowRect, row.tooltip);
+                    Widgets.DrawHighlightIfMouseover(rowRect);
+                    GUI.color = new Color(0.6f, 0.85f, 1f, 0.65f);
+                    Text.Anchor = TextAnchor.UpperCenter;
+                    Widgets.Label(new Rect(width - CostTooltipWidth, y,
+                        CostTooltipWidth, rowHeight), "?");
+                    Text.Anchor = TextAnchor.UpperLeft;
+                    GUI.color = Color.white;
+                }
+
+                y += rowHeight + CostRowGap;
             }
         }
 

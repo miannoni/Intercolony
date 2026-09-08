@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -26,6 +27,75 @@ namespace Intercolony
         public static void ResetLedger()
         {
             netTaken = 0;
+        }
+
+        /// <summary>
+        /// Builds the same hire-cost snapshot <see cref="EmploymentService.TryHire"/> will accept.
+        /// Kept test-only so fixtures can fund and pass the exact quote they are proving.
+        /// </summary>
+        public static EmploymentHireCostQuote QuoteHireCost(
+            IntercolonyWorldComponent state, LaborCandidate candidate, int termDays,
+            WageStructure structure, CombatClause clause, out string failReason)
+        {
+            failReason = null;
+            if (state == null || candidate?.pawn == null)
+            {
+                failReason = "No candidate.";
+                return null;
+            }
+
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(candidate.settlementId);
+            if (settlement == null)
+            {
+                failReason = $"{candidate.settlementName} no longer exists.";
+                return null;
+            }
+
+            SettlementEconomicProfile profile = state.GetProfile(settlement);
+            int pricingTerm = termDays <= 0 ? LaborCandidateService.MaxTermDays : termDays;
+            int baseWage = LaborCandidateService.DailyWage(
+                candidate.pawn, profile, candidate.distanceTiles, pricingTerm,
+                EmployerReputationService.ScoreFor(state), clause);
+            int upFront = WageStructureUtility.UpFrontCost(structure, baseWage, termDays);
+            EmploymentEquipmentQuote equipmentQuote =
+                EmploymentEquipmentService.Quote(candidate.pawn);
+            return EmploymentEquipmentService.QuoteHireCost(upFront, equipmentQuote);
+        }
+
+        public static int SilverToEnsure(EmploymentHireCostQuote quote)
+        {
+            return quote == null ? 0 : SilverToEnsure(quote.totalDue);
+        }
+
+        public static int SilverToEnsure(long amount)
+        {
+            if (amount <= 0)
+            {
+                return 0;
+            }
+
+            return amount >= int.MaxValue ? int.MaxValue : (int)amount;
+        }
+
+        public static int RestoreStorageSilver(Map map, int savedSilver)
+        {
+            if (map == null)
+            {
+                return 0;
+            }
+
+            int available = PurchaseOrderService.CountColonySilver(map);
+            if (available < savedSilver)
+            {
+                return EnsureSilver(map, savedSilver);
+            }
+
+            if (available > savedSilver)
+            {
+                PurchaseOrderService.TryTakeSilver(map, available - savedSilver);
+            }
+
+            return 0;
         }
 
         /// <summary>Tops colony storage up to at least <paramref name="needed"/> silver.</summary>

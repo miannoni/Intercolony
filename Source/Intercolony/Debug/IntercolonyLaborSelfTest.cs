@@ -58,6 +58,9 @@ namespace Intercolony
                 return r.sb.ToString();
             }
 
+            int savedSilver = PurchaseOrderService.CountColonySilver(map);
+            IntercolonyLaborSelfTestSupport.ResetLedger();
+
             try
             {
                 // --- Candidate pool ---
@@ -75,14 +78,36 @@ namespace Intercolony
                 // --- Hire ---
                 LaborCandidate candidate = pool[0];
                 int term = candidate.minTermDays;
-                int expectedTotal = candidate.dailyWage * term;
+                EmploymentHireCostQuote hireQuote =
+                    IntercolonyLaborSelfTestSupport.QuoteHireCost(
+                        state, candidate, term, WageStructure.Prepaid, CombatClause.Civilian,
+                        out string quoteFailReason);
+                if (hireQuote == null)
+                {
+                    r.Check(false, "hire cost could be quoted", quoteFailReason);
+                    return Summarize(r);
+                }
+
+                int expectedTotal = IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote);
 
                 // Budget for the second hire too, or the early-dismissal check silently skips —
                 // which is how the KeepForever unpin path went unexercised on the first run.
                 int budget = expectedTotal;
                 if (pool.Count > 1)
                 {
-                    budget += pool[1].dailyWage * pool[1].minTermDays;
+                    EmploymentHireCostQuote secondQuote =
+                        IntercolonyLaborSelfTestSupport.QuoteHireCost(
+                            state, pool[1], pool[1].minTermDays, WageStructure.Prepaid,
+                            CombatClause.Civilian, out string secondQuoteFailReason);
+                    if (secondQuote == null)
+                    {
+                        r.Info($"second hire budget skipped: {secondQuoteFailReason}");
+                    }
+                    else
+                    {
+                        budget = IntercolonyLaborSelfTestSupport.SilverToEnsure(
+                            hireQuote.totalDue + secondQuote.totalDue);
+                    }
                 }
 
                 int added = IntercolonyLaborSelfTestSupport.EnsureSilver(map, budget);
@@ -109,7 +134,7 @@ namespace Intercolony
 
                 EmploymentContract contract = EmploymentService.TryHire(
                     state, candidate, term, map, out string failReason,
-                    WageStructure.Prepaid, CombatClause.Civilian);
+                    WageStructure.Prepaid, CombatClause.Civilian, hireQuote);
 
                 r.Check(contract != null, "hire succeeded", failReason ?? $"{workerName}, {term} days");
                 if (contract == null)
@@ -122,9 +147,11 @@ namespace Intercolony
                     $"expected \"{expectedSkills}\", got \"{contract.workerSkills}\"");
 
                 int silverAfter = PurchaseOrderService.CountColonySilver(map);
-                r.Check(silverBefore - silverAfter == contract.paidSilver,
-                    "wages were deducted exactly once",
-                    $"{silverBefore} -> {silverAfter}, contract says {contract.paidSilver}");
+                long expectedWithdrawal = (long)contract.paidSilver + contract.equipmentBond;
+                r.Check(silverBefore - silverAfter == expectedWithdrawal,
+                    "hire cost was deducted exactly once",
+                    $"{silverBefore} -> {silverAfter}, contract says {contract.paidSilver} wages + " +
+                    $"{contract.equipmentBond} bond");
                 // Not dailyWage x termDays: from Phase 18 a prepaid hire carries §37's discount,
                 // so the gross rate is the wrong expectation and TotalCommitment is the right one.
                 r.Check(contract.paidSilver == contract.TotalCommitment,
@@ -228,6 +255,14 @@ namespace Intercolony
             finally
             {
                 LaborCandidateService.Clear();
+                int returned =
+                    IntercolonyLaborSelfTestSupport.RestoreStorageSilver(map, savedSilver);
+                if (returned > 0)
+                {
+                    r.Info($"returned {returned} silver to restore the labor fixture.");
+                }
+
+                IntercolonyLaborSelfTestSupport.ResetLedger();
             }
 
             return Summarize(r);
@@ -290,16 +325,26 @@ namespace Intercolony
             }
 
             LaborCandidate candidate = pool[0];
-            int total = candidate.dailyWage * candidate.minTermDays;
-            if (PurchaseOrderService.CountColonySilver(map) < total)
+            EmploymentHireCostQuote hireQuote =
+                IntercolonyLaborSelfTestSupport.QuoteHireCost(
+                    state, candidate, candidate.minTermDays, WageStructure.Prepaid,
+                    CombatClause.Civilian, out string quoteFailReason);
+            if (hireQuote == null)
             {
-                r.Info($"early-dismissal check skipped: needs {total} silver.");
+                r.Info($"early-dismissal check skipped: {quoteFailReason}");
                 return;
+            }
+
+            int total = IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote);
+            int added = IntercolonyLaborSelfTestSupport.EnsureSilver(map, total);
+            if (added > 0)
+            {
+                r.Info($"added {added} silver so the dismissal hire could run.");
             }
 
             EmploymentContract contract = EmploymentService.TryHire(
                 state, candidate, candidate.minTermDays, map, out string failReason,
-                WageStructure.Prepaid, CombatClause.Civilian);
+                WageStructure.Prepaid, CombatClause.Civilian, hireQuote);
             if (contract == null)
             {
                 r.Check(false, "second hire for the dismissal check succeeded", failReason);

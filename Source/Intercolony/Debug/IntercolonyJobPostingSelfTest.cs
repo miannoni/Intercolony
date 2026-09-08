@@ -643,18 +643,23 @@ namespace Intercolony
                 // expected contract rate below is read directly from applicant.openMarketAsk.
                 int upFront = WageStructureUtility.UpFrontCost(
                     posting.wageStructure, applicantAsk, posting.termDays);
-                IntercolonyLaborSelfTestSupport.EnsureSilver(map, upFront);
+                EmploymentEquipmentQuote equipmentQuote =
+                    EmploymentEquipmentService.Quote(applicant.pawn);
+                EmploymentHireCostQuote hireQuote =
+                    EmploymentEquipmentService.QuoteHireCost(upFront, equipmentQuote);
+                IntercolonyLaborSelfTestSupport.EnsureSilver(
+                    map, IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote));
                 int available = PurchaseOrderService.CountColonySilver(map);
-                if (available < upFront)
+                if (available < hireQuote.totalDue)
                 {
                     r.Skip(label,
                         $"could not stage the up-front cost: {available} silver available, " +
-                        $"{upFront} needed for the applicant ask of {applicantAsk}/day");
+                        $"{hireQuote.totalDue} needed for the applicant ask of {applicantAsk}/day");
                     return;
                 }
 
                 contract = EmploymentService.TryHireApplicant(
-                    state, applicant, posting, map, out string hireFailReason);
+                    state, applicant, posting, map, out string hireFailReason, hireQuote);
                 if (contract == null)
                 {
                     r.Skip(label,

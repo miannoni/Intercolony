@@ -56,6 +56,7 @@ namespace Intercolony
                 return Summarize(r);
             }
 
+            int savedSilver = PurchaseOrderService.CountColonySilver(map);
             IntercolonyLaborSelfTestSupport.ResetLedger();
 
             try
@@ -78,6 +79,14 @@ namespace Intercolony
                     r.Info($"returned {returned} silver the test had consumed.");
                 }
 
+                int restored =
+                    IntercolonyLaborSelfTestSupport.RestoreStorageSilver(map, savedSilver);
+                if (restored > 0)
+                {
+                    r.Info($"returned {restored} silver to restore the payroll fixture.");
+                }
+
+                IntercolonyLaborSelfTestSupport.ResetLedger();
                 LaborCandidateService.Clear();
             }
 
@@ -167,21 +176,24 @@ namespace Intercolony
             LaborCandidate candidate = pool[0];
             int term = Mathf.Max(candidate.minTermDays, 20);
 
-            // The pool's quoted daily wage is not quite the wage TryHire will use: hiring prices
-            // the chosen term again with the settlement, distance, reputation and combat clause.
-            // Keep that money calculation in EmploymentService rather than duplicating it here,
-            // and fund four times the quote's up-front cost as a deliberately generous margin.
-            // Over-funding is harmless because this test strips every silver stack before it starts
-            // missing payroll; the extra balance therefore cannot soften the escalation under test.
-            int quotedUpFront = WageStructureUtility.UpFrontCost(
-                WageStructure.Daily, candidate.dailyWage, term);
-            IntercolonyLaborSelfTestSupport.EnsureSilver(map, quotedUpFront * 4);
+            EmploymentHireCostQuote hireQuote =
+                IntercolonyLaborSelfTestSupport.QuoteHireCost(
+                    state, candidate, term, WageStructure.Daily, CombatClause.Civilian,
+                    out string quoteFailReason);
+            if (hireQuote == null)
+            {
+                r.Check(false, "daily hire cost could be quoted", quoteFailReason);
+                return;
+            }
+
+            IntercolonyLaborSelfTestSupport.EnsureSilver(
+                map, IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote));
 
             // Daily wage, so one pay period is one day and the escalation can be driven without
             // simulating a quadrum.
             EmploymentContract contract = EmploymentService.TryHire(
                 state, candidate, term, map, out string failReason, WageStructure.Daily,
-                CombatClause.Civilian);
+                CombatClause.Civilian, hireQuote);
 
             r.Check(contract != null, "hired on a daily wage", failReason ?? "");
             if (contract == null)

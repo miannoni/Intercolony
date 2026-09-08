@@ -389,11 +389,26 @@ namespace Intercolony
                    $"paid {applicant.openMarketAsk}/day";
         }
 
-        private static string ApplicantPaymentLine(JobPosting posting, int upFront, int available)
+        private static string ApplicantPaymentLine(JobPosting posting, int upFront)
         {
             return posting.wageStructure.IsPeriodic()
-                ? $"Signing fee: {upFront} silver.  In storage: {available}."
-                : $"Prepaid wages: {upFront} silver.  In storage: {available}.";
+                ? $"Signing fee: {upFront:N0} silver"
+                : $"Prepaid wages: {upFront:N0} silver";
+        }
+
+        private static string ApplicantStorageLine(int available)
+        {
+            return $"In storage: {available:N0} silver";
+        }
+
+        private static string ApplicantEquipmentBondLine(EmploymentEquipmentQuote equipmentQuote)
+        {
+            return $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentQuote.bond)}.";
+        }
+
+        private static string ApplicantHireCostLine(long totalDue)
+        {
+            return $"Due at hire: {totalDue:N0} silver.";
         }
 
         private static string ApplicantDeathCompensationLine(
@@ -414,12 +429,19 @@ namespace Intercolony
             float textWidth = ApplicantTextWidth(rowWidth);
             int upFront = WageStructureUtility.UpFrontCost(
                 posting.wageStructure, applicant.openMarketAsk, posting.termDays);
+            EmploymentEquipmentQuote equipmentQuote = EmploymentEquipmentService.Quote(applicant.pawn);
+            EmploymentHireCostQuote hireCostQuote = EmploymentEquipmentService.QuoteHireCost(
+                upFront, equipmentQuote);
             int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
 
             float height = ApplicantRowTopPadding + ApplicantRowBottomPadding;
             height += ApplicantLabelHeight(ApplicantTitleLine(applicant), textWidth);
             height += ApplicantLabelHeight(ApplicantValueLine(applicant), textWidth);
-            height += ApplicantLabelHeight(ApplicantPaymentLine(posting, upFront, available), textWidth);
+            height += ApplicantLabelHeight(
+                ApplicantPaymentLine(posting, hireCostQuote.upfrontWages), textWidth);
+            height += ApplicantLabelHeight(ApplicantStorageLine(available), textWidth);
+            height += ApplicantLabelHeight(ApplicantEquipmentBondLine(hireCostQuote.equipment), textWidth);
+            height += ApplicantLabelHeight(ApplicantHireCostLine(hireCostQuote.totalDue), textWidth);
 
             string deathCompensation = ApplicantDeathCompensationLine(posting, applicant);
             if (deathCompensation != null)
@@ -515,15 +537,44 @@ namespace Intercolony
 
             int upFront = WageStructureUtility.UpFrontCost(
                 posting.wageStructure, applicant.openMarketAsk, posting.termDays);
+            EmploymentEquipmentQuote equipmentQuote = EmploymentEquipmentService.Quote(applicant.pawn);
+            EmploymentHireCostQuote hireCostQuote = EmploymentEquipmentService.QuoteHireCost(
+                upFront, equipmentQuote);
+            long totalDue = hireCostQuote.totalDue;
             int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
-            bool affordable = available >= upFront;
-            string payment = ApplicantPaymentLine(posting, upFront, available);
+            bool affordable = totalDue <= int.MaxValue && available >= totalDue;
+            string payment = ApplicantPaymentLine(posting, hireCostQuote.upfrontWages);
             float paymentHeight = ApplicantLabelHeight(payment, textWidth);
 
             GUI.color = affordable ? new Color(1f, 1f, 1f, 0.65f) : new Color(1f, 0.6f, 0.6f);
             Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, paymentHeight), payment);
             GUI.color = Color.white;
             lineY += paymentHeight;
+
+            string storage = ApplicantStorageLine(available);
+            float storageHeight = ApplicantLabelHeight(storage, textWidth);
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, storageHeight), storage);
+            GUI.color = Color.white;
+            lineY += storageHeight;
+
+            string bond = ApplicantEquipmentBondLine(hireCostQuote.equipment);
+            float bondHeight = ApplicantLabelHeight(bond, textWidth);
+            Rect bondRect = new Rect(rect.x + ApplicantTextInset, lineY, textWidth, bondHeight);
+            TooltipHandler.TipRegion(bondRect, EmploymentEquipmentService.BondTooltip);
+            Widgets.DrawHighlightIfMouseover(bondRect);
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(bondRect, bond);
+            GUI.color = Color.white;
+            lineY += bondHeight;
+
+            string hireCost = ApplicantHireCostLine(totalDue);
+            float hireCostHeight = ApplicantLabelHeight(hireCost, textWidth);
+            GUI.color = affordable ? new Color(1f, 1f, 1f, 0.65f) : new Color(1f, 0.6f, 0.6f);
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, hireCostHeight),
+                hireCost);
+            GUI.color = Color.white;
+            lineY += hireCostHeight;
 
             string deathCompensation = ApplicantDeathCompensationLine(posting, applicant);
             if (deathCompensation != null)
@@ -538,18 +589,21 @@ namespace Intercolony
             float actionY = rect.y + (rect.height - 30f) / 2f;
             Rect hireRect = new Rect(
                 rect.xMax - ApplicantActionWidth * 2f - 14f, actionY, ApplicantActionWidth, 30f);
+            bool guiEnabled = GUI.enabled;
+            GUI.enabled = guiEnabled && affordable;
             if (Widgets.ButtonText(hireRect, "Take on"))
             {
                 pendingAction = () =>
                 {
                     if (JobPostingService.TryAccept(state, posting, applicant, Find.CurrentMap,
-                            out string failReason) == null)
+                            out string failReason, hireCostQuote) == null)
                     {
                         Messages.Message(failReason ?? "Could not hire.",
                             MessageTypeDefOf.RejectInput, historical: false);
                     }
                 };
             }
+            GUI.enabled = guiEnabled;
 
             Rect rejectRect = new Rect(
                 rect.xMax - ApplicantActionWidth - 4f, actionY, ApplicantActionWidth, 30f);
@@ -1031,6 +1085,7 @@ namespace Intercolony
                 $"Term: {contract.TermLabel} at {contract.dailyWage} silver/day\n" +
                 $"Wage structure: {contract.wageStructure.Label()}\n" +
                 $"Paid in advance: {contract.paidSilver} silver\n\n" +
+                $"Equipment bond: {contract.EquipmentBondLabel}\n\n" +
 
                 // §42 and §43 in the tooltip, together, because they are one decision: what you may
                 // ask of them, and what it costs if it goes wrong.
@@ -1423,10 +1478,11 @@ namespace Intercolony
 
             Find.WindowStack.Add(new Dialog_HireWorker(
                 candidate, profile, map, MaxTermDays,
-                (termDays, structure, clause) =>
+                (termDays, structure, clause, hireCostQuote) =>
                 {
                     EmploymentContract contract = EmploymentService.TryHire(
-                        state, candidate, termDays, map, out string failReason, structure, clause);
+                        state, candidate, termDays, map, out string failReason, structure, clause,
+                        hireCostQuote);
 
                     if (contract == null)
                     {

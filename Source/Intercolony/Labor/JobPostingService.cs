@@ -501,7 +501,8 @@ namespace Intercolony
         /// </summary>
         public static EmploymentContract TryAccept(
             IntercolonyWorldComponent state, JobPosting posting, JobApplicant applicant,
-            Map paymentMap, out string failReason)
+            Map paymentMap, out string failReason,
+            EmploymentHireCostQuote quotedHireCost = null)
         {
             failReason = null;
 
@@ -518,7 +519,7 @@ namespace Intercolony
             }
 
             EmploymentContract contract = EmploymentService.TryHireApplicant(
-                state, applicant, posting, paymentMap, out failReason);
+                state, applicant, posting, paymentMap, out failReason, quotedHireCost);
 
             if (contract == null)
             {

@@ -152,6 +152,25 @@ namespace Intercolony
         /// <summary>Silver actually handed over so far — the whole term for prepaid, accumulating for periodic.</summary>
         public int paidSilver;
 
+        // --- Equipment bond (F23 first slice) ------------------------------------------------
+
+        /// <summary>
+        /// Weapons and apparel observed from the worker at hire. The field/node keeps the original
+        /// arrivedEquipment name for the additive schema-58 record: nothing in Intercolony changes
+        /// a travelling worker's gear, so the hire-time observation is also what arrives. This is
+        /// the durable record of borrowed capital, not inventory or body modifications. The
+        /// return/refund and retention settlement are the next F23 slice and are deliberately not
+        /// built yet.
+        /// </summary>
+        public List<EmploymentEquipmentRecord> arrivedEquipment =
+            new List<EmploymentEquipmentRecord>();
+
+        /// <summary>
+        /// Refundable deposit charged for <see cref="arrivedEquipment"/>. It is separate from
+        /// wages, <see cref="paidSilver"/>, and every wage-cost calculation.
+        /// </summary>
+        public int equipmentBond;
+
         // --- Payment structure (§37, §38, §39) ---
 
         public WageStructure wageStructure = WageStructure.Prepaid;
@@ -331,6 +350,12 @@ namespace Intercolony
         public int PeriodPayment => WageStructureUtility.PeriodCost(wageStructure, dailyWage);
 
         /// <summary>
+        /// Player-facing wording for the deposit. A none-value is described in words rather than
+        /// formatted as a zero.
+        /// </summary>
+        public string EquipmentBondLabel => EmploymentEquipmentService.BondLabel(equipmentBond);
+
+        /// <summary>
         /// Whether the worker is severed and still on their way out. Not <see cref="IsOpen"/>:
         /// the employment is over, nothing more is earned, and no payroll runs — but the pawn
         /// reference is still live and must be finished off.
@@ -436,6 +461,8 @@ namespace Intercolony
             Scribe_Values.Look(ref dailyWage, "dailyWage", 0);
             Scribe_Values.Look(ref termDays, "termDays", 0);
             Scribe_Values.Look(ref paidSilver, "paidSilver", 0);
+            Scribe_Collections.Look(ref arrivedEquipment, "arrivedEquipment", LookMode.Deep);
+            Scribe_Values.Look(ref equipmentBond, "equipmentBond", 0);
 
             // Pre-Phase-20 saves have no clause node. Civilian is the right default for them:
             // it is what every existing contract was priced as, so an old save does not
@@ -484,6 +511,13 @@ namespace Intercolony
                 {
                     // A missing dictionary node loads as null, not empty.
                     heldPriorities = new Dictionary<WorkTypeDef, int>();
+                }
+
+                // The arrived-equipment node is additive on schema 58. Older saves therefore
+                // correctly load with no recorded gear and no deposit.
+                if (arrivedEquipment == null)
+                {
+                    arrivedEquipment = new List<EmploymentEquipmentRecord>();
                 }
 
                 // A pre-Phase-20 save has refusingWork but no reason. Everything that could set
@@ -602,6 +636,11 @@ namespace Intercolony
             if (compensationPaid > 0)
             {
                 money += $", {compensationPaid} compensation";
+            }
+
+            if (equipmentBond > 0)
+            {
+                money += $", {EquipmentBondLabel}";
             }
 
             string clause = combatClause.Label();

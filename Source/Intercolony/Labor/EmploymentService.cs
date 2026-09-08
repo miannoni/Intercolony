@@ -38,7 +38,8 @@ namespace Intercolony
         /// </param>
         public static EmploymentContract TryHire(
             IntercolonyWorldComponent state, LaborCandidate candidate, int termDays, Map paymentMap,
-            out string failReason, WageStructure structure, CombatClause clause)
+            out string failReason, WageStructure structure, CombatClause clause,
+            EmploymentHireCostQuote quotedHireCost = null)
         {
             failReason = null;
 
@@ -125,17 +126,35 @@ namespace Intercolony
             // shown at hiring and then never charged.
             int dailyWage = WageStructureUtility.EffectiveDailyWage(structure, baseWage);
 
-            int available = PurchaseOrderService.CountColonySilver(paymentMap);
-            if (available < upFront)
+            // The dialog passes the same snapshot it displayed. Direct callers that have no UI
+            // quote get one here; either way the record and the bond come from one observation of
+            // this pawn at hire. Nothing in Intercolony changes a travelling worker's gear, so it
+            // is sound to keep this snapshot instead of reading the pawn again on arrival.
+            EmploymentHireCostQuote hireCostQuote = HireCostQuoteFor(
+                candidate.pawn, upFront, quotedHireCost, out failReason);
+            if (hireCostQuote == null)
             {
-                string payment = structure.IsPeriodic() ? "the signing fee" : "the prepaid wages";
-                failReason = $"Not enough silver in storage for {payment}: {available} of {upFront} needed.";
                 return null;
             }
 
-            if (upFront > 0 && !PurchaseOrderService.TryTakeSilver(paymentMap, upFront))
+            EmploymentEquipmentQuote equipmentQuote = hireCostQuote.equipment;
+            int equipmentBond = equipmentQuote.bond;
+            long hireCost = hireCostQuote.totalDue;
+
+            int available = PurchaseOrderService.CountColonySilver(paymentMap);
+            if (available < hireCost)
             {
-                failReason = "Could not collect the silver.";
+                string payment = structure.IsPeriodic() ? "the signing fee" : "the prepaid wages";
+                failReason =
+                    $"Not enough silver in storage for hire: {available} of {hireCost} needed " +
+                    $"({payment}: {upFront}; equipment bond: " +
+                    $"{EmploymentEquipmentService.BondLabel(equipmentBond)}).";
+                return null;
+            }
+
+            if (!EmploymentEquipmentService.TryTakeHireCost(
+                    paymentMap, hireCostQuote, out failReason))
+            {
                 return null;
             }
 
@@ -169,6 +188,8 @@ namespace Intercolony
                 termDays = termDays,
                 combatClause = clause,
                 wageStructure = structure,
+                arrivedEquipment = equipmentQuote.equipment,
+                equipmentBond = equipmentBond,
                 paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
                 arrivalTick = GenTicks.TicksGame + candidate.travelDays * GenDate.TicksPerDay,
@@ -191,6 +212,7 @@ namespace Intercolony
                 $"Hired {contract.workerName} from {contract.settlementName} as a {clause.Label()} — " +
                 $"{dailyWage} silver/day × {termDays} days, " +
                 $"{WageStructureUtility.Explain(structure, dailyWage, termDays)} " +
+                $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentBond)}. " +
                 $"Arrives in {candidate.travelDays} days.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
@@ -210,7 +232,8 @@ namespace Intercolony
         /// </summary>
         public static EmploymentContract TryHireApplicant(
             IntercolonyWorldComponent state, JobApplicant applicant, JobPosting posting,
-            Map paymentMap, out string failReason)
+            Map paymentMap, out string failReason,
+            EmploymentHireCostQuote quotedHireCost = null)
         {
             failReason = null;
 
@@ -257,19 +280,37 @@ namespace Intercolony
             int dailyWage = applicant.openMarketAsk;
             int upFront = WageStructureUtility.UpFrontCost(posting.wageStructure, dailyWage, posting.termDays);
 
+            // The posting row passes the same snapshot it displayed. If this method is called
+            // directly, make the quote now from the applicant's real pawn. Travel does not mutate
+            // worker gear in this mod, so recording it at hire is the same observation that prices
+            // and charges the bond; arrival must not read or charge it again.
+            EmploymentHireCostQuote hireCostQuote = HireCostQuoteFor(
+                applicant.pawn, upFront, quotedHireCost, out failReason);
+            if (hireCostQuote == null)
+            {
+                return null;
+            }
+
+            EmploymentEquipmentQuote equipmentQuote = hireCostQuote.equipment;
+            int equipmentBond = equipmentQuote.bond;
+            long hireCost = hireCostQuote.totalDue;
+
             int available = PurchaseOrderService.CountColonySilver(paymentMap);
-            if (available < upFront)
+            if (available < hireCost)
             {
                 string payment = posting.wageStructure.IsPeriodic()
                     ? "the signing fee"
                     : "the prepaid wages";
-                failReason = $"Not enough silver in storage for {payment}: {available} of {upFront} needed.";
+                failReason =
+                    $"Not enough silver in storage for hire: {available} of {hireCost} needed " +
+                    $"({payment}: {upFront}; equipment bond: " +
+                    $"{EmploymentEquipmentService.BondLabel(equipmentBond)}).";
                 return null;
             }
 
-            if (upFront > 0 && !PurchaseOrderService.TryTakeSilver(paymentMap, upFront))
+            if (!EmploymentEquipmentService.TryTakeHireCost(
+                    paymentMap, hireCostQuote, out failReason))
             {
-                failReason = "Could not collect the silver.";
                 return null;
             }
 
@@ -298,6 +339,8 @@ namespace Intercolony
                 termDays = posting.termDays,
                 combatClause = posting.combatClause,
                 wageStructure = posting.wageStructure,
+                arrivedEquipment = equipmentQuote.equipment,
+                equipmentBond = equipmentBond,
                 paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
                 arrivalTick = GenTicks.TicksGame + applicant.travelDays * GenDate.TicksPerDay,
@@ -316,6 +359,7 @@ namespace Intercolony
             Messages.Message(
                 $"Hired {contract.workerName} from {contract.settlementName} as a {posting.combatClause.Label()} " +
                 $"at the worker's {dailyWage} silver/day × {posting.termDays} days. " +
+                $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentBond)}. " +
                 $"Arrives in {applicant.travelDays} days.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
@@ -800,6 +844,9 @@ namespace Intercolony
                 return;
             }
 
+            // Equipment was observed, recorded and charged at hire. Nothing in Intercolony changes
+            // a travelling worker's gear, so arrival only receives the pawn and never re-quotes or
+            // charges the bond.
             try
             {
                 if (!RCellFinder.TryFindRandomPawnEntryCell(out IntVec3 cell, map,
@@ -858,6 +905,7 @@ namespace Intercolony
                     $"to work for {contract.termDays} days.\n\n" +
                     $"Skills: {contract.workerSkills}\n" +
                     $"Wage: {contract.dailyWage} silver/day, {contract.paidSilver} silver paid in advance.\n" +
+                    $"Equipment: {contract.EquipmentBondLabel}.\n" +
                     $"Terms: {contract.combatClause.LabelCap()}. {contract.combatClause.Explain()}\n\n" +
                     "They can be assigned work and given a bed like a colonist, but they are not one: " +
                     "they belong to their own faction and will leave when the term ends.\n\n" +
@@ -1027,6 +1075,28 @@ namespace Intercolony
             contract.destinationMap = null;
 
             IntercolonyLog.Message($"Ended: {contract} — {note}");
+        }
+
+        private static EmploymentHireCostQuote HireCostQuoteFor(
+            Pawn worker, int upfrontWages, EmploymentHireCostQuote quotedHireCost,
+            out string failureReason)
+        {
+            failureReason = null;
+            if (quotedHireCost == null)
+            {
+                return EmploymentEquipmentService.QuoteHireCost(
+                    upfrontWages, EmploymentEquipmentService.Quote(worker));
+            }
+
+            if (quotedHireCost.equipment == null ||
+                quotedHireCost.equipment.sourcePawn != worker ||
+                quotedHireCost.upfrontWages != upfrontWages)
+            {
+                failureReason = "The hire quote changed. Reopen the hiring screen.";
+                return null;
+            }
+
+            return quotedHireCost;
         }
 
         private static void SendDepartureLetter(EmploymentContract contract, EmploymentStatus status, Pawn worker)
