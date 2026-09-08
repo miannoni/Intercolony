@@ -1,72 +1,46 @@
 ﻿# Foreman state — Intercolony
 
-Stage: 7 — F23 in progress; F24 and F22 after it. **STAGES 1 THROUGH 6 ARE CLOSED.**
-Unit: 7.6f — the F23 play entry
-Worker: running — `…\scratchpad\unit-7-6f.out`
-
-**F23's BOND IS COMPLETE AND PROVEN** at `91dc10d`: baseline 42/0/0 and all five assertions red
-under their own mutation, including "parka 148.8 + tuque 34.32 = 183.12, plus 10% = 201.432,
-expected bond 201, recorded 183" when the premium is dropped.
-
-F23 STAYS PART-BUILT AND THAT IS DELIBERATE, on the F12/F21 precedent: the bond is the economic
-core and it is whole, while tiers and availability gating are the system half the recon flagged, and
-the body-modification consequence is a severity rule of its own. Building tiers now would be a large
-detour with F24, F22, stage 8 and stage 9 still ahead. The play entry records all three gaps, and
-names the body-mod one as the largest — it is the part F23 argues most strongly for.
-
-NEXT: F24. Read the finding first; the recon calls it a system needing an urgent request, a
-reachability deadline, a mobilisation premium and a transport outcome, so it will need a bounded
-first piece chosen the way F23's and F19's were.
-Last done: 7.6b at `a173619` — F23's bond settles on every one of the nine paths that end an
-employment. Suite 1506/0/16, log clean.
-Updated: 2026-09-08, wake 172
-Wakes: 180 · last full load at wake 172
-
-**I CALLED E2 HOLLOW AND I WAS WRONG.** It reddens under two other mutations — "bond 201, refund
-201, silver 1930 → 2131" and "bond 201, refund 38" — so it detects a wrong refund perfectly well.
-The mutation I aimed at it, `returnedSilver = Mathf.Clamp(returnedSilver, 0, matchedBond);` →
-`returnedSilver = 0;`, sits AFTER the silver has already been placed
-(`EmploymentEquipment.cs:337`); it normalises the figure used in the MESSAGE, not the money. E2
-asserts on actual silver, which is why it stayed green and why that is correct.
-**The lesson is about my own method: when a mutation does not bite, the first hypothesis must be
-that the mutation is wrong, not that the assertion is.** I reported it as hollow before checking
-what the line actually does.
-E3, E4 and E5 are each proven red by their own mutation. E1 is still unproven only because my
-mutation did not compile — unbalanced parentheses — and a compiling version is running now.
+Stage: 7 — F24 in progress; F22 after it. **STAGES 1 THROUGH 6 ARE CLOSED.**
+Unit: 7.7c — make F24's emergency window relative to the market
+Worker: running — `…\scratchpad\unit-7-7c.out`
+Last done: F24 slice 1 at `edb99ac`; F23's bond closed part-built at `9841ec9`.
+Updated: 2026-09-08, wake 189
+Wakes: 189 · last full load at wake 189
 
 READ THE "RESUME BRIEF" BELOW. It is what a session with no memory should trust.
 
-<!-- ONE WORKING NOTE, AT MOST ABOUT FIFTEEN LINES. Replace it each wake; never prepend a second.
-     If it needs more than that, the surplus belongs in a commit message. The header has run away
-     three times and crept back a fourth by the note simply getting longer each wake. -->
+<!-- ONE WORKING NOTE, AT MOST FIFTEEN LINES. Replace it each wake. THE SIZE IS THE PART THAT KEEPS
+     BEING BROKEN — not the "don't prepend" part, which is now habit. The header has gone 50 -> 274,
+     50 -> 187, 51 -> 130 and 51 -> 123 because each wake's finding was interesting and got written
+     in full. Findings go in the COMMIT MESSAGE, which is where they are read again. This note only
+     needs enough to resume. -->
 
-WORKING NOTE — wake 172. F23's first two parts are whole: the gear an employee arrives with is
-recorded, valued, bonded, disclosed at hire beside the wage, and refunded proportionally when it
-comes back. 7.6c is adding the assertions, which two commits of economic code currently lack — E3
-(part returned is part refunded, premium included) and E4 (a bond settles ONCE) are the two that
-matter, the second because two paths both firing would pay the player from nothing.
-Not built of F23, deliberately: equipment tiers, availability gating, and the severe consequence for
-stripping body modifications. Remaining in the run after F23: F24, F22, then stage 8 (F08, F09) and
-stage 9 (F06), each starting with recon.
-For the play sitting: hiring an equipped worker now costs roughly 70% more up front — 918 prepaid
-wages against a 641 bond on one real example.
+WORKING NOTE — wake 189.
+  - F24's emergency dispatch as first built could never produce a candidate: window 2 travel days,
+    real market 10-19 days, pool empty. My error, found by 7.7b's assertions. 7.7c makes arrival a
+    fraction of ordinary travel and narrows the pool relative to the market.
+  - **7.7b's four assertions are IN THE TREE, UNCOMMITTED AND NOT YET MUTATION-VERIFIED.** They must
+    be watched going red before they are accepted, after 7.7c lands.
+  - 7.7b ran ~80 minutes before I stopped it, against a 5-10 minute rule. Its work was sound; the
+    cost was mine for not cutting the unit smaller.
+  - Left in the run: F22, then stage 8 (F08, F09) and stage 9 (F06), each starting with recon.
 
 STANDING RULES THIS RUN HAS PAID FOR, kept here because they survive a compaction:
-  - **When a field stops being written, grep every reader.** A `> 0` check treats zero as
-    corruption. Two defects at once.
+  - **When a field stops being written, grep every reader.** A `> 0` check treats zero as corruption.
   - **When something stops happening immediately, find everything that assumed it was instant.**
-    A third defect: replies scheduled past a deadline that then deleted them.
+  - **A number chosen without looking at the data the game generates is a guess.** F24's two-day
+    window was five times smaller than the nearest settlement in the world.
   - **The seam nobody asserts is the one between the caller and the service.**
-  - **A skip is not evidence**, and a mutation run that skips its target proves nothing.
-  - **A mutation that fails to compile looks exactly like one that found nothing.** Assert the
-    anchor is unique before editing; read the run's log, not the summary line.
+  - **A skip is not evidence** — but a skip can BE the finding, as it was for F24.
+  - **A mutation that fails to compile looks exactly like one that found nothing.** Check the anchor
+    is unique and the replacement builds; read the run's log, not the summary line.
+  - **When a mutation does not bite, suspect the mutation before the assertion.**
   - **Never let a zero mean unknown.** Say it in words.
-  - **A charge the player was never shown is worse than the problem it fixes.** Disclose at the
-    moment of decision, not at the moment of collection.
-  - Use `dev.ps1 bridge -Save`, not `run -Save`: only the bridge path stages the autostart copy.
+  - **A charge the player was never shown is worse than the problem it fixes.**
+  - Use `dev.ps1 bridge -Save`, not `run -Save`, to load a save.
   - Write files with the file tools; PowerShell `Get-Content` + `Out-File` double-encodes UTF-8.
 
-Owed to the operator, all in `docs/PENDING_PLAYTESTS.md`: twenty play observations across stages
+Owed to the operator, all in `docs/PENDING_PLAYTESTS.md`: twenty-one play observations across stages
 1-7. The three that matter most are the F15 save-compatibility check, the partial-delivery defect in
 `DeliverToColony` which costs the player silver and needs a design decision, and F20's equal wage
 split — someone who only ever makes chairs still has half their wage charged to tables.
@@ -109,7 +83,7 @@ keeps F25 a no-bump change.
 | F20 labour from actual work | 6 | BUILT, mutation-proven, `86f3868` + `78d6eba`: the relevant-workforce approximation shares eligible wages across eligible goods; measured-time attribution is not built |
 | F25 buyer-side labour market | 7 | BUILT, mutation-proven, `0189a8a` + `680c39e` + `3125bd6` + `fbb5290`: requirement-first postings, worker asks, a seeded spread, own-ask pay, and the save/create seams; no new persisted state or Harmony patch, and no reverse market |
 | F23 equipment and bond state | 7 | PART-BUILT, `ed99423` + `a173619`. The gear an employee ARRIVES with is recorded, valued at replacement plus a 10% premium, disclosed as its own row at hire beside the wage, charged there, and refunded proportionally item by item when the contract ends — on all nine ending paths, idempotently. NOT built: equipment tiers, availability gating by settlement wealth/tech/scarcity, and the severe consequence for stripping body modifications. Assertions in progress at 7.6c |
-| F24 urgent dispatch | 7 | UNBLOCKED, NOT STARTED; needs new persisted state additive on schema 58; no Harmony patch |
+| F24 urgent dispatch | 7 | PART-BUILT, `edb99ac`, and being corrected at 7.7c. Emergency dispatch is a MODE ON THE IMMEDIATE DIRECT-HIRE PATH, which is why it needs NO persisted state — the recon's "needs new state" is true only of a post-and-wait urgent request. It narrows the pool to who can actually arrive in time, charges a 4x premium, shortens arrival, and discloses both before the player commits. **The first version's absolute 2-day window made it unusable — real markets are 10-19 travel days away — so the window is being made relative to the market.** NOT built: drop-pod arrival, which F24 wants but which should be gated on a settlement logistics capability that F21 never built; any queued urgent request; equipment level in the request |
 | F22 reverse listing and offer queue | 7 | UNBLOCKED, NOT STARTED; needs new persisted state additive on schema 58; no Harmony patch |
 | F08 F09 commercial relationships | 8 | not started |
 | **F06 optional apparel policies** | **9** | **PLACED IN STAGE 9 — not started, recon first; see the gap below** |
