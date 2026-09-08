@@ -25,6 +25,8 @@ namespace Intercolony
     {
         private const int SupplyProbeSettlementId = 971_102;
         private const int PurchaseFixtureSilver = 4;
+        private const float MinimumUsefulRfqDistanceGapTiles = 48f;
+        private const int MaximumF11FixtureDefinitions = 32;
 
         private static bool IsLegacyAppealBucket(float appeal)
         {
@@ -95,6 +97,7 @@ namespace Intercolony
 
             List<PurchaseRequest> created = new List<PurchaseRequest>();
 
+            CheckF11ResponseTiming(Check, Skip, state, tradable);
             CheckEffectiveSupplyForRfq(Check, state);
             CheckRfqResponseCountUsesEffectiveSupply(Check, Skip, state);
             CheckLogisticsQuoteOwnership(Check, Skip, state);
@@ -462,6 +465,510 @@ namespace Intercolony
             return Summarize();
         }
 
+        private static void CheckF11ResponseTiming(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            List<ThingDef> tradable)
+        {
+            const string P1 = "P1 new RFQ has no arrived quotes and explains pending replies";
+            const string P2 = "P2 due RFQ replies arrive through AdvancePendingResponses";
+            const string P3 = "P3 nearer RFQ supplier answers sooner";
+            const string P4 = "P4 RFQ replies are scheduled before request expiry";
+
+            if (state == null || state.Requests == null || state.PendingRfqResponses == null)
+            {
+                string reason = "world request or pending-response state was unavailable";
+                skip(P1, reason);
+                skip(P2, reason);
+                skip(P3, reason);
+                skip(P4, reason);
+                return;
+            }
+
+            List<PurchaseRequest> savedRequests =
+                new List<PurchaseRequest>(state.Requests);
+            List<PendingRfqResponse> savedPendingResponses =
+                new List<PendingRfqResponse>(state.PendingRfqResponses);
+            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
+                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+            int savedNextId = state.PeekNextId();
+
+            try
+            {
+                // The queue is world-global. Isolate this fixture so the clock jump used by P2
+                // cannot consume a live request's pending response, then restore the exact list
+                // in finally below.
+                state.PendingRfqResponses.Clear();
+                List<PurchaseRequest> fixtures = new List<PurchaseRequest>();
+
+                PurchaseRequest waiting = CreateFirstResponseBearingRfq(
+                    state, tradable, fixtures, ProcurementFulfillmentPreference.Either,
+                    out int p1Attempts);
+                List<PendingRfqResponse> waitingPending =
+                    PendingResponsesFor(state, waiting);
+
+                if (waiting == null || waitingPending.Count == 0)
+                {
+                    string reason = waiting == null
+                        ? $"no response-bearing request among {p1Attempts} fixture definition(s)"
+                        : "request revealed quotes immediately or had no pending response; " +
+                          RfqTimingDetails(waiting, waitingPending);
+
+                    if (waiting == null)
+                    {
+                        skip(P1, reason);
+                        skip(P2, "P1 could not build a request with a pending supplier response");
+                    }
+                    else
+                    {
+                        check(P1, false, reason);
+                        skip(P2, "P1 fixture had no pending response to advance");
+                    }
+                }
+                else
+                {
+                    string waitingDetails = RfqTimingDetails(waiting, waitingPending);
+                    check(P1,
+                        waiting.quotes.Count == 0 &&
+                        HasPendingResponseExplanation(waiting.noResponseReason, waitingPending.Count),
+                        waitingDetails + $"; explanation=\"{waiting.noResponseReason}\"");
+
+                    if (Find.TickManager == null)
+                    {
+                        skip(P2, "RimWorld tick manager was unavailable");
+                    }
+                    else
+                    {
+                        int pendingBefore = waitingPending.Count;
+                        AdvanceRfqResponsesForSelfTest(state, waiting, skip);
+                        List<PendingRfqResponse> pendingAfter =
+                            PendingResponsesFor(state, waiting);
+                        check(P2,
+                            waiting.quotes.Count == pendingBefore && pendingAfter.Count == 0,
+                            $"pendingBefore={pendingBefore}; arrivedQuotes={waiting.quotes.Count}; " +
+                            $"pendingAfter={pendingAfter.Count}; " +
+                            $"arrivalDetails={waitingDetails}; expiryTick={waiting.expiryTick}");
+                    }
+                }
+
+                PendingRfqResponse nearer;
+                PendingRfqResponse farther;
+                PurchaseRequest distanceRequest;
+                List<float> p3Distances;
+                if (!TryFindDistanceOrderedRfq(
+                        state, tradable, fixtures, out distanceRequest,
+                        out nearer, out farther, out p3Distances))
+                {
+                    skip(P3,
+                        "no two pending supplier replies were found at a useful distance gap; " +
+                        $"distancesFound={FormatDistances(p3Distances)}");
+                }
+                else
+                {
+                    float nearerDelayDays =
+                        (nearer.arrivalTick - distanceRequest.createdTick) /
+                        (float)GenDate.TicksPerDay;
+                    float fartherDelayDays =
+                        (farther.arrivalTick - distanceRequest.createdTick) /
+                        (float)GenDate.TicksPerDay;
+                    check(P3,
+                        nearer.arrivalTick < farther.arrivalTick,
+                        $"nearDistance={nearer.quote.distanceTiles:F2} tiles; " +
+                        $"nearDelay={nearerDelayDays:F2} days; nearArrivalTick={nearer.arrivalTick}; " +
+                        $"farDistance={farther.quote.distanceTiles:F2} tiles; " +
+                        $"farDelay={fartherDelayDays:F2} days; farArrivalTick={farther.arrivalTick}; " +
+                        $"expiryTick={distanceRequest.expiryTick}");
+                }
+
+                float furthestAvailableDistance;
+                float furthestSampleDistance;
+                List<float> p4Distances;
+                PurchaseRequest furthestRequest = FindFurthestResponseRfq(
+                    state, tradable, fixtures, out furthestAvailableDistance,
+                    out furthestSampleDistance, out p4Distances);
+                List<PendingRfqResponse> furthestPending =
+                    PendingResponsesFor(state, furthestRequest);
+                bool reachedFurthestAvailable = furthestAvailableDistance < 0f ||
+                    furthestSampleDistance >= furthestAvailableDistance - 0.01f;
+
+                if (furthestRequest == null || furthestPending.Count == 0 ||
+                    furthestSampleDistance < 0f || !reachedFurthestAvailable)
+                {
+                    skip(P4,
+                        "no pending reply from the furthest available settlement sample; " +
+                        $"furthestAvailableDistance={furthestAvailableDistance:F2} tiles; " +
+                        $"furthestSampleDistance={furthestSampleDistance:F2} tiles; " +
+                        $"distancesFound={FormatDistances(p4Distances)}");
+                }
+                else
+                {
+                    const int independentPollingIntervalTicks = GenDate.TicksPerHour;
+                    bool safeForEveryPendingReply = true;
+                    int latestArrivalTick = furthestRequest.createdTick;
+                    int smallestMarginTicks = int.MaxValue;
+                    string firstUnsafeReply = null;
+                    foreach (PendingRfqResponse pending in furthestPending)
+                    {
+                        if (pending == null || pending.quote == null)
+                        {
+                            safeForEveryPendingReply = false;
+                            firstUnsafeReply = "null pending reply";
+                            continue;
+                        }
+
+                        latestArrivalTick = Mathf.Max(latestArrivalTick, pending.arrivalTick);
+                        int marginTicks = furthestRequest.expiryTick - pending.arrivalTick;
+                        smallestMarginTicks = Mathf.Min(smallestMarginTicks, marginTicks);
+                        if (pending.arrivalTick >= furthestRequest.expiryTick ||
+                            marginTicks <= independentPollingIntervalTicks)
+                        {
+                            safeForEveryPendingReply = false;
+                            firstUnsafeReply =
+                                $"arrivalTick={pending.arrivalTick}, expiryTick={furthestRequest.expiryTick}, " +
+                                $"marginTicks={marginTicks}";
+                        }
+                    }
+
+                    float latestDelayDays =
+                        (latestArrivalTick - furthestRequest.createdTick) /
+                        (float)GenDate.TicksPerDay;
+                    float smallestMarginDays = smallestMarginTicks == int.MaxValue
+                        ? 0f
+                        : smallestMarginTicks / (float)GenDate.TicksPerDay;
+                    check(P4,
+                        safeForEveryPendingReply,
+                        $"furthestAvailableDistance={furthestAvailableDistance:F2} tiles; " +
+                        $"furthestSampleDistance={furthestSampleDistance:F2} tiles; " +
+                        $"pending={furthestPending.Count}; latestDelay={latestDelayDays:F2} days; " +
+                        $"latestArrivalTick={latestArrivalTick}; expiryTick={furthestRequest.expiryTick}; " +
+                        $"smallestMargin={smallestMarginDays:F2} days ({smallestMarginTicks} ticks); " +
+                        $"firstUnsafeReply={firstUnsafeReply ?? "none"}");
+                }
+            }
+            finally
+            {
+                state.Requests.Clear();
+                state.Requests.AddRange(savedRequests);
+                state.PendingRfqResponses.Clear();
+                state.PendingRfqResponses.AddRange(savedPendingResponses);
+                if (nextIdField != null)
+                {
+                    nextIdField.SetValue(state, savedNextId);
+                }
+            }
+        }
+
+        private static PurchaseRequest CreateFirstResponseBearingRfq(
+            IntercolonyWorldComponent state,
+            List<ThingDef> tradable,
+            List<PurchaseRequest> fixtures,
+            ProcurementFulfillmentPreference fulfillmentPreference,
+            out int attempts)
+        {
+            attempts = 0;
+            foreach (ThingDef def in F11FixtureDefinitions(tradable))
+            {
+                attempts++;
+                PurchaseRequest request = RfqService.CreateRequest(
+                    state, def, null, 1, 15, fulfillmentPreference);
+                if (request == null)
+                {
+                    continue;
+                }
+
+                fixtures.Add(request);
+                if (request.AnyQuotes || PendingResponsesFor(state, request).Count > 0)
+                {
+                    return request;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryFindDistanceOrderedRfq(
+            IntercolonyWorldComponent state,
+            List<ThingDef> tradable,
+            List<PurchaseRequest> fixtures,
+            out PurchaseRequest selectedRequest,
+            out PendingRfqResponse nearer,
+            out PendingRfqResponse farther,
+            out List<float> distancesFound)
+        {
+            selectedRequest = null;
+            nearer = null;
+            farther = null;
+            distancesFound = AccessibleSupplierDistances(state);
+            float largestGap = -1f;
+
+            foreach (ThingDef def in F11FixtureDefinitions(tradable))
+            {
+                PurchaseRequest request = RfqService.CreateRequest(
+                    state, def, null, 1, 15,
+                    ProcurementFulfillmentPreference.PlayerPickup);
+                if (request == null)
+                {
+                    continue;
+                }
+
+                fixtures.Add(request);
+                List<PendingRfqResponse> pending = PendingResponsesFor(state, request);
+                foreach (PendingRfqResponse response in pending)
+                {
+                    if (response?.quote != null)
+                    {
+                        distancesFound.Add(response.quote.distanceTiles);
+                    }
+                }
+
+                for (int i = 0; i < pending.Count; i++)
+                {
+                    PendingRfqResponse left = pending[i];
+                    if (left?.quote == null || left.quote.distanceTiles < 0f)
+                    {
+                        continue;
+                    }
+
+                    for (int j = i + 1; j < pending.Count; j++)
+                    {
+                        PendingRfqResponse right = pending[j];
+                        if (right?.quote == null || right.quote.distanceTiles < 0f ||
+                            Mathf.Approximately(left.quote.distanceTiles, right.quote.distanceTiles))
+                        {
+                            continue;
+                        }
+
+                        PendingRfqResponse candidateNearer =
+                            left.quote.distanceTiles < right.quote.distanceTiles ? left : right;
+                        PendingRfqResponse candidateFarther =
+                            left.quote.distanceTiles < right.quote.distanceTiles ? right : left;
+                        float gap = candidateFarther.quote.distanceTiles -
+                                     candidateNearer.quote.distanceTiles;
+                        if (gap >= MinimumUsefulRfqDistanceGapTiles && gap > largestGap)
+                        {
+                            largestGap = gap;
+                            selectedRequest = request;
+                            nearer = candidateNearer;
+                            farther = candidateFarther;
+                        }
+                    }
+                }
+            }
+
+            return selectedRequest != null;
+        }
+
+        private static PurchaseRequest FindFurthestResponseRfq(
+            IntercolonyWorldComponent state,
+            List<ThingDef> tradable,
+            List<PurchaseRequest> fixtures,
+            out float furthestAvailableDistance,
+            out float furthestSampleDistance,
+            out List<float> distancesFound)
+        {
+            furthestAvailableDistance = -1f;
+            foreach (float distance in AccessibleSupplierDistances(state))
+            {
+                furthestAvailableDistance = Mathf.Max(furthestAvailableDistance, distance);
+            }
+
+            PurchaseRequest furthestRequest = null;
+            furthestSampleDistance = -1f;
+            distancesFound = new List<float>();
+            foreach (ThingDef def in F11FixtureDefinitions(tradable))
+            {
+                PurchaseRequest request = RfqService.CreateRequest(
+                    state, def, null, 1, 15,
+                    ProcurementFulfillmentPreference.PlayerPickup);
+                if (request == null)
+                {
+                    continue;
+                }
+
+                fixtures.Add(request);
+                float requestFurthestDistance = -1f;
+                foreach (PendingRfqResponse pending in PendingResponsesFor(state, request))
+                {
+                    if (pending?.quote == null)
+                    {
+                        continue;
+                    }
+
+                    distancesFound.Add(pending.quote.distanceTiles);
+                    requestFurthestDistance = Mathf.Max(
+                        requestFurthestDistance, pending.quote.distanceTiles);
+                }
+
+                if (requestFurthestDistance > furthestSampleDistance)
+                {
+                    furthestSampleDistance = requestFurthestDistance;
+                    furthestRequest = request;
+                }
+
+                if (furthestAvailableDistance >= 0f &&
+                    furthestSampleDistance >= furthestAvailableDistance)
+                {
+                    break;
+                }
+            }
+
+            return furthestRequest;
+        }
+
+        private static List<float> AccessibleSupplierDistances(
+            IntercolonyWorldComponent state)
+        {
+            List<float> distances = new List<float>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                return distances;
+            }
+
+            foreach (Settlement settlement in settlements)
+            {
+                if (IntercolonyMarketAccess.IsAccessible(settlement) &&
+                    state.GetProfile(settlement) != null)
+                {
+                    distances.Add(MarketOpportunityGenerator.DistanceToPlayer(settlement));
+                }
+            }
+
+            return distances;
+        }
+
+        private static List<ThingDef> F11FixtureDefinitions(List<ThingDef> tradable)
+        {
+            List<ThingDef> result = new List<ThingDef>();
+            if (tradable == null || tradable.Count == 0)
+            {
+                return result;
+            }
+
+            if (tradable.Contains(ThingDefOf.Steel))
+            {
+                result.Add(ThingDefOf.Steel);
+            }
+
+            int sampleCount = Mathf.Min(tradable.Count, MaximumF11FixtureDefinitions);
+            for (int i = 0; i < sampleCount; i++)
+            {
+                int index = sampleCount == 1
+                    ? 0
+                    : Mathf.RoundToInt(i * (tradable.Count - 1f) / (sampleCount - 1f));
+                ThingDef def = tradable[index];
+                if (def != null && !result.Contains(def))
+                {
+                    result.Add(def);
+                }
+            }
+
+            return result;
+        }
+
+        private static List<PendingRfqResponse> PendingResponsesFor(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request)
+        {
+            List<PendingRfqResponse> result = new List<PendingRfqResponse>();
+            if (state?.PendingRfqResponses == null || request == null)
+            {
+                return result;
+            }
+
+            foreach (PendingRfqResponse pending in state.PendingRfqResponses)
+            {
+                if (pending != null && pending.requestId == request.id)
+                {
+                    result.Add(pending);
+                }
+            }
+
+            return result;
+        }
+
+        private static bool HasPendingResponseExplanation(string explanation, int pendingCount)
+        {
+            if (string.IsNullOrEmpty(explanation) || pendingCount <= 0)
+            {
+                return false;
+            }
+
+            string countPrefix = pendingCount == 1
+                ? "One supplier response"
+                : $"{pendingCount} supplier responses";
+            return explanation.StartsWith(countPrefix, StringComparison.Ordinal) &&
+                   explanation.Contains("still coming");
+        }
+
+        private static string RfqTimingDetails(
+            PurchaseRequest request,
+            List<PendingRfqResponse> pending)
+        {
+            if (request == null || pending == null || pending.Count == 0)
+            {
+                return $"pending={pending?.Count ?? 0}; arrivedQuotes={request?.quotes?.Count ?? 0}; " +
+                       $"expiryTick={request?.expiryTick ?? -1}";
+            }
+
+            float nearestDistance = float.MaxValue;
+            float furthestDistance = -1f;
+            int earliestArrivalTick = int.MaxValue;
+            int latestArrivalTick = request.createdTick;
+            int validCount = 0;
+            foreach (PendingRfqResponse response in pending)
+            {
+                if (response?.quote == null)
+                {
+                    continue;
+                }
+
+                validCount++;
+                nearestDistance = Mathf.Min(nearestDistance, response.quote.distanceTiles);
+                furthestDistance = Mathf.Max(furthestDistance, response.quote.distanceTiles);
+                earliestArrivalTick = Mathf.Min(earliestArrivalTick, response.arrivalTick);
+                latestArrivalTick = Mathf.Max(latestArrivalTick, response.arrivalTick);
+            }
+
+            float earliestDelayDays = earliestArrivalTick == int.MaxValue
+                ? 0f
+                : (earliestArrivalTick - request.createdTick) / (float)GenDate.TicksPerDay;
+            float latestDelayDays =
+                (latestArrivalTick - request.createdTick) / (float)GenDate.TicksPerDay;
+            return $"pending={validCount}; distances={nearestDistance:F2}-{furthestDistance:F2} tiles; " +
+                   $"delays={earliestDelayDays:F2}-{latestDelayDays:F2} days; " +
+                   $"arrivalTicks={earliestArrivalTick}-{latestArrivalTick}; " +
+                   $"expiryTick={request.expiryTick}";
+        }
+
+        private static string FormatDistances(List<float> distances)
+        {
+            if (distances == null || distances.Count == 0)
+            {
+                return "none";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            int shown = Mathf.Min(distances.Count, 12);
+            for (int i = 0; i < shown; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(", ");
+                }
+
+                sb.Append(distances[i].ToString("F2"));
+            }
+
+            if (distances.Count > shown)
+            {
+                sb.Append($", ... ({distances.Count} total)");
+            }
+
+            return sb.ToString();
+        }
+
         private static void AdvanceRfqResponsesForSelfTest(
             IntercolonyWorldComponent state,
             PurchaseRequest request,
@@ -532,7 +1039,14 @@ namespace Intercolony
 
                     cursorTick = Mathf.Max(cursorTick, nextArrivalTick);
                     tickManager.DebugSetTicksGame(cursorTick);
+                    int pendingCountBeforeAdvance = state.PendingRfqResponses.Count;
                     RfqService.AdvancePendingResponses(state);
+                    if (state.PendingRfqResponses.Count >= pendingCountBeforeAdvance)
+                    {
+                        skip("RFQ response arrival fixture",
+                            $"advance made no queue progress at tick {cursorTick}");
+                        break;
+                    }
                 }
             }
             finally
