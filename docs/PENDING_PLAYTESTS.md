@@ -46,6 +46,47 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### F25's buyer-side labour market needs a market read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. F25's labour market is now two-sided
+on the buyer's side. The posting dialog no longer asks for a wage: the player names the requirement —
+skill, minimum level, term, wage structure and combat clause — and the dialog reports what the market
+currently charges for it, for example **Going rate: 5 qualifying workers ask 30-52 silver per day**, or
+**Nobody reachable can do this work** when none qualify.
+
+Who applies is decided by the requirement alone. The posted wage no longer filters anybody; a worker
+applies if they meet the skill bar. A worker who qualifies for several postings takes the one that pays
+them most, which is real because the combat clause multiplies their wage. The waiting list is a
+deterministic seeded spread of everyone who qualified, not the strongest few. That is deliberate: with
+no wage lever, ranking by ability would hand the player the six strongest workers alive every refresh at
+the six highest asks, and F25 asks for a range to choose within. A hired applicant is paid their own ask,
+not the posted wage. Their ask, the signing fee or prepaid amount, and what their death would cost are
+all on their row.
+
+**Steps.** In play, open the posting dialog and set several requirements. Read the going-rate line and
+confirm it gives the market's current charge, or the nobody-reachable message when no one qualifies.
+Inspect the waiting list as a market: judge whether it offers a real spread of ability and price to
+choose between or feels random. Judge whether the going-rate line helps decide what to ask for or is
+only decoration. Judge whether six waiting applicants is still the right cap now that the wage no longer
+limits volume. Finally, judge whether losing the wage control feels like losing agency: the player has
+no direct lever on price, only on the requirement.
+
+### F25's two defects need confirmation after a green suite
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. Two defects were found during this
+stage; both were introduced and repaired within this branch. Nothing released was affected, and a
+self-test now covers each. Both were invisible to a green suite until someone looked, so they still
+need human confirmation.
+
+Postings created after the wage was removed were **silently deleted** on save and reload. The load-time
+validity check still demanded a positive wage. Fixed in `74e42fe`, asserted in `3125bd6`. **WORTH
+CONFIRMING BY HAND.** Create a posting, save, quit to the menu, reload, and check it is still there with
+its applicants.
+
+Creating a posting failed outright, with **Offer at least 1 silver a day** shown on a dialog that has
+no wage field. The service still rejected a wage below 1. Fixed in `fbb5290`. **WORTH CONFIRMING BY
+HAND.** Simply create a posting and see that it appears.
+
 ### F21 logistics figure needs a supplier-choice read
 
 Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A supplier quote's tooltip now
