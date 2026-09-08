@@ -263,10 +263,11 @@ namespace Intercolony
                     FulfillmentMode fulfillment = delivers
                         ? FulfillmentMode.SellerDelivery
                         : FulfillmentMode.BuyerPickup;
-                    int leadTimeDays = RfqService.LeadTimeDays(distance, delivers, supply);
+                    LogisticsQuote logistics = LogisticsQuote.Create(
+                        distance, LogisticsQuote.MethodFor(delivers), supply);
                     float unitPrice = RfqService.SupplierUnitPrice(
-                        state, def, stuff, quality, profile, category.Value, supply, distance,
-                        delivers, quantityAvailable, out _);
+                        state, def, stuff, quality, profile, category.Value, supply, logistics,
+                        quantityAvailable, out _);
                     int lifespanDays = Rand.RangeInclusive(MinLifespanDays, MaxLifespanDays);
 
                     created.Add(new SupplierListing
@@ -279,7 +280,7 @@ namespace Intercolony
                         quantityAvailable = quantityAvailable,
                         unitPrice = unitPrice,
                         fulfillment = fulfillment,
-                        leadTimeDays = leadTimeDays,
+                        leadTimeDays = logistics.LeadTimeDays,
                         createdTick = GenTicks.TicksGame,
                         expiryTick = GenTicks.TicksGame + lifespanDays * GenDate.TicksPerDay,
                         refreshWindow = refreshWindow

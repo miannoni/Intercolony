@@ -290,9 +290,20 @@ namespace Intercolony
                                 ProcurementFulfillmentPreference.SupplierDelivers ||
                             (request.fulfillmentPreference == ProcurementFulfillmentPreference.Either &&
                              Rand.Value < DeliveryChance(profile, distance));
-            float unitPrice = QuotedUnitPrice(state, request, offeredStuff, offeredQuality, profile,
-                category, supply, distance, delivers, out string explanation);
-            int leadTime = LeadTimeDays(distance, delivers, supply);
+            LogisticsTransportMethod transportMethod = LogisticsQuote.MethodFor(delivers);
+            float negotiationMultiplier = IntercolonyPricing.RollSupplierNegotiationMultiplier();
+            LogisticsQuote logistics = LogisticsQuote.Create(distance, transportMethod, supply);
+            float unitPrice = QuotedUnitPriceWithLogistics(
+                state,
+                request,
+                offeredStuff,
+                offeredQuality,
+                profile,
+                category,
+                supply,
+                logistics,
+                negotiationMultiplier,
+                out string explanation);
 
             return new Quotation
             {
@@ -304,7 +315,7 @@ namespace Intercolony
                 factionName = settlement.Faction?.Name ?? "",
                 quantityOffered = offered,
                 unitPrice = unitPrice,
-                leadTimeDays = leadTime,
+                leadTimeDays = logistics.LeadTimeDays,
                 supplierDelivers = delivers,
                 distanceTiles = distance,
                 priceExplanation = explanation
@@ -518,6 +529,31 @@ namespace Intercolony
                 quantity, out explanation);
         }
 
+        public static float SupplierUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            LogisticsQuote logistics,
+            int quantity,
+            out string explanation)
+        {
+            return IntercolonyPricing.SupplierUnitPrice(
+                state,
+                def,
+                stuff,
+                quality,
+                profile,
+                category,
+                supply,
+                logistics,
+                quantity,
+                out explanation);
+        }
+
         private static float QuotedUnitPrice(
             IntercolonyWorldComponent state,
             PurchaseRequest request,
@@ -561,7 +597,7 @@ namespace Intercolony
 
             if (distance >= 0f)
             {
-                float haul = 1f + Mathf.Min(distance, 150f) * 0.0012f;
+                float haul = LogisticsQuote.DistancePriceMultiplierFor(distance);
                 factors.Add(new PriceFactor("Distance", haul));
             }
 
@@ -572,6 +608,75 @@ namespace Intercolony
             factors.Add(new PriceFactor("Negotiation", Rand.Range(0.94f, 1.1f)));
 
             factors.Add(ProcurementLogisticsFactor(delivers));
+            factors.Add(IntercolonyPricing.BuyingEconomyDifficultyFactor());
+
+            float price = baseValue;
+            foreach (PriceFactor factor in factors)
+            {
+                price *= factor.multiplier;
+            }
+
+            price = Mathf.Max(0.01f, price);
+            explanation = IntercolonyPricing.Explain(
+                request.thingDef, null, request.animalSpec, request.quantityRequested, price, factors);
+            return price;
+        }
+
+        private static float QuotedUnitPriceWithLogistics(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            LogisticsQuote logistics,
+            float negotiationMultiplier,
+            out string explanation)
+        {
+            if (!request.IsAnimalOrder)
+            {
+                return IntercolonyPricing.SupplierUnitPrice(
+                    state,
+                    request.thingDef,
+                    stuff,
+                    quality,
+                    profile,
+                    category,
+                    supply,
+                    logistics,
+                    request.quantityRequested,
+                    negotiationMultiplier,
+                    out explanation);
+            }
+
+            List<PriceFactor> factors = new List<PriceFactor>();
+            float baseValue = IntercolonyPricing.BaseValue(
+                request.thingDef, null, request.animalSpec);
+
+            factors.Add(new PriceFactor("Supplier margin", SupplierMargin));
+
+            float scarcity = Mathf.Clamp(1.6f - supply * 0.5f, 0.9f, 1.6f);
+            float supplyCondition =
+                EffectiveEconomyService.SupplyCondition(state, profile, category);
+            string scarcityLabel = Mathf.Approximately(
+                    supplyCondition, SettlementMarketState.Neutral)
+                ? "Local scarcity"
+                : supplyCondition < SettlementMarketState.Neutral
+                    ? "Local scarcity (shortage)"
+                    : "Local scarcity (surplus)";
+            factors.Add(new PriceFactor(scarcityLabel, scarcity));
+
+            if (logistics.DistanceTiles >= 0f)
+            {
+                factors.Add(new PriceFactor(
+                    "Distance", logistics.DistancePriceMultiplier));
+            }
+
+            float wealth = profile.wealthTier >= IntercolonyWealthTier.Comfortable ? 1.08f : 0.96f;
+            factors.Add(new PriceFactor("Supplier standing", wealth));
+            factors.Add(new PriceFactor("Negotiation", negotiationMultiplier));
+            factors.Add(IntercolonyPricing.SupplierLogisticsFactor(logistics));
             factors.Add(IntercolonyPricing.BuyingEconomyDifficultyFactor());
 
             float price = baseValue;
@@ -609,15 +714,8 @@ namespace Intercolony
 
         internal static int LeadTimeDays(float distance, bool delivers, float supply)
         {
-            // Pickup is "ready in N days"; delivery adds travel on top.
-            int prep = Mathf.RoundToInt(Mathf.Lerp(5f, 1f, Mathf.Clamp01(supply / 2f)));
-            if (!delivers)
-            {
-                return Mathf.Max(1, prep + Rand.RangeInclusive(0, 2));
-            }
-
-            int travel = distance < 0f ? 3 : Mathf.RoundToInt(distance / 12f);
-            return Mathf.Max(1, prep + travel);
+            return LogisticsQuote.Create(
+                distance, LogisticsQuote.MethodFor(delivers), supply).LeadTimeDays;
         }
 
         /// <summary>Lapses requests past their expiry. Called from the coarse refresh.</summary>

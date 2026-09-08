@@ -452,6 +452,95 @@ namespace Intercolony
             int quantity,
             out string explanation)
         {
+            LogisticsTransportMethod transportMethod = LogisticsQuote.MethodFor(delivers);
+            return SupplierUnitPriceCore(
+                state,
+                def,
+                stuff,
+                quality,
+                profile,
+                category,
+                supply,
+                distance,
+                LogisticsQuote.DistancePriceMultiplierFor(distance),
+                SupplierLogisticsFactor(transportMethod),
+                quantity,
+                RollSupplierNegotiationMultiplier(),
+                out explanation);
+        }
+
+        /// <summary>Prices a standing offer from the already-produced logistics quote.</summary>
+        internal static float SupplierUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            LogisticsQuote logistics,
+            int quantity,
+            out string explanation)
+        {
+            return SupplierUnitPrice(
+                state,
+                def,
+                stuff,
+                quality,
+                profile,
+                category,
+                supply,
+                logistics,
+                quantity,
+                RollSupplierNegotiationMultiplier(),
+                out explanation);
+        }
+
+        /// <summary>Pricing entry point used when RFQ must preserve its pre-jitter RNG order.</summary>
+        internal static float SupplierUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            LogisticsQuote logistics,
+            int quantity,
+            float negotiationMultiplier,
+            out string explanation)
+        {
+            return SupplierUnitPriceCore(
+                state,
+                def,
+                stuff,
+                quality,
+                profile,
+                category,
+                supply,
+                logistics.DistanceTiles,
+                logistics.DistancePriceMultiplier,
+                SupplierLogisticsFactor(logistics),
+                quantity,
+                negotiationMultiplier,
+                out explanation);
+        }
+
+        private static float SupplierUnitPriceCore(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            float distance,
+            float distanceMultiplier,
+            PriceFactor logisticsFactor,
+            int quantity,
+            float negotiationMultiplier,
+            out string explanation)
+        {
             List<PriceFactor> factors = new List<PriceFactor>();
             float baseValue = BaseValue(def, stuff);
 
@@ -478,14 +567,13 @@ namespace Intercolony
 
             if (distance >= 0f)
             {
-                factors.Add(new PriceFactor(
-                    "Distance", 1f + Mathf.Min(distance, 150f) * 0.0012f));
+                factors.Add(new PriceFactor("Distance", distanceMultiplier));
             }
 
             float wealth = profile.wealthTier >= IntercolonyWealthTier.Comfortable ? 1.08f : 0.96f;
             factors.Add(new PriceFactor("Supplier standing", wealth));
-            factors.Add(new PriceFactor("Negotiation", Rand.Range(0.94f, 1.1f)));
-            factors.Add(SupplierLogisticsFactor(delivers));
+            factors.Add(new PriceFactor("Negotiation", negotiationMultiplier));
+            factors.Add(logisticsFactor);
             factors.Add(BuyingEconomyDifficultyFactor());
 
             float price = baseValue;
@@ -502,9 +590,31 @@ namespace Intercolony
         /// <summary>Supplier delivery premium used by procurement price formation.</summary>
         public static PriceFactor SupplierLogisticsFactor(bool supplierDelivers)
         {
-            return supplierDelivers
-                ? new PriceFactor("Supplier delivery", 1.12f)
-                : new PriceFactor("You collect", 1f);
+            return SupplierLogisticsFactor(LogisticsQuote.MethodFor(supplierDelivers));
+        }
+
+        internal static PriceFactor SupplierLogisticsFactor(
+            LogisticsTransportMethod transportMethod)
+        {
+            return new PriceFactor(
+                transportMethod == LogisticsTransportMethod.SupplierDelivery
+                    ? "Supplier delivery"
+                    : "You collect",
+                LogisticsQuote.TransportPriceMultiplierFor(transportMethod));
+        }
+
+        internal static PriceFactor SupplierLogisticsFactor(LogisticsQuote logistics)
+        {
+            return new PriceFactor(
+                logistics.TransportMethod == LogisticsTransportMethod.SupplierDelivery
+                    ? "Supplier delivery"
+                    : "You collect",
+                logistics.TransportPriceMultiplier);
+        }
+
+        internal static float RollSupplierNegotiationMultiplier()
+        {
+            return Rand.Range(0.94f, 1.1f);
         }
 
         /// <summary>
