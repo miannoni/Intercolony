@@ -165,6 +165,27 @@ the reason for adding it. Watch for **Logistics: unavailable** in normal play; i
 a common result means a derivation case is missing. Finally, judge whether cost and method are better
 read together on one line or would be clearer separated.
 
+### F11 Request Goods replies need a pacing read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. Request Goods replies no longer all
+appear at once. Quotes are still generated the moment the request is made, so no price changed; what
+changed is when the player learns them. A nearer settlement answers sooner. A request that is still
+waiting says **"3 supplier responses are still coming."** One letter arrives when the **LAST**
+outstanding reply lands, matching the existing letter for a job posting drawing applicants.
+
+**Steps.** Watch the replies arrive in a real world. The important question is the delay: the observed
+delays are **five to twenty days** — 28 tiles gave five days and 186 tiles gave twenty. Twenty days
+for a price quote is a long time in RimWorld. Ask whether that reads as a living market or as an
+unusable delay, and whether the player abandons distant suppliers simply because the answer takes too
+long. Then judge whether one letter at the end is enough notice or replies are easy to miss, and
+whether waiting for quotes is more interesting than having them instantly — the whole premise of the
+finding.
+
+A fixed defect is worth confirming by hand. Distant suppliers' replies were being **DELETED** before
+they could arrive because a request expired after six days while a far supplier needed seventeen. It
+is fixed and asserted. Ask a genuinely distant settlement for a quote and confirm that it eventually
+produces one.
+
 ### F21's larger ask and F11 are deliberate stops
 
 Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. The larger F21 ask is not built.
