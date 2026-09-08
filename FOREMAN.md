@@ -1,50 +1,62 @@
 ﻿# Foreman state — Intercolony
 
-Stage: 6 — Business intelligence and costing (F07, F19, F20). Stage 7's F25 is closed; F23, F24 and
-F22 remain open and come after stage 6 in the dependency order.
-Unit: 6.1 — schema 57→58, the migration, and the persisted production history F07 and F20 read
-Worker: none
-Last done: 7.8 — trimmed this file. Before it, F25 closed complete at `d8ad4ed`.
-Updated: 2026-09-08, wake 115
-Wakes: 115 · last full load at wake 111
+Stage: 5 reopened for one unit — F11. **STAGES 6 AND 7's F25 ARE CLOSED.**
+Unit: 5.9 — F11: Request Goods responses arrive progressively instead of all at once
+Worker: running — `…\scratchpad\unit-5-9.out`
+Last done: 6.6 at `927dd8a`, closing stage 6. F07, F19 and F20 are all built, each with assertions
+watched going red for the right reason, and the 57→58 migration verified against a real schema-57
+save.
+Updated: 2026-09-08, wake 142
+Wakes: 142 · last full load at wake 142
 
-NOTHING IS BLOCKED ON A HUMAN. The operator answered both decisions YES on 2026-09-08: the schema
-may move 57→58 with a migration and prior-save verification, and one narrowly scoped observational
-Harmony patch may go on vanilla's crafting completion. F06 is placed as stage 9. Scope, wording and
-the F20 qualification are in the RESUME BRIEF below, which is what a cold session should read first.
+READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST.
 
-WHAT 6.1 NEEDS FROM THE OPERATOR, and it is the only thing outstanding: **prior-save verification
-needs a real pre-58 save.** A `-quicktest` launch generates a world already at the current schema
-and never enters the migration path, so it cannot prove a migration. The route is the
-autostart-a-copy technique in `CLAUDE.md` — autostart a COPY, never the original, and delete it
-afterwards or it hijacks every later launch including `-Fresh`.
+TWO DRIFTS FOUND AT THIS FULL LOAD, AND BOTH ARE MINE.
 
-F25's RESULT, so nobody re-derives it: the posting dialog asks for a requirement and reports the
-going rate; who applies is decided by the requirement alone; a worker who qualifies for several
-postings takes the one that pays them most; the waiting list is a deterministic seeded spread rather
-than the strongest few; a hired applicant is paid their own ask. Suite 1484/0/16, log clean, on two
-independently generated worlds. Every assertion was watched going red for the right reason.
+**1. I missed the tenth-wake full load for thirty wakes.** The counter read
+`141 · last full load at wake 111`. The cadence exists to catch exactly the kind of drift listed
+below, and skipping it is why both went unnoticed. Reset here.
 
-TWO DEFECTS WERE INTRODUCED AND FIXED INSIDE F25, both mine, both from one reasoning error — I made
-the dialog stop writing `wageOffered` and checked that the field still persisted without checking
-who READS it. Postings were silently deleted on load (`74e42fe`, asserted `3125bd6`) and could not
-be created at all (`fbb5290`). **When a field stops being written, grep every reader before assuming
-it can quietly hold its default.** A default is only harmless if nothing treats it as meaningful,
-and a `> 0` validity check treats zero as corruption.
+**2. Units have been running 30 to 60 minutes against an explicit 5-10 minute instruction.** 6.5 and
+6.5b each ran roughly an hour. The reason the operator gave for the limit is that a wrong long task
+has usually had things built on top of the mistake before anyone looks. Nothing has gone wrong yet,
+but that is luck rather than method. **Cut the next units smaller: split investigation from
+implementation, and split production from assertions even when they feel like one thought.**
 
-THREE THINGS THIS STAGE TAUGHT THE SUITE, worth carrying into stage 6:
-  - **The seam nobody asserts is the seam between the caller and the service.** A suite that only
-    ever calls the service will never see a dead user-facing path; 29 assertions passed over a
-    feature the player could not use.
-  - **`interested` comes from a counting helper and `queued` comes from the matcher.** An assertion
-    about matching that reads only the helper is hollow and stays green while matching is broken.
-  - **A skip is not evidence.** A mutation run that skips the target assertion proves nothing; read
-    the skip line, never just the counts.
+**3. This file's header grew back to 274 lines** by appending a block per unit — the same failure
+`9133ca7` fixed. The body is still trimmed; only the header regrew. Do not append a new block per
+unit: REPLACE the working note each time, and let the commit messages hold the history.
 
-Owed to the operator, all recorded in `docs/PENDING_PLAYTESTS.md`: sixteen play observations across
-stages 1-7. Three matter more than the rest — the F15 save-compatibility check, the partial-delivery
-defect in `DeliverToColony` which costs the player silver and needs a design decision, and F25's
-market read, which asks whether the waiting list actually feels like a market to choose from.
+WHAT PASSED THE CHECK: one worker at a time throughout; nothing committed without a suite run; every
+unit that added an assertion had it watched going red for the right reason; the cron is alive;
+reports have stayed to the tables.
+
+DEPENDENCY ORDER FROM HERE:
+  1. **F11**, running now — the RFQ pending-response queue, additive on schema 58.
+  2. **F23, F24, F22** — the rest of stage 7. Each needs new persisted state per `RECON_STAGE7.md`,
+     all additive on 58, none needing a Harmony patch, which is just as well: the allowance is spent
+     on the crafting-completion postfix.
+  3. **Stage 8** — F08, F09. Recon first.
+  4. **Stage 9** — F06. Recon first; it has had none, and the run cannot complete without it.
+
+STANDING RULES THIS RUN HAS LEARNED, all paid for:
+  - **When a field stops being written, grep every reader.** A default is only harmless if nothing
+    treats it as meaningful, and a `> 0` validity check treats zero as corruption. This cost two
+    defects in one commit.
+  - **The seam nobody asserts is the one between the caller and the service.** A suite that only
+    calls the service will never see a dead user-facing path.
+  - **A skip is not evidence**, and a mutation run that skips its target assertion proves nothing.
+  - **A mutation that fails to compile looks exactly like one that found nothing.** Assert the
+    anchor is unique before editing, and read the run's own log rather than the summary line.
+  - **Never let a zero mean unknown.** Say it in words. Nine occasions and counting.
+  - Use `dev.ps1 bridge -Save`, not `run -Save`, to load a save: only the bridge path stages the
+    autostart copy. A migration check that quietly does not run looks exactly like one that passed.
+
+Owed to the operator, all in `docs/PENDING_PLAYTESTS.md`: nineteen play observations across stages
+1-7. The three that matter most are the F15 save-compatibility check, the partial-delivery defect in
+`DeliverToColony` which costs the player silver and needs a design decision, and F20's equal wage
+split — someone who only ever makes chairs still has half their wage charged to tables, which no
+assertion can judge.
 Foreman: 10ee860 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md`, follow it,
 then re-run its section 0.
@@ -53,8 +65,14 @@ then re-run its section 0.
 
 ## RESUME BRIEF — written 2026-09-08 for a context compaction
 
-HEAD `a564c18` on `foreman/playtest-batch-2026-09-06`. Working tree: `FOREMAN.md` modified (this
-edit), `Playtesting annotations.docx` untracked and not ours. Suite last green at 1476/0/17.
+**THIS BRIEF IS PARTLY STALE AND IS BEING REWRITTEN — read the header above first, it is current.**
+Everything below was written on 2026-09-08 before stages 6 and 7 were worked. What is still TRUE and
+worth reading: the finding-disposition table for stages 1 to 5, the F06 gap and its stage-9
+placement, both operator decisions with their scope and the F20 qualification, and the stage-6 seam
+map. What is STALE: the HEAD, the "a worker is running" note, and any row for F25, F07, F19 or F20 —
+all four are built, and the header and the git log are authoritative over this section.
+
+HEAD when this was written: `a564c18`. Suite then 1476/0/17; it is now 1498/0/16.
 
 UPDATED AFTER THE COMPACTION, 2026-09-08 12:40. The stage-7 recon finished and is committed at
 `a564c18` as `RECON_STAGE7.md`. It changes one thing in the picture below: **F25 is not blocked.**
