@@ -9,17 +9,17 @@ namespace Intercolony
     /// <summary>
     /// Writing a job advertisement (DESIGN.md §35.2, §114).
     ///
-    /// §35.2's example screen has three lines — requirement, duration, wage offered — and this is
-    /// those three plus the two terms every employment already carries (§37's wage structure and
-    /// §42's combat clause), because an applicant is accepting all of it at once. The posting itself
-    /// names no number of positions: it stays open and the player hires as many applicants as they
-    /// like.
+    /// §35.2's example screen has three lines — requirement, duration and market information — and
+    /// this is those three plus the two terms every employment already carries (§37's wage
+    /// structure and §42's combat clause), because an applicant is accepting all of it at once.
+    /// The posting itself names no number of positions: it stays open and the player hires as many
+    /// applicants as they like.
     ///
-    /// The going-rate band is the difference between this and a blind guess. It is **measured, not
-    /// modelled**: it asks the same question the matcher will ask, of the same pool, so the numbers
-    /// shown are the numbers that will decide who applies. A band rather than a figure because the
-    /// requirement genuinely spans a range — a Construction 10 labourer next door and a
-    /// Construction 18 master across the planet both qualify and do not cost the same.
+    /// The going-rate band is **measured, not modelled**: it asks the same question the matcher will
+    /// ask, of the same pool, so the numbers shown describe the workers who can answer. A band
+    /// rather than a figure because the requirement genuinely spans a range — a Construction 10
+    /// labourer next door and a Construction 18 master across the planet both qualify and do not
+    /// cost the same.
     /// </summary>
     public class Dialog_CreateJobPosting : Window
     {
@@ -27,8 +27,8 @@ namespace Intercolony
         private const float WindowMargin = 18f;
 
         /// <summary>
-        /// This is a dense form — a title, up to three labelled sliders with scale text, a wage
-        /// field row, two option columns and three summary lines — and genuinely needs the room.
+        /// This is a dense form — a title, requirement controls, one market-rate row and two option
+        /// columns — and genuinely needs the room.
         /// Capped short of the full screen only so the window never touches the edges.
         /// </summary>
         private const float MaxScreenHeightFraction = 0.95f;
@@ -82,13 +82,10 @@ namespace Intercolony
         private const float SliderWidth = 460f;
 
         private const float SkillButtonWidth = 200f;
-        private const float WageFieldWidth = 90f;
-        private const float WageUnitWidth = 120f;
-        private const float MatchTopButtonWidth = 140f;
 
         private const string IntroText =
-            "You name the terms and the wage. Workers who can do the job, and who will work for " +
-            "what you are offering, apply as the market brings them past.";
+            "You name the requirement. Workers who qualify apply, and each one quotes their own " +
+            "price, which you see before accepting anyone.";
 
         private readonly IntercolonyWorldComponent state;
         private readonly Action<SkillDef, int, int, int, WageStructure, CombatClause> onConfirm;
@@ -96,11 +93,9 @@ namespace Intercolony
         private SkillDef skill;
         private int minLevel = 8;
         private int termDays = 20;
-        private int wageOffered = 30;
         private WageStructure structure = WageStructure.Daily;
         private CombatClause clause = CombatClause.Civilian;
 
-        private string wageBuffer;
         private Vector2 optionsScroll;
 
         /// <summary>Cached band, recomputed only when an input that feeds it changes.</summary>
@@ -121,8 +116,6 @@ namespace Intercolony
                 ? SkillDefOf.Construction
                 : null;
 
-            wageBuffer = wageOffered.ToString();
-
             doCloseX = true;
             forcePause = true;
             absorbInputAroundWindow = true;
@@ -135,11 +128,7 @@ namespace Intercolony
                 Text.Font = GameFont.Small;
                 RefreshRate();
                 float contentWidth = ContentWidth(WindowWidth - WindowMargin * 2f);
-                BuildSummaries(out string totalSummary, out string upFrontSummary,
-                    out string deathSummary);
-                float fixedHeight = WindowMargin * 2f + BottomButtonsHeight +
-                                    SummaryHeight(contentWidth, totalSummary, upFrontSummary,
-                                        deathSummary);
+                float fixedHeight = WindowMargin * 2f + BottomButtonsHeight;
                 float contentHeight = OptionsHeight(contentWidth);
                 float height = Mathf.Min(fixedHeight + contentHeight,
                     UI.screenHeight * MaxScreenHeightFraction);
@@ -151,16 +140,9 @@ namespace Intercolony
         public override void DoWindowContents(Rect inRect)
         {
             Text.Font = GameFont.Small;
-            BuildSummaries(out string totalSummary, out string upFrontSummary,
-                out string deathSummary);
             float contentWidth = ContentWidth(inRect.width);
-            float totalSummaryHeight = Text.CalcHeight(totalSummary, contentWidth);
-            float upFrontSummaryHeight = Text.CalcHeight(upFrontSummary, contentWidth);
-            float deathSummaryHeight = Text.CalcHeight(deathSummary, contentWidth);
-            float summaryHeight = SummaryHeight(contentWidth, totalSummary, upFrontSummary,
-                deathSummary);
             float bottom = inRect.height - BottomButtonsHeight;
-            float optionsBottom = bottom - summaryHeight;
+            float optionsBottom = bottom;
             Rect optionsRect = new Rect(ContentLeft, 0f, contentWidth + ScrollbarGutter,
                 Mathf.Max(1f, optionsBottom));
             RefreshRate();
@@ -180,20 +162,9 @@ namespace Intercolony
                 Widgets.EndScrollView();
             }
 
-            float y = optionsBottom + SectionGap;
-
-            GUI.color = new Color(1f, 1f, 1f, 0.7f);
-            Widgets.Label(new Rect(ContentLeft, y, contentWidth, totalSummaryHeight), totalSummary);
-            y += totalSummaryHeight + RowGap;
-            Widgets.Label(new Rect(ContentLeft, y, contentWidth, upFrontSummaryHeight),
-                upFrontSummary);
-            y += upFrontSummaryHeight + RowGap;
-            Widgets.Label(new Rect(ContentLeft, y, contentWidth, deathSummaryHeight), deathSummary);
-            GUI.color = Color.white;
-
             if (Widgets.ButtonText(new Rect(ContentLeft, bottom, 170f, 36f), "Post"))
             {
-                onConfirm?.Invoke(skill, minLevel, termDays, wageOffered, structure,
+                onConfirm?.Invoke(skill, minLevel, termDays, 0, structure,
                     clause);
                 Close();
             }
@@ -259,51 +230,14 @@ namespace Intercolony
 
             RefreshRate();
 
-            // Wage row: label, field, unit, Match top — all on the controls column x.
-            float wageLabelHeight = Text.CalcHeight("Wage offered", LabelColumnWidth);
-            float wageRowHeight = Mathf.Max(wageLabelHeight, ControlRowHeight);
-            DrawRowLabel("Wage offered", y, wageRowHeight);
-
-            float fieldX = controlsX;
-            float unitX = fieldX + WageFieldWidth + RowGap;
-            float matchX = controlsX + SliderWidth - MatchTopButtonWidth;
-
-            int typed = wageOffered;
-            Widgets.TextFieldNumeric(new Rect(fieldX, y, WageFieldWidth, ControlRowHeight),
-                ref typed, ref wageBuffer, 1, 9999);
-            if (typed != wageOffered)
-            {
-                wageOffered = typed;
-            }
-
-            Widgets.Label(new Rect(unitX, y, WageUnitWidth, ControlRowHeight), "silver / day");
-            if (rateValid && Widgets.ButtonText(
-                    new Rect(matchX, y, MatchTopButtonWidth, ControlRowHeight),
-                    $"Match top ({rateHigh})"))
-            {
-                SetWage(rateHigh);
-            }
-
-            y += wageRowHeight + RowGap;
-
-            // Wage slider row, directly beneath the field, same controls column x and width.
-            float slid = wageOffered;
-            int sliderMax = Mathf.Max(rateValid ? rateHigh * 2 : 100, wageOffered);
-            DrawLabeledSlider(controlsX, y, ref slid, 1f, sliderMax, "1",
-                $"{wageOffered} silver/day", $"{sliderMax}", 1f);
-            if (Mathf.RoundToInt(slid) != wageOffered)
-            {
-                SetWage(Mathf.RoundToInt(slid));
-            }
-            y += SliderRowHeight;
-
+            // Market row: the requirement is posted, and each qualifying worker quotes a price.
             float rateAdviceHeight = RateAdviceHeight(width - controlsX);
             DrawRowLabel("Going rate", y, rateAdviceHeight);
             y = DrawRateAdvice(controlsX, width - controlsX, y);
 
             y = DrawSectionDivider(width, y);
 
-            // Clause / Paid columns — unchanged.
+            // Clause / Paid columns.
             float columnWidth = (width - OptionColumnGap) / 2f;
             float clauseHeight = ClauseColumnHeight(columnWidth);
             float structureHeight = StructureColumnHeight(columnWidth);
@@ -315,7 +249,7 @@ namespace Intercolony
             {
                 CombatClause captured = option;
                 clauseY = LaborOptionRows.Draw(columnWidth, clauseY,
-                    CombatClauseUtility.Summary(option, wageOffered), option.Explain(),
+                    option.LabelCap(), option.Explain(),
                     clause == option, () =>
                     {
                         clause = captured;
@@ -332,8 +266,11 @@ namespace Intercolony
             {
                 WageStructure captured = option;
                 structureY = LaborOptionRows.Draw(columnWidth, structureY, StructureTitle(option),
-                    WageStructureUtility.Explain(option, wageOffered, termDays), structure == option,
-                    () => structure = captured);
+                    StructureExplanation(option), structure == option, () =>
+                    {
+                        structure = captured;
+                        rateKey = int.MinValue;
+                    });
             }
             GUI.EndGroup();
         }
@@ -429,10 +366,6 @@ namespace Intercolony
             height += SliderRowHeight;
             height += SectionGap;
 
-            float wageLabelHeight = Text.CalcHeight("Wage offered", LabelColumnWidth);
-            float wageRowHeight = Mathf.Max(wageLabelHeight, ControlRowHeight);
-            height += wageRowHeight + RowGap;
-            height += SliderRowHeight;
             height += RateAdviceHeight(width - controlsX);
             height += SectionGap;
 
@@ -447,8 +380,7 @@ namespace Intercolony
             float height = Text.CalcHeight("Clause:", width);
             foreach (CombatClause option in CombatClauseUtility.All)
             {
-                height += LaborOptionRows.Height(CombatClauseUtility.Summary(option, wageOffered),
-                    option.Explain(), width);
+                height += LaborOptionRows.Height(option.LabelCap(), option.Explain(), width);
             }
             return height;
         }
@@ -460,44 +392,29 @@ namespace Intercolony
                      new[] { WageStructure.Prepaid, WageStructure.Quadrum, WageStructure.Daily })
             {
                 height += LaborOptionRows.Height(StructureTitle(option),
-                    WageStructureUtility.Explain(option, wageOffered, termDays), width);
+                    StructureExplanation(option), width);
             }
             return height;
         }
 
-        private void BuildSummaries(out string totalSummary, out string upFrontSummary,
-            out string deathSummary)
+        private static string StructureTitle(WageStructure option)
         {
-            int total = WageStructureUtility.TotalCost(structure, wageOffered, termDays);
-            int upFront = WageStructureUtility.UpFrontCost(structure, wageOffered, termDays);
-            int death = wageOffered * clause.DeathCompensationDays();
-            totalSummary =
-                $"Each worker you take on: {total} silver over the full term.";
-            upFrontSummary = structure == WageStructure.Prepaid
-                ? $"Due when you take on each applicant: {upFront} silver for the whole term, paid at once."
-                : $"Due when you take on each applicant: {upFront} silver signing fee.";
-            deathSummary = $"Compensation if one of them dies: {death} silver each.";
+            return option.Label().CapitalizeFirst();
         }
 
-        private static float SummaryHeight(float width, string totalSummary,
-            string upFrontSummary, string deathSummary)
+        private static string StructureExplanation(WageStructure option)
         {
-            return SectionGap + Text.CalcHeight(totalSummary, width) + RowGap +
-                   Text.CalcHeight(upFrontSummary, width) + RowGap +
-                   Text.CalcHeight(deathSummary, width) + SectionGap;
-        }
-
-        private string StructureTitle(WageStructure option)
-        {
-            int total = WageStructureUtility.TotalCost(option, wageOffered, termDays);
             switch (option)
             {
                 case WageStructure.Prepaid:
-                    return $"Prepaid — {total} silver total";
+                    return "Pay the worker's quoted rate for the whole term at hire. Cheapest total, " +
+                           "but the silver is spent if they die or you change your mind.";
                 case WageStructure.Daily:
-                    return $"Daily — {total} silver total";
+                    return "Pay a signing fee, then the worker's quoted rate at the end of each day. " +
+                           "Most flexible, but the dearest arrangement.";
                 default:
-                    return $"Per quadrum — {total} silver total";
+                    return "Pay a signing fee, then the worker's quoted rate every quadrum. A short " +
+                           "term pays the remainder pro rata at the end.";
             }
         }
 
@@ -511,7 +428,7 @@ namespace Intercolony
 
         /// <summary>
         /// The going rate is a labelled value; the tooltip explains why it moves.
-        /// Drawn starting at the controls column x so it aligns under the wage controls above it.
+        /// Drawn starting at the controls column x so it aligns with the requirement controls above it.
         /// </summary>
         private float DrawRateAdvice(float x, float width, float y)
         {
@@ -527,23 +444,25 @@ namespace Intercolony
 
         private string GoingRateText()
         {
-            string workers = $"{qualified} reachable worker{(qualified == 1 ? "" : "s")}";
-            if (!rateValid)
+            if (!rateValid || qualified == 0)
             {
-                return $"{workers} can do this job; no daily ask is available.";
+                return "Nobody reachable can do this work.";
             }
 
             string ask = rateLow == rateHigh
-                ? $"{rateLow} silver"
-                : $"{rateLow}–{rateHigh} silver";
-            return $"{workers} can do this job; they ask {ask} per day.";
+                ? $"{rateLow} silver per day"
+                : $"{rateLow}–{rateHigh} silver per day";
+            string workerNoun = $"{qualified} qualifying worker{(qualified == 1 ? "" : "s")}";
+            string verb = qualified == 1 ? "asks" : "ask";
+            return $"{workerNoun} {verb} {ask}.";
         }
 
         private string GoingRateTooltip()
         {
             string standing = EmployerStandingLabel();
-            return $"Employer standing: {standing}. Workers' daily asks include your standing " +
-                   "as an employer, so this rate moves with your record.";
+            return $"This band uses the selected pay structure. Employer standing: {standing}. " +
+                   "Workers' asks include your standing as an employer, so this rate moves with " +
+                   "your record.";
         }
 
         private string EmployerStandingLabel()
@@ -557,12 +476,13 @@ namespace Intercolony
         ///
         /// Not an optimisation for its own sake: the band walks the whole world pool, and GUI code
         /// runs at least twice a frame. Recomputing every frame would price forty workers a hundred
-        /// times a second while the player drags the wage slider — which does not even affect it.
+        /// times a second while the player adjusts a requirement control.
         /// </summary>
         private void RefreshRate()
         {
             int key = Gen.HashCombineInt(
-                skill?.shortHash ?? 0, minLevel, termDays, (int)clause);
+                Gen.HashCombineInt(skill?.shortHash ?? 0, minLevel, termDays, (int)clause),
+                (int)structure);
             if (key == rateKey)
             {
                 return;
@@ -570,14 +490,8 @@ namespace Intercolony
 
             rateKey = key;
             rateValid = JobPostingService.GoingRate(
-                state, skill, minLevel, termDays, clause,
+                state, skill, minLevel, termDays, clause, structure,
                 out rateLow, out rateHigh, out qualified);
-        }
-
-        private void SetWage(int value)
-        {
-            wageOffered = Mathf.Clamp(value, 1, 9999);
-            wageBuffer = wageOffered.ToString();
         }
 
         private void OpenSkillMenu()
