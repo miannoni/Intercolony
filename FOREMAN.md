@@ -4,29 +4,26 @@ Stage: 7 — Two-sided labour market. NOTHING IS BLOCKED ON A HUMAN. The operato
 decisions YES on 2026-09-08: schema 57→58 with a migration and prior-save verification, and one
 narrowly scoped observational Harmony patch on crafting completion. Stage 6 is next after F25, and
 F06 is now stage 9. The dependency order is in "Next executable work" in the brief below.
-Unit: 7.2c — replace the five assertions the deleted wage filter left behind
-Worker: verification script running — baseline plus two mutations, `…\scratchpad\verify-7-2c.out`
-Last done: 7.2 + 7.2b at `8ac8a9f`. The posted wage no longer decides who applies or who waits: a
-worker applies iff they meet the requirement, a worker who qualifies for several postings takes the
-one that pays them most, and each posting's waiting list is a deterministic seeded spread of the
-qualified pool rather than its top N by skill. That landed the suite deliberately red at 27/2/0.
-Updated: 2026-09-08, wake 93
-Wakes: 93 · last full load at wake 85
+Unit: 7.2d — the three assertions F25 still has none of
+Worker: running — `…\scratchpad\unit-7-2d.out`
+Last done: 7.2c at `680c39e`. Suite green again at 26/0/0, and this time with mutation evidence:
+M1 (the requirement stops testing the minimum level) reddens A1, A2 and the silence explanation;
+M2 (a wage filter restored in `MatchAll`) reddens A3 and nothing else.
+Updated: 2026-09-08, wake 94
+Wakes: 94 · last full load at wake 85
 
 READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST — every finding's disposition, the answered
 decisions and their scope, the stage-6 seams, the F06 placement, and the dependency order.
 
-WHAT 7.2c MUST SURVIVE. It rewrites assertions for a mechanism that was deleted, which is the exact
-situation in which a suite gets quietly weakened until it passes. So each new assertion was
-specified with what it must be able to FAIL on, and it is not accepted on a green run:
-  A1 a higher skill minimum reaches no more workers, and a demanding one reaches materially fewer;
-  A2 a high minimum yields better applicants;
-  A3 THE POSTED WAGE CHANGES NOTHING — the new invariant, guarding against a future refactor
-     restoring a comparison against a field that is still saved and still sits on the posting.
-Mutations being applied to prove they can go red: M1 drops the minimum-level test from
-`JobPosting.MeetsRequirement(LaborProspect)`, which must redden A1 and A2; M2 reintroduces a wage
-filter in `MatchAll`, which must redden A3. 7.2c's own suggested A2 mutation was garbled and did not
-match any code — I wrote M1 and M2 myself.
+THE MOST USEFUL THING LEARNED THIS STAGE, and it must not be lost. Under M1 the per-minimum
+"interested" counts still fell — 620, 350, 144, 54, 14, 0 — because `CountInterested` filters
+independently of the matcher. An assertion resting on that number alone would have stayed GREEN
+while the matcher had stopped filtering entirely. A1 went red only on its third clause, that a
+demanding posting must QUEUE fewer people than an open one; the matcher had queued its full six for
+a 20+ posting nobody on the planet qualified for. A3 behaved the same way under M2 — "interested"
+was 573 either side, and only the queued count differed. **In this suite, `interested` comes from a
+counting helper and `queued` comes from the matcher. An assertion about matching that reads only
+`interested` is hollow.**
 
 STILL OWED, and not asserted anywhere — unit 7.2d:
   - the waiting list is a SPREAD, not the top N by skill. This guards 7.2b's central decision and
