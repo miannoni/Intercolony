@@ -1,6 +1,9 @@
 # Foreman state — Intercolony
 
-Stage: 7 — Two-sided labor market (stage 6 is BLOCKED)
+Stage: 7 — Two-sided labor market. NOTHING IS BLOCKED ON A HUMAN ANY MORE: the operator answered
+both decisions YES on 2026-09-08 — schema 57→58 with migration and prior-save verification, and one
+narrowly scoped observational Harmony patch on crafting completion. Stage 6 is next after F25.
+F06 is now stage 9. See "Next executable work" in the brief for the dependency order.
 Unit: 7.1 — F25 slice 1: a hired applicant is contracted at their own ask, not the posted wage
 Worker: running — `…\scratchpad\unit-7-1.out`
 Last done: 7.0 — recon, committed a564c18. STAGE 7 IS PARTLY OPEN: F25 needs no schema bump and no
@@ -11,7 +14,7 @@ makes them a lighter blocker than stage 6's. STAGE 6 REMAINS BLOCKED: F07, F19 a
 schema bump and a new patch on vanilla's crafting completion, because nothing observes an item
 being made.
 Updated: 2026-09-08 12:40 (session compacted; run resumed from the RESUME BRIEF below)
-Wakes: 85 · last full load at wake 85
+Wakes: 86 · last full load at wake 85
 READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST — it carries every finding's disposition, the
 two pending operator decisions, the stage-6 seams, and the F06 gap. Written for a compaction.
 
@@ -34,10 +37,15 @@ UPDATED AFTER THE COMPACTION, 2026-09-08 12:40. The stage-7 recon finished and i
 `a564c18` as `RECON_STAGE7.md`. It changes one thing in the picture below: **F25 is not blocked.**
 It needs no schema bump and no new Harmony patch, because `JobPosting.cs:154` already persists each
 applicant's `openMarketAsk` and `LaborCandidateService.cs:269-274` regenerates the census rather
-than saving it. F23, F24 and F22 do need new persisted state and wait on the schema decision; none
-of them needs a Harmony patch. Unit 7.1 is running against F25 and is the first work in this batch
-that is neither recon nor documentation since stage 5 closed. The two operator decisions below are
-still unanswered and still gate stage 6 in full, plus F11, F23, F24 and F22.
+than saving it. F23, F24 and F22 do need new persisted state; none of them needs a Harmony patch.
+Unit 7.1 is running against F25 and is the first work in this batch that is neither recon nor
+documentation since stage 5 closed.
+
+**SUPERSEDED LATER THE SAME DAY: both operator decisions came back YES.** The schema may move
+57→58 with a migration and prior-save verification, and one narrowly scoped observational patch may
+go on crafting completion. F11, F07, F19, F20, F23, F24 and F22 are all unblocked; F06 is placed as
+stage 9. Read the decisions section and "Next executable work" below — they are current, and any
+sentence anywhere in this file calling something blocked is older than they are.
 
 My one design call on F25, made rather than escalated because the source plan already decides the
 substance: `wageOffered` stays exactly as it is saved, so old open postings keep their shape, and
@@ -77,10 +85,20 @@ A worker IS RUNNING: unit 7.0, stage-7 recon, output at
 `docs/PLAYTEST_BATCH_SOURCE_PLAN.md:338` is "F06 — Optional apparel policies for employees". The
 stage table in this file covers 24 findings and F06 is not one of them. The table predates this
 session and the omission was inherited, not introduced, but it was also not caught until now. F06
-has had NO recon and NO work. It must be placed in a stage — most naturally with the employee work
-in stage 3, which is closed, so it needs a stage of its own or an explicit decision to drop it.
+has had NO recon and NO work.
 
-### THE TWO PENDING OPERATOR DECISIONS — preserve verbatim
+**DISPOSITION, decided 2026-09-08: F06 becomes STAGE 9, and the run cannot complete without it.**
+The operator required an executable stage or disposition, and dropping it was not chosen. Its
+natural home was stage 3 (employee UX), which is closed, and reopening a closed stage to bolt on an
+unreconnoitred finding is worse than giving it its own. Stage 9 runs last because it depends on
+nothing: apparel policy is per-employee configuration, not economy state. It starts with a recon
+unit — 9.0 — because unlike every other finding in this batch, nobody has yet established where it
+would attach or whether it needs persisted state of its own. If that recon finds it needs a schema
+change a default cannot express, that is the second bump and it returns to the operator.
+
+### THE TWO OPERATOR DECISIONS — BOTH ANSWERED YES, 2026-09-08
+
+The questions, kept verbatim because the answers only mean something beside them:
 
 1. **May `IntercolonyWorldComponent.CurrentSaveVersion` move from 57 to 58, with a migration?**
    Its comment requires a bump plus a `MigrateIfNeeded` step whenever the saved shape changes. No
@@ -88,8 +106,32 @@ in stage 3, which is closed, so it needs a stage of its own or an explicit decis
    survive a save), F07 and F20 (rolling history), F19 (durable price history, conditional).
 2. **May a Harmony patch be added on vanilla's crafting completion?** Needed by F07 and F20.
 
-Answering 1 alone unblocks F11 and F19. Answering both unblocks stage 6 entirely. Answering neither
-leaves four findings unbuilt, which is a legitimate outcome and would be recorded as such.
+**ANSWER TO 1: YES.** 57 → 58, with the narrow migration this batch requires, **including
+prior-save verification** — the operator asked for that explicitly and it is not optional. A
+`-quicktest` launch cannot prove a migration, because it generates a world already at the current
+schema and never enters the migration path; the autostart-a-copy technique in `CLAUDE.md` is the
+route, and the copy gets deleted afterwards or it hijacks every later launch.
+
+**ANSWER TO 2: YES**, for **one narrowly scoped observational patch** on the crafting-completion
+seam. Observational: it reads that something was made and by whom, and changes nothing about what
+vanilla does. This repo keeps patches deliberately few (DESIGN.md §63) and there are four today
+(`HarmonyPatches.cs:25`, `:64`, `:99`, `:165`); this makes five and that is the whole allowance.
+
+**THE F20 QUALIFICATION, from the operator and binding:** actual-work attribution is preferred
+**only where technically defensible**. If the completion seam would produce false precision — and
+attributing a product's whole labour cost to whoever happened to finish it is exactly that, since
+the seam carries a finisher, not hours worked — or if getting real hours would mean materially more
+invasive instrumentation, then use the source plan's explicitly authorised **relevant-workforce
+approximation** instead. That call gets made at F20's unit, on what the seam actually yields, and
+the reasoning goes in the commit body either way.
+
+**Scope of the bump.** One bump, to 58, designed to carry this batch's new persisted state:
+production history (F07/F20), the RFQ pending queue (F11), equipment bond state (F23), urgent
+dispatch (F24), the reverse listing and offer queue (F22). Later additions inside the batch ride on
+58 as additive nodes with safe defaults — `Scribe_Values.Look` omits a value equal to its default
+(`reference/decompiled/Verse/Scribe_Values.cs:29`), so an absent node IS the old shape and reads
+correctly. If a stage ever needs a shape change a default cannot express, that is a second bump and
+it comes back to the operator.
 
 ### Stage 6 seams, so they need not be rediscovered
 
@@ -110,14 +152,33 @@ Full detail is in `RECON_STAGE6.md` (committed, `2cc12d5`). The load-bearing fin
   `:137`-`:143`, where suspended agreements are deliberately treated as live. Whether F07's "active"
   rows should include them is an open product question.
 
-### Next executable work, in order
+### Next executable work, in dependency order — rewritten 2026-09-08 after both answers
 
-1. Wait for 7.0 to finish, verify its citations, commit `RECON_STAGE7.md`.
-2. Its section-A table says per finding whether F25/F23/F24/F22 need a schema bump or a Harmony
-   patch. Build only what needs NEITHER; anything that does joins the blocked list.
-3. If stage 7 is entirely blocked, run stage-8 recon (F08, F09) with the same "can it be built
-   unblocked?" framing, and then F06 recon.
-4. Do not start any blocked work until the operator answers.
+Nothing in this batch is blocked on a human any more. What remains is ordering.
+
+1. **Finish F25** — units 7.1 to 7.4. It is already running and needs neither the bump nor the
+   patch, so it stays in front regardless. Do not interrupt it; the operator said so and
+   one-worker-at-a-time says so anyway.
+2. **The schema unit, 6.1.** 57 → 58, the `MigrateIfNeeded` step, and the persisted production
+   history F07 and F20 both read. This is first among the schema-dependent work because everything
+   else additive rides on the shape it establishes. It ends with **prior-save verification on a
+   copy of a real pre-58 save**, not a `-quicktest` world.
+3. **The observational patch, 6.2**, on `GenRecipe`'s `Notify_RecipeProduced(worker)`
+   (`reference/decompiled/Verse/GenRecipe.cs:36`), feeding the ledger from 6.1. One patch, reads
+   only. This is the seam nothing in the mod has today.
+4. **F07, 6.3** — the committed-per-day against actually-completed-per-day rows in the Business
+   view, off the ledger. Open product question to settle at the unit: whether "active" includes the
+   suspended agreements `BusinessReportService.cs:137-143` deliberately treats as live.
+5. **F19, 6.4** — value self-produced inputs at what buying them would have cost.
+6. **F20, 6.5** — labour attribution, under the qualification above. Decide actual-work vs
+   relevant-workforce on what the seam yields, and say which in the commit.
+7. **F11** — the RFQ pending-response queue, additive on 58. Stage 5 is otherwise closed; this
+   reopens it for one unit.
+8. **F23, F24, F22** — the rest of stage 7, additive on 58, none needing a patch.
+9. **Stage 8** — F08, F09. Recon first.
+10. **Stage 9 — F06**, see its disposition above. Recon first; it has had none.
+
+Then the run's remaining obligation is the play sitting, not code.
 
 Source plan: `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` (findings F01–F25).
 Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publish** — §I of the plan.
@@ -131,10 +192,13 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | closed 2026-09-08 |
 | ✅ | 4 — Player-side logistics | F05, F12 | closed 2026-09-08, F12 part-built |
 | ✅ | 5 — Market geography | F21, F11 | closed 2026-09-08, F11 blocked |
-| ⛔ | 6 — Business intelligence and costing | F07, F19, F20 | BLOCKED, all three are systems |
-| 🔨 | 7 — Two-sided labor market | F25, F23, F24, F22 | recon in progress |
+| ⬜ | 6 — Business intelligence and costing | F07, F19, F20 | UNBLOCKED 2026-09-08, next after F25 |
+| 🔨 | 7 — Two-sided labor market | F25, F23, F24, F22 | F25 building; the other three unblocked |
 | ⬜ | 8 — Commercial relationships | F08, F09 | not started |
-| ❓ | — | **F06 apparel policies** | **NOT IN ANY STAGE — omission, see Resume brief** |
+| ⬜ | 9 — Optional apparel policies | F06 | placed 2026-09-08, recon first, runs last |
+
+Also reopening for one unit: **stage 5's F11**, the RFQ pending-response queue, unblocked by the
+schema answer.
 
 ## Units — stage 7
 
