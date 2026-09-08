@@ -201,4 +201,57 @@ namespace Intercolony
             }
         }
     }
+
+    /// <summary>
+    /// Feeds actually completed products into the production ledger for F07.
+    ///
+    /// Nothing in Intercolony could observe an item being completed: the existing production loop
+    /// only polls stock, and F07 forbids inferring production from stock (selling twenty chairs is
+    /// not negative chair production). This fifth Harmony patch is the only practical hook for
+    /// vanilla recipes in this mod because there is no mod-owned completion event or product
+    /// component.
+    ///
+    /// <c>GenRecipe.MakeRecipeProducts</c> is an iterator, so a postfix there would run when its
+    /// enumerator is created rather than when its body yields. <see cref="RecordsUtility.Notify_BillDone"/>
+    /// is the plainly patchable equivalent: vanilla calls it once after <c>ToList()</c> has
+    /// materialized the completed product batch, before storing or dropping it. The postfix only
+    /// reads each product's definition and stack count, and never changes vanilla's call or data.
+    /// </summary>
+    [HarmonyPatch(typeof(RecordsUtility), nameof(RecordsUtility.Notify_BillDone))]
+    public static class RecordsUtility_Notify_BillDone_Patch
+    {
+        public static void Postfix(Pawn billDoer, List<Thing> products)
+        {
+            if (billDoer == null || products == null || products.Count == 0 ||
+                billDoer.Faction == null || billDoer.Faction != Faction.OfPlayer)
+            {
+                return;
+            }
+
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null)
+            {
+                return;
+            }
+
+            try
+            {
+                for (int i = 0; i < products.Count; i++)
+                {
+                    Thing product = products[i];
+                    if (product == null)
+                    {
+                        continue;
+                    }
+
+                    ProductionLedgerService.Record(state, product.def, product.stackCount);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                // A recording failure must not turn a completed vanilla bill into a failed job.
+                IntercolonyLog.Error("Failed to record completed production: " + ex);
+            }
+        }
+    }
 }
