@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using RimWorld;
 using UnityEngine;
@@ -76,6 +77,8 @@ namespace Intercolony
             try
             {
                 CheckProductionLedger(r, state);
+                CheckBillDonePatch(r, state, map);
+                CheckProductionLedgerMigration(r, state);
 
                 Subject subject = FindSubject();
                 if (subject == null)
@@ -260,6 +263,296 @@ namespace Intercolony
                 buckets.AddRange(savedBuckets);
                 r.Info($"production ledger restored to {buckets.Count} bucket(s).");
             }
+        }
+
+        private static void CheckBillDonePatch(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const string playerAssertion =
+                "Notify_BillDone records exactly the products made by a player-faction pawn";
+            const string nonPlayerAssertion =
+                "Notify_BillDone records nothing for a non-player-faction pawn";
+            const int firstProductCount = 7;
+            const int secondProductCount = 11;
+
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            ThingDef firstProductDef = ThingDefOf.Steel;
+            ThingDef secondProductDef = ThingDefOf.WoodLog;
+            if (buckets == null || firstProductDef == null || secondProductDef == null)
+            {
+                string reason = buckets == null
+                    ? "the world production ledger is unavailable"
+                    : "vanilla Steel or WoodLog is unavailable";
+                r.Skip(playerAssertion, reason);
+                r.Skip(nonPlayerAssertion, reason);
+                return;
+            }
+
+            Pawn playerPawn = FindExistingBillDoer(map, playerFaction: true);
+            Pawn nonPlayerPawn = FindExistingBillDoer(map, playerFaction: false);
+            if (playerPawn == null || nonPlayerPawn == null)
+            {
+                string reason = playerPawn == null
+                    ? "no existing living player-faction pawn with a records tracker"
+                    : "no existing living non-player-faction pawn with a records tracker";
+                r.Skip(playerAssertion, reason);
+                r.Skip(nonPlayerAssertion, reason);
+                return;
+            }
+
+            List<ProductionBucket> savedBuckets = new List<ProductionBucket>(buckets);
+            List<Thing> products = new List<Thing>();
+            try
+            {
+                try
+                {
+                    Thing firstProduct = ThingMaker.MakeThing(firstProductDef);
+                    if (firstProduct == null)
+                    {
+                        throw new InvalidOperationException("ThingMaker returned a null product");
+                    }
+
+                    firstProduct.stackCount = firstProductCount;
+                    products.Add(firstProduct);
+
+                    Thing secondProduct = ThingMaker.MakeThing(secondProductDef);
+                    if (secondProduct == null)
+                    {
+                        throw new InvalidOperationException("ThingMaker returned a null product");
+                    }
+
+                    secondProduct.stackCount = secondProductCount;
+                    products.Add(secondProduct);
+                }
+                catch (Exception ex)
+                {
+                    string reason = $"could not build the unspawned product fixture: {ex.Message}";
+                    r.Skip(playerAssertion, reason);
+                    r.Skip(nonPlayerAssertion, reason);
+                    return;
+                }
+
+                buckets.Clear();
+                int currentDay = GenDate.DaysPassedAt(GenTicks.TicksGame);
+                RecordsUtility.Notify_BillDone(playerPawn, products);
+                bool playerRecordedExactly = buckets.Count == products.Count &&
+                    HasProductionBucket(
+                        buckets, firstProductDef, currentDay, firstProductCount) &&
+                    HasProductionBucket(
+                        buckets, secondProductDef, currentDay, secondProductCount);
+                r.Check(
+                    playerRecordedExactly,
+                    playerAssertion,
+                    $"pawn {playerPawn.ToStringSafe()}; {DescribeProductionBuckets(buckets)}; " +
+                    $"expected {firstProductDef.defName}={firstProductCount}, " +
+                    $"{secondProductDef.defName}={secondProductCount}");
+
+                buckets.Clear();
+                RecordsUtility.Notify_BillDone(nonPlayerPawn, products);
+                r.Check(
+                    buckets.Count == 0,
+                    nonPlayerAssertion,
+                    $"pawn {nonPlayerPawn.ToStringSafe()} faction " +
+                    $"{nonPlayerPawn.Faction?.Name ?? "null"}; " +
+                    $"{DescribeProductionBuckets(buckets)}; expected 0 bucket(s)");
+            }
+            finally
+            {
+                buckets.Clear();
+                buckets.AddRange(savedBuckets);
+                for (int i = 0; i < products.Count; i++)
+                {
+                    Thing product = products[i];
+                    if (product != null && !product.Destroyed)
+                    {
+                        product.Destroy(DestroyMode.Vanish);
+                    }
+                }
+
+                r.Info($"Notify_BillDone fixture restored production ledger to " +
+                       $"{buckets.Count} bucket(s); no pawn was created.");
+            }
+        }
+
+        private static void CheckProductionLedgerMigration(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string assertion =
+                "a pre-58 state migrates to an existing empty production ledger";
+            const int preMigrationVersion = 57;
+            const int postMigrationVersion = 58;
+
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo productionLedgerField = typeof(IntercolonyWorldComponent).GetField(
+                "productionLedger", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (saveVersionField == null || productionLedgerField == null)
+            {
+                r.Skip(
+                    assertion,
+                    saveVersionField == null
+                        ? "the private saveVersion field is unavailable"
+                        : "the private productionLedger field is unavailable");
+                return;
+            }
+
+            List<ProductionBucket> savedBuckets = state.ProductionLedger;
+            int savedSaveVersion = state.SaveVersion;
+            LoadSaveMode savedScribeMode = Scribe.mode;
+            try
+            {
+                if (Scribe.loader == null)
+                {
+                    r.Skip(
+                        assertion,
+                        "RimWorld Scribe.loader was null, so the PostLoadInit path could not run");
+                    return;
+                }
+
+                // The normal load path repairs a missing list before calling MigrateIfNeeded.
+                // Exercise that path first, then repeat the exact 57 -> 58 branch with the
+                // repaired field made null again so removing its initializer cannot hide behind
+                // ExposeData's earlier invariant repair.
+                saveVersionField.SetValue(state, preMigrationVersion);
+                productionLedgerField.SetValue(state, null);
+                Scribe.mode = LoadSaveMode.PostLoadInit;
+                state.ExposeData();
+                List<ProductionBucket> loadPathBuckets = state.ProductionLedger;
+                int loadPathSaveVersion = state.SaveVersion;
+                bool loadPathIsEmpty = loadPathBuckets != null &&
+                    loadPathBuckets.Count == 0 &&
+                    loadPathSaveVersion == postMigrationVersion;
+
+                saveVersionField.SetValue(state, preMigrationVersion);
+                productionLedgerField.SetValue(state, null);
+                state.MigrateIfNeeded();
+                List<ProductionBucket> migratedBuckets = state.ProductionLedger;
+                int migratedSaveVersion = state.SaveVersion;
+                bool migrationIsEmpty = migratedBuckets != null &&
+                    migratedBuckets.Count == 0 &&
+                    migratedSaveVersion == postMigrationVersion;
+
+                r.Check(
+                    loadPathIsEmpty && migrationIsEmpty,
+                    assertion,
+                    $"PostLoadInit ledger {DescribeBucketCount(loadPathBuckets)} bucket(s), " +
+                    $"version {loadPathSaveVersion}; isolated 57->58 ledger " +
+                    $"{DescribeBucketCount(migratedBuckets)} bucket(s), version " +
+                    $"{migratedSaveVersion}; expected 0 bucket(s), version " +
+                    $"{postMigrationVersion}");
+            }
+            finally
+            {
+                Scribe.mode = savedScribeMode;
+                productionLedgerField.SetValue(state, savedBuckets);
+                saveVersionField.SetValue(state, savedSaveVersion);
+                r.Info($"production migration fixture restored ledger to " +
+                       $"{DescribeBucketCount(savedBuckets)} bucket(s) and save version " +
+                       $"{state.SaveVersion}.");
+            }
+        }
+
+        private static Pawn FindExistingBillDoer(Map map, bool playerFaction)
+        {
+            if (Faction.OfPlayer == null)
+            {
+                return null;
+            }
+
+            Pawn found = FindExistingBillDoerOnMap(map, playerFaction);
+            if (found != null)
+            {
+                return found;
+            }
+
+            if (Find.Maps != null)
+            {
+                for (int i = 0; i < Find.Maps.Count; i++)
+                {
+                    found = FindExistingBillDoerOnMap(Find.Maps[i], playerFaction);
+                    if (found != null)
+                    {
+                        return found;
+                    }
+                }
+            }
+
+            List<Pawn> worldPawns = Find.WorldPawns?.AllPawnsAliveOrDead;
+            if (worldPawns != null)
+            {
+                for (int i = 0; i < worldPawns.Count; i++)
+                {
+                    if (IsExistingBillDoer(worldPawns[i], playerFaction))
+                    {
+                        return worldPawns[i];
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static Pawn FindExistingBillDoerOnMap(Map map, bool playerFaction)
+        {
+            IReadOnlyList<Pawn> pawns = map?.mapPawns?.AllPawnsSpawned;
+            if (pawns == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                if (IsExistingBillDoer(pawns[i], playerFaction))
+                {
+                    return pawns[i];
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsExistingBillDoer(Pawn pawn, bool playerFaction)
+        {
+            return pawn != null && pawn.health != null && !pawn.Dead && pawn.records != null &&
+                (playerFaction
+                    ? pawn.Faction == Faction.OfPlayer
+                    : pawn.Faction != null && pawn.Faction != Faction.OfPlayer);
+        }
+
+        private static string DescribeProductionBuckets(List<ProductionBucket> buckets)
+        {
+            if (buckets == null)
+            {
+                return "null ledger";
+            }
+
+            if (buckets.Count == 0)
+            {
+                return "0 bucket(s)";
+            }
+
+            StringBuilder description = new StringBuilder();
+            for (int i = 0; i < buckets.Count; i++)
+            {
+                if (i > 0)
+                {
+                    description.Append(", ");
+                }
+
+                ProductionBucket bucket = buckets[i];
+                description.Append(bucket?.thingDef?.defName ?? "null");
+                description.Append("=");
+                description.Append(bucket?.count ?? 0);
+                description.Append("@");
+                description.Append(bucket?.day ?? -1);
+            }
+
+            return description.ToString();
+        }
+
+        private static string DescribeBucketCount(List<ProductionBucket> buckets)
+        {
+            return buckets == null ? "null" : buckets.Count.ToString();
         }
 
         private static bool HasProductionBucket(
