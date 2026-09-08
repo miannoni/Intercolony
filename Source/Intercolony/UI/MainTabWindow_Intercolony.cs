@@ -4208,6 +4208,39 @@ namespace Intercolony
                 ContractMeasuredHeight(DirectInputsAmountLabel(estimate), numberWidth));
         }
 
+        private static string DirectLaborAmountLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            BusinessReportService.DirectLaborEstimate directLabor = estimate?.directLabor;
+            if (directLabor == null ||
+                directLabor.status == BusinessReportService.DirectLaborCostStatus.Unavailable)
+            {
+                return "unavailable";
+            }
+
+            if (directLabor.status == BusinessReportService.DirectLaborCostStatus.NoEligibleEmployees)
+            {
+                return "no eligible employees";
+            }
+
+            if (directLabor.status == BusinessReportService.DirectLaborCostStatus.LessThanOneSilver)
+            {
+                return "less than 1 silver";
+            }
+
+            return estimate.directPayroll.ToString("N0");
+        }
+
+        private static float ContractDirectLaborLineHeight(
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberWidth)
+        {
+            return Mathf.Max(
+                ContractMeasuredHeight("Direct labor for this good", labelWidth),
+                ContractMeasuredHeight(DirectLaborAmountLabel(estimate), numberWidth));
+        }
+
         private static string DirectInputTooltip(
             BusinessReportService.DirectInputEstimate estimate)
         {
@@ -4241,13 +4274,44 @@ namespace Intercolony
             return method + " Using " + recipe + ".";
         }
 
+        private static string DirectLaborTooltip(
+            BusinessReportService.DirectLaborEstimate estimate)
+        {
+            const string method =
+                "Direct labor is a relevant-workforce approximation, not measured time. " +
+                "The bill-completion seam reports who finished and what came out, but no elapsed " +
+                "time; using nominal recipe work or per-tick job instrumentation would either fake " +
+                "precision or violate the performance constraint. Eligibility uses the employee " +
+                "pawn's current work-skill record and work priority against each recipe's workSkill " +
+                "and skillRequirements, plus its requiredGiverWorkType or the matching bill-giver " +
+                "work type for recipeUsers.";
+
+            if (estimate == null ||
+                estimate.status == BusinessReportService.DirectLaborCostStatus.Unavailable)
+            {
+                return method + " The estimate is unavailable; this is not a zero cost.";
+            }
+
+            if (estimate.status == BusinessReportService.DirectLaborCostStatus.NoEligibleEmployees)
+            {
+                return method +
+                    " No active employee is eligible for this good, so colonists rather than " +
+                    "employees are making it; this is not an unknown zero.";
+            }
+
+            return method +
+                " Each eligible employee's daily wage is shared equally across the distinct " +
+                "current-agreement goods they could produce, then multiplied by this agreement's " +
+                "cycle length. " + estimate.eligibleEmployeeCount + " employee(s) contribute.";
+        }
+
         private static string ContractEstimateInterpretation(
             BusinessReportService.ContractEstimate estimate)
         {
             return estimate.Margin >= 0
                 ? $"about {estimate.MarginPerDay:0} silver a day; making the goods rather than " +
                   $"buying them is worth {estimate.MakingSaves:N0} a cycle"
-                : "the wage bill alone outweighs this agreement";
+                : "direct labor and other estimated costs outweigh this agreement";
         }
 
         private static float ContractEstimateBlockHeight(
@@ -4265,6 +4329,7 @@ namespace Intercolony
             height += ContractDirectInputsLineHeight(estimate, labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
                 "Wage bill over the cycle", estimate.payroll, labelWidth, numberWidth);
+            height += ContractDirectLaborLineHeight(estimate, labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
                 "Delivery premium earned, and hauled for", estimate.transport,
                 labelWidth, numberWidth);
@@ -4403,6 +4468,54 @@ namespace Intercolony
             return Mathf.Max(labelHeight, amountHeight);
         }
 
+        private static float DrawContractDirectLaborLine(
+            Rect rect,
+            float y,
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberX,
+            float numberWidth)
+        {
+            string amountLabel = DirectLaborAmountLabel(estimate);
+            float labelHeight = 0f;
+            float amountHeight = 0f;
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.85f);
+                labelHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
+                    "Direct labor for this good", TextAnchor.UpperLeft);
+
+                bool hasNumericCost = estimate != null && estimate.directLabor != null &&
+                                      (estimate.directLabor.status ==
+                                           BusinessReportService.DirectLaborCostStatus.Resolved ||
+                                       estimate.directLabor.status ==
+                                           BusinessReportService.DirectLaborCostStatus.LessThanOneSilver);
+                GUI.color = hasNumericCost && estimate.directPayroll < 0
+                    ? new Color(1f, 0.75f, 0.75f)
+                    : new Color(1f, 1f, 1f, 0.6f);
+                amountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
+                    amountLabel, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+
+            Rect tooltipRect = new Rect(
+                rect.x + 6f, y, labelWidth + 8f + numberWidth,
+                Mathf.Max(labelHeight, amountHeight));
+            if (ShouldBuildTooltip(tooltipRect))
+            {
+                TooltipHandler.TipRegion(
+                    tooltipRect, DirectLaborTooltip(estimate?.directLabor));
+            }
+
+            return Mathf.Max(labelHeight, amountHeight);
+        }
+
         private static float DrawContractEstimateMargin(
             Rect rect,
             float y,
@@ -4457,6 +4570,8 @@ namespace Intercolony
             lineY += DrawContractEstimateLine(
                 rect, lineY, "Wage bill over the cycle", estimate.payroll,
                 labelWidth, numberX, numberWidth);
+            lineY += DrawContractDirectLaborLine(
+                rect, lineY, estimate, labelWidth, numberX, numberWidth);
             lineY += DrawContractEstimateLine(
                 rect, lineY, "Delivery premium earned, and hauled for", estimate.transport,
                 labelWidth, numberX, numberWidth);

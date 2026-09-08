@@ -48,13 +48,27 @@ namespace Intercolony
             /// <summary>Direct-input price and resolution state for the contracted good.</summary>
             public DirectInputEstimate directInputs;
 
-            /// <summary>Share of the wage bill this cycle would cover. Negative.</summary>
+            /// <summary>Whole active-employee wage bill over this cycle. Negative.</summary>
             public int payroll;
+
+            /// <summary>Wages of the relevant workforce for this good over the cycle. Negative.</summary>
+            public int directPayroll;
+
+            /// <summary>Resolution and explanation state for the direct-labour estimate.</summary>
+            public DirectLaborEstimate directLabor;
 
             /// <summary>The delivery premium, shown as what hauling it yourself is worth. Negative.</summary>
             public int transport;
 
-            public int Margin => revenue + inputsIfBought + payroll + transport;
+            public bool HasDirectLaborEstimate =>
+                directLabor != null && directLabor.status != DirectLaborCostStatus.Unavailable;
+
+            // A malformed/incomplete report must not turn an unavailable direct estimate into a
+            // numeric zero. Normal report reads resolve this state or explicitly find no eligible
+            // employees; the old whole bill is retained only as the defensive fallback.
+            public int Margin => HasDirectLaborEstimate
+                ? revenue + inputsIfBought + directPayroll + transport
+                : revenue + inputsIfBought + payroll + transport;
 
             /// <summary>What making the goods rather than buying them is worth, per cycle.</summary>
             public int MakingSaves => -inputsIfBought;
@@ -98,6 +112,26 @@ namespace Intercolony
             public string reason;
         }
 
+        public enum DirectLaborCostStatus
+        {
+            Resolved,
+            NoEligibleEmployees,
+            LessThanOneSilver,
+            Unavailable
+        }
+
+        /// <summary>
+        /// Relevant-workforce approximation for one good over one agreement cycle. The cost is
+        /// positive here, while <see cref="ContractEstimate.directPayroll"/> follows the report's
+        /// negative-cost convention.
+        /// </summary>
+        public class DirectLaborEstimate
+        {
+            public DirectLaborCostStatus status;
+            public float cost;
+            public int eligibleEmployeeCount;
+        }
+
         /// <summary>
         /// Estimates a contract's per-cycle economics.
         ///
@@ -132,6 +166,13 @@ namespace Intercolony
             }
 
             estimate.payroll = -PayrollForPeriod(state, contract.CadenceDays);
+            estimate.directLabor = EstimateDirectLabor(
+                state, contract.thingDef, contract.CadenceDays);
+            if (estimate.directLabor.status == DirectLaborCostStatus.Resolved ||
+                estimate.directLabor.status == DirectLaborCostStatus.LessThanOneSilver)
+            {
+                estimate.directPayroll = -Mathf.RoundToInt(estimate.directLabor.cost);
+            }
 
             // §45's "should I deliver myself?". A recurring agreement is always seller-delivery, and
             // the price already carries a premium for that — so the transport line is that premium,
@@ -142,6 +183,102 @@ namespace Intercolony
             float premiumShare = deliver <= 0f ? 0f : (deliver - collect) / deliver;
             estimate.transport = -Mathf.RoundToInt(estimate.revenue * premiumShare);
 
+            return estimate;
+        }
+
+        /// <summary>
+        /// Estimates the wages of employees who could produce one good over a period.
+        ///
+        /// This is deliberately F20's relevant-workforce fallback, not actual-work attribution.
+        /// The only completion seam available to this mod is the postfix on
+        /// RecordsUtility.Notify_BillDone, which receives the pawn who finished the bill and the
+        /// products, but no elapsed time. Inferring time from a recipe's nominal work amount and
+        /// choosing one recipe when several produce the good would stack two assumptions into a
+        /// figure the player would read as measured. Per-tick job instrumentation would be the
+        /// constant expensive polling F20 rules out, so the report uses current active employees'
+        /// current skills and work priorities instead.
+        ///
+        /// Each eligible employee's daily wage is divided equally across the distinct current
+        /// agreement goods that employee could produce. That prevents one wage being counted in
+        /// full against every good while still combining all eligible employees for each good.
+        /// </summary>
+        public static DirectLaborEstimate EstimateDirectLabor(
+            IntercolonyWorldComponent state, ThingDef product, float days)
+        {
+            DirectLaborEstimate estimate = new DirectLaborEstimate
+            {
+                status = DirectLaborCostStatus.Unavailable
+            };
+
+            if (state == null || product == null || days <= 0f)
+            {
+                return estimate;
+            }
+
+            List<ThingDef> goods = RelevantProductionGoods(state, product);
+            Dictionary<ThingDef, List<RecipeDef>> recipesByGood =
+                new Dictionary<ThingDef, List<RecipeDef>>();
+            for (int i = 0; i < goods.Count; i++)
+            {
+                recipesByGood[goods[i]] = RecipesProducing(goods[i]);
+            }
+
+            Dictionary<RecipeDef, List<WorkTypeDef>> workTypesByRecipe =
+                WorkTypesByRecipe(recipesByGood);
+
+            List<RecipeDef> productRecipes = recipesByGood[product];
+            if (productRecipes.Count == 0)
+            {
+                estimate.status = DirectLaborCostStatus.NoEligibleEmployees;
+                return estimate;
+            }
+
+            float total = 0f;
+            int eligibleEmployees = 0;
+            if (state.Employments == null)
+            {
+                return estimate;
+            }
+
+            foreach (EmploymentContract employee in state.Employments)
+            {
+                if (employee == null || employee.status != EmploymentStatus.Active ||
+                    employee.pawn == null ||
+                    !CanProduceAny(employee.pawn, productRecipes, workTypesByRecipe))
+                {
+                    continue;
+                }
+
+                int eligibleGoods = 0;
+                for (int i = 0; i < goods.Count; i++)
+                {
+                    if (CanProduceAny(
+                            employee.pawn, recipesByGood[goods[i]], workTypesByRecipe))
+                    {
+                        eligibleGoods++;
+                    }
+                }
+
+                if (eligibleGoods <= 0)
+                {
+                    continue;
+                }
+
+                total += employee.dailyWage * days / eligibleGoods;
+                eligibleEmployees++;
+            }
+
+            estimate.eligibleEmployeeCount = eligibleEmployees;
+            if (eligibleEmployees == 0)
+            {
+                estimate.status = DirectLaborCostStatus.NoEligibleEmployees;
+                return estimate;
+            }
+
+            estimate.cost = total;
+            estimate.status = total > 0f && Mathf.RoundToInt(total) == 0
+                ? DirectLaborCostStatus.LessThanOneSilver
+                : DirectLaborCostStatus.Resolved;
             return estimate;
         }
 
@@ -159,6 +296,209 @@ namespace Intercolony
             }
 
             return contract.quantityPerCycle / Mathf.Max(1f, contract.CadenceDays);
+        }
+
+        private static List<ThingDef> RelevantProductionGoods(
+            IntercolonyWorldComponent state, ThingDef requestedProduct)
+        {
+            List<ThingDef> goods = new List<ThingDef>();
+            if (state.Contracts != null)
+            {
+                foreach (RecurringContract contract in state.Contracts)
+                {
+                    if (!IsBusinessLive(contract) || contract.thingDef == null ||
+                        goods.Contains(contract.thingDef))
+                    {
+                        continue;
+                    }
+
+                    goods.Add(contract.thingDef);
+                }
+            }
+
+            if (requestedProduct != null && !goods.Contains(requestedProduct))
+            {
+                goods.Add(requestedProduct);
+            }
+
+            return goods;
+        }
+
+        private static List<RecipeDef> RecipesProducing(ThingDef product)
+        {
+            List<RecipeDef> recipes = new List<RecipeDef>();
+            List<RecipeDef> allRecipes = DefDatabase<RecipeDef>.AllDefsListForReading;
+            if (product == null || allRecipes == null)
+            {
+                return recipes;
+            }
+
+            for (int i = 0; i < allRecipes.Count; i++)
+            {
+                RecipeDef recipe = allRecipes[i];
+                if (recipe == null || recipe.IsSurgery || recipe.products == null ||
+                    FindProducedProduct(recipe, product) == null)
+                {
+                    continue;
+                }
+
+                recipes.Add(recipe);
+            }
+
+            return recipes;
+        }
+
+        private static bool CanProduceAny(
+            Pawn pawn,
+            List<RecipeDef> recipes,
+            Dictionary<RecipeDef, List<WorkTypeDef>> workTypesByRecipe)
+        {
+            if (pawn == null || recipes == null || workTypesByRecipe == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < recipes.Count; i++)
+            {
+                RecipeDef recipe = recipes[i];
+                List<WorkTypeDef> workTypes;
+                if (recipe == null || !workTypesByRecipe.TryGetValue(recipe, out workTypes) ||
+                    !CanPerformRecipe(pawn, recipe, workTypes))
+                {
+                    continue;
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static Dictionary<RecipeDef, List<WorkTypeDef>> WorkTypesByRecipe(
+            Dictionary<ThingDef, List<RecipeDef>> recipesByGood)
+        {
+            Dictionary<RecipeDef, List<WorkTypeDef>> result =
+                new Dictionary<RecipeDef, List<WorkTypeDef>>();
+            foreach (List<RecipeDef> recipes in recipesByGood.Values)
+            {
+                for (int i = 0; i < recipes.Count; i++)
+                {
+                    RecipeDef recipe = recipes[i];
+                    if (recipe != null && !result.ContainsKey(recipe))
+                    {
+                        result[recipe] = WorkTypesForRecipe(recipe);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static List<WorkTypeDef> WorkTypesForRecipe(RecipeDef recipe)
+        {
+            List<WorkTypeDef> workTypes = new List<WorkTypeDef>();
+            if (recipe == null)
+            {
+                return workTypes;
+            }
+
+            if (recipe.requiredGiverWorkType != null)
+            {
+                workTypes.Add(recipe.requiredGiverWorkType);
+                return workTypes;
+            }
+
+            // A recipe without requiredGiverWorkType can still be restricted by the bill giver:
+            // vanilla stores that work type on WorkGiverDef, whose fixed bill-giver defs intersect
+            // RecipeDef.recipeUsers. If no such static link exists, the recipe has not given us a
+            // defensible work-type gate, so skill requirements remain the only gate.
+            if (recipe.recipeUsers == null)
+            {
+                return workTypes;
+            }
+
+            List<WorkGiverDef> workGivers = DefDatabase<WorkGiverDef>.AllDefsListForReading;
+            if (workGivers == null)
+            {
+                return workTypes;
+            }
+
+            for (int i = 0; i < workGivers.Count; i++)
+            {
+                WorkGiverDef workGiver = workGivers[i];
+                if (workGiver == null || workGiver.workType == null ||
+                    workGiver.giverClass == null ||
+                    !typeof(WorkGiver_DoBill).IsAssignableFrom(workGiver.giverClass) ||
+                    workGiver.fixedBillGiverDefs == null)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < recipe.recipeUsers.Count; j++)
+                {
+                    if (recipe.recipeUsers[j] != null &&
+                        workGiver.fixedBillGiverDefs.Contains(recipe.recipeUsers[j]))
+                    {
+                        if (!workTypes.Contains(workGiver.workType))
+                        {
+                            workTypes.Add(workGiver.workType);
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            return workTypes;
+        }
+
+        private static bool CanPerformRecipe(
+            Pawn pawn, RecipeDef recipe, List<WorkTypeDef> workTypes)
+        {
+            if (pawn == null || recipe == null)
+            {
+                return false;
+            }
+
+            // EmploymentContract.workerSkills is a frozen display string, not a structured
+            // hiring requirement. The live pawn is the only current record of what this employee
+            // can do, so use its actual skill record and current work assignment here.
+            if (recipe.workSkill != null)
+            {
+                if (pawn.skills == null)
+                {
+                    return false;
+                }
+
+                SkillRecord workSkill = pawn.skills.GetSkill(recipe.workSkill);
+                if (workSkill == null || workSkill.TotallyDisabled)
+                {
+                    return false;
+                }
+            }
+
+            if (workTypes != null && workTypes.Count > 0)
+            {
+                bool canDoWorkType = false;
+                for (int i = 0; i < workTypes.Count; i++)
+                {
+                    WorkTypeDef workType = workTypes[i];
+                    if (workType != null && pawn.workSettings != null &&
+                        !pawn.WorkTypeIsDisabled(workType) &&
+                        pawn.workSettings.WorkIsActive(workType))
+                    {
+                        canDoWorkType = true;
+                        break;
+                    }
+                }
+
+                if (!canDoWorkType)
+                {
+                    return false;
+                }
+            }
+
+            return recipe.PawnSatisfiesSkillRequirements(pawn);
         }
 
         /// <summary>
