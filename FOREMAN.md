@@ -4,9 +4,24 @@ Stage: 7 — Two-sided labor market. NOTHING IS BLOCKED ON A HUMAN ANY MORE: the
 both decisions YES on 2026-09-08 — schema 57→58 with migration and prior-save verification, and one
 narrowly scoped observational Harmony patch on crafting completion. Stage 6 is next after F25.
 F06 is now stage 9. See "Next executable work" in the brief for the dependency order.
-Unit: 7.1b — restore the death-compensation disclosure onto the applicant row
-Worker: running — `…\scratchpad\unit-7-1b.out`
-7.1 is committed at `0ab8d86`; `job-posting` ran 28/0/0, clean log, exit 0.
+Unit: 7.2 — F25 slice 2: applicants are drawn by the requirement, not by the posted wage
+Worker: running — `…\scratchpad\unit-7-2.out`
+7.1 `0ab8d86` and 7.1b `d73db12` are committed; `job-posting` ran 28/0/0 clean on each.
+
+EXPECT `job-posting` TO GO RED WHEN 7.2 LANDS, AND THAT IS CORRECT. Some of its assertions exist to
+prove a higher posted wage attracts more and better applicants — the exact mechanism 7.2 deletes.
+7.2 is forbidden from touching `Source/Intercolony/Debug`; instead it must classify every assertion
+it expects to fail into "tests the deleted mechanism" versus "should still hold and I broke it".
+Unit 7.2b then rewrites the first list against a spec I write from that report, NOT against
+greenness — otherwise a rewrite that merely weakens assertions until they pass is indistinguishable
+from a correct one, which is how four hollow suites got through earlier in this batch.
+
+Design decisions made for 7.2, so they are not re-litigated later: a prospect applies iff they meet
+the requirement; one person still applies to at most one posting and picks the one that PAYS THEM
+MOST, which is real because the combat clause multiplies their wage (Armed 1.5, Security 2.5),
+tie-broken by shorter travel then lower posting id for determinism under the seeded census; pool
+size and quality stay driven by employer reputation and settlement labour supply, with no new
+scarcity concept and no new tuning constant; `wageOffered` is still saved untouched.
 
 THE BRIDGE IS NOT BROKEN. The first suite run exited 2 with "RimWorld exited before the bridge
 became ready" and I opened a diagnosis unit on it; the operator then said they had closed the game
@@ -33,7 +48,7 @@ makes them a lighter blocker than stage 6's. STAGE 6 REMAINS BLOCKED: F07, F19 a
 schema bump and a new patch on vanilla's crafting completion, because nothing observes an item
 being made.
 Updated: 2026-09-08 12:40 (session compacted; run resumed from the RESUME BRIEF below)
-Wakes: 88 · last full load at wake 85
+Wakes: 89 · last full load at wake 85
 READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST — it carries every finding's disposition, the
 two pending operator decisions, the stage-6 seams, and the F06 gap. Written for a compaction.
 
