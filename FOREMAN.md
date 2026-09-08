@@ -7,8 +7,10 @@ Last done: 6.0 — recon, committed 2cc12d5. STAGE 6 IS BLOCKED: F07, F19 and F2
 history and a schema bump, and F07/F20 also need a new Harmony patch on vanilla's crafting
 completion, because nothing in the mod observes an item being made. Stage 7 recon runs meanwhile to
 find work that is not blocked.
-Updated: 2026-09-08 10:30
-Wakes: 82 · last full load at wake 80
+Updated: 2026-09-08 11:00
+Wakes: 84 · last full load at wake 80
+READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST — it carries every finding's disposition, the
+two pending operator decisions, the stage-6 seams, and the F06 gap. Written for a compaction.
 
 Owed to the operator, all recorded in `docs/PENDING_PLAYTESTS.md`: fourteen play observations across
 stages 1-4. Two matter more than the rest — the F15 save-compatibility check, the only change
@@ -19,6 +21,88 @@ Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL
 then re-run its section 0.
 
 <!-- Everything above this line is the header. A fresh session reads only the header. -->
+
+## RESUME BRIEF — written 2026-09-08 for a context compaction
+
+HEAD `b40fd30` on `foreman/playtest-batch-2026-09-06`. Working tree: `FOREMAN.md` modified (this
+edit), `RECON_STAGE7.md` untracked (a worker is still writing it), `Playtesting annotations.docx`
+untracked and not ours. Suite last green at 1476/0/17.
+
+A worker IS RUNNING: unit 7.0, stage-7 recon, output at
+`…\scratchpad\unit-7-0.out`. It is read-only and writes only `RECON_STAGE7.md`. Check it with
+`grep -q "^tokens used"` before dispatching anything — one worker at a time.
+
+### Every finding's disposition
+
+| Finding | Stage | State |
+|---|---|---|
+| F01 silent auto-ready | 1 | DONE, mutation-proven, `4f2f319` + `db9627a` |
+| F02 Cancel ends the produce loop | 1 | DONE, `bc2a46b` + `c00cb0c` |
+| F13 auto-renew on the employee row | 1 | DONE, `41dc1f5`; its overflow later fixed by F16/F17 |
+| F15 agreements default auto-ready on | 1 | DONE, `d48a1cf` + `e4d50c9` |
+| F03 area Produce/Pause/Stop | 2 | DONE, `ece7083` `e0ada0d` `16411e5` `c01d7db`, tests `f49db5a` `57e0981` |
+| F04 programmable produce | 2 | DONE for indefinite + produce-until-target, `4b14abb` `5656c75` `30b784e`. Worker eligibility, skill and quality controls NOT built — they live in vanilla's construction job, not the loop |
+| F14 collapsible contracts | 3 | DONE both lists, `02d5710` `275577a` `c67cece` `7571391` |
+| F16/F17 employee card | 3 | DONE, `b1b5c7f`; also fixed F13's measured overflow, 1367f → 620f against 720f |
+| F18 procurement unit price | 3 | DONE, `8d533bc`. No assertions, deliberately — private UI string |
+| F10 procurement progression | 3 | DONE as an earned gate, `799d673`. Count is settlement-wide, not per product |
+| F05 receiving locations | 4 | DONE, `231df04` `caf4340` `74aff0f` `912a5fe` |
+| F12 programmed caravans | 4 | PART-BUILT. Only `OrderAvailability` + `GetAvailability` exist (`c19b9cb`, tests `8cb06a9`) — an order can report available/required. NOT built: the caravan itself, pawn/animal selection, the configuration surface, recurrence, multi-map routing, and the waiting behaviour. The mod has NO caravan formation of its own |
+| F21 logistics meaningful | 5 | PART-BUILT. `LogisticsQuote` is one owner for cost/time/method (`2efd13f`), drift-guarded (`6d6366a`), and the cost is disclosed (`8da0d9f` + `83f2340`). NOT built: route difficulty, provisions, settlement capability, real transport-method choice — none of those models exist |
+| F11 progressive RFQ responses | 5 | BLOCKED — decision 1 below |
+| F07 commitment vs production | 6 | BLOCKED — decisions 1 AND 2 |
+| F19 material replacement cost | 6 | BLOCKED — decision 1 |
+| F20 labour from actual work | 6 | BLOCKED — decisions 1 AND 2 |
+| F25 F23 F24 F22 labour market | 7 | recon 7.0 running, nothing built |
+| F08 F09 commercial relationships | 8 | not started |
+| **F06 optional apparel policies** | **NONE** | **NOT IN ANY STAGE — see the gap below** |
+
+### THE F06 GAP — a real omission, found 2026-09-08
+
+`docs/PLAYTEST_BATCH_SOURCE_PLAN.md:338` is "F06 — Optional apparel policies for employees". The
+stage table in this file covers 24 findings and F06 is not one of them. The table predates this
+session and the omission was inherited, not introduced, but it was also not caught until now. F06
+has had NO recon and NO work. It must be placed in a stage — most naturally with the employee work
+in stage 3, which is closed, so it needs a stage of its own or an explicit decision to drop it.
+
+### THE TWO PENDING OPERATOR DECISIONS — preserve verbatim
+
+1. **May `IntercolonyWorldComponent.CurrentSaveVersion` move from 57 to 58, with a migration?**
+   Its comment requires a bump plus a `MigrateIfNeeded` step whenever the saved shape changes. No
+   stage in this batch has touched the schema. Needed by: F11 (a pending-response queue must
+   survive a save), F07 and F20 (rolling history), F19 (durable price history, conditional).
+2. **May a Harmony patch be added on vanilla's crafting completion?** Needed by F07 and F20.
+
+Answering 1 alone unblocks F11 and F19. Answering both unblocks stage 6 entirely. Answering neither
+leaves four findings unbuilt, which is a legitimate outcome and would be recorded as such.
+
+### Stage 6 seams, so they need not be rediscovered
+
+Full detail is in `RECON_STAGE6.md` (committed, `2cc12d5`). The load-bearing findings:
+
+- **Nothing in the mod observes an item being COMPLETED.** Production code polls stored stack counts
+  (`ProduceLoopMapComponent.cs:180`, `:202`, `:205`). The only completion handlers are sales and
+  purchase transitions (`SalesOrderService.cs:527` `:560` `:571`, `PurchaseOrderService.cs:659`
+  `:673`). F07 explicitly forbids inferring production from stockpile change, so its number cannot
+  be computed at all today.
+- **The vanilla seam is `GenRecipe`**, which calls `Notify_RecipeProduced(worker)` at
+  `reference/decompiled/Verse/GenRecipe.cs:36`. It carries the worker pawn, so it is the only place
+  BOTH F07 (something was made) and F20 (who made it) could be observed. Reaching it means a comp on
+  every producible thing, or a Harmony patch on a hot crafting path.
+- **Nothing records employee work on a product.** `PayrollService.cs:339` `workedTicks` is an
+  employment period, not production work.
+- **The Business view's report service is `Source/Intercolony/Core/BusinessReportService.cs`**; note
+  `:137`-`:143`, where suspended agreements are deliberately treated as live. Whether F07's "active"
+  rows should include them is an open product question.
+
+### Next executable work, in order
+
+1. Wait for 7.0 to finish, verify its citations, commit `RECON_STAGE7.md`.
+2. Its section-A table says per finding whether F25/F23/F24/F22 need a schema bump or a Harmony
+   patch. Build only what needs NEITHER; anything that does joins the blocked list.
+3. If stage 7 is entirely blocked, run stage-8 recon (F08, F09) with the same "can it be built
+   unblocked?" framing, and then F06 recon.
+4. Do not start any blocked work until the operator answers.
 
 Source plan: `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` (findings F01–F25).
 Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publish** — §I of the plan.
@@ -35,6 +119,7 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ⛔ | 6 — Business intelligence and costing | F07, F19, F20 | BLOCKED, all three are systems |
 | 🔨 | 7 — Two-sided labor market | F25, F23, F24, F22 | recon in progress |
 | ⬜ | 8 — Commercial relationships | F08, F09 | not started |
+| ❓ | — | **F06 apparel policies** | **NOT IN ANY STAGE — omission, see Resume brief** |
 
 ## Units — stage 7
 
