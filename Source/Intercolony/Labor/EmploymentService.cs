@@ -252,9 +252,9 @@ namespace Intercolony
                 return null;
             }
 
-            // The posted wage, not a computed one. This is the whole of §35.2's inversion: the
-            // player named the price and the worker accepted it.
-            int dailyWage = posting.wageOffered;
+            // The worker names the price in the application; the posted wage is only what got them
+            // to apply. F25 makes the applicant's own ask the contract rate.
+            int dailyWage = applicant.openMarketAsk;
             int upFront = WageStructureUtility.UpFrontCost(posting.wageStructure, dailyWage, posting.termDays);
 
             int available = PurchaseOrderService.CountColonySilver(paymentMap);
@@ -315,7 +315,7 @@ namespace Intercolony
 
             Messages.Message(
                 $"Hired {contract.workerName} from {contract.settlementName} as a {posting.combatClause.Label()} " +
-                $"at your posted {dailyWage} silver/day × {posting.termDays} days. " +
+                $"at the worker's {dailyWage} silver/day × {posting.termDays} days. " +
                 $"Arrives in {applicant.travelDays} days.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 

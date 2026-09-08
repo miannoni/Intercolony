@@ -424,12 +424,10 @@ namespace Intercolony
             Widgets.Label(new Rect(rect.x + 24f, rect.y + 2f, textWidth, 22f),
                 $"{applicant.Name}  —  {applicant.SkillSummary(4)}");
 
-            // The bargain is the useful number: they accepted your wage, but what were they worth?
-            int bargain = applicant.Bargain(posting.wageOffered);
-            string value = bargain > 0
-                ? $"asks {applicant.openMarketAsk}/day on the open market — you are paying " +
-                  $"{bargain} over"
-                : $"asks {applicant.openMarketAsk}/day on the open market — your offer matches";
+            // The worker's ask is the contract rate; the posted wage is only the filter that got
+            // this applicant to apply.
+            string value =
+                $"asks {applicant.openMarketAsk}/day on the open market — contract rate";
 
             GUI.color = new Color(1f, 1f, 1f, 0.65f);
             Widgets.Label(new Rect(rect.x + 24f, rect.y + 22f, textWidth, 22f),
@@ -438,7 +436,7 @@ namespace Intercolony
             GUI.color = Color.white;
 
             int upFront = WageStructureUtility.UpFrontCost(
-                posting.wageStructure, posting.wageOffered, posting.termDays);
+                posting.wageStructure, applicant.openMarketAsk, posting.termDays);
             int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
             bool affordable = available >= upFront;
 
@@ -477,9 +475,8 @@ namespace Intercolony
                 $"Posted {posting.DaysPosted:0.#} days ago, " +
                 $"{posting.ExpiryLabel}.\n" +
                 $"{posting.hired} hired so far.\n\n" +
-                $"Each worker taken on: {posting.TotalCommitment} silver over the full term.\n" +
-                $"Compensation if one of them dies: " +
-                $"{posting.wageOffered * posting.combatClause.DeathCompensationDays()} silver each.";
+                "The posted wage is the application filter, not the contract rate. Each applicant's " +
+                "own ask is their contract rate; the signing fee or prepaid amount is shown on their row.";
 
             if (posting.Applicants.Count == 0 && posting.emptyCycles > 0)
             {
