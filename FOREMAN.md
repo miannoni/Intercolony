@@ -1,12 +1,38 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F23 in progress; F24 and F22 after it. **STAGES 1 THROUGH 6 ARE CLOSED.**
-Unit: 7.6c — assertions for the equipment bond
-Worker: running — `…\scratchpad\unit-7-6c.out`
+Unit: 7.6f — the F23 play entry
+Worker: running — `…\scratchpad\unit-7-6f.out`
+
+**F23's BOND IS COMPLETE AND PROVEN** at `91dc10d`: baseline 42/0/0 and all five assertions red
+under their own mutation, including "parka 148.8 + tuque 34.32 = 183.12, plus 10% = 201.432,
+expected bond 201, recorded 183" when the premium is dropped.
+
+F23 STAYS PART-BUILT AND THAT IS DELIBERATE, on the F12/F21 precedent: the bond is the economic
+core and it is whole, while tiers and availability gating are the system half the recon flagged, and
+the body-modification consequence is a severity rule of its own. Building tiers now would be a large
+detour with F24, F22, stage 8 and stage 9 still ahead. The play entry records all three gaps, and
+names the body-mod one as the largest — it is the part F23 argues most strongly for.
+
+NEXT: F24. Read the finding first; the recon calls it a system needing an urgent request, a
+reachability deadline, a mobilisation premium and a transport outcome, so it will need a bounded
+first piece chosen the way F23's and F19's were.
 Last done: 7.6b at `a173619` — F23's bond settles on every one of the nine paths that end an
 employment. Suite 1506/0/16, log clean.
 Updated: 2026-09-08, wake 172
-Wakes: 172 · last full load at wake 172
+Wakes: 180 · last full load at wake 172
+
+**I CALLED E2 HOLLOW AND I WAS WRONG.** It reddens under two other mutations — "bond 201, refund
+201, silver 1930 → 2131" and "bond 201, refund 38" — so it detects a wrong refund perfectly well.
+The mutation I aimed at it, `returnedSilver = Mathf.Clamp(returnedSilver, 0, matchedBond);` →
+`returnedSilver = 0;`, sits AFTER the silver has already been placed
+(`EmploymentEquipment.cs:337`); it normalises the figure used in the MESSAGE, not the money. E2
+asserts on actual silver, which is why it stayed green and why that is correct.
+**The lesson is about my own method: when a mutation does not bite, the first hypothesis must be
+that the mutation is wrong, not that the assertion is.** I reported it as hollow before checking
+what the line actually does.
+E3, E4 and E5 are each proven red by their own mutation. E1 is still unproven only because my
+mutation did not compile — unbalanced parentheses — and a compiling version is running now.
 
 READ THE "RESUME BRIEF" BELOW. It is what a session with no memory should trust.
 

@@ -107,6 +107,37 @@ pre-58 save **Edithor Alliance**, saved at version 57, and it migrated in one st
 This does **NOT** remove the need for the F15 save-compatibility check already listed in this file,
 because that check is about a different change.
 
+### F23 equipment bonds need an early-colony market read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. Weapons and apparel an employee
+arrives with are now borrowed capital. At hire, the player sees an **Equipment bond** row beside the
+signing fee or prepaid wages, a **Due at hire** total, and what is in storage; **Take on** is disabled
+when the total is unaffordable. The bond is the gear's replacement value plus 10%.
+
+When employment ends — by term, dismissal, walk-out, death, capture, war release, paid release or
+defection — the bond is refunded item by item for whatever the worker still carries, including each
+item's share of the premium. The player is told what came back and what was kept. Keeping the gear
+costs the bond and nothing else: there is no reputation penalty, because F23 treats it as the player
+effectively buying scarce gear through the labour market. Normal wear refunds in full; nothing reads
+an item's condition. Assertions and mutation evidence cover this shipped portion.
+
+**Steps.** In an early colony, hire an equipped worker and read the **Equipment bond**, **Due at
+hire**, storage and **Take on** state. The first question is the sharp one: hiring an equipped worker
+now costs roughly 70% more up front — one measured example was **918** in prepaid wages against a
+**641** bond. Judge whether that reads as a market price or a wall, especially whether an armed worker
+or security contractor becomes impossible to hire in the first several hours, quietly removing part
+of the mod. Follow a worker through an employment ending and read the settlement message. Judge
+whether keeping the gear reads as a legitimate purchase or an exploit the player feels guilty about —
+F23 intends the former. Judge whether the message makes clear what was kept and why without requiring
+the player to count silver. Finally, compare hires and judge whether the bond makes the player prefer
+poorly equipped workers just to avoid the deposit: that would be an unintended market distortion.
+
+F23's requested equipment market is not fully built. The player cannot request an equipment **TIER**.
+There is no availability gating by settlement wealth, tech or scarcity, so a poor settlement is not
+prevented from sending good gear. Stripping a valuable bionic or prosthetic from an employee has no
+special consequence beyond the ordinary bond. The last point is the gap F23 argues for most strongly
+and the largest gap. These unbuilt parts have no assertion or mutation evidence.
+
 ### F25's buyer-side labour market needs a market read
 
 Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. F25's labour market is now two-sided
