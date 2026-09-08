@@ -1,12 +1,14 @@
 # Foreman state — Intercolony
 
-Stage: 6 — Business intelligence and costing
-Unit: 6.0 — Read-only recon: the seams for F07, F19 and F20
-Worker: running — `…\scratchpad\unit-6-0.out`
-Last done: STAGE 5 CLOSED — F21 built to its bounded scope, F11 BLOCKED on a schema decision.
-Last commit 2f8ba8c; suite 1476/0/17.
-Updated: 2026-09-08 09:30
-Wakes: 79 · last full load at wake 70
+Stage: 7 — Two-sided labor market (stage 6 is BLOCKED)
+Unit: 7.0 — Read-only recon: can any of F25, F23, F24, F22 be built without a schema bump?
+Worker: running — `…\scratchpad\unit-7-0.out`
+Last done: 6.0 — recon, committed 2cc12d5. STAGE 6 IS BLOCKED: F07, F19 and F20 all need persisted
+history and a schema bump, and F07/F20 also need a new Harmony patch on vanilla's crafting
+completion, because nothing in the mod observes an item being made. Stage 7 recon runs meanwhile to
+find work that is not blocked.
+Updated: 2026-09-08 10:30
+Wakes: 82 · last full load at wake 80
 
 Owed to the operator, all recorded in `docs/PENDING_PLAYTESTS.md`: fourteen play observations across
 stages 1-4. Two matter more than the rest — the F15 save-compatibility check, the only change
@@ -30,15 +32,21 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | closed 2026-09-08 |
 | ✅ | 4 — Player-side logistics | F05, F12 | closed 2026-09-08, F12 part-built |
 | ✅ | 5 — Market geography | F21, F11 | closed 2026-09-08, F11 blocked |
-| 🔨 | 6 — Business intelligence and costing | F07, F19, F20 | in progress |
-| ⬜ | 7 — Two-sided labor market | F25, F23, F24, F22 | not started |
+| ⛔ | 6 — Business intelligence and costing | F07, F19, F20 | BLOCKED, all three are systems |
+| 🔨 | 7 — Two-sided labor market | F25, F23, F24, F22 | recon in progress |
 | ⬜ | 8 — Commercial relationships | F08, F09 | not started |
 
-## Units — stage 6
+## Units — stage 7
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | 6.0 — recon: the seams for F07, F19 and F20 | worker running |
+| 🔨 | 7.0 — recon: what stage 7 can build unblocked | worker running |
+
+## Units — stage 6 (blocked)
+
+| | Unit | Status |
+|---|---|---|
+| ✅ | 6.0 — recon: the seams for F07, F19 and F20 | 2cc12d5 |
 
 ## Units — stage 5 (closed, F11 blocked)
 
@@ -136,6 +144,20 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
   whole-agreement outcome and stays.
 
 ## Open for the operator
+
+- **2026-09-08 — STAGE 6 IS BLOCKED and the schema decision now gates two stages.** F07 needs a
+  number the mod cannot compute: nothing observes an item being COMPLETED, and the finding
+  explicitly forbids inferring production from stockpile change. The only vanilla seam is
+  `GenRecipe`, which calls `Notify_RecipeProduced` with the worker pawn
+  (`reference/decompiled/Verse/GenRecipe.cs:36`) — reaching it means a comp on every producible
+  thing, or a Harmony patch on a hot crafting path in a repo whose rule is that patches stay few.
+  That same seam is the only place F20 could learn who worked on what. All three of F07, F19 and F20
+  then need persisted rolling history, hence the schema.
+  So there are now TWO decisions, and they are yours:
+  1. may `CurrentSaveVersion` move from 57 to 58, with a migration? F11 and all of stage 6 need it;
+  2. may a Harmony patch be added on vanilla's crafting completion? F07 and F20 need it.
+  Answering (1) alone unblocks F11 and F19. Answering both unblocks stage 6 entirely. Answering
+  neither leaves four findings unbuilt, which is a legitimate outcome and would be recorded as such.
 
 - **2026-09-08 — F11 needs a save-schema bump, the first in this batch, and that is your call.**
   Recon: RFQ responses are generated synchronously at `RfqService.cs:91`, before the request is even
