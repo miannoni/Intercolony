@@ -27,7 +27,7 @@ namespace Intercolony
         /// Bump this whenever the saved shape changes, and add a migration step in
         /// <see cref="MigrateIfNeeded"/>.
         /// </summary>
-        public const int CurrentSaveVersion = 57;
+        public const int CurrentSaveVersion = 58;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -720,6 +720,15 @@ namespace Intercolony
         public List<LedgerEntry> Ledger => ledger;
 
         /// <summary>
+        /// Completed production by exact good and absolute in-game day. World-scoped so the
+        /// Business history survives maps, caravans and colony abandonment with the other
+        /// authoritative economic state.
+        /// </summary>
+        private List<ProductionBucket> productionLedger = new List<ProductionBucket>();
+
+        public List<ProductionBucket> ProductionLedger => productionLedger;
+
+        /// <summary>
         /// When the first entry was recorded, or -1 before any. Read by the dashboard so a young
         /// colony's report says "12 days of history" rather than presenting a confident quarter.
         /// </summary>
@@ -1197,6 +1206,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref postings, "postings", LookMode.Deep);
             Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
             Scribe_Collections.Look(ref ledger, "ledger", LookMode.Deep);
+            Scribe_Collections.Look(ref productionLedger, "productionLedger", LookMode.Deep);
             Scribe_Values.Look(ref ledgerStartTick, "ledgerStartTick", LedgerService.NoHistory);
             Scribe_Deep.Look(ref employerStanding, "employerStanding");
 
@@ -1536,6 +1546,16 @@ namespace Intercolony
                     ledger.RemoveAll(e => e == null);
                 }
 
+                if (productionLedger == null)
+                {
+                    productionLedger = new List<ProductionBucket>();
+                }
+                else
+                {
+                    productionLedger.RemoveAll(bucket =>
+                        bucket == null || bucket.thingDef == null || bucket.count <= 0);
+                }
+
                 if (postings == null)
                 {
                     postings = new List<JobPosting>();
@@ -1712,6 +1732,7 @@ namespace Intercolony
             PruneProfileCache();
 
             LedgerService.Prune(this);
+            ProductionLedgerService.Prune(this);
             OrderHistoryService.Prune(this);
             CommercialTimelineService.Prune(this);
 
@@ -2614,6 +2635,20 @@ namespace Intercolony
                 IntercolonyLog.Message(
                     "  schema 56 -> 57: per-contract auto-renew and auto-ready flags added; " +
                     "existing agreements and employments keep them off.");
+            }
+
+            if (saveVersion < 58)
+            {
+                // 57 -> 58 added the completed-production ledger. Older saves contain no
+                // observation of what was actually completed, and stock or order totals cannot
+                // prove that history without inventing a past the player never measured.
+                if (productionLedger == null)
+                {
+                    productionLedger = new List<ProductionBucket>();
+                }
+
+                IntercolonyLog.Message(
+                    "  schema 57 -> 58: completed-production ledger added; no historical production was fabricated.");
             }
 
             saveVersion = CurrentSaveVersion;
