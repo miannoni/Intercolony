@@ -1,11 +1,12 @@
 # Foreman state — Intercolony
 
-Stage: 5 — Market geography
-Unit: 5.0 — Read-only recon: the seams for F21 and F11
-Worker: running — `…\scratchpad\unit-5-0.out`
-Last done: STAGE 4 CLOSED — F05 complete, F12 first slice only. Last commit 58656a9; suite 1475/0/15.
-Updated: 2026-09-08 06:00
-Wakes: 65 · last full load at wake 60
+Stage: 6 — Business intelligence and costing
+Unit: 6.0 — Read-only recon: the seams for F07, F19 and F20
+Worker: running — `…\scratchpad\unit-6-0.out`
+Last done: STAGE 5 CLOSED — F21 built to its bounded scope, F11 BLOCKED on a schema decision.
+Last commit 2f8ba8c; suite 1476/0/17.
+Updated: 2026-09-08 09:30
+Wakes: 79 · last full load at wake 70
 
 Owed to the operator, all recorded in `docs/PENDING_PLAYTESTS.md`: fourteen play observations across
 stages 1-4. Two matter more than the rest — the F15 save-compatibility check, the only change
@@ -28,16 +29,29 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 2 — Produce becomes programmable | F03, F04 | closed 2026-09-07 |
 | ✅ | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | closed 2026-09-08 |
 | ✅ | 4 — Player-side logistics | F05, F12 | closed 2026-09-08, F12 part-built |
-| 🔨 | 5 — Market geography | F21, F11 | in progress |
-| ⬜ | 6 — Business intelligence and costing | F07, F19, F20 | not started |
+| ✅ | 5 — Market geography | F21, F11 | closed 2026-09-08, F11 blocked |
+| 🔨 | 6 — Business intelligence and costing | F07, F19, F20 | in progress |
 | ⬜ | 7 — Two-sided labor market | F25, F23, F24, F22 | not started |
 | ⬜ | 8 — Commercial relationships | F08, F09 | not started |
 
-## Units — stage 5
+## Units — stage 6
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | 5.0 — recon: the seams for F21 and F11 | worker running |
+| 🔨 | 6.0 — recon: the seams for F07, F19 and F20 | worker running |
+
+## Units — stage 5 (closed, F11 blocked)
+
+| | Unit | Status |
+|---|---|---|
+| ✅ | 5.0 — recon: the seams for F21 and F11 | done, citations verified |
+| ✅ | 5.1 — F21: one owner for cost, time and method, numbers unchanged | 2efd13f |
+| ✅ | 5.1b — the flaky receiving fixture skips instead of failing | 2efd13f |
+| ✅ | 5.2 + 5.2b — F21 drift guards, all four mutation-proven | 6d6366a |
+| ✅ | 5.3 — F21: disclose the logistics cost | 8da0d9f |
+| ✅ | 5.3b — F21 disclosure tests | 83f2340, four mutations red |
+| ✅ | 5.5 — record the stage-5 playtests owed | 2f8ba8c |
+| ⛔ | 5.4 — F11: staggered RFQ responses | BLOCKED on the operator's schema decision |
 
 ## Units — stage 4 (closed)
 
@@ -122,6 +136,22 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
   whole-agreement outcome and stays.
 
 ## Open for the operator
+
+- **2026-09-08 — F11 needs a save-schema bump, the first in this batch, and that is your call.**
+  Recon: RFQ responses are generated synchronously at `RfqService.cs:91`, before the request is even
+  stored, and there is no pending queue and no advancement method. Making them arrive progressively
+  means persisting pending responses so they survive a save, and
+  `IntercolonyWorldComponent.CurrentSaveVersion` is 57 with a comment requiring a bump plus a
+  `MigrateIfNeeded` step whenever the saved shape changes. Every stage so far has deliberately
+  avoided touching the schema. I have not started F11. Say whether to bump to 58 with a migration,
+  or to leave F11 unbuilt and record why.
+- **2026-09-08 — F21 is a system, like F12 was.** It asks for cost and time to reflect route
+  difficulty, cargo and provisions, settlement capability and transport method, none of which exist
+  — there is no route model, no provisions, no logistics capability and no transport method beyond
+  a delivery/pickup boolean. What distance drives today is five unrelated ad-hoc formulas. I am
+  building the piece that is genuinely useful and bounded: one owner for cost, time and method, then
+  disclosing it to the player. Making it reflect route difficulty and provisions is not being
+  attempted.
 
 - **2026-09-08 — a pre-existing defect found next to F05, deliberately not fixed.**
   `PurchaseOrderService.DeliverToColony` refunds only when ZERO goods were placed; with any
