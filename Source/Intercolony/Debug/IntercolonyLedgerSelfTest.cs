@@ -75,6 +75,7 @@ namespace Intercolony
                 CheckAgreesWithRealSilver(r, state, map);
                 CheckContractEstimate(r, state);
                 CheckDirectInputEstimate(r, state);
+                CheckDirectLaborAttribution(r, state);
                 CheckProductionCommitments(r, state);
                 CheckPruning(r, state);
             }
@@ -729,6 +730,414 @@ namespace Intercolony
             return estimate == null || estimate.directInputs == null
                 ? "<missing recipe>"
                 : estimate.directInputs.recipeDefName ?? "<none>";
+        }
+
+        // --- F20 direct-labour attribution ------------------------------------------------
+
+        private static void CheckDirectLaborAttribution(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string ineligibleAssertion =
+                "W1 an ineligible employee's wage does not reach the good's direct labour";
+            const string sharedAssertion =
+                "W2 a wage is shared across eligible goods, not counted twice";
+            const string noEligibleAssertion =
+                "W3 no eligible employee is reported as such, not as zero";
+            const string marginAssertion =
+                "W4 the margin uses direct labour, not the whole wage bill";
+
+            List<RecurringContract> contracts = state?.Contracts;
+            List<EmploymentContract> employments = state?.Employments;
+            ThingDef mealProduct = ThingDefOf.MealSimple;
+            ThingDef componentProduct = ThingDefOf.ComponentIndustrial;
+            ThingDef noEligibleProduct = ThingDefOf.ComponentSpacer;
+            SkillDef cookingSkill = SkillDefOf.Cooking;
+            SkillDef craftingSkill = SkillDefOf.Crafting;
+            WorkTypeDef cookingWorkType =
+                DefDatabase<WorkTypeDef>.GetNamedSilentFail("Cooking");
+            WorkTypeDef craftingWorkType = WorkTypeDefOf.Crafting;
+            RecipeDef mealRecipe =
+                DefDatabase<RecipeDef>.GetNamedSilentFail("CookMealSimple");
+            RecipeDef componentRecipe =
+                DefDatabase<RecipeDef>.GetNamedSilentFail("Make_ComponentIndustrial");
+            RecipeDef noEligibleRecipe =
+                DefDatabase<RecipeDef>.GetNamedSilentFail("Make_ComponentSpacer");
+
+            if (contracts == null || employments == null || Find.WorldPawns == null)
+            {
+                string reason = contracts == null
+                    ? "the world recurring-contract collection is unavailable"
+                    : employments == null
+                        ? "the world employment collection is unavailable"
+                        : "Find.WorldPawns was null, so real pawn employees could not be arranged";
+                r.Skip(ineligibleAssertion, reason);
+                r.Skip(sharedAssertion, reason);
+                r.Skip(noEligibleAssertion, reason);
+                r.Skip(marginAssertion, reason);
+                return;
+            }
+
+            if (mealProduct == null || componentProduct == null || noEligibleProduct == null ||
+                cookingSkill == null || craftingSkill == null || cookingWorkType == null ||
+                craftingWorkType == null || PawnKindDefOf.Colonist == null ||
+                Faction.OfPlayer == null || mealRecipe == null || componentRecipe == null ||
+                noEligibleRecipe == null || FindTestProduct(mealRecipe, mealProduct) == null ||
+                FindTestProduct(componentRecipe, componentProduct) == null ||
+                FindTestProduct(noEligibleRecipe, noEligibleProduct) == null ||
+                mealRecipe.requiredGiverWorkType != cookingWorkType ||
+                mealRecipe.workSkill != cookingSkill ||
+                componentRecipe.requiredGiverWorkType != null ||
+                componentRecipe.workSkill != craftingSkill ||
+                noEligibleRecipe.requiredGiverWorkType != null ||
+                noEligibleRecipe.workSkill != craftingSkill)
+            {
+                string reason =
+                    "vanilla MealSimple, ComponentIndustrial, ComponentSpacer, Cooking/Crafting, " +
+                    "or the three F20 recipes are unavailable or no longer have their expected gates";
+                r.Skip(ineligibleAssertion, reason);
+                r.Skip(sharedAssertion, reason);
+                r.Skip(noEligibleAssertion, reason);
+                r.Skip(marginAssertion, reason);
+                return;
+            }
+
+            List<RecurringContract> savedContracts = new List<RecurringContract>(contracts);
+            List<EmploymentContract> savedEmployments =
+                new List<EmploymentContract>(employments);
+            Pawn ineligiblePawn = null;
+            Pawn sharedPawn = null;
+            bool randomStatePushed = false;
+
+            const int cycleDays = 5;
+            const int ineligibleDailyWage = 18;
+            const int sharedDailyWage = 42;
+            const int sharedEligibleGoodCount = 2;
+            // Independent fixture arithmetic: each employee's daily wage is spread over the
+            // two current agreement goods this shared employee can make.
+            const float expectedSharedDailyShare =
+                sharedDailyWage / (float)sharedEligibleGoodCount;
+            const float expectedMealLabor =
+                (ineligibleDailyWage + expectedSharedDailyShare) * cycleDays;
+            const float expectedComponentLabor =
+                expectedSharedDailyShare * cycleDays;
+            int expectedMealDirectPayroll = -Mathf.RoundToInt(expectedMealLabor);
+            int expectedComponentDirectPayroll = -Mathf.RoundToInt(expectedComponentLabor);
+            int expectedWholePayroll =
+                -Mathf.RoundToInt((ineligibleDailyWage + sharedDailyWage) * cycleDays);
+
+            try
+            {
+                System.Predicate<Pawn> workerValidator = pawn =>
+                    pawn != null && pawn.skills != null && pawn.workSettings != null &&
+                    HasUsableSkill(pawn, cookingSkill) && HasUsableSkill(pawn, craftingSkill) &&
+                    !pawn.WorkTypeIsDisabled(cookingWorkType) &&
+                    !pawn.WorkTypeIsDisabled(craftingWorkType);
+
+                try
+                {
+                    // A fixed stream makes the fixture reproducible and restores the live RNG
+                    // frame below; the validator makes an unavailable humanlike skill a fixture
+                    // failure rather than silently weakening the employee arrangement.
+                    Rand.PushState(0xF20_2026);
+                    randomStatePushed = true;
+                    PawnGenerationRequest request = new PawnGenerationRequest(
+                        PawnKindDefOf.Colonist,
+                        Faction.OfPlayer,
+                        PawnGenerationContext.NonPlayer,
+                        forceGenerateNewPawn: true,
+                        canGeneratePawnRelations: false,
+                        mustBeCapableOfViolence: false,
+                        allowFood: true,
+                        validatorPostGear: workerValidator,
+                        forceNoGear: true);
+                    ineligiblePawn = PawnGenerator.GeneratePawn(request);
+                    sharedPawn = PawnGenerator.GeneratePawn(request);
+                }
+                catch (System.Exception ex)
+                {
+                    string reason =
+                        $"could not generate two real colonist employees: {ex.Message}";
+                    r.Skip(ineligibleAssertion, reason);
+                    r.Skip(sharedAssertion, reason);
+                    r.Skip(noEligibleAssertion, reason);
+                    r.Skip(marginAssertion, reason);
+                    return;
+                }
+
+                if (ineligiblePawn == null || sharedPawn == null)
+                {
+                    string reason =
+                        "PawnGenerator could not produce two colonists capable of Cooking and Crafting";
+                    r.Skip(ineligibleAssertion, reason);
+                    r.Skip(sharedAssertion, reason);
+                    r.Skip(noEligibleAssertion, reason);
+                    r.Skip(marginAssertion, reason);
+                    return;
+                }
+
+                string configurationReason;
+                if (!TryConfigureDirectLaborPawn(
+                        ineligiblePawn, cookingSkill, cookingWorkType, craftingSkill,
+                        craftingWorkType, canCook: true, canCraft: false,
+                        out configurationReason) ||
+                    !TryConfigureDirectLaborPawn(
+                        sharedPawn, cookingSkill, cookingWorkType, craftingSkill,
+                        craftingWorkType, canCook: true, canCraft: true,
+                        out configurationReason))
+                {
+                    string reason =
+                        $"could not configure the real employee fixture: {configurationReason}";
+                    r.Skip(ineligibleAssertion, reason);
+                    r.Skip(sharedAssertion, reason);
+                    r.Skip(noEligibleAssertion, reason);
+                    r.Skip(marginAssertion, reason);
+                    return;
+                }
+
+                RecurringContract mealContract = new RecurringContract
+                {
+                    id = -870,
+                    settlementName = "Testholme",
+                    factionName = "Test Confederacy",
+                    thingDef = mealProduct,
+                    quantityPerCycle = 1,
+                    cadenceTicks = cycleDays * GenDate.TicksPerDay,
+                    totalCycles = 5,
+                    unitPrice = 100f,
+                    status = ContractStatus.Active
+                };
+                RecurringContract componentContract = new RecurringContract
+                {
+                    id = -871,
+                    settlementName = "Testholme",
+                    factionName = "Test Confederacy",
+                    thingDef = componentProduct,
+                    quantityPerCycle = 1,
+                    cadenceTicks = cycleDays * GenDate.TicksPerDay,
+                    totalCycles = 5,
+                    unitPrice = 100f,
+                    status = ContractStatus.Active
+                };
+                RecurringContract noEligibleContract = new RecurringContract
+                {
+                    id = -872,
+                    settlementName = "Testholme",
+                    factionName = "Test Confederacy",
+                    thingDef = noEligibleProduct,
+                    quantityPerCycle = 1,
+                    cadenceTicks = cycleDays * GenDate.TicksPerDay,
+                    totalCycles = 5,
+                    unitPrice = 100f,
+                    status = ContractStatus.Active
+                };
+
+                EmploymentContract ineligibleEmployment = new EmploymentContract
+                {
+                    id = -870,
+                    settlementName = "Testholme",
+                    factionName = "Test Confederacy",
+                    pawn = ineligiblePawn,
+                    employerFaction = Faction.OfPlayer,
+                    originalKind = ineligiblePawn.kindDef,
+                    workerName = "F20 Cooking specialist",
+                    workerSkills = "Cooking 20",
+                    dailyWage = ineligibleDailyWage,
+                    termDays = cycleDays,
+                    status = EmploymentStatus.Active
+                };
+                EmploymentContract sharedEmployment = new EmploymentContract
+                {
+                    id = -871,
+                    settlementName = "Testholme",
+                    factionName = "Test Confederacy",
+                    pawn = sharedPawn,
+                    employerFaction = Faction.OfPlayer,
+                    originalKind = sharedPawn.kindDef,
+                    workerName = "F20 Cooking and Crafting worker",
+                    workerSkills = "Cooking 20, Crafting 20",
+                    dailyWage = sharedDailyWage,
+                    termDays = cycleDays,
+                    status = EmploymentStatus.Active
+                };
+
+                contracts.Clear();
+                employments.Clear();
+                state.AddContract(mealContract);
+                state.AddContract(componentContract);
+                state.AddEmployment(ineligibleEmployment);
+                state.AddEmployment(sharedEmployment);
+
+                BusinessReportService.ContractEstimate mealEstimate =
+                    BusinessReportService.Estimate(state, mealContract);
+                BusinessReportService.ContractEstimate componentEstimate =
+                    BusinessReportService.Estimate(state, componentContract);
+
+                r.Check(
+                    componentEstimate != null && componentEstimate.directLabor != null &&
+                    componentEstimate.directLabor.status ==
+                        BusinessReportService.DirectLaborCostStatus.Resolved &&
+                    componentEstimate.directLabor.eligibleEmployeeCount == 1 &&
+                    Mathf.Abs(componentEstimate.directLabor.cost - expectedComponentLabor) < 0.001f,
+                    ineligibleAssertion,
+                    $"{componentProduct.defName}: reported {DirectLaborFigure(componentEstimate)} " +
+                    $"silver; ineligible {ineligibleDailyWage}/day; eligible " +
+                    $"{sharedDailyWage}/day / {sharedEligibleGoodCount} goods = " +
+                    $"{expectedSharedDailyShare:0.###}/day x {cycleDays}d; expected " +
+                    $"{expectedComponentLabor:0.###}, eligible employees " +
+                    $"{componentEstimate?.directLabor?.eligibleEmployeeCount.ToString() ?? "<missing>"}");
+
+                r.Check(
+                    mealEstimate != null && mealEstimate.directLabor != null &&
+                    componentEstimate != null && componentEstimate.directLabor != null &&
+                    mealEstimate.directLabor.status ==
+                        BusinessReportService.DirectLaborCostStatus.Resolved &&
+                    componentEstimate.directLabor.status ==
+                        BusinessReportService.DirectLaborCostStatus.Resolved &&
+                    mealEstimate.directLabor.eligibleEmployeeCount == 2 &&
+                    componentEstimate.directLabor.eligibleEmployeeCount == 1 &&
+                    mealEstimate.directPayroll == expectedMealDirectPayroll &&
+                    componentEstimate.directPayroll == expectedComponentDirectPayroll &&
+                    Mathf.Abs(mealEstimate.directLabor.cost - expectedMealLabor) < 0.001f &&
+                    Mathf.Abs(componentEstimate.directLabor.cost - expectedComponentLabor) < 0.001f,
+                    sharedAssertion,
+                    $"wages {ineligibleDailyWage}+{sharedDailyWage}/day over " +
+                    $"{cycleDays}d; shared employee eligible for {sharedEligibleGoodCount} goods " +
+                    $"so share is {sharedDailyWage}/{sharedEligibleGoodCount} = " +
+                    $"{expectedSharedDailyShare:0.###}/day; {mealProduct.defName} reported " +
+                    $"{DirectLaborFigure(mealEstimate)} silver, expected " +
+                    $"{expectedMealLabor:0.###}; {componentProduct.defName} reported " +
+                    $"{DirectLaborFigure(componentEstimate)} silver, expected " +
+                    $"{expectedComponentLabor:0.###}");
+
+                SkillRecord sharedCrafting = sharedPawn.skills.GetSkill(craftingSkill);
+                sharedCrafting.Level = 0;
+                sharedPawn.workSettings.SetPriority(craftingWorkType, 0);
+
+                BusinessReportService.ContractEstimate noEligibleEstimate =
+                    BusinessReportService.Estimate(state, noEligibleContract);
+                r.Check(
+                    noEligibleEstimate != null && noEligibleEstimate.directLabor != null &&
+                    noEligibleEstimate.directLabor.status ==
+                        BusinessReportService.DirectLaborCostStatus.NoEligibleEmployees &&
+                    noEligibleEstimate.directLabor.eligibleEmployeeCount == 0,
+                    noEligibleAssertion,
+                    $"{noEligibleProduct.defName}: status {DirectLaborStatus(noEligibleEstimate)}; " +
+                    $"reported {DirectLaborFigure(noEligibleEstimate)} silver; wages " +
+                    $"{ineligibleDailyWage}+{sharedDailyWage}/day over {cycleDays}d; shared " +
+                    $"good count {sharedEligibleGoodCount}, resulting share " +
+                    $"{expectedSharedDailyShare:0.###}/day before the no-eligible probe; " +
+                    $"eligible employees " +
+                    $"{noEligibleEstimate?.directLabor?.eligibleEmployeeCount.ToString() ?? "<missing>"}");
+
+                int expectedNarrowMargin = componentEstimate == null
+                    ? 0
+                    : componentEstimate.revenue + componentEstimate.inputsIfBought +
+                      expectedComponentDirectPayroll + componentEstimate.transport;
+                int wholePayrollMargin = componentEstimate == null
+                    ? 0
+                    : componentEstimate.revenue + componentEstimate.inputsIfBought +
+                      expectedWholePayroll + componentEstimate.transport;
+                r.Check(
+                    componentEstimate != null && componentEstimate.directLabor != null &&
+                    componentEstimate.HasDirectLaborEstimate &&
+                    componentEstimate.directPayroll == expectedComponentDirectPayroll &&
+                    componentEstimate.payroll == expectedWholePayroll &&
+                    componentEstimate.Margin == expectedNarrowMargin &&
+                    componentEstimate.Margin != wholePayrollMargin,
+                    marginAssertion,
+                    $"{componentProduct.defName}: wages {ineligibleDailyWage}+{sharedDailyWage}/day " +
+                    $"x {cycleDays}d; shared eligible-good count {sharedEligibleGoodCount}, " +
+                    $"resulting share {expectedSharedDailyShare:0.###}/day; direct payroll " +
+                    $"{componentEstimate?.directPayroll.ToString() ?? "<missing>"}, whole payroll " +
+                    $"{componentEstimate?.payroll.ToString() ?? "<missing>"}; expected margin " +
+                    $"{expectedNarrowMargin}, whole-payroll margin {wholePayrollMargin}, reported " +
+                    $"{componentEstimate?.Margin.ToString() ?? "<missing>"}");
+            }
+            catch (System.Exception ex)
+            {
+                r.sb.AppendLine($"  EXCEPTION: direct-labour fixture {ex}");
+                r.failed++;
+            }
+            finally
+            {
+                contracts.Clear();
+                contracts.AddRange(savedContracts);
+                employments.Clear();
+                employments.AddRange(savedEmployments);
+                new LaborCandidate { pawn = ineligiblePawn }.Discard();
+                new LaborCandidate { pawn = sharedPawn }.Discard();
+                if (randomStatePushed)
+                {
+                    Rand.PopState();
+                }
+
+                r.Info($"direct-labour fixture removed; restored {employments.Count} employment(s) " +
+                       $"and {contracts.Count} agreement(s), and discarded its generated pawns.");
+            }
+        }
+
+        private static bool HasUsableSkill(Pawn pawn, SkillDef skill)
+        {
+            if (pawn == null || pawn.skills == null || skill == null)
+            {
+                return false;
+            }
+
+            SkillRecord record = pawn.skills.GetSkill(skill);
+            return record != null && !record.TotallyDisabled;
+        }
+
+        private static bool TryConfigureDirectLaborPawn(
+            Pawn pawn,
+            SkillDef cookingSkill,
+            WorkTypeDef cookingWorkType,
+            SkillDef craftingSkill,
+            WorkTypeDef craftingWorkType,
+            bool canCook,
+            bool canCraft,
+            out string reason)
+        {
+            reason = null;
+            if (pawn == null || pawn.skills == null || pawn.workSettings == null)
+            {
+                reason = "the generated colonist has no skills or work settings";
+                return false;
+            }
+
+            SkillRecord cooking = pawn.skills.GetSkill(cookingSkill);
+            SkillRecord crafting = pawn.skills.GetSkill(craftingSkill);
+            if (cooking == null || crafting == null || cooking.TotallyDisabled ||
+                crafting.TotallyDisabled || pawn.WorkTypeIsDisabled(cookingWorkType) ||
+                pawn.WorkTypeIsDisabled(craftingWorkType))
+            {
+                reason = "the generated colonist cannot expose both Cooking and Crafting records";
+                return false;
+            }
+
+            if (!pawn.workSettings.Initialized)
+            {
+                pawn.workSettings.EnableAndInitialize();
+            }
+
+            cooking.Level = canCook ? 20 : 0;
+            crafting.Level = canCraft ? 20 : 0;
+            pawn.workSettings.SetPriority(cookingWorkType, canCook ? 3 : 0);
+            pawn.workSettings.SetPriority(craftingWorkType, canCraft ? 3 : 0);
+            return true;
+        }
+
+        private static string DirectLaborFigure(BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate == null || estimate.directLabor == null
+                ? "<missing estimate>"
+                : estimate.directLabor.cost.ToString("0.###");
+        }
+
+        private static string DirectLaborStatus(BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate == null || estimate.directLabor == null
+                ? "<missing status>"
+                : estimate.directLabor.status.ToString();
         }
 
         // --- F07 production commitments ----------------------------------------------------
