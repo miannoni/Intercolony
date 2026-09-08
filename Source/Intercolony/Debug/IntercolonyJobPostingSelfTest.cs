@@ -120,6 +120,7 @@ namespace Intercolony
                 CheckSilenceIsExplained(r, state);
                 CheckLifecycle(r, state);
                 CheckApplicantOwnAsk(r, state, map);
+                CheckLoadPruner(r, state);
             }
             catch (System.Exception ex)
             {
@@ -958,6 +959,98 @@ namespace Intercolony
                 "an already-closed posting cannot be withdrawn twice");
 
             state.Postings.Remove(posting);
+        }
+
+        /// <summary>
+        /// Runs the same post-load path that owns the posting validity check. The posting dialog
+        /// passes zero for the legacy wage field, but TryPost still rejects zero at its boundary;
+        /// create both records through that real service with an accepted wage, then model the
+        /// F25 persisted state before invoking the component's PostLoadInit branch.
+        ///
+        /// RimWorld's Scribe.mode and LoadSaveMode.PostLoadInit are public, and ExposeData is the
+        /// component's public load entry point. In this mode Scribe's Look calls do not reload
+        /// values; the call reaches the component's own post-load pruning code, including
+        /// IntercolonyWorldComponent.cs:1546.
+        /// </summary>
+        private static void CheckLoadPruner(Results r, IntercolonyWorldComponent state)
+        {
+            const int term = 20;
+            const int acceptedWageForTryPost = 1;
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            JobPosting zeroWagePosting = null;
+            JobPosting nonPositiveTermPosting = null;
+            string zeroWageFailure = null;
+            string nonPositiveTermFailure = null;
+            LoadSaveMode savedScribeMode = Scribe.mode;
+
+            try
+            {
+                zeroWagePosting = JobPostingService.TryPost(
+                    state, SkillDefOf.Construction, 0, term, acceptedWageForTryPost,
+                    WageStructure.Daily, CombatClause.Civilian, out zeroWageFailure);
+                nonPositiveTermPosting = JobPostingService.TryPost(
+                    state, SkillDefOf.Construction, 0, 1, acceptedWageForTryPost,
+                    WageStructure.Daily, CombatClause.Civilian, out nonPositiveTermFailure);
+
+                if (zeroWagePosting == null || nonPositiveTermPosting == null)
+                {
+                    string reason = zeroWagePosting == null
+                        ? $"TryPost could not build the zero-wage fixture: " +
+                          $"{zeroWageFailure ?? "no failure reason"}"
+                        : $"TryPost could not build the broken-term fixture: " +
+                          $"{nonPositiveTermFailure ?? "no failure reason"}";
+                    r.Skip("load-pruner posting fixtures", reason);
+                    return;
+                }
+
+                // This is the value produced by the F25 dialog and persisted by JobPosting.
+                zeroWagePosting.wageOffered = 0;
+                nonPositiveTermPosting.termDays = 0;
+
+                if (Scribe.loader == null)
+                {
+                    r.Skip("load-pruner posting fixtures",
+                        "RimWorld Scribe.loader was null, so the PostLoadInit path could not run");
+                    return;
+                }
+
+                // Keep unrelated player postings out of the pruner invocation, then restore the
+                // exact list in finally. This lets the real RemoveAll caller run without pruning
+                // or otherwise disturbing a player's existing postings.
+                state.Postings.Clear();
+                state.Postings.Add(zeroWagePosting);
+                state.Postings.Add(nonPositiveTermPosting);
+
+                Scribe.mode = LoadSaveMode.PostLoadInit;
+                state.ExposeData();
+
+                int postingsAfterPrune = state.Postings.Count;
+                int zeroWage = zeroWagePosting.wageOffered;
+                int zeroWageTerm = zeroWagePosting.termDays;
+                int brokenWage = nonPositiveTermPosting.wageOffered;
+                int brokenTerm = nonPositiveTermPosting.termDays;
+
+                r.Check(zeroWage == 0 && zeroWageTerm > 0 &&
+                        state.Postings.Contains(zeroWagePosting),
+                    "a real zero-wage posting survives the load-time pruner (§35.2, F25)",
+                    $"term {zeroWageTerm}, wage {zeroWage}; {postingsAfterPrune} posting(s) remained");
+                r.Check(brokenTerm <= 0 && !state.Postings.Contains(nonPositiveTermPosting),
+                    "the load-time pruner rejects a posting with a non-positive term (§35.2)",
+                    $"term {brokenTerm}, wage {brokenWage}; {postingsAfterPrune} posting(s) remained");
+            }
+            finally
+            {
+                Scribe.mode = savedScribeMode;
+
+                JobPostingService.Close(
+                    zeroWagePosting, JobPostingStatus.Withdrawn, "self-test load-pruner cleanup");
+                JobPostingService.Close(
+                    nonPositiveTermPosting, JobPostingStatus.Withdrawn,
+                    "self-test load-pruner cleanup");
+
+                state.Postings.Clear();
+                state.Postings.AddRange(savedPostings);
+            }
         }
 
         // --- Helpers -----------------------------------------------------------------------
