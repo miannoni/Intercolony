@@ -189,8 +189,9 @@ namespace Intercolony
         public int termDays;
 
         /// <summary>
-        /// Saved wage field from the posting UI. It remains persisted in this slice, but no longer
-        /// gates applications; the next F25 slice removes the player's ability to set it.
+        /// Legacy wage field retained for postings created before F25. New postings do not set it;
+        /// it remains persisted for save compatibility, but matching, ranking and hiring no longer
+        /// read it.
         /// </summary>
         public int wageOffered;
 
@@ -243,18 +244,14 @@ namespace Intercolony
 
         public float DaysPosted => (GenTicks.TicksGame - postedTick) / (float)GenDate.TicksPerDay;
 
-        /// <summary>What each worker taken on from this posting costs over the full term.</summary>
-        public int TotalCommitment =>
-            WageStructureUtility.TotalCost(wageStructure, wageOffered, termDays);
-
         public string SkillLabel =>
             skill == null ? "any work" : $"{skill.skillLabel.CapitalizeFirst()} {minSkillLevel}+";
 
         /// <summary>§35.2's headline, one line.</summary>
         public string Headline()
         {
-            return $"{SkillLabel} — open, {termDays}d, {wageOffered} silver/day " +
-                   $"{wageStructure.Label()}, {combatClause.Label()}";
+            return $"{SkillLabel} — open, {termDays}d, {wageStructure.Label()}, " +
+                   $"{combatClause.Label()}";
         }
 
         public string StatusLine()
@@ -375,7 +372,10 @@ namespace Intercolony
             }
         }
 
-        public bool IsValidAfterLoad => termDays > 0 && wageOffered > 0;
+        // A zero wage is NORMAL for a posting made after F25 and must never again be treated as
+        // corruption. A positive term is the only posting value required to re-enter matching
+        // after a load.
+        public bool IsValidAfterLoad => termDays > 0;
 
         public override string ToString()
         {
