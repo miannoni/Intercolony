@@ -9,9 +9,10 @@ namespace Intercolony
     /// <summary>
     /// Posting jobs and collecting applicants (DESIGN.md §35.2, §114).
     ///
-    /// §114's acceptance criterion is the whole design brief: *"Higher wages and better employer
-    /// reputation measurably improve applicant quantity/quality."* Both fall out of one rule rather
-    /// than being tuned separately — see <see cref="MatchAll"/>.
+    /// F25 makes the posting an RFQ: a worker applies when they meet the requirement, and the
+    /// application carries the worker's own asking wage. Reputation still controls the census's
+    /// availability and quality, while the requirement controls who can answer — see <see
+    /// cref="MatchAll"/>.
     ///
     /// The market limits itself. Every open posting is matched against **one** world labor pool per
     /// refresh, and each worker applies to at most one posting, so ten identical postings are
@@ -89,19 +90,16 @@ namespace Intercolony
         /// <summary>
         /// Exposes every open posting to this cycle's world labor pool.
         ///
-        /// **The one rule that makes §114's acceptance criterion true, rather than tuned:**
-        /// a worker applies if they meet the skill bar and the offered wage clears what they would
-        /// have charged on the open market. Nothing else. From that:
+        /// **The F25 rule is deliberately simple:** a worker applies if and only if they meet the
+        /// posting's requirement. The posted wage is retained as saved posting data, but it is not
+        /// a clearing threshold. Each applicant carries the asking wage calculated for that worker,
+        /// posting term, employer standing, and combat clause, so the player discovers the price by
+        /// reviewing the replies.
         ///
-        /// * a higher offer clears more workers, and because better workers ask more, it clears
-        ///   *better* ones — so quantity and quality both rise with wage, from one comparison;
-        /// * Phase 19's <c>WageFactor</c> already multiplies every asking price by employer
-        ///   reputation, so a bad employer's offer clears fewer people with no separate mechanism.
-        ///
-        /// Writing a second, purpose-built "attractiveness" formula would have been the obvious
-        /// approach and the wrong one: two models of what a worker is worth would drift apart, and
-        /// the hiring tab and the posting tab would start quoting different numbers for the same
-        /// person. §113 learned that lesson about policy; it applies just as well to pricing.
+        /// The census still supplies the market shape: employer reputation affects availability and
+        /// candidate quality, and settlement labor supply remains part of each worker's ask. A
+        /// demanding requirement therefore yields fewer replies because fewer prospects qualify,
+        /// without adding a second scarcity or attractiveness formula.
         ///
         /// Called from the market refresh, which is also when the pool itself changes — so "the
         /// world had a look at your advertisement" and "the world moved on" are the same beat.
@@ -150,7 +148,6 @@ namespace Intercolony
                 }
 
                 JobPosting best = null;
-                int bestSurplus = int.MinValue;
                 int bestAsk = 0;
 
                 foreach (JobPosting posting in open)
@@ -161,18 +158,16 @@ namespace Intercolony
                     }
 
                     int ask = Ask(state, worker, posting, standing);
-                    int surplus = posting.wageOffered - ask;
-                    if (surplus < 0)
-                    {
-                        continue;
-                    }
 
-                    // Ties broken by posting id so the outcome is reproducible: the same census
-                    // and the same postings must produce the same applicants after a reload.
-                    if (surplus > bestSurplus || (surplus == bestSurplus && best != null && posting.id < best.id))
+                    // A prospect chooses the posting that pays them the most. Ask includes the
+                    // posting's term and combat clause, so this is a real choice: the same prospect
+                    // can ask more for Armed or Security work than for Civilian work. Break equal
+                    // asks by lower posting id so a seeded census produces the same market after a
+                    // save reload.
+                    if (best == null || ask > bestAsk ||
+                        (ask == bestAsk && posting.id < best.id))
                     {
                         best = posting;
-                        bestSurplus = surplus;
                         bestAsk = ask;
                     }
                 }
@@ -191,39 +186,57 @@ namespace Intercolony
                 queue.Add(new Interest { worker = worker, ask = bestAsk });
             }
 
-            // Phase two: each posting takes the **best** of the people who want it, not the first
-            // few the census happened to list.
+            // Phase two: each posting takes a deterministic spread from the qualified pool, not
+            // the strongest few workers.
             //
-            // This is what keeps a generous offer worth making once the queue is full. Below the
-            // cap a better wage buys more replies; above it, it buys better ones — because a higher
-            // offer clears stronger workers who would not have applied at all, and they now
-            // displace the weaker ones rather than arriving behind them. Taking the first N in
-            // census order threw that away and made every offer above the cheapest look identical.
-            foreach (JobPosting posting in open)
+            // Once F25 stopped using the posted wage as a filter, best-N ranking would hand the
+            // player the strongest N workers every refresh — and therefore the highest asks —
+            // turning the waiting list into a leaderboard. Shuffle each qualified queue with the
+            // same seeded RNG inputs as the census and take up to its existing room. The cap stays
+            // unchanged, while the existing ask formula supplies the quality/price correlation
+            // without another attractiveness rule.
+            Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ 0x4C41_5445);
+            try
             {
-                if (!interested.TryGetValue(posting.id, out List<Interest> queue))
+                foreach (JobPosting posting in open)
                 {
-                    continue;
-                }
-
-                queue.Sort((a, b) => Desirability(b.worker, posting).CompareTo(
-                    Desirability(a.worker, posting)));
-
-                int room = Room(posting);
-                int taken = 0;
-
-                for (int i = 0; i < queue.Count && taken < room; i++)
-                {
-                    if (Apply(posting, queue[i].worker, queue[i].ask))
+                    if (!interested.TryGetValue(posting.id, out List<Interest> queue))
                     {
-                        taken++;
+                        continue;
+                    }
+
+                    int room = Room(posting);
+                    if (room <= 0)
+                    {
+                        continue;
+                    }
+
+                    for (int i = queue.Count - 1; i > 0; i--)
+                    {
+                        int j = Rand.RangeInclusive(0, i);
+                        Interest swap = queue[i];
+                        queue[i] = queue[j];
+                        queue[j] = swap;
+                    }
+
+                    int taken = 0;
+                    for (int i = 0; i < queue.Count && taken < room; i++)
+                    {
+                        if (Apply(posting, queue[i].worker, queue[i].ask))
+                        {
+                            taken++;
+                        }
+                    }
+
+                    if (taken > 0)
+                    {
+                        gained[posting.id] = taken;
                     }
                 }
-
-                if (taken > 0)
-                {
-                    gained[posting.id] = taken;
-                }
+            }
+            finally
+            {
+                Rand.PopState();
             }
 
             foreach (JobPosting posting in open)
@@ -233,7 +246,7 @@ namespace Intercolony
             }
         }
 
-        /// <summary>One worker's willingness to take one posting, before anyone has been chosen.</summary>
+        /// <summary>One qualified worker's chosen posting and the ask they quoted for it.</summary>
         private struct Interest
         {
             public LaborProspect worker;
@@ -244,20 +257,6 @@ namespace Intercolony
         private static int Room(JobPosting posting)
         {
             return Mathf.Max(0, MaxWaitingApplicants - posting.Applicants.Count);
-        }
-
-        /// <summary>
-        /// How much an employer would want this worker for this job.
-        ///
-        /// The advertised skill comes first, because that is what the posting asked for: a
-        /// Construction 16 generalist beats a Construction 11 prodigy when the job is building.
-        /// Overall ability breaks the tie, so between two equally qualified applicants the more
-        /// capable one is the one who turns up.
-        /// </summary>
-        private static float Desirability(LaborProspect worker, JobPosting posting)
-        {
-            float required = posting.skill == null ? 0f : worker.LevelOf(posting.skill);
-            return required * 100f + worker.pricedSkillValue;
         }
 
         /// <summary>
@@ -321,8 +320,8 @@ namespace Intercolony
         /// Tells the player what their advertisement did, and — when it did nothing — why.
         ///
         /// The "why" is the point. A posting that draws nobody is indistinguishable from a broken
-        /// feature unless the game says which of the two reasons it was: the wage is below what
-        /// anyone with that skill will accept, or nobody with that skill exists to ask.
+        /// feature unless the game says whether nobody qualified or whether the qualified pool did
+        /// not answer this refresh. The posted wage is intentionally not one of those reasons.
         /// </summary>
         private static void Report(IntercolonyWorldComponent state, JobPosting posting, int arrived,
             float standing)
@@ -364,12 +363,12 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Works out why nobody applied, by asking the pool the same question the matcher did.
+        /// Works out why nobody applied, by asking the pool the same requirement question the
+        /// matcher did.
         ///
-        /// Deliberately measured rather than guessed: it finds the cheapest qualified worker in the
-        /// world and reports what they actually wanted. A letter that said "try offering more" when
-        /// the real problem was that nobody in the world has Construction 15 would be worse than no
-        /// letter at all.
+        /// Deliberately measured rather than guessed: it counts qualified prospects in the current
+        /// world pool. A letter that said "try offering more" would contradict F25, because the
+        /// posted wage no longer decides who applies.
         /// </summary>
         public static string ExplainSilence(IntercolonyWorldComponent state, JobPosting posting,
             float standing)
@@ -377,7 +376,6 @@ namespace Intercolony
             List<LaborProspect> world = LaborCandidateService.Census(state);
 
             int qualified = 0;
-            int cheapestAsk = int.MaxValue;
 
             foreach (LaborProspect worker in world)
             {
@@ -387,12 +385,6 @@ namespace Intercolony
                 }
 
                 qualified++;
-
-                int ask = Ask(state, worker, posting, standing);
-                if (ask < cheapestAsk)
-                {
-                    cheapestAsk = ask;
-                }
             }
 
             if (qualified == 0)
@@ -406,12 +398,12 @@ namespace Intercolony
             if (rep != null && rep.Score < EmployerReputation.StartingScore)
             {
                 reputation = $"\n\nYour standing as an employer ({rep.TierLabel().ToLower()}) is part of " +
-                             "it: people charge more to work somewhere with your record.";
+                             "the market reach: a poor record brings a smaller, weaker pool.";
             }
 
             return $"{qualified} worker{(qualified == 1 ? "" : "s")} reachable can do the job, but the " +
-                   $"cheapest of them wants {cheapestAsk} silver a day and you offered " +
-                   $"{posting.wageOffered}." + reputation;
+                   "qualified pool did not answer this refresh. They may have chosen another open " +
+                   "posting, or the next market refresh may draw a different pool." + reputation;
         }
 
         // --- Lifecycle ---------------------------------------------------------------------
@@ -505,10 +497,11 @@ namespace Intercolony
         // --- Hiring ------------------------------------------------------------------------
 
         /// <summary>
-        /// Takes on an applicant at the posted wage.
+        /// Takes on an applicant at the applicant's own market ask.
         ///
-        /// The wage comes from the posting, not from the worker — that is the inversion §35.2
-        /// describes, and it is why this cannot simply call the candidate hire path.
+        /// EmploymentService resolves the contract rate from the applicant's saved quote. The
+        /// posted wage remains saved posting data in this slice, but it neither chose the applicant
+        /// nor sets the hire rate.
         /// </summary>
         public static EmploymentContract TryAccept(
             IntercolonyWorldComponent state, JobPosting posting, JobApplicant applicant,
@@ -563,13 +556,14 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// How many workers in the census would take these terms — the market's response before the
-        /// applicant queue truncates it.
+        /// How many workers in the census meet this requirement — the market's qualified supply
+        /// before the applicant queue truncates it.
         ///
         /// The player never sees this number: they see the queue, and §35.2's screen shows
         /// applicants rather than interest. It exists so the self-test can measure the *market*
-        /// rather than the queue length, which saturates at the cap and would hide the very
-        /// smoothness the census was built to produce.
+        /// rather than the queue length, which saturates at the cap. The term, wage, and clause
+        /// parameters remain in this compatibility-shaped diagnostic entry point, but F25
+        /// intentionally does not use the posted wage to count applicants.
         /// </summary>
         public static int CountInterested(
             IntercolonyWorldComponent state, SkillDef skill, int minLevel, int termDays,
@@ -580,7 +574,6 @@ namespace Intercolony
                 return 0;
             }
 
-            float standing = EmployerReputationService.ScoreFor(state);
             int count = 0;
 
             foreach (LaborProspect worker in LaborCandidateService.Census(state))
@@ -595,14 +588,7 @@ namespace Intercolony
                     continue;
                 }
 
-                int ask = LaborCandidateService.DailyWageFor(
-                    worker.pricedSkillValue, ProfileFor(state, worker.settlementId),
-                    worker.distanceTiles, termDays, standing, clause);
-
-                if (wageOffered >= ask)
-                {
-                    count++;
-                }
+                count++;
             }
 
             return count;
@@ -627,9 +613,9 @@ namespace Intercolony
 
         /// <summary>
         /// The same band for a specific wage structure. Paying by the day carries a premium, so
-        /// a daily posting genuinely costs more than a per-quadrum one for the same worker — and
-        /// a band that ignored that would advise the player to underpay and then wonder why
-        /// nobody applied.
+        /// a daily posting genuinely costs more than a per-quadrum one for the same worker. The
+        /// band is market information for the player, not an application threshold: applicants
+        /// still arrive based on the requirement and quote their own effective rate.
         /// </summary>
         public static bool GoingRate(
             IntercolonyWorldComponent state, SkillDef skill, int minLevel, int termDays,
