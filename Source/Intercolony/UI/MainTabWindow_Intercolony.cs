@@ -4167,6 +4167,80 @@ namespace Intercolony
                 ContractMeasuredHeight(amount.ToString("N0"), numberWidth));
         }
 
+        private static string DirectInputsAmountLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            BusinessReportService.DirectInputEstimate directInputs = estimate?.directInputs;
+            if (directInputs == null ||
+                directInputs.status == BusinessReportService.DirectInputCostStatus.CannotBePriced)
+            {
+                return "unavailable";
+            }
+
+            if (directInputs.status == BusinessReportService.DirectInputCostStatus.NoKnownRecipe)
+            {
+                return "no known inputs";
+            }
+
+            if (!directInputs.hasDirectInputs)
+            {
+                return "no direct inputs";
+            }
+
+            return DirectInputsIfBoughtIsLessThanOneSilver(estimate)
+                ? "less than 1 silver"
+                : estimate.directInputsIfBought.ToString("N0");
+        }
+
+        private static bool DirectInputsIfBoughtIsLessThanOneSilver(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate.directInputsIfBought == 0;
+        }
+
+        private static float ContractDirectInputsLineHeight(
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberWidth)
+        {
+            return Mathf.Max(
+                ContractMeasuredHeight("Direct inputs if bought", labelWidth),
+                ContractMeasuredHeight(DirectInputsAmountLabel(estimate), numberWidth));
+        }
+
+        private static string DirectInputTooltip(
+            BusinessReportService.DirectInputEstimate estimate)
+        {
+            string method =
+                "Direct inputs only: this prices the selected recipe's immediate ingredients and " +
+                "does not recursively decompose intermediate goods. Each ingredient uses the " +
+                "lowest-priced definition allowed by its filter; ties use ordinal defName. Prices " +
+                "use BaseValue multiplied by the supplier margin " +
+                $"({RfqService.SupplierMargin:0.##}), not a live supplier quote. The selected " +
+                "recipe is the non-surgery recipe with the smallest ordinal defName that produces " +
+                "this good.";
+
+            if (estimate == null ||
+                estimate.status == BusinessReportService.DirectInputCostStatus.CannotBePriced)
+            {
+                string reason = estimate?.reason ??
+                    "The direct input estimate is unavailable.";
+                return method + " " + reason + " This is not a zero cost.";
+            }
+
+            if (estimate.status == BusinessReportService.DirectInputCostStatus.NoKnownRecipe)
+            {
+                return method +
+                    " No non-surgery recipe in the loaded defs produces this good, so no known " +
+                    "inputs are reported; this is not a zero cost.";
+            }
+
+            string recipe = estimate.recipeDefName.NullOrEmpty()
+                ? "the selected recipe"
+                : $"recipe {estimate.recipeDefName}";
+            return method + " Using " + recipe + ".";
+        }
+
         private static string ContractEstimateInterpretation(
             BusinessReportService.ContractEstimate estimate)
         {
@@ -4188,6 +4262,7 @@ namespace Intercolony
                 "Revenue, payable", estimate.revenue, labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
                 "If you bought the goods instead", estimate.inputsIfBought, labelWidth, numberWidth);
+            height += ContractDirectInputsLineHeight(estimate, labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
                 "Wage bill over the cycle", estimate.payroll, labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
@@ -4282,6 +4357,52 @@ namespace Intercolony
             return Mathf.Max(labelHeight, amountHeight);
         }
 
+        private static float DrawContractDirectInputsLine(
+            Rect rect,
+            float y,
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberX,
+            float numberWidth)
+        {
+            string amountLabel = DirectInputsAmountLabel(estimate);
+            float labelHeight = 0f;
+            float amountHeight = 0f;
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.85f);
+                labelHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
+                    "Direct inputs if bought", TextAnchor.UpperLeft);
+
+                GUI.color = estimate != null && estimate.directInputs != null &&
+                            estimate.directInputs.status ==
+                                BusinessReportService.DirectInputCostStatus.Resolved &&
+                            estimate.directInputs.hasDirectInputs
+                    ? new Color(1f, 0.75f, 0.75f)
+                    : new Color(1f, 1f, 1f, 0.6f);
+                amountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
+                    amountLabel, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+
+            Rect tooltipRect = new Rect(
+                rect.x + 6f, y, labelWidth + 8f + numberWidth,
+                Mathf.Max(labelHeight, amountHeight));
+            if (ShouldBuildTooltip(tooltipRect))
+            {
+                TooltipHandler.TipRegion(
+                    tooltipRect, DirectInputTooltip(estimate?.directInputs));
+            }
+
+            return Mathf.Max(labelHeight, amountHeight);
+        }
+
         private static float DrawContractEstimateMargin(
             Rect rect,
             float y,
@@ -4331,6 +4452,8 @@ namespace Intercolony
             lineY += DrawContractEstimateLine(
                 rect, lineY, "If you bought the goods instead", estimate.inputsIfBought,
                 labelWidth, numberX, numberWidth);
+            lineY += DrawContractDirectInputsLine(
+                rect, lineY, estimate, labelWidth, numberX, numberWidth);
             lineY += DrawContractEstimateLine(
                 rect, lineY, "Wage bill over the cycle", estimate.payroll,
                 labelWidth, numberX, numberWidth);

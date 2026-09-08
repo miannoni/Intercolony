@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -41,6 +42,12 @@ namespace Intercolony
             /// <summary>What procuring the same goods would cost. Negative.</summary>
             public int inputsIfBought;
 
+            /// <summary>What the selected recipe's direct inputs would cost. Negative when known.</summary>
+            public int directInputsIfBought;
+
+            /// <summary>Direct-input price and resolution state for the contracted good.</summary>
+            public DirectInputEstimate directInputs;
+
             /// <summary>Share of the wage bill this cycle would cover. Negative.</summary>
             public int payroll;
 
@@ -70,6 +77,27 @@ namespace Intercolony
             public bool hasRecordedProduction;
         }
 
+        public enum DirectInputCostStatus
+        {
+            Resolved,
+            NoKnownRecipe,
+            CannotBePriced
+        }
+
+        /// <summary>
+        /// Replacement price for the immediate ingredients of one output unit. This deliberately
+        /// stops at the selected recipe's direct ingredients; an intermediate good is priced as the
+        /// good that production consumes rather than being recursively decomposed.
+        /// </summary>
+        public class DirectInputEstimate
+        {
+            public DirectInputCostStatus status;
+            public float costPerUnit;
+            public bool hasDirectInputs;
+            public string recipeDefName;
+            public string reason;
+        }
+
         /// <summary>
         /// Estimates a contract's per-cycle economics.
         ///
@@ -95,6 +123,13 @@ namespace Intercolony
             float unit = IntercolonyPricing.BaseValue(contract.thingDef, contract.stuffDef) *
                          RfqService.SupplierMargin;
             estimate.inputsIfBought = -Mathf.RoundToInt(unit * contract.quantityPerCycle);
+
+            estimate.directInputs = EstimateDirectInputs(contract.thingDef);
+            if (estimate.directInputs.status == DirectInputCostStatus.Resolved)
+            {
+                estimate.directInputsIfBought = -Mathf.RoundToInt(
+                    estimate.directInputs.costPerUnit * contract.quantityPerCycle);
+            }
 
             estimate.payroll = -PayrollForPeriod(state, contract.CadenceDays);
 
@@ -124,6 +159,214 @@ namespace Intercolony
             }
 
             return contract.quantityPerCycle / Mathf.Max(1f, contract.CadenceDays);
+        }
+
+        /// <summary>
+        /// Prices one product's direct recipe inputs as replacement purchases. Recipe selection is
+        /// deterministic: the non-surgery recipe with the smallest ordinal defName that produces
+        /// the product is selected. An ingredient filter may allow several definitions; the lowest
+        /// priced acceptable definition wins, with ordinal defName as its tie-breaker.
+        /// </summary>
+        public static DirectInputEstimate EstimateDirectInputs(ThingDef product)
+        {
+            DirectInputEstimate estimate = new DirectInputEstimate();
+            if (product == null)
+            {
+                estimate.status = DirectInputCostStatus.CannotBePriced;
+                estimate.reason = "The product definition is unavailable.";
+                return estimate;
+            }
+
+            RecipeDef recipe = FindDirectInputRecipe(product);
+            if (recipe == null)
+            {
+                estimate.status = DirectInputCostStatus.NoKnownRecipe;
+                estimate.reason = "No non-surgery recipe in the loaded defs produces this good.";
+                return estimate;
+            }
+
+            estimate.recipeDefName = recipe.defName;
+            ThingDefCountClass productEntry = FindProducedProduct(recipe, product);
+            if (productEntry == null || productEntry.count <= 0 || recipe.ingredients == null)
+            {
+                estimate.status = DirectInputCostStatus.CannotBePriced;
+                estimate.reason = "The selected recipe does not expose a usable product or ingredient list.";
+                return estimate;
+            }
+
+            if (recipe.ingredients.Count == 0)
+            {
+                estimate.status = DirectInputCostStatus.Resolved;
+                estimate.hasDirectInputs = false;
+                return estimate;
+            }
+
+            float recipeInputCost = 0f;
+            for (int i = 0; i < recipe.ingredients.Count; i++)
+            {
+                IngredientCount ingredient = recipe.ingredients[i];
+                float ingredientCost;
+                if (!TryPriceDirectIngredient(ingredient, recipe, out ingredientCost))
+                {
+                    estimate.status = DirectInputCostStatus.CannotBePriced;
+                    estimate.reason = "At least one direct ingredient has no usable allowed definition or BaseValue price.";
+                    return estimate;
+                }
+
+                recipeInputCost += ingredientCost;
+                if (!IsUsablePositive(recipeInputCost))
+                {
+                    estimate.status = DirectInputCostStatus.CannotBePriced;
+                    estimate.reason = "The selected recipe's direct input total is not a usable price.";
+                    return estimate;
+                }
+            }
+
+            float costPerUnit = recipeInputCost / productEntry.count;
+            if (!IsUsablePositive(costPerUnit))
+            {
+                estimate.status = DirectInputCostStatus.CannotBePriced;
+                estimate.reason = "The selected recipe's output count does not produce a usable unit price.";
+                return estimate;
+            }
+
+            estimate.status = DirectInputCostStatus.Resolved;
+            estimate.hasDirectInputs = true;
+            estimate.costPerUnit = costPerUnit;
+            return estimate;
+        }
+
+        private static RecipeDef FindDirectInputRecipe(ThingDef product)
+        {
+            RecipeDef selected = null;
+            List<RecipeDef> recipes = DefDatabase<RecipeDef>.AllDefsListForReading;
+            if (recipes == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < recipes.Count; i++)
+            {
+                RecipeDef candidate = recipes[i];
+                if (candidate == null || candidate.IsSurgery || candidate.products == null)
+                {
+                    continue;
+                }
+
+                if (FindProducedProduct(candidate, product) == null)
+                {
+                    continue;
+                }
+
+                if (selected == null ||
+                    string.CompareOrdinal(candidate.defName ?? string.Empty,
+                        selected.defName ?? string.Empty) < 0)
+                {
+                    selected = candidate;
+                }
+            }
+
+            return selected;
+        }
+
+        private static ThingDefCountClass FindProducedProduct(RecipeDef recipe, ThingDef product)
+        {
+            if (recipe == null || recipe.products == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < recipe.products.Count; i++)
+            {
+                ThingDefCountClass productEntry = recipe.products[i];
+                if (productEntry != null && productEntry.thingDef == product && productEntry.count > 0)
+                {
+                    return productEntry;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryPriceDirectIngredient(
+            IngredientCount ingredient,
+            RecipeDef recipe,
+            out float ingredientCost)
+        {
+            ingredientCost = 0f;
+            if (ingredient == null || ingredient.filter == null)
+            {
+                return false;
+            }
+
+            List<ThingDef> allowedDefs = new List<ThingDef>();
+            foreach (ThingDef allowedDef in ingredient.filter.AllowedThingDefs)
+            {
+                if (allowedDef != null)
+                {
+                    allowedDefs.Add(allowedDef);
+                }
+            }
+
+            allowedDefs.Sort((left, right) => string.CompareOrdinal(
+                left.defName ?? string.Empty, right.defName ?? string.Empty));
+
+            bool foundPrice = false;
+            ThingDef selectedDef = null;
+            float selectedCost = 0f;
+            for (int i = 0; i < allowedDefs.Count; i++)
+            {
+                ThingDef allowedDef = allowedDefs[i];
+                int requiredCount;
+                try
+                {
+                    requiredCount = ingredient.CountRequiredOfFor(allowedDef, recipe);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+
+                if (requiredCount <= 0)
+                {
+                    continue;
+                }
+
+                float unitBaseValue = IntercolonyPricing.BaseValue(allowedDef, null);
+                if (!IsUsablePositive(unitBaseValue))
+                {
+                    continue;
+                }
+
+                float candidateCost = requiredCount * unitBaseValue * RfqService.SupplierMargin;
+                if (!IsUsablePositive(candidateCost))
+                {
+                    continue;
+                }
+
+                if (!foundPrice || candidateCost < selectedCost ||
+                    (candidateCost == selectedCost &&
+                     string.CompareOrdinal(allowedDef.defName ?? string.Empty,
+                         selectedDef.defName ?? string.Empty) < 0))
+                {
+                    foundPrice = true;
+                    selectedDef = allowedDef;
+                    selectedCost = candidateCost;
+                }
+            }
+
+            if (!foundPrice)
+            {
+                return false;
+            }
+
+            ingredientCost = selectedCost;
+            return true;
+        }
+
+        private static bool IsUsablePositive(float value)
+        {
+            return value > 0f && !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
         /// <summary>
