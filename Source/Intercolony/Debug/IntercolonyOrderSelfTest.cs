@@ -681,7 +681,8 @@ namespace Intercolony
                         ReserveCell(buildingCell, ThingDefOf.Shelf);
                         try
                         {
-                            buildingThing = ThingMaker.MakeThing(ThingDefOf.Shelf);
+                            buildingThing = ThingMaker.MakeThing(
+                                ThingDefOf.Shelf, ThingDefOf.WoodLog);
                             testBuilding = buildingThing as Building_Storage;
                             if (testBuilding == null)
                             {
@@ -738,8 +739,8 @@ namespace Intercolony
                                 ReserveCell(controlBuildingCell, ThingDefOf.Shelf);
                                 try
                                 {
-                                    controlBuildingThing =
-                                        ThingMaker.MakeThing(ThingDefOf.Shelf);
+                                    controlBuildingThing = ThingMaker.MakeThing(
+                                        ThingDefOf.Shelf, ThingDefOf.WoodLog);
                                     controlBuilding = controlBuildingThing as Building_Storage;
                                     if (controlBuilding == null)
                                     {
@@ -1672,7 +1673,8 @@ namespace Intercolony
                                 }
                                 else
                                 {
-                                    testStock = ThingMaker.MakeThing(def);
+                                    testStock = ThingMaker.MakeThing(
+                                        def, def.MadeFromStuff ? GenStuff.DefaultStuffFor(def) : null);
                                     if (testStock == null)
                                     {
                                         storageFixtureFailure =
