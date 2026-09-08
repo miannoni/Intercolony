@@ -5024,7 +5024,7 @@ namespace Intercolony
                         ? $"Quality: {quote.offeredQuality.Value.GetLabel()}\n"
                         : "") +
                     (quote.offeredStuff != null ? $"Material: {quote.offeredStuff.label}\n" : "") +
-                    $"{(quote.supplierDelivers ? "They deliver it" : "You collect it")}, " +
+                    $"{QuoteLogisticsLine(quote)}\n" +
                     $"ready in {quote.leadTimeDays} days\n\n" +
                     quote.priceExplanation);
             }
@@ -5116,6 +5116,113 @@ namespace Intercolony
         private static float SortableQuoteDistance(Quotation quote)
         {
             return quote.distanceTiles < 0f ? float.MaxValue : quote.distanceTiles;
+        }
+
+        private static bool TryReadPriceFactor(
+            string explanation, string factorLabel, out float multiplier)
+        {
+            multiplier = 0f;
+            foreach (string line in (explanation ?? "").Split('\n'))
+            {
+                string trimmed = line.Trim();
+                if (!trimmed.StartsWith(factorLabel, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                int percentIndex = trimmed.IndexOf('%');
+                if (percentIndex <= factorLabel.Length)
+                {
+                    return false;
+                }
+
+                string percentText = trimmed.Substring(
+                    factorLabel.Length, percentIndex - factorLabel.Length).Trim();
+                if (!float.TryParse(percentText, out float percent) ||
+                    float.IsNaN(percent) || float.IsInfinity(percent))
+                {
+                    return false;
+                }
+
+                multiplier = 1f + percent / 100f;
+                return !float.IsNaN(multiplier) && !float.IsInfinity(multiplier);
+            }
+
+            return false;
+        }
+
+        private static bool MatchesExplainedFactor(float explained, float actual)
+        {
+            // IntercolonyPricing.Explain renders percentages to one decimal place. The exact
+            // multiplier comes from the quotation's persisted distance/method inputs below.
+            return Mathf.Abs(explained - actual) <= 0.0006f;
+        }
+
+        private static bool TryGetLogisticsSilver(Quotation quote, out int logisticsSilver)
+        {
+            logisticsSilver = 0;
+            if (quote == null || quote.unitPrice <= 0f ||
+                float.IsNaN(quote.unitPrice) || float.IsInfinity(quote.unitPrice) ||
+                float.IsNaN(quote.distanceTiles) || float.IsInfinity(quote.distanceTiles))
+            {
+                return false;
+            }
+
+            float distanceMultiplier = 1f;
+            if (quote.distanceTiles >= 0f)
+            {
+                if (!TryReadPriceFactor(quote.priceExplanation, "Distance", out float explainedDistance))
+                {
+                    return false;
+                }
+
+                distanceMultiplier = LogisticsQuote.DistancePriceMultiplierFor(quote.distanceTiles);
+                if (!MatchesExplainedFactor(explainedDistance, distanceMultiplier))
+                {
+                    return false;
+                }
+            }
+
+            string transportLabel = quote.supplierDelivers
+                ? "Supplier delivery"
+                : "You collect";
+            if (!TryReadPriceFactor(
+                    quote.priceExplanation, transportLabel, out float explainedTransport))
+            {
+                return false;
+            }
+
+            float transportMultiplier = LogisticsQuote.TransportPriceMultiplierFor(
+                LogisticsQuote.MethodFor(quote.supplierDelivers));
+            if (!MatchesExplainedFactor(explainedTransport, transportMultiplier))
+            {
+                return false;
+            }
+
+            float logisticsMultiplier = distanceMultiplier * transportMultiplier;
+            if (logisticsMultiplier <= 0f ||
+                float.IsNaN(logisticsMultiplier) || float.IsInfinity(logisticsMultiplier))
+            {
+                return false;
+            }
+
+            float priceWithoutLogistics = quote.unitPrice / logisticsMultiplier;
+            float contribution = quote.unitPrice - priceWithoutLogistics;
+            if (float.IsNaN(contribution) || float.IsInfinity(contribution) || contribution < 0f)
+            {
+                return false;
+            }
+
+            logisticsSilver = Mathf.RoundToInt(contribution);
+            return true;
+        }
+
+        private static string QuoteLogisticsLine(Quotation quote)
+        {
+            string method = quote.supplierDelivers ? "They deliver it" : "You collect it";
+            return TryGetLogisticsSilver(quote, out int logisticsSilver)
+                ? $"Logistics: +{logisticsSilver} silver per unit — {method}"
+                : $"Logistics: unavailable — {method}";
         }
 
         private static string RequestFulfillmentLabel(
