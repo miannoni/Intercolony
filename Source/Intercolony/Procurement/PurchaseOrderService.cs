@@ -1043,6 +1043,16 @@ namespace Intercolony
             return remaining <= 0;
         }
 
+        /// <summary>
+        /// Returns silver through the same storage-first, trade-spot fallback used by purchase
+        /// refunds. Employment bonds use this rather than creating a second placement convention.
+        /// </summary>
+        internal static int ReturnSilverToColony(
+            Map map, int amount, out bool usedStorageFallback)
+        {
+            return GiveSilver(map, amount, out usedStorageFallback);
+        }
+
         private static int GiveSilver(Map map, int amount, out bool usedStorageFallback)
         {
             usedStorageFallback = false;

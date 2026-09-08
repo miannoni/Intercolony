@@ -1625,7 +1625,22 @@ namespace Intercolony
                 else
                 {
                     int nullEmployments = employments.RemoveAll(e => e == null);
-                    int brokenEmployments = employments.RemoveAll(e => !e.IsValidAfterLoad);
+                    int brokenEmployments = 0;
+                    for (int i = employments.Count - 1; i >= 0; i--)
+                    {
+                        EmploymentContract employment = employments[i];
+                        if (employment.IsValidAfterLoad)
+                        {
+                            continue;
+                        }
+
+                        // There is no pawn left against which to verify a returned Thing. Settle
+                        // before dropping the unrecoverable record, which retains the full bond and
+                        // tells the player instead of silently losing the charged deposit.
+                        EmploymentEquipmentService.SettleBond(employment);
+                        employments.RemoveAt(i);
+                        brokenEmployments++;
+                    }
                     if (nullEmployments > 0 || brokenEmployments > 0)
                     {
                         // An employment whose pawn did not resolve leaves a worker somewhere in

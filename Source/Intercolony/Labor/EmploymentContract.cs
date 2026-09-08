@@ -152,15 +152,15 @@ namespace Intercolony
         /// <summary>Silver actually handed over so far — the whole term for prepaid, accumulating for periodic.</summary>
         public int paidSilver;
 
-        // --- Equipment bond (F23 first slice) ------------------------------------------------
+        // --- Equipment bond (F23) ------------------------------------------------------------
 
         /// <summary>
         /// Weapons and apparel observed from the worker at hire. The field/node keeps the original
         /// arrivedEquipment name for the additive schema-58 record: nothing in Intercolony changes
         /// a travelling worker's gear, so the hire-time observation is also what arrives. This is
-        /// the durable record of borrowed capital, not inventory or body modifications. The
-        /// return/refund and retention settlement are the next F23 slice and are deliberately not
-        /// built yet.
+        /// the durable record of borrowed capital, not inventory or body modifications. Settlement
+        /// compares this snapshot with the weapons and apparel the worker still carries when the
+        /// employment ends.
         /// </summary>
         public List<EmploymentEquipmentRecord> arrivedEquipment =
             new List<EmploymentEquipmentRecord>();
@@ -170,6 +170,9 @@ namespace Intercolony
         /// wages, <see cref="paidSilver"/>, and every wage-cost calculation.
         /// </summary>
         public int equipmentBond;
+
+        /// <summary>Prevents a terminal path from settling the same deposit twice.</summary>
+        public bool equipmentBondSettled;
 
         // --- Payment structure (§37, §38, §39) ---
 
@@ -463,6 +466,7 @@ namespace Intercolony
             Scribe_Values.Look(ref paidSilver, "paidSilver", 0);
             Scribe_Collections.Look(ref arrivedEquipment, "arrivedEquipment", LookMode.Deep);
             Scribe_Values.Look(ref equipmentBond, "equipmentBond", 0);
+            Scribe_Values.Look(ref equipmentBondSettled, "equipmentBondSettled", false);
 
             // Pre-Phase-20 saves have no clause node. Civilian is the right default for them:
             // it is what every existing contract was priced as, so an old save does not

@@ -583,6 +583,10 @@ namespace Intercolony
             PayrollService.SettleOnEnd(contract, EmploymentStatus.Severed, state?.LaborDebts, state);
             CompensationService.ClaimOnEnd(state, contract);
 
+            // The worker is about to be made factionless and sent through vanilla departure
+            // cleanup, which drops carried gear. Match the bond before that happens.
+            EmploymentEquipmentService.SettleBond(contract);
+
             contract.status = EmploymentStatus.Severed;
             contract.outcomeNote =
                 $"{contract.factionName} went to war; {contract.workerName} was released";
@@ -661,7 +665,10 @@ namespace Intercolony
             Pawn worker = contract.pawn;
             if (worker == null)
             {
-                // Already finished, or the pawn did not survive a load. Nothing left to do.
+                // A save can contain a severed departure created before the settlement half was
+                // present. The pawn is no longer inspectable, so the bond is retained rather than
+                // silently discarded; current departures already settled it in BeginSafePassage.
+                EmploymentEquipmentService.SettleBond(contract);
                 contract.safePassage = false;
                 return;
             }
@@ -759,6 +766,11 @@ namespace Intercolony
         {
             Pawn worker = contract.pawn;
             Quest quest = contract.quest;
+
+            // The employment ended, and its bond was settled, in BeginSafePassage. This method
+            // normally only closes the already-Severed departure after the pawn is clear. Keep the
+            // call here as an idempotent fallback for a save made between those two operations.
+            EmploymentEquipmentService.SettleBond(contract);
 
             contract.outcomeNote = note ?? contract.outcomeNote;
             contract.safePassage = false;
@@ -943,6 +955,11 @@ namespace Intercolony
             Quest quest = contract.quest;
             Pawn worker = contract.pawn;
 
+            // Settle before QuestPart_Leave cleanup drops anything the worker is carrying. The
+            // same call applies to completion, dismissal, death, capture, walk-out and failure;
+            // the reason the employment ended does not change the bond rule.
+            EmploymentEquipmentService.SettleBond(contract);
+
             // Pay for the days actually worked since the last payday before anything else — the
             // pawn's references are cleared below, and the arrears calculation needs them.
             PayrollService.SettleOnEnd(contract, status, IntercolonyWorldComponent.Current?.LaborDebts,
@@ -1103,7 +1120,6 @@ namespace Intercolony
         {
             // Severance sends its own letter from HostilityPolicy, which can say what a generic
             // departure letter cannot: which faction went to war, and what happened to the money.
-            // A second letter here would just repeat it worse.
             if (status == EmploymentStatus.Severed)
             {
                 return;
@@ -1151,9 +1167,6 @@ namespace Intercolony
                     : status == EmploymentStatus.Dismissed
                         ? IntercolonyLetterImportance.Important
                         : IntercolonyLetterImportance.Always;
-
-            // Deliberately says nothing about refunds. Nothing else in RimWorld or Intercolony
-            // refunds anything, so raising the subject is what would make a player expect one.
 
             // A worker who left the map has no target to look at; one still walking out does.
             if (worker != null && worker.Spawned)
