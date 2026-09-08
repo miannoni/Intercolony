@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 using Verse.AI.Group;
@@ -26,6 +27,7 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -45,6 +47,12 @@ namespace Intercolony
             {
                 sb.AppendLine($"        {line}");
             }
+
+            public void Skip(string label, string detail)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {label}  ({detail})");
+            }
         }
 
         public static string Run(IntercolonyWorldComponent state, Map map)
@@ -59,6 +67,14 @@ namespace Intercolony
             }
 
             int savedSilver = PurchaseOrderService.CountColonySilver(map);
+            int savedEmployments = state.Employments.Count;
+            EmployerReputation savedStandingOwner = state.EmployerStanding;
+            float savedStanding = savedStandingOwner?.Score ?? 0f;
+            int savedLedger = state.Ledger.Count;
+            int savedLedgerStartTick = state.LedgerStartTick;
+            int worldPawnsBefore = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
+            List<Pawn> fixturePawns = new List<Pawn>();
+            List<Thing> fixtureItems = new List<Thing>();
             IntercolonyLaborSelfTestSupport.ResetLedger();
 
             try
@@ -69,6 +85,8 @@ namespace Intercolony
 
                 if (pool.Count == 0)
                 {
+                    SkipMainEquipmentBondChecks(r, "the labor candidate pool was empty");
+                    SkipPartialEquipmentBondChecks(r, "the labor candidate pool was empty");
                     r.sb.AppendLine("  Cannot continue without a candidate.");
                     return Summarize(r);
                 }
@@ -78,6 +96,15 @@ namespace Intercolony
                 // --- Hire ---
                 LaborCandidate candidate = pool[0];
                 int term = candidate.minTermDays;
+                List<Thing> mainFixtureItems = new List<Thing>();
+                bool mainFixtureBuilt = BuildEquipmentBondFixture(
+                    candidate, mainFixtureItems, out string mainFixtureFailureReason);
+                fixtureItems.AddRange(mainFixtureItems);
+                if (!mainFixtureBuilt)
+                {
+                    SkipMainEquipmentBondChecks(r, mainFixtureFailureReason);
+                }
+
                 EmploymentHireCostQuote hireQuote =
                     IntercolonyLaborSelfTestSupport.QuoteHireCost(
                         state, candidate, term, WageStructure.Prepaid, CombatClause.Civilian,
@@ -85,6 +112,14 @@ namespace Intercolony
                 if (hireQuote == null)
                 {
                     r.Check(false, "hire cost could be quoted", quoteFailReason);
+                    if (mainFixtureBuilt)
+                    {
+                        SkipMainEquipmentBondChecks(
+                            r, $"the hire path could not quote the fixture: {quoteFailReason}");
+                    }
+
+                    SkipPartialEquipmentBondChecks(
+                        r, $"the hire path could not quote the first fixture: {quoteFailReason}");
                     return Summarize(r);
                 }
 
@@ -142,11 +177,29 @@ namespace Intercolony
                     return Summarize(r);
                 }
 
+                TrackPawn(fixturePawns, contract.pawn);
+
                 r.Check(contract.workerSkills == expectedSkills,
                     "the record froze the worker's real skills",
                     $"expected \"{expectedSkills}\", got \"{contract.workerSkills}\"");
 
                 int silverAfter = PurchaseOrderService.CountColonySilver(map);
+                if (mainFixtureBuilt)
+                {
+                    // 1.10f is the independent assertion oracle, not the production premium
+                    // constant. The value comes from the fixture Things, not the quote snapshot.
+                    float expectedReplacementValue = IndependentReplacementValue(
+                        mainFixtureItems, out string mainEquipmentDetail);
+                    float expectedBondBeforeRounding = expectedReplacementValue * 1.10f;
+                    int expectedBond = Mathf.Max(0, Mathf.RoundToInt(expectedBondBeforeRounding));
+                    long actualBondCharge = (long)silverBefore - silverAfter - contract.paidSilver;
+                    r.Check(contract.equipmentBond == expectedBond && actualBondCharge == expectedBond,
+                        "E1 equipment bond is recorded-item value plus 10%",
+                        $"items [{mainEquipmentDetail}], replacement {expectedReplacementValue:0.###}, " +
+                        $"value plus 10% {expectedBondBeforeRounding:0.###}, expected bond {expectedBond}, " +
+                        $"recorded bond {contract.equipmentBond}, actual bond debit {actualBondCharge:0.###}");
+                }
+
                 long expectedWithdrawal = (long)contract.paidSilver + contract.equipmentBond;
                 r.Check(silverBefore - silverAfter == expectedWithdrawal,
                     "hire cost was deducted exactly once",
@@ -223,6 +276,38 @@ namespace Intercolony
 
                 GenSpawn.Spawn(worker, restoreCell, map);
 
+                bool allMainEquipmentCarried = false;
+                bool damageApplied = false;
+                int hitPointsBefore = -1;
+                int hitPointsAfter = -1;
+                int silverBeforeEquipmentSettlement = 0;
+                if (mainFixtureBuilt)
+                {
+                    int totalMainQuantity;
+                    int matchedMainQuantity = CountMatchedEquipment(
+                        worker, contract.arrivedEquipment, out totalMainQuantity);
+                    allMainEquipmentCarried = totalMainQuantity > 0 &&
+                        matchedMainQuantity == totalMainQuantity;
+
+                    Thing damagedEquipment = mainFixtureItems.Count > 0
+                        ? mainFixtureItems[0]
+                        : null;
+                    hitPointsBefore = damagedEquipment == null ? -1 : damagedEquipment.HitPoints;
+                    if (damagedEquipment != null && !damagedEquipment.Destroyed)
+                    {
+                        // Vanilla's own apparel wear-out path uses this same call:
+                        // reference/decompiled/RimWorld/Pawn_ApparelTracker.cs:412.
+                        damagedEquipment.TakeDamage(
+                            new DamageInfo(DamageDefOf.Deterioration, 1f));
+                    }
+
+                    hitPointsAfter = damagedEquipment == null || damagedEquipment.Destroyed
+                        ? -1
+                        : damagedEquipment.HitPoints;
+                    damageApplied = hitPointsBefore > 1 && hitPointsAfter == hitPointsBefore - 1;
+                    silverBeforeEquipmentSettlement = PurchaseOrderService.CountColonySilver(map);
+                }
+
                 // --- Expiry and departure ---
                 contract.endTick = GenTicks.TicksGame;
                 EmploymentService.Advance(state.Employments);
@@ -238,8 +323,29 @@ namespace Intercolony
                 r.Check(contract.pawn == null && contract.quest == null,
                     "closed record holds no live references (nothing to dangle on load)");
 
+                if (mainFixtureBuilt)
+                {
+                    int silverAfterEquipmentSettlement =
+                        PurchaseOrderService.CountColonySilver(map);
+                    int equipmentRefund =
+                        silverAfterEquipmentSettlement - silverBeforeEquipmentSettlement;
+                    r.Check(allMainEquipmentCarried && contract.equipmentBondSettled &&
+                            equipmentRefund == contract.equipmentBond,
+                        "E2 everything returned is everything refunded",
+                        $"all recorded gear carried before end {allMainEquipmentCarried}, " +
+                        $"bond {contract.equipmentBond:0.###}, refund {equipmentRefund:0.###}, " +
+                        $"silver {silverBeforeEquipmentSettlement:0.###} -> " +
+                        $"{silverAfterEquipmentSettlement:0.###}");
+                    r.Check(damageApplied && contract.equipmentBondSettled &&
+                            equipmentRefund == contract.equipmentBond,
+                        "E5 normal wear still refunds in full",
+                        $"hit points {hitPointsBefore:0.###} -> {hitPointsAfter:0.###}, " +
+                        $"bond {contract.equipmentBond:0.###}, refund {equipmentRefund:0.###}");
+                }
+
                 // --- Dismissal before arrival ---
-                CheckEarlyDismissal(r, state, map);
+                CheckEarlyDismissal(r, state, map, fixturePawns);
+                CheckPartialEquipmentBond(r, state, map, fixturePawns, fixtureItems);
 
                 r.sb.AppendLine();
                 r.sb.AppendLine("  Not covered here — check by hand:");
@@ -254,7 +360,26 @@ namespace Intercolony
             }
             finally
             {
+                CleanupAddedEmployments(r, state, savedEmployments);
+
+                savedStandingOwner?.Adjust(savedStanding - savedStandingOwner.Score);
+                while (state.Ledger.Count > savedLedger)
+                {
+                    state.Ledger.RemoveAt(state.Ledger.Count - 1);
+                }
+
+                state.LedgerStartTick = savedLedgerStartTick;
                 LaborCandidateService.Clear();
+                foreach (Pawn fixturePawn in fixturePawns)
+                {
+                    CleanupFixturePawn(fixturePawn);
+                }
+
+                foreach (Thing fixtureItem in fixtureItems)
+                {
+                    CleanupFixtureItem(fixtureItem);
+                }
+
                 int returned =
                     IntercolonyLaborSelfTestSupport.RestoreStorageSilver(map, savedSilver);
                 if (returned > 0)
@@ -263,6 +388,11 @@ namespace Intercolony
                 }
 
                 IntercolonyLaborSelfTestSupport.ResetLedger();
+
+                int worldPawnsAfter = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
+                r.Check(worldPawnsAfter <= worldPawnsBefore,
+                    "no world pawns leaked by the labor fixtures",
+                    $"{worldPawnsBefore:0.###} before, {worldPawnsAfter:0.###} after");
             }
 
             return Summarize(r);
@@ -315,7 +445,8 @@ namespace Intercolony
         /// TryHire pins them as KeepForever, which the world pawn GC obeys forever if nothing
         /// unpins them.
         /// </summary>
-        private static void CheckEarlyDismissal(Results r, IntercolonyWorldComponent state, Map map)
+        private static void CheckEarlyDismissal(
+            Results r, IntercolonyWorldComponent state, Map map, List<Pawn> fixturePawns)
         {
             List<LaborCandidate> pool = LaborCandidateService.Refresh(state);
             if (pool.Count == 0)
@@ -352,6 +483,7 @@ namespace Intercolony
             }
 
             Pawn worker = contract.pawn;
+            TrackPawn(fixturePawns, worker);
             EmploymentService.End(contract, EmploymentStatus.Dismissed, "dismissed by self-test");
 
             r.Check(contract.status == EmploymentStatus.Dismissed,
@@ -361,10 +493,542 @@ namespace Intercolony
             r.Check(contract.pawn == null, "dismissed record holds no pawn reference");
         }
 
+        private static void CheckPartialEquipmentBond(
+            Results r, IntercolonyWorldComponent state, Map map,
+            List<Pawn> fixturePawns, List<Thing> fixtureItems)
+        {
+            List<LaborCandidate> pool = LaborCandidateService.Refresh(state, force: true);
+            if (pool.Count == 0)
+            {
+                SkipPartialEquipmentBondChecks(
+                    r, "a forced candidate refresh returned no worker for the second fixture");
+                return;
+            }
+
+            LaborCandidate candidate = pool[0];
+            List<Thing> partialFixtureItems = new List<Thing>();
+            bool fixtureBuilt = BuildEquipmentBondFixture(
+                candidate, partialFixtureItems, out string fixtureFailureReason);
+            fixtureItems.AddRange(partialFixtureItems);
+            if (!fixtureBuilt)
+            {
+                SkipPartialEquipmentBondChecks(r, fixtureFailureReason);
+                return;
+            }
+
+            EmploymentHireCostQuote hireQuote =
+                IntercolonyLaborSelfTestSupport.QuoteHireCost(
+                    state, candidate, candidate.minTermDays, WageStructure.Prepaid,
+                    CombatClause.Civilian, out string quoteFailReason);
+            if (hireQuote == null)
+            {
+                SkipPartialEquipmentBondChecks(
+                    r, $"the hire path could not quote the fixture: {quoteFailReason}");
+                return;
+            }
+
+            int added = IntercolonyLaborSelfTestSupport.EnsureSilver(
+                map, IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote));
+            if (added > 0)
+            {
+                r.Info($"added {added} silver so the partial bond hire could run.");
+            }
+
+            EmploymentContract contract = EmploymentService.TryHire(
+                state, candidate, candidate.minTermDays, map, out string failReason,
+                WageStructure.Prepaid, CombatClause.Civilian, hireQuote);
+            if (contract == null)
+            {
+                string detail = failReason ?? "the hire returned no contract";
+                r.Check(false, "E3 partial bond fixture hire succeeded", detail);
+                r.Check(false, "E4 second bond settlement fixture hire succeeded", detail);
+                return;
+            }
+
+            TrackPawn(fixturePawns, contract.pawn);
+            contract.arrivalTick = GenTicks.TicksGame;
+            EmploymentService.Advance(state.Employments);
+
+            Pawn worker = contract.pawn;
+            if (contract.status != EmploymentStatus.Active || worker == null || !worker.Spawned)
+            {
+                string detail =
+                    $"status {contract.status}, worker {(worker == null ? "null" : "not spawned")}";
+                r.Check(false, "E3 partial bond worker arrived", detail);
+                r.Check(false, "E4 second bond settlement worker arrived", detail);
+                return;
+            }
+
+            Apparel removedItem = partialFixtureItems.Count > 0
+                ? partialFixtureItems[0] as Apparel
+                : null;
+            bool removedWasWorn = removedItem != null && worker.apparel != null &&
+                worker.apparel.WornApparel.Contains(removedItem);
+            if (!removedWasWorn)
+            {
+                r.Check(false, "E3 partial bond fixture has a removable recorded item");
+                r.Check(false, "E4 second bond settlement fixture has a live worker");
+                return;
+            }
+
+            int totalQuantity;
+            int matchedBeforeRemoval = CountMatchedEquipment(
+                worker, contract.arrivedEquipment, out totalQuantity);
+            worker.apparel.Remove(removedItem);
+            int matchedAfterRemoval = CountMatchedEquipment(
+                worker, contract.arrivedEquipment, out int ignoredTotalQuantity);
+
+            float independentlyPricedReplacementValue = IndependentReplacementValue(
+                partialFixtureItems, out string independentItemDetail);
+            int independentlyPricedBond = Mathf.Max(
+                0, Mathf.RoundToInt(independentlyPricedReplacementValue * 1.10f));
+            int expectedPartialRefund = DescribePartialBond(
+                partialFixtureItems, worker, independentlyPricedBond,
+                out float totalReplacementValue, out float returnedReplacementValue,
+                out string itemDetail);
+            bool returnedSomeButNotAll = matchedAfterRemoval > 0 &&
+                matchedAfterRemoval < totalQuantity &&
+                returnedReplacementValue > 0f &&
+                returnedReplacementValue < totalReplacementValue;
+
+            int silverBeforeFirstSettlement = PurchaseOrderService.CountColonySilver(map);
+            EmploymentService.BeginSafePassage(contract, offMap: true);
+            int silverAfterFirstSettlement = PurchaseOrderService.CountColonySilver(map);
+            int firstRefund = silverAfterFirstSettlement - silverBeforeFirstSettlement;
+            string settlementDetail =
+                $"items [{itemDetail}], quantities {matchedBeforeRemoval:0.###} -> " +
+                $"{matchedAfterRemoval:0.###}/{totalQuantity:0.###}, total value " +
+                $"{totalReplacementValue:0.###}, returned value {returnedReplacementValue:0.###}, " +
+                $"independent items [{independentItemDetail}], charged bond " +
+                $"{contract.equipmentBond:0.###}, independently priced bond " +
+                $"{independentlyPricedBond:0.###}, expected returned share " +
+                $"{expectedPartialRefund:0.###}, first refund {firstRefund:0.###}";
+            r.Check(returnedSomeButNotAll && contract.equipmentBondSettled &&
+                    contract.equipmentBond == independentlyPricedBond &&
+                    expectedPartialRefund > 0 && expectedPartialRefund < independentlyPricedBond &&
+                    firstRefund == expectedPartialRefund,
+                "E3 part returned is part refunded, including the premium",
+                settlementDetail);
+
+            Pawn workerAfterFirstSettlement = contract.pawn;
+            int silverBeforeSecondSettlement = PurchaseOrderService.CountColonySilver(map);
+            if (workerAfterFirstSettlement != null && workerAfterFirstSettlement.Spawned)
+            {
+                workerAfterFirstSettlement.DeSpawn();
+            }
+
+            EmploymentService.Advance(state.Employments);
+            int silverAfterSecondSettlement = PurchaseOrderService.CountColonySilver(map);
+            int secondRefund = silverAfterSecondSettlement - silverBeforeSecondSettlement;
+            r.Check(contract.equipmentBondSettled && workerAfterFirstSettlement != null &&
+                    contract.pawn == null && secondRefund == 0 &&
+                    silverAfterSecondSettlement == silverAfterFirstSettlement,
+                "E4 an equipment bond settles once",
+                $"first refund {firstRefund:0.###}, second refund {secondRefund:0.###}, " +
+                $"silver after first {silverAfterFirstSettlement:0.###}, after second " +
+                $"{silverAfterSecondSettlement:0.###}, settled {contract.equipmentBondSettled}");
+        }
+
+        private static bool BuildEquipmentBondFixture(
+            LaborCandidate candidate, List<Thing> createdItems, out string failureReason)
+        {
+            failureReason = null;
+            if (candidate?.pawn == null)
+            {
+                failureReason = "candidate pawn was null";
+                return false;
+            }
+
+            ThingDef parkaDef = ThingDefOf.Apparel_Parka;
+            ThingDef tuqueDef = ThingDefOf.Apparel_Tuque;
+            ThingDef clothDef = ThingDefOf.Cloth;
+            if (parkaDef == null || tuqueDef == null || clothDef == null)
+            {
+                failureReason = "Core parka, tuque or cloth ThingDef was unavailable";
+                return false;
+            }
+
+            if (!parkaDef.MadeFromStuff || !tuqueDef.MadeFromStuff || !clothDef.IsStuff)
+            {
+                failureReason =
+                    $"vanilla fixture defs were not stuff-based as expected: " +
+                    $"{parkaDef.defName} madeFromStuff={parkaDef.MadeFromStuff}, " +
+                    $"{tuqueDef.defName} madeFromStuff={tuqueDef.MadeFromStuff}, " +
+                    $"{clothDef.defName} isStuff={clothDef.IsStuff}";
+                return false;
+            }
+
+            Pawn worker = candidate.pawn;
+            if (worker.apparel == null)
+            {
+                failureReason = "candidate pawn had no apparel tracker";
+                return false;
+            }
+
+            try
+            {
+                Apparel parka = ThingMaker.MakeThing(parkaDef, clothDef) as Apparel;
+                createdItems.Add(parka);
+                Apparel tuque = ThingMaker.MakeThing(tuqueDef, clothDef) as Apparel;
+                createdItems.Add(tuque);
+                if (parka == null || tuque == null)
+                {
+                    failureReason = "ThingMaker did not create both apparel instances";
+                    return false;
+                }
+
+                parka.stackCount = 1;
+                tuque.stackCount = 1;
+                if (parka.MaxHitPoints <= 1 || tuque.MaxHitPoints <= 1)
+                {
+                    failureReason =
+                        $"fixture apparel did not have enough hit points: " +
+                        $"{parka.def.defName} max {parka.MaxHitPoints}, " +
+                        $"{tuque.def.defName} max {tuque.MaxHitPoints}";
+                    return false;
+                }
+
+                // Start at full durability so the vanilla deterioration hit is observable and
+                // cannot randomly destroy a fixture before settlement.
+                parka.HitPoints = parka.MaxHitPoints;
+                tuque.HitPoints = tuque.MaxHitPoints;
+
+                worker.equipment?.DestroyAllEquipment(DestroyMode.Vanish);
+                worker.apparel.DestroyAll(DestroyMode.Vanish);
+                worker.apparel.Wear(parka, dropReplacedApparel: false);
+                worker.apparel.Wear(tuque, dropReplacedApparel: false);
+                if (!worker.apparel.WornApparel.Contains(parka) ||
+                    !worker.apparel.WornApparel.Contains(tuque))
+                {
+                    failureReason =
+                        $"candidate pawn could not wear both fixture items: " +
+                        $"{parka.def.defName} worn={worker.apparel.WornApparel.Contains(parka)}, " +
+                        $"{tuque.def.defName} worn={worker.apparel.WornApparel.Contains(tuque)}";
+                    return false;
+                }
+
+                float parkaValue = VanillaDefinitionValue(parka);
+                float tuqueValue = VanillaDefinitionValue(tuque);
+                if (parkaValue <= 0f || tuqueValue <= 0f ||
+                    float.IsNaN(parkaValue) || float.IsNaN(tuqueValue) ||
+                    float.IsInfinity(parkaValue) || float.IsInfinity(tuqueValue))
+                {
+                    failureReason =
+                        $"vanilla fixture values were not positive: " +
+                        $"{parka.def.defName} {parkaValue:0.###}, " +
+                        $"{tuque.def.defName} {tuqueValue:0.###}";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                failureReason =
+                    $"vanilla apparel fixture construction threw {ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static void SkipMainEquipmentBondChecks(Results r, string reason)
+        {
+            string detail =
+                $"equipment-bond fixture unavailable: {reason ?? "no reason supplied"}";
+            r.Skip("E1 equipment bond charge", detail);
+            r.Skip("E2 full equipment bond refund", detail);
+            r.Skip("E5 wear does not reduce the equipment bond refund", detail);
+        }
+
+        private static void SkipPartialEquipmentBondChecks(Results r, string reason)
+        {
+            string detail =
+                $"partial equipment-bond fixture unavailable: {reason ?? "no reason supplied"}";
+            r.Skip("E3 partial equipment bond refund", detail);
+            r.Skip("E4 one-time equipment bond settlement", detail);
+        }
+
+        private static float IndependentReplacementValue(
+            List<Thing> items, out string detail)
+        {
+            StringBuilder itemDetails = new StringBuilder();
+            float total = 0f;
+            if (items != null)
+            {
+                foreach (Thing item in items)
+                {
+                    int quantity = Mathf.Max(0, item?.stackCount ?? 0);
+                    float unitValue = VanillaDefinitionValue(item);
+                    float lineValue = unitValue * quantity;
+                    total += lineValue;
+                    if (itemDetails.Length > 0)
+                    {
+                        itemDetails.Append("; ");
+                    }
+
+                    itemDetails.Append(item?.def?.defName ?? "null")
+                        .Append(" x").Append(quantity)
+                        .Append($": unit {unitValue:0.###}, value {lineValue:0.###}");
+                }
+            }
+
+            detail = itemDetails.ToString();
+            return total;
+        }
+
+        private static int DescribePartialBond(
+            List<Thing> fixtureItems, Pawn worker, int bond,
+            out float totalValue, out float returnedValue, out string detail)
+        {
+            totalValue = 0f;
+            returnedValue = 0f;
+            List<Thing> carried = CaptureCarriedEquipmentForTest(worker);
+            if (fixtureItems != null)
+            {
+                foreach (Thing item in fixtureItems)
+                {
+                    totalValue += VanillaDefinitionValue(item) *
+                        Mathf.Max(0, item?.stackCount ?? 0);
+                }
+            }
+
+            StringBuilder itemDetails = new StringBuilder();
+            if (fixtureItems != null)
+            {
+                foreach (Thing item in fixtureItems)
+                {
+                    int quantity = Mathf.Max(0, item?.stackCount ?? 0);
+                    float lineValue = VanillaDefinitionValue(item) * quantity;
+                    bool returned = ContainsReference(carried, item);
+                    if (returned)
+                    {
+                        returnedValue += lineValue;
+                    }
+
+                    if (itemDetails.Length > 0)
+                    {
+                        itemDetails.Append("; ");
+                    }
+
+                    float bondShare = totalValue > 0f
+                        ? bond * lineValue / totalValue
+                        : 0f;
+                    itemDetails.Append(item?.def?.defName ?? "null")
+                        .Append(" x").Append(quantity)
+                        .Append($": value {lineValue:0.###}, bond share {bondShare:0.###}, ")
+                        .Append(returned ? "returned" : "retained");
+                }
+            }
+
+            detail = itemDetails.ToString();
+            if (bond <= 0 || totalValue <= 0f || float.IsNaN(totalValue) ||
+                float.IsInfinity(totalValue) || returnedValue <= 0f)
+            {
+                return 0;
+            }
+
+            return Mathf.Clamp(
+                Mathf.RoundToInt(bond * returnedValue / totalValue), 0, bond);
+        }
+
+        private static float VanillaDefinitionValue(Thing item)
+        {
+            if (item?.def == null)
+            {
+                return 0f;
+            }
+
+            return item.Stuff != null && item.def.MadeFromStuff
+                ? item.def.GetStatValueAbstract(StatDefOf.MarketValue, item.Stuff)
+                : item.def.BaseMarketValue;
+        }
+
+        private static int CountMatchedEquipment(
+            Pawn worker, List<EmploymentEquipmentRecord> records, out int totalQuantity)
+        {
+            totalQuantity = 0;
+            if (records == null)
+            {
+                return 0;
+            }
+
+            List<Thing> carried = CaptureCarriedEquipmentForTest(worker);
+            List<int> remaining = new List<int>(carried.Count);
+            foreach (Thing item in carried)
+            {
+                remaining.Add(Mathf.Max(0, item?.stackCount ?? 0));
+            }
+
+            int matchedTotal = 0;
+            foreach (EmploymentEquipmentRecord record in records)
+            {
+                int needed = Mathf.Max(0, record?.quantity ?? 0);
+                totalQuantity += needed;
+                for (int i = 0; i < carried.Count && needed > 0; i++)
+                {
+                    if (remaining[i] <= 0 || !SameEquipment(record, carried[i]))
+                    {
+                        continue;
+                    }
+
+                    int matched = Mathf.Min(needed, remaining[i]);
+                    remaining[i] -= matched;
+                    needed -= matched;
+                    matchedTotal += matched;
+                }
+            }
+
+            return matchedTotal;
+        }
+
+        private static List<Thing> CaptureCarriedEquipmentForTest(Pawn worker)
+        {
+            List<Thing> carried = new List<Thing>();
+            if (worker?.inventory?.innerContainer != null)
+            {
+                foreach (Thing item in worker.inventory.innerContainer)
+                {
+                    carried.Add(item);
+                }
+            }
+
+            if (worker?.carryTracker?.CarriedThing != null)
+            {
+                carried.Add(worker.carryTracker.CarriedThing);
+            }
+
+            if (worker?.equipment != null)
+            {
+                foreach (ThingWithComps item in worker.equipment.AllEquipmentListForReading)
+                {
+                    carried.Add(item);
+                }
+            }
+
+            if (worker?.apparel != null)
+            {
+                foreach (Apparel item in worker.apparel.WornApparel)
+                {
+                    carried.Add(item);
+                }
+            }
+
+            return carried;
+        }
+
+        private static bool SameEquipment(EmploymentEquipmentRecord record, Thing item)
+        {
+            if (record == null || item == null || item.Destroyed || item.def == null ||
+                item.def != record.thingDef || item.Stuff != record.stuffDef)
+            {
+                return false;
+            }
+
+            QualityCategory? quality = null;
+            if (item.TryGetQuality(out QualityCategory observedQuality))
+            {
+                quality = observedQuality;
+            }
+
+            return quality == record.quality;
+        }
+
+        private static bool ContainsReference(List<Thing> things, Thing target)
+        {
+            if (things == null || target == null)
+            {
+                return false;
+            }
+
+            foreach (Thing item in things)
+            {
+                if (ReferenceEquals(item, target))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void TrackPawn(List<Pawn> fixturePawns, Pawn pawn)
+        {
+            if (pawn != null && !fixturePawns.Contains(pawn))
+            {
+                fixturePawns.Add(pawn);
+            }
+        }
+
+        private static void CleanupAddedEmployments(
+            Results r, IntercolonyWorldComponent state, int savedEmployments)
+        {
+            for (int i = state.Employments.Count - 1; i >= savedEmployments; i--)
+            {
+                EmploymentContract contract = state.Employments[i];
+                try
+                {
+                    if (contract?.IsOpen == true)
+                    {
+                        EmploymentService.End(contract, EmploymentStatus.Failed,
+                            "labor self-test cleanup");
+                    }
+
+                    if (contract?.status == EmploymentStatus.Severed && contract.pawn != null)
+                    {
+                        if (contract.pawn.Spawned)
+                        {
+                            contract.pawn.DeSpawn();
+                        }
+
+                        EmploymentService.Advance(state.Employments);
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    r.Check(false, "labor fixture contracts clean up",
+                        $"{contract?.id.ToString() ?? "unknown"}: {ex.GetType().Name}: {ex.Message}");
+                }
+                finally
+                {
+                    state.Employments.RemoveAt(i);
+                }
+            }
+        }
+
+        private static void CleanupFixturePawn(Pawn pawn)
+        {
+            if (pawn == null || pawn.Discarded || Find.WorldPawns == null)
+            {
+                return;
+            }
+
+            if (pawn.Spawned)
+            {
+                pawn.DeSpawn();
+            }
+
+            if (Find.WorldPawns.Contains(pawn))
+            {
+                Find.WorldPawns.RemoveAndDiscardPawnViaGC(pawn);
+            }
+            else if (!pawn.Discarded)
+            {
+                Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
+            }
+        }
+
+        private static void CleanupFixtureItem(Thing item)
+        {
+            if (item != null && !item.Destroyed)
+            {
+                item.Destroy(DestroyMode.Vanish);
+            }
+        }
+
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed" +
+                            (r.skipped == 0 ? "." : $", {r.skipped} skipped."));
             return r.sb.ToString();
         }
     }
