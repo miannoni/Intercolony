@@ -97,6 +97,7 @@ namespace Intercolony
 
             CheckEffectiveSupplyForRfq(Check, state);
             CheckRfqResponseCountUsesEffectiveSupply(Check, Skip, state);
+            CheckLogisticsQuoteOwnership(Check, Skip, state);
 
             // Supplier stock belongs to its refresh window, not to any one RFQ. Exercise the
             // state mechanism without touching the live world's ledger or requests.
@@ -9367,6 +9368,335 @@ namespace Intercolony
             }
 
             return total;
+        }
+
+        private static void CheckLogisticsQuoteOwnership(
+            System.Action<string, bool, string> check,
+            System.Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            const string LeadAssertion =
+                "a supplier-delivery quote's lead time comes from the shared owner";
+            const string PriceAssertion =
+                "a supplier-delivery quote's price multiplier comes from the shared owner";
+            const string DirectionAssertion =
+                "distance changes a delivery quote in the direction it should";
+            const string MethodAssertion =
+                "a pickup quote reports pickup, and a delivery quote reports delivery";
+
+            float ReportedMultiplier(
+                string explanation,
+                string factorLabel,
+                out bool found)
+            {
+                found = false;
+                foreach (string line in (explanation ?? "").Split('\n'))
+                {
+                    string trimmed = line.Trim();
+                    if (!trimmed.StartsWith(factorLabel, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    int percentIndex = trimmed.IndexOf('%');
+                    if (percentIndex <= factorLabel.Length)
+                    {
+                        return float.NaN;
+                    }
+
+                    string percentText = trimmed.Substring(
+                        factorLabel.Length, percentIndex - factorLabel.Length).Trim();
+                    if (!float.TryParse(percentText, out float percent))
+                    {
+                        return float.NaN;
+                    }
+
+                    found = true;
+                    return 1f + percent / 100f;
+                }
+
+                return float.NaN;
+            }
+
+            string FormatTerms(
+                float distance,
+                LogisticsTransportMethod method,
+                int lead,
+                float multiplier,
+                float? unitPrice = null)
+            {
+                string terms =
+                    $"distance={distance:F2}, " +
+                    $"method={method}, " +
+                    $"lead={lead}, " +
+                    $"multiplier={multiplier:F4}";
+                if (unitPrice.HasValue)
+                {
+                    terms += $", unitPrice={unitPrice.Value:F4}";
+                }
+
+                return "{" + terms + "}";
+            }
+
+            Quotation deliveryQuotation = null;
+            Quotation pickupQuotation = null;
+            IntercolonyProductCategory probeCategory = IntercolonyProductCategory.Commodities;
+            ThingDef probeDef = null;
+            Settlement probeSettlement = null;
+
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null ||
+                    !IntercolonyProductClassifier.TryGetTradableCategory(
+                        candidate, out IntercolonyProductCategory category))
+                {
+                    continue;
+                }
+
+                PurchaseRequest candidateDelivery = new PurchaseRequest
+                {
+                    thingDef = candidate,
+                    quantityRequested = 20,
+                    desiredDays = 15,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.SupplierDelivers,
+                    stuffDef = null,
+                    minQuality = null
+                };
+                PurchaseRequest candidatePickup = new PurchaseRequest
+                {
+                    thingDef = candidate,
+                    quantityRequested = 20,
+                    desiredDays = 15,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.PlayerPickup,
+                    stuffDef = null,
+                    minQuality = null
+                };
+
+                // GenerateResponses is the real RFQ path. It pushes the same seed used by live
+                // requests and pops it again, so probing here does not perturb the caller's RNG.
+                RfqService.GenerateResponses(state, candidateDelivery);
+                RfqService.GenerateResponses(state, candidatePickup);
+
+                foreach (Quotation candidateDeliveryQuotation in candidateDelivery.quotes)
+                {
+                    if (candidateDeliveryQuotation == null)
+                    {
+                        continue;
+                    }
+
+                    Quotation matchingPickup = null;
+                    foreach (Quotation candidatePickupQuotation in candidatePickup.quotes)
+                    {
+                        if (candidatePickupQuotation != null &&
+                            candidatePickupQuotation.settlementId ==
+                                candidateDeliveryQuotation.settlementId)
+                        {
+                            matchingPickup = candidatePickupQuotation;
+                            break;
+                        }
+                    }
+
+                    Settlement settlement = IntercolonyMarketAccess.FindSettlement(
+                        candidateDeliveryQuotation.settlementId);
+                    if (matchingPickup == null || settlement == null ||
+                        state.GetProfile(settlement) == null)
+                    {
+                        continue;
+                    }
+
+                    deliveryQuotation = candidateDeliveryQuotation;
+                    pickupQuotation = matchingPickup;
+                    probeCategory = category;
+                    probeDef = candidate;
+                    probeSettlement = settlement;
+                    break;
+                }
+
+                if (deliveryQuotation != null)
+                {
+                    break;
+                }
+            }
+
+            if (deliveryQuotation == null || pickupQuotation == null || probeSettlement == null)
+            {
+                string reason =
+                    "no paired deterministic supplier-delivery and pickup RFQ quotations " +
+                    "could be obtained from the loaded settlements";
+                skip(LeadAssertion, reason);
+                skip(PriceAssertion, reason);
+                skip(DirectionAssertion, reason);
+                skip(MethodAssertion, reason);
+                return;
+            }
+
+            SettlementEconomicProfile profile = state.GetProfile(probeSettlement);
+            float supply = EffectiveEconomyService.EffectiveSupply(
+                state, profile, probeCategory);
+            LogisticsTransportMethod deliveryMethod =
+                LogisticsQuote.MethodFor(deliveryQuotation.supplierDelivers);
+            LogisticsTransportMethod pickupMethod =
+                LogisticsQuote.MethodFor(pickupQuotation.supplierDelivers);
+            LogisticsQuote deliveryOwner = LogisticsQuote.Create(
+                deliveryQuotation.distanceTiles,
+                deliveryMethod,
+                supply);
+
+            // Quotation persists the human-readable factors rather than a separate multiplier.
+            // Reconstruct the RFQ-side logistics multiplier from its Distance and Supplier
+            // delivery rows. Those rows are rounded to one decimal percent, so the comparison
+            // allows the corresponding half-point-in-the-last-place error. The independent
+            // unit-price comparison below also catches an RFQ-side multiplier change if the
+            // explanation were left stale.
+            bool hasDistanceFactor;
+            float rfqDistanceMultiplier;
+            if (deliveryQuotation.distanceTiles < 0f)
+            {
+                rfqDistanceMultiplier = 1f;
+                hasDistanceFactor = true;
+            }
+            else
+            {
+                rfqDistanceMultiplier = ReportedMultiplier(
+                    deliveryQuotation.priceExplanation, "Distance", out hasDistanceFactor);
+            }
+
+            float rfqTransportMultiplier = ReportedMultiplier(
+                deliveryQuotation.priceExplanation,
+                "Supplier delivery",
+                out bool hasTransportFactor);
+            float rfqNegotiationMultiplier = ReportedMultiplier(
+                deliveryQuotation.priceExplanation,
+                "Negotiation",
+                out bool hasNegotiationFactor);
+            float rfqPriceMultiplier = rfqDistanceMultiplier * rfqTransportMultiplier;
+            float expectedRfqPrice = float.NaN;
+            if (hasNegotiationFactor)
+            {
+                expectedRfqPrice = IntercolonyPricing.SupplierUnitPrice(
+                    state,
+                    probeDef,
+                    deliveryQuotation.offeredStuff,
+                    deliveryQuotation.offeredQuality,
+                    profile,
+                    probeCategory,
+                    supply,
+                    deliveryOwner,
+                    20,
+                    rfqNegotiationMultiplier,
+                    out _);
+            }
+            string rfqTerms = FormatTerms(
+                deliveryQuotation.distanceTiles,
+                deliveryMethod,
+                deliveryQuotation.leadTimeDays,
+                rfqPriceMultiplier,
+                deliveryQuotation.unitPrice);
+            string ownerTerms = FormatTerms(
+                deliveryOwner.DistanceTiles,
+                deliveryOwner.TransportMethod,
+                deliveryOwner.LeadTimeDays,
+                deliveryOwner.PriceMultiplier,
+                expectedRfqPrice);
+
+            check(
+                LeadAssertion,
+                deliveryQuotation.leadTimeDays == deliveryOwner.LeadTimeDays,
+                "RFQ " + rfqTerms + "; Create " + ownerTerms);
+            check(
+                PriceAssertion,
+                hasDistanceFactor && hasTransportFactor &&
+                hasNegotiationFactor &&
+                Mathf.Abs(rfqPriceMultiplier - deliveryOwner.PriceMultiplier) <= 0.001f &&
+                !float.IsNaN(expectedRfqPrice) &&
+                Mathf.Abs(deliveryQuotation.unitPrice - expectedRfqPrice) <=
+                    Mathf.Max(0.01f, Mathf.Abs(expectedRfqPrice) * 0.001f),
+                "RFQ " + rfqTerms + "; Create " + ownerTerms);
+
+            LogisticsQuote nearestDelivery = LogisticsQuote.Create(
+                0f, LogisticsTransportMethod.SupplierDelivery, supply);
+            LogisticsQuote fartherDelivery = nearestDelivery;
+            int fartherDistance = 0;
+            bool foundFartherDelivery = false;
+            for (int distance = 1; distance <= 1000; distance++)
+            {
+                LogisticsQuote candidate = LogisticsQuote.Create(
+                    distance, LogisticsTransportMethod.SupplierDelivery, supply);
+                fartherDelivery = candidate;
+                fartherDistance = distance;
+                if (candidate.PriceMultiplier > nearestDelivery.PriceMultiplier &&
+                    candidate.LeadTimeDays > nearestDelivery.LeadTimeDays)
+                {
+                    foundFartherDelivery = true;
+                    break;
+                }
+            }
+
+            int capDistance = -1;
+            LogisticsQuote cappedDelivery = nearestDelivery;
+            LogisticsQuote afterCapDelivery = nearestDelivery;
+            float previousMultiplier = nearestDelivery.PriceMultiplier;
+            for (int distance = 1; distance <= 1000; distance++)
+            {
+                LogisticsQuote candidate = LogisticsQuote.Create(
+                    distance, LogisticsTransportMethod.SupplierDelivery, supply);
+                if (Mathf.Approximately(candidate.PriceMultiplier, previousMultiplier))
+                {
+                    capDistance = distance - 1;
+                    cappedDelivery = LogisticsQuote.Create(
+                        capDistance, LogisticsTransportMethod.SupplierDelivery, supply);
+                    afterCapDelivery = candidate;
+                    break;
+                }
+
+                previousMultiplier = candidate.PriceMultiplier;
+            }
+
+            bool directionAndCapHold =
+                foundFartherDelivery &&
+                fartherDelivery.PriceMultiplier > nearestDelivery.PriceMultiplier &&
+                fartherDelivery.LeadTimeDays > nearestDelivery.LeadTimeDays &&
+                capDistance > 0 &&
+                cappedDelivery.PriceMultiplier >
+                    LogisticsQuote.Create(
+                        capDistance - 1,
+                        LogisticsTransportMethod.SupplierDelivery,
+                        supply).PriceMultiplier &&
+                Mathf.Approximately(
+                    cappedDelivery.PriceMultiplier, afterCapDelivery.PriceMultiplier);
+            check(
+                DirectionAssertion,
+                directionAndCapHold,
+                "near " + FormatTerms(
+                    nearestDelivery.DistanceTiles,
+                    nearestDelivery.TransportMethod,
+                    nearestDelivery.LeadTimeDays,
+                    nearestDelivery.PriceMultiplier) +
+                "; far " + FormatTerms(
+                    fartherDistance,
+                    fartherDelivery.TransportMethod,
+                    fartherDelivery.LeadTimeDays,
+                    fartherDelivery.PriceMultiplier) +
+                $"; price cap first binds at {capDistance} tiles " +
+                $"({cappedDelivery.PriceMultiplier:F4} -> {afterCapDelivery.PriceMultiplier:F4})");
+
+            float pickupPriceMultiplier =
+                LogisticsQuote.DistancePriceMultiplierFor(pickupQuotation.distanceTiles) *
+                LogisticsQuote.TransportPriceMultiplierFor(LogisticsTransportMethod.ColonyPickup);
+            check(
+                MethodAssertion,
+                deliveryMethod == LogisticsTransportMethod.SupplierDelivery &&
+                pickupMethod == LogisticsTransportMethod.ColonyPickup,
+                "delivery " + FormatTerms(
+                    deliveryQuotation.distanceTiles,
+                    deliveryMethod,
+                    deliveryQuotation.leadTimeDays,
+                    rfqPriceMultiplier) +
+                "; pickup " + FormatTerms(
+                    pickupQuotation.distanceTiles,
+                    pickupMethod,
+                    pickupQuotation.leadTimeDays,
+                    pickupPriceMultiplier));
         }
 
         /// <summary>
