@@ -34,6 +34,9 @@ namespace Intercolony
         /// </summary>
         public const int ApplicantPatienceDays = 12;
 
+        // Separates applicant-queue shuffles from the labor-census random stream.
+        private const int ApplicantShuffleSalt = 0x4C41_5445;
+
         // --- Creating ----------------------------------------------------------------------
 
         public static JobPosting TryPost(
@@ -195,7 +198,7 @@ namespace Intercolony
             // same seeded RNG inputs as the census and take up to its existing room. The cap stays
             // unchanged, while the existing ask formula supplies the quality/price correlation
             // without another attractiveness rule.
-            Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ 0x4C41_5445);
+            Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ ApplicantShuffleSalt);
             try
             {
                 foreach (JobPosting posting in open)

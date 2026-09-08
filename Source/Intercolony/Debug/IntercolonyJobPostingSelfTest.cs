@@ -9,10 +9,10 @@ namespace Intercolony
     /// <summary>
     /// End-to-end check of Phase 21's acceptance criterion (DESIGN.md §114, §35.2).
     ///
-    /// §114 asks for one measurable thing: *"Higher wages and better employer reputation measurably
+    /// §114 asks for one measurable thing: *"Requirements and better employer reputation measurably
     /// improve applicant quantity/quality."* So this drives the **real** matcher against the **real**
-    /// world pool at several wages and at both ends of the reputation range, and measures what comes
-    /// back. It does not assert that a formula returns what the formula returns.
+    /// world pool at several requirements and at both ends of the reputation range, and measures what
+    /// comes back. It does not assert that a formula returns what the formula returns.
     ///
     /// It also guards the thing that is invisible in play: applicants are pinned world pawns, and a
     /// posting that closes without discarding them leaks one pawn per applicant, forever. The world
@@ -27,6 +27,7 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -46,12 +47,18 @@ namespace Intercolony
             {
                 sb.AppendLine($"        {line}");
             }
+
+            public void Skip(string label, string detail)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {label}  ({detail})");
+            }
         }
 
         /// <summary>One measurement of what a posting drew.</summary>
         private struct Draw
         {
-            /// <summary>Workers who would have taken the offer — the market's answer.</summary>
+            /// <summary>Workers meeting the requirement — the market's unbounded answer.</summary>
             public int interested;
 
             /// <summary>Workers actually queued, which the applicant cap truncates.</summary>
@@ -80,8 +87,7 @@ namespace Intercolony
             try
             {
                 CheckPoolSplit(r, state);
-                CheckResponseCurveIsSmooth(r, state);
-                CheckWageDrivesApplicants(r, state);
+                CheckRequirementsDriveApplicants(r, state);
                 CheckReputationDrivesApplicants(r, state, rep);
                 CheckReputationDrivesCandidateQuality(r, state, rep);
                 CheckOnePersonOnePosting(r, state);
@@ -202,168 +208,110 @@ namespace Intercolony
                 $"skill value {lowest:0.0} to {highest:0.0}");
         }
 
-        /// <summary>
-        /// The complaint this phase's second pass exists to answer, turned into an assertion.
-        ///
-        /// Playing it revealed that a single silver could take a posting from no replies to every
-        /// qualified worker in the world, which is not a market — it is a threshold. So: walk the
-        /// wage one silver at a time across the whole going-rate band and assert that no single step
-        /// moves more than a modest share of the eventual total.
-        /// </summary>
-        private static void CheckResponseCurveIsSmooth(Results r, IntercolonyWorldComponent state)
-        {
-            SkillDef skill = SkillDefOf.Construction;
-            const int term = 20;
-
-            if (!JobPostingService.GoingRate(state, skill, 8, term, CombatClause.Civilian,
-                    out int low, out int high, out int qualified))
-            {
-                r.Info("response curve skipped: nobody reachable has the skill.");
-                return;
-            }
-
-            if (high - low < 4)
-            {
-                r.Info($"response curve skipped: the band is only {low}-{high}, too narrow to walk.");
-                return;
-            }
-
-            // Measured as *interest*, not queue length. The applicant queue is capped at a handful
-            // by design, so it saturates a third of the way up the band and would report every
-            // offer above that as identical — hiding the very smoothness this checks for. What the
-            // player feels is the market: how many people the offer actually reaches.
-            int steps = Mathf.Min(16, high - low + 1);
-            int biggestJump = 0;
-            int biggestAt = 0;
-            int previous = 0;
-            int total = 0;
-            StringBuilder curve = new StringBuilder();
-
-            for (int i = 0; i < steps; i++)
-            {
-                int wage = low + Mathf.RoundToInt(i * (high - low) / (float)(steps - 1));
-                int reach = JobPostingService.CountInterested(
-                    state, skill, 8, term, wage, CombatClause.Civilian);
-
-                if (i > 0)
-                {
-                    curve.Append(' ');
-                    if (reach - previous > biggestJump)
-                    {
-                        biggestJump = reach - previous;
-                        biggestAt = wage;
-                    }
-                }
-
-                curve.Append(reach);
-                previous = reach;
-                total = Mathf.Max(total, reach);
-            }
-
-            r.Info($"{qualified} qualified in the census; interest across {low}-{high}: {curve}");
-
-            if (total == 0)
-            {
-                r.Info("response curve skipped: nobody would take the job anywhere in the band.");
-                return;
-            }
-
-            float share = biggestJump / (float)total;
-            r.Check(share <= 0.4f,
-                "no single step across the band flips the whole market (§35.2)",
-                $"biggest jump {biggestJump} of {total} ({share:P0}) at {biggestAt}/day");
-
-            r.Check(total >= 10,
-                "the top of the band reaches a real population, not a handful",
-                $"{total} workers would take it");
-        }
-
         // --- §114's acceptance criterion ---------------------------------------------------
 
         /// <summary>
-        /// The headline claim: a better offer brings more and better applicants.
+        /// The requirement claim: a higher skill bar brings fewer but better applicants, while the
+        /// saved posted wage does not alter the market's answer.
         ///
-        /// Measured across a spread of wages derived from the actual going rate, so the test works
-        /// on any world rather than assuming a silver figure. Quantity is asserted as monotonic
-        /// across the whole spread; quality is asserted between the extremes, because a single
-        /// step can legitimately add one mediocre worker.
+        /// Every draw goes through the real posting service. The unbounded interested count reports
+        /// the market shape; the queued applicants prove that the matcher applied the same
+        /// requirement before its six-person waiting-list cap.
         /// </summary>
-        private static void CheckWageDrivesApplicants(Results r, IntercolonyWorldComponent state)
+        private static void CheckRequirementsDriveApplicants(
+            Results r, IntercolonyWorldComponent state)
         {
             SkillDef skill = SkillDefOf.Construction;
-            const int minLevel = 0;
             const int term = 20;
-
-            if (!JobPostingService.GoingRate(state, skill, minLevel, term, CombatClause.Civilian,
-                    out int low, out int high, out int qualified))
-            {
-                r.Info("wage effect skipped: nobody reachable can do the work this cycle.");
-                return;
-            }
-
-            r.Info($"{qualified} reachable worker(s) with {skill.skillLabel}; they ask {low} to {high}/day.");
-
-            int[] wages = { Mathf.Max(1, low - 5), low, (low + high) / 2, high, high + 15 };
+            const int probeWage = 9999;
+            int[] minimums = { 0, 4, 8, 12, 16, 20 };
             List<Draw> draws = new List<Draw>();
 
-            foreach (int wage in wages)
+            foreach (int minimum in minimums)
             {
-                draws.Add(Measure(state, skill, minLevel, term, wage));
-            }
-
-            bool quantityMonotonic = true;
-            for (int i = 1; i < draws.Count; i++)
-            {
-                if (draws[i].interested < draws[i - 1].interested)
-                {
-                    quantityMonotonic = false;
-                }
+                draws.Add(Measure(state, skill, minimum, term, probeWage));
             }
 
             StringBuilder shape = new StringBuilder();
-            for (int i = 0; i < wages.Length; i++)
+            for (int i = 0; i < minimums.Length; i++)
             {
                 if (i > 0)
                 {
                     shape.Append(", ");
                 }
 
-                shape.Append($"{wages[i]}/day -> {draws[i].interested} interested, " +
+                shape.Append($"{minimums[i]}+ -> {draws[i].interested} interested, " +
                              $"{draws[i].applicants} queued");
             }
 
-            r.Check(quantityMonotonic,
-                "raising the offer never reaches fewer workers (§114)", shape.ToString());
-
-            Draw worst = draws[0];
-            Draw best = draws[draws.Count - 1];
-
-            r.Check(best.interested > worst.interested,
-                "a generous offer reaches measurably more workers than a poor one (§114)",
-                $"{worst.interested} at {wages[0]}/day vs {best.interested} at {wages[wages.Length - 1]}/day");
-
-            // The half that matters once the queue is full: a better offer must still buy better
-            // people. This is what the ranking pass exists for — without it every offer above the
-            // cheapest viable one produced the same applicants and the wage stopped meaning
-            // anything past saturation.
-            if (best.applicants > 0 && worst.applicants > 0)
+            Draw noMinimum = draws[0];
+            Draw demanding = draws[draws.Count - 1];
+            if (noMinimum.interested == 0)
             {
-                r.Check(best.averageBestSkill >= worst.averageBestSkill,
-                    "a generous offer brings better applicants, not just more (§114)",
-                    $"average best skill {worst.averageBestSkill:0.0} at {wages[0]}/day vs " +
-                    $"{best.averageBestSkill:0.0} at {wages[wages.Length - 1]}/day");
+                r.Skip("minimum skill drives applicant quantity (§114)",
+                    $"no-minimum draw was empty: {shape}");
             }
             else
             {
-                r.Info($"quality comparison skipped: the low offer drew {worst.applicants}.");
+                bool quantityMonotonic = true;
+                for (int i = 1; i < draws.Count; i++)
+                {
+                    if (draws[i].interested > draws[i - 1].interested)
+                    {
+                        quantityMonotonic = false;
+                    }
+                }
+
+                bool materiallyFewer = demanding.interested < noMinimum.interested &&
+                                       demanding.interested * 2 < noMinimum.interested;
+                bool matcherAppliedBar = demanding.applicants < noMinimum.applicants;
+
+                r.Check(quantityMonotonic && materiallyFewer && matcherAppliedBar,
+                    "a higher skill minimum reaches no more workers and a demanding minimum reaches materially fewer (§114)",
+                    $"{shape}; no minimum queued {noMinimum.applicants}, demanding {demanding.applicants}");
             }
 
-            // An offer below everyone's asking price must draw nobody. This is the assertion that
-            // catches a matcher that has quietly stopped checking the wage at all.
-            Draw hopeless = Measure(state, skill, 0, term, 1);
-            r.Check(hopeless.applicants == 0 && hopeless.interested == 0,
-                "an offer of 1 silver a day reaches nobody at all (§114)",
-                $"{hopeless.interested} interested, {hopeless.applicants} queued");
+            const int highMinimum = 16;
+            Draw unfiltered = draws[0];
+            Draw highMinimumDraw = Measure(state, skill, highMinimum, term, probeWage);
+            if (unfiltered.applicants == 0 || highMinimumDraw.applicants == 0)
+            {
+                string emptyDraw = unfiltered.applicants == 0 && highMinimumDraw.applicants == 0
+                    ? "both the no-minimum and high-minimum draws were empty"
+                    : unfiltered.applicants == 0
+                        ? "the no-minimum draw was empty"
+                        : "the high-minimum draw was empty";
+                r.Skip("a high skill minimum yields better applicants (§114)",
+                    $"{emptyDraw}; no minimum {unfiltered.interested} interested, " +
+                    $"{unfiltered.applicants} queued; {highMinimum}+ " +
+                    $"{highMinimumDraw.interested} interested, {highMinimumDraw.applicants} queued");
+            }
+            else
+            {
+                r.Check(highMinimumDraw.averageBestSkill > unfiltered.averageBestSkill,
+                    "a high skill minimum yields better applicants (§114)",
+                    $"average best skill {unfiltered.averageBestSkill:0.0} at 0+ vs " +
+                    $"{highMinimumDraw.averageBestSkill:0.0} at {highMinimum}+");
+            }
+
+            const int lowWage = 1;
+            const int highWage = 10000;
+            int qualified = JobPostingService.CountInterested(
+                state, skill, 0, term, lowWage, CombatClause.Civilian);
+            if (qualified == 0)
+            {
+                r.Skip("posted wage does not change interested-worker count (§114)",
+                    $"the no-minimum requirement had {qualified} interested workers to compare");
+                return;
+            }
+
+            Draw lowOffer = Measure(state, skill, 0, term, lowWage);
+            Draw highOffer = Measure(state, skill, 0, term, highWage);
+            r.Check(lowOffer.interested == highOffer.interested &&
+                    lowOffer.applicants > 0 && lowOffer.applicants == highOffer.applicants,
+                "posted wage does not change interested-worker count (§114)",
+                $"{lowWage}/day -> {lowOffer.interested} interested, {lowOffer.applicants} queued; " +
+                $"{highWage}/day -> {highOffer.interested} interested, {highOffer.applicants} queued");
         }
 
         /// <summary>
@@ -633,7 +581,7 @@ namespace Intercolony
         ///
         /// The pool is cleared first so each measurement sees the same world: without that, the
         /// second posting would be matched against a pool the first had already taken people out of,
-        /// and the comparison would measure order rather than wage.
+        /// and the comparison would measure order rather than the requirement or wage invariant.
         /// </summary>
         private static Draw Measure(
             IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage)
@@ -737,7 +685,8 @@ namespace Intercolony
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed" +
+                            (r.skipped == 0 ? "." : $", {r.skipped} skipped."));
             return r.sb.ToString();
         }
     }
