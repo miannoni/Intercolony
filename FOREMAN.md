@@ -1,14 +1,17 @@
 # Foreman state — Intercolony
 
 Stage: 7 — Two-sided labor market (stage 6 is BLOCKED)
-Unit: 7.0 — Read-only recon: can any of F25, F23, F24, F22 be built without a schema bump?
-Worker: running — `…\scratchpad\unit-7-0.out`
-Last done: 6.0 — recon, committed 2cc12d5. STAGE 6 IS BLOCKED: F07, F19 and F20 all need persisted
-history and a schema bump, and F07/F20 also need a new Harmony patch on vanilla's crafting
-completion, because nothing in the mod observes an item being made. Stage 7 recon runs meanwhile to
-find work that is not blocked.
-Updated: 2026-09-08 11:00
-Wakes: 84 · last full load at wake 80
+Unit: 7.1 — F25 slice 1: a hired applicant is contracted at their own ask, not the posted wage
+Worker: running — `…\scratchpad\unit-7-1.out`
+Last done: 7.0 — recon, committed a564c18. STAGE 7 IS PARTLY OPEN: F25 needs no schema bump and no
+new Harmony patch, because each applicant's `openMarketAsk` is already persisted and the census is
+regenerated rather than saved. F23, F24 and F22 each need new authoritative state that cannot be
+derived, so they wait on the schema decision — but none of the three needs a Harmony patch, which
+makes them a lighter blocker than stage 6's. STAGE 6 REMAINS BLOCKED: F07, F19 and F20 need both a
+schema bump and a new patch on vanilla's crafting completion, because nothing observes an item
+being made.
+Updated: 2026-09-08 12:40 (session compacted; run resumed from the RESUME BRIEF below)
+Wakes: 85 · last full load at wake 85
 READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST — it carries every finding's disposition, the
 two pending operator decisions, the stage-6 seams, and the F06 gap. Written for a compaction.
 
@@ -24,9 +27,21 @@ then re-run its section 0.
 
 ## RESUME BRIEF — written 2026-09-08 for a context compaction
 
-HEAD `b40fd30` on `foreman/playtest-batch-2026-09-06`. Working tree: `FOREMAN.md` modified (this
-edit), `RECON_STAGE7.md` untracked (a worker is still writing it), `Playtesting annotations.docx`
-untracked and not ours. Suite last green at 1476/0/17.
+HEAD `a564c18` on `foreman/playtest-batch-2026-09-06`. Working tree: `FOREMAN.md` modified (this
+edit), `Playtesting annotations.docx` untracked and not ours. Suite last green at 1476/0/17.
+
+UPDATED AFTER THE COMPACTION, 2026-09-08 12:40. The stage-7 recon finished and is committed at
+`a564c18` as `RECON_STAGE7.md`. It changes one thing in the picture below: **F25 is not blocked.**
+It needs no schema bump and no new Harmony patch, because `JobPosting.cs:154` already persists each
+applicant's `openMarketAsk` and `LaborCandidateService.cs:269-274` regenerates the census rather
+than saving it. F23, F24 and F22 do need new persisted state and wait on the schema decision; none
+of them needs a Harmony patch. Unit 7.1 is running against F25 and is the first work in this batch
+that is neither recon nor documentation since stage 5 closed. The two operator decisions below are
+still unanswered and still gate stage 6 in full, plus F11, F23, F24 and F22.
+
+My one design call on F25, made rather than escalated because the source plan already decides the
+substance: `wageOffered` stays exactly as it is saved, so old open postings keep their shape, and
+new postings stop treating it as the binding price. That is what keeps F25 a no-bump change.
 
 A worker IS RUNNING: unit 7.0, stage-7 recon, output at
 `…\scratchpad\unit-7-0.out`. It is read-only and writes only `RECON_STAGE7.md`. Check it with
