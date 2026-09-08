@@ -77,6 +77,13 @@ namespace Intercolony
             y += 12f;
             y = DrawBrandSummary(viewRect, y, state);
             y += 12f;
+            float productionStartY = y;
+            y = DrawProductionCommitments(viewRect, y, state);
+            if (y > productionStartY)
+            {
+                y += 12f;
+            }
+
             y = DrawPeriodReport(viewRect, y, state);
 
             EndPageScrollView();
@@ -373,6 +380,77 @@ namespace Intercolony
                 if (ShouldBuildTooltip(valueRect) && !row.tooltip.NullOrEmpty())
                 {
                     TooltipHandler.TipRegion(valueRect, row.tooltip);
+                }
+
+                y += rowHeight + 4f;
+            }
+
+            return y;
+        }
+
+        /// <summary>
+        /// Shows the operational comparison F07 asks for: the commitment derived from live seller
+        /// agreements beside actual completed products from the production ledger. The rationale
+        /// and the ledger's limits belong in the tooltip; the face of the page stays key/value rows.
+        /// </summary>
+        private float DrawProductionCommitments(
+            Rect inRect,
+            float y,
+            IntercolonyWorldComponent state)
+        {
+            List<BusinessReportService.ProductionCommitment> rows =
+                BusinessReportService.ActiveProductionCommitments(state);
+            if (rows.Count == 0)
+            {
+                return y;
+            }
+
+            Text.Font = GameFont.Medium;
+            string title = "Production commitments";
+            float titleWidth = Mathf.Max(1f, inRect.width - 12f);
+            float titleHeight = Text.CalcHeight(title, titleWidth);
+            Widgets.Label(new Rect(0f, y, titleWidth, titleHeight), title);
+            Text.Font = GameFont.Small;
+            y += titleHeight + 4f;
+
+            float contentWidth = Mathf.Max(1f, inRect.width - 40f);
+            float keyWidth = Mathf.Min(220f, contentWidth * 0.6f);
+            float valueWidth = Mathf.Max(1f, contentWidth - keyWidth - 12f);
+            float valueX = 20f + keyWidth + 12f;
+            string tooltip =
+                "Commitment sums active and suspended seller agreements from their quantity per " +
+                "cycle and cadence. Recent production counts completed products in the last " +
+                $"{ProductionLedgerService.WindowDays} days; it does not infer production from " +
+                "stock changes. No recorded production is shown in words because the ledger does " +
+                "not store zero-production observations.";
+
+            foreach (BusinessReportService.ProductionCommitment row in rows)
+            {
+                string key = row.thingDef.LabelCap.ToString();
+                string value = row.hasRecordedProduction
+                    ? $"Commitment: {row.committedPerDay:0.0}/day | " +
+                      $"Recent production: {row.completedPerDay:0.0}/day"
+                    : "Commitment: " + row.committedPerDay.ToString("0.0") + "/day | " +
+                      "Recent production: no production recorded in the last " +
+                      $"{ProductionLedgerService.WindowDays} days";
+
+                float keyHeight = Text.CalcHeight(key, keyWidth);
+                float valueHeight = Text.CalcHeight(value, valueWidth);
+                float rowHeight = Mathf.Max(keyHeight, valueHeight);
+
+                Widgets.Label(new Rect(20f, y, keyWidth, keyHeight), key);
+                GUI.color = !row.hasRecordedProduction
+                    ? new Color(1f, 1f, 1f, 0.6f)
+                    : row.completedPerDay + 0.0001f < row.committedPerDay
+                        ? new Color(1f, 0.75f, 0.75f)
+                        : new Color(0.6f, 0.9f, 0.6f);
+                Rect valueRect = new Rect(valueX, y, valueWidth, valueHeight);
+                Widgets.Label(valueRect, value);
+                GUI.color = Color.white;
+
+                if (ShouldBuildTooltip(valueRect))
+                {
+                    TooltipHandler.TipRegion(valueRect, tooltip);
                 }
 
                 y += rowHeight + 4f;

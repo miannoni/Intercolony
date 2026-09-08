@@ -58,6 +58,19 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// One Business row comparing a good's live seller commitments with completed production
+        /// recorded in the ledger's rolling window. Rows are keyed by ThingDef because that is the
+        /// identity used by <see cref="ProductionBucket"/>; agreements for the same good are summed.
+        /// </summary>
+        public class ProductionCommitment
+        {
+            public ThingDef thingDef;
+            public float committedPerDay;
+            public float completedPerDay;
+            public bool hasRecordedProduction;
+        }
+
+        /// <summary>
         /// Estimates a contract's per-cycle economics.
         ///
         /// **Inputs are priced as "what buying it instead would cost", and that choice is the
@@ -95,6 +108,73 @@ namespace Intercolony
             estimate.transport = -Mathf.RoundToInt(estimate.revenue * premiumShare);
 
             return estimate;
+        }
+
+        /// <summary>
+        /// Derives one seller agreement's commitment from the fields already stored on it:
+        /// quantityPerCycle divided by its cadence length in days. The fallback of one day matches
+        /// the existing contract presentation and prevents malformed zero-cadence state from
+        /// producing a divide-by-zero result.
+        /// </summary>
+        public static float CommittedPerDay(RecurringContract contract)
+        {
+            if (contract == null || contract.thingDef == null || contract.quantityPerCycle <= 0)
+            {
+                return 0f;
+            }
+
+            return contract.quantityPerCycle / Mathf.Max(1f, contract.CadenceDays);
+        }
+
+        /// <summary>
+        /// Returns one row per good with a Business-live seller commitment. This deliberately shares
+        /// the same active predicate as the contract economics report, including suspended
+        /// agreements, so the Business page does not define "live" two different ways.
+        /// </summary>
+        public static List<ProductionCommitment> ActiveProductionCommitments(
+            IntercolonyWorldComponent state)
+        {
+            List<ProductionCommitment> rows = new List<ProductionCommitment>();
+            if (state == null || state.Contracts == null)
+            {
+                return rows;
+            }
+
+            foreach (RecurringContract contract in state.Contracts)
+            {
+                if (!IsBusinessLive(contract))
+                {
+                    continue;
+                }
+
+                float committedPerDay = CommittedPerDay(contract);
+                if (committedPerDay <= 0f)
+                {
+                    continue;
+                }
+
+                ProductionCommitment row = rows.Find(
+                    existing => existing.thingDef == contract.thingDef);
+                if (row == null)
+                {
+                    row = new ProductionCommitment
+                    {
+                        thingDef = contract.thingDef
+                    };
+                    rows.Add(row);
+                }
+
+                row.committedPerDay += committedPerDay;
+            }
+
+            foreach (ProductionCommitment row in rows)
+            {
+                row.hasRecordedProduction = ProductionLedgerService.HasRecordedProduction(
+                    state, row.thingDef);
+                row.completedPerDay = ProductionLedgerService.CompletedPerDay(state, row.thingDef);
+            }
+
+            return rows;
         }
 
         /// <summary>
@@ -136,7 +216,7 @@ namespace Intercolony
 
             foreach (RecurringContract contract in state.Contracts)
             {
-                if (contract.IsActive || contract.status == ContractStatus.Suspended)
+                if (IsBusinessLive(contract))
                 {
                     estimates.Add(Estimate(state, contract));
                 }
@@ -144,6 +224,14 @@ namespace Intercolony
 
             estimates.Sort((a, b) => b.Margin.CompareTo(a.Margin));
             return estimates;
+        }
+
+        private static bool IsBusinessLive(RecurringContract contract)
+        {
+            // Suspension pauses delivery, but the Business view already treats the agreement as
+            // live for its other economics; F07 must use that same definition of commitment.
+            return contract != null &&
+                   (contract.IsActive || contract.status == ContractStatus.Suspended);
         }
 
         // --- Backward-looking helpers (§75, §117) ------------------------------------------

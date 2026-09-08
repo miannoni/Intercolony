@@ -103,6 +103,42 @@ namespace Intercolony
             return total / (float)WindowDays;
         }
 
+        /// <summary>
+        /// Whether the retained rolling window contains a positive completion bucket for this good.
+        ///
+        /// The ledger records completed quantities, not zero-production observations. A false answer
+        /// therefore means that no positive completion was recorded in the window; callers should not
+        /// present the corresponding <see cref="CompletedPerDay"/> zero as though it were measured.
+        /// </summary>
+        public static bool HasRecordedProduction(
+            IntercolonyWorldComponent state,
+            ThingDef thingDef)
+        {
+            if (state == null || thingDef == null)
+            {
+                return false;
+            }
+
+            List<ProductionBucket> buckets = state.ProductionLedger;
+            if (buckets == null || buckets.Count == 0)
+            {
+                return false;
+            }
+
+            int currentDay = CurrentDay();
+            int firstDay = FirstDay(currentDay);
+            foreach (ProductionBucket bucket in buckets)
+            {
+                if (bucket != null && bucket.thingDef == thingDef && bucket.count > 0 &&
+                    bucket.day >= firstDay && bucket.day <= currentDay)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>Removes invalid buckets and buckets older than the rolling window.</summary>
         public static int Prune(IntercolonyWorldComponent state)
         {
