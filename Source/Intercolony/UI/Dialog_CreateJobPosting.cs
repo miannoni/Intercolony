@@ -88,7 +88,7 @@ namespace Intercolony
             "price, which you see before accepting anyone.";
 
         private readonly IntercolonyWorldComponent state;
-        private readonly Action<SkillDef, int, int, int, WageStructure, CombatClause> onConfirm;
+        private readonly Action<SkillDef, int, int, WageStructure, CombatClause> onConfirm;
 
         private SkillDef skill;
         private int minLevel = 8;
@@ -107,7 +107,7 @@ namespace Intercolony
 
         public Dialog_CreateJobPosting(
             IntercolonyWorldComponent state,
-            Action<SkillDef, int, int, int, WageStructure, CombatClause> onConfirm)
+            Action<SkillDef, int, int, WageStructure, CombatClause> onConfirm)
         {
             this.state = state;
             this.onConfirm = onConfirm;
@@ -164,8 +164,7 @@ namespace Intercolony
 
             if (Widgets.ButtonText(new Rect(ContentLeft, bottom, 170f, 36f), "Post"))
             {
-                onConfirm?.Invoke(skill, minLevel, termDays, 0, structure,
-                    clause);
+                onConfirm?.Invoke(skill, minLevel, termDays, structure, clause);
                 Close();
             }
 

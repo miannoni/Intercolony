@@ -189,9 +189,9 @@ namespace Intercolony
         public int termDays;
 
         /// <summary>
-        /// Legacy wage field retained for postings created before F25. New postings do not set it;
-        /// it remains persisted for save compatibility, but matching, ranking and hiring no longer
-        /// read it.
+        /// Legacy wage field retained for postings created before F25. Nothing sets it on new
+        /// postings; it remains persisted for save compatibility, but matching, ranking and
+        /// hiring no longer read it.
         /// </summary>
         public int wageOffered;
 

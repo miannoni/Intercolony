@@ -83,6 +83,7 @@ namespace Intercolony
             public int qualified;
             public List<ApplicantValues> values;
             public bool fixtureBuilt;
+            public string fixtureFailureReason;
         }
 
         private const float WaitingListSpreadMargin = 1f;
@@ -284,7 +285,7 @@ namespace Intercolony
 
             foreach (int minimum in minimums)
             {
-                draws.Add(Measure(state, skill, minimum, term, probeWage));
+                draws.Add(Measure(r, state, skill, minimum, term, probeWage));
             }
 
             StringBuilder shape = new StringBuilder();
@@ -328,7 +329,7 @@ namespace Intercolony
 
             const int highMinimum = 16;
             Draw unfiltered = draws[0];
-            Draw highMinimumDraw = Measure(state, skill, highMinimum, term, probeWage);
+            Draw highMinimumDraw = Measure(r, state, skill, highMinimum, term, probeWage);
             if (unfiltered.applicants == 0 || highMinimumDraw.applicants == 0)
             {
                 string emptyDraw = unfiltered.applicants == 0 && highMinimumDraw.applicants == 0
@@ -360,8 +361,8 @@ namespace Intercolony
                 return;
             }
 
-            Draw lowOffer = Measure(state, skill, 0, term, lowWage);
-            Draw highOffer = Measure(state, skill, 0, term, highWage);
+            Draw lowOffer = Measure(r, state, skill, 0, term, lowWage);
+            Draw highOffer = Measure(r, state, skill, 0, term, highWage);
             r.Check(lowOffer.interested == highOffer.interested &&
                     lowOffer.applicants > 0 && lowOffer.applicants == highOffer.applicants,
                 "posted wage does not change interested-worker count (§114)",
@@ -389,11 +390,13 @@ namespace Intercolony
 
             LaborCandidateService.Clear();
             JobPosting posting = MakePosting(
-                state, SkillDefOf.Construction, 0, term, probeWage);
+                state, SkillDefOf.Construction, 0, term, probeWage,
+                out string failReason);
             if (posting == null)
             {
                 r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
-                    "the real posting fixture could not be created");
+                    $"TryPost refused the real posting fixture: " +
+                    $"{failReason ?? "no failure reason"}");
                 return;
             }
 
@@ -510,7 +513,8 @@ namespace Intercolony
             Rand.PushState(0x7F25_2D);
             try
             {
-                first = CaptureApplicants(state, SkillDefOf.Construction, 0, term, probeWage);
+                first = CaptureApplicants(
+                    state, SkillDefOf.Construction, 0, term, probeWage);
             }
             finally
             {
@@ -521,7 +525,8 @@ namespace Intercolony
             {
                 r.Skip(label,
                     $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
-                    "the real posting fixture could not be created");
+                    $"TryPost refused the real posting fixture: " +
+                    $"{first.fixtureFailureReason ?? "no failure reason"}");
                 return;
             }
 
@@ -550,7 +555,8 @@ namespace Intercolony
             {
                 r.Skip(label,
                     $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
-                    "the second real posting fixture could not be created");
+                    $"TryPost refused the second real posting fixture: " +
+                    $"{second.fixtureFailureReason ?? "no failure reason"}");
                 return;
             }
 
@@ -595,7 +601,8 @@ namespace Intercolony
             int savedSilver = PurchaseOrderService.CountColonySilver(map);
             LaborCandidateService.Clear();
             JobPosting posting = MakePosting(
-                state, SkillDefOf.Construction, 0, term, postedWage);
+                state, SkillDefOf.Construction, 0, term, postedWage,
+                out string postingFailReason);
             JobApplicant applicant = null;
             EmploymentContract contract = null;
 
@@ -603,7 +610,9 @@ namespace Intercolony
             {
                 if (posting == null)
                 {
-                    r.Skip(label, "the real posting fixture could not be created");
+                    r.Skip(label,
+                        $"TryPost refused the real posting fixture: " +
+                        $"{postingFailReason ?? "no failure reason"}");
                     return;
                 }
 
@@ -645,11 +654,12 @@ namespace Intercolony
                 }
 
                 contract = EmploymentService.TryHireApplicant(
-                    state, applicant, posting, map, out string failReason);
+                    state, applicant, posting, map, out string hireFailReason);
                 if (contract == null)
                 {
                     r.Skip(label,
-                        $"the real applicant hire could not be arranged: {failReason ?? "no reason"}");
+                        $"the real applicant hire could not be arranged: " +
+                        $"{hireFailReason ?? "no reason"}");
                     return;
                 }
 
@@ -733,10 +743,10 @@ namespace Intercolony
             int wage = (low + high) / 2;
 
             rep.Adjust(EmployerReputation.MinScore - rep.Score);
-            Draw asBad = Measure(state, skill, 0, term, wage);
+            Draw asBad = Measure(r, state, skill, 0, term, wage);
 
             rep.Adjust(EmployerReputation.MaxScore - rep.Score);
-            Draw asGood = Measure(state, skill, 0, term, wage);
+            Draw asGood = Measure(r, state, skill, 0, term, wage);
 
             // Reach rather than queue length, for the same reason as the response curve: the queue
             // caps out and would report a sought-after employer and an exploitative one as equal.
@@ -852,13 +862,42 @@ namespace Intercolony
 
             int wage = high + 20;
 
-            Draw single = Measure(state, skill, 0, term, wage);
+            Draw single = Measure(r, state, skill, 0, term, wage);
 
             // Five identical postings, matched together.
             List<JobPosting> group = new List<JobPosting>();
+            List<string> groupFailureReasons = new List<string>();
             for (int i = 0; i < 5; i++)
             {
-                group.Add(MakePosting(state, skill, 0, term, wage));
+                JobPosting posting = MakePosting(
+                    state, skill, 0, term, wage, out string failReason);
+                if (posting == null)
+                {
+                    groupFailureReasons.Add(
+                        $"attempt {i + 1}: {failReason ?? "no failure reason"}");
+
+                    continue;
+                }
+
+                group.Add(posting);
+            }
+
+            if (group.Count != 5)
+            {
+                string reason =
+                    $"TryPost refused one or more of the five duplicate fixtures; " +
+                    $"{group.Count} were created; failReason: " +
+                    $"{string.Join("; ", groupFailureReasons.ToArray())}";
+                r.Skip("five identical postings draw no more people than one (§35.2)", reason);
+                r.Skip("identical postings do not each collect their own queue (§35.2)", reason);
+
+                foreach (JobPosting posting in group)
+                {
+                    JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test");
+                    state.Postings.Remove(posting);
+                }
+
+                return;
             }
 
             LaborCandidateService.Clear();
@@ -895,10 +934,52 @@ namespace Intercolony
         {
             float standing = EmployerReputationService.ScoreFor(state);
 
-            JobPosting unaffordable = MakePosting(state, SkillDefOf.Construction, 0, 20, 1);
+            JobPosting unaffordable = MakePosting(
+                state, SkillDefOf.Construction, 0, 20, 1, out string tooCheapFailure);
+            JobPosting impossible = MakePosting(
+                state, SkillDefOf.Construction, 20, 20, 9999, out string nobodyCanFailure);
+
+            if (unaffordable == null || impossible == null)
+            {
+                StringBuilder reason = new StringBuilder("TryPost refused a silence fixture: ");
+                if (unaffordable == null)
+                {
+                    reason.Append("unaffordable fixture failReason: ")
+                          .Append(tooCheapFailure ?? "no failure reason");
+                }
+
+                if (impossible == null)
+                {
+                    if (unaffordable == null)
+                    {
+                        reason.Append("; ");
+                    }
+
+                    reason.Append("impossible fixture failReason: ")
+                          .Append(nobodyCanFailure ?? "no failure reason");
+                }
+
+                r.Skip("a posting that draws nobody always explains itself (§114)",
+                    reason.ToString());
+                r.Skip("\"your offer is too low\" and \"nobody can do this\" read differently",
+                    reason.ToString());
+
+                foreach (JobPosting posting in new[] { unaffordable, impossible })
+                {
+                    if (posting == null)
+                    {
+                        continue;
+                    }
+
+                    JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test");
+                    state.Postings.Remove(posting);
+                }
+
+                return;
+            }
+
             string tooCheap = JobPostingService.ExplainSilence(state, unaffordable, standing);
 
-            JobPosting impossible = MakePosting(state, SkillDefOf.Construction, 20, 20, 9999);
             string nobodyCan = JobPostingService.ExplainSilence(state, impossible, standing);
 
             foreach (JobPosting posting in new[] { unaffordable, impossible })
@@ -921,13 +1002,29 @@ namespace Intercolony
         /// <summary>Posting, filling and closing, through the real service.</summary>
         private static void CheckLifecycle(Results r, IntercolonyWorldComponent state)
         {
+            JobPosting dialogPosting = JobPostingService.TryPost(
+                state, SkillDefOf.Construction, 8, 20, WageStructure.Daily,
+                CombatClause.Civilian, out string dialogFailReason);
+            r.Check(dialogPosting != null && dialogFailReason == null,
+                "a posting can be created with the dialog's arguments",
+                dialogFailReason ?? "");
+            if (dialogPosting != null)
+            {
+                JobPostingService.Close(
+                    dialogPosting, JobPostingStatus.Withdrawn, "self-test dialog seam cleanup");
+                state.Postings.Remove(dialogPosting);
+            }
+
             JobPosting posting = JobPostingService.TryPost(
-                state, SkillDefOf.Construction, 0, 20, 50, WageStructure.Daily,
+                state, SkillDefOf.Construction, 0, 20, WageStructure.Daily,
                 CombatClause.Civilian, out string failReason);
 
             r.Check(posting != null, "a posting can be created through the real service", failReason ?? "");
             if (posting == null)
             {
+                r.Skip("posting lifecycle checks after creation",
+                    $"TryPost refused the lifecycle fixture; failReason: " +
+                    $"{failReason ?? "no failure reason"}");
                 return;
             }
 
@@ -938,12 +1035,8 @@ namespace Intercolony
                 "a new posting never expires and describes its lifespan without formatting the sentinel",
                 $"never expires: {posting.NeverExpires}, label \"{posting.ExpiryLabel}\"");
 
-            r.Check(JobPostingService.TryPost(state, null, 0, 20, 0, WageStructure.Daily,
-                        CombatClause.Civilian, out _) == null,
-                "a posting offering nothing is refused");
-
             r.Check(JobPostingService.TryPost(state, null, 0,
-                        LaborCandidateService.MaxTermDays + 1, 50, WageStructure.Daily,
+                        LaborCandidateService.MaxTermDays + 1, WageStructure.Daily,
                         CombatClause.Civilian, out _) == null,
                 "a posting past the term cap is refused",
                 $"cap is {LaborCandidateService.MaxTermDays}d");
@@ -963,8 +1056,8 @@ namespace Intercolony
 
         /// <summary>
         /// Runs the same post-load path that owns the posting validity check. The posting dialog
-        /// passes zero for the legacy wage field, but TryPost still rejects zero at its boundary;
-        /// create both records through that real service with an accepted wage, then model the
+        /// leaves the legacy wage field at its zero default; new postings now receive that state
+        /// directly from TryPost. Create both records through that real service, then model the
         /// F25 persisted state before invoking the component's PostLoadInit branch.
         ///
         /// RimWorld's Scribe.mode and LoadSaveMode.PostLoadInit are public, and ExposeData is the
@@ -975,7 +1068,6 @@ namespace Intercolony
         private static void CheckLoadPruner(Results r, IntercolonyWorldComponent state)
         {
             const int term = 20;
-            const int acceptedWageForTryPost = 1;
             List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
             JobPosting zeroWagePosting = null;
             JobPosting nonPositiveTermPosting = null;
@@ -986,25 +1078,38 @@ namespace Intercolony
             try
             {
                 zeroWagePosting = JobPostingService.TryPost(
-                    state, SkillDefOf.Construction, 0, term, acceptedWageForTryPost,
+                    state, SkillDefOf.Construction, 0, term,
                     WageStructure.Daily, CombatClause.Civilian, out zeroWageFailure);
                 nonPositiveTermPosting = JobPostingService.TryPost(
-                    state, SkillDefOf.Construction, 0, 1, acceptedWageForTryPost,
+                    state, SkillDefOf.Construction, 0, 1,
                     WageStructure.Daily, CombatClause.Civilian, out nonPositiveTermFailure);
 
                 if (zeroWagePosting == null || nonPositiveTermPosting == null)
                 {
-                    string reason = zeroWagePosting == null
-                        ? $"TryPost could not build the zero-wage fixture: " +
-                          $"{zeroWageFailure ?? "no failure reason"}"
-                        : $"TryPost could not build the broken-term fixture: " +
-                          $"{nonPositiveTermFailure ?? "no failure reason"}";
-                    r.Skip("load-pruner posting fixtures", reason);
+                    StringBuilder reason = new StringBuilder(
+                        "TryPost could not build the load-pruner fixture(s): ");
+                    if (zeroWagePosting == null)
+                    {
+                        reason.Append("zero-wage fixture failReason: ")
+                              .Append(zeroWageFailure ?? "no failure reason");
+                    }
+
+                    if (nonPositiveTermPosting == null)
+                    {
+                        if (zeroWagePosting == null)
+                        {
+                            reason.Append("; ");
+                        }
+
+                        reason.Append("broken-term fixture failReason: ")
+                              .Append(nonPositiveTermFailure ?? "no failure reason");
+                    }
+
+                    r.Skip("load-pruner posting fixtures", reason.ToString());
                     return;
                 }
 
                 // This is the value produced by the F25 dialog and persisted by JobPosting.
-                zeroWagePosting.wageOffered = 0;
                 nonPositiveTermPosting.termDays = 0;
 
                 if (Scribe.loader == null)
@@ -1064,9 +1169,11 @@ namespace Intercolony
             };
 
             LaborCandidateService.Clear();
-            JobPosting posting = MakePosting(state, skill, minLevel, term, wage);
+            JobPosting posting = MakePosting(
+                state, skill, minLevel, term, wage, out string failReason);
             if (posting == null)
             {
+                draw.fixtureFailureReason = failReason;
                 return draw;
             }
 
@@ -1222,11 +1329,22 @@ namespace Intercolony
         /// and the comparison would measure order rather than the requirement or wage invariant.
         /// </summary>
         private static Draw Measure(
-            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage)
+            Results r, IntercolonyWorldComponent state, SkillDef skill,
+            int minLevel, int term, int wage)
         {
             LaborCandidateService.Clear();
 
-            JobPosting posting = MakePosting(state, skill, minLevel, term, wage);
+            JobPosting posting = MakePosting(
+                state, skill, minLevel, term, wage, out string failReason);
+            if (posting == null)
+            {
+                r.Skip("job posting measurement",
+                    $"TryPost refused the measurement fixture for minimum {minLevel}, " +
+                    $"term {term}d, wage {wage}/day; failReason: " +
+                    $"{failReason ?? "no failure reason"}");
+                return new Draw();
+            }
+
             JobPostingService.MatchAll(state);
 
             Draw draw = new Draw
@@ -1258,11 +1376,12 @@ namespace Intercolony
         }
 
         private static JobPosting MakePosting(
-            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage)
+            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage,
+            out string failReason)
         {
             return JobPostingService.TryPost(
-                state, skill, minLevel, term, wage, WageStructure.Daily,
-                CombatClause.Civilian, out _);
+                state, skill, minLevel, term, WageStructure.Daily,
+                CombatClause.Civilian, out failReason);
         }
 
         private static int BestSkillLevel(Pawn pawn)

@@ -288,10 +288,10 @@ namespace Intercolony
             if (Widgets.ButtonText(new Rect(inRect.width - 160f, y + 2f, 150f, 30f), "New posting"))
             {
                 Find.WindowStack.Add(new Dialog_CreateJobPosting(state,
-                    (skill, minLevel, termDays, wage, structure, clause) =>
+                    (skill, minLevel, termDays, structure, clause) =>
                     {
                         if (JobPostingService.TryPost(state, skill, minLevel, termDays,
-                                wage, structure, clause, out string failReason) == null)
+                                structure, clause, out string failReason) == null)
                         {
                             Messages.Message(failReason ?? "Could not post.",
                                 MessageTypeDefOf.RejectInput, historical: false);

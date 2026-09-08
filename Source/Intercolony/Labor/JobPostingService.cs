@@ -41,7 +41,7 @@ namespace Intercolony
 
         public static JobPosting TryPost(
             IntercolonyWorldComponent state, SkillDef skill, int minSkillLevel,
-            int termDays, int wageOffered, WageStructure structure, CombatClause clause,
+            int termDays, WageStructure structure, CombatClause clause,
             out string failReason)
         {
             failReason = null;
@@ -58,19 +58,12 @@ namespace Intercolony
                 return null;
             }
 
-            if (wageOffered < 1)
-            {
-                failReason = "Offer at least 1 silver a day.";
-                return null;
-            }
-
             JobPosting posting = new JobPosting
             {
                 id = state.NextId(),
                 skill = skill,
                 minSkillLevel = skill == null ? 0 : Mathf.Clamp(minSkillLevel, 0, 20),
                 termDays = termDays,
-                wageOffered = wageOffered,
                 wageStructure = structure,
                 combatClause = clause,
                 postedTick = GenTicks.TicksGame,
