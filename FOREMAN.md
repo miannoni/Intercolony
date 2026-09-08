@@ -1,44 +1,44 @@
 ﻿# Foreman state — Intercolony
 
-Stage: 7 — the three findings F25 left behind. **STAGES 1 THROUGH 6 ARE ALL CLOSED.**
-Unit: 7.6 — F23, the first of them
-Worker: none
-Last done: 5.9h — the F11 play entry and a full rewrite of the RESUME BRIEF below, which had gone
-stale while still being the first thing a fresh session is told to read.
-Updated: 2026-09-08, wake 157
-Wakes: 157 · last full load at wake 157
+Stage: 7 — F23 in progress; F24 and F22 after it. **STAGES 1 THROUGH 6 ARE CLOSED.**
+Unit: 7.6c — assertions for the equipment bond
+Worker: running — `…\scratchpad\unit-7-6c.out`
+Last done: 7.6b at `a173619` — F23's bond settles on every one of the nine paths that end an
+employment. Suite 1506/0/16, log clean.
+Updated: 2026-09-08, wake 172
+Wakes: 172 · last full load at wake 172
 
-READ THE "RESUME BRIEF" BELOW. It is current as of HEAD `47c1f5d` and it is what a session with no
-memory should trust.
+READ THE "RESUME BRIEF" BELOW. It is what a session with no memory should trust.
 
-<!-- ONE WORKING NOTE. Replace this block each wake; never prepend a second one. The header has
-     regrown three times because a new note was added instead of the old one being replaced, and
-     the history belongs in the commit log, which is better at it. -->
+<!-- ONE WORKING NOTE, AT MOST ABOUT FIFTEEN LINES. Replace it each wake; never prepend a second.
+     If it needs more than that, the surplus belongs in a commit message. The header has run away
+     three times and crept back a fourth by the note simply getting longer each wake. -->
 
-WORKING NOTE — wake 157. Stage 5's F11 is closed and proven: suite 1503/0/15, log clean, and its
-four assertions each watched going red. What remains in the whole run is F23, F24 and F22, then
-stage 8 (F08, F09) and stage 9 (F06), each of the last two starting with recon.
-
-ONE THING FOR THE PLAY SITTING THAT MAY BE A BALANCE PROBLEM, and it is recorded in
-`docs/PENDING_PLAYTESTS.md` rather than only here: F11's reply delays measured 5 to 20 days on a
-real world — 28 tiles gave five days, 186 tiles gave twenty. Twenty days for a price quote is a long
-time in RimWorld, and the risk is that distant suppliers become unusable in practice rather than
-merely slower. No assertion can settle it.
+WORKING NOTE — wake 172. F23's first two parts are whole: the gear an employee arrives with is
+recorded, valued, bonded, disclosed at hire beside the wage, and refunded proportionally when it
+comes back. 7.6c is adding the assertions, which two commits of economic code currently lack — E3
+(part returned is part refunded, premium included) and E4 (a bond settles ONCE) are the two that
+matter, the second because two paths both firing would pay the player from nothing.
+Not built of F23, deliberately: equipment tiers, availability gating, and the severe consequence for
+stripping body modifications. Remaining in the run after F23: F24, F22, then stage 8 (F08, F09) and
+stage 9 (F06), each starting with recon.
+For the play sitting: hiring an equipped worker now costs roughly 70% more up front — 918 prepaid
+wages against a 641 bond on one real example.
 
 STANDING RULES THIS RUN HAS PAID FOR, kept here because they survive a compaction:
-  - **When a field stops being written, grep every reader.** A default is only harmless if nothing
-    treats it as meaningful, and a `> 0` check treats zero as corruption. Cost two defects at once.
+  - **When a field stops being written, grep every reader.** A `> 0` check treats zero as
+    corruption. Two defects at once.
   - **When something stops happening immediately, find everything that assumed it was instant.**
-    F11 cost a third: replies scheduled past a deadline that then deleted them.
+    A third defect: replies scheduled past a deadline that then deleted them.
   - **The seam nobody asserts is the one between the caller and the service.**
   - **A skip is not evidence**, and a mutation run that skips its target proves nothing.
   - **A mutation that fails to compile looks exactly like one that found nothing.** Assert the
     anchor is unique before editing; read the run's log, not the summary line.
   - **Never let a zero mean unknown.** Say it in words.
-  - Use `dev.ps1 bridge -Save`, not `run -Save`: only the bridge path stages the autostart copy, and
-    a migration check that quietly does not run looks exactly like one that passed.
-  - Write files with the file tools. PowerShell `Get-Content` + `Out-File -Encoding utf8`
-    double-encodes UTF-8 and has corrupted this file once already.
+  - **A charge the player was never shown is worse than the problem it fixes.** Disclose at the
+    moment of decision, not at the moment of collection.
+  - Use `dev.ps1 bridge -Save`, not `run -Save`: only the bridge path stages the autostart copy.
+  - Write files with the file tools; PowerShell `Get-Content` + `Out-File` double-encodes UTF-8.
 
 Owed to the operator, all in `docs/PENDING_PLAYTESTS.md`: twenty play observations across stages
 1-7. The three that matter most are the F15 save-compatibility check, the partial-delivery defect in
@@ -82,7 +82,7 @@ keeps F25 a no-bump change.
 | F19 material replacement cost | 6 | BUILT, mutation-proven, `fae0dbe` + `be507f9`: direct ingredients only, deterministic and non-recursive; the existing finished-good figure is unchanged |
 | F20 labour from actual work | 6 | BUILT, mutation-proven, `86f3868` + `78d6eba`: the relevant-workforce approximation shares eligible wages across eligible goods; measured-time attribution is not built |
 | F25 buyer-side labour market | 7 | BUILT, mutation-proven, `0189a8a` + `680c39e` + `3125bd6` + `fbb5290`: requirement-first postings, worker asks, a seeded spread, own-ask pay, and the save/create seams; no new persisted state or Harmony patch, and no reverse market |
-| F23 equipment and bond state | 7 | UNBLOCKED, NOT STARTED; needs new persisted state additive on schema 58; no Harmony patch |
+| F23 equipment and bond state | 7 | PART-BUILT, `ed99423` + `a173619`. The gear an employee ARRIVES with is recorded, valued at replacement plus a 10% premium, disclosed as its own row at hire beside the wage, charged there, and refunded proportionally item by item when the contract ends — on all nine ending paths, idempotently. NOT built: equipment tiers, availability gating by settlement wealth/tech/scarcity, and the severe consequence for stripping body modifications. Assertions in progress at 7.6c |
 | F24 urgent dispatch | 7 | UNBLOCKED, NOT STARTED; needs new persisted state additive on schema 58; no Harmony patch |
 | F22 reverse listing and offer queue | 7 | UNBLOCKED, NOT STARTED; needs new persisted state additive on schema 58; no Harmony patch |
 | F08 F09 commercial relationships | 8 | not started |
