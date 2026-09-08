@@ -4,13 +4,80 @@ Stage: 7 — Two-sided labour market. NOTHING IS BLOCKED ON A HUMAN. The operato
 decisions YES on 2026-09-08: schema 57→58 with a migration and prior-save verification, and one
 narrowly scoped observational Harmony patch on crafting completion. Stage 6 is next after F25, and
 F06 is now stage 9. The dependency order is in "Next executable work" in the brief below.
-Unit: 7.2d — the three assertions F25 still has none of
-Worker: running — `…\scratchpad\unit-7-2d.out`
+Unit: 7.3 — F25's last slice: the posting dialog stops asking for a wage
+Worker: running — `…\scratchpad\unit-7-3.out`
+7.2d–7.2g committed together at `0189a8a`, suite green 29/0/0 with all three assertions proven red
+under mutation. F25's code is done after 7.3; what remains is the dead `wageOffered` parameter on
+`TryPost`, which is unit 7.4, and the play entry, 7.6.
+
+7.2f fixed the crash and the suite is green at 29/0/0. But the reproducibility assertion STILL does
+not guard anything: under the unseeded-shuffle mutation it SKIPS rather than fails — "applicant from
+Bustpe asking 84/day matched multiple census records (170, 172); source identity is ambiguous".
+An assertion that skips exactly when the thing it guards breaks is not a guard, and with several
+hundred prospects two of them sharing a settlement, an ask and a skill profile is not rare, so it
+would skip in ordinary runs too. The cause is a step that need not exist: it resolves each applicant
+back to a unique census record so it can compare indices. 7.2g drops that and compares the two runs'
+applicant lists element-wise on settlement, faction, travel days, ask and skill levels. Two records
+identical in all of those are interchangeable in every way the market cares about; what an unseeded
+shuffle changes is which six of several hundred get drawn.
+
+A NOTE ON SKIPS, since this is the second time one has hidden something: the suite reports them and
+they do not redden the exit code, which is correct — but a skip is not evidence, and a mutation run
+that skips the target assertion proves nothing at all. Read the skip line, never just the counts.
+
+7.2e re-keyed identity correctly — census index / settlement / travel days / ask / skill vector, no
+pawn and no generated name — but added a probe that crashes the suite at 10 passed, 1 failed:
+`InvalidOperationException: Stack empty` from `Rand.PopState()` in `CheckMarketReproduces`. The
+probe pushes a seed, records two `Rand.Int` values, runs the match, reads two more, and pops a
+SECOND time if the stream did not return to where it started — on the theory that a missing
+`PopState` inside `MatchAll` would have left a frame behind. THE THEORY IS WRONG: matching
+materialises applicants, pawn generation draws from the current frame, so the stream legitimately
+moves on every healthy run, the conditional pop fires every time, and it pops a frame the test does
+not own. 7.2f deletes the probe and leaves one push and one unconditional pop.
+
+Good news from that same run, which reached them before the crash: A1, A2 and A3 all pass with real
+separation, and **B1 has far more headroom than I feared** — queued mean best skill 11.83 against a
+top-six mean of 20.00, a gap of 8.17 on a 1.00 margin. A lucky shuffle will not fail it.
+
+7.2d's mutation results in full: baseline 28/1/0 (the one red is B2, below); B1 red under a queue
+re-sort; B3 red when `TryHireApplicant` reverts to the posted wage — 27/2/0, the second red being
+B2 again. B1 and B3 are proven and must not be touched. The B1 and B2 runs stopped at 11 and 11
+assertions rather than 29, so those mutations threw partway; that does not weaken the evidence,
+because the target assertion had already gone red, but do not read their totals as suite counts.
+
+B2 FAILS AT BASELINE — the assertion is wrong, not the code, and unit 7.2e must fix it. The draw IS
+reproducible: both matches selected prospect ids 26, 72, 9, 54, 75, 56 in that order, from the same
+settlements, with identical skill vectors and identical asks of 101, 150, 84, 147, 151, 156. What
+differed was three of the six generated pawns' NAMES — "Lisa-Marie 'Lima' Schmid" against "Jill Yu",
+and so on. So pawn materialisation is outside the seeded stream, and the assertion keyed identity on
+the pawn instead of on the census record it was made from. Re-key it to the prospect: id, settlement,
+travel, ask and skills — all of which already reproduce exactly.
+Not a play defect: `MatchAll` runs once per refresh, and once an applicant is materialised the pawn
+itself is persisted, so a reload sees the saved pawn rather than a regenerated one. But it does mean
+nobody may claim "the same world regenerates the same applicants" about pawns, only about the draw.
+
+B1 IS PROVEN. Re-sorting the queue by ability reddened it at gap 0.00 against a 1.00 margin, with
+535 qualified and 6 queued — and reddened A2 as a bonus, since a ranked unfiltered draw (20.0) then
+beats the 16+ draw (17.3).
+  B1 the waiting list is a spread, not the top N — mutation re-sorts the queue by ability;
+  B2 the same seed and refresh reproduce the same applicants — mutation makes the shuffle unseeded;
+  B3 a hired applicant is paid their own ask — mutation reverts `TryHireApplicant` to the posted
+     wage, which is the exact regression 7.1 exists to prevent and nothing has tested until now.
 Last done: 7.2c at `680c39e`. Suite green again at 26/0/0, and this time with mutation evidence:
 M1 (the requirement stops testing the minimum level) reddens A1, A2 and the silence explanation;
 M2 (a wage filter restored in `MatchAll`) reddens A3 and nothing else.
-Updated: 2026-09-08, wake 94
-Wakes: 94 · last full load at wake 85
+Updated: 2026-09-08, wake 95
+Wakes: 101 · last full load at wake 95
+
+DRIFT CHECK AT THE TENTH-WAKE FULL LOAD, and one thing failed it. The method says this file is a
+header plus a stage/unit table plus a short decisions list. It is 478 lines. The RESUME BRIEF earns
+its place — it is what a cold session reads — but the unit tables now carry eight stages of history
+that the commit log records better, and a state file nobody can skim has the same failure mode as
+the stale header I just cut. TRIM THE BODY WHEN F25 CLOSES, before starting 6.1: keep the brief, the
+decisions, and the current stage's units; drop closed stages to one line each. Everything else is
+already in the commits. Not doing it mid-stage, because the tables are load-bearing right now.
+Everything else passed: one worker at a time, nothing committed without a suite run, mutation
+evidence on every unit that added an assertion, cron alive, reports kept to the tables.
 
 READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST — every finding's disposition, the answered
 decisions and their scope, the stage-6 seams, the F06 placement, and the dependency order.
