@@ -74,6 +74,7 @@ namespace Intercolony
                 CheckPartialHistoryIsAdmitted(r, state);
                 CheckAgreesWithRealSilver(r, state, map);
                 CheckContractEstimate(r, state);
+                CheckDirectInputEstimate(r, state);
                 CheckProductionCommitments(r, state);
                 CheckPruning(r, state);
             }
@@ -339,6 +340,395 @@ namespace Intercolony
 
             r.Check(BusinessReportService.Estimate(state, null) != null,
                 "a missing contract estimates to nothing rather than throwing");
+        }
+
+        // --- F19 direct-input estimate -----------------------------------------------------
+
+        private static void CheckDirectInputEstimate(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string summedAssertion =
+                "I1 direct ingredients are summed, supplier-priced, and scaled";
+            const string deterministicAssertion =
+                "I2 the same world reports the same direct-input figure twice";
+            const string noRecipeAssertion =
+                "I3 no recipe is reported as such, not as zero";
+            const string boundedAssertion =
+                "I4 a craftable direct ingredient is priced at its own value, without recursion";
+
+            ThingDef summedProduct = ThingDefOf.ComponentSpacer;
+            RecipeDef summedRecipe =
+                DefDatabase<RecipeDef>.GetNamedSilentFail("Make_ComponentSpacer");
+            if (summedProduct == null || summedRecipe == null ||
+                summedRecipe.ingredients == null || summedRecipe.ingredients.Count < 2)
+            {
+                r.Skip(summedAssertion,
+                    "vanilla ComponentSpacer and its multi-ingredient recipe are unavailable");
+            }
+            else
+            {
+                const int quantityPerCycle = 3;
+                int expectedDirectInputs;
+                int outputCount;
+                float expectedBatchCost;
+                string ingredientDetail;
+                string reason;
+                if (!TryBuildIndependentDirectInputExpectation(
+                        summedRecipe, summedProduct, quantityPerCycle,
+                        out expectedDirectInputs, out outputCount, out expectedBatchCost,
+                        out ingredientDetail, out reason))
+                {
+                    r.Skip(summedAssertion, reason);
+                }
+                else
+                {
+                    RecurringContract contract = new RecurringContract
+                    {
+                        id = -866,
+                        settlementName = "Testholme",
+                        factionName = "Test Confederacy",
+                        thingDef = summedProduct,
+                        quantityPerCycle = quantityPerCycle,
+                        cadenceTicks = GenDate.TicksPerDay,
+                        totalCycles = 5,
+                        unitPrice = 4f,
+                        status = ContractStatus.Active
+                    };
+
+                    BusinessReportService.ContractEstimate estimate =
+                        BusinessReportService.Estimate(state, contract);
+                    r.Check(
+                        estimate != null && estimate.directInputs != null &&
+                        estimate.directInputs.status ==
+                            BusinessReportService.DirectInputCostStatus.Resolved &&
+                        estimate.directInputsIfBought == expectedDirectInputs,
+                        summedAssertion,
+                        $"reported {DirectInputFigure(estimate)} silver; expected " +
+                        $"{expectedDirectInputs} from {ingredientDetail}; batch " +
+                        $"{expectedBatchCost:0.###} / {outputCount} output x {quantityPerCycle}");
+                }
+            }
+
+            ThingDef deterministicProduct = ThingDefOf.Chemfuel;
+            RecipeDef organicsRecipe =
+                DefDatabase<RecipeDef>.GetNamedSilentFail("Make_ChemfuelFromOrganics");
+            RecipeDef woodRecipe =
+                DefDatabase<RecipeDef>.GetNamedSilentFail("Make_ChemfuelFromWood");
+            List<RecipeDef> recipes = DefDatabase<RecipeDef>.AllDefsListForReading;
+            if (deterministicProduct == null || recipes == null || organicsRecipe == null ||
+                woodRecipe == null || !recipes.Contains(organicsRecipe) ||
+                !recipes.Contains(woodRecipe) ||
+                FindTestProduct(organicsRecipe, deterministicProduct) == null ||
+                FindTestProduct(woodRecipe, deterministicProduct) == null)
+            {
+                r.Skip(deterministicAssertion,
+                    "vanilla Chemfuel and both direct-input recipes are unavailable");
+            }
+            else
+            {
+                List<RecipeDef> savedRecipes = new List<RecipeDef>(recipes);
+                try
+                {
+                    // Put each known Chemfuel recipe first in turn. An ordinal resolver must
+                    // return the same recipe even when the loaded collection changes order.
+                    RecurringContract contract = new RecurringContract
+                    {
+                        id = -867,
+                        settlementName = "Testholme",
+                        factionName = "Test Confederacy",
+                        thingDef = deterministicProduct,
+                        quantityPerCycle = 35,
+                        cadenceTicks = GenDate.TicksPerDay,
+                        totalCycles = 5,
+                        unitPrice = 2.5f,
+                        status = ContractStatus.Active
+                    };
+
+                    MoveRecipeToFront(recipes, organicsRecipe);
+                    BusinessReportService.ContractEstimate first =
+                        BusinessReportService.Estimate(state, contract);
+
+                    MoveRecipeToFront(recipes, woodRecipe);
+                    BusinessReportService.ContractEstimate second =
+                        BusinessReportService.Estimate(state, contract);
+
+                    r.Check(
+                        first != null && second != null &&
+                        first.directInputs != null && second.directInputs != null &&
+                        first.directInputs.status ==
+                            BusinessReportService.DirectInputCostStatus.Resolved &&
+                        second.directInputs.status ==
+                            BusinessReportService.DirectInputCostStatus.Resolved &&
+                        first.directInputs.recipeDefName == second.directInputs.recipeDefName &&
+                        first.directInputsIfBought == second.directInputsIfBought,
+                        deterministicAssertion,
+                        $"first {DirectInputFigure(first)} silver via " +
+                        $"{DirectInputRecipe(first)}; second {DirectInputFigure(second)} " +
+                        $"silver via {DirectInputRecipe(second)} after recipe-order change");
+                }
+                finally
+                {
+                    recipes.Clear();
+                    recipes.AddRange(savedRecipes);
+                    r.Info($"direct-input recipe order restored to {recipes.Count} recipe(s).");
+                }
+            }
+
+            ThingDef noRecipeProduct = ThingDefOf.Silver;
+            if (noRecipeProduct == null)
+            {
+                r.Skip(noRecipeAssertion, "vanilla Silver ThingDef is unavailable");
+            }
+            else
+            {
+                RecurringContract contract = new RecurringContract
+                {
+                    id = -868,
+                    settlementName = "Testholme",
+                    factionName = "Test Confederacy",
+                    thingDef = noRecipeProduct,
+                    quantityPerCycle = 7,
+                    cadenceTicks = GenDate.TicksPerDay,
+                    totalCycles = 5,
+                    unitPrice = 2f,
+                    status = ContractStatus.Active
+                };
+
+                BusinessReportService.ContractEstimate estimate =
+                    BusinessReportService.Estimate(state, contract);
+                r.Check(
+                    estimate != null && estimate.directInputs != null &&
+                    estimate.directInputs.status ==
+                        BusinessReportService.DirectInputCostStatus.NoKnownRecipe &&
+                    estimate.directInputsIfBought == 0,
+                    noRecipeAssertion,
+                    $"status {DirectInputStatus(estimate)}; figure " +
+                    $"{DirectInputFigure(estimate)} silver");
+            }
+
+            ThingDef boundedProduct = ThingDefOf.ComponentIndustrial;
+            RecipeDef boundedRecipe =
+                DefDatabase<RecipeDef>.GetNamedSilentFail("Make_ComponentIndustrial");
+            RecipeDef steelRecipe =
+                DefDatabase<RecipeDef>.GetNamedSilentFail("ExtractMetalFromSlag");
+            if (boundedProduct == null || boundedRecipe == null || steelRecipe == null ||
+                boundedRecipe.ingredients == null || boundedRecipe.ingredients.Count != 1 ||
+                FindTestProduct(boundedRecipe, boundedProduct) == null ||
+                FindTestProduct(steelRecipe, ThingDefOf.Steel) == null)
+            {
+                r.Skip(boundedAssertion,
+                    "vanilla ComponentIndustrial, Steel, and their recipes are unavailable");
+            }
+            else
+            {
+                ThingDef boundedIngredient;
+                string ingredientReason;
+                if (!TryGetSingleAllowedThingDef(
+                        boundedRecipe.ingredients[0], out boundedIngredient, out ingredientReason) ||
+                    boundedIngredient != ThingDefOf.Steel)
+                {
+                    r.Skip(boundedAssertion,
+                        ingredientReason ?? "Make_ComponentIndustrial no longer consumes only Steel");
+                }
+                else
+                {
+                    const int quantityPerCycle = 2;
+                    int expectedDirectInputs;
+                    int outputCount;
+                    float expectedBatchCost;
+                    string ingredientDetail;
+                    string reason;
+                    if (!TryBuildIndependentDirectInputExpectation(
+                            boundedRecipe, boundedProduct, quantityPerCycle,
+                            out expectedDirectInputs, out outputCount, out expectedBatchCost,
+                            out ingredientDetail, out reason))
+                    {
+                        r.Skip(boundedAssertion, reason);
+                    }
+                    else
+                    {
+                        RecurringContract contract = new RecurringContract
+                        {
+                            id = -869,
+                            settlementName = "Testholme",
+                            factionName = "Test Confederacy",
+                            thingDef = boundedProduct,
+                            quantityPerCycle = quantityPerCycle,
+                            cadenceTicks = GenDate.TicksPerDay,
+                            totalCycles = 5,
+                            unitPrice = 3f,
+                            status = ContractStatus.Active
+                        };
+
+                        BusinessReportService.ContractEstimate estimate =
+                            BusinessReportService.Estimate(state, contract);
+                        r.Check(
+                            estimate != null && estimate.directInputs != null &&
+                            estimate.directInputs.status ==
+                                BusinessReportService.DirectInputCostStatus.Resolved &&
+                            estimate.directInputs.hasDirectInputs &&
+                            estimate.directInputs.recipeDefName == boundedRecipe.defName &&
+                            estimate.directInputsIfBought == expectedDirectInputs,
+                            boundedAssertion,
+                            $"reported {DirectInputFigure(estimate)} silver; expected " +
+                            $"{expectedDirectInputs} from {ingredientDetail}; batch " +
+                            $"{expectedBatchCost:0.###} / {outputCount} output x {quantityPerCycle}; " +
+                            $"Steel remains a direct input while {steelRecipe.defName} can craft it");
+                    }
+                }
+            }
+        }
+
+        private static void MoveRecipeToFront(List<RecipeDef> recipes, RecipeDef target)
+        {
+            int index = recipes.IndexOf(target);
+            if (index > 0)
+            {
+                recipes.RemoveAt(index);
+                recipes.Insert(0, target);
+            }
+        }
+
+        private static ThingDefCountClass FindTestProduct(RecipeDef recipe, ThingDef product)
+        {
+            if (recipe == null || recipe.products == null || product == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < recipe.products.Count; i++)
+            {
+                ThingDefCountClass productEntry = recipe.products[i];
+                if (productEntry != null && productEntry.thingDef == product &&
+                    productEntry.count > 0)
+                {
+                    return productEntry;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryGetSingleAllowedThingDef(
+            IngredientCount ingredient, out ThingDef allowedDef, out string reason)
+        {
+            allowedDef = null;
+            reason = null;
+            if (ingredient == null || ingredient.filter == null)
+            {
+                reason = "the recipe exposes an ingredient without a usable filter";
+                return false;
+            }
+
+            int allowedCount = 0;
+            foreach (ThingDef candidate in ingredient.filter.AllowedThingDefs)
+            {
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                allowedDef = candidate;
+                allowedCount++;
+            }
+
+            if (allowedCount != 1)
+            {
+                reason = $"the fixture expected one allowed ingredient definition, found {allowedCount}";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryBuildIndependentDirectInputExpectation(
+            RecipeDef recipe,
+            ThingDef product,
+            int quantity,
+            out int expectedDirectInputs,
+            out int outputCount,
+            out float expectedBatchCost,
+            out string ingredientDetail,
+            out string reason)
+        {
+            expectedDirectInputs = 0;
+            outputCount = 0;
+            expectedBatchCost = 0f;
+            ingredientDetail = null;
+            reason = null;
+
+            // Reconstruct the expected silver independently from public vanilla recipe data;
+            // this deliberately does not call BusinessReportService's direct-input resolver.
+            ThingDefCountClass productEntry = FindTestProduct(recipe, product);
+            if (productEntry == null || recipe.ingredients == null || recipe.ingredients.Count == 0)
+            {
+                reason = "the vanilla recipe does not expose a usable product and ingredient list";
+                return false;
+            }
+
+            List<string> parts = new List<string>();
+            for (int i = 0; i < recipe.ingredients.Count; i++)
+            {
+                IngredientCount ingredient = recipe.ingredients[i];
+                ThingDef allowedDef;
+                string ingredientReason;
+                if (!TryGetSingleAllowedThingDef(
+                        ingredient, out allowedDef, out ingredientReason))
+                {
+                    reason = $"ingredient {i} cannot be read independently: {ingredientReason}";
+                    return false;
+                }
+
+                float valuePerUnit = recipe.IngredientValueGetter.ValuePerUnitOf(allowedDef);
+                if (valuePerUnit <= 0f || float.IsNaN(valuePerUnit) ||
+                    float.IsInfinity(valuePerUnit))
+                {
+                    reason = $"ingredient {i} has no usable vanilla unit value";
+                    return false;
+                }
+
+                int requiredCount = Mathf.CeilToInt(
+                    ingredient.GetBaseCount() / valuePerUnit);
+                float baseValue = IntercolonyPricing.BaseValue(allowedDef, null);
+                if (requiredCount <= 0 || baseValue <= 0f || float.IsNaN(baseValue) ||
+                    float.IsInfinity(baseValue))
+                {
+                    reason = $"ingredient {i} has no usable BaseValue price";
+                    return false;
+                }
+
+                expectedBatchCost +=
+                    requiredCount * baseValue * RfqService.SupplierMargin;
+                parts.Add(
+                    $"{requiredCount} {allowedDef.defName} @ {baseValue:0.###} x " +
+                    $"{RfqService.SupplierMargin:0.###}");
+            }
+
+            outputCount = productEntry.count;
+            expectedDirectInputs = -Mathf.RoundToInt(
+                expectedBatchCost / outputCount * quantity);
+            ingredientDetail = string.Join(", ", parts.ToArray());
+            return true;
+        }
+
+        private static string DirectInputFigure(BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate == null ? "<missing estimate>" :
+                estimate.directInputsIfBought.ToString();
+        }
+
+        private static string DirectInputStatus(BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate == null || estimate.directInputs == null
+                ? "<missing status>"
+                : estimate.directInputs.status.ToString();
+        }
+
+        private static string DirectInputRecipe(BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate == null || estimate.directInputs == null
+                ? "<missing recipe>"
+                : estimate.directInputs.recipeDefName ?? "<none>";
         }
 
         // --- F07 production commitments ----------------------------------------------------
