@@ -5158,7 +5158,7 @@ namespace Intercolony
             return Mathf.Abs(explained - actual) <= 0.0006f;
         }
 
-        private static bool TryGetLogisticsSilver(Quotation quote, out int logisticsSilver)
+        internal static bool TryGetLogisticsSilver(Quotation quote, out int logisticsSilver)
         {
             logisticsSilver = 0;
             if (quote == null || quote.unitPrice <= 0f ||
@@ -5217,7 +5217,7 @@ namespace Intercolony
             return true;
         }
 
-        private static string QuoteLogisticsLine(Quotation quote)
+        internal static string QuoteLogisticsLine(Quotation quote)
         {
             string method = quote.supplierDelivers ? "They deliver it" : "You collect it";
             return TryGetLogisticsSilver(quote, out int logisticsSilver)

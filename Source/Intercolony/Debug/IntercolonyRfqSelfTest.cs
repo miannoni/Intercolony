@@ -98,6 +98,7 @@ namespace Intercolony
             CheckEffectiveSupplyForRfq(Check, state);
             CheckRfqResponseCountUsesEffectiveSupply(Check, Skip, state);
             CheckLogisticsQuoteOwnership(Check, Skip, state);
+            CheckLogisticsDisclosure(Check, Skip, state);
 
             // Supplier stock belongs to its refresh window, not to any one RFQ. Exercise the
             // state mechanism without touching the live world's ledger or requests.
@@ -9368,6 +9369,246 @@ namespace Intercolony
             }
 
             return total;
+        }
+
+        private static void CheckLogisticsDisclosure(
+            System.Action<string, bool, string> check,
+            System.Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            const string PriceAssertion =
+                "the disclosed logistics cost matches the price it came from";
+            const string DistanceAssertion =
+                "a farther supplier discloses a larger logistics cost";
+            const string UnavailableAssertion =
+                "a quotation without usable factors discloses nothing rather than guessing";
+            const string MethodAssertion =
+                "the disclosed line names the method that was recorded";
+            const float PriceRoundingTolerance = 0.51f;
+
+            string FactorExplanation(
+                float distanceMultiplier,
+                float transportMultiplier,
+                bool supplierDelivers)
+            {
+                string methodLabel = supplierDelivers ? "Supplier delivery" : "You collect";
+                return $"Distance {(distanceMultiplier - 1f) * 100f:F1}%\n" +
+                       $"{methodLabel} {(transportMultiplier - 1f) * 100f:F1}%";
+            }
+
+            string FormatDisclosure(
+                Quotation quote,
+                int logisticsSilver,
+                bool distanceFactorUsable,
+                bool transportFactorUsable,
+                string line)
+            {
+                float distanceMultiplier = LogisticsQuote.DistancePriceMultiplierFor(
+                    quote.distanceTiles);
+                float transportMultiplier = LogisticsQuote.TransportPriceMultiplierFor(
+                    LogisticsQuote.MethodFor(quote.supplierDelivers));
+                string recordedMethod = LogisticsQuote.MethodFor(quote.supplierDelivers).ToString();
+                string distanceText = distanceFactorUsable
+                    ? distanceMultiplier.ToString("F4")
+                    : $"{distanceMultiplier:F4} (not usable)";
+                string transportText = transportFactorUsable
+                    ? transportMultiplier.ToString("F4")
+                    : $"{transportMultiplier:F4} (not usable)";
+                return $"unitPrice={quote.unitPrice:F4}, distance={quote.distanceTiles:F2}, " +
+                       $"distanceMultiplier={distanceText}, " +
+                       $"transportMultiplier={transportText}, " +
+                       $"disclosedSilver={logisticsSilver}, recordedMethod={recordedMethod}, " +
+                       $"line=\"{line}\"";
+            }
+
+            Quotation deliveryQuotation = null;
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null ||
+                    !IntercolonyProductClassifier.TryGetTradableCategory(
+                        candidate, out IntercolonyProductCategory category))
+                {
+                    continue;
+                }
+
+                PurchaseRequest request = new PurchaseRequest
+                {
+                    thingDef = candidate,
+                    quantityRequested = 20,
+                    desiredDays = 15,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.SupplierDelivers,
+                    stuffDef = null,
+                    minQuality = null
+                };
+                RfqService.GenerateResponses(state, request);
+
+                foreach (Quotation quote in request.quotes)
+                {
+                    if (quote != null && quote.supplierDelivers)
+                    {
+                        deliveryQuotation = quote;
+                        break;
+                    }
+                }
+
+                if (deliveryQuotation != null)
+                {
+                    break;
+                }
+            }
+
+            if (deliveryQuotation == null)
+            {
+                skip(PriceAssertion,
+                    "no supplier-delivery quotation could be obtained from the RFQ path");
+            }
+            else
+            {
+                bool hasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                    deliveryQuotation, out int logisticsSilver);
+                float distanceMultiplier = LogisticsQuote.DistancePriceMultiplierFor(
+                    deliveryQuotation.distanceTiles);
+                float transportMultiplier = LogisticsQuote.TransportPriceMultiplierFor(
+                    LogisticsQuote.MethodFor(deliveryQuotation.supplierDelivers));
+                float logisticsMultiplier = distanceMultiplier * transportMultiplier;
+                float priceWithoutLogistics = deliveryQuotation.unitPrice / logisticsMultiplier;
+                float priceAfterDisclosure = deliveryQuotation.unitPrice - logisticsSilver;
+                string line = MainTabWindow_Intercolony.QuoteLogisticsLine(deliveryQuotation);
+                bool priceMatches = hasDisclosure && logisticsMultiplier > 0f &&
+                    !float.IsNaN(logisticsMultiplier) && !float.IsInfinity(logisticsMultiplier) &&
+                    Mathf.Abs(priceAfterDisclosure - priceWithoutLogistics) <=
+                        PriceRoundingTolerance;
+                check(
+                    PriceAssertion,
+                    priceMatches,
+                    FormatDisclosure(
+                        deliveryQuotation,
+                        logisticsSilver,
+                        hasDisclosure,
+                        hasDisclosure,
+                        line) +
+                    $"; priceWithoutLogistics={priceWithoutLogistics:F4}, " +
+                    $"priceAfterDisclosure={priceAfterDisclosure:F4}, " +
+                    $"tolerance={PriceRoundingTolerance:F2}");
+            }
+
+            const float ProbeUnitPrice = 100f;
+            const float NearDistance = 0f;
+            const float FartherDistance = 100f;
+            float nearDistanceMultiplier = LogisticsQuote.DistancePriceMultiplierFor(NearDistance);
+            float fartherDistanceMultiplier =
+                LogisticsQuote.DistancePriceMultiplierFor(FartherDistance);
+            float deliveryTransportMultiplier = LogisticsQuote.TransportPriceMultiplierFor(
+                LogisticsTransportMethod.SupplierDelivery);
+            Quotation nearQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = NearDistance,
+                supplierDelivers = true,
+                priceExplanation = FactorExplanation(
+                    nearDistanceMultiplier, deliveryTransportMultiplier, supplierDelivers: true)
+            };
+            Quotation fartherQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = FartherDistance,
+                supplierDelivers = true,
+                priceExplanation = FactorExplanation(
+                    fartherDistanceMultiplier, deliveryTransportMultiplier, supplierDelivers: true)
+            };
+            bool nearHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                nearQuotation, out int nearLogisticsSilver);
+            bool fartherHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                fartherQuotation, out int fartherLogisticsSilver);
+            string nearLine = MainTabWindow_Intercolony.QuoteLogisticsLine(nearQuotation);
+            string fartherLine = MainTabWindow_Intercolony.QuoteLogisticsLine(fartherQuotation);
+            check(
+                DistanceAssertion,
+                nearHasDisclosure && fartherHasDisclosure &&
+                fartherLogisticsSilver > nearLogisticsSilver,
+                "near " + FormatDisclosure(
+                    nearQuotation,
+                    nearLogisticsSilver,
+                    nearHasDisclosure,
+                    nearHasDisclosure,
+                    nearLine) +
+                "; farther " + FormatDisclosure(
+                    fartherQuotation,
+                    fartherLogisticsSilver,
+                    fartherHasDisclosure,
+                    fartherHasDisclosure,
+                    fartherLine));
+
+            Quotation underivableQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = 32f,
+                supplierDelivers = true,
+                // The transport factor is present, but omitting Distance makes the stored terms
+                // insufficient to recover the multiplier that produced unitPrice.
+                priceExplanation = "Supplier delivery +12.0%"
+            };
+            bool underivableHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                underivableQuotation, out int underivableLogisticsSilver);
+            string underivableLine = MainTabWindow_Intercolony.QuoteLogisticsLine(
+                underivableQuotation);
+            check(
+                UnavailableAssertion,
+                !underivableHasDisclosure && underivableLine.Contains("Logistics: unavailable"),
+                FormatDisclosure(
+                    underivableQuotation,
+                    underivableLogisticsSilver,
+                    distanceFactorUsable: false,
+                    transportFactorUsable: true,
+                    underivableLine) +
+                $"; TryGetLogisticsSilver={underivableHasDisclosure}");
+
+            Quotation deliveryMethodQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = NearDistance,
+                supplierDelivers = true,
+                priceExplanation = FactorExplanation(
+                    nearDistanceMultiplier, deliveryTransportMultiplier, supplierDelivers: true)
+            };
+            Quotation pickupMethodQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = NearDistance,
+                supplierDelivers = false,
+                priceExplanation = FactorExplanation(
+                    nearDistanceMultiplier,
+                    LogisticsQuote.TransportPriceMultiplierFor(LogisticsTransportMethod.ColonyPickup),
+                    supplierDelivers: false)
+            };
+            bool deliveryMethodHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                deliveryMethodQuotation, out int deliveryMethodSilver);
+            bool pickupMethodHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                pickupMethodQuotation, out int pickupMethodSilver);
+            string deliveryMethodLine = MainTabWindow_Intercolony.QuoteLogisticsLine(
+                deliveryMethodQuotation);
+            string pickupMethodLine = MainTabWindow_Intercolony.QuoteLogisticsLine(
+                pickupMethodQuotation);
+            bool methodMatchesRecordedField =
+                deliveryMethodLine.Contains("They deliver it") &&
+                !deliveryMethodLine.Contains("You collect it") &&
+                pickupMethodLine.Contains("You collect it") &&
+                !pickupMethodLine.Contains("They deliver it");
+            check(
+                MethodAssertion,
+                methodMatchesRecordedField,
+                "delivery " + FormatDisclosure(
+                    deliveryMethodQuotation,
+                    deliveryMethodSilver,
+                    deliveryMethodHasDisclosure,
+                    deliveryMethodHasDisclosure,
+                    deliveryMethodLine) +
+                "; pickup " + FormatDisclosure(
+                    pickupMethodQuotation,
+                    pickupMethodSilver,
+                    pickupMethodHasDisclosure,
+                    pickupMethodHasDisclosure,
+                    pickupMethodLine));
         }
 
         private static void CheckLogisticsQuoteOwnership(
