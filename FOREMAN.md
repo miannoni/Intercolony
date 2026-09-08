@@ -4,8 +4,66 @@ Stage: 7 — Two-sided labor market. NOTHING IS BLOCKED ON A HUMAN ANY MORE: the
 both decisions YES on 2026-09-08 — schema 57→58 with migration and prior-save verification, and one
 narrowly scoped observational Harmony patch on crafting completion. Stage 6 is next after F25.
 F06 is now stage 9. See "Next executable work" in the brief for the dependency order.
-Unit: 7.2 — F25 slice 2: applicants are drawn by the requirement, not by the posted wage
-Worker: running — `…\scratchpad\unit-7-2.out`
+Unit: 7.2c — replace the five assertions the deleted wage filter leaves behind
+Worker: running — `…\scratchpad\unit-7-2c.out`
+7.2 and 7.2b committed together at `8ac8a9f`, with the suite deliberately red at 27/2/0.
+
+THE SUITE IS RED ON PURPOSE UNTIL 7.2c LANDS. `job-posting` 27/2/0; the two failures are
+`IntercolonyJobPostingSelfTest.cs:341` and `:364`, both asserting the wage filter that 8ac8a9f
+deleted. `:272`, `:335` and `:351` pass vacuously for the same reason. 7.2c writes three assertions
+in their place, each specified with WHAT IT MUST BE ABLE TO FAIL ON, and 7.2c must return the exact
+one-line production mutation that reddens each — I apply those myself before accepting.
+  A1 the requirement drives quantity; A2 the requirement drives quality; A3 the posted wage drives
+  nothing, which is the new invariant and guards against a future refactor quietly restoring a
+  comparison against a field that is still saved and still sitting on the posting.
+
+Still owed after 7.2c, and not yet written anywhere as assertions:
+  - the waiting list is a SPREAD, not the top N by skill — this guards 7.2b's decision and nothing
+    tests it;
+  - the same seed and refresh reproduce the same applicants after a reload;
+  - a hired applicant's contract rate equals their `openMarketAsk` — 7.1's whole point, still
+    unasserted.
+That is unit 7.2d.
+
+7.2b's seeding, verified against vanilla before accepting: it shuffles the queue Fisher-Yates under
+`Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ 0x4C41_5445)` with a
+`finally { Rand.PopState(); }`, and deleted the `Desirability` ranking function. All four APIs
+resolve — `EconomySeed` and `RefreshCount` on the world component, `Gen.HashCombineInt(int,int)` at
+`reference/decompiled/Verse/Gen.cs:198`, `Rand.PushState(int)` at `Rand.cs:445`. Reproducible after
+a reload because both seed inputs are persisted world state. One nit for 7.2c: the salt is an inline
+magic number, while the repo names its salts — `IntercolonyWorldComponent.cs:922` has
+`EconomySeedSalt = 0x1C7EC0`. Give it a name.
+
+THE REAL RED, and it is the right red: `job-posting` 27/2/0, exactly the two 7.2 predicted, with
+detail proving the mechanism is gone — "616 at 56/day vs 616 at 299/day" and "616 interested, 6
+queued" at an offer of 1 silver a day. The wage no longer filters anyone.
+
+THAT RUN ALSO EXPOSED A DESIGN FAULT IN 7.2, now being fixed by 7.2b. 616 prospects qualify and the
+queue holds 6, and phase two was still ranking by ability and taking the best six. That ranking
+existed because a generous wage used to buy better people; with the wage lever gone it just hands
+the player the six strongest workers alive every time, at the six highest asks, with no choice to
+make. F25's own worked example is a SPREAD — 13 at 52, 17 at 91, 12 at 46, 19 at 138 — and it says
+outright that mediocre offers can exist and the player simply need not accept them. So phase two
+becomes a deterministic representative sample of the qualified pool, seeded the way the census
+already seeds itself, with no new tuning constant: quality and price correlate on their own because
+an ask is computed from skill, which is why a high-skill bargain stays rare without a curve to make
+it so.
+
+MY SPEC WAS WRONG IN ONE PLACE AND 7.2b MUST FIX IT. I told 7.2 to break an equal-ask tie by
+"shorter travel, then lower posting id". Travel days belong to the PROSPECT, not to the posting, so
+inside the per-prospect loop `worker.travelDays` is identical for every posting under comparison and
+the clause can never decide anything. The code is correct in behaviour — it degenerates to the id
+tie-break, which is deterministic — but it carries a comparison that cannot fire and a comment
+claiming it can. Remove the travel clause and the sentence about it.
+
+7.2's own classification of the assertions, to be checked against the real run, not trusted:
+  - `IntercolonyJobPostingSelfTest.cs:341` "a generous offer reaches measurably more workers than a
+    poor one" and `:364` "an offer of 1 silver a day reaches nobody at all" — expected to FAIL,
+    both test the deleted mechanism.
+  - `:272`, `:335`, `:351` — expected to PASS BUT VACUOUSLY, because they vary a wage that is no
+    longer read. **These are the dangerous ones.** A vacuous green assertion is exactly the hollow
+    test this batch has already produced four times, and it is worse than a red one because nothing
+    draws attention to it.
 7.1 `0ab8d86` and 7.1b `d73db12` are committed; `job-posting` ran 28/0/0 clean on each.
 
 EXPECT `job-posting` TO GO RED WHEN 7.2 LANDS, AND THAT IS CORRECT. Some of its assertions exist to
@@ -48,7 +106,7 @@ makes them a lighter blocker than stage 6's. STAGE 6 REMAINS BLOCKED: F07, F19 a
 schema bump and a new patch on vanilla's crafting completion, because nothing observes an item
 being made.
 Updated: 2026-09-08 12:40 (session compacted; run resumed from the RESUME BRIEF below)
-Wakes: 89 · last full load at wake 85
+Wakes: 92 · last full load at wake 85
 READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST — it carries every finding's disposition, the
 two pending operator decisions, the stage-6 seams, and the F06 gap. Written for a compaction.
 
