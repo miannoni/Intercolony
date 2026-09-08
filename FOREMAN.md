@@ -4,8 +4,45 @@ Stage: 7 — Two-sided labour market. NOTHING IS BLOCKED ON A HUMAN. The operato
 decisions YES on 2026-09-08: schema 57→58 with a migration and prior-save verification, and one
 narrowly scoped observational Harmony patch on crafting completion. Stage 6 is next after F25, and
 F06 is now stage 9. The dependency order is in "Next executable work" in the brief below.
-Unit: 7.3 — F25's last slice: the posting dialog stops asking for a wage
-Worker: running — `…\scratchpad\unit-7-3.out`
+Unit: 7.4 — FIX A DEFECT I INTRODUCED: postings are destroyed on load
+Worker: running — `…\scratchpad\unit-7-4b.out`
+
+**`JobPosting.IsValidAfterLoad` is `termDays > 0 && wageOffered > 0`, and
+`IntercolonyWorldComponent.cs:1546` does `postings.RemoveAll(p => !p.IsValidAfterLoad)` on load.
+Since `ed49531` every new posting has `wageOffered == 0`, so EVERY POSTING CREATED AFTER F25 IS
+SILENTLY DELETED WHEN THE GAME RELOADS.** A posting is a standing order the player set up and is
+waiting on. This is mine: I told 7.3 to pass 0 and never audited who reads the field.
+Two more readers of the same dead field: `Headline()` at `JobPosting.cs:256` interpolates
+`{wageOffered} silver/day` and now says "0 silver/day" in three player-facing messages
+(`JobPostingService.cs:84`, `:340`, `:363`) — the eighth time this repo has formatted a value
+meaning "none" as a quantity — and `JobPosting.TotalCommitment` at `:247` computes from it and has
+no callers left.
+Branch-only, nothing released, no player save affected. Fix lands before anything else.
+
+THE LESSON, and it generalises past this batch: **when a field stops being written, grep every
+reader before assuming the field can quietly hold its default.** A default is only harmless if
+nothing treats it as meaningful, and `> 0` validity checks treat zero as corruption.
+
+7.4's first attempt correctly STOPPED and changed nothing: I claimed `CombatClause.Summary(int)` had
+no callers and it has two, at `Dialog_HireWorker.cs:258` and `:283`. My grep looked for
+`clause.Summary(` and they call `option.Summary(optionWage)`. The deletion is cancelled.
+
+Deferred to 7.4b, after the defect is fixed and verified — do not fold them in, a signature change
+does not belong in the same commit as a save-integrity fix: drop `TryPost`'s `wageOffered`
+parameter and update its self-test call sites, and give `Armed` a clause about what a death costs,
+which is the only combat clause whose `Explain()` never says.
+
+F25's CODE IS COMPLETE at `ed49531`, suite 29/0/0 with a clean log. What 7.4 does is tidy-up plus
+one small content gap: delete `CombatClause.Summary(int)` whose last caller went with ed49531's
+terms summary; drop `TryPost`'s `wageOffered` parameter, which every real caller now passes 0 to,
+updating the self-test call sites; document the surviving `wageOffered` FIELD as a compatibility
+node so the next reader is not misled; and give `Armed` a clause about what a death costs, which is
+the only combat clause whose `Explain()` never said.
+
+Note for whoever reviews ed49531: removing its terms summary was NOT the mistake d73db12 had to
+repair. Those figures genuinely cannot exist before anyone applies, because each applicant now has
+their own rate, and all three appear on the applicant's own row where they are real. The
+qualitative consequence stayed on the clause rows, where the choice is made.
 7.2d–7.2g committed together at `0189a8a`, suite green 29/0/0 with all three assertions proven red
 under mutation. F25's code is done after 7.3; what remains is the dead `wageOffered` parameter on
 `TryPost`, which is unit 7.4, and the play entry, 7.6.
@@ -67,7 +104,7 @@ Last done: 7.2c at `680c39e`. Suite green again at 26/0/0, and this time with mu
 M1 (the requirement stops testing the minimum level) reddens A1, A2 and the silence explanation;
 M2 (a wage filter restored in `MatchAll`) reddens A3 and nothing else.
 Updated: 2026-09-08, wake 95
-Wakes: 101 · last full load at wake 95
+Wakes: 103 · last full load at wake 95
 
 DRIFT CHECK AT THE TENTH-WAKE FULL LOAD, and one thing failed it. The method says this file is a
 header plus a stage/unit table plus a short decisions list. It is 478 lines. The RESUME BRIEF earns
