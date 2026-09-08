@@ -327,13 +327,14 @@ namespace Intercolony
             }
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            float viewWidth = Mathf.Max(1f, inRect.width - 16f);
             float height = 0f;
             foreach (JobPosting posting in live)
             {
-                height += PostingBlockHeight(posting);
+                height += PostingBlockHeight(posting, viewWidth);
             }
 
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, height);
+            Rect viewRect = new Rect(0f, 0f, viewWidth, height);
             System.Action pendingAction = null;
             BeginPageScrollView(outRect, ref postingScroll, viewRect);
 
@@ -342,7 +343,7 @@ namespace Intercolony
                 float rowY = 0f;
                 for (int i = 0; i < live.Count; i++)
                 {
-                    float blockHeight = PostingBlockHeight(live[i]);
+                    float blockHeight = PostingBlockHeight(live[i], viewRect.width);
                     DrawPostingBlock(new Rect(0f, rowY, viewRect.width, blockHeight), live[i],
                         state, i, ref pendingAction);
                     rowY += blockHeight;
@@ -359,11 +360,85 @@ namespace Intercolony
         }
 
         private const float PostingHeaderHeight = 54f;
-        private const float ApplicantRowHeight = 66f;
+        private const float ApplicantRowMinimumHeight = 66f;
+        private const float ApplicantRowTopPadding = 2f;
+        private const float ApplicantRowBottomPadding = 2f;
+        private const float ApplicantActionWidth = 100f;
+        private const float ApplicantTextInset = 24f;
+        private const float ApplicantTextWidthPadding = 48f;
 
-        private static float PostingBlockHeight(JobPosting posting)
+        private static float ApplicantTextWidth(float rowWidth)
         {
-            return PostingHeaderHeight + posting.Applicants.Count * ApplicantRowHeight + 8f;
+            return Mathf.Max(1f,
+                rowWidth - ApplicantActionWidth * 2f - ApplicantTextWidthPadding);
+        }
+
+        private static float ApplicantLabelHeight(string text, float width)
+        {
+            return Mathf.Max(Text.LineHeight, Text.CalcHeight(text ?? "", Mathf.Max(1f, width)));
+        }
+
+        private static string ApplicantTitleLine(JobApplicant applicant)
+        {
+            return $"{applicant.Name}  —  {applicant.SkillSummary(4)}";
+        }
+
+        private static string ApplicantValueLine(JobApplicant applicant)
+        {
+            return $"{applicant.settlementName} ({applicant.factionName}), {applicant.travelDays}d away — " +
+                   $"paid {applicant.openMarketAsk}/day";
+        }
+
+        private static string ApplicantPaymentLine(JobPosting posting, int upFront, int available)
+        {
+            return posting.wageStructure.IsPeriodic()
+                ? $"Signing fee: {upFront} silver.  In storage: {available}."
+                : $"Prepaid wages: {upFront} silver.  In storage: {available}.";
+        }
+
+        private static string ApplicantDeathCompensationLine(
+            JobPosting posting, JobApplicant applicant)
+        {
+            int deathCompensationDays = posting.combatClause.DeathCompensationDays();
+            if (deathCompensationDays <= 0)
+            {
+                return null;
+            }
+
+            return $"Death compensation: {applicant.openMarketAsk * deathCompensationDays} silver.";
+        }
+
+        private static float ApplicantRowHeight(
+            float rowWidth, JobPosting posting, JobApplicant applicant)
+        {
+            float textWidth = ApplicantTextWidth(rowWidth);
+            int upFront = WageStructureUtility.UpFrontCost(
+                posting.wageStructure, applicant.openMarketAsk, posting.termDays);
+            int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
+
+            float height = ApplicantRowTopPadding + ApplicantRowBottomPadding;
+            height += ApplicantLabelHeight(ApplicantTitleLine(applicant), textWidth);
+            height += ApplicantLabelHeight(ApplicantValueLine(applicant), textWidth);
+            height += ApplicantLabelHeight(ApplicantPaymentLine(posting, upFront, available), textWidth);
+
+            string deathCompensation = ApplicantDeathCompensationLine(posting, applicant);
+            if (deathCompensation != null)
+            {
+                height += ApplicantLabelHeight(deathCompensation, textWidth);
+            }
+
+            return Mathf.Max(ApplicantRowMinimumHeight, height);
+        }
+
+        private static float PostingBlockHeight(JobPosting posting, float width)
+        {
+            float height = PostingHeaderHeight + 8f;
+            for (int i = 0; i < posting.Applicants.Count; i++)
+            {
+                height += ApplicantRowHeight(width, posting, posting.Applicants[i]);
+            }
+
+            return height;
         }
 
         private void DrawPostingBlock(
@@ -406,9 +481,11 @@ namespace Intercolony
             float y = rect.y + PostingHeaderHeight;
             for (int i = posting.Applicants.Count - 1; i >= 0; i--)
             {
-                DrawApplicantRow(new Rect(rect.x, y, rect.width, ApplicantRowHeight),
-                    posting, posting.Applicants[i], state, ref pendingAction);
-                y += ApplicantRowHeight;
+                JobApplicant applicant = posting.Applicants[i];
+                float rowHeight = ApplicantRowHeight(rect.width, posting, applicant);
+                DrawApplicantRow(new Rect(rect.x, y, rect.width, rowHeight),
+                    posting, applicant, state, ref pendingAction);
+                y += rowHeight;
             }
         }
 
@@ -418,36 +495,49 @@ namespace Intercolony
         {
             Widgets.DrawHighlightIfMouseover(rect);
 
-            float actionWidth = 100f;
-            float textWidth = rect.width - actionWidth * 2f - 48f;
+            float textWidth = ApplicantTextWidth(rect.width);
+            float lineY = rect.y + ApplicantRowTopPadding;
 
-            Widgets.Label(new Rect(rect.x + 24f, rect.y + 2f, textWidth, 22f),
-                $"{applicant.Name}  —  {applicant.SkillSummary(4)}");
+            string title = ApplicantTitleLine(applicant);
+            float titleHeight = ApplicantLabelHeight(title, textWidth);
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, titleHeight), title);
+            lineY += titleHeight;
 
             // The worker's ask is the contract rate; the posted wage is only the filter that got
             // this applicant to apply.
-            string value =
-                $"asks {applicant.openMarketAsk}/day on the open market — contract rate";
+            string value = ApplicantValueLine(applicant);
+            float valueHeight = ApplicantLabelHeight(value, textWidth);
 
             GUI.color = new Color(1f, 1f, 1f, 0.65f);
-            Widgets.Label(new Rect(rect.x + 24f, rect.y + 22f, textWidth, 22f),
-                $"{applicant.settlementName} ({applicant.factionName}), {applicant.travelDays}d away — " +
-                value);
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, valueHeight), value);
             GUI.color = Color.white;
+            lineY += valueHeight;
 
             int upFront = WageStructureUtility.UpFrontCost(
                 posting.wageStructure, applicant.openMarketAsk, posting.termDays);
             int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
             bool affordable = available >= upFront;
+            string payment = ApplicantPaymentLine(posting, upFront, available);
+            float paymentHeight = ApplicantLabelHeight(payment, textWidth);
 
             GUI.color = affordable ? new Color(1f, 1f, 1f, 0.65f) : new Color(1f, 0.6f, 0.6f);
-            Widgets.Label(new Rect(rect.x + 24f, rect.y + 42f, textWidth, 22f),
-                posting.wageStructure.IsPeriodic()
-                    ? $"Signing fee: {upFront} silver.  In storage: {available}."
-                    : $"Prepaid wages: {upFront} silver.  In storage: {available}.");
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, paymentHeight), payment);
             GUI.color = Color.white;
+            lineY += paymentHeight;
 
-            Rect hireRect = new Rect(rect.xMax - actionWidth * 2f - 14f, rect.y + 18f, actionWidth, 30f);
+            string deathCompensation = ApplicantDeathCompensationLine(posting, applicant);
+            if (deathCompensation != null)
+            {
+                float deathCompensationHeight = ApplicantLabelHeight(deathCompensation, textWidth);
+                GUI.color = new Color(1f, 1f, 1f, 0.65f);
+                Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth,
+                    deathCompensationHeight), deathCompensation);
+                GUI.color = Color.white;
+            }
+
+            float actionY = rect.y + (rect.height - 30f) / 2f;
+            Rect hireRect = new Rect(
+                rect.xMax - ApplicantActionWidth * 2f - 14f, actionY, ApplicantActionWidth, 30f);
             if (Widgets.ButtonText(hireRect, "Take on"))
             {
                 pendingAction = () =>
@@ -461,7 +551,8 @@ namespace Intercolony
                 };
             }
 
-            Rect rejectRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 18f, actionWidth, 30f);
+            Rect rejectRect = new Rect(
+                rect.xMax - ApplicantActionWidth - 4f, actionY, ApplicantActionWidth, 30f);
             if (Widgets.ButtonText(rejectRect, "Turn away"))
             {
                 pendingAction = () => JobPostingService.Reject(posting, applicant);
@@ -475,8 +566,8 @@ namespace Intercolony
                 $"Posted {posting.DaysPosted:0.#} days ago, " +
                 $"{posting.ExpiryLabel}.\n" +
                 $"{posting.hired} hired so far.\n\n" +
-                "The posted wage is the application filter, not the contract rate. Each applicant's " +
-                "own ask is their contract rate; the signing fee or prepaid amount is shown on their row.";
+                "The posted wage is only an application filter because each applicant's own ask sets " +
+                "their contract rate, with the signing fee or prepaid amount shown on their row.";
 
             if (posting.Applicants.Count == 0 && posting.emptyCycles > 0)
             {
