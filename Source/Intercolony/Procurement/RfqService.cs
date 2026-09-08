@@ -7,7 +7,7 @@ using Verse;
 namespace Intercolony
 {
     /// <summary>
-    /// Creates purchase requests and generates supplier responses
+    /// Creates purchase requests, generates supplier responses, and reveals them progressively
     /// (DESIGN.md §19 RFQs, §20 scarcity model, Phase 10 §103).
     ///
     /// §20 calls this "the core anti-vending-machine design", and that is the whole point:
@@ -20,8 +20,18 @@ namespace Intercolony
     /// </summary>
     public static class RfqService
     {
-        /// <summary>How long a request and its quotes stand before lapsing.</summary>
+        /// <summary>
+        /// Base lifespan for a request. Requests whose scheduled replies all arrive before this
+        /// deadline keep it; a later final arrival extends the deadline at creation.
+        /// </summary>
         public const int RequestLifespanDays = 6;
+
+        /// <summary>
+        /// Gives the final scheduled reply one full response-poll interval, plus one tick, before
+        /// the inclusive request-expiry boundary can discard it.
+        /// </summary>
+        private const int ResponseExpiryMarginTicks =
+            IntercolonyWorldComponent.DeadlineCheckIntervalTicks + 1;
 
         /// <summary>Baseline chance a plausible supplier bothers to answer at all.</summary>
         private const float BaseResponseChance = 0.55f;
@@ -89,14 +99,21 @@ namespace Intercolony
             };
 
             GenerateResponses(state, request);
+            int generatedResponseCount = request.quotes.Count;
             state.AddRequest(request);
+            int pendingResponseCount = QueueResponses(state, request);
+            if (pendingResponseCount > 0)
+            {
+                request.noResponseReason = PendingResponsesText(pendingResponseCount);
+            }
 
-            if (request.AnyQuotes)
+            if (generatedResponseCount > 0)
             {
                 IntercolonyLog.Message(
-                    $"Request {request.id}: {quantity}x {def.label} — {request.quotes.Count} quote(s).");
+                    $"Request {request.id}: {quantity}x {def.label} — " +
+                    $"{pendingResponseCount} response(s) pending.");
                 Messages.Message(
-                    $"{request.quotes.Count} supplier(s) answered your request for {quantity}x {def.label}.",
+                    $"Request for {quantity}x {def.label} sent. Supplier replies are still coming.",
                     MessageTypeDefOf.NeutralEvent, historical: false);
             }
             else
@@ -202,6 +219,202 @@ namespace Intercolony
                 request.noResponseReason = considered == 0
                     ? "you have no reachable trading partners"
                     : $"none of {couldNotSupply} reachable suppliers can provide this";
+            }
+        }
+
+        /// <summary>
+        /// Moves the quotations generated for a live request into the world-owned arrival queue.
+        /// The quotation objects are not regenerated or copied, so their prices and promised
+        /// properties remain exactly the values rolled at request creation. The request deadline
+        /// is extended here, if necessary, from the latest scheduled arrival while creation still
+        /// has the complete response schedule in hand.
+        /// </summary>
+        private static int QueueResponses(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request)
+        {
+            if (state == null || request == null || request.quotes == null ||
+                request.quotes.Count == 0 || state.PendingRfqResponses == null)
+            {
+                return 0;
+            }
+
+            int queued = 0;
+            int latestArrivalTick = request.createdTick;
+            foreach (Quotation quote in request.quotes)
+            {
+                if (quote == null)
+                {
+                    continue;
+                }
+
+                int arrivalTick = request.createdTick +
+                                  ResponseDelayDays(state, request, quote) * GenDate.TicksPerDay;
+                state.PendingRfqResponses.Add(new PendingRfqResponse
+                {
+                    requestId = request.id,
+                    quote = quote,
+                    arrivalTick = arrivalTick
+                });
+                latestArrivalTick = Mathf.Max(latestArrivalTick, arrivalTick);
+                queued++;
+            }
+
+            request.expiryTick = Mathf.Max(
+                request.expiryTick,
+                latestArrivalTick + ResponseExpiryMarginTicks);
+            request.quotes.Clear();
+            return queued;
+        }
+
+        /// <summary>
+        /// Reveals due quotations from the persisted queue and reports a request once its final
+        /// pending response has arrived. This is called by the existing coarse world tick, not by
+        /// a new scheduler. A request that was withdrawn, ordered, expired, or otherwise disappeared
+        /// cannot receive a late answer.
+        /// </summary>
+        internal static int AdvancePendingResponses(IntercolonyWorldComponent state)
+        {
+            if (state == null || state.PendingRfqResponses == null ||
+                state.PendingRfqResponses.Count == 0)
+            {
+                return 0;
+            }
+
+            int now = GenTicks.TicksGame;
+            int revealed = 0;
+            Dictionary<int, int> arrivedByRequest = new Dictionary<int, int>();
+            for (int i = state.PendingRfqResponses.Count - 1; i >= 0; i--)
+            {
+                PendingRfqResponse pending = state.PendingRfqResponses[i];
+                if (pending == null || pending.quote == null)
+                {
+                    state.PendingRfqResponses.RemoveAt(i);
+                    continue;
+                }
+
+                PurchaseRequest request = state.FindRequest(pending.requestId);
+                if (request == null || !request.IsOpen || request.HasExpired(now))
+                {
+                    state.PendingRfqResponses.RemoveAt(i);
+                    continue;
+                }
+
+                if (pending.arrivalTick > now)
+                {
+                    continue;
+                }
+
+                state.PendingRfqResponses.RemoveAt(i);
+                arrivedByRequest.TryGetValue(pending.requestId, out int arrivedForRequest);
+                arrivedByRequest[pending.requestId] = arrivedForRequest + 1;
+                if (pending.quote.quantityOffered <= 0)
+                {
+                    continue;
+                }
+
+                request.quotes.Add(pending.quote);
+                request.quotes.Sort(CompareQuotes);
+                revealed++;
+            }
+
+            foreach (KeyValuePair<int, int> arrival in arrivedByRequest)
+            {
+                if (arrival.Value <= 0 ||
+                    state.PendingRfqResponseCountFor(arrival.Key) > 0)
+                {
+                    continue;
+                }
+
+                PurchaseRequest request = state.FindRequest(arrival.Key);
+                if (request == null || !request.IsOpen || request.quotes == null ||
+                    request.quotes.Count == 0)
+                {
+                    continue;
+                }
+
+                SendResponsesArrivedLetter(request);
+            }
+
+            return revealed;
+        }
+
+        private static string PendingResponsesText(int pendingResponseCount)
+        {
+            if (pendingResponseCount <= 0)
+            {
+                return "";
+            }
+
+            return pendingResponseCount == 1
+                ? "One supplier response is still coming."
+                : $"{pendingResponseCount} supplier responses are still coming.";
+        }
+
+        /// <summary>
+        /// Reports the actionable replies once the request's final pending response has arrived.
+        /// The posting precedent reports the batch, not each individual applicant, so a request
+        /// with several suppliers produces one letter rather than one per arrival.
+        /// </summary>
+        private static void SendResponsesArrivedLetter(PurchaseRequest request)
+        {
+            int responseCount = request?.quotes?.Count ?? 0;
+            if (responseCount <= 0)
+            {
+                return;
+            }
+
+            string responseLabel = responseCount == 1
+                ? "1 supplier reply"
+                : $"{responseCount} supplier replies";
+            string responseText = responseCount == 1
+                ? "a supplier reply"
+                : $"{responseCount} supplier replies";
+            string reviewTarget = responseCount == 1 ? "it" : "them";
+
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
+                responseLabel,
+                $"Your request — {request.quantityRequested}x {request.ItemLabel()} — drew " +
+                $"{responseText}.\n\n" +
+                $"Review {reviewTarget} in the Procurement tab under Find seller.",
+                LetterDefOf.PositiveEvent);
+        }
+
+        /// <summary>
+        /// Uses the quotation's existing lead time as the preparation floor and its persisted
+        /// distance as the same travel-day component used by <see cref="LogisticsQuote"/>.
+        /// A small isolated timing roll keeps equal-distance replies from becoming a rigid queue;
+        /// it runs after quote generation and cannot change any quoted term.
+        /// </summary>
+        private static int ResponseDelayDays(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request,
+            Quotation quote)
+        {
+            if (quote == null)
+            {
+                return 1;
+            }
+
+            int leadTimeDays = Mathf.Max(1, quote.leadTimeDays);
+            int distanceDays = Mathf.Max(1, LogisticsQuote.TravelDaysFor(quote.distanceTiles));
+            int delayDays = Mathf.Max(leadTimeDays, distanceDays);
+
+            // Keep this draw independent from GenerateResponses. The quote's random rolls have
+            // already finished, and the pushed state means scheduling does not perturb game RNG.
+            Rand.PushState(Gen.HashCombineInt(
+                state?.EconomySeed ?? 0,
+                request?.id ?? 0,
+                quote.id,
+                0xF11A));
+            try
+            {
+                return delayDays + Rand.RangeInclusive(0, 2);
+            }
+            finally
+            {
+                Rand.PopState();
             }
         }
 

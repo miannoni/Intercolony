@@ -24,8 +24,9 @@ namespace Intercolony
     {
         /// <summary>
         /// Current schema version of Intercolony's persisted state (DESIGN.md §62).
-        /// Bump this whenever the saved shape changes, and add a migration step in
-        /// <see cref="MigrateIfNeeded"/>.
+        /// Bump this when a saved-shape change needs migration, and add the step in
+        /// <see cref="MigrateIfNeeded"/>. Additive nodes with safe defaults may ride the current
+        /// schema when the batch explicitly authorises them to do so.
         /// </summary>
         public const int CurrentSaveVersion = 58;
 
@@ -345,6 +346,34 @@ namespace Intercolony
         public List<PurchaseRequest> Requests => requests;
 
         /// <summary>
+        /// Already-generated RFQ quotations that have not reached their request yet. This is a
+        /// separate persisted node because an unarrived answer must not be present in the request's
+        /// actionable quotation list.
+        /// </summary>
+        private List<PendingRfqResponse> pendingRfqResponses = new List<PendingRfqResponse>();
+
+        public List<PendingRfqResponse> PendingRfqResponses => pendingRfqResponses;
+
+        public int PendingRfqResponseCountFor(int requestId)
+        {
+            if (pendingRfqResponses == null || requestId <= 0)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            foreach (PendingRfqResponse pending in pendingRfqResponses)
+            {
+                if (pending != null && pending.requestId == requestId)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>
         /// Units already bought from each supplier's finite offer in a market window.
         /// This belongs to the world rather than a request so withdrawing and recreating an
         /// RFQ cannot restore stock the supplier has already sold.
@@ -380,7 +409,8 @@ namespace Intercolony
 
         /// <summary>
         /// Consumes units from one supplier's finite offer for this market window. Every matching
-        /// live quotation is reduced immediately, including quotations created before the purchase.
+        /// arrived or pending quotation is reduced immediately, including quotations created
+        /// before the purchase.
         /// </summary>
         public void ConsumeSupplierOffer(
             int refreshWindow, ThingDef thingDef, int settlementId, int quantityPurchased)
@@ -444,6 +474,28 @@ namespace Intercolony
                     }
                 }
             }
+
+            for (int i = pendingRfqResponses.Count - 1; i >= 0; i--)
+            {
+                PendingRfqResponse pending = pendingRfqResponses[i];
+                Quotation quote = pending?.quote;
+                PurchaseRequest request = pending == null
+                    ? null
+                    : FindRequest(pending.requestId);
+                if (request == null || !request.IsOpen || quote == null ||
+                    request.thingDef == null || request.thingDef.shortHash != thingDefShortHash ||
+                    quote.refreshWindow != refreshWindow || quote.settlementId != settlementId)
+                {
+                    continue;
+                }
+
+                quote.quantityOffered = Mathf.Max(
+                    0, quote.quantityOffered - quantityPurchased);
+                if (quote.quantityOffered == 0)
+                {
+                    pendingRfqResponses.RemoveAt(i);
+                }
+            }
         }
 
         public void AddRequest(PurchaseRequest request)
@@ -452,6 +504,19 @@ namespace Intercolony
             {
                 requests.Add(request);
             }
+        }
+
+        public PurchaseRequest FindRequest(int requestId)
+        {
+            foreach (PurchaseRequest request in requests)
+            {
+                if (request != null && request.id == requestId)
+                {
+                    return request;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -1197,6 +1262,8 @@ namespace Intercolony
             Scribe_Collections.Look(
                 ref supplierOfferConsumption, "supplierOfferConsumption", LookMode.Deep);
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
+            Scribe_Collections.Look(
+                ref pendingRfqResponses, "pendingRfqResponses", LookMode.Deep);
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
             Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
@@ -1438,6 +1505,38 @@ namespace Intercolony
                     }
                 }
 
+                if (pendingRfqResponses == null)
+                {
+                    pendingRfqResponses = new List<PendingRfqResponse>();
+                }
+                else
+                {
+                    int nullPendingResponses = pendingRfqResponses.RemoveAll(pending => pending == null);
+                    int brokenPendingResponses = 0;
+                    for (int i = pendingRfqResponses.Count - 1; i >= 0; i--)
+                    {
+                        PendingRfqResponse pending = pendingRfqResponses[i];
+                        PurchaseRequest request = FindRequest(pending.requestId);
+                        if (pending.IsValidAfterLoad && request != null && request.IsOpen &&
+                            !request.HasExpired(GenTicks.TicksGame) &&
+                            pending.quote.TryValidateForRequest(
+                                request.thingDef, request.IsAnimalOrder, out _))
+                        {
+                            continue;
+                        }
+
+                        pendingRfqResponses.RemoveAt(i);
+                        brokenPendingResponses++;
+                    }
+
+                    if (nullPendingResponses > 0 || brokenPendingResponses > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullPendingResponses} null and {brokenPendingResponses} " +
+                            "invalid pending RFQ response(s) while loading.");
+                    }
+                }
+
                 if (purchaseOrders == null)
                 {
                     purchaseOrders = new List<PurchaseOrder>();
@@ -1637,6 +1736,14 @@ namespace Intercolony
             // to be free (§84).
             if (GenTicks.IsTickInterval(DeadlineCheckIntervalTicks))
             {
+                // RFQ responses are already generated and frozen; this hourly beat only reveals
+                // the ones whose persisted arrival tick has passed. Keeping the queue beside the
+                // existing periodic work avoids a second scheduler and a per-tick scan.
+                if (pendingRfqResponses.Count > 0)
+                {
+                    RfqService.AdvancePendingResponses(this);
+                }
+
                 // §88's policy runs *before* the deadline and expiry checks, so a commitment killed
                 // by a war is reported as lost to the war rather than as the player's failure to
                 // deliver on time. The ordering is the policy: same hour, two very different
@@ -1685,8 +1792,11 @@ namespace Intercolony
             }
         }
 
-        /// <summary>One in-game hour.</summary>
-        private const int DeadlineCheckIntervalTicks = 2500;
+        /// <summary>
+        /// One in-game hour, and the polling interval used when allowing pending RFQ responses to
+        /// arrive before their request expires.
+        /// </summary>
+        internal const int DeadlineCheckIntervalTicks = 2500;
 
         /// <summary>
         /// Runs the refresh immediately (DESIGN.md §95). Note this does not shift the
@@ -2768,6 +2878,14 @@ namespace Intercolony
                     {
                         highest = quote.id;
                     }
+                }
+            }
+
+            foreach (PendingRfqResponse pending in pendingRfqResponses)
+            {
+                if (pending?.quote != null && pending.quote.id > highest)
+                {
+                    highest = pending.quote.id;
                 }
             }
 

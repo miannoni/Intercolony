@@ -17,6 +17,8 @@ namespace Intercolony
     /// </summary>
     public readonly struct LogisticsQuote
     {
+        private const float TravelTilesPerDay = 12f;
+
         /// <summary>Approximate world-tile distance from the player's home map.</summary>
         public readonly float DistanceTiles;
 
@@ -68,9 +70,7 @@ namespace Intercolony
             }
             else
             {
-                int travel = distanceTiles < 0f
-                    ? 3
-                    : Mathf.RoundToInt(distanceTiles / 12f);
+                int travel = TravelDaysFor(distanceTiles);
                 leadTime = Mathf.Max(1, prep + travel);
             }
 
@@ -79,6 +79,17 @@ namespace Intercolony
                 transportMethod,
                 leadTime,
                 distanceMultiplier * transportMultiplier);
+        }
+
+        /// <summary>
+        /// Uses the same distance-to-days conversion as supplier-delivery lead time. RFQ reply
+        /// timing reuses this existing geography instead of introducing a second travel scale.
+        /// </summary>
+        internal static int TravelDaysFor(float distanceTiles)
+        {
+            return distanceTiles < 0f
+                ? 3
+                : Mathf.RoundToInt(distanceTiles / TravelTilesPerDay);
         }
 
         /// <summary>Maps the existing delivery decision to the logistics vocabulary.</summary>

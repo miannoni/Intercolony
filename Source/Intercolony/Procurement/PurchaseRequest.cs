@@ -8,7 +8,10 @@ namespace Intercolony
     /// <summary>RFQ lifecycle (DESIGN.md §19, §73). Terminal states are terminal.</summary>
     public enum PurchaseRequestStatus
     {
-        /// <summary>Sent out; suppliers have answered and the quotes stand until expiry.</summary>
+        /// <summary>
+        /// Sent out; arrived quotes stand until expiry and other supplier replies may still be on
+        /// their way.
+        /// </summary>
         Open,
 
         /// <summary>Lapsed without the player acting.</summary>
@@ -194,9 +197,16 @@ namespace Intercolony
         public ProcurementFulfillmentPreference fulfillmentPreference =
             ProcurementFulfillmentPreference.Either;
 
+        /// <summary>
+        /// Supplier quotations that have arrived and are currently actionable. Unarrived
+        /// quotations live in the world's pending-response queue instead.
+        /// </summary>
         public List<Quotation> quotes = new List<Quotation>();
 
-        /// <summary>Set when nobody answered, so the UI can explain rather than show an empty list.</summary>
+        /// <summary>
+        /// Explains why no actionable quotation is currently in the request. This can describe
+        /// final supplier silence or replies that are still on their way.
+        /// </summary>
         public string noResponseReason = "";
 
         /// <summary>Requested animal constraints, or null for goods.</summary>

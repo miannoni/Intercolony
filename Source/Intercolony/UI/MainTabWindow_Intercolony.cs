@@ -2839,7 +2839,7 @@ namespace Intercolony
             float contentHeight = 0f;
             foreach (PurchaseRequest request in requests)
             {
-                contentHeight += RequestBlockHeight(request);
+                contentHeight += RequestBlockHeight(request, state, inRect.width - 16f);
             }
 
             if (requests.Count == 0)
@@ -2872,7 +2872,7 @@ namespace Intercolony
 
             foreach (PurchaseRequest request in requests)
             {
-                float height = RequestBlockHeight(request);
+                float height = RequestBlockHeight(request, state, viewRect.width);
                 DrawRequestBlock(new Rect(0f, rowY, viewRect.width, height), request, state);
                 rowY += height;
             }
@@ -5102,9 +5102,8 @@ namespace Intercolony
             }
         }
 
-        private const float RequestSummaryHeight = 46f;
+        private const float MinimumRequestSummaryHeight = 46f;
         private const float QuoteHeaderHeight = 24f;
-        private const float RequestHeaderHeight = RequestSummaryHeight + QuoteHeaderHeight;
         private const float QuoteRowHeight = 26f;
 
         private static readonly float[] QuoteColumnWidths =
@@ -5113,49 +5112,97 @@ namespace Intercolony
         private static readonly string[] QuoteColumnLabels =
             { "Supplier", "Offered", "Unit", "Total", "Lead", "Terms", "Dist", "" };
 
-        private static float RequestBlockHeight(PurchaseRequest request)
+        private static float RequestBlockHeight(
+            PurchaseRequest request,
+            IntercolonyWorldComponent state,
+            float blockWidth)
         {
+            float summaryHeight = RequestSummaryHeight(request, state, blockWidth);
             if (!request.IsOpen)
             {
-                return RequestSummaryHeight + 10f;
+                return summaryHeight + 10f;
             }
 
             int rows = Mathf.Max(1, request.quotes.Count);
-            return RequestHeaderHeight + rows * QuoteRowHeight + 10f;
+            return summaryHeight + QuoteHeaderHeight + rows * QuoteRowHeight + 10f;
         }
 
-        private void DrawRequestBlock(Rect rect, PurchaseRequest request, IntercolonyWorldComponent state)
+        private static float RequestSummaryHeight(
+            PurchaseRequest request,
+            IntercolonyWorldComponent state,
+            float blockWidth)
         {
-            Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, RequestSummaryHeight));
+            float labelWidth = Mathf.Max(1f, blockWidth - 200f);
+            float headerHeight = Text.CalcHeight(RequestHeader(request), labelWidth);
+            float subHeight = Text.CalcHeight(RequestSub(request, state), labelWidth);
+            return Mathf.Max(MinimumRequestSummaryHeight, 12f + headerHeight + subHeight);
+        }
 
+        private static string RequestHeader(PurchaseRequest request)
+        {
             string quantityLabel = request.quantityOrdered > 0 && request.IsOpen
                 ? $"{request.QuantityOutstanding}x {request.ItemLabel()} still wanted " +
                   $"({request.quantityOrdered} of {request.quantityRequested} ordered)"
                 : $"{request.quantityRequested}x {request.ItemLabel()}";
-            string header = $"#{request.id}  {quantityLabel}";
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width - 200f, 22f), header);
+            return $"#{request.id}  {quantityLabel}";
+        }
 
-            string sub;
-            Color colour = Color.white;
-            if (request.IsOpen)
+        private static string RequestSub(
+            PurchaseRequest request,
+            IntercolonyWorldComponent state)
+        {
+            if (!request.IsOpen)
             {
-                sub = request.AnyQuotes
-                    ? $"{request.quotes.Count} quote(s) — offers stand for {request.DaysRemaining:F1}d — " +
-                      RequestFulfillmentLabel(request.fulfillmentPreference)
-                    : $"No supplier answered: {request.noResponseReason}";
-                if (!request.AnyQuotes)
-                {
-                    colour = new Color(0.9f, 0.7f, 0.5f);
-                }
+                return request.status.ToString();
             }
-            else
+
+            int pendingResponseCount = state?.PendingRfqResponseCountFor(request.id) ?? 0;
+            string available = request.AnyQuotes
+                ? $"{request.quotes.Count} quote(s) available — offers stand for " +
+                  $"{request.DaysRemaining:F1}d — {RequestFulfillmentLabel(request.fulfillmentPreference)}"
+                : pendingResponseCount > 0
+                    ? "No quotes available yet."
+                    : string.IsNullOrEmpty(request.noResponseReason)
+                        ? "No supplier quote is currently available."
+                        : $"No supplier answered: {request.noResponseReason}";
+
+            return pendingResponseCount > 0
+                ? available + $"\n{PendingResponsesText(pendingResponseCount)}"
+                : available;
+        }
+
+        private static string PendingResponsesText(int pendingResponseCount)
+        {
+            return pendingResponseCount == 1
+                ? "One supplier response is still coming."
+                : $"{pendingResponseCount} supplier responses are still coming.";
+        }
+
+        private void DrawRequestBlock(Rect rect, PurchaseRequest request, IntercolonyWorldComponent state)
+        {
+            float summaryHeight = RequestSummaryHeight(request, state, rect.width);
+            float labelWidth = Mathf.Max(1f, rect.width - 200f);
+            string header = RequestHeader(request);
+            string sub = RequestSub(request, state);
+            float headerHeight = Text.CalcHeight(header, labelWidth);
+            float subHeight = Text.CalcHeight(sub, labelWidth);
+            Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, summaryHeight));
+            Widgets.Label(
+                new Rect(rect.x + 6f, rect.y + 4f, labelWidth, headerHeight), header);
+
+            Color colour = Color.white;
+            if (request.IsOpen && !request.AnyQuotes)
             {
-                sub = request.status.ToString();
+                colour = new Color(0.9f, 0.7f, 0.5f);
+            }
+            else if (!request.IsOpen)
+            {
                 colour = new Color(0.7f, 0.7f, 0.7f);
             }
 
             GUI.color = colour;
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 24f, rect.width - 200f, 22f), sub);
+            Widgets.Label(
+                new Rect(rect.x + 6f, rect.y + 4f + headerHeight, labelWidth, subHeight), sub);
             GUI.color = Color.white;
 
             if (request.IsOpen)
@@ -5186,15 +5233,19 @@ namespace Intercolony
             }
 
             Rect quoteArea = new Rect(
-                rect.x + 16f, rect.y + RequestSummaryHeight, rect.width - 24f, QuoteHeaderHeight);
+                rect.x + 16f, rect.y + summaryHeight, rect.width - 24f, QuoteHeaderHeight);
             DrawQuoteHeader(quoteArea);
 
-            float rowY = rect.y + RequestHeaderHeight;
+            float rowY = rect.y + summaryHeight + QuoteHeaderHeight;
             if (request.quotes.Count == 0)
             {
+                string emptyLabel = "— nothing available —";
+                float emptyWidth = Mathf.Max(1f, rect.width - 40f);
                 GUI.color = new Color(1f, 1f, 1f, 0.45f);
-                Widgets.Label(new Rect(rect.x + 20f, rowY + 2f, rect.width - 40f, 22f),
-                    "— nothing available —");
+                Widgets.Label(
+                    new Rect(rect.x + 20f, rowY + 2f, emptyWidth,
+                        Text.CalcHeight(emptyLabel, emptyWidth)),
+                    emptyLabel);
                 GUI.color = Color.white;
                 return;
             }

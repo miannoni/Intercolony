@@ -183,6 +183,7 @@ namespace Intercolony
                 }
 
                 created.Add(request);
+                AdvanceRfqResponsesForSelfTest(state, request, Skip);
                 totalRequests++;
 
                 if (!request.AnyQuotes)
@@ -255,6 +256,7 @@ namespace Intercolony
                 if (scarceRequest != null)
                 {
                     created.Add(scarceRequest);
+                    AdvanceRfqResponsesForSelfTest(state, scarceRequest, Skip);
                     sb.AppendLine($"  (scarce probe: {scarce.label} [{scarce.techLevel}] -> " +
                                   $"{scarceRequest.quotes.Count} quote(s))");
 
@@ -317,6 +319,7 @@ namespace Intercolony
                 if (delivery != null)
                 {
                     created.Add(delivery);
+                    AdvanceRfqResponsesForSelfTest(state, delivery, Skip);
                     foreach (Quotation quote in delivery.quotes)
                     {
                         forcedDeliveryQuotes++;
@@ -335,6 +338,7 @@ namespace Intercolony
                 if (pickup != null)
                 {
                     created.Add(pickup);
+                    AdvanceRfqResponsesForSelfTest(state, pickup, Skip);
                     foreach (Quotation quote in pickup.quotes)
                     {
                         forcedPickupQuotes++;
@@ -389,6 +393,7 @@ namespace Intercolony
             if (probe != null)
             {
                 created.Add(probe);
+                AdvanceRfqResponsesForSelfTest(state, probe, Skip);
                 Check("new request is open", probe.IsOpen);
                 Check("expire succeeds once", probe.TryExpire());
                 Check("expired request is closed", !probe.IsOpen);
@@ -414,6 +419,7 @@ namespace Intercolony
                     if (moddedRequest != null)
                     {
                         created.Add(moddedRequest);
+                        AdvanceRfqResponsesForSelfTest(state, moddedRequest, Skip);
                     }
                 }
                 catch (System.Exception ex)
@@ -454,6 +460,85 @@ namespace Intercolony
                 DefDatabase<ThingDef>.GetNamedSilentFail("ElectricStove"), ThingDefOf.Steel, null, 1);
 
             return Summarize();
+        }
+
+        private static void AdvanceRfqResponsesForSelfTest(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request,
+            Action<string, string> skip)
+        {
+            if (state == null || request == null)
+            {
+                skip("RFQ response arrival fixture", "world state or request was unavailable");
+                return;
+            }
+
+            if (state.PendingRfqResponses == null)
+            {
+                skip("RFQ response arrival fixture", "pending response queue was unavailable");
+                return;
+            }
+
+            int now = GenTicks.TicksGame;
+            int latestArrivalTick = now;
+            bool hasPendingResponse = false;
+            foreach (PendingRfqResponse pending in state.PendingRfqResponses)
+            {
+                if (pending == null || pending.requestId != request.id)
+                {
+                    continue;
+                }
+
+                hasPendingResponse = true;
+                latestArrivalTick = Mathf.Max(latestArrivalTick, pending.arrivalTick);
+            }
+
+            if (!hasPendingResponse)
+            {
+                return;
+            }
+
+            if (Find.TickManager == null)
+            {
+                skip("RFQ response arrival fixture", "RimWorld tick manager was unavailable");
+                return;
+            }
+
+            TickManager tickManager = Find.TickManager;
+            int savedTick = tickManager.TicksGame;
+            int cursorTick = savedTick;
+            try
+            {
+                // Advance the global queue in arrival order. A direct jump to this request's
+                // latest response can pass another request's expiry and make the real advance
+                // path discard that request before its own fixture call gets a turn.
+                while (true)
+                {
+                    int nextArrivalTick = int.MaxValue;
+                    foreach (PendingRfqResponse pending in state.PendingRfqResponses)
+                    {
+                        if (pending == null || pending.arrivalTick > latestArrivalTick)
+                        {
+                            continue;
+                        }
+
+                        nextArrivalTick = Mathf.Min(nextArrivalTick, pending.arrivalTick);
+                    }
+
+                    if (nextArrivalTick == int.MaxValue)
+                    {
+                        break;
+                    }
+
+                    cursorTick = Mathf.Max(cursorTick, nextArrivalTick);
+                    tickManager.DebugSetTicksGame(cursorTick);
+                    RfqService.AdvancePendingResponses(state);
+                }
+            }
+            finally
+            {
+                tickManager.DebugSetTicksGame(savedTick);
+            }
         }
 
         private static void CheckSupplierListings(
