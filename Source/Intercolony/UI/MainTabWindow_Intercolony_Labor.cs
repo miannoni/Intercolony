@@ -66,6 +66,9 @@ namespace Intercolony
         private LaborPage laborPage = LaborPage.Hire;
         private Vector2 postingScroll;
         private readonly float[] candidateColumnWidths = new float[6];
+        // UI-only mode for the transient direct-hire listing. It is deliberately not world state:
+        // emergency dispatch is not a queued request and has no save obligation.
+        private bool emergencyDispatch;
 
         private const float LaborTabRowHeight = 30f;
 
@@ -169,20 +172,54 @@ namespace Intercolony
             List<LaborCandidate> pool = new List<LaborCandidate>(LaborCandidateService.Refresh(state));
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, 400f, 34f), "Workers for hire");
+            string hireTitle = emergencyDispatch ? "Emergency workers for hire" : "Workers for hire";
+            float hireTitleHeight = Text.CalcHeight(hireTitle, 400f);
+            Widgets.Label(new Rect(0f, y, 400f, hireTitleHeight), hireTitle);
             Text.Font = GameFont.Small;
 
             DrawEmployerStanding(new Rect(360f, y + 4f, inRect.width - 360f, 28f), state);
-            y += 38f;
+            y += Mathf.Max(38f, hireTitleHeight + 4f);
+
+            const float emergencyToggleWidth = 260f;
+            float emergencyToggleHeight = Mathf.Max(
+                24f, Text.CalcHeight("Emergency dispatch", emergencyToggleWidth - 24f));
+            Rect emergencyToggleRect = new Rect(
+                0f, y, emergencyToggleWidth, emergencyToggleHeight);
+            bool wasEmergencyDispatch = emergencyDispatch;
+            Widgets.CheckboxLabeled(emergencyToggleRect, "Emergency dispatch", ref emergencyDispatch);
+            TooltipHandler.TipRegion(
+                emergencyToggleRect,
+                $"Show only existing workers whose travel estimate fits the " +
+                $"{LaborCandidateService.EmergencyReachabilityWindowDays}-day urgent window. " +
+                "Emergency dispatch buys priority and speed with a large wage premium; it does " +
+                "not create workers, guarantee fulfilment, queue a request, or select a drop pod.");
+            if (emergencyDispatch != wasEmergencyDispatch)
+            {
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
+            y += emergencyToggleHeight + 4f;
+
+            if (emergencyDispatch)
+            {
+                pool.RemoveAll(candidate => !LaborCandidateService.CanReachEmergency(candidate));
+            }
 
             if (pool.Count == 0)
             {
                 GUI.color = Color.gray;
-                string emptyMessage = "No workers on offer.\n\n" +
-                                      "Settlements you can reach are not releasing labor at the moment. The listing " +
-                                      "changes with the market — check back after the next refresh, or post a job and " +
-                                      "let people come to you.";
-                Widgets.Label(new Rect(6f, y, inRect.width - 12f, Text.CalcHeight(emptyMessage, inRect.width - 12f)), emptyMessage);
+                string emptyMessage = emergencyDispatch
+                    ? $"No workers can reach the colony within " +
+                      $"{LaborCandidateService.EmergencyReachabilityWindowDays} days.\n\n" +
+                      "Emergency dispatch filters the existing direct-hire market; it does not " +
+                      "create workers or queue an urgent request. Switch it off for ordinary hires, " +
+                      "or check again after the next market refresh."
+                    : "No workers on offer.\n\n" +
+                      "Settlements you can reach are not releasing labor at the moment. The listing " +
+                      "changes with the market — check back after the next refresh, or post a job and " +
+                      "let people come to you.";
+                float emptyMessageHeight = Text.CalcHeight(emptyMessage, inRect.width - 12f);
+                Widgets.Label(new Rect(6f, y, inRect.width - 12f, emptyMessageHeight), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }
@@ -1429,7 +1466,7 @@ namespace Intercolony
             Rect hireRect = new Rect(rect.xMax - 86f, rect.y + 2f, 80f, 28f);
             if (Widgets.ButtonText(hireRect, "Hire"))
             {
-                OpenHireDialog(state, candidate);
+                OpenHireDialog(state, candidate, emergencyDispatch);
             }
         }
 
@@ -1470,19 +1507,20 @@ namespace Intercolony
         /// The hiring commitment. Term length lives here rather than in the tab, matching every
         /// other commitment in the mod: read the terms, choose the size, commit.
         /// </summary>
-        private void OpenHireDialog(IntercolonyWorldComponent state, LaborCandidate candidate)
+        private void OpenHireDialog(
+            IntercolonyWorldComponent state, LaborCandidate candidate, bool emergencyDispatch)
         {
             Map map = Find.CurrentMap;
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(candidate.settlementId);
             SettlementEconomicProfile profile = settlement == null ? null : state.GetProfile(settlement);
 
             Find.WindowStack.Add(new Dialog_HireWorker(
-                candidate, profile, map, MaxTermDays,
+                candidate, profile, map, MaxTermDays, emergencyDispatch,
                 (termDays, structure, clause, hireCostQuote) =>
                 {
                     EmploymentContract contract = EmploymentService.TryHire(
                         state, candidate, termDays, map, out string failReason, structure, clause,
-                        hireCostQuote);
+                        hireCostQuote, emergencyDispatch);
 
                     if (contract == null)
                     {

@@ -36,16 +36,28 @@ namespace Intercolony
         /// how a call site ends up billing a different number than the dialog quoted. The compiler
         /// naming every site is the point.
         /// </param>
+        /// <param name="emergencyDispatch">
+        /// UI-only direct-hire mode. It filters the existing candidate pool, applies the shared
+        /// urgency wage multiplier, and changes the existing arrival tick; it is not persisted.
+        /// </param>
         public static EmploymentContract TryHire(
             IntercolonyWorldComponent state, LaborCandidate candidate, int termDays, Map paymentMap,
             out string failReason, WageStructure structure, CombatClause clause,
-            EmploymentHireCostQuote quotedHireCost = null)
+            EmploymentHireCostQuote quotedHireCost = null, bool emergencyDispatch = false)
         {
             failReason = null;
 
             if (state == null || candidate?.pawn == null)
             {
                 failReason = "No candidate.";
+                return null;
+            }
+
+            if (emergencyDispatch && !LaborCandidateService.CanReachEmergency(candidate))
+            {
+                failReason =
+                    $"{candidate.Name} cannot reach the colony within " +
+                    $"{LaborCandidateService.EmergencyReachabilityWindowDays} days for emergency dispatch.";
                 return null;
             }
 
@@ -113,7 +125,7 @@ namespace Intercolony
 
             int baseWage = LaborCandidateService.DailyWage(
                 candidate.pawn, profile, candidate.distanceTiles, pricingTerm,
-                EmployerReputationService.ScoreFor(state), clause);
+                EmployerReputationService.ScoreFor(state), clause, emergencyDispatch);
 
             // Prepaid hands over the whole term; pay-as-you-go hands over a signing fee. A
             // periodic hire that demanded the full term up front would defeat the point of
@@ -169,6 +181,7 @@ namespace Intercolony
             // string "no skills" into every completed record.
             string skills = candidate.SkillSummary();
 
+            int arrivalDays = LaborCandidateService.ArrivalDaysFor(candidate, emergencyDispatch);
             Pawn worker = candidate.Release();
             LaborCandidateService.Take(candidate);
 
@@ -192,7 +205,9 @@ namespace Intercolony
                 equipmentBond = equipmentBond,
                 paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
-                arrivalTick = GenTicks.TicksGame + candidate.travelDays * GenDate.TicksPerDay,
+                // Emergency mode changes only this existing arrival deadline. The mode itself is
+                // deliberately not retained as a new contract field or save-state concept.
+                arrivalTick = GenTicks.TicksGame + arrivalDays * GenDate.TicksPerDay,
                 status = EmploymentStatus.Travelling
             };
 
@@ -213,7 +228,7 @@ namespace Intercolony
                 $"{dailyWage} silver/day × {termDays} days, " +
                 $"{WageStructureUtility.Explain(structure, dailyWage, termDays)} " +
                 $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentBond)}. " +
-                $"Arrives in {candidate.travelDays} days.",
+                $"Arrives in {arrivalDays} days.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             IntercolonyLog.Message($"Hired: {contract}");

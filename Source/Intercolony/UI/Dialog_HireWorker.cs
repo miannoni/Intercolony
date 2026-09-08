@@ -35,6 +35,7 @@ namespace Intercolony
         private readonly Action<int, WageStructure, CombatClause, EmploymentHireCostQuote> onConfirm;
         private readonly int maxTermDays;
         private readonly EmploymentEquipmentQuote equipmentQuote;
+        private readonly bool emergencyDispatch;
 
         private int termDays;
         private string termBuffer;
@@ -57,12 +58,14 @@ namespace Intercolony
 
         public Dialog_HireWorker(
             LaborCandidate candidate, SettlementEconomicProfile profile, Map map, int maxTermDays,
+            bool emergencyDispatch,
             Action<int, WageStructure, CombatClause, EmploymentHireCostQuote> onConfirm)
         {
             this.candidate = candidate;
             this.profile = profile;
             this.map = map;
             this.maxTermDays = Mathf.Max(candidate.minTermDays, maxTermDays);
+            this.emergencyDispatch = emergencyDispatch;
             this.onConfirm = onConfirm;
             equipmentQuote = EmploymentEquipmentService.Quote(candidate.pawn);
 
@@ -90,16 +93,26 @@ namespace Intercolony
 
         private int DailyWage => WageFor(clause);
 
-        private int WageFor(CombatClause option) => LaborCandidateService.DailyWage(
-            candidate.pawn, profile, candidate.distanceTiles,
-            openEnded ? maxTermDays : termDays, EmployerStanding, option);
+        private int WageFor(CombatClause option)
+        {
+            return WageFor(option, emergencyDispatch);
+        }
+
+        private int WageFor(CombatClause option, bool emergencyMode)
+        {
+            return LaborCandidateService.DailyWage(
+                candidate.pawn, profile, candidate.distanceTiles,
+                openEnded ? maxTermDays : termDays, EmployerStanding, option, emergencyMode);
+        }
 
         public override void DoWindowContents(Rect inRect)
         {
             float y = 0f;
 
             Text.Font = GameFont.Medium;
-            string title = $"Hire {candidate.Name}";
+            string title = emergencyDispatch
+                ? $"Emergency hire — {candidate.Name}"
+                : $"Hire {candidate.Name}";
             float titleHeight = Text.CalcHeight(title, inRect.width);
             Widgets.Label(new Rect(0f, y, inRect.width, titleHeight), title);
             y += titleHeight + 4f;
@@ -180,7 +193,7 @@ namespace Intercolony
             {
                 int atMinimum = LaborCandidateService.DailyWage(
                     candidate.pawn, profile, candidate.distanceTiles, candidate.minTermDays,
-                    EmployerStanding, clause);
+                    EmployerStanding, clause, emergencyDispatch);
                 if (wage < atMinimum)
                 {
                     string longerTerm =
@@ -207,8 +220,10 @@ namespace Intercolony
             long totalDue = hireCostQuote.totalDue;
             int available = PurchaseOrderService.CountColonySilver(map);
             bool affordable = totalDue <= int.MaxValue && available >= totalDue;
+            int ordinaryWage = emergencyDispatch ? WageFor(clause, false) : wage;
             List<TermRow> costRows = BuildCostRows(
-                structure, hireCostQuote, available);
+                structure, hireCostQuote, available, candidate, emergencyDispatch,
+                ordinaryWage, wage);
             float costHeight = CostRowsHeight(costRows, inRect.width);
 
             float bottom = inRect.height - 40f;
@@ -259,9 +274,10 @@ namespace Intercolony
         }
 
         private static List<TermRow> BuildCostRows(
-            WageStructure structure, EmploymentHireCostQuote hireCostQuote, int available)
+            WageStructure structure, EmploymentHireCostQuote hireCostQuote, int available,
+            LaborCandidate candidate, bool emergencyDispatch, int ordinaryWage, int wage)
         {
-            return new List<TermRow>
+            List<TermRow> rows = new List<TermRow>
             {
                 new TermRow(
                     structure.IsPeriodic() ? "Signing fee" : "Prepaid wages",
@@ -269,10 +285,50 @@ namespace Intercolony
                 new TermRow(
                     "Equipment bond",
                     EmploymentEquipmentService.BondLabel(hireCostQuote.equipment.bond),
-                    EmploymentEquipmentService.BondTooltip),
-                new TermRow("Due at hire", $"{hireCostQuote.totalDue:N0} silver"),
-                new TermRow("In storage", $"{available:N0} silver")
+                    EmploymentEquipmentService.BondTooltip)
             };
+
+            if (emergencyDispatch)
+            {
+                int premium = Mathf.Max(0, wage - ordinaryWage);
+                int arrivalDays = LaborCandidateService.ArrivalDaysFor(candidate, true);
+                rows.Add(new TermRow(
+                    "Emergency premium",
+                    $"+{premium:N0} silver/day ({LaborCandidateService.EmergencyDispatchWageMultiplier:0.#}x wage)",
+                    EmergencyPremiumTooltip(ordinaryWage, wage)));
+                rows.Add(new TermRow(
+                    "Arrival",
+                    $"{ArrivalLabel(arrivalDays)} (ordinary: {ArrivalLabel(candidate.travelDays)})",
+                    EmergencyArrivalTooltip(candidate, arrivalDays)));
+            }
+
+            rows.Add(new TermRow("Due at hire", $"{hireCostQuote.totalDue:N0} silver"));
+            rows.Add(new TermRow("In storage", $"{available:N0} silver"));
+            return rows;
+        }
+
+        private static string EmergencyPremiumTooltip(int ordinaryWage, int emergencyWage)
+        {
+            return $"Emergency dispatch applies a {LaborCandidateService.EmergencyDispatchWageMultiplier:0.#}x " +
+                   $"urgency multiplier in the shared wage calculation ({ordinaryWage:N0} ordinary to " +
+                   $"{emergencyWage:N0} silver/day). It pays for priority and mobilisation; it does " +
+                   "not guarantee that a worker exists or can fulfil the request.";
+        }
+
+        private static string EmergencyArrivalTooltip(LaborCandidate candidate, int arrivalDays)
+        {
+            return $"This worker's existing {candidate.travelDays}-day travel estimate is inside the " +
+                   $"{LaborCandidateService.EmergencyReachabilityWindowDays}-day urgent window. " +
+                   $"Emergency dispatch uses the existing employment arrival time and brings them in " +
+                   $"{ArrivalLabel(arrivalDays)}. Drop-pod arrival is not offered because F21 has no " +
+                   "settlement logistics capability model to gate it on.";
+        }
+
+        private static string ArrivalLabel(int days)
+        {
+            return days <= 0
+                ? "Same day"
+                : $"Within {days} {(days == 1 ? "day" : "days")}";
         }
 
         private static float CostRowsHeight(List<TermRow> rows, float width)

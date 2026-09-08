@@ -18,6 +18,28 @@ namespace Intercolony
         private const float BaseDailyWage = 8f;
 
         /// <summary>
+        /// F24 explicitly does not require a fixed 10x or 20x multiplier. This 4x urgency
+        /// multiplier is a deliberately large starting figure for balancing, applied inside the
+        /// shared wage calculation rather than as a second labour-value model.
+        /// </summary>
+        public const float EmergencyDispatchWageMultiplier = 4f;
+
+        /// <summary>
+        /// A source must be able to reach the colony in this ordinary travel window to offer an
+        /// emergency direct hire. The window is intentionally narrow; it filters the existing
+        /// market and never creates a worker or a queued request.
+        /// </summary>
+        public const int EmergencyReachabilityWindowDays = 2;
+
+        /// <summary>
+        /// Emergency direct hires use the existing arrival-tick field, with a one-day urgent
+        /// arrival for candidates that can reach the colony inside the reachability window.
+        /// Drop-pod arrival is deliberately absent: F21 has no settlement logistics capability
+        /// model to gate it on, and equipment tier remains F23's unbuilt request work.
+        /// </summary>
+        public const int EmergencyArrivalDays = 1;
+
+        /// <summary>
         /// What a labor cost of 100% means, relative to the rate this mod shipped with. The
         /// original figures made hiring cheap enough that it was never weighed against doing
         /// the work yourself, and doubling them did not fix it.
@@ -326,7 +348,7 @@ namespace Intercolony
                     }
 
                     float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
-                    int travel = TravelDays(distance);
+                    int travel = LogisticsQuote.TravelDaysFor(distance);
 
                     for (int i = 0; i < perSettlement && census.Count < MaxCensus; i++)
                     {
@@ -702,7 +724,7 @@ namespace Intercolony
                 factionName = faction.Name ?? "",
                 faction = faction,
                 distanceTiles = distance,
-                travelDays = TravelDays(distance),
+                travelDays = LogisticsQuote.TravelDaysFor(distance),
                 minTermDays = minTerm,
 
                 // The listed rate is the civilian rate — the cheapest terms available, and the
@@ -712,12 +734,42 @@ namespace Intercolony
             };
         }
 
-        /// <summary>Days a hired worker spends travelling to the colony.</summary>
+        /// <summary>
+        /// Days a hired worker spends travelling to the colony. Kept as the labor-facing entry
+        /// point, but the distance conversion belongs to <see cref="LogisticsQuote.TravelDaysFor"/>
+        /// so labor and procurement cannot drift apart.
+        /// </summary>
         public static int TravelDays(float distance)
         {
-            // Same rate the procurement lead time uses (RfqService.LeadTimeDays), so a worker
-            // and a crate from the same settlement take comparable time to arrive.
-            return distance < 0f ? 3 : Mathf.Clamp(Mathf.RoundToInt(distance / 12f), 1, 20);
+            return LogisticsQuote.TravelDaysFor(distance);
+        }
+
+        /// <summary>
+        /// Whether an already-listed worker can be dispatched inside F24's urgent window. This is
+        /// a filter on the transient direct-hire pool only: it does not synthesize a replacement,
+        /// preserve a request, select a transport pod, or add an equipment requirement.
+        /// </summary>
+        public static bool CanReachEmergency(LaborCandidate candidate)
+        {
+            return candidate != null && candidate.pawn != null && candidate.travelDays >= 0 &&
+                   candidate.travelDays <= EmergencyReachabilityWindowDays;
+        }
+
+        /// <summary>
+        /// Arrival days for the existing employment arrival tick. Emergency dispatch compresses a
+        /// reachable trip to the urgent arrival target, but never makes a same-day ordinary source
+        /// wait longer.
+        /// </summary>
+        public static int ArrivalDaysFor(LaborCandidate candidate, bool emergencyDispatch)
+        {
+            if (candidate == null)
+            {
+                return 0;
+            }
+
+            return emergencyDispatch
+                ? Mathf.Min(candidate.travelDays, EmergencyArrivalDays)
+                : candidate.travelDays;
         }
 
         /// <summary>
@@ -738,10 +790,10 @@ namespace Intercolony
         /// </param>
         public static int DailyWage(
             Pawn pawn, SettlementEconomicProfile profile, float distance, int termDays,
-            float employerStanding, CombatClause clause)
+            float employerStanding, CombatClause clause, bool emergencyDispatch = false)
         {
             return DailyWageFor(PricedSkillValue(pawn), profile, distance, termDays,
-                employerStanding, clause);
+                employerStanding, clause, emergencyDispatch);
         }
 
         /// <summary>
@@ -797,7 +849,7 @@ namespace Intercolony
         /// </summary>
         public static int DailyWageFor(
             float skillValue, SettlementEconomicProfile profile, float distance, int termDays,
-            float employerStanding, CombatClause clause)
+            float employerStanding, CombatClause clause, bool emergencyDispatch = false)
         {
             float wage = BaseDailyWage + skillValue * SilverPerSkillLevel;
 
@@ -828,6 +880,13 @@ namespace Intercolony
             // only ever affects wages being quoted now: an employment already agreed keeps the
             // wage it was signed at, exactly as economy difficulty leaves agreed prices alone.
             wage *= LaborBaselineMultiplier * IntercolonyMod.Settings.laborCostMultiplier;
+
+            if (emergencyDispatch)
+            {
+                // F24 buys priority and speed, not a guaranteed pawn. Keep urgency in this one
+                // formula so the displayed quote and the charged hire use the same calculation.
+                wage *= EmergencyDispatchWageMultiplier;
+            }
 
             return Mathf.Max(1, Mathf.RoundToInt(wage));
         }
