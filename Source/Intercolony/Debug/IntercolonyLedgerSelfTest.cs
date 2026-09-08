@@ -25,6 +25,7 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -43,6 +44,12 @@ namespace Intercolony
             public void Info(string line)
             {
                 sb.AppendLine($"        {line}");
+            }
+
+            public void Skip(string label, string reason)
+            {
+                skipped++;
+                sb.AppendLine($"SKIPPED {label} — {reason}");
             }
         }
 
@@ -67,6 +74,7 @@ namespace Intercolony
                 CheckPartialHistoryIsAdmitted(r, state);
                 CheckAgreesWithRealSilver(r, state, map);
                 CheckContractEstimate(r, state);
+                CheckProductionCommitments(r, state);
                 CheckPruning(r, state);
             }
             catch (System.Exception ex)
@@ -333,6 +341,206 @@ namespace Intercolony
                 "a missing contract estimates to nothing rather than throwing");
         }
 
+        // --- F07 production commitments ----------------------------------------------------
+
+        private static void CheckProductionCommitments(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string committedAssertion =
+                "R1 committed quantity per cycle is reported per cycle-length day";
+            const string completedAssertion =
+                "R2 completed production is reported for each good from the ledger";
+            const string noProductionAssertion =
+                "R3 no recorded production is flagged instead of presented as zero";
+            const string suspendedAssertion =
+                "R4 suspended seller agreements remain counted in Business commitments";
+
+            List<RecurringContract> contracts = state?.Contracts;
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            ThingDef committedProduct = ThingDefOf.Steel;
+            ThingDef secondProduct = ThingDefOf.WoodLog;
+            ThingDef noProductionProduct = ThingDefOf.Plasteel;
+            ThingDef suspendedProduct = ThingDefOf.Silver;
+
+            if (contracts == null || buckets == null || committedProduct == null ||
+                secondProduct == null || noProductionProduct == null || suspendedProduct == null)
+            {
+                string reason = contracts == null
+                    ? "the world recurring-contract collection is unavailable"
+                    : buckets == null
+                        ? "the world production ledger is unavailable"
+                        : "vanilla Steel, WoodLog, Plasteel, or Silver ThingDef is unavailable";
+                r.Skip(committedAssertion, reason);
+                r.Skip(completedAssertion, reason);
+                r.Skip(noProductionAssertion, reason);
+                r.Skip(suspendedAssertion, reason);
+                return;
+            }
+
+            List<RecurringContract> savedContracts = new List<RecurringContract>(contracts);
+            List<ProductionBucket> savedBuckets = new List<ProductionBucket>(buckets);
+
+            const int committedQuantity = 17;
+            const int committedCadenceDays = 2;
+            // Independent fixture arithmetic: 17 units / 2 days = 8.5 per day.
+            const float expectedCommittedPerDay = committedQuantity / (float)committedCadenceDays;
+
+            const int firstRecordedQuantity = 5;
+            const int secondRecordedQuantity = 10;
+            // Independent fixture arithmetic: 5 / 5 days = 1, and 10 / 5 days = 2.
+            const float expectedFirstCompletedPerDay = firstRecordedQuantity / 5f;
+            const float expectedSecondCompletedPerDay = secondRecordedQuantity / 5f;
+
+            const int noProductionQuantity = 9;
+            const int noProductionCadenceDays = 3;
+            const int suspendedQuantity = 8;
+            const int suspendedCadenceDays = 4;
+            // Independent fixture arithmetic: 8 units / 4 days = 2 per day.
+            const float expectedSuspendedPerDay = suspendedQuantity / (float)suspendedCadenceDays;
+
+            List<RecurringContract> fixtures;
+            try
+            {
+                fixtures = new List<RecurringContract>
+                {
+                    new RecurringContract
+                    {
+                        id = -862,
+                        settlementName = "Testholme",
+                        factionName = "Test Confederacy",
+                        thingDef = committedProduct,
+                        quantityPerCycle = committedQuantity,
+                        cadenceTicks = committedCadenceDays * GenDate.TicksPerDay,
+                        totalCycles = 7,
+                        unitPrice = 3.5f,
+                        status = ContractStatus.Active
+                    },
+                    new RecurringContract
+                    {
+                        id = -863,
+                        settlementName = "Testholme",
+                        factionName = "Test Confederacy",
+                        thingDef = secondProduct,
+                        quantityPerCycle = 6,
+                        cadenceTicks = 3 * GenDate.TicksPerDay,
+                        totalCycles = 5,
+                        unitPrice = 2.25f,
+                        status = ContractStatus.Active
+                    },
+                    new RecurringContract
+                    {
+                        id = -864,
+                        settlementName = "Testholme",
+                        factionName = "Test Confederacy",
+                        thingDef = noProductionProduct,
+                        quantityPerCycle = noProductionQuantity,
+                        cadenceTicks = noProductionCadenceDays * GenDate.TicksPerDay,
+                        totalCycles = 5,
+                        unitPrice = 4.75f,
+                        status = ContractStatus.Active
+                    },
+                    new RecurringContract
+                    {
+                        id = -865,
+                        settlementName = "Testholme",
+                        factionName = "Test Confederacy",
+                        thingDef = suspendedProduct,
+                        quantityPerCycle = suspendedQuantity,
+                        cadenceTicks = suspendedCadenceDays * GenDate.TicksPerDay,
+                        totalCycles = 5,
+                        unitPrice = 2.5f,
+                        status = ContractStatus.Suspended
+                    }
+                };
+            }
+            catch (System.Exception ex)
+            {
+                string reason = $"could not build the production commitment fixture: {ex.Message}";
+                r.Skip(committedAssertion, reason);
+                r.Skip(completedAssertion, reason);
+                r.Skip(noProductionAssertion, reason);
+                r.Skip(suspendedAssertion, reason);
+                return;
+            }
+
+            try
+            {
+                contracts.Clear();
+                buckets.Clear();
+                for (int i = 0; i < fixtures.Count; i++)
+                {
+                    state.AddContract(fixtures[i]);
+                }
+
+                ProductionLedgerService.Record(state, committedProduct, firstRecordedQuantity);
+                ProductionLedgerService.Record(state, secondProduct, secondRecordedQuantity);
+
+                List<BusinessReportService.ProductionCommitment> rows =
+                    BusinessReportService.ActiveProductionCommitments(state);
+                BusinessReportService.ProductionCommitment committedRow = rows.Find(
+                    row => row.thingDef == committedProduct);
+                BusinessReportService.ProductionCommitment firstCompletedRow = rows.Find(
+                    row => row.thingDef == committedProduct);
+                BusinessReportService.ProductionCommitment secondCompletedRow = rows.Find(
+                    row => row.thingDef == secondProduct);
+                BusinessReportService.ProductionCommitment noProductionRow = rows.Find(
+                    row => row.thingDef == noProductionProduct);
+                BusinessReportService.ProductionCommitment suspendedRow = rows.Find(
+                    row => row.thingDef == suspendedProduct);
+
+                r.Check(
+                    committedRow != null &&
+                    committedRow.committedPerDay == expectedCommittedPerDay,
+                    committedAssertion,
+                    $"reported {CommittedValue(committedRow)} per day; expected " +
+                    $"{expectedCommittedPerDay:0.###} from {committedQuantity} units / " +
+                    $"{committedCadenceDays} days");
+
+                r.Check(
+                    firstCompletedRow != null && secondCompletedRow != null &&
+                    firstCompletedRow.completedPerDay == expectedFirstCompletedPerDay &&
+                    secondCompletedRow.completedPerDay == expectedSecondCompletedPerDay,
+                    completedAssertion,
+                    $"{committedProduct.defName} {CompletedValue(firstCompletedRow)} per day " +
+                    $"vs {expectedFirstCompletedPerDay:0.###}; " +
+                    $"{secondProduct.defName} {CompletedValue(secondCompletedRow)} per day vs " +
+                    $"{expectedSecondCompletedPerDay:0.###}");
+
+                r.Check(
+                    noProductionRow != null && !noProductionRow.hasRecordedProduction,
+                    noProductionAssertion,
+                    $"flag {(noProductionRow == null ? "<missing row>" :
+                        noProductionRow.hasRecordedProduction.ToString())}; completed " +
+                    $"{CompletedValue(noProductionRow)} per day");
+
+                r.Check(
+                    suspendedRow != null && suspendedRow.committedPerDay == expectedSuspendedPerDay,
+                    suspendedAssertion,
+                    $"reported {CommittedValue(suspendedRow)} per day; expected " +
+                    $"{expectedSuspendedPerDay:0.###} from {suspendedQuantity} units / " +
+                    $"{suspendedCadenceDays} days");
+            }
+            finally
+            {
+                contracts.Clear();
+                contracts.AddRange(savedContracts);
+                buckets.Clear();
+                buckets.AddRange(savedBuckets);
+                r.Info($"production commitment fixture restored {buckets.Count} bucket(s) and " +
+                       $"{contracts.Count} agreement(s).");
+            }
+        }
+
+        private static string CommittedValue(BusinessReportService.ProductionCommitment row)
+        {
+            return row == null ? "<missing row>" : row.committedPerDay.ToString("0.###");
+        }
+
+        private static string CompletedValue(BusinessReportService.ProductionCommitment row)
+        {
+            return row == null ? "<missing row>" : row.completedPerDay.ToString("0.###");
+        }
+
         // --- Retention ---------------------------------------------------------------------
 
         private static void CheckPruning(Results r, IntercolonyWorldComponent state)
@@ -375,7 +583,8 @@ namespace Intercolony
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed" +
+                            (r.skipped == 0 ? "." : $", {r.skipped} skipped."));
             return r.sb.ToString();
         }
     }
