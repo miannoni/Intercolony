@@ -4,8 +4,27 @@ Stage: 7 — Two-sided labor market. NOTHING IS BLOCKED ON A HUMAN ANY MORE: the
 both decisions YES on 2026-09-08 — schema 57→58 with migration and prior-save verification, and one
 narrowly scoped observational Harmony patch on crafting completion. Stage 6 is next after F25.
 F06 is now stage 9. See "Next executable work" in the brief for the dependency order.
-Unit: 7.1 — F25 slice 1: a hired applicant is contracted at their own ask, not the posted wage
-Worker: running — `…\scratchpad\unit-7-1.out`
+Unit: 7.1b — restore the death-compensation disclosure onto the applicant row
+Worker: running — `…\scratchpad\unit-7-1b.out`
+7.1 is committed at `0ab8d86`; `job-posting` ran 28/0/0, clean log, exit 0.
+
+THE BRIDGE IS NOT BROKEN. The first suite run exited 2 with "RimWorld exited before the bridge
+became ready" and I opened a diagnosis unit on it; the operator then said they had closed the game
+window by hand when it popped up. That is the whole cause, and the diagnosis unit was cancelled
+before it could produce a confident story about a launcher. The one odd fact I had — `Player.log:21`
+reading `Command line arguments: -disable-compute-shaders` with no `-quicktest` and no bridge line —
+is explained by that log belonging to the operator's own Steam-launched session rather than to
+dev.ps1's launch, and NOT by the Steam-relaunch hypothesis I was chasing, which is unconfirmed and
+should not be repeated as if it were established.
+
+WORTH KEEPING: a suite run pops a game window the operator may be sitting in front of, and closing
+it looks exactly like infrastructure failure from this side. Before reading a bridge timeout as a
+defect, check whether a human was at the keyboard.
+FOUND IN REVIEW, must be fixed by unit 7.1b before stage 7 closes: the worker deleted the posting
+tooltip's death-compensation disclosure instead of moving it. It was `posting.wageOffered ×
+DeathCompensationDays()`, which is genuinely wrong now, but the obligation still exists and is now
+per-applicant — it belongs on the applicant row as their ask × the clause days. Same failure class
+as unit 2.6b, where an explanation was deleted while a maximum was added.
 Last done: 7.0 — recon, committed a564c18. STAGE 7 IS PARTLY OPEN: F25 needs no schema bump and no
 new Harmony patch, because each applicant's `openMarketAsk` is already persisted and the census is
 regenerated rather than saved. F23, F24 and F22 each need new authoritative state that cannot be
@@ -14,7 +33,7 @@ makes them a lighter blocker than stage 6's. STAGE 6 REMAINS BLOCKED: F07, F19 a
 schema bump and a new patch on vanilla's crafting completion, because nothing observes an item
 being made.
 Updated: 2026-09-08 12:40 (session compacted; run resumed from the RESUME BRIEF below)
-Wakes: 86 · last full load at wake 85
+Wakes: 88 · last full load at wake 85
 READ THE "RESUME BRIEF" SECTION BELOW THE HEADER FIRST — it carries every finding's disposition, the
 two pending operator decisions, the stage-6 seams, and the F06 gap. Written for a compaction.
 
