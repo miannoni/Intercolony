@@ -46,6 +46,41 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### F21 logistics figure needs a supplier-choice read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A supplier quote's tooltip now
+discloses the distance charge in whole silver per unit beside how the goods come: **Logistics: +N
+silver per unit — They deliver it** or **Logistics: +N silver per unit — You collect it**. Arrival
+time remains in its existing column. The figure is derived by inverting the multipliers that produced
+the quoted price, using the factors stored on the quotation, so it reports the logistics cost
+actually charged rather than a second estimate. If those factors cannot support the derivation, the
+tooltip says **Logistics: unavailable** instead of guessing. Assertions and mutation evidence cover
+this shipped portion; they do not settle whether the line helps a player read and choose.
+
+**Steps.** In play, open supplier quotes and read the logistics line beside the rest of each tooltip.
+Judge whether it reads clearly, and whether the number is useful for choosing between suppliers —
+the reason for adding it. Watch for **Logistics: unavailable** in normal play; it should be rare, and
+a common result means a derivation case is missing. Finally, judge whether cost and method are better
+read together on one line or would be clearer separated.
+
+### F21's larger ask and F11 are deliberate stops
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. The larger F21 ask is not built.
+F21 calls for cost and time to reflect route difficulty, cargo and provisions, settlement capability,
+and a real choice of transport method. None of those exist in the mod: there is no route model, no
+provisions, no logistics capability, and no transport method beyond the delivery-or-pickup boolean.
+What shipped is the foundation — one place that answers cost, time and method, where five unrelated
+formulas used to — plus the logistics disclosure above. The built portion has assertions and mutation
+evidence; the larger model does not exist.
+
+F11 — Request Goods responses arriving progressively — was not started. RFQ responses are generated
+synchronously before the request is stored, so staggering them needs a persisted pending queue, the
+first save-schema bump of this batch, and a migration. That is an operator decision, not work to slip
+in.
+
+This entry records deliberate stops rather than requesting play. Nothing in the unbuilt work described
+here is player-visible.
+
 ### F05 receiving locations need a warehouse-arrival and overflow check
 
 Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A stockpile zone or a storage
