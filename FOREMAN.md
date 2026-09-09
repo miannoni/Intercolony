@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: **D — RUNTIME DEFECT TRIAGE. THE CORRECTION PLAN IS PAUSED AT C3.3 AND RESUMES THERE.**
-Unit: D.0 — recon on two defects found in real play, one potentially save-corrupting
-Worker: sol recon running — `…\scratchpad\recon-defects.out`
+Unit: D.1 — the discard guard must mean what its comment says
+Worker: luna running — `…\scratchpad\unit-d1.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -148,6 +148,41 @@ preserved at `…\scratchpad\playtest-evidence\Player-prev-CAPTURED.log`** and t
 own Lords for guests, and **avilmask.CommonSense**, which prefixes the exact job giver in defect B's
 stack. Nothing here may be blamed on Intercolony merely because it happened in an Intercolony game.
 
+### THE DISPOSITIONS, 2026-09-09. They differ, and both are evidenced.
+
+**DEFECT B IS OURS, AND IT IS A REAL DEFECT IN SHIPPED CODE.** `EmploymentService.cs:1093-1102`
+discards a worker with the guard `!worker.Spawned && Find.WorldPawns.Contains(worker)`, under a
+comment that says "a worker dismissed before arrival". **A DEAD employee satisfies that predicate**
+— a dead pawn is despawned, and `WorldPawns.Contains` includes the dead collection
+(`reference/decompiled/RimWorld.Planet/WorldPawns.cs:191`, `:388`). The comment states an intent
+the code never implemented.
+
+The chain, every step cited by recon and the last two verified by me: vanilla holds the dead pawn
+inside the corpse BY REFERENCE (`Corpse.cs:163-167`); our sweep discards it; the save writes the
+discarded reference as null (`Scribe_References.cs:60-75`); the load drops the null entry
+(`ThingOwner.cs:53-63`); the grave is left holding **a corpse with an empty container**; and
+vanilla `JoyGiver_VisitGrave` then throws on `Corpse.InnerPawn.Faction` for every colonist looking
+for joy.
+
+**The operator's save contains the end state**: grave `Grave508055`, corpse `Corpse_Human849086`,
+`<innerList />`. The pawn was the employee **Sinni**, contract 110039, "Sinni died before the term
+ended".
+
+**DEFECT A IS NOT OURS, and it must not be patched defensively.** The captured log names the
+holder outright: `curParent=Moth` (`Player-prev-CAPTURED.log:3023`). Moth is a `Town_Trader` in
+Faction_14, a departed trade caravan pawn with no Intercolony contract, quest or record. The
+reference lives in **Hospitality's `CompGuest.lord`** — its own serialized field, which vanilla
+cannot clear when it removes a Lord because vanilla only knows about `Pawn.lord`. Intercolony
+creates exit Lords through `QuestPart_Leave` and one directly in safe passage, but it never stores
+or persists a Lord reference.
+
+Worth knowing: the save has since been rewritten by continued play and Moth's node now reads
+`<lord>null</lord>` — the stale reference resolved to null on load and was saved back as null. The
+warning is noisy rather than progressive, and the original bytes that reproduce it are gone.
+
+**They are independent.** Different pawns, factions, objects and causes; the only thing they share
+is the shape of a saved reference outliving its target.
+
 ### What I established myself, before the recon returned
 
 **Defect B's null is identified.** `JoyGiver_VisitGrave`'s validator evaluates
@@ -220,7 +255,10 @@ point of the ceiling is that commerce cannot buy an alliance.
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | D.0 — recon on both defects, against the captured log and the play save | Sol recon running |
+| ✅ | D.0 — recon on both defects, against the captured log and the play save | accepted; both claims spot-checked |
+| 🔨 | D.1 — the discard guard must mean what its comment says | Luna running |
+| ⬜ | D.2 — the regression assertion, through save/load | not started |
+| ⬜ | D.3 — record defect A's not-ours disposition in `PROGRESS.md` | not started |
 
 ## C1 — the recon, and what I decided from it
 
