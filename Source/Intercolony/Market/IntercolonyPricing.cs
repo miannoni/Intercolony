@@ -696,7 +696,7 @@ namespace Intercolony
             return def.BaseMarketValue;
         }
 
-        private static float BaseValue(ThingDef def, ThingDef stuff, Thing actualThing)
+        internal static float BaseValue(ThingDef def, ThingDef stuff, Thing actualThing)
         {
             Thing valueThing = actualThing?.GetInnerIfMinified();
             if (valueThing != null && !valueThing.Destroyed && valueThing.def == def)

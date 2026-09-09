@@ -60,6 +60,11 @@ namespace Intercolony
         public ThingDef thingDef;
         public ThingDef stuffDef;
         public QualityCategory? quality;
+        /// <summary>
+        /// The per-unit market value captured from the actual Thing at hire. Zero means that no
+        /// value was recorded, as in a legacy record saved before this field existed.
+        /// </summary>
+        public float unitValue;
         public int quantity;
 
         public void ExposeData()
@@ -67,6 +72,7 @@ namespace Intercolony
             Scribe_Defs.Look(ref thingDef, "thingDef");
             Scribe_Defs.Look(ref stuffDef, "stuffDef");
             Scribe_Values.Look(ref quality, "quality");
+            Scribe_Values.Look(ref unitValue, "unitValue", 0f);
             Scribe_Values.Look(ref quantity, "quantity", 0);
         }
     }
@@ -181,13 +187,13 @@ namespace Intercolony
                     continue;
                 }
 
-                float baseValue = IntercolonyPricing.BaseValue(item.thingDef, item.stuffDef);
-                if (baseValue <= 0f || float.IsNaN(baseValue) || float.IsInfinity(baseValue))
+                float unitValue = ReplacementValuePerUnit(item);
+                if (unitValue <= 0f || float.IsNaN(unitValue) || float.IsInfinity(unitValue))
                 {
                     continue;
                 }
 
-                total += baseValue * item.quantity;
+                total += unitValue * item.quantity;
             }
 
             return total;
@@ -503,12 +509,17 @@ namespace Intercolony
 
         private static float ReplacementValuePerUnit(EmploymentEquipmentRecord item)
         {
-            if (item == null || item.thingDef == null || item.quantity <= 0)
+            if (item == null || item.thingDef == null)
             {
                 return 0f;
             }
 
-            float baseValue = IntercolonyPricing.BaseValue(item.thingDef, item.stuffDef);
+            float baseValue = item.unitValue;
+            if (baseValue <= 0f || float.IsNaN(baseValue) || float.IsInfinity(baseValue))
+            {
+                baseValue = IntercolonyPricing.BaseValue(item.thingDef, item.stuffDef);
+            }
+
             return baseValue > 0f && !float.IsNaN(baseValue) && !float.IsInfinity(baseValue)
                 ? baseValue
                 : 0f;
@@ -680,6 +691,7 @@ namespace Intercolony
                 thingDef = item.def,
                 stuffDef = item.Stuff,
                 quality = quality,
+                unitValue = IntercolonyPricing.BaseValue(item.def, item.Stuff, item),
                 quantity = item.stackCount
             });
         }
