@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.12b — E1's oracle must become quality-aware, and the fixture needs a masterwork
-Worker: luna running — `…\scratchpad\unit-7-12b.out`
-Last done: 7.12, the quality-aware bond, accepted at `1bdac06` — labor 48/0/0, economy 142/0/0.
-Updated: 2026-09-09 01:45
+Unit: 7.10 — F19's direct-input figure must reach the margin
+Worker: luna running — `…\scratchpad\unit-7-10.out`
+Last done: 7.12b, the masterwork bond assertions, accepted at `b723d41` — labor 49/0/0, three assertions red under mutation.
+Updated: 2026-09-09 02:05
 Foreman load: 2026-09-09 00:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -388,8 +388,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.9b2 — the writer at `EmploymentService.cs:138` and the hire message | accepted, `ca5860f` |
 | ✅ | 7.9b3b+c — displayed equals charged, with the literal oracle restored | accepted, `477ad58` |
 | ✅ | 7.12 — F23's bond ignores quality when valuing | accepted, `1bdac06`; unasserted by design |
-| 🔨 | 7.12b — E1's oracle becomes quality-aware, fixture gets a masterwork | Luna running |
-| ⬜ | 7.10 — F19's direct-input figure must reach the margin | known defect 2 |
+| ✅ | 7.12b — E1's oracle becomes quality-aware, fixture gets a masterwork | accepted, `b723d41` |
+| 🔨 | 7.10 — F19's direct-input figure must reach the margin | Luna running |
 | ⬜ | 7.11 — Pause must not let a committed uninstall finish | known defect 4 |
 | ⬜ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | known defect 6 |
 | ⬜ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | known defect 7 |
