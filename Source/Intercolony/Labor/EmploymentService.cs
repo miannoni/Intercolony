@@ -55,9 +55,8 @@ namespace Intercolony
 
             if (emergencyDispatch && !LaborCandidateService.CanReachEmergency(candidate))
             {
-                failReason =
-                    $"{candidate.Name} cannot reach the colony within " +
-                    $"{LaborCandidateService.EmergencyReachabilityWindowDays} days for emergency dispatch.";
+                failReason = $"{candidate.Name} is not in the nearest half of the current " +
+                    "direct-hire market for emergency dispatch.";
                 return null;
             }
 

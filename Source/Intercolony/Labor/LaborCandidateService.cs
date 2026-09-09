@@ -25,19 +25,20 @@ namespace Intercolony
         public const float EmergencyDispatchWageMultiplier = 4f;
 
         /// <summary>
-        /// A source must be able to reach the colony in this ordinary travel window to offer an
-        /// emergency direct hire. The window is intentionally narrow; it filters the existing
-        /// market and never creates a worker or a queued request.
+        /// Emergency dispatch keeps the nearest half of the existing direct-hire market, ranked
+        /// by the ordinary travel estimate. This is a deliberately narrow starting balance figure:
+        /// it preserves scarcity without making eligibility depend on a world-specific day count.
         /// </summary>
-        public const int EmergencyReachabilityWindowDays = 2;
+        public const float EmergencyMarketFraction = 0.5f;
 
         /// <summary>
-        /// Emergency direct hires use the existing arrival-tick field, with a one-day urgent
-        /// arrival for candidates that can reach the colony inside the reachability window.
-        /// Drop-pod arrival is deliberately absent: F21 has no settlement logistics capability
-        /// model to gate it on, and equipment tier remains F23's unbuilt request work.
+        /// Emergency direct hires compress the candidate's ordinary travel estimate to roughly one
+        /// third. This is a deliberately urgent starting balance figure; the one-day floor keeps
+        /// the existing arrival-tick contract in whole days. Drop-pod arrival is deliberately
+        /// absent: F21 has no settlement logistics capability model to gate it on, and equipment
+        /// tier remains F23's unbuilt request work.
         /// </summary>
-        public const int EmergencyArrivalDays = 1;
+        public const float EmergencyArrivalFraction = 1f / 3f;
 
         /// <summary>
         /// What a labor cost of 100% means, relative to the rate this mod shipped with. The
@@ -745,20 +746,82 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Whether an already-listed worker can be dispatched inside F24's urgent window. This is
-        /// a filter on the transient direct-hire pool only: it does not synthesize a replacement,
-        /// preserve a request, select a transport pod, or add an equipment requirement.
+        /// Whether an already-listed worker belongs to F24's urgent slice of the current market.
+        /// The slice is the nearest fraction of the transient direct-hire pool by the existing
+        /// ordinary travel estimate. It does not synthesize a replacement, preserve a request,
+        /// select a transport pod, or add an equipment requirement.
         /// </summary>
         public static bool CanReachEmergency(LaborCandidate candidate)
         {
-            return candidate != null && candidate.pawn != null && candidate.travelDays >= 0 &&
-                   candidate.travelDays <= EmergencyReachabilityWindowDays;
+            if (!IsEmergencyCandidate(candidate) || pool == null || pool.Count == 0)
+            {
+                return false;
+            }
+
+            int candidateIndex = pool.IndexOf(candidate);
+            if (candidateIndex < 0)
+            {
+                return false;
+            }
+
+            int available = EmergencyCandidateCount();
+            if (available == 0)
+            {
+                return false;
+            }
+
+            int rank = 0;
+            for (int i = 0; i < pool.Count; i++)
+            {
+                LaborCandidate offered = pool[i];
+                if (!IsEmergencyCandidate(offered) || ReferenceEquals(offered, candidate))
+                {
+                    continue;
+                }
+
+                int travelComparison = offered.travelDays.CompareTo(candidate.travelDays);
+                bool comesFirst = travelComparison < 0;
+                if (travelComparison == 0)
+                {
+                    int distanceComparison = offered.distanceTiles.CompareTo(candidate.distanceTiles);
+                    comesFirst = distanceComparison < 0 ||
+                        (distanceComparison == 0 && i < candidateIndex);
+                }
+
+                if (comesFirst)
+                {
+                    rank++;
+                }
+            }
+
+            return rank < available;
+        }
+
+        private static bool IsEmergencyCandidate(LaborCandidate candidate)
+        {
+            return candidate != null && candidate.pawn != null && candidate.travelDays >= 0;
+        }
+
+        private static int EmergencyCandidateCount()
+        {
+            int candidateCount = 0;
+            foreach (LaborCandidate candidate in pool)
+            {
+                if (IsEmergencyCandidate(candidate))
+                {
+                    candidateCount++;
+                }
+            }
+
+            return candidateCount == 0
+                ? 0
+                : Mathf.Max(1, Mathf.CeilToInt(candidateCount * EmergencyMarketFraction));
         }
 
         /// <summary>
-        /// Arrival days for the existing employment arrival tick. Emergency dispatch compresses a
-        /// reachable trip to the urgent arrival target, but never makes a same-day ordinary source
-        /// wait longer.
+        /// Arrival days for the existing employment arrival tick. Emergency dispatch compresses
+        /// ordinary travel to the starting urgency fraction and rounds up to a whole day, with a
+        /// one-day floor.
         /// </summary>
         public static int ArrivalDaysFor(LaborCandidate candidate, bool emergencyDispatch)
         {
@@ -768,7 +831,8 @@ namespace Intercolony
             }
 
             return emergencyDispatch
-                ? Mathf.Min(candidate.travelDays, EmergencyArrivalDays)
+                ? Mathf.Max(1, Mathf.CeilToInt(
+                    Mathf.Max(0, candidate.travelDays) * EmergencyArrivalFraction))
                 : candidate.travelDays;
         }
 

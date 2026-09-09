@@ -35,7 +35,8 @@ namespace Intercolony
         /// </summary>
         public static EmploymentHireCostQuote QuoteHireCost(
             IntercolonyWorldComponent state, LaborCandidate candidate, int termDays,
-            WageStructure structure, CombatClause clause, out string failReason)
+            WageStructure structure, CombatClause clause, out string failReason,
+            bool emergencyDispatch = false)
         {
             failReason = null;
             if (state == null || candidate?.pawn == null)
@@ -55,7 +56,7 @@ namespace Intercolony
             int pricingTerm = termDays <= 0 ? LaborCandidateService.MaxTermDays : termDays;
             int baseWage = LaborCandidateService.DailyWage(
                 candidate.pawn, profile, candidate.distanceTiles, pricingTerm,
-                EmployerReputationService.ScoreFor(state), clause);
+                EmployerReputationService.ScoreFor(state), clause, emergencyDispatch);
             int upFront = WageStructureUtility.UpFrontCost(structure, baseWage, termDays);
             EmploymentEquipmentQuote equipmentQuote =
                 EmploymentEquipmentService.Quote(candidate.pawn);

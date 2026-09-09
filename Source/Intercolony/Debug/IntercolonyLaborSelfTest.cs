@@ -1,5 +1,8 @@
 ﻿using System.Collections.Generic;
 using System.Text;
+using System;
+using System.Xml;
+using System.Reflection;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -22,6 +25,17 @@ namespace Intercolony
     /// </summary>
     public static class IntercolonyLaborSelfTest
     {
+        // Independent F24 assertion oracles. Keep these separate from the production constants:
+        // changing a rule must make the assertion explain what moved instead of moving its own
+        // goalposts with the implementation.
+        private const float ExpectedEmergencyMarketFraction = 0.5f;
+        private const float ExpectedEmergencyWageMultiplier = 4f;
+        private const int ExpectedCurrentSaveVersion = 58;
+
+        // DailyWageFor rounds once after applying the urgency multiplier, while the ordinary
+        // listing exposes its already-rounded daily wage. The independent integer oracle is
+        // therefore allowed the two-silver maximum induced by that two-observation rounding gap.
+        private const int EmergencyWageRoundingTolerance = 2;
         private class Results
         {
             public readonly StringBuilder sb = new StringBuilder();
@@ -92,9 +106,34 @@ namespace Intercolony
                 }
 
                 CheckPricing(r, state, pool);
+                List<LaborCandidate> f24OrdinaryPool =
+                    new List<LaborCandidate>(pool);
+                List<LaborCandidate> f24EmergencyPool =
+                    new List<LaborCandidate>(f24OrdinaryPool);
+                f24EmergencyPool.RemoveAll(candidate =>
+                    !LaborCandidateService.CanReachEmergency(candidate));
 
                 // --- Hire ---
                 LaborCandidate candidate = pool[0];
+                LaborCandidate longEmergencyCandidate = f24EmergencyPool.Find(
+                    offered => offered?.pawn != null &&
+                               EmergencyArrivalDaysForAssertion(offered.travelDays) <
+                               offered.travelDays);
+                if (ReferenceEquals(candidate, longEmergencyCandidate) && pool.Count > 1)
+                {
+                    // Leave the longer-trip urgent fixture available for U3 when the ordinary
+                    // listing has another worker the existing F23 path can hire instead.
+                    foreach (LaborCandidate alternative in pool)
+                    {
+                        if (alternative?.pawn != null &&
+                            !ReferenceEquals(alternative, longEmergencyCandidate))
+                        {
+                            candidate = alternative;
+                            break;
+                        }
+                    }
+                }
+
                 int term = candidate.minTermDays;
                 List<Thing> mainFixtureItems = new List<Thing>();
                 bool mainFixtureBuilt = BuildEquipmentBondFixture(
@@ -199,6 +238,13 @@ namespace Intercolony
                         $"value plus 10% {expectedBondBeforeRounding:0.###}, expected bond {expectedBond}, " +
                         $"recorded bond {contract.equipmentBond}, actual bond debit {actualBondCharge:0.###}");
                 }
+
+                // --- F24 emergency dispatch -------------------------------------------------
+                // The emergency assertions sit beside F23's hire-time bond assertion because
+                // both features are commitments made on this same real direct-hire path.
+                CheckEmergencyDispatch(
+                    r, state, map, fixturePawns, contract,
+                    f24OrdinaryPool, f24EmergencyPool);
 
                 long expectedWithdrawal = (long)contract.paidSilver + contract.equipmentBond;
                 r.Check(silverBefore - silverAfter == expectedWithdrawal,
@@ -438,6 +484,636 @@ namespace Intercolony
             r.Check(pool.TrueForAll(c => c.travelDays > 0), "every candidate has a travel time");
             r.Check(pool.TrueForAll(c => c.pawn != null && c.pawn.RaceProps.Humanlike),
                 "every candidate is a humanlike pawn");
+        }
+
+        /// <summary>
+        /// F24's emergency mode is deliberately a direct-hire slice: the ordinary listing is
+        /// filtered, the same candidate is priced with an independent premium, and the existing
+        /// arrival tick is shortened. This stays next to F23's bond assertion because both checks
+        /// drive the real employment transaction rather than a private copy of it.
+        /// </summary>
+        private static void CheckEmergencyDispatch(
+            Results r, IntercolonyWorldComponent state, Map map, List<Pawn> fixturePawns,
+            EmploymentContract ordinaryContract,
+            List<LaborCandidate> ordinaryPoolSnapshot,
+            List<LaborCandidate> emergencyPoolSnapshot)
+        {
+            int savedSilver = PurchaseOrderService.CountColonySilver(map);
+            int savedEmployments = state.Employments.Count;
+            int savedLedger = state.Ledger.Count;
+            int savedLedgerStartTick = state.LedgerStartTick;
+            EmployerReputation savedStandingOwner = state.EmployerStanding;
+            float savedStanding = savedStandingOwner?.Score ?? 0f;
+
+            try
+            {
+                r.Check(IntercolonyWorldComponent.CurrentSaveVersion == ExpectedCurrentSaveVersion,
+                    "U4 CurrentSaveVersion remains 58",
+                    $"expected 58, actual {IntercolonyWorldComponent.CurrentSaveVersion}");
+
+                // Capture U1 before the main F23 hire consumes one candidate; otherwise the exact
+                // nearest-half comparison would be measuring a changed market. U2-U4 deliberately
+                // refresh the live remaining listing.
+                List<LaborCandidate> ordinaryPoolForU1 =
+                    ordinaryPoolSnapshot == null
+                        ? new List<LaborCandidate>(LaborCandidateService.Refresh(state))
+                        : new List<LaborCandidate>(ordinaryPoolSnapshot);
+                List<LaborCandidate> emergencyPoolForU1 =
+                    emergencyPoolSnapshot == null
+                        ? new List<LaborCandidate>(ordinaryPoolForU1)
+                        : new List<LaborCandidate>(emergencyPoolSnapshot);
+                if (emergencyPoolSnapshot == null)
+                {
+                    emergencyPoolForU1.RemoveAll(candidate =>
+                        !LaborCandidateService.CanReachEmergency(candidate));
+                }
+
+                List<LaborCandidate> ordinaryPool =
+                    new List<LaborCandidate>(LaborCandidateService.Refresh(state));
+                List<LaborCandidate> emergencyPool =
+                    new List<LaborCandidate>(ordinaryPool);
+                emergencyPool.RemoveAll(candidate =>
+                    !LaborCandidateService.CanReachEmergency(candidate));
+
+                CheckEmergencyUiFilter(r);
+
+                List<LaborCandidate> expectedEmergencyPool =
+                    ExpectedEmergencyPool(ordinaryPoolForU1);
+                bool ordinaryHasCandidate = expectedEmergencyPool.Count > 0;
+                bool emergencyCandidateSetsDiffer =
+                    !SameCandidateSet(emergencyPoolForU1, ordinaryPoolForU1);
+                bool exactNearestHalf =
+                    emergencyPoolForU1.Count == expectedEmergencyPool.Count &&
+                    SameCandidateSet(emergencyPoolForU1, expectedEmergencyPool);
+                bool strictWhenCandidatesDiffer =
+                    !emergencyCandidateSetsDiffer ||
+                    emergencyPoolForU1.Count < ordinaryPoolForU1.Count;
+                bool nonEmptyWhenCandidateExists =
+                    !ordinaryHasCandidate || emergencyPoolForU1.Count > 0;
+                r.Check(exactNearestHalf && strictWhenCandidatesDiffer &&
+                        nonEmptyWhenCandidateExists,
+                    "U1 emergency pool is exactly the nearest half",
+                    $"ordinary {ordinaryPoolForU1.Count} " +
+                    $"[{CandidateTravelDaysDetail(ordinaryPoolForU1)}], expected nearest " +
+                    $"{expectedEmergencyPool.Count} [{CandidateTravelDaysDetail(expectedEmergencyPool)}], " +
+                    $"emergency {emergencyPoolForU1.Count} " +
+                    $"[{CandidateTravelDaysDetail(emergencyPoolForU1)}], exact {exactNearestHalf}, " +
+                    $"strict when different {strictWhenCandidatesDiffer}, " +
+                    $"non-empty when available {nonEmptyWhenCandidateExists}");
+
+                LaborCandidate emergencyCandidate =
+                    FindEmergencyFixtureCandidate(emergencyPool, requireLongerTravel: true);
+                bool hasLongEmergencyFixture = emergencyCandidate != null;
+                if (!hasLongEmergencyFixture)
+                {
+                    // U2 and U4 do not require the emergency arrival to be shorter than ordinary
+                    // travel. U3 reports its own named fixture skip because that precondition is
+                    // specific to the arrival assertion.
+                    emergencyCandidate =
+                        FindEmergencyFixtureCandidate(emergencyPool, requireLongerTravel: false);
+                }
+
+                if (emergencyCandidate == null)
+                {
+                    string reason =
+                        "no emergency candidate was available in the current direct-hire market; " +
+                        $"travel days found [{CandidateTravelDaysDetail(ordinaryPoolForU1)}]";
+                    r.Skip("U2 emergency dispatch wage premium", reason);
+                    r.Skip("U3 emergency dispatch arrival is urgent", reason);
+                    r.Skip("U4 emergency hire has the ordinary save shape", reason);
+                    return;
+                }
+
+                EmploymentHireCostQuote emergencyQuote =
+                    IntercolonyLaborSelfTestSupport.QuoteHireCost(
+                        state, emergencyCandidate, emergencyCandidate.minTermDays,
+                        WageStructure.Prepaid, CombatClause.Civilian,
+                        out string emergencyQuoteFailure, emergencyDispatch: true);
+                if (emergencyQuote == null)
+                {
+                    string reason = $"emergency quote unavailable: {emergencyQuoteFailure}";
+                    r.Skip("U2 emergency dispatch wage premium", reason);
+                    r.Skip("U3 emergency dispatch arrival is urgent", reason);
+                    r.Skip("U4 emergency hire has the ordinary save shape", reason);
+                    return;
+                }
+
+                int added = IntercolonyLaborSelfTestSupport.EnsureSilver(
+                    map, IntercolonyLaborSelfTestSupport.SilverToEnsure(emergencyQuote));
+                if (added > 0)
+                {
+                    r.Info($"added {added} silver from the emergency hire quote " +
+                           $"({emergencyQuote.totalDue}) so F24 could run.");
+                }
+
+                int hireTick = GenTicks.TicksGame;
+                EmploymentContract emergencyContract = EmploymentService.TryHire(
+                    state, emergencyCandidate, emergencyCandidate.minTermDays, map,
+                    out string emergencyHireFailure, WageStructure.Prepaid,
+                    CombatClause.Civilian, emergencyQuote, emergencyDispatch: true);
+                if (emergencyContract != null)
+                {
+                    TrackPawn(fixturePawns, emergencyContract.pawn);
+                }
+
+                int ordinaryWage = emergencyCandidate.dailyWage;
+                int expectedEmergencyWage = Mathf.RoundToInt(
+                    ordinaryWage * ExpectedEmergencyWageMultiplier);
+                int actualEmergencyWage = emergencyContract?.dailyWage ?? -1;
+                int wageDelta = actualEmergencyWage < 0
+                    ? int.MaxValue
+                    : Mathf.Abs(actualEmergencyWage - expectedEmergencyWage);
+                r.Check(emergencyContract != null && ordinaryWage > 0 &&
+                        wageDelta <= EmergencyWageRoundingTolerance,
+                    "U2 emergency dispatch costs the premium",
+                    $"ordinary {ordinaryWage}/day, multiplier {ExpectedEmergencyWageMultiplier:0.###}x, " +
+                    $"expected {expectedEmergencyWage}/day, actual {actualEmergencyWage}/day, " +
+                    $"delta {wageDelta}, tolerance {EmergencyWageRoundingTolerance}");
+
+                int ordinaryArrivalTick = hireTick +
+                    emergencyCandidate.travelDays * GenDate.TicksPerDay;
+                int expectedEmergencyArrivalDays =
+                    EmergencyArrivalDaysForAssertion(emergencyCandidate.travelDays);
+                int expectedEmergencyArrivalTick = hireTick +
+                    expectedEmergencyArrivalDays * GenDate.TicksPerDay;
+                int actualEmergencyArrivalTick = emergencyContract?.arrivalTick ?? -1;
+                if (!hasLongEmergencyFixture)
+                {
+                    r.Skip("U3 emergency dispatch arrives sooner",
+                        "no emergency candidate had ordinary travel longer than its " +
+                        "one-third emergency arrival; travel days found " +
+                        $"[{CandidateTravelDaysDetail(ordinaryPoolForU1)}]");
+                }
+                else
+                {
+                    r.Check(emergencyContract != null &&
+                            emergencyCandidate.travelDays > expectedEmergencyArrivalDays &&
+                            actualEmergencyArrivalTick == expectedEmergencyArrivalTick &&
+                            actualEmergencyArrivalTick != ordinaryArrivalTick,
+                        "U3 emergency dispatch arrives sooner",
+                        $"ordinary travel {emergencyCandidate.travelDays}d, urgent arrival " +
+                        $"{expectedEmergencyArrivalDays}d, hire tick {hireTick}, " +
+                        $"ordinary arrival tick {ordinaryArrivalTick}, expected urgent tick " +
+                        $"{expectedEmergencyArrivalTick}, actual {actualEmergencyArrivalTick}");
+                }
+
+                if (ordinaryContract == null)
+                {
+                    r.Check(false, "U4 emergency hire has the ordinary save shape",
+                        "the ordinary baseline contract was null");
+                }
+                else if (emergencyContract == null)
+                {
+                    r.Check(false, "U4 emergency hire has the ordinary save shape",
+                        $"emergency hire failed: {emergencyHireFailure}; " +
+                        $"ordinary baseline contract {ordinaryContract.id} exists");
+                }
+                else
+                {
+                    CheckEmergencyContractPersistence(r, ordinaryContract, emergencyContract);
+                }
+            }
+            finally
+            {
+                CleanupAddedEmployments(r, state, savedEmployments);
+                savedStandingOwner?.Adjust(savedStanding - savedStandingOwner.Score);
+                while (state.Ledger.Count > savedLedger)
+                {
+                    state.Ledger.RemoveAt(state.Ledger.Count - 1);
+                }
+
+                state.LedgerStartTick = savedLedgerStartTick;
+                int returned = IntercolonyLaborSelfTestSupport.RestoreStorageSilver(
+                    map, savedSilver);
+                if (returned > 0)
+                {
+                    r.Info($"returned {returned} silver to restore the F24 fixture.");
+                }
+
+                Scribe.ForceStop();
+            }
+        }
+
+        private static void CheckEmergencyUiFilter(Results r)
+        {
+            // DrawHirePage keeps its filtered copy local and exposes no list-returning seam. Check
+            // the compiled method that the player actually uses, including its generated lambda,
+            // so deleting the UI filter cannot leave the behavioral copy below green.
+            MethodInfo drawHirePage = typeof(MainTabWindow_Intercolony).GetMethod(
+                "DrawHirePage", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo removeAll = typeof(List<LaborCandidate>).GetMethod(
+                "RemoveAll", new[] { typeof(Predicate<LaborCandidate>) });
+            MethodInfo canReachEmergency = typeof(LaborCandidateService).GetMethod(
+                "CanReachEmergency", BindingFlags.Static | BindingFlags.Public);
+
+            bool drawCallsRemoveAll = CallsMethod(drawHirePage, removeAll);
+            MethodInfo reachabilityCaller = FindMethodCalling(
+                typeof(MainTabWindow_Intercolony), canReachEmergency);
+            bool uiCallsReachability = reachabilityCaller != null;
+
+            r.Check(drawCallsRemoveAll && uiCallsReachability,
+                "U1 labor UI applies the emergency nearest-half filter",
+                $"DrawHirePage RemoveAll call {drawCallsRemoveAll}, " +
+                $"CanReachEmergency call {uiCallsReachability} in " +
+                $"{(reachabilityCaller == null ? "none" :
+                    $"{reachabilityCaller.DeclaringType?.Name}.{reachabilityCaller.Name}")}");
+        }
+
+        private static MethodInfo FindMethodCalling(Type type, MethodInfo target)
+        {
+            if (type == null || target == null)
+            {
+                return null;
+            }
+
+            foreach (MethodInfo method in type.GetMethods(
+                BindingFlags.Instance | BindingFlags.Static |
+                BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if (CallsMethod(method, target))
+                {
+                    return method;
+                }
+            }
+
+            foreach (Type nestedType in type.GetNestedTypes(
+                BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                MethodInfo nestedCaller = FindMethodCalling(nestedType, target);
+                if (nestedCaller != null)
+                {
+                    return nestedCaller;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool CallsMethod(MethodInfo caller, MethodInfo target)
+        {
+            if (caller == null || target == null)
+            {
+                return false;
+            }
+
+            MethodBody body = caller.GetMethodBody();
+            byte[] il = body?.GetILAsByteArray();
+            if (il == null)
+            {
+                return false;
+            }
+
+            // call, callvirt, and newobj all carry a four-byte method token. The two
+            // methods checked here are emitted as callvirt (List.RemoveAll) and call
+            // (CanReachEmergency). Resolve the token instead of relying on compiler-specific
+            // method names for the generated lambda.
+            for (int i = 0; i + 4 < il.Length; i++)
+            {
+                if (il[i] != 0x28 && il[i] != 0x6F && il[i] != 0x73)
+                {
+                    continue;
+                }
+
+                int token = il[i + 1] |
+                    (il[i + 2] << 8) |
+                    (il[i + 3] << 16) |
+                    (il[i + 4] << 24);
+                MethodBase called;
+                try
+                {
+                    Type[] genericTypeArguments = caller.DeclaringType?.IsGenericType == true
+                        ? caller.DeclaringType.GetGenericArguments()
+                        : null;
+                    Type[] genericMethodArguments = caller.IsGenericMethod
+                        ? caller.GetGenericArguments()
+                        : null;
+                    called = caller.Module.ResolveMethod(
+                        token,
+                        genericTypeArguments, genericMethodArguments);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+
+                if (called != null && called.Name == target.Name &&
+                    SameDeclaringType(called.DeclaringType, target.DeclaringType))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool SameDeclaringType(Type actual, Type expected)
+        {
+            if (actual == expected)
+            {
+                return true;
+            }
+
+            return actual?.IsGenericType == true && expected?.IsGenericType == true &&
+                   actual.GetGenericTypeDefinition() == expected.GetGenericTypeDefinition();
+        }
+
+        private static LaborCandidate FindEmergencyFixtureCandidate(
+            List<LaborCandidate> emergencyPool, bool requireLongerTravel)
+        {
+            if (emergencyPool == null)
+            {
+                return null;
+            }
+
+            foreach (LaborCandidate candidate in emergencyPool)
+            {
+                if (candidate?.pawn != null &&
+                    (!requireLongerTravel ||
+                        EmergencyArrivalDaysForAssertion(candidate.travelDays) <
+                        candidate.travelDays))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static int EmergencyArrivalDaysForAssertion(int ordinaryTravelDays)
+        {
+            return Mathf.Max(1, Mathf.CeilToInt(
+                Mathf.Max(0, ordinaryTravelDays) / 3f));
+        }
+
+        private static List<LaborCandidate> ExpectedEmergencyPool(
+            List<LaborCandidate> ordinaryPool)
+        {
+            // This is a pre-hire snapshot of candidate references, not a snapshot of each
+            // candidate's mutable fields. TryHire calls LaborCandidate.Release(), which nulls the
+            // selected candidate's pawn in the same object held by this list. Requiring pawn !=
+            // null here would therefore erase a valid snapshot member and change N after the
+            // market was captured. Keep the record by its own identity and travel estimate; the
+            // display name is diagnostic only and may correctly become "?" after Release().
+            List<LaborCandidate> ranked = ordinaryPool == null
+                ? new List<LaborCandidate>()
+                : new List<LaborCandidate>(ordinaryPool);
+            ranked.RemoveAll(candidate => candidate == null || candidate.travelDays < 0);
+
+            // Production ranks equal travel-day candidates by source distance, then by their
+            // original market order. The fraction remains an independent assertion oracle.
+            ranked.Sort((left, right) =>
+            {
+                int travelComparison = left.travelDays.CompareTo(right.travelDays);
+                if (travelComparison != 0)
+                {
+                    return travelComparison;
+                }
+
+                int distanceComparison = left.distanceTiles.CompareTo(right.distanceTiles);
+                if (distanceComparison != 0)
+                {
+                    return distanceComparison;
+                }
+
+                return ordinaryPool.IndexOf(left).CompareTo(ordinaryPool.IndexOf(right));
+            });
+
+            // Independent oracle: ceil(N x 0.5), with N taken from the captured ordinary pool.
+            // Do not replace this with LaborCandidateService's candidate-count helper.
+            int expectedCount = Mathf.CeilToInt(
+                ranked.Count * ExpectedEmergencyMarketFraction);
+            if (ranked.Count > expectedCount)
+            {
+                ranked.RemoveRange(expectedCount, ranked.Count - expectedCount);
+            }
+
+            return ranked;
+        }
+
+        private static bool SameCandidateSet(
+            List<LaborCandidate> actual, List<LaborCandidate> expected)
+        {
+            if (actual == null || expected == null || actual.Count != expected.Count)
+            {
+                return false;
+            }
+
+            foreach (LaborCandidate candidate in actual)
+            {
+                if (!expected.Contains(candidate))
+                {
+                    return false;
+                }
+            }
+
+            foreach (LaborCandidate candidate in expected)
+            {
+                if (!actual.Contains(candidate))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string CandidateTravelDaysDetail(List<LaborCandidate> candidates)
+        {
+            if (candidates == null || candidates.Count == 0)
+            {
+                return "none";
+            }
+
+            StringBuilder detail = new StringBuilder();
+            foreach (LaborCandidate candidate in candidates)
+            {
+                if (detail.Length > 0)
+                {
+                    detail.Append(", ");
+                }
+
+                string name = candidate == null ? "null" : candidate.Name;
+                if (string.IsNullOrEmpty(name))
+                {
+                    name = "<unnamed>";
+                }
+
+                detail.Append(name)
+                    .Append('=')
+                    .Append(candidate?.travelDays ?? -1)
+                    .Append('d');
+            }
+
+            return detail.ToString();
+        }
+
+        private static void CheckEmergencyContractPersistence(
+            Results r, EmploymentContract ordinaryContract, EmploymentContract emergencyContract)
+        {
+            HashSet<string> ordinaryNodes = PersistedContractNodeNames(
+                ordinaryContract, out string ordinaryFailure);
+            HashSet<string> emergencyNodes = PersistedContractNodeNames(
+                emergencyContract, out string emergencyFailure);
+            if (ordinaryNodes == null || emergencyNodes == null)
+            {
+                r.Check(false, "U4 emergency hire has the ordinary save shape",
+                    $"ordinary serializer: {ordinaryFailure ?? "ok"}; " +
+                    $"emergency serializer: {emergencyFailure ?? "ok"}");
+                return;
+            }
+
+            HashSet<string> expectedNodes = ExpectedEmploymentContractNodeNames();
+            // The ordinary baseline is the existing F23 fixture hire, which deliberately carries
+            // apparel. A generated emergency worker may or may not carry bondable gear, so the
+            // presence of this already-known F23 node is candidate-dependent, not F24 state.
+            HashSet<string> candidateDependentNodes = new HashSet<string>(
+                new[] { "equipmentBond" }, StringComparer.Ordinal);
+            HashSet<string> ordinaryOnly = new HashSet<string>(
+                ordinaryNodes, StringComparer.Ordinal);
+            ordinaryOnly.ExceptWith(emergencyNodes);
+            HashSet<string> emergencyOnly = new HashSet<string>(
+                emergencyNodes, StringComparer.Ordinal);
+            emergencyOnly.ExceptWith(ordinaryNodes);
+            HashSet<string> ordinaryShapeOnly = new HashSet<string>(
+                ordinaryOnly, StringComparer.Ordinal);
+            ordinaryShapeOnly.ExceptWith(candidateDependentNodes);
+            HashSet<string> emergencyShapeOnly = new HashSet<string>(
+                emergencyOnly, StringComparer.Ordinal);
+            emergencyShapeOnly.ExceptWith(candidateDependentNodes);
+            HashSet<string> ordinaryUnexpected = new HashSet<string>(
+                ordinaryNodes, StringComparer.Ordinal);
+            ordinaryUnexpected.ExceptWith(expectedNodes);
+            HashSet<string> emergencyUnexpected = new HashSet<string>(
+                emergencyNodes, StringComparer.Ordinal);
+            emergencyUnexpected.ExceptWith(expectedNodes);
+            HashSet<string> unexpectedContractFields =
+                UnexpectedEmploymentContractFieldNames(expectedNodes);
+
+            bool sameShape = ordinaryShapeOnly.Count == 0 && emergencyShapeOnly.Count == 0;
+            bool noNewPersistedNode = ordinaryUnexpected.Count == 0 &&
+                emergencyUnexpected.Count == 0 && unexpectedContractFields.Count == 0;
+            r.Check(sameShape && noNewPersistedNode,
+                "U4 emergency hire has the ordinary save shape",
+                $"ordinary id {ordinaryContract.id}, wage {ordinaryContract.dailyWage}/day, " +
+                $"arrival tick {ordinaryContract.arrivalTick}; emergency id " +
+                $"{emergencyContract.id}, wage {emergencyContract.dailyWage}/day, arrival tick " +
+                $"{emergencyContract.arrivalTick}; ordinary-only [{NodeNamesDetail(ordinaryOnly)}], " +
+                $"emergency-only [{NodeNamesDetail(emergencyOnly)}], unexpected ordinary " +
+                $"[{NodeNamesDetail(ordinaryUnexpected)}], unexpected emergency " +
+                $"[{NodeNamesDetail(emergencyUnexpected)}], candidate-dependent node allowed " +
+                $"[{NodeNamesDetail(candidateDependentNodes)}], unexpected contract fields " +
+                $"[{NodeNamesDetail(unexpectedContractFields)}]");
+        }
+
+        private static HashSet<string> PersistedContractNodeNames(
+            EmploymentContract contract, out string failureReason)
+        {
+            failureReason = null;
+            try
+            {
+                if (contract == null)
+                {
+                    failureReason = "contract was null";
+                    return null;
+                }
+
+                if (Scribe.saver == null)
+                {
+                    failureReason = "vanilla Scribe saver was unavailable";
+                    return null;
+                }
+
+                string xml = Scribe.saver.DebugOutputFor(contract);
+                if (String.IsNullOrEmpty(xml))
+                {
+                    failureReason = "vanilla Scribe produced no XML";
+                    return null;
+                }
+
+                XmlDocument document = new XmlDocument();
+                document.LoadXml(xml);
+                XmlElement root = document.DocumentElement;
+                if (root == null)
+                {
+                    failureReason = "vanilla Scribe XML had no document element";
+                    return null;
+                }
+
+                HashSet<string> nodes = new HashSet<string>(StringComparer.Ordinal);
+                foreach (XmlNode child in root.ChildNodes)
+                {
+                    if (child.NodeType == XmlNodeType.Element)
+                    {
+                        nodes.Add(child.Name);
+                    }
+                }
+
+                return nodes;
+            }
+            catch (Exception ex)
+            {
+                failureReason = $"vanilla Scribe XML inspection threw {ex.GetType().Name}: {ex.Message}";
+                return null;
+            }
+            finally
+            {
+                Scribe.ForceStop();
+            }
+        }
+
+        private static HashSet<string> ExpectedEmploymentContractNodeNames()
+        {
+            return new HashSet<string>(
+                new[]
+                {
+                    "id", "settlementId", "settlementName", "factionName",
+                    "pawn", "employerFaction", "quest", "destinationMap", "originalKind",
+                    "workerName", "workerSkills",
+                    "dailyWage", "termDays", "paidSilver", "arrivedEquipment",
+                    "equipmentBond", "equipmentBondSettled",
+                    "combatClause", "combatIncidents", "clauseBreaches",
+                    "countedAttackTick", "lastIncidentTick", "permanentInjuriesOnArrival",
+                    "compensationPaid",
+                    "wageStructure", "nextPaymentTick", "arrearsSilver", "missedPayments",
+                    "refusingWork", "refusalReason", "heldPriorities",
+                    "hiredTick", "arrivalTick", "arrivedTick", "noticeEndTick",
+                    "renewalOffered", "renewalDeclinedByWorker", "renewalDeclinedByPlayer",
+                    "renewalWage", "renewals", "autoRenew",
+                    "transitionOffered", "transitionOfferedTick", "transitionResolved", "endTick",
+                    "status", "outcomeNote", "termLapsedNotified", "downedNotified",
+                    "safePassage", "safePassageEndTick"
+                },
+                StringComparer.Ordinal);
+        }
+
+        private static HashSet<string> UnexpectedEmploymentContractFieldNames(
+            HashSet<string> expectedNodes)
+        {
+            // Scribe_Values omits a default-valued field unless forceSave is requested. Keep this
+            // guard deliberately broader than the emitted-node check: any new contract instance
+            // field is a schema decision worth surfacing, even before a non-default value makes
+            // it visible in XML.
+            HashSet<string> actualFields = new HashSet<string>(StringComparer.Ordinal);
+            foreach (FieldInfo field in typeof(EmploymentContract).GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                actualFields.Add(field.Name);
+            }
+
+            actualFields.ExceptWith(expectedNodes);
+            return actualFields;
+        }
+
+        private static string NodeNamesDetail(HashSet<string> nodes)
+        {
+            if (nodes == null || nodes.Count == 0)
+            {
+                return "none";
+            }
+
+            List<string> ordered = new List<string>(nodes);
+            ordered.Sort(StringComparer.Ordinal);
+            return String.Join(", ", ordered.ToArray());
         }
 
         /// <summary>

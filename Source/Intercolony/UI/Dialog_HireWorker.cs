@@ -317,10 +317,10 @@ namespace Intercolony
 
         private static string EmergencyArrivalTooltip(LaborCandidate candidate, int arrivalDays)
         {
-            return $"This worker's existing {candidate.travelDays}-day travel estimate is inside the " +
-                   $"{LaborCandidateService.EmergencyReachabilityWindowDays}-day urgent window. " +
-                   $"Emergency dispatch uses the existing employment arrival time and brings them in " +
-                   $"{ArrivalLabel(arrivalDays)}. Drop-pod arrival is not offered because F21 has no " +
+            return $"This worker is in the nearest half of the current direct-hire market by ordinary " +
+                   $"travel time ({candidate.travelDays} days). Emergency dispatch uses the existing " +
+                   $"employment arrival time and compresses that trip to {ArrivalLabel(arrivalDays)} " +
+                   "with a one-day minimum. Drop-pod arrival is not offered because F21 has no " +
                    "settlement logistics capability model to gate it on.";
         }
 

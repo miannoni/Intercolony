@@ -189,9 +189,9 @@ namespace Intercolony
             Widgets.CheckboxLabeled(emergencyToggleRect, "Emergency dispatch", ref emergencyDispatch);
             TooltipHandler.TipRegion(
                 emergencyToggleRect,
-                $"Show only existing workers whose travel estimate fits the " +
-                $"{LaborCandidateService.EmergencyReachabilityWindowDays}-day urgent window. " +
-                "Emergency dispatch buys priority and speed with a large wage premium; it does " +
+                "Show only the nearest half of the existing worker market by ordinary travel time. " +
+                "Emergency dispatch compresses the listed travel estimate to about one third, " +
+                "with a one-day minimum, and buys that speed with a large wage premium; it does " +
                 "not create workers, guarantee fulfilment, queue a request, or select a drop pod.");
             if (emergencyDispatch != wasEmergencyDispatch)
             {
@@ -208,12 +208,15 @@ namespace Intercolony
             if (pool.Count == 0)
             {
                 GUI.color = Color.gray;
+                // The nearest-half rule guarantees an emergency candidate whenever the ordinary
+                // listing contains one; this established empty state therefore remains for an
+                // empty ordinary market.
                 string emptyMessage = emergencyDispatch
-                    ? $"No workers can reach the colony within " +
-                      $"{LaborCandidateService.EmergencyReachabilityWindowDays} days.\n\n" +
+                    ? "No workers are currently on offer.\n\n" +
                       "Emergency dispatch filters the existing direct-hire market; it does not " +
-                      "create workers or queue an urgent request. Switch it off for ordinary hires, " +
-                      "or check again after the next market refresh."
+                      "create workers or queue an urgent request. There is therefore nothing to " +
+                      "dispatch until the market refreshes. Check back then, or post a job and " +
+                      "let people come to you."
                     : "No workers on offer.\n\n" +
                       "Settlements you can reach are not releasing labor at the moment. The listing " +
                       "changes with the market — check back after the next refresh, or post a job and " +
