@@ -1,9 +1,13 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F24 in progress; F22 after it. **STAGES 1 THROUGH 6 ARE CLOSED.**
-Unit: 7.8.0 — F22 recon: what is the smallest honest first slice, and where does it attach
-Worker: sol recon running — `…\scratchpad\recon-f22.out`
-Last done: 7.7f at `a264c22` — the F24 play entry. F24 slice 1 is closed; F23 stays part-built.
+Unit: 7.9 — F25's wage: show what is charged, not only what is asked
+Worker: luna running — `…\scratchpad\unit-7-9.out`
+Last done: 7.8.0, the F22 recon — read-only, tree untouched, evidence spot-checked.
+
+**F22 IS ABOUT NINE UNITS and needs an operator decision before it starts.** See the F22 section
+below for what the recon established, including a game-over hazard and six design questions the
+source plan does not answer. The three verified review defects come first regardless.
 
 F22 IS THE LAST FINDING IN STAGE 7 and the recon says it is a system: a reverse listing, an offer
 queue, a colonist who leaves and returns, abstract training and job-type risk. This is the first
@@ -37,6 +41,31 @@ target fixed at launch, and may overlap Luna because it is read-only.
 first created this file — so the review lane audits only work this run produced, not the branch's
 earlier history. `Run started` is `469dddf`'s own timestamp. Both are evidence-based rather than the
 conservative "use HEAD / use now" fallbacks the migration allows.
+
+## F22 — Sol recon, 2026-09-09. NOT STARTED, and it needs an operator decision
+
+Read-only; the tree was untouched and the evidence spot-checked.
+
+**F22 IS ABOUT NINE UNITS** before balancing or playtesting: custody proof, persisted
+listing/offer/assignment records, the Supply page and its eligibility rules, deterministic offer
+generation, offer display and expiry, departure with save/load and map retargeting, return and
+payment, then training and risk as two more.
+
+**THE HAZARD THAT SHAPES EVERYTHING: a bare custom world pawn is NOT recognised as borrowed by
+vanilla's game-over and population systems** (`QuestUtility.cs:734`, `GameEnder.cs:94`). If the last
+colonist leaves on an F22 job, the game could end incorrectly. So the first unit must be the custody
+proof — vanilla lending versus a custom world-pawn lifecycle — because that choice changes the
+persisted shape and the last-colonist behaviour. Everything else waits on it.
+
+Also established: an away pawn is handled by NO Intercolony map-removal or abandonment path, and
+vanilla's lending waits for a valid return map rather than resolving. F22 needs an explicit
+abandonment policy; the recon recommends following vanilla and holding the pawn away.
+
+**SIX QUESTIONS THE SOURCE PLAN DOES NOT ANSWER**, and they are design decisions rather than code:
+what makes a colonist eligible; whether minimum compensation is daily, total or take-home, and when
+it is paid; what job determines the training a returning colonist gains; what drives a settlement's
+labour demand, since no such field exists; what happens to carried inventory, bonded animals, beds
+and titles on departure; and what happens if no player map ever returns.
 
 ## Review findings — Sol review #1, `6ec6c16..493ee4b`, 94 commits, 2026-09-09
 
