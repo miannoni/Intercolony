@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 8 — F08 and F09, recon first. Stage 7 is done apart from F22, which awaits the operator. Stages 1-6 are CLOSED.
-Unit: 8.5 — F09's two persisted fields and its daily sampler, observation only
-Worker: luna running — `…\scratchpad\unit-8-5.out`
-Last done: 8.3, the Relations disclosure, accepted at `08412cf` — F08 IS COMPLETE.
-Updated: 2026-09-09 05:30
+Unit: 8.6 — F09's one-time evaluation at the end of an employment
+Worker: luna running — `…\scratchpad\unit-8-6.out`
+Last done: 8.5 + 8.5b, F09's sampler and two assertion repairs, accepted at `10aa547` — five suites green.
+Updated: 2026-09-09 06:00
 Foreman load: 2026-09-09 03:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -229,6 +229,11 @@ starting with recon, which means **Sol high read-only**, not Luna.
   - **A mutation that fails to compile looks exactly like one that found nothing.** Check the anchor
     is unique and the replacement builds; read the run's log, not the summary line.
   - **When a mutation does not bite, suspect the mutation before the assertion.**
+  - **A fixture that assumes a world shape is flaky, and it will fail on a world that is merely
+    small.** 7.13's travel-ceiling case needed a tile more than 246 tiles away; the next generated
+    world had none, and the suite went red for a reason that had nothing to do with the code. Where
+    a world cannot exercise a bound, SKIP with the reason and the measurement — a red suite that
+    means "small world" teaches everyone to ignore the colour.
   - **An oracle that reads state the test itself has already mutated is measuring the wrong world.**
     F24's U1 looked like an off-by-one in production; in fact the fixture's own earlier hire had
     called `Release()` on the shared candidate, nulling its pawn, so the oracle's `pawn != null`
@@ -482,8 +487,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 8.2 — apply it on a quadrum cadence from the world tick | accepted, `ccd1bdf` |
 | ✅ | 8.4 — F08's assertions, five of them, through the world tick | accepted, `d103024` |
 | ✅ | 8.3 — disclose it in the Relations row | accepted, `08412cf`. **F08 IS COMPLETE** |
-| 🔨 | 8.5 — F09's persisted fields and daily sampler, observation only | Luna running |
-| ⬜ | 8.6 — F09's end evaluation and its guards | not started |
+| ✅ | 8.5 + 8.5b — F09's sampler, and two assertion repairs | accepted, `10aa547` |
+| 🔨 | 8.6 — F09's end evaluation and its guards | Luna running |
 | ⬜ | 8.7 — F09's disclosure in the departure letter | not started |
 | ⬜ | 8.8 — F09's assertions | not started |
 
