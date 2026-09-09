@@ -1091,10 +1091,13 @@ namespace Intercolony
                 worker.kindDef = contract.originalKind;
             }
 
-            // A worker dismissed before arrival was never spawned and is only alive because
-            // TryHire pinned them in the world pawn pool. Unpin and discard, or every cancelled
-            // hire leaves a pawn the GC has been told never to collect.
-            if (status != EmploymentStatus.Captured && worker != null && !worker.Spawned &&
+            // Discard only a live worker whose contract never recorded arrival: TryHire pinned the
+            // unspawned generated pawn in the world pawn pool, so an ended pre-arrival contract
+            // must unpin it or leak a pawn the GC was told never to collect. Never discard a dead
+            // worker here: a corpse may still reference it, and destroying it would empty that
+            // corpse's reference.
+            if (status != EmploymentStatus.Captured && worker != null && !worker.Dead &&
+                contract.arrivedTick == EmploymentContract.NotArrived && !worker.Spawned &&
                 Find.WorldPawns.Contains(worker))
             {
                 Find.WorldPawns.RemoveAndDiscardPawnViaGC(worker);
