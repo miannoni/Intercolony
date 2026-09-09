@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
@@ -58,20 +59,23 @@ namespace Intercolony
     /// </summary>
     public static class CommercialGoodwillPressureService
     {
-        /// <summary>One positive goodwill point per qualifying faction per application.</summary>
-        public const int GoodwillPressureDelta = 1;
+        /// <summary>Goodwill gained by each qualifying faction per application.</summary>
+        public static int GoodwillPressureDelta =>
+            IntercolonyMod.Settings.commercialGoodwillPerInterval;
 
         /// <summary>
-        /// Pressure stops at this BASE goodwill. Vanilla changes a faction to Ally at 75 goodwill;
-        /// stopping at 60 leaves a hard 15-point gap so commerce cannot itself reach alliance.
+        /// Pressure stops at this live-configured BASE goodwill. The setting is capped below
+        /// vanilla's Ally threshold so commerce cannot itself reach alliance.
         /// </summary>
-        public const int GoodwillBaseCeiling = 60;
+        public static int GoodwillBaseCeiling =>
+            IntercolonyMod.Settings.commercialGoodwillCeiling;
 
         /// <summary>Vanilla's goodwill threshold for changing a relation to Ally.</summary>
         public const int VanillaAllyThreshold = 75;
 
         /// <summary>
-        /// Returns one +1 pressure result for each faction with at least one qualifying settlement.
+        /// Returns one configured pressure result for each faction with at least one qualifying
+        /// settlement.
         /// Results are sorted by the faction's stable load ID, never by dictionary enumeration
         /// order, so the same save produces the same application order after reload.
         /// </summary>
@@ -123,7 +127,7 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Returns the same live decision that the quadrum tick uses for one settlement. The
+        /// Returns the same live decision that the scheduled tick uses for one settlement. The
         /// faction is resolved from the live settlement, while the persisted faction name remains
         /// display-only history.
         /// </summary>
@@ -139,6 +143,11 @@ namespace Intercolony
         {
             foreach (CommercialGoodwillPressure pressure in Evaluate(state))
             {
+                if (pressure.Delta <= 0)
+                {
+                    continue;
+                }
+
                 EmployerReputationService.AffectGoodwill(
                     pressure.Faction,
                     pressure.Delta,
@@ -168,7 +177,7 @@ namespace Intercolony
                     0);
             }
 
-            if (reputation.Tier != ReputationTier.Preferred)
+            if (reputation.Score < IntercolonyMod.Settings.commercialReputationRequired)
             {
                 return new CommercialGoodwillPressureEvaluation(
                     CommercialGoodwillPressureStatus.BelowPreferred,
@@ -217,10 +226,12 @@ namespace Intercolony
                     0);
             }
 
+            int remainingHeadroom = Math.Max(0, GoodwillBaseCeiling - baseGoodwill);
+            int appliedDelta = Math.Max(0, Math.Min(GoodwillPressureDelta, remainingHeadroom));
             return new CommercialGoodwillPressureEvaluation(
                 CommercialGoodwillPressureStatus.Earning,
                 faction,
-                GoodwillPressureDelta);
+                appliedDelta);
         }
 
         private static bool CanReceivePressure(

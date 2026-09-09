@@ -37,6 +37,13 @@ namespace Intercolony
         public static int RefreshIntervalTicks =>
             Mathf.RoundToInt(IntercolonyMod.Settings.refreshDays * GenDate.TicksPerDay);
 
+        /// <summary>
+        /// How often commercial goodwill pressure fires, in ticks. Read live so changing the mod
+        /// setting changes the next absolute-tick schedule without adding world state or catch-up.
+        /// </summary>
+        public static int CommercialGoodwillIntervalTicks =>
+            IntercolonyMod.Settings.commercialGoodwillIntervalDays * GenDate.TicksPerDay;
+
         /// <summary>Version this state was last written at. 0 means "predates versioning".</summary>
         private int saveVersion = CurrentSaveVersion;
 
@@ -1772,7 +1779,7 @@ namespace Intercolony
                     EmploymentExperienceService.Sample(employments);
                 }
 
-                if (GenTicks.IsTickInterval(GenDate.TicksPerQuadrum))
+                if (GenTicks.IsTickInterval(CommercialGoodwillIntervalTicks))
                 {
                     CommercialGoodwillPressureService.Apply(this);
                 }
