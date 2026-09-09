@@ -958,7 +958,13 @@ namespace Intercolony
         /// drops anything carried, and puts them under a <c>LordJob_ExitMapBest</c>. Doing it by
         /// hand would mean reimplementing <c>LeaveQuestPartUtility</c> less well.
         /// </summary>
-        public static void End(EmploymentContract contract, EmploymentStatus status, string note)
+        /// <param name="noticeSkipped">
+        /// True only for an open-ended dismissal that skipped its required notice. That goodwill
+        /// consequence is already recorded by RenewalService, so F09 must not add another one.
+        /// This is call context, not persisted contract state.
+        /// </param>
+        public static void End(EmploymentContract contract, EmploymentStatus status, string note,
+            bool noticeSkipped = false)
         {
             if (contract == null || !contract.IsOpen)
             {
@@ -1099,6 +1105,10 @@ namespace Intercolony
             // gone": it vanishes, leaves nothing in the history, and is easy to miss entirely
             // while the camera is elsewhere.
             SendDepartureLetter(contract, status, worker);
+
+            // Resolve after the existing letter has read the original outcome note. F09 records
+            // its result on the contract for history, but its disclosure belongs to the next unit.
+            EmploymentExperienceService.ResolveGoodwill(contract, status, noticeSkipped);
 
             // A closed record must not hold live references: the pawn walks off the map and may
             // be garbage-collected out of the world, and a dangling Scribe_References target

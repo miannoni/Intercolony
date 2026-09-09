@@ -375,7 +375,8 @@ namespace Intercolony
             EmployerReputationService.NoteNoticeSkipped(IntercolonyWorldComponent.Current, contract);
 
             EmploymentService.End(contract, EmploymentStatus.Dismissed,
-                $"{contract.workerName} was dismissed without the {NoticeDays(contract)} days' notice owed");
+                $"{contract.workerName} was dismissed without the {NoticeDays(contract)} days' notice owed",
+                noticeSkipped: true);
         }
     }
 }
