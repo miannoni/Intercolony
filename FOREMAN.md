@@ -6,6 +6,9 @@ findings need the operator: F22 needs a decision, F06 needs a sixth and seventh 
 Worker: idle
 Last done: the batch milestone record in `PROGRESS.md`. The whole suite on a fresh world is
 **1536 passed, 0 failed, 17 skipped, exit 0**.
+Pushed: the branch is on `origin` at the operator's request, tracking
+`origin/foreman/playtest-batch-2026-09-06`, 194 commits ahead of `main`. **`main` is untouched and
+no pull request was opened** — §I of the plan forbids merging and publishing.
 Updated: 2026-09-09 07:05
 Foreman load: 2026-09-09 07:03
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
