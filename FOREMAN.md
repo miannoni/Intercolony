@@ -2,7 +2,7 @@
 
 Stage: C0 — scope lock and regression baseline, under the NEW correction plan.
 Unit: C0.1 — copy the plan into the repo and record the scope lock in `PROGRESS.md`
-Worker: luna running — `…scratchpadNit-c0-1.out`
+Worker: luna running — `…\scratchpad\unit-c0-1.out`
 Last done: the previous run reached a clean halt at `56180ea`; the whole suite on a fresh world was
 **1536 passed, 0 failed, 17 skipped, exit 0**.
 Updated: 2026-09-09 16:05
