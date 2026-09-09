@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C2 — F07, the production rate must count real completions. **C0 AND C1 ARE CLOSED.**
-Unit: C2.0 — recon: what the bill observer misses, and whether the denominator is really wrong
-Worker: sol recon running — `…\scratchpad\recon-c2.out`
+Unit: C2.1 — the sixth Harmony patch, on the moment a frame becomes a building
+Worker: luna running — `…\scratchpad\unit-c2-1.out`
 Last done: C1.2 + C1.2b, C1's seven assertions, accepted at `1c5cc56` — long-term 61/0/0, and the
 mutation that restores the due letter turns six of the seven red.
 Updated: 2026-09-09 17:35
@@ -78,11 +78,51 @@ two workers on the same large UI or settings file.
 | ✅ | C1.1 — the due letter becomes a log, the warning moves after auto-ready | accepted, `9b8e05e` |
 | ✅ | C1.2 + C1.2b — C1's seven assertions and the fixture repair | accepted, `1c5cc56`. **C1 COMPLETE** |
 
+## C2 — the recon, and what I decided from it
+
+Sol recon, read-only. Three load-bearing claims spot-checked in the source myself.
+
+**THE PLAN IS WRONG ABOUT THE DENOMINATOR, and it matters that nobody "fixes" it.**
+`ProductionLedger.cs:103` already divides by a constant `WindowDays`, and
+`HasRecordedProduction` turns true on the first positive bucket (`:128`). One chair today already
+computes 1/5 = 0.2/day. **The only real defect is capture: no chair bucket ever reaches that
+arithmetic.** Recorded here so a later unit does not go looking for a bug that is not there.
+
+**A SIXTH HARMONY PATCH IS NEEDED, and this plan authorises it** where the F06 question could not
+be answered: C2 says to prefer an existing vanilla event, then an Intercolony seam, and only then a
+narrow observation-only patch *with the justification written down*. The justification is:
+`Frame.CompleteConstruction(Pawn)` (`reference/decompiled/RimWorld/Frame.cs:262`) is the
+authoritative moment a frame becomes the finished Thing, it is `void`, the Thing is a local
+variable, and nothing in Intercolony is called by ordinary vanilla construction at all.
+
+**DECIDED:**
+
+  - **C2-D1 — one observer covers construction AND Produce.** Produce places an ordinary vanilla
+    build blueprint (`ProduceLoopMapComponent.cs:119`), so its completions go through the same
+    frame. **Do NOT also record at Produce's `finishedBuilding` branch** (`:82`) — that branch
+    cannot tell a newly finished object from a seed object the player enabled Produce on, and
+    recording in both places would count a Produce chair twice.
+  - **C2-D2 — the bill observer records the wrong def for minifiable goods.** `GenRecipe` wraps a
+    minifiable product in a `MinifiedThing` before returning it
+    (`reference/decompiled/Verse/GenRecipe.cs:121`), and the postfix records `product.def`, so a
+    crafted minifiable good is recorded under the wrapper. Normalise through the inner Thing.
+  - **C2-D3 — minification and reinstallation must stay invisible.** They do not call
+    `CompleteConstruction`, so a chair built once counts once and selling it counts nothing. That
+    is the property the assertions must pin.
+  - **C2-D4 — the extractive paths are OUT OF SCOPE and recorded, not silently skipped.** Recon
+    found that harvesting, mining, wool and milk, eggs and fishing all create contractable goods
+    without any bill and without any Intercolony seam. C2's own list — bills, constructed
+    furniture, Produce loops — is what this stage covers. Whether *harvesting* is "production" is a
+    product decision, and the honest estimate for that answer is another 12-18 production units.
+    It goes to the operator rather than into this stage.
+
 ## Units — stage C2
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | C2.0 — recon: the missing completion paths, and the denominator question | Sol recon running |
+| ✅ | C2.0 — recon: the missing completion paths, and the denominator question | accepted; D1-D4 recorded |
+| 🔨 | C2.1 — normalise minified bill products, add the construction observer | Luna running |
+| ⬜ | C2.2 — C2's assertions | not started |
 
 ## C1 — the recon, and what I decided from it
 
