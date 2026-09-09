@@ -1,11 +1,11 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 9 — F06, the last finding, recon first. **STAGES 1-6 AND 8 ARE CLOSED.** Stage 7 is done apart from F22, which awaits the operator.
-Unit: 9.0 — F06 recon: what vanilla already does about apparel policies
-Worker: sol recon running — `…\scratchpad\recon-stage9.out`
-Last done: 8.7, F09's disclosure, accepted at `d1640f3` — **STAGE 8 IS COMPLETE**.
+Unit: 8.9 — the stage-8 play entry. **STAGE 9 IS BLOCKED — see the Harmony question below.**
+Worker: luna running — `…\scratchpad\unit-8-9.out`
+Last done: 9.0, the F06 recon — read-only, and it found the blocker.
 Updated: 2026-09-09 07:05
-Foreman load: 2026-09-09 03:18
+Foreman load: 2026-09-09 07:03
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
@@ -131,6 +131,37 @@ They differ ON PURPOSE, and the difference is the whole unit
 Making the two behave alike would be a misreading in either direction. Accepted cost, recorded
 rather than discovered later: nothing in a designation records who placed it, so a player's own
 hand-placed Uninstall on the loop's building is cancelled by Pause too.
+
+## STAGE 9 IS BLOCKED ON THE OPERATOR — F06 NEEDS TWO MORE HARMONY PATCHES
+
+Sol recon, 2026-09-09, read-only. I verified the two gates and the patch count myself.
+
+**An employee already has everything F06 needs except permission from vanilla.** After the faction
+transfer they carry a real `Pawn_OutfitTracker` with a real `ApparelPolicy`
+(`EmploymentService.cs:890`, `PawnComponentsUtility.cs:280`), and the tracker is saved with the
+pawn. But they are a quest lodger, and vanilla vetoes them **twice, deliberately**:
+
+  - `PawnColumnWorker_Outfit.cs:41` — the Assign tab shows "Unchangeable" instead of the dropdown.
+  - `JobGiver_OptimizeApparel.cs:68` — the optimizer returns immediately, so nothing is enforced.
+
+Both confirmed by reading the decompiled source. **So F06 cannot be built without patching those
+two seams**, and there is no non-Harmony route: they are private vanilla decisions inside vanilla
+methods.
+
+**THIS COLLIDES WITH A CONSTRAINT THE OPERATOR SET.** The Harmony allowance was declared fully
+spent at five patches when the crafting-completion observer landed — `HarmonyPatches.cs` lines 33,
+71, 115, 172 and 220, counted just now. F06 needs a sixth and a seventh.
+
+**Everything else about F06 is small and needs nothing.** No new apparel system, no filters, no
+uniform model, no second schema bump: one additive `bool` on the contract, default false, absent on
+an old save meaning unmanaged. Recon's honest estimate is twelve units.
+
+**A SECOND OPERATOR QUESTION, from the same recon and worth answering together:** vanilla's
+optimizer can remove disallowed worn apparel and haul it to storage
+(`JobGiver_OptimizeApparel.cs:88`). F23's bond only matches items still on the pawn
+(`EmploymentEquipment.cs:280`, `:384`), so a policy could strip an employee's own coat into a
+stockpile and the colony would keep the bond for gear it did not take. F23 distinguishes returned
+from deliberately retained; it says nothing about policy-driven removal.
 
 ## Stage 8 — the recon, and what I decided from it, 2026-09-09
 
@@ -491,13 +522,14 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 8.6 — F09's end evaluation and its guards | accepted, `c07fae7` |
 | ✅ | 8.8 — F09's five assertions | accepted, `ecf314a` |
 | ✅ | 8.7 — F09's disclosure in the departure letter | accepted, `d1640f3`. **STAGE 8 COMPLETE** |
-| ⬜ | 8.9 — the stage-8 play entry | not started |
+| 🔨 | 8.9 — the stage-8 play entry | Luna running |
 
 ## Units — stage 9
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | 9.0 — F06 recon: what vanilla already does about apparel policies | Sol recon running |
+| ✅ | 9.0 — F06 recon: what vanilla already does about apparel policies | accepted; two claims spot-checked |
+| ⛔ | 9.1+ — F06 implementation, ~12 units | **BLOCKED: needs a sixth and seventh Harmony patch** |
 
 ## Closed-stage unit history
 
