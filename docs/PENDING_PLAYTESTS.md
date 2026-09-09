@@ -138,6 +138,39 @@ prevented from sending good gear. Stripping a valuable bionic or prosthetic from
 special consequence beyond the ordinary bond. The last point is the gap F23 argues for most strongly
 and the largest gap. These unbuilt parts have no assertion or mutation evidence.
 
+### F24 emergency hiring needs an urgency read
+
+Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. The direct-hire screen now has an
+**Emergency dispatch** toggle. When it is on, the candidate list narrows to the nearest half of the
+market by travel time, the wage carries a **4x premium**, and arrival takes a third of the ordinary
+journey with a one-day floor — a worker whose ordinary journey is fifteen days arrives in five. The
+premium and shortened arrival are their own rows beside the signing fee, equipment bond, due-at-hire
+and in-storage figures, so the player can compare an ordinary hire with an emergency one before
+choosing. Assertions and mutation evidence cover this shipped portion.
+
+**Steps.** In a real emergency, open the direct-hire screen, compare ordinary and emergency candidates,
+and switch **Emergency dispatch** on and off. Judge whether **4x** reads as expensive-but-worth-it in
+a real emergency, or as trivial or absurd: F24 asks for a **VERY LARGE PREMIUM** but explicitly refuses
+to mandate a fixed 10x or 20x, so this is only a starting figure. Judge whether a third of the journey
+feels like an emergency at all; without transport pods, the fastest possible arrival is still days,
+while F24's ideal is **SOLDIERS NOW**. Judge whether **the nearest half** feels like a sensible
+narrowing or an arbitrary one, and whether the distance reason is legible when candidates disappear.
+Finally, judge whether the toggle is reachable at the moment it is needed: it sits on the ordinary hire
+screen, and an emergency is exactly when a player will not go looking for it.
+
+One earlier version used an absolute two-day reachability window and could never produce a single
+candidate, because the nearest settlement in a generated world is around ten days away. Assertions
+caught it before it left the branch. There is nothing to test; this is why the rule is now relative to
+the market.
+
+F24's requested **TRANSPORT-POD ARRIVAL** is not built. It is the thing F24 wants most and calls
+**EXCEPTIONAL AND VISCERAL**. It should be gated on a supplying settlement's logistics capability, but
+that capability model does not exist — F21 shipped part-built with no route model, no provisions and
+no settlement capability. Pods without it would be either always-on or arbitrary, which is worse than
+not having them. There is no queued or posting-side urgent request; the toggle only filters the
+immediate hire market. Equipment level is not part of this request; that is F23's unbuilt tier work.
+These unbuilt parts have no assertion or mutation evidence.
+
 ### F25's buyer-side labour market needs a market read
 
 Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. F25's labour market is now two-sided

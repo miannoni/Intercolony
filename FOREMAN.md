@@ -1,14 +1,15 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F24 in progress; F22 after it. **STAGES 1 THROUGH 6 ARE CLOSED.**
-Unit: 7.7e — fix U1's expected-set oracle in the labour self-test
-Worker: none
-Last done: 7.7d — verified, labour 47/1/0. U2, U3 and U4 pass; U1 fails and the TEST is wrong.
+Unit: 7.7f — the F24 play entry
+Worker: luna running — `…\scratchpad\unit-7-7f.out`
+Last done: 7.7b-e accepted at `4a78e0e` — F24's emergency dispatch, its unusable-window fix, and
+four assertions each watched going red. Labour 48/0/0, log clean.
 Updated: 2026-09-09 00:30
 Run started: 2026-09-06 22:37
 Foreman load: 2026-09-09 00:30
 Review checkpoint: 6ec6c16 · reviewed never
-Review: none
+Review: running — `…\scratchpad\review-1.out` · 6ec6c16..493ee4b · started 2026-09-09 00:45
 Run base: 6ec6c16
 Foreman: 86cdc44 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -28,9 +29,10 @@ first created this file — so the review lane audits only work this run produce
 earlier history. `Run started` is `469dddf`'s own timestamp. Both are evidence-based rather than the
 conservative "use HEAD / use now" fallbacks the migration allows.
 
-## UNCOMMITTED WORK IN THE TREE — do not discard
+## F24 slice 1 — accepted at `4a78e0e`
 
-7.7b, 7.7c and 7.7d are all in the working tree and commit together. Nothing is staged.
+Everything below was the state before that commit; it is kept because the reasoning is worth having
+and because the U1 root cause generalises. Nothing here is outstanding any more.
 
   - **7.7c is the production fix and it works.** Emergency dispatch selects the nearest
     `ceil(N x 0.5)` candidates and arrives in `ceil(ordinary / 3)` days with a one-day floor.
@@ -38,12 +40,15 @@ conservative "use HEAD / use now" fallbacks the migration allows.
   - 7.7b/7.7d are the four assertions. **U2, U3 and U4 PASS** — 88/day becomes 352/day at 4x;
     9-day travel becomes a 3-day arrival with matching ticks; emergency and ordinary contracts
     scribe the same shape apart from the candidate-dependent `equipmentBond`.
-  - **U1 FAILS AND THE TEST IS WRONG, NOT THE CODE.** Ordinary pool 15 with travel days
-    [3,4,4,5,5,9,9,9,9,10,10,11,11,16,16]. Production picked 8 — `ceil(15 x 0.5)` — and they are the
-    eight nearest, correctly including the 3-day candidate. The test expected SEVEN and its expected
-    set omits the 3-day candidate entirely: [4,4,5,5,9,9,9]. Wrong in count and in membership; it
-    looks like floor-instead-of-ceil plus a dropped first element, possibly around the candidate
-    whose name renders as "?".
+  - **U1 FAILED AND THE TEST WAS WRONG, NOT THE CODE.** 7.7e fixed it, and the real cause was not
+    what I guessed. There was no floor: the oracle already used `CeilToInt`. **The fixture's own
+    earlier hire called `Release()` on the shared candidate, nulling its pawn, and the oracle's
+    `pawn != null` filter then dropped it** — taking N from 15 to 14 so `ceil(14 x 0.5)` gave 7, and
+    removing the 3-day candidate, which is exactly the one that had been hired. Its name rendered as
+    `?` for the same reason: `LaborCandidate.Name` falls back after `Release`.
+    **An oracle that reads state the test itself has already mutated is measuring the wrong world.**
+    It now snapshots the ranking before the hire and ranks by travel days, then distance, then
+    original index.
 
 **NEXT ACTION: unit 7.7e — fix the expected-set computation in the TEST, not the production
 selection. Then mutate all four assertions and commit 7.7b + 7.7c + 7.7d together.**
