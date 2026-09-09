@@ -1199,6 +1199,8 @@ namespace Intercolony
         public static void AdvanceContracts(IntercolonyWorldComponent state)
         {
             int now = GenTicks.TicksGame;
+            // Keep this local so already-open Accepted orders are not re-announced on later beats.
+            List<SalesOrder> cycleOrdersRaisedThisPass = new List<SalesOrder>();
 
             foreach (RecurringContract contract in state.Contracts)
             {
@@ -1266,10 +1268,19 @@ namespace Intercolony
                 if (now >= contract.nextCycleTick)
                 {
                     RaiseCycleOrder(state, contract);
+                    if (contract.activeOrderId != 0)
+                    {
+                        SalesOrder cycleOrder = state.FindOrder(contract.activeOrderId);
+                        if (cycleOrder != null)
+                        {
+                            cycleOrdersRaisedThisPass.Add(cycleOrder);
+                        }
+                    }
                 }
             }
 
             AdvanceAutoReady(state);
+            NotifyCycleOrdersRequiringAttention(cycleOrdersRaisedThisPass);
         }
 
         public static int AdvanceAutoReady(IntercolonyWorldComponent state)
@@ -1328,6 +1339,47 @@ namespace Intercolony
                    $"{order.RemainingQuantity:N0}x {itemLabel} could not be marked ready automatically.\n\n" +
                    $"{reason}\n\n" +
                    "The order is still open and can be marked ready by hand in Selling -> Orders.";
+        }
+
+        private static void NotifyCycleOrdersRequiringAttention(
+            List<SalesOrder> cycleOrdersRaisedThisPass)
+        {
+            foreach (SalesOrder order in cycleOrdersRaisedThisPass)
+            {
+                if (order == null || order.status != SalesOrderStatus.Accepted ||
+                    order.autoReadyFailureNotified)
+                {
+                    continue;
+                }
+
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Important,
+                    "Agreement delivery needs attention",
+                    CycleOrderAttentionLetterText(order),
+                    LetterDefOf.NeutralEvent);
+            }
+        }
+
+        private static string CycleOrderAttentionLetterText(SalesOrder order)
+        {
+            string itemLabel = order.line?.ShortLabel() ?? "<missing item>";
+            string remaining = order.RemainingQuantity > 0
+                ? $"{order.RemainingQuantity:N0}x {itemLabel}"
+                : itemLabel;
+
+            if (order.fulfillment == FulfillmentMode.SellerDelivery)
+            {
+                return $"{order.settlementName}'s order #{order.id} for {remaining} " +
+                       "needs delivery attention.\n\n" +
+                       "This seller-delivery order is not handled by Auto-ready.\n\n" +
+                       "Review the order in Selling -> Orders and arrange the delivery by hand.";
+            }
+
+            return $"{order.settlementName}'s order #{order.id} for {remaining} " +
+                   "needs delivery attention.\n\n" +
+                   "Auto-ready is off for this agreement, so the delivery is waiting to be " +
+                   "marked ready by hand.\n\n" +
+                   "Mark the order ready by hand in Selling -> Orders.";
         }
 
         /// <summary>Lets a settlement answer a player proposal once its deliberation ends.</summary>
@@ -1699,16 +1751,10 @@ namespace Intercolony
             contract.activeOrderId = order.id;
             contract.nextCycleTick = GenTicks.TicksGame + contract.cadenceTicks;
 
-            IntercolonyLetters.Send(
-                IntercolonyLetterImportance.Always,
-                "Contract delivery due",
-                $"Delivery {contract.cyclesCompleted + contract.cyclesFailed + 1} of " +
-                $"{contract.totalCycles} for {contract.settlementName}:\n\n" +
-                $"{contract.quantityPerCycle}x {contract.ItemLabel()} within " +
-                $"{contract.CadenceDays:F0} days, for " +
-                $"{contract.DiscountedCyclePayment} silver." +
-                DiscountDisplaySentence(contract),
-                LetterDefOf.NeutralEvent);
+            IntercolonyLog.Message(
+                $"Contract {contract.id} opened cycle order #{order.id} for " +
+                $"{contract.settlementName}: {contract.quantityPerCycle}x " +
+                $"{contract.ItemLabel()} due within {contract.CadenceDays:F0} days.");
         }
 
         private static string DiscountDisplayLine(RecurringContract contract)
