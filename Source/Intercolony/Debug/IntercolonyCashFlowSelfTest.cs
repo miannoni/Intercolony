@@ -74,6 +74,7 @@ namespace Intercolony
                 CheckSalesAgreementCycle(r, state);
                 CheckProcurementCycle(r, state);
                 CheckFixedTermPayroll(r, state);
+                CheckPartialScheduledPayroll(r, state);
                 CheckOpenEndedPayroll(r, state);
                 CheckEmptyReport(r, state);
                 CheckNetArithmetic(r, state);
@@ -242,6 +243,54 @@ namespace Intercolony
                     $"secondDay={secondDay}, firstExpense={firstExpense}, " +
                     $"secondExpense={secondExpense}, expectedFirst={expectedFirst}, " +
                     $"intervalDays={contract.wageStructure.IntervalDays()}; {DayValues(report)}");
+            }
+            finally
+            {
+                state.Employments.Remove(contract);
+            }
+        }
+
+        private static void CheckPartialScheduledPayroll(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const int dailyAsk = 40;
+            const int dailyPremiumPercent = 35;
+            const int servedDays = 1;
+            const int arrears = 7;
+            int now = GenTicks.TicksGame;
+            int payday = now + GenDate.TicksPerDay;
+            EmploymentContract contract = new EmploymentContract
+            {
+                status = EmploymentStatus.Active,
+                wageStructure = WageStructure.Daily,
+                dailyWage = dailyAsk,
+                nextPaymentTick = payday,
+                // A payday exactly at the end tick is still due. With zero days remaining, this
+                // selects PeriodDue's strict partial-period guard (0 < the one-day interval).
+                endTick = payday,
+                termDays = 2,
+                arrearsSilver = arrears
+                // pawn is deliberately left null; the forecast only needs scalar contract fields.
+            };
+
+            try
+            {
+                state.AddEmployment(contract);
+                CashFlowReport report = CashFlowForecast.Compute(state);
+                int paydayDay = DayIndex(report, payday);
+                int observed = ExpenseAt(report, paydayDay);
+                int expected =
+                    dailyAsk * (100 + dailyPremiumPercent) / 100 * servedDays + arrears;
+
+                // This must fail if a final part period is billed at the stored ask instead of the
+                // same charged daily rate as a full period.
+                r.Check(
+                    paydayDay >= 0 && observed == expected &&
+                    HasOnlyExpenseAt(report, paydayDay, expected),
+                    "a part period is billed at the same daily rate as a full one, not a different player rate",
+                    $"payday={payday}, endTick={contract.endTick}, observed={observed}, " +
+                    $"expected={expected} ({dailyAsk}*{100 + dailyPremiumPercent}/100*" +
+                    $"{servedDays}+{arrears}); {DayValues(report)}");
             }
             finally
             {

@@ -62,6 +62,7 @@ namespace Intercolony
             try
             {
                 CheckWageStructureMaths(r);
+                CheckPartialEndSettlement(r, state, map);
                 CheckEscalation(r, state, map);
             }
             catch (System.Exception ex)
@@ -152,6 +153,55 @@ namespace Intercolony
             r.Check(WageStructure.Daily.IntervalDays() == 1, "a daily pay period is one day");
             r.Check(!WageStructure.Prepaid.IsPeriodic() && WageStructure.Daily.IsPeriodic(),
                 "prepaid is not on a schedule and daily is");
+        }
+
+        private static void CheckPartialEndSettlement(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const int dailyAsk = 40;
+            const int dailyPremiumPercent = 35;
+            const int workedDays = 1;
+            int now = GenTicks.TicksGame;
+            EmploymentContract contract = new EmploymentContract
+            {
+                settlementName = "Payroll self-test",
+                workerName = "partial-period probe",
+                status = EmploymentStatus.Active,
+                wageStructure = WageStructure.Daily,
+                dailyWage = dailyAsk,
+                destinationMap = map,
+                arrivalTick = now - 2 * GenDate.TicksPerDay,
+                nextPaymentTick = now - GenDate.TicksPerDay / 2,
+                endTick = now,
+                termDays = 3,
+                termLapsedNotified = true
+            };
+            int expected = dailyAsk * (100 + dailyPremiumPercent) / 100 * workedDays;
+
+            try
+            {
+                state.AddEmployment(contract);
+                IntercolonyLaborSelfTestSupport.EnsureSilver(map, expected);
+                int before = PurchaseOrderService.CountColonySilver(map);
+
+                PayrollService.SettleOnEnd(
+                    contract, EmploymentStatus.Dismissed, state.LaborDebts, state);
+
+                int after = PurchaseOrderService.CountColonySilver(map);
+                // This must fail if a worker leaving part way through a period is settled at a
+                // different rate from a full period, even though the stored field is the ask.
+                r.Check(
+                    before - after == expected && contract.paidSilver == expected &&
+                    contract.arrearsSilver == 0,
+                    "a worker leaving part way through a period is settled at the same daily rate as a full one, not a different player rate",
+                    $"observed={contract.paidSilver} silver, expected={expected} " +
+                    $"({dailyAsk}*{100 + dailyPremiumPercent}/100*{workedDays}), " +
+                    $"storage={before}->{after}");
+            }
+            finally
+            {
+                state.Employments.Remove(contract);
+            }
         }
 
         /// <summary>
