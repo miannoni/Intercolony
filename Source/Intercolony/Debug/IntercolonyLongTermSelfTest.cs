@@ -87,6 +87,17 @@ namespace Intercolony
                 new List<ProcurementContractDiagnosticSnapshot>();
         }
 
+        private sealed class FactionGoodwillSnapshot
+        {
+            public Faction faction;
+            public FactionRelation factionRelation;
+            public FactionRelation playerRelation;
+            public FactionRelationKind factionRelationKind;
+            public int factionBaseGoodwill;
+            public FactionRelationKind playerRelationKind;
+            public int playerBaseGoodwill;
+        }
+
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
             Results r = new Results();
@@ -109,6 +120,7 @@ namespace Intercolony
                 CheckSeveranceShape(r);
                 CheckOpenEndedContract(r);
                 CheckNoticeRules(r);
+                CheckF09EmploymentGoodwill(r, state);
                 CheckRenewalGating(r, state);
                 CheckAutoRenewal(r, state);
                 CheckSupplyAutoReady(r, state, map);
@@ -284,6 +296,290 @@ namespace Intercolony
             EmploymentContract fixedTerm = Synthetic(CombatClause.Civilian, 40, 100);
             r.Check(RenewalService.NoticeDays(fixedTerm) == 0,
                 "a fixed-term contract owes no notice — the end date was the notice");
+        }
+
+        private static void CheckF09EmploymentGoodwill(
+            Results r, IntercolonyWorldComponent state)
+        {
+            Faction playerFaction = Faction.OfPlayer;
+            Faction originFaction = FindF09OriginFaction(playerFaction);
+            TickManager tickManager = Find.TickManager;
+            if (state?.Employments == null || playerFaction == null || originFaction == null ||
+                tickManager == null)
+            {
+                SkipF09EmploymentGoodwillAssertions(
+                    r, "no real origin faction with a bilateral, changeable goodwill relation " +
+                    "and live tick manager was available");
+                return;
+            }
+
+            List<FactionGoodwillSnapshot> savedGoodwill =
+                SnapshotFactionGoodwill(playerFaction);
+            List<EmploymentContract> savedEmployments =
+                new List<EmploymentContract>(state.Employments);
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+            EmployerReputation savedStanding = state.EmployerStanding?.Snapshot();
+            int savedTick = tickManager.TicksGame;
+
+            try
+            {
+                int fixtureGoodwill = originFaction.NaturalGoodwill;
+                if (fixtureGoodwill + 3 > 100 || fixtureGoodwill - 3 < -100 ||
+                    !SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill))
+                {
+                    SkipF09EmploymentGoodwillAssertions(
+                        r, "the real faction's vanilla goodwill situation could not hold the " +
+                        "neutral fixture without an effective cap");
+                    return;
+                }
+
+                EmploymentContract happy = F09Contract(
+                    originFaction, -93001, 7.5f, 10);
+                state.AddEmployment(happy);
+                int happyBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    happy, EmploymentStatus.Completed, "F09 happy completion self-test");
+                int happyAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    happyAfter == happyBefore + 3,
+                    "F09 happy long employment adds exactly 3 vanilla goodwill",
+                    $"base goodwill {happyBefore}->{happyAfter}; samples 10; average 0.75");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract miserable = F09Contract(
+                    originFaction, -93002, 3.5f, 10);
+                state.AddEmployment(miserable);
+                int miserableBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    miserable, EmploymentStatus.Completed, "F09 miserable completion self-test");
+                int miserableAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    miserableAfter == miserableBefore - 3,
+                    "F09 miserable long employment subtracts exactly 3 vanilla goodwill",
+                    $"base goodwill {miserableBefore}->{miserableAfter}; samples 10; average 0.35");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract middling = F09Contract(
+                    originFaction, -93003, 5f, 10);
+                state.AddEmployment(middling);
+                int middlingBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    middling, EmploymentStatus.Completed, "F09 middling completion self-test");
+                int middlingAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    middlingAfter == middlingBefore,
+                    "F09 middling long employment leaves vanilla goodwill unchanged",
+                    $"base goodwill {middlingBefore}->{middlingAfter}; samples 10; average 0.50");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract shortEmployment = F09Contract(
+                    originFaction, -93004, 9f, 9);
+                state.AddEmployment(shortEmployment);
+                int shortBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    shortEmployment, EmploymentStatus.Completed, "F09 short completion self-test");
+                int shortAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    shortAfter == shortBefore,
+                    "F09 short employment leaves vanilla goodwill unchanged despite perfect mood",
+                    $"base goodwill {shortBefore}->{shortAfter}; samples 9; average 1.00");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract quit = F09Contract(
+                    originFaction, -93005, 7.5f, 10);
+                state.AddEmployment(quit);
+                int beforePricedEnding = originFaction.BaseGoodwillWith(playerFaction);
+                EmployerReputationService.NoteWalkOut(state, quit);
+                int beforeF09 = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    quit, EmploymentStatus.Quit, "F09 already-priced quit self-test");
+                int afterQuit = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    afterQuit == beforeF09,
+                    "F09 adds no goodwill change to an already-priced quit",
+                    $"pre-priced ending {beforePricedEnding}->{beforeF09}; End {beforeF09}->{afterQuit}; " +
+                    "the other penalty is deliberately not sized here");
+            }
+            finally
+            {
+                tickManager.DebugSetTicksGame(savedTick);
+                RestoreFactionGoodwill(savedGoodwill);
+                RestoreList(state.Employments, savedEmployments);
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+                state.EmployerStanding?.RestoreFrom(savedStanding);
+
+                r.Info(
+                    $"F09 fixture restored {savedGoodwill.Count} faction/player goodwill " +
+                    $"relations, {savedEmployments.Count} employment records, employer standing, " +
+                    $"and tick {savedTick}; generated departure letters were removed.");
+            }
+        }
+
+        private static Faction FindF09OriginFaction(Faction playerFaction)
+        {
+            if (playerFaction == null || Find.FactionManager == null ||
+                Find.WorldObjects?.Settlements == null)
+            {
+                return null;
+            }
+
+            List<Faction> factions = Find.FactionManager.AllFactionsListForReading;
+            foreach (Settlement settlement in Find.WorldObjects.Settlements)
+            {
+                Faction faction = settlement?.Faction;
+                if (faction == null || faction == playerFaction || !factions.Contains(faction) ||
+                    !faction.HasGoodwill || faction.Hidden || faction.defeated ||
+                    faction.def == null || faction.def.permanentEnemy ||
+                    HostilityPolicy.IsAtWar(faction))
+                {
+                    continue;
+                }
+
+                FactionRelation factionRelation = faction.RelationWith(
+                    playerFaction, allowNull: true);
+                FactionRelation playerRelation = playerFaction.RelationWith(
+                    faction, allowNull: true);
+                if (factionRelation == null || factionRelation.other == null ||
+                    playerRelation == null || playerRelation.other == null ||
+                    !faction.CanChangeGoodwillFor(playerFaction, 3) ||
+                    !faction.CanChangeGoodwillFor(playerFaction, -3))
+                {
+                    continue;
+                }
+
+                return faction;
+            }
+
+            return null;
+        }
+
+        private static List<FactionGoodwillSnapshot> SnapshotFactionGoodwill(
+            Faction playerFaction)
+        {
+            List<FactionGoodwillSnapshot> snapshots =
+                new List<FactionGoodwillSnapshot>();
+            if (playerFaction == null || Find.FactionManager == null)
+            {
+                return snapshots;
+            }
+
+            foreach (Faction faction in Find.FactionManager.AllFactionsListForReading)
+            {
+                if (faction == null || faction == playerFaction)
+                {
+                    continue;
+                }
+
+                FactionRelation factionRelation = faction.RelationWith(
+                    playerFaction, allowNull: true);
+                FactionRelation playerRelation = playerFaction.RelationWith(
+                    faction, allowNull: true);
+                if (factionRelation == null || playerRelation == null)
+                {
+                    continue;
+                }
+
+                snapshots.Add(new FactionGoodwillSnapshot
+                {
+                    faction = faction,
+                    factionRelation = factionRelation,
+                    playerRelation = playerRelation,
+                    factionRelationKind = factionRelation.kind,
+                    factionBaseGoodwill = factionRelation.baseGoodwill,
+                    playerRelationKind = playerRelation.kind,
+                    playerBaseGoodwill = playerRelation.baseGoodwill
+                });
+            }
+
+            return snapshots;
+        }
+
+        private static void RestoreFactionGoodwill(
+            List<FactionGoodwillSnapshot> snapshots)
+        {
+            if (snapshots == null)
+            {
+                return;
+            }
+
+            foreach (FactionGoodwillSnapshot snapshot in snapshots)
+            {
+                if (snapshot?.faction == null || snapshot.factionRelation == null ||
+                    snapshot.playerRelation == null)
+                {
+                    continue;
+                }
+
+                snapshot.factionRelation.kind = snapshot.factionRelationKind;
+                snapshot.factionRelation.baseGoodwill = snapshot.factionBaseGoodwill;
+                snapshot.playerRelation.kind = snapshot.playerRelationKind;
+                snapshot.playerRelation.baseGoodwill = snapshot.playerBaseGoodwill;
+            }
+        }
+
+        private static void RestoreList<T>(List<T> target, List<T> saved)
+        {
+            target.Clear();
+            target.AddRange(saved);
+        }
+
+        private static bool SetF09GoodwillFixture(
+            Faction originFaction, Faction playerFaction, int baseGoodwill)
+        {
+            FactionRelation factionRelation = originFaction?.RelationWith(
+                playerFaction, allowNull: true);
+            FactionRelation playerRelation = playerFaction?.RelationWith(
+                originFaction, allowNull: true);
+            if (factionRelation == null || factionRelation.other == null ||
+                playerRelation == null || playerRelation.other == null)
+            {
+                return false;
+            }
+
+            factionRelation.kind = FactionRelationKind.Neutral;
+            factionRelation.baseGoodwill = baseGoodwill;
+            playerRelation.kind = FactionRelationKind.Neutral;
+            playerRelation.baseGoodwill = baseGoodwill;
+
+            return originFaction.GoodwillWith(playerFaction) == baseGoodwill &&
+                   playerFaction.GoodwillWith(originFaction) == baseGoodwill;
+        }
+
+        private static EmploymentContract F09Contract(
+            Faction originFaction, int id, float moodSampleTotal, int moodSampleCount)
+        {
+            return new EmploymentContract
+            {
+                id = id,
+                settlementId = id,
+                settlementName = "F09 self-test settlement",
+                factionName = originFaction?.Name ?? "F09 self-test faction",
+                employerFaction = originFaction,
+                workerName = "F09 probe",
+                workerSkills = "none",
+                dailyWage = 1,
+                termDays = 30,
+                wageStructure = WageStructure.Prepaid,
+                moodSampleTotal = moodSampleTotal,
+                moodSampleCount = moodSampleCount,
+                status = EmploymentStatus.Active
+            };
+        }
+
+        private static void SkipF09EmploymentGoodwillAssertions(
+            Results r, string reason)
+        {
+            r.Skip(
+                "F09 happy long employment adds exactly 3 vanilla goodwill", reason);
+            r.Skip(
+                "F09 miserable long employment subtracts exactly 3 vanilla goodwill", reason);
+            r.Skip(
+                "F09 middling long employment leaves vanilla goodwill unchanged", reason);
+            r.Skip(
+                "F09 short employment leaves vanilla goodwill unchanged despite perfect mood", reason);
+            r.Skip(
+                "F09 adds no goodwill change to an already-priced quit", reason);
         }
 
         // --- §115 renewal ------------------------------------------------------------------
