@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: **D — RUNTIME DEFECT TRIAGE. THE CORRECTION PLAN IS PAUSED AT C3.3 AND RESUMES THERE.**
-Unit: D.1 — the discard guard must mean what its comment says
-Worker: luna running — `…\scratchpad\unit-d1.out`
+Unit: D.2 — the regression assertion, through a real corpse and a save
+Worker: luna running — `…\scratchpad\unit-d2.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -256,8 +256,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 | | Unit | Status |
 |---|---|---|
 | ✅ | D.0 — recon on both defects, against the captured log and the play save | accepted; both claims spot-checked |
-| 🔨 | D.1 — the discard guard must mean what its comment says | Luna running |
-| ⬜ | D.2 — the regression assertion, through save/load | not started |
+| ✅ | D.1 — the discard guard must mean what its comment says | accepted, `68ad1ea` |
+| 🔨 | D.2 — the regression assertion, through a real corpse and a save | Luna running |
 | ⬜ | D.3 — record defect A's not-ours disposition in `PROGRESS.md` | not started |
 
 ## C1 — the recon, and what I decided from it
@@ -343,6 +343,11 @@ newer product direction, not by defect:
     others. The letter count was right, the letter was wrong. **Assert on the branch you meant to
     exercise, and print the reason in the failure detail** — labels alone cost a whole extra run to
     diagnose.
+  - **A green suite whose COUNT dropped is not a green suite — find out why before accepting.**
+    The transition suite went 21 to 20 with no failure and no skip while a defect fix was in the
+    tree. It turned out to be world variance: one assertion there is gated on the best negotiator
+    having any Social at all, and that world rolled a zero. Checked rather than assumed, because a
+    silently unexecuted assertion looks exactly like a passing one.
   - **A fixture that assumes a world shape is flaky, and it will fail on a world that is merely
     small.** 7.13's travel-ceiling case needed a tile more than 246 tiles away; the next generated
     world had none, and the suite went red for a reason that had nothing to do with the code. Where
