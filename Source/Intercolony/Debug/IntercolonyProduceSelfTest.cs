@@ -96,6 +96,8 @@ namespace Intercolony
                         r, map, loops, subject, reservedCells, testRects);
                     CheckPauseBehavior(
                         r, map, loops, subject, reservedCells, testRects);
+                    CheckPauseStopUninstallBehavior(
+                        r, map, loops, subject, reservedCells, testRects, addedDesignations);
                     CheckTargetBehavior(
                         r, map, loops, subject, reservedCells, testRects, testZones);
                     CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
@@ -1040,6 +1042,171 @@ namespace Intercolony
                         map,
                         GenAdj.OccupiedRect(
                             pausedCell,
+                            Rot4.North,
+                            subject.thingDef.Size));
+                }
+            }
+        }
+
+        private static void CheckPauseStopUninstallBehavior(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects,
+            List<Designation> addedDesignations)
+        {
+            const string pauseLabel = "Pause cancels an outstanding Uninstall designation";
+            const string stopLabel = "Stop does not cancel an outstanding Uninstall designation";
+
+            IntVec3 pauseCell;
+            if (!TryFindBuildCell(
+                    map, loops, subject, Rot4.North, reservedCells, out pauseCell))
+            {
+                r.Skip(pauseLabel, "no empty valid cell for the Pause uninstall fixture");
+            }
+            else
+            {
+                RememberCell(
+                    pauseCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+                Building building = null;
+                Designation uninstall = null;
+                try
+                {
+                    string failure;
+                    if (!TryPrepareInstalledUninstall(
+                            map,
+                            loops,
+                            subject,
+                            pauseCell,
+                            out building,
+                            out uninstall,
+                            out failure))
+                    {
+                        r.Skip(pauseLabel, failure);
+                    }
+                    else
+                    {
+                        addedDesignations.Add(uninstall);
+                        CheckSafely(
+                            r,
+                            pauseLabel,
+                            () =>
+                            {
+                                loops.Pause(pauseCell);
+                                return map.designationManager.DesignationOn(
+                                           building,
+                                           DesignationDefOf.Uninstall) == null &&
+                                       building.Spawned &&
+                                       building.Map == map &&
+                                       building.Position == pauseCell;
+                            },
+                            () => $"cell {pauseCell}; Uninstall present " +
+                            $"{(map.designationManager.DesignationOn(
+                                building,
+                                DesignationDefOf.Uninstall) == null ? "no" : "yes")}; " +
+                            $"building spawned at cell " +
+                            $"{(building.Spawned && building.Map == map &&
+                                building.Position == pauseCell ? "yes" : "no")}");
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        loops.Disable(pauseCell);
+                    }
+                    finally
+                    {
+                        RemoveAllDesignationsOn(
+                            map,
+                            building,
+                            DesignationDefOf.Uninstall,
+                            r);
+                        DestroyThingsInRect(
+                            map,
+                            GenAdj.OccupiedRect(
+                                pauseCell,
+                                Rot4.North,
+                                subject.thingDef.Size));
+                    }
+                }
+            }
+
+            IntVec3 stopCell;
+            if (!TryFindBuildCell(
+                    map, loops, subject, Rot4.North, reservedCells, out stopCell))
+            {
+                r.Skip(stopLabel, "no empty valid cell for the Stop uninstall fixture");
+                return;
+            }
+
+            RememberCell(
+                stopCell,
+                subject.thingDef,
+                Rot4.North,
+                reservedCells,
+                testRects);
+            Building stopBuilding = null;
+            Designation stopUninstall = null;
+            try
+            {
+                string failure;
+                if (!TryPrepareInstalledUninstall(
+                        map,
+                        loops,
+                        subject,
+                        stopCell,
+                        out stopBuilding,
+                        out stopUninstall,
+                        out failure))
+                {
+                    r.Skip(stopLabel, failure);
+                }
+                else
+                {
+                    addedDesignations.Add(stopUninstall);
+                    CheckSafely(
+                        r,
+                        stopLabel,
+                        () =>
+                        {
+                            loops.Disable(stopCell);
+                            return map.designationManager.DesignationOn(
+                                       stopBuilding,
+                                       DesignationDefOf.Uninstall) == stopUninstall;
+                        },
+                        () => $"cell {stopCell}; Uninstall present " +
+                        $"{(map.designationManager.DesignationOn(
+                            stopBuilding,
+                            DesignationDefOf.Uninstall) == null ? "no" : "yes")}; " +
+                        $"building spawned at cell " +
+                        $"{(stopBuilding.Spawned && stopBuilding.Map == map &&
+                            stopBuilding.Position == stopCell ? "yes" : "no")}");
+                }
+            }
+            finally
+            {
+                try
+                {
+                    loops.Disable(stopCell);
+                }
+                finally
+                {
+                    RemoveAllDesignationsOn(
+                        map,
+                        stopBuilding,
+                        DesignationDefOf.Uninstall,
+                        r);
+                    DestroyThingsInRect(
+                        map,
+                        GenAdj.OccupiedRect(
+                            stopCell,
                             Rot4.North,
                             subject.thingDef.Size));
                 }
@@ -3002,6 +3169,58 @@ namespace Intercolony
             return spawned as Building;
         }
 
+        private static bool TryPrepareInstalledUninstall(
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            IntVec3 cell,
+            out Building building,
+            out Designation uninstall,
+            out string failure)
+        {
+            building = null;
+            uninstall = null;
+            failure = null;
+            try
+            {
+                building = SpawnFinishedBuilding(map, subject, cell, Rot4.North);
+                if (building == null)
+                {
+                    failure = "could not spawn the finished building fixture";
+                    return false;
+                }
+
+                loops.Enable(cell, Rot4.North, subject.thingDef, subject.stuffDef, null);
+                loops.RunPass();
+                uninstall = map.designationManager.DesignationOn(
+                    building,
+                    DesignationDefOf.Uninstall);
+                if (uninstall == null)
+                {
+                    failure =
+                        "a real loop pass did not create an outstanding Uninstall designation";
+                    return false;
+                }
+
+                if (!building.Spawned || building.Map != map || building.Position != cell)
+                {
+                    failure =
+                        "the real loop pass created an Uninstall designation, but the building " +
+                        "was not still spawned at the fixture cell";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure =
+                    $"could not drive a real loop pass to the designated state: " +
+                    $"{ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+
         private static Blueprint_Build FindBlueprint(Map map, IntVec3 cell, ThingDef thingDef)
         {
             List<Thing> things = map.thingGrid.ThingsListAt(cell);
@@ -3347,6 +3566,8 @@ namespace Intercolony
             r.Skip("a paused loop keeps its record, unlike Stop", reason);
             r.Skip("resuming places a blueprint again", reason);
             r.Skip("pausing leaves work already under way alone", reason);
+            r.Skip("Pause cancels an outstanding Uninstall designation", reason);
+            r.Skip("Stop does not cancel an outstanding Uninstall designation", reason);
             r.Skip("vanilla Cancel ends the loop for that cell", reason);
             r.Skip("cancelling elsewhere leaves the loop alone", reason);
             r.Skip(
