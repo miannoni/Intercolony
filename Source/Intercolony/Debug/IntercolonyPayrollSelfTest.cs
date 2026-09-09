@@ -259,23 +259,21 @@ namespace Intercolony
             // for every non-prepaid structure, and 0.9.2 shipped a fix specifically to *disclose*
             // that fee, so the charge is deliberate and the assertion was stale. The distinction
             // still worth guarding is that a periodic hire is not charged for the whole term.
-            // Multiply the days out here rather than calling SigningFee, because SigningFee takes
-            // the *base* wage and applies the daily premium itself (WageStructure.cs:82), while
-            // contract.dailyWage has already had that premium applied (EmploymentService.cs:126,
-            // 168). Passing one into the other charges the premium twice: on a base of 60 that is
-            // 60 -> 81 -> 109, so the test demanded 545 where the hire correctly took 405.
+            // Keep this oracle independent of SigningFee: the contract stores the worker's ask,
+            // while Daily terms charge 135% of that ask and take five charged days at hire. On
+            // the fixture's usual base of 60, that is 60 * 135 / 100 * 5 = 405 silver.
             //
             // This assertion had never actually executed. The hire above it always failed for want
             // of silver, and the method returns early when it does, so the arithmetic was written
             // when the signing fee was introduced and then never run until the funding fix landed.
-            int expectedSigningFee =
-                contract.dailyWage * WageStructureUtility.SigningFeeDays(WageStructure.Daily);
+            int expectedChargedDailyWage = Mathf.RoundToInt(contract.dailyWage * 135f / 100f);
+            int expectedSigningFee = expectedChargedDailyWage * 5;
             r.Check(contract.paidSilver == expectedSigningFee,
                 "a periodic hire pays the signing fee up front and no more (§37)",
                 $"{contract.paidSilver} silver, expected {expectedSigningFee}");
+            int expectedFullTermCost = expectedChargedDailyWage * term + expectedSigningFee;
             r.Check(
-                contract.paidSilver <
-                WageStructureUtility.TotalCost(WageStructure.Daily, contract.dailyWage, term),
+                contract.paidSilver < expectedFullTermCost,
                 "and is not charged for the whole term");
             r.Check(contract.nextPaymentTick < 0,
                 "the pay clock does not start until the worker arrives");

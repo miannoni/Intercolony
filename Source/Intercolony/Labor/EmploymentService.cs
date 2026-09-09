@@ -132,10 +132,10 @@ namespace Intercolony
             // WageStructureUtility method takes.
             int upFront = WageStructureUtility.UpFrontCost(structure, baseWage, termDays);
 
-            // The contract records the rate actually agreed, premium included, because payroll
-            // reads dailyWage straight off it. A premium applied only at the quote would be
-            // shown at hiring and then never charged.
-            int dailyWage = WageStructureUtility.EffectiveDailyWage(structure, baseWage);
+            // The contract records the worker's ask. The charged rate is derived through
+            // ChargedDailyWage whenever payroll needs it, so the premium is not stored and
+            // cannot be applied twice.
+            int dailyWage = baseWage;
 
             // The dialog passes the same snapshot it displayed. Direct callers that have no UI
             // quote get one here; either way the record and the bond come from one observation of
