@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.9b — what `dailyWage` means, and the double premium behind it
-Worker: sol recon running — `…\scratchpad\recon-wage-meaning.out`
-Last done: 7.9, the wage disclosure, accepted at `2d737e7` — labor 48/0/0, payroll 42/0/0.
-Updated: 2026-09-08 23:55
+Unit: 7.9b1 — one owner for the charged daily rate, and every payroll path through it
+Worker: luna running — `…\scratchpad\unit-7-9b1.out`
+Last done: 7.9b, the wage-meaning recon — read-only, tree untouched, two claims spot-checked.
+Updated: 2026-09-09 00:10
 Foreman load: 2026-09-08 22:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -31,10 +31,30 @@ THE CONTRACT, AND ONE OF THEM IS CHARGED TWICE.** All verified in the source:
   - `PayrollService.cs:88` and `:349` — the PARTIAL-period branches use `contract.dailyWage` raw,
     so a part period is charged at a different rate from a full one in the same function.
 
-This is not a display bug and it is not new to this batch: the direct path is the one shipped 1.0
-uses, so a released colony overpays its Daily employees by 35% and was quoted otherwise. A fix has
-to settle what the field means, and the two candidate answers differ in what they do to saves that
-already exist — which is why the next unit is a Sol recon, not a Luna edit.
+**THE RECON'S ANSWER, 2026-09-09, and one correction to me.** I said shipped 1.0 used the direct
+path only. It did not: the posting path is `8afd6a3`, 2026-07-30, and `git merge-base --is-ancestor
+8afd6a3 v1.0.0` succeeds — I checked. `v1.0.0`'s `TryHireApplicant` stores `posting.wageOffered`
+raw. **So the released game already contains both cohorts, in the same save, with nothing in the
+persisted shape to tell them apart.** F25 changed which raw number the posting path stores; it did
+not create the ambiguity.
+
+Also confirmed, and worse than the payroll double: `EmploymentService.cs:228`'s hire message passes
+the already-charged local wage into `Explain`, which applies the premium a second time — so the
+message the player reads after hiring quotes a different number from the dialog they just accepted.
+
+**DECISION — `dailyWage` MEANS THE WORKER'S RAW ASK. The charged rate is always derived.** Recorded
+in Decisions below. The alternative was to store the charged rate and add a persisted `workerAsk`
+node; it was rejected because neither option can rescue both legacy cohorts, and this one needs no
+new persisted state, matches the convention every `WageStructureUtility` method already follows,
+and makes no legacy contract worse than it is today — a legacy direct-hire Daily contract is
+already charged the doubled rate on full periods, so consistency costs it nothing.
+
+What it cannot fix: a legacy direct-hire contract will keep displaying its stored 135 as the ask.
+There is no provenance in the save to recover the real 100 from. Accepted.
+
+Cut into three units: **7.9b1** one owner for the charged rate and every payroll path through it,
+**7.9b2** the writer at `:138` and the hire message at `:228`, **7.9b3** the assertions, which 7.9
+also still owes.
 
 ## What 7.9 was asked to do
 
@@ -334,6 +354,11 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
   The downstream "Order collected" letter (`SalesOrderService.cs:982`) stays loud: it reports
   payment received, which is a value event the player should see, not a routine mechanical step.
   No schema change, and every manual ready path keeps its letter by default.
+- **2026-09-09** — `EmploymentContract.dailyWage` stores the WORKER'S ASK. The charged rate is
+  derived from it, never stored, and every payroll and display path goes through one owner. No
+  `workerAsk` node, no second schema bump. Neither this nor the alternative can rescue both legacy
+  cohorts — shipped 1.0 already mixes them with no discriminator — so the tie was broken on
+  convention and on the fact that this option makes no existing contract worse. Do not re-litigate.
 - **2026-09-07** — Procurement needs no F01 change. Recon established there is no per-cycle
   procurement success letter to suppress; the only procurement success letter is the terminal
   `Procurement agreement completed` notice (`ProcurementContractService.cs:1185`), which is a
@@ -348,7 +373,10 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.7–7.7f — F24's emergency dispatch, its window fix, assertions, play entry | accepted, `4a78e0e` `a264c22` |
 | ✅ | 7.8.0 — F22 recon (Sol high, read-only) | accepted, `d83a500` |
 | ✅ | 7.9 — F25's wage: show what is charged, not only what is asked | accepted, `2d737e7`; assertions still owed |
-| 🔨 | 7.9b — what `dailyWage` means, and the double premium | Sol recon running |
+| ✅ | 7.9b — recon: what `dailyWage` means (Sol high, read-only) | accepted; decision recorded |
+| 🔨 | 7.9b1 — one owner for the charged rate, every payroll path through it | Luna running |
+| ⬜ | 7.9b2 — the writer at `EmploymentService.cs:138` and the hire message | not started |
+| ⬜ | 7.9b3 — assertions for 7.9, 7.9b1 and 7.9b2 | not started |
 | ⬜ | 7.12 — F23's bond ignores quality when valuing | known defect 5 |
 | ⬜ | 7.10 — F19's direct-input figure must reach the margin | known defect 2 |
 | ⬜ | 7.11 — Pause must not let a committed uninstall finish | known defect 4 |
