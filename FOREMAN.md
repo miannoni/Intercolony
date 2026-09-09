@@ -1,11 +1,11 @@
 # Foreman state — Intercolony
 
-Stage: C1 — F01, a routine contract cycle must be silent. **C0 IS CLOSED.**
-Unit: C1.2b — the missing-goods fixture is not producing a missing-goods block
-Worker: luna running — `…\scratchpad\unit-c1-2b.out`; C1.2's seven assertions are UNCOMMITTED and must be kept
-Last done: C0.1, the scope lock, accepted at `f049bfb` — the plan is copied to
-`docs/PLAYTEST_CORRECTION_PLAN.md` byte-identical, and `PROGRESS.md` records the freezes.
-Updated: 2026-09-09 16:25
+Stage: C2 — F07, the production rate must count real completions. **C0 AND C1 ARE CLOSED.**
+Unit: C2.0 — recon: what the bill observer misses, and whether the denominator is really wrong
+Worker: sol recon running — `…\scratchpad\recon-c2.out`
+Last done: C1.2 + C1.2b, C1's seven assertions, accepted at `1c5cc56` — long-term 61/0/0, and the
+mutation that restores the due letter turns six of the seven red.
+Updated: 2026-09-09 17:35
 Foreman load: 2026-09-09 15:48
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -60,8 +60,8 @@ two workers on the same large UI or settings file.
 | | Stage | Scope | Status |
 |---|---|---|---|
 | ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
-| 🔨 | C1 — F01: a routine contract cycle must be silent | F01 | recon running |
-| ⬜ | C2 — F07: the production rate must count real completions | F07 | not started |
+| ✅ | C1 — F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
+| 🔨 | C2 — F07: the production rate must count real completions | F07 | recon running |
 | ⬜ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | not started |
 | ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
 | ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
@@ -76,8 +76,13 @@ two workers on the same large UI or settings file.
 | ✅ | C0.1 — copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | accepted, `f049bfb` |
 | ✅ | C1.0 — recon: the `Contract delivery due` emission and what it knows | accepted; decisions below |
 | ✅ | C1.1 — the due letter becomes a log, the warning moves after auto-ready | accepted, `9b8e05e` |
-| 🔨 | C1.2 — C1's assertions, seven of them | six green, one fixture wrong |
-| 🔨 | C1.2b — make the missing-goods fixture actually run short of goods | Luna running |
+| ✅ | C1.2 + C1.2b — C1's seven assertions and the fixture repair | accepted, `1c5cc56`. **C1 COMPLETE** |
+
+## Units — stage C2
+
+| | Unit | Status |
+|---|---|---|
+| 🔨 | C2.0 — recon: the missing completion paths, and the denominator question | Sol recon running |
 
 ## C1 — the recon, and what I decided from it
 
