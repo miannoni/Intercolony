@@ -1,275 +1,108 @@
-﻿# Foreman state — Intercolony
+# Foreman state — Intercolony
 
-Stage: 9 — F06, the last finding, recon first. **STAGES 1-6 AND 8 ARE CLOSED.** Stage 7 is done apart from F22, which awaits the operator.
-Unit: NONE. **THE RUN HAS REACHED A CLEAN HALT AND EVERYTHING EXECUTABLE IS DONE.** Both remaining
-findings need the operator: F22 needs a decision, F06 needs a sixth and seventh Harmony patch.
-Worker: idle
-Last done: the batch milestone record in `PROGRESS.md`. The whole suite on a fresh world is
+Stage: C0 — scope lock and regression baseline, under the NEW correction plan.
+Unit: C0.1 — copy the plan into the repo and record the scope lock in `PROGRESS.md`
+Worker: luna running — `…scratchpadNit-c0-1.out`
+Last done: the previous run reached a clean halt at `56180ea`; the whole suite on a fresh world was
 **1536 passed, 0 failed, 17 skipped, exit 0**.
-Pushed: the branch is on `origin` at the operator's request, tracking
-`origin/foreman/playtest-batch-2026-09-06`, 194 commits ahead of `main`. **`main` is untouched and
-no pull request was opened** — §I of the plan forbids merging and publishing.
-Updated: 2026-09-09 07:05
+Updated: 2026-09-09 16:05
 Foreman load: 2026-09-09 15:48
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
 <!-- Everything above this line is the header. A fresh session reads only the header. -->
 
-## 7.9 is accepted, and it uncovered a worse defect than the one it was sent to fix
+## THE PLAN CHANGED — read this before dispatching anything
 
-7.9 is committed at `2d737e7`: every site that shows or sums a daily wage names both the ask and
-what the colony is charged, and the business payroll estimate and F20's direct-labour figure
-stopped summing the raw figure. Labor 48/0/0, payroll 42/0/0, both exit 0. Production only — its
-assertions are still owed.
+**`C:\dev\intercolony_playtest_correction_execution_plan.md` is now the authority** for the
+behaviours it covers, and it beats `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` wherever the two disagree.
+The older plan still governs everything the correction plan does not mention. A copy lives at
+`docs/PLAYTEST_CORRECTION_PLAN.md` so workers, which have no chat history, can cite it.
 
-**THE DEFECT IT EXPOSED — `dailyWage` MEANS TWO DIFFERENT THINGS DEPENDING ON WHICH HIRE PATH MADE
-THE CONTRACT, AND ONE OF THEM IS CHARGED TWICE.** All verified in the source:
+**It also answers the two questions the previous run halted on, and the answers are both "no":**
+F22 is FROZEN and F06 is deferred. Neither is a pending decision any more, and **this run must not
+stop to ask about either**.
 
-  - `EmploymentService.cs:138` — the DIRECT hire path stores `EffectiveDailyWage(structure, ask)`,
-    the charged rate, and says so in its comment: "payroll reads dailyWage straight off it".
-  - `EmploymentContract.cs:353` — `PeriodPayment => PeriodCost(wageStructure, dailyWage)`, and
-    `WageStructure.cs:185` applies the premium AGAIN. **A 100/day ask on Daily terms is quoted at
-    135, stored as 135, and charged 182.**
-  - `TryHireApplicant`, F25's path, stores the raw ask, so the same field there means the ask and
-    the same payroll charges it once, correctly.
-  - `PayrollService.cs:88` and `:349` — the PARTIAL-period branches use `contract.dailyWage` raw,
-    so a part period is charged at a different rate from a full one in the same function.
+### IN SCOPE — only these eight findings
 
-**THE RECON'S ANSWER, 2026-09-09, and one correction to me.** I said shipped 1.0 used the direct
-path only. It did not: the posting path is `8afd6a3`, 2026-07-30, and `git merge-base --is-ancestor
-8afd6a3 v1.0.0` succeeds — I checked. `v1.0.0`'s `TryHireApplicant` stores `posting.wageOffered`
-raw. **So the released game already contains both cohorts, in the same save, with nothing in the
-persisted shape to tell them apart.** F25 changed which raw number the posting path stores; it did
-not create the ambiguity.
+F01, F07, F08, F09, F10, F11, F13, F17.
 
-Also confirmed, and worse than the payroll double: `EmploymentService.cs:228`'s hire message passes
-the already-charged local wage into `Explain`, which applies the premium a second time — so the
-message the player reads after hiring quotes a different number from the dialog they just accepted.
+### FROZEN — documented, never advanced
 
-**DECISION — `dailyWage` MEANS THE WORKER'S RAW ASK. The charged rate is always derived.** Recorded
-in Decisions below. The alternative was to store the charged rate and add a persisted `workerAsk`
-node; it was rejected because neither option can rescue both legacy cohorts, and this one needs no
-new persisted state, matches the convention every `WageStructureUtility` method already follows,
-and makes no legacy contract worse than it is today — a legacy direct-hire Daily contract is
-already charged the doubled rate on full periods, so consistency costs it nothing.
+**F12** and **F22**. Existing work stays; no implementation unit may follow their documentation
+freeze. F22's recon stays as historical technical information and is not a plan.
 
-What it cannot fix: a legacy direct-hire contract will keep displaying its stored 135 as the ask.
-There is no provenance in the save to recover the real 100 from. Accepted.
+### DEFERRED — do not touch, do not recon, do not "finish"
 
-Cut into units: **7.9b1** one owner for the charged rate and every payroll path through it
-(accepted, `7e230ad`), **7.9b3a** assertions for the two payroll branches that have none,
-**7.9b2** the writer at `:138` and the hire message at `:228`, **7.9b3b** the rest of the
-assertions, which 7.9 also still owes.
+F04, F06, F16, F19, F20, F21, F23, F24. Newer product direction is coming for each. If an in-scope
+unit turns out to depend on one, **stop at the boundary, record why, and do the independent work**.
 
-**A GAP THE MUTATION FOUND, and it is why 7.9b3a jumped the queue.** Reverting the partial
-scheduled period to the raw stored wage left `cash-flow` at 11/0/0. Not a hollow assertion: the
-fixture cannot reach the branch, because its contract ends half a day into a one-day Daily interval,
-so `daysLeftInTerm` ceilings to 1 and the guard `1 < 1` sends it down the FULL period path. **The
-partial scheduled period and the end-of-employment settlement have no assertion at all**, and did
-not before this batch either. A colony could be billed one rate for a full period and another for a
-part period with nothing to catch it.
+### REGRESSION-ONLY — closed, touch only if an in-scope change breaks them
 
-## What 7.9 was asked to do
+F02, F03, F05, F14, F15, F18, F25. A break there is a regression to fix narrowly, not a reopening.
 
-Fix known defect 1, which I verified in the code myself. `EmploymentService.TryHireApplicant`
-stores an applicant's raw `openMarketAsk` in `contract.dailyWage`, the applicant row tells the
-player they are "paid <ask>/day", and Daily payroll then multiplies by
-`WageStructureUtility.EffectiveDailyWage`'s 35% premium (`WageStructure.cs:53-58`,
-`EmploymentContract.cs:353`). So an ask of 100/day is shown and charged at 135/day.
+### Standing constraints, unchanged
 
-**THE ECONOMICS ARE NOT THE BUG.** The premium is real — paying daily rather than up front costs
-more, which is what `WageStructure` is for. The instruction was to DISCLOSE BOTH numbers wherever a
-wage is shown, to make payroll and runway figures use the CHARGED rate and "what this worker asks"
-figures use the ask, and to change nothing about `EffectiveDailyWage`, `PeriodCost`, the premium
-constant, or what is stored in `contract.dailyWage`. It was also asked to report every site that
-displays or sums a daily wage, and to check the business payroll estimate specifically, which the
-audit says sums the raw figure and therefore understates what employees cost.
+Stay on `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never release.** Push
+regularly. Avoid a schema bump unless persisted world state genuinely needs one — ordinary mod
+settings never do. Prefer existing simulation events and mod-owned seams over polling, and the
+existing settings infrastructure over a second configuration mechanism.
 
-## Method version note — migrated to `e46c835`, 2026-09-08
+### Serialisation the plan requires
 
-**There is no Sol audit lane any more, and no review state.** `Run started`, `Run base`,
-`Review checkpoint` and `Review` were removed from the header by this migration; the findings the
-single review it ran produced are kept below as ordinary units, because they are real defects in
-shipped code and a method migration must not reopen or discard settled work.
+F08, F09 and F11's settings are ONE coherent slice or strictly serialised — they share the settings
+surface. F13 and F17 both touch the employee card and are serialised or owned by one worker. Never
+two workers on the same large UI or settings file.
 
-The method now is: **Sol high read-only for reconnaissance only**, **Luna max workspace-write for
-implementation**, one recon/work lane so the two never overlap and two Sols never run at once, a
-15-minute heartbeat, and a full method reload about every two hours of wall clock (`Foreman load`),
-never a wake count.
 
-## F22 — Sol recon, 2026-09-09. NOT STARTED, and it needs an operator decision
+## Stages — the correction run
 
-Read-only; the tree was untouched and the evidence spot-checked.
-
-**F22 IS ABOUT NINE UNITS** before balancing or playtesting: custody proof, persisted
-listing/offer/assignment records, the Supply page and its eligibility rules, deterministic offer
-generation, offer display and expiry, departure with save/load and map retargeting, return and
-payment, then training and risk as two more.
-
-**THE HAZARD THAT SHAPES EVERYTHING: a bare custom world pawn is NOT recognised as borrowed by
-vanilla's game-over and population systems** (`QuestUtility.cs:734`, `GameEnder.cs:94`). If the last
-colonist leaves on an F22 job, the game could end incorrectly. So the first unit must be the custody
-proof — vanilla lending versus a custom world-pawn lifecycle — because that choice changes the
-persisted shape and the last-colonist behaviour. Everything else waits on it.
-
-Also established: an away pawn is handled by NO Intercolony map-removal or abandonment path, and
-vanilla's lending waits for a valid return map rather than resolving. F22 needs an explicit
-abandonment policy; the recon recommends following vanilla and holding the pawn away.
-
-**SIX QUESTIONS THE SOURCE PLAN DOES NOT ANSWER**, and they are design decisions rather than code:
-what makes a colonist eligible; whether minimum compensation is daily, total or take-home, and when
-it is paid; what job determines the training a returning colonist gains; what drives a settlement's
-labour demand, since no such field exists; what happens to carried inventory, bonded animals, beds
-and titles on departure; and what happens if no player map ever returns.
-
-## 7.11 — what the plan actually says about Pause and Stop
-
-They differ ON PURPOSE, and the difference is the whole unit
-(`docs/PLAYTEST_BATCH_SOURCE_PLAN.md:125-137`):
-
-  - **Pause** — construction under way may finish, and once installed **it remains installed**. So
-    an outstanding Uninstall designation has to be cancelled, or the object vanishes while paused
-    and the paused loop refuses to replace it.
-  - **Stop** — a committed uninstall **may finish**. Stop cancels nothing.
-
-Making the two behave alike would be a misreading in either direction. Accepted cost, recorded
-rather than discovered later: nothing in a designation records who placed it, so a player's own
-hand-placed Uninstall on the loop's building is cancelled by Pause too.
-
-## THE RUN IS AT A CLEAN HALT — TWO QUESTIONS FOR THE OPERATOR, 2026-09-09
-
-Twenty-three of twenty-five findings are built, asserted and disclosed across eight stages. The
-whole suite on a fresh world is 1536 / 0 / 17, exit 0. `PROGRESS.md` carries the milestone record
-and `docs/PENDING_PLAYTESTS.md` carries everything a suite cannot settle.
-
-**Nothing further can be dispatched without an answer to one of these:**
-
-  1. **F22** — start it, take only the custody proof, or drop it? About nine units, and the first
-     one must be the custody proof because of the game-over hazard.
-  2. **F06** — may the Harmony allowance go from five patches to seven? Without that the finding
-     cannot be built at all. And separately: should apparel-policy removal that leaves an
-     employee's own gear in colony storage count as returned for the equipment bond?
-
-Nothing else in the batch is waiting on anything. The unbuilt parts of F12, F21, F23 and F24 were
-scoped out deliberately and are recorded as such.
-
-## Why stage 9 is blocked — F06 needs two more Harmony patches
-
-Sol recon, 2026-09-09, read-only. I verified the two gates and the patch count myself.
-
-**An employee already has everything F06 needs except permission from vanilla.** After the faction
-transfer they carry a real `Pawn_OutfitTracker` with a real `ApparelPolicy`
-(`EmploymentService.cs:890`, `PawnComponentsUtility.cs:280`), and the tracker is saved with the
-pawn. But they are a quest lodger, and vanilla vetoes them **twice, deliberately**:
-
-  - `PawnColumnWorker_Outfit.cs:41` — the Assign tab shows "Unchangeable" instead of the dropdown.
-  - `JobGiver_OptimizeApparel.cs:68` — the optimizer returns immediately, so nothing is enforced.
-
-Both confirmed by reading the decompiled source. **So F06 cannot be built without patching those
-two seams**, and there is no non-Harmony route: they are private vanilla decisions inside vanilla
-methods.
-
-**THIS COLLIDES WITH A CONSTRAINT THE OPERATOR SET.** The Harmony allowance was declared fully
-spent at five patches when the crafting-completion observer landed — `HarmonyPatches.cs` lines 33,
-71, 115, 172 and 220, counted just now. F06 needs a sixth and a seventh.
-
-**Everything else about F06 is small and needs nothing.** No new apparel system, no filters, no
-uniform model, no second schema bump: one additive `bool` on the contract, default false, absent on
-an old save meaning unmanaged. Recon's honest estimate is twelve units.
-
-**A SECOND OPERATOR QUESTION, from the same recon and worth answering together:** vanilla's
-optimizer can remove disallowed worn apparel and haul it to storage
-(`JobGiver_OptimizeApparel.cs:88`). F23's bond only matches items still on the pawn
-(`EmploymentEquipment.cs:280`, `:384`), so a policy could strip an employee's own coat into a
-stockpile and the colony would keep the bond for gear it did not take. F23 distinguishes returned
-from deliberately retained; it says nothing about policy-driven removal.
-
-## Stage 8 — the recon, and what I decided from it, 2026-09-09
-
-Sol recon, read-only, tree untouched. Three load-bearing claims spot-checked against the source
-myself: commercial reputation is per settlement keyed by `WorldObject.ID`
-(`IntercolonyWorldComponent.cs:522-535`), Preferred begins at 80 (`CommercialReputation.cs:78-86`),
-and **vanilla turns a faction into an ALLY at goodwill 75** (`FactionRelation.cs:34-36`).
-
-**No second schema bump.** F08 needs no persisted state at all. F09 needs two additive nodes on
-`EmploymentContract` with zero defaults, which ride 58 legitimately.
-
-**F08 is 3-4 units. F09 is 7-9 and is a small system**, because nothing in this mod samples mood
-today and F09 is defined in terms of consolidated employment experience.
-
-**DECIDED, from the recon and the plan's explicit "balance is open" (`:616-621`). These are
-starting values for the play sitting, not laws:**
-
-  - **D1 — eligibility.** Any settlement at Preferred, 80 or above, whose CURRENT owning faction is
-    not hostile and not at war. Live owning faction, never the saved faction-name string, because
-    settlements change hands and the existing lookup already tracks that.
-  - **D2 — one faction, one tick.** Deduplicate per faction: three Preferred towns of one faction
-    produce one application, not three.
-  - **D3 — the ceiling is 60, and that number is the whole safety property.** Vanilla allies at 75.
-    F08 must never be a hostility-to-alliance engine, so commercial pressure stops well below the
-    threshold that would create one. `+1` per quadrum, and nothing at all once base goodwill is at
-    or above the ceiling.
-  - **D4 — cap against BASE goodwill, and skip while a goodwill situation is suppressing the
-    effective value**, so credit cannot accumulate invisibly and then appear when a diplomatic
-    restriction expires.
-  - **D5 — no double credit.** Sale-price generosity already moves goodwill on its own
-    (`SalesOrderService.cs:588-647`) and F10's purchase count is already inside the commercial
-    score. F08 reads the score and nothing else.
-
-**F09's decisions, same authority — the plan leaves magnitude and window open (`:372-377`), so
-these are starting values for the play sitting:**
-
-  - **D6 — a lifetime average, never a moment.** Sample the worker's mood once a day and keep a
-    running total and count on the contract. The plan's own words are that momentary mood must not
-    be farmable, and an average over the whole employment is what makes it unfarmable.
-  - **D7 — no result before ten samples.** A ten-day minimum, so a two-day hire cannot move
-    diplomacy at all. Absent nodes on an old save read as zero samples, which means no result
-    rather than a fabricated neutral one.
-  - **D8 — ±3 goodwill, once, at the end.** Average at or above 0.75 gives +3; at or below 0.35
-    gives -3; anything between gives nothing. Small enough that it complements employer reputation
-    rather than replacing it, which is what the plan asks for.
-  - **D9 — never on an outcome that is already priced.** Death, walkout, combat misuse,
-    safe-passage denial and a skipped notice already move the origin faction's goodwill
-    (`EmployerReputationService.cs:141-175`). F09 produces NOTHING for those; it is for ordinary
-    completed and dismissed employments only. Two penalties for one act is the failure mode here.
-  - **D10 — never positive to a hostile origin, and nothing at all for a war severance.** F08 has
-    the same rule for the same reason.
-
-## ALL SEVEN KNOWN DEFECTS ARE CLOSED, 2026-09-09
-
-Every one is fixed, asserted and mutation-proven — `2d737e7`, `7e230ad`, `66af13b`, `ca5860f`,
-`477ad58`, `1bdac06`, `b723d41`, `eb2d11c`, `35e1f2b`, `fe4c1ce`, `c67cd50`, `b4cc6c9`. Two of them
-also turned out to be worse than the audit said: the wage defect was a live overcharge on shipped
-1.0, and the partial-period branch it exposed had no assertion at all.
-
-**WHAT THE RUN NEEDS FROM THE OPERATOR NOW: a decision on F22.** It is the only thing left in stage
-7 and it is about nine units, with a game-over hazard in its first one. Stages 8 and 9 do not depend
-on it and can run first.
-
-## The seven defects, kept for the record
-
-Found on 2026-09-09 by a one-off audit of this run's own commits, back when the method still had an
-audit lane. The lane is gone; these stay, because they are defects in shipped code. Schema-58
-persistence audited clean. I verified the two most serious against the code myself.
-
-| # | Sev | Finding | Disposition |
+| | Stage | Scope | Status |
 |---|---|---|---|
-| 1 | High | **F25 shows the applicant's ask but charges 35% more.** `TryHireApplicant` stores the raw `openMarketAsk` in `contract.dailyWage`, and Daily payroll then applies `WageStructureUtility.EffectiveDailyWage`'s 35% premium on top. **VERIFIED**: `WageStructure.cs:53-58` applies the premium; `EmploymentContract.cs:353` routes `PeriodPayment` through `PeriodCost`; the applicant row says the worker is paid the ask. A displayed figure and a charged figure must come from one calculation — this run's own standing rule. `0189a8a`'s assertion is hollow at that seam: it checks `dailyWage == openMarketAsk` and never advances payroll. | **FIX NOW — 7.9** |
-| 2 | High | **F19's direct-input value never reaches the margin.** `ContractEstimate.Margin` subtracts `inputsIfBought`, the finished-good figure, and never `directInputsIfBought`. **VERIFIED** at `BusinessReportService.cs:69-71`. The UI shows both rows, so the new figure looks incorporated and is not. F19 exists to make profitability account for self-produced inputs, so this is its purpose unmet. **My under-specification** — I asked for a figure beside the old one and never said the margin should use it. | **FIX NOW — 7.10** |
-| 3 | High | F24's emergency pool empty under real market data. | **ALREADY FIXED** at `4a78e0e`, after this review's fixed target. No action. |
-| 4 | Med | **Pause after an uninstall designation can still uninstall the building.** `Pause` sets the flag but leaves an outstanding designation, and vanilla may finish it while the paused loop suppresses the replacement blueprint. F03 says an installed object stays installed while paused. | **SCHEDULE — 7.11** |
-| 5 | Med | **F23 values a bond by def and stuff but matches returns by quality.** So a worker can leave with a masterwork and forfeit only a normal-quality bond. **Asymmetric in the player's favour and an exploit.** Mine: I specified `BaseValue` without quality. | **FIX NOW — 7.12** |
-| 6 | Low | F24 dropped the old 1-20 day clamp on ORDINARY travel by delegating to `LogisticsQuote.TravelDaysFor`. Scope leak beyond the toggle. | **SCHEDULE — 7.13** |
-| 7 | Low | F11's timing assertion bypasses `WorldComponentTick`, the game-facing caller. | **SCHEDULE — 7.14** |
+| 🔨 | C0 — scope lock and regression baseline | — | in progress |
+| ⬜ | C1 — F01: a routine contract cycle must be silent | F01 | not started |
+| ⬜ | C2 — F07: the production rate must count real completions | F07 | not started |
+| ⬜ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | not started |
+| ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
+| ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
+| ⬜ | C6 — freeze F12 in the documentation | — | not started |
+| ⬜ | C7 — freeze F22 in the documentation | — | not started |
+| ⬜ | C8 — whole-suite regression and clean halt | — | not started |
 
-Order: 7.9, then 7.12, then 7.10 — money first, then the exploit, then the unmet purpose. F22
-continues after them.
+## Units — stage C0
 
-## What remains in the run
+| | Unit | Status |
+|---|---|---|
+| 🔨 | C0.1 — copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | Luna next |
 
-The known defects above, then F22, then stage 8 (F08, F09) and stage 9 (F06) — each of those three
-starting with recon, which means **Sol high read-only**, not Luna.
+## The baseline, established before any edit
+
+Branch `foreman/playtest-batch-2026-09-06` at `56180ea`, pushed, working tree clean apart from an
+untracked `Playtesting annotations.docx` that is not ours. The milestone record for stages 1-8 is in
+`PROGRESS.md`. The whole suite on a fresh world: **1536 passed, 0 failed, 17 skipped, exit 0** —
+run at `56180ea`'s tree, which no edit has touched since, so it stands as this run's baseline.
+
+## What the correction plan changes about work already done
+
+Three of the eight in-scope findings were closed in the previous run and are being REOPENED by
+newer product direction, not by defect:
+
+  - **F01** shipped scoped to the sales *readying* letter only. The correction plan says the
+    `Contract delivery due` letter on a recurring supply cycle must also be silent when the cycle
+    can be fulfilled normally, and actionable only when it cannot.
+  - **F07** shipped comparing commitments against a ledger fed by ONE observer, vanilla's
+    bill-completion seam. The plan says that observer misses constructed furniture, and that the
+    rolling five-day rate must show `0.2/day` after a single completion rather than waiting for the
+    window to fill.
+  - **F08, F09 and F11** shipped with fixed constants. The plan wants them player-configurable
+    through the existing settings surface, defaults reproducing today's behaviour.
+  - **F10** shipped as an earned gate on procurement. The plan says the gate leaked onto spot
+    procurement: Find Seller must work with a supplier you have never bought from, and only the
+    STANDING agreement stays earned.
+  - **F13** shipped as an auto-renew row on the employee card. The plan wants the state readable at
+    a glance and directly toggleable, like the existing Auto-ready control.
+  - **F17** shipped an employee card that still carries occasional actions inline. They move to the
+    `...` menu, with no lifecycle change.
 
 ## Standing rules this run has paid for
 
@@ -304,6 +137,7 @@ Twenty-one play observations are owed, all in `docs/PENDING_PLAYTESTS.md`. The t
 most: the F15 save-compatibility check; the partial-delivery defect in `DeliverToColony`, which
 costs the player silver and needs a design decision; and F20's equal wage split — someone who only
 ever makes chairs still has half their wage charged to tables.
+
 
 
 ## RESUME BRIEF — current at HEAD `47c1f5d`, 2026-09-08
@@ -344,21 +178,6 @@ keeps F25 a no-bump change.
 | F08 F09 commercial relationships | 8 | not started |
 | **F06 optional apparel policies** | **9** | **PLACED IN STAGE 9 — not started, recon first; see the gap below** |
 
-### THE F06 GAP — a real omission, found 2026-09-08
-
-`docs/PLAYTEST_BATCH_SOURCE_PLAN.md:338` is "F06 — Optional apparel policies for employees". The
-original stage table covered 24 of the 25 source-plan findings and omitted F06; the table above now
-places it in stage 9. The omission was inherited, not introduced, but it was also not caught until
-now. F06 has had NO recon and NO work.
-
-**DISPOSITION, decided 2026-09-08: F06 becomes STAGE 9, and the run cannot complete without it.**
-The operator required an executable stage or disposition, and dropping it was not chosen. Its
-natural home was stage 3 (employee UX), which is closed, and reopening a closed stage to bolt on an
-unreconnoitred finding is worse than giving it its own. Stage 9 runs last because it depends on
-nothing: apparel policy is per-employee configuration, not economy state. It starts with a recon
-unit — 9.0 — because unlike every other finding in this batch, nobody has yet established where it
-would attach or whether it needs persisted state of its own. If that recon finds it needs a schema
-change a default cannot express, that is the second bump and it returns to the operator.
 
 ### THE TWO OPERATOR DECISIONS — BOTH ANSWERED YES, 2026-09-08
 
@@ -469,20 +288,6 @@ Then the run's remaining obligation is the play sitting, not code.
 Source plan: `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` (findings F01–F25).
 Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publish** — §I of the plan.
 
-## Stages
-
-| | Stage | Findings | Status |
-|---|---|---|---|
-| ✅ | 1 — Quiet automation and vanilla-command correctness | F01, F02, F13, F15 | closed 2026-09-07 |
-| ✅ | 2 — Produce becomes programmable | F03, F04 | closed 2026-09-07 |
-| ✅ | 3 — Agreement and employee UX | F14, F16/F17, F18, F10 | closed 2026-09-08 |
-| ✅ | 4 — Player-side logistics | F05, F12 | closed 2026-09-08, F12 part-built |
-| ✅ | 5 — Market geography | F21, F11 | closed 2026-09-08 |
-| ✅ | 6 — Business intelligence and costing | F07, F19, F20 | closed 2026-09-08 |
-| 🔨 | 7 — Two-sided labor market | F25, F23, F24, F22 | F25, F23, F24 built; F22 reconnoitred only |
-| ✅ | 8 — Commercial relationships | F08, F09 | closed 2026-09-09, both built, asserted and disclosed |
-| ⬜ | 9 — Optional apparel policies | F06 | placed 2026-09-08, recon first, runs last |
-
 ## Decisions
 
 - **2026-09-06** — Stage order is dependency-driven, not plan order. F24 needs F21's logistics
@@ -507,53 +312,10 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
   `Procurement agreement completed` notice (`ProcurementContractService.cs:1185`), which is a
   whole-agreement outcome and stays.
 
-## Units — stage 7
 
-| | Unit | Status |
-|---|---|---|
-| ✅ | 7.1–7.5c — F25, the buyer-side labour market | accepted, through `d8ad4ed` |
-| ✅ | 7.6–7.6f — F23's equipment bond, both halves + assertions | accepted, `ed99423` `a173619` `91dc10d` `9841ec9` |
-| ✅ | 7.7–7.7f — F24's emergency dispatch, its window fix, assertions, play entry | accepted, `4a78e0e` `a264c22` |
-| ✅ | 7.8.0 — F22 recon (Sol high, read-only) | accepted, `d83a500` |
-| ✅ | 7.9 — F25's wage: show what is charged, not only what is asked | accepted, `2d737e7`; assertions still owed |
-| ✅ | 7.9b — recon: what `dailyWage` means (Sol high, read-only) | accepted; decision recorded |
-| ✅ | 7.9b1 — one owner for the charged rate, every payroll path through it | accepted, `7e230ad` |
-| ✅ | 7.9b3a — assertions for the partial period and the end settlement | accepted, `66af13b` |
-| ✅ | 7.9b2 — the writer at `EmploymentService.cs:138` and the hire message | accepted, `ca5860f` |
-| ✅ | 7.9b3b+c — displayed equals charged, with the literal oracle restored | accepted, `477ad58` |
-| ✅ | 7.12 — F23's bond ignores quality when valuing | accepted, `1bdac06`; unasserted by design |
-| ✅ | 7.12b — E1's oracle becomes quality-aware, fixture gets a masterwork | accepted, `b723d41` |
-| ✅ | 7.10 + 7.10b — F19's figure reaches the margin, and W4 pins it | accepted, `eb2d11c` |
-| ✅ | 7.11 — Pause must not let a committed uninstall finish | accepted, `35e1f2b`; unasserted |
-| ✅ | 7.11b — its assertions, both directions | accepted, `fe4c1ce` |
-| ✅ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | accepted, `c67cd50` |
-| ✅ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | accepted, `b4cc6c9` |
-| ✅ | 7.15 — the play entry for the seven-defect series | accepted, `1f4440c` |
-| ⬜ | 7.8 — F22 implementation, ~9 units | AWAITING OPERATOR DECISION |
+## Closed history — the first run, stages 1 to 9
 
-## Units — stage 8
-
-| | Unit | Status |
-|---|---|---|
-| ✅ | 8.0 — recon: what relationship state exists, and how big F08+F09 really are | accepted; decisions D1-D5 recorded |
-| ✅ | 8.1 — F08's decision logic, pure and uncalled | accepted, `91fc5e9` |
-| ✅ | 8.2 — apply it on a quadrum cadence from the world tick | accepted, `ccd1bdf` |
-| ✅ | 8.4 — F08's assertions, five of them, through the world tick | accepted, `d103024` |
-| ✅ | 8.3 — disclose it in the Relations row | accepted, `08412cf`. **F08 IS COMPLETE** |
-| ✅ | 8.5 + 8.5b — F09's sampler, and two assertion repairs | accepted, `10aa547` |
-| ✅ | 8.6 — F09's end evaluation and its guards | accepted, `c07fae7` |
-| ✅ | 8.8 — F09's five assertions | accepted, `ecf314a` |
-| ✅ | 8.7 — F09's disclosure in the departure letter | accepted, `d1640f3`. **STAGE 8 COMPLETE** |
-| ✅ | 8.9 — the stage-8 play entry | accepted, `400d0b3` |
-
-## Units — stage 9
-
-| | Unit | Status |
-|---|---|---|
-| ✅ | 9.0 — F06 recon: what vanilla already does about apparel policies | accepted; two claims spot-checked |
-| ⛔ | 9.1+ — F06 implementation, ~12 units | **BLOCKED: needs a sixth and seventh Harmony patch** |
-
-## Closed-stage unit history
-
-The unit history for closed stages 1–6 lives in the git log on branch
-`foreman/playtest-batch-2026-09-06`. Run `git log --oneline` on this branch to see it.
+Its unit tables and stage tables were replaced when the correction plan arrived. Every unit
+is in the git log on this branch, and `PROGRESS.md` carries the milestone record. Nothing
+from that run is pending: it halted cleanly, and the two questions it halted on have been
+answered by the correction plan as FROZEN and DEFERRED.
