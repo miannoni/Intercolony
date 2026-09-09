@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 8 — F08 and F09, recon first. Stage 7 is done apart from F22, which awaits the operator. Stages 1-6 are CLOSED.
-Unit: 8.8 — F09's five assertions, including the anti-farming rule
-Worker: luna running — `…\scratchpad\unit-8-8.out`
-Last done: 8.6, F09's end evaluation and its guards, accepted at `c07fae7` — six suites green.
-Updated: 2026-09-09 06:25
+Unit: 8.7 — F09's disclosure in the departure letter, the last unit of stage 8
+Worker: luna running — `…\scratchpad\unit-8-7.out`
+Last done: 8.8, F09's five assertions, accepted at `ecf314a` — long-term 54/0/0, both mutations red.
+Updated: 2026-09-09 06:50
 Foreman load: 2026-09-09 03:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -489,8 +489,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 8.3 — disclose it in the Relations row | accepted, `08412cf`. **F08 IS COMPLETE** |
 | ✅ | 8.5 + 8.5b — F09's sampler, and two assertion repairs | accepted, `10aa547` |
 | ✅ | 8.6 — F09's end evaluation and its guards | accepted, `c07fae7` |
-| 🔨 | 8.8 — F09's five assertions | Luna running |
-| ⬜ | 8.7 — F09's disclosure in the departure letter | not started |
+| ✅ | 8.8 — F09's five assertions | accepted, `ecf314a` |
+| 🔨 | 8.7 — F09's disclosure in the departure letter | Luna running |
 
 ## Closed-stage unit history
 
