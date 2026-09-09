@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.11 — Pause must not let a committed uninstall finish
-Worker: luna running — `…\scratchpad\unit-7-11.out`
-Last done: 7.10 + 7.10b, the direct-input margin and its oracle, accepted at `eb2d11c`.
-Updated: 2026-09-09 02:30
+Unit: 7.11b — assertions that Pause cancels the uninstall and Stop does not
+Worker: luna running — `…\scratchpad\unit-7-11b.out`
+Last done: 7.11, Pause leaves the object installed, accepted at `35e1f2b` — produce 35/0/0, economy 142/0/0.
+Updated: 2026-09-09 02:45
 Foreman load: 2026-09-09 00:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -404,7 +404,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.12 — F23's bond ignores quality when valuing | accepted, `1bdac06`; unasserted by design |
 | ✅ | 7.12b — E1's oracle becomes quality-aware, fixture gets a masterwork | accepted, `b723d41` |
 | ✅ | 7.10 + 7.10b — F19's figure reaches the margin, and W4 pins it | accepted, `eb2d11c` |
-| 🔨 | 7.11 — Pause must not let a committed uninstall finish | Luna running |
+| ✅ | 7.11 — Pause must not let a committed uninstall finish | accepted, `35e1f2b`; unasserted |
+| 🔨 | 7.11b — its assertions, both directions | Luna running |
 | ⬜ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | known defect 6 |
 | ⬜ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | known defect 7 |
 | ⬜ | 7.8 — F22 implementation, ~9 units | AWAITING OPERATOR DECISION |
