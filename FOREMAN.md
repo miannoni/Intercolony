@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C3 — settings for F08, F09 and F11, as one coherent pass. **C0, C1 AND C2 ARE CLOSED.**
-Unit: C3.0 — recon: the settings surface, the nine constants, and F11's real scheduling
-Worker: sol recon running — `…\scratchpad\recon-c3.out`
+Unit: C3.1 — the settings surface: nine settings, declared, persisted, validated, drawn
+Worker: luna running — `…\scratchpad\unit-c3-1.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -124,11 +124,50 @@ variable, and nothing in Intercolony is called by ordinary vanilla construction 
 | ✅ | C2.1 — normalise minified bill products, add the construction observer | accepted, `8cb5774` |
 | ✅ | C2.2 + C2.2b — C2's eight assertions and the wrapper re-cut | accepted, `14ad416`. **C2 COMPLETE** |
 
+## C3 — the recon, and what I decided from it
+
+Sol recon, read-only. The settings idiom, the nine constants and F11's scheduler are all mapped.
+
+**A DEFECT THE RECON FOUND, and it would have shipped: making the delta configurable BREAKS F08's
+safety property.** `CommercialGoodwillPressureService` only asks whether base goodwill is already at
+the ceiling and then applies the whole delta (`:203`, `:220`). At today's fixed `+1` that can never
+overshoot. At a configurable delta of 5 with a ceiling of 74, a faction at 73 lands on 78 — past
+vanilla's ally threshold of 75 (`reference/decompiled/RimWorld/DiplomacyTuning.cs:25`). The entire
+point of the ceiling is that commerce cannot buy an alliance.
+
+**DECIDED:**
+
+  - **C3-D1 — one owner for the settings surface, and it goes first.** All nine settings —
+    declaration, `Scribe` keys, ranges, validation, sections, labels, tooltips — land in ONE unit
+    before any consumer is touched. The plan demands it and the recon confirms
+    `IntercolonySettings.cs` and `IntercolonyMod.cs` cannot take two workers.
+  - **C3-D2 — the application clamps to remaining headroom**, not merely "is it below the
+    ceiling". And the ceiling setting itself clamps to at most 74. Two guards, because either alone
+    still lets a large delta jump the threshold.
+  - **C3-D3 — F09's thresholds are validated in both places.** `ExposeData` clamps on load and
+    save, but the UI writes live, so a consumer can see an invalid pair mid-drag. The invariant
+    holds at assignment too.
+  - **C3-D4 — attractiveness means price relative to its siblings.** Every quote for a request is
+    still in `request.quotes` while arrivals are scheduled (`RfqService.cs:242`), already sorted by
+    quantity then total price, so a bounded bias against the cheaper offers is available without
+    inventing a score. Bounded, and combined with the existing independent jitter, so the best
+    price is a tendency and never deterministically last — the plan is explicit about that.
+  - **C3-D5 — the five-day cap is on ARRIVAL, and the request keeps its six-day life.** Expiry is
+    inclusive (`PurchaseRequest.cs:225`) and the reveal path rejects an expired request before
+    checking whether a reply is due, so a request that expired at day 5 would discard the very
+    reply the cap scheduled.
+
 ## Units — stage C3
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | C3.0 — recon: the settings surface, the nine constants, F11's scheduling | Sol recon running |
+| ✅ | C3.0 — recon: the settings surface, the nine constants, F11's scheduling | accepted; D1-D5 recorded |
+| 🔨 | C3.1 — the settings surface, one owner, no consumer touched | Luna running |
+| ⬜ | C3.2 — F08 reads the settings, and clamps to remaining headroom | not started |
+| ⬜ | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | not started |
+| ⬜ | C3.4 — F09 reads the settings at resolution | not started |
+| ⬜ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | not started |
+| ⬜ | C3.6 → C3.8 — assertions, one unit per host suite | not started |
 
 ## C1 — the recon, and what I decided from it
 
