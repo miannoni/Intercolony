@@ -2468,3 +2468,37 @@ Manual test:
   `docs/PENDING_PLAYTESTS.md`, which now carries entries for F11, F23, F24, F25, stage 6, the
   seven-defect series and stage 8.
 
+## Playtest correction run — scope lock  (2026-09-09)
+
+Scope:
+- The new product plan, `docs/PLAYTEST_CORRECTION_PLAN.md`, is now authoritative for the behaviours it covers. `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` remains authoritative for everything else.
+- This run advances ONLY F01, F07, F08, F09, F10, F11, F13 and F17.
+
+Frozen:
+- F12 is **FROZEN**. Stage C6 says:
+  > F12 — FROZEN.
+  > Existing order-availability work retained.
+  > Recurring/preprogrammed caravan design intentionally deferred.
+  > Do not dispatch further implementation without a newer product plan.
+  > No implementation unit should follow the documentation freeze.
+  No future run should treat F12 as an unfinished task to resume automatically.
+- F22 is **FROZEN**. Stage C7 says:
+  > F22 — FROZEN.
+  > Reverse/player-supplied labor market intentionally not part of the current release scope.
+  > Do not dispatch custody proof or any implementation unit without a newer product plan.
+  > Foreman should not stop the run later asking whether it may begin F22.
+  The existing recon may remain as historical technical information; no future run should treat F22 as an unfinished task to resume automatically.
+
+Left untouched pending newer product direction:
+- F04, F06, F16, F19, F20, F21, F23, F24 are left untouched pending newer product direction — not abandoned, not incomplete-by-accident.
+
+Regression-only:
+- F02, F03, F05, F14, F15, F18 and F25 are closed and regression-only.
+
+Baseline:
+- This run starts from branch `foreman/playtest-batch-2026-09-06` at `56180ea`.
+- Whole suite on a fresh world: **1536 passed, 0 failed, 17 skipped, exit 0**.
+
+Status:
+- The branch is not merged and not released.
+
