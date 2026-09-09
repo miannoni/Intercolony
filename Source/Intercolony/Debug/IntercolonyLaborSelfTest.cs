@@ -447,7 +447,7 @@ namespace Intercolony
         /// <summary>Wage rules that must hold regardless of which worker was rolled.</summary>
         private static void CheckPricing(Results r, IntercolonyWorldComponent state, List<LaborCandidate> pool)
         {
-            bool chosenTravelBounds = CheckTravelBounds(state, pool, out string travelBoundsDetail);
+            CheckTravelBounds(r, state, pool);
             int positive = 0;
             int longerIsCheaperPerDay = 0;
             int sampled = 0;
@@ -482,10 +482,6 @@ namespace Intercolony
                 "a longer term never costs more per day (§36.1)",
                 $"{longerIsCheaperPerDay}/{sampled} sampled");
             r.Check(pool.TrueForAll(c => c.minTermDays > 0), "every candidate has a minimum term");
-            r.Check(chosenTravelBounds &&
-                    pool.TrueForAll(c => c.travelDays >= 1 && c.travelDays <= 20),
-                "every candidate's travel time is bounded to 1-20 days",
-                travelBoundsDetail);
             r.Check(pool.TrueForAll(c => c.pawn != null && c.pawn.RaceProps.Humanlike),
                 "every candidate is a humanlike pawn");
         }
@@ -497,10 +493,9 @@ namespace Intercolony
         /// the live market as it was. The expected days are literals rather than a second call to
         /// the production conversion.
         /// </summary>
-        private static bool CheckTravelBounds(
-            IntercolonyWorldComponent state, List<LaborCandidate> pool, out string detail)
+        private static void CheckTravelBounds(
+            Results r, IntercolonyWorldComponent state, List<LaborCandidate> pool)
         {
-            detail = "chosen-distance candidate fixture did not run";
             Settlement source = null;
             PlanetTile originalTile = PlanetTile.Invalid;
             bool savedOriginalTile = false;
@@ -510,8 +505,11 @@ namespace Intercolony
                 if (state == null || pool == null || Find.WorldGrid == null ||
                     Find.WorldObjects == null || Find.AnyPlayerHomeMap == null)
                 {
-                    detail = "chosen-distance candidate fixture needs a world, world grid, and home map";
-                    return false;
+                    string failureDetail =
+                        "chosen-distance candidate fixture needs a world, world grid, and home map";
+                    r.Check(false, "every candidate's travel time respects the 1-day lower bound", failureDetail);
+                    r.Check(false, "every candidate's travel time is bounded to 1-20 days", failureDetail);
+                    return;
                 }
 
                 foreach (LaborCandidate candidate in pool)
@@ -527,23 +525,30 @@ namespace Intercolony
 
                 if (source == null)
                 {
-                    detail = "chosen-distance candidate fixture found no live source settlement";
-                    return false;
+                    string failureDetail = "chosen-distance candidate fixture found no live source settlement";
+                    r.Check(false, "every candidate's travel time respects the 1-day lower bound", failureDetail);
+                    r.Check(false, "every candidate's travel time is bounded to 1-20 days", failureDetail);
+                    return;
                 }
 
                 SettlementEconomicProfile profile = state.GetProfile(source);
                 if (profile == null)
                 {
-                    detail = $"chosen-distance candidate fixture could not profile {source.Label}";
-                    return false;
+                    string failureDetail = $"chosen-distance candidate fixture could not profile {source.Label}";
+                    r.Check(false, "every candidate's travel time respects the 1-day lower bound", failureDetail);
+                    r.Check(false, "every candidate's travel time is bounded to 1-20 days", failureDetail);
+                    return;
                 }
 
                 PlanetTile homeTile = Find.AnyPlayerHomeMap.Tile;
-                PlanetTile farTile = FindFarTravelFixtureTile(homeTile);
+                PlanetTile farTile = FindFarthestTravelFixtureTile(
+                    homeTile, out float farthestDistance);
                 if (!farTile.Valid)
                 {
-                    detail = "chosen-distance candidate fixture found no world tile beyond 246 tiles";
-                    return false;
+                    string failureDetail = "chosen-distance candidate fixture found no world tile";
+                    r.Check(false, "every candidate's travel time respects the 1-day lower bound", failureDetail);
+                    r.Check(false, "every candidate's travel time is bounded to 1-20 days", failureDetail);
+                    return;
                 }
 
                 originalTile = source.Tile;
@@ -562,23 +567,51 @@ namespace Intercolony
 
                 int farTravelDays = far?.travelDays ?? -1;
                 float farDistance = far?.distanceTiles ?? float.NaN;
+                // Independent oracle: keep the expected distance arithmetic literal here instead
+                // of calling the production travel conversion.
+                int nearUnclampedTravelDays = near == null
+                    ? -1
+                    : Mathf.RoundToInt(nearDistance / 12f);
+                int farUnclampedTravelDays = Mathf.RoundToInt(farthestDistance / 12f);
+                bool listedCandidatesHaveLowerBound = pool.TrueForAll(candidate =>
+                    candidate != null && candidate.travelDays >= 1);
+                bool nearLowerBound = near != null && nearDistance < 6f &&
+                    nearUnclampedTravelDays == 0 && nearTravelDays == 1;
+
+                string detail =
+                    $"near fixture {nearDistance:0.###} tiles -> {nearTravelDays}d (expected 1d; " +
+                    $"literal unclamped arithmetic gives {nearUnclampedTravelDays}d); " +
+                    $"farthest world tile {farthestDistance:0.###} tiles; " +
+                    $"far fixture {farDistance:0.###} tiles -> {farTravelDays}d (literal unclamped " +
+                    $"arithmetic gives {farUnclampedTravelDays}d); " +
+                    $"listed candidates lower-bounded {listedCandidatesHaveLowerBound}";
+                r.Check(listedCandidatesHaveLowerBound && nearLowerBound,
+                    "every candidate's travel time respects the 1-day lower bound", detail);
+
+                if (farUnclampedTravelDays <= 20)
+                {
+                    r.Skip("every candidate's travel time is bounded to 1-20 days",
+                        $"upper-bound check skipped: farthest world tile is {farthestDistance:0.###} " +
+                        $"tiles from the colony; literal unclamped travel is " +
+                        $"{farUnclampedTravelDays} days, so it does not exceed the 20-day ceiling.");
+                    return;
+                }
+
                 bool listedCandidatesBounded = farPool != null && farPool.TrueForAll(candidate =>
                     candidate != null && candidate.travelDays >= 1 && candidate.travelDays <= 20);
-                bool expectedExtremes = near != null && nearDistance < 6f && nearTravelDays == 1 &&
-                    far != null && farDistance > 246f && farTravelDays == 20;
-
-                detail =
-                    $"near fixture {nearDistance:0.###} tiles -> {nearTravelDays}d (expected 1d; " +
-                    "without the labour clamp this distance rounds to 0d); " +
-                    $"far fixture {farDistance:0.###} tiles -> {farTravelDays}d (expected 20d; " +
-                    "without the labour clamp it rounds above 20d); " +
-                    $"listed candidates bounded {listedCandidatesBounded}";
-                return expectedExtremes && listedCandidatesBounded;
+                bool upperBound = far != null &&
+                    Mathf.Abs(farDistance - farthestDistance) < 0.01f && farTravelDays == 20 &&
+                    listedCandidatesBounded;
+                r.Check(upperBound,
+                    "every candidate's travel time is bounded to 1-20 days",
+                    detail + $"; listed candidates bounded {listedCandidatesBounded}");
             }
             catch (Exception ex)
             {
-                detail = $"chosen-distance candidate fixture threw {ex.GetType().Name}: {ex.Message}";
-                return false;
+                string detail =
+                    $"chosen-distance candidate fixture threw {ex.GetType().Name}: {ex.Message}";
+                r.Check(false, "every candidate's travel time respects the 1-day lower bound", detail);
+                r.Check(false, "every candidate's travel time is bounded to 1-20 days", detail);
             }
             finally
             {
@@ -590,30 +623,23 @@ namespace Intercolony
             }
         }
 
-        private static PlanetTile FindFarTravelFixtureTile(PlanetTile homeTile)
+        private static PlanetTile FindFarthestTravelFixtureTile(
+            PlanetTile homeTile, out float farthestDistance)
         {
-            PlanetTile occupiedFallback = PlanetTile.Invalid;
+            PlanetTile farthestTile = PlanetTile.Invalid;
+            farthestDistance = -1f;
             for (int tileId = 0; tileId < Find.WorldGrid.TilesCount; tileId++)
             {
                 PlanetTile tile = new PlanetTile(tileId);
-                if (tile == homeTile ||
-                    Find.WorldGrid.ApproxDistanceInTiles(homeTile, tile) <= 246f)
+                float distance = Find.WorldGrid.ApproxDistanceInTiles(homeTile, tile);
+                if (!farthestTile.Valid || distance > farthestDistance)
                 {
-                    continue;
-                }
-
-                if (!Find.WorldObjects.AnyWorldObjectAt(tile))
-                {
-                    return tile;
-                }
-
-                if (!occupiedFallback.Valid)
-                {
-                    occupiedFallback = tile;
+                    farthestTile = tile;
+                    farthestDistance = distance;
                 }
             }
 
-            return occupiedFallback;
+            return farthestTile;
         }
 
         private static LaborCandidate FindCandidateFromSource(
@@ -1114,9 +1140,11 @@ namespace Intercolony
             HashSet<string> expectedNodes = ExpectedEmploymentContractNodeNames();
             // The ordinary baseline is the existing F23 fixture hire, which deliberately carries
             // apparel. A generated emergency worker may or may not carry bondable gear, so the
-            // presence of this already-known F23 node is candidate-dependent, not F24 state.
+            // presence of these already-known nodes is candidate-dependent, not F24 state. The
+            // experience fields can likewise be absent when their default zero values are omitted.
             HashSet<string> candidateDependentNodes = new HashSet<string>(
-                new[] { "equipmentBond" }, StringComparer.Ordinal);
+                new[] { "equipmentBond", "moodSampleTotal", "moodSampleCount" },
+                StringComparer.Ordinal);
             HashSet<string> ordinaryOnly = new HashSet<string>(
                 ordinaryNodes, StringComparer.Ordinal);
             ordinaryOnly.ExceptWith(emergencyNodes);
@@ -1229,6 +1257,7 @@ namespace Intercolony
                     "renewalOffered", "renewalDeclinedByWorker", "renewalDeclinedByPlayer",
                     "renewalWage", "renewals", "autoRenew",
                     "transitionOffered", "transitionOfferedTick", "transitionResolved", "endTick",
+                    "moodSampleTotal", "moodSampleCount",
                     "status", "outcomeNote", "termLapsedNotified", "downedNotified",
                     "safePassage", "safePassageEndTick"
                 },

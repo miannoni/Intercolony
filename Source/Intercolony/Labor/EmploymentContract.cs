@@ -268,6 +268,17 @@ namespace Intercolony
         /// <summary>Set on arrival: the term runs from the first day of work, not from hiring.</summary>
         public int endTick = -1;
 
+        /// <summary>
+        /// Running total of normalized daily mood samples recorded during this employment.
+        /// </summary>
+        public float moodSampleTotal;
+
+        /// <summary>
+        /// Number of normalized daily mood samples recorded. Zero means "never sampled", not a
+        /// genuine average of zero.
+        /// </summary>
+        public int moodSampleCount;
+
         public EmploymentStatus status = EmploymentStatus.Travelling;
         public string outcomeNote = "";
 
@@ -508,6 +519,8 @@ namespace Intercolony
             Scribe_Values.Look(ref transitionOfferedTick, "transitionOfferedTick", -1);
             Scribe_Values.Look(ref transitionResolved, "transitionResolved", false);
             Scribe_Values.Look(ref endTick, "endTick", -1);
+            Scribe_Values.Look(ref moodSampleTotal, "moodSampleTotal", 0f);
+            Scribe_Values.Look(ref moodSampleCount, "moodSampleCount", 0);
 
             Scribe_Values.Look(ref status, "status", EmploymentStatus.Travelling);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");

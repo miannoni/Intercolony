@@ -1765,6 +1765,13 @@ namespace Intercolony
                 // letters, and only one of them is an accusation.
                 HostilityPolicy.Sweep(this);
 
+                // Record the day's normalized employment experience after hostility has had its
+                // chance to close a war-severed contract, but before ordinary expiry processing.
+                if (GenTicks.IsTickInterval(GenDate.TicksPerDay))
+                {
+                    EmploymentExperienceService.Sample(employments);
+                }
+
                 if (GenTicks.IsTickInterval(GenDate.TicksPerQuadrum))
                 {
                     CommercialGoodwillPressureService.Apply(this);
