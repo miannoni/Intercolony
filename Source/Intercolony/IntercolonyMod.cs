@@ -120,6 +120,233 @@ namespace Intercolony
             }
 
             SectionGap(ref y);
+            SectionTitle("Commercial relationships", width, ref y, draw);
+            float commercialGoodwillIntervalDays = Settings.commercialGoodwillIntervalDays;
+            Slider(
+                CommercialGoodwillIntervalLabel(commercialGoodwillIntervalDays),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinCommercialGoodwillIntervalDays,
+                    IntercolonySettings.MaxCommercialGoodwillIntervalDays,
+                    1f,
+                    CommercialGoodwillIntervalLabel),
+                ref commercialGoodwillIntervalDays,
+                IntercolonySettings.MinCommercialGoodwillIntervalDays,
+                IntercolonySettings.MaxCommercialGoodwillIntervalDays,
+                1f,
+                width,
+                ref y,
+                draw,
+                CommercialGoodwillIntervalTooltip);
+            if (draw)
+            {
+                Settings.commercialGoodwillIntervalDays =
+                    Mathf.RoundToInt(commercialGoodwillIntervalDays);
+            }
+
+            float commercialGoodwillPerInterval = Settings.commercialGoodwillPerInterval;
+            Slider(
+                CommercialGoodwillPerIntervalLabel(commercialGoodwillPerInterval),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinCommercialGoodwillPerInterval,
+                    IntercolonySettings.MaxCommercialGoodwillPerInterval,
+                    1f,
+                    CommercialGoodwillPerIntervalLabel),
+                ref commercialGoodwillPerInterval,
+                IntercolonySettings.MinCommercialGoodwillPerInterval,
+                IntercolonySettings.MaxCommercialGoodwillPerInterval,
+                1f,
+                width,
+                ref y,
+                draw,
+                CommercialGoodwillPerIntervalTooltip);
+            if (draw)
+            {
+                Settings.commercialGoodwillPerInterval =
+                    Mathf.RoundToInt(commercialGoodwillPerInterval);
+            }
+
+            float commercialGoodwillCeiling = Settings.commercialGoodwillCeiling;
+            Slider(
+                CommercialGoodwillCeilingLabel(commercialGoodwillCeiling),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinCommercialGoodwillCeiling,
+                    IntercolonySettings.MaxCommercialGoodwillCeiling,
+                    1f,
+                    CommercialGoodwillCeilingLabel),
+                ref commercialGoodwillCeiling,
+                IntercolonySettings.MinCommercialGoodwillCeiling,
+                IntercolonySettings.MaxCommercialGoodwillCeiling,
+                1f,
+                width,
+                ref y,
+                draw,
+                CommercialGoodwillCeilingTooltip);
+            if (draw)
+            {
+                Settings.commercialGoodwillCeiling = Mathf.RoundToInt(commercialGoodwillCeiling);
+            }
+
+            float commercialReputationRequired = Settings.commercialReputationRequired;
+            Slider(
+                CommercialReputationRequiredLabel(commercialReputationRequired),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinCommercialReputationRequired,
+                    IntercolonySettings.MaxCommercialReputationRequired,
+                    1f,
+                    CommercialReputationRequiredLabel),
+                ref commercialReputationRequired,
+                IntercolonySettings.MinCommercialReputationRequired,
+                IntercolonySettings.MaxCommercialReputationRequired,
+                1f,
+                width,
+                ref y,
+                draw,
+                CommercialReputationRequiredTooltip);
+            if (draw)
+            {
+                Settings.commercialReputationRequired =
+                    Mathf.RoundToInt(commercialReputationRequired);
+            }
+
+            SectionGap(ref y);
+            SectionTitle("Employment experience", width, ref y, draw);
+            float minimumEmploymentDaysForGoodwill =
+                Settings.minimumEmploymentDaysForGoodwill;
+            Slider(
+                MinimumEmploymentDaysLabel(minimumEmploymentDaysForGoodwill),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinMinimumEmploymentDaysForGoodwill,
+                    IntercolonySettings.MaxMinimumEmploymentDaysForGoodwill,
+                    1f,
+                    MinimumEmploymentDaysLabel),
+                ref minimumEmploymentDaysForGoodwill,
+                IntercolonySettings.MinMinimumEmploymentDaysForGoodwill,
+                IntercolonySettings.MaxMinimumEmploymentDaysForGoodwill,
+                1f,
+                width,
+                ref y,
+                draw,
+                MinimumEmploymentDaysTooltip);
+            if (draw)
+            {
+                Settings.minimumEmploymentDaysForGoodwill =
+                    Mathf.RoundToInt(minimumEmploymentDaysForGoodwill);
+            }
+
+            float positiveExperienceThreshold = Settings.positiveExperienceThreshold;
+            Slider(
+                PositiveExperienceThresholdLabel(positiveExperienceThreshold),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinPositiveExperienceThreshold,
+                    IntercolonySettings.MaxPositiveExperienceThreshold,
+                    0.01f,
+                    PositiveExperienceThresholdLabel),
+                ref positiveExperienceThreshold,
+                IntercolonySettings.MinPositiveExperienceThreshold,
+                IntercolonySettings.MaxPositiveExperienceThreshold,
+                0.01f,
+                width,
+                ref y,
+                draw,
+                PositiveExperienceThresholdTooltip);
+            if (draw)
+            {
+                Settings.positiveExperienceThreshold = Mathf.Clamp(
+                    positiveExperienceThreshold,
+                    IntercolonySettings.MinPositiveExperienceThreshold,
+                    IntercolonySettings.MaxPositiveExperienceThreshold);
+                if (Settings.positiveExperienceThreshold <=
+                    Settings.negativeExperienceThreshold)
+                {
+                    Settings.positiveExperienceThreshold =
+                        Settings.negativeExperienceThreshold + 0.01f;
+                }
+            }
+
+            float negativeExperienceThreshold = Settings.negativeExperienceThreshold;
+            Slider(
+                NegativeExperienceThresholdLabel(negativeExperienceThreshold),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinNegativeExperienceThreshold,
+                    IntercolonySettings.MaxNegativeExperienceThreshold,
+                    0.01f,
+                    NegativeExperienceThresholdLabel),
+                ref negativeExperienceThreshold,
+                IntercolonySettings.MinNegativeExperienceThreshold,
+                IntercolonySettings.MaxNegativeExperienceThreshold,
+                0.01f,
+                width,
+                ref y,
+                draw,
+                NegativeExperienceThresholdTooltip);
+            if (draw)
+            {
+                Settings.negativeExperienceThreshold = Mathf.Clamp(
+                    negativeExperienceThreshold,
+                    IntercolonySettings.MinNegativeExperienceThreshold,
+                    IntercolonySettings.MaxNegativeExperienceThreshold);
+                if (Settings.negativeExperienceThreshold >=
+                    Settings.positiveExperienceThreshold)
+                {
+                    Settings.negativeExperienceThreshold =
+                        Settings.positiveExperienceThreshold - 0.01f;
+                }
+            }
+
+            float employmentGoodwillImpact = Settings.employmentGoodwillImpact;
+            Slider(
+                EmploymentGoodwillImpactLabel(employmentGoodwillImpact),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinEmploymentGoodwillImpact,
+                    IntercolonySettings.MaxEmploymentGoodwillImpact,
+                    1f,
+                    EmploymentGoodwillImpactLabel),
+                ref employmentGoodwillImpact,
+                IntercolonySettings.MinEmploymentGoodwillImpact,
+                IntercolonySettings.MaxEmploymentGoodwillImpact,
+                1f,
+                width,
+                ref y,
+                draw,
+                EmploymentGoodwillImpactTooltip);
+            if (draw)
+            {
+                Settings.employmentGoodwillImpact = Mathf.RoundToInt(employmentGoodwillImpact);
+            }
+
+            SectionGap(ref y);
+            SectionTitle("RFQ response speed", width, ref y, draw);
+            float rfqResponseSpeed = Settings.rfqResponseSpeed;
+            Slider(
+                RfqResponseSpeedLabel(rfqResponseSpeed),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinRfqResponseSpeed,
+                    IntercolonySettings.MaxRfqResponseSpeed,
+                    0.1f,
+                    RfqResponseSpeedLabel),
+                ref rfqResponseSpeed,
+                IntercolonySettings.MinRfqResponseSpeed,
+                IntercolonySettings.MaxRfqResponseSpeed,
+                0.1f,
+                width,
+                ref y,
+                draw,
+                RfqResponseSpeedTooltip);
+            if (draw)
+            {
+                Settings.rfqResponseSpeed = rfqResponseSpeed;
+            }
+
+            SectionGap(ref y);
             SectionTitle("Find Buyer", width, ref y, draw);
             bool markReadyByDefault = Settings.markReadyNowByDefault;
             float markReadyHeight = Mathf.Max(
@@ -272,6 +499,33 @@ namespace Intercolony
         private const string ShowProposalAppealPercentageTooltip =
             "Shows the continuous proposal appeal percentage on both the selling and procurement " +
             "proposal screens.";
+        private const string CommercialGoodwillIntervalTooltip =
+            "Controls how often a qualifying commercial relationship can add goodwill. Shorter " +
+            "intervals apply the change more often; changing it does not grant goodwill retroactively.";
+        private const string CommercialGoodwillPerIntervalTooltip =
+            "Sets the goodwill gained at each qualifying interval. Set it to 0 to turn off positive " +
+            "commercial goodwill while leaving the rest of reputation working.";
+        private const string CommercialGoodwillCeilingTooltip =
+            "Caps goodwill gained through commercial relationships. It stops below vanilla's Ally " +
+            "threshold, so commercial standing never creates an alliance on its own.";
+        private const string CommercialReputationRequiredTooltip =
+            "Sets the commercial reputation needed before a relationship can add goodwill. Higher " +
+            "values require a stronger trading relationship.";
+        private const string MinimumEmploymentDaysTooltip =
+            "Sets how long a worker must be employed before their experience can change goodwill. " +
+            "Shorter employments still record experience but do not qualify for this goodwill change.";
+        private const string PositiveExperienceThresholdTooltip =
+            "An average mood at or above this level counts as a positive employment experience and " +
+            "can improve goodwill.";
+        private const string NegativeExperienceThresholdTooltip =
+            "An average mood at or below this level counts as a negative employment experience and " +
+            "can reduce goodwill. It must remain below the positive threshold.";
+        private const string EmploymentGoodwillImpactTooltip =
+            "Sets how much goodwill a qualifying employment experience gains or loses. Set it to 0 " +
+            "to disable this goodwill change without stopping experience recording.";
+        private const string RfqResponseSpeedTooltip =
+            "Higher values make supplier replies arrive sooner, but distance still matters and " +
+            "price or offer quality may still influence timing.";
 
         private static string RefreshDaysLabel(float refreshDays)
         {
@@ -283,6 +537,63 @@ namespace Intercolony
         private static string ActiveOpportunitiesLabel(float activeOpportunities)
         {
             return $"Open opportunities kept active: {Mathf.RoundToInt(activeOpportunities)}";
+        }
+
+        private static string CommercialGoodwillIntervalLabel(float days)
+        {
+            int roundedDays = Mathf.RoundToInt(days);
+            return roundedDays == 1
+                ? "Commercial goodwill interval: every 1 day"
+                : $"Commercial goodwill interval: every {roundedDays} days";
+        }
+
+        private static string CommercialGoodwillPerIntervalLabel(float delta)
+        {
+            int roundedDelta = Mathf.RoundToInt(delta);
+            return roundedDelta == 0
+                ? "Commercial goodwill per interval: +0 (disabled)"
+                : $"Commercial goodwill per interval: +{roundedDelta}";
+        }
+
+        private static string CommercialGoodwillCeilingLabel(float ceiling)
+        {
+            return $"Commercial goodwill ceiling: {Mathf.RoundToInt(ceiling)}";
+        }
+
+        private static string CommercialReputationRequiredLabel(float required)
+        {
+            return $"Commercial reputation required for goodwill: {Mathf.RoundToInt(required)}/100";
+        }
+
+        private static string MinimumEmploymentDaysLabel(float days)
+        {
+            int roundedDays = Mathf.RoundToInt(days);
+            return roundedDays == 1
+                ? "Minimum employment for goodwill: 1 day"
+                : $"Minimum employment for goodwill: {roundedDays} days";
+        }
+
+        private static string PositiveExperienceThresholdLabel(float threshold)
+        {
+            return $"Positive experience threshold: {Mathf.RoundToInt(threshold * 100f)}% mood";
+        }
+
+        private static string NegativeExperienceThresholdLabel(float threshold)
+        {
+            return $"Negative experience threshold: {Mathf.RoundToInt(threshold * 100f)}% mood";
+        }
+
+        private static string EmploymentGoodwillImpactLabel(float impact)
+        {
+            int roundedImpact = Mathf.RoundToInt(impact);
+            return roundedImpact == 0
+                ? "Employment goodwill impact: ±0 (disabled)"
+                : $"Employment goodwill impact: ±{roundedImpact}";
+        }
+
+        private static string RfqResponseSpeedLabel(float speed)
+        {
+            return $"RFQ response speed: {speed:0.0}x";
         }
 
         /// <summary>
@@ -418,8 +729,9 @@ namespace Intercolony
         private static void Slider(
             string label, float reservedLabelHeight, ref float value,
             float min, float max, float roundTo,
-            float width, ref float y, bool draw)
+            float width, ref float y, bool draw, string tooltip = null)
         {
+            float rowY = y;
             float textHeight = Text.CalcHeight(label, width);
             float labelHeight = Mathf.Max(textHeight, reservedLabelHeight);
             if (draw)
@@ -436,6 +748,11 @@ namespace Intercolony
                 value = Widgets.HorizontalSlider(
                     new Rect(0f, y, width, sliderHeight), value, min, max,
                     middleAlignment: true, roundTo: roundTo);
+                if (!string.IsNullOrEmpty(tooltip))
+                {
+                    TooltipHandler.TipRegion(
+                        new Rect(0f, rowY, width, labelHeight + sliderHeight), tooltip);
+                }
             }
 
             y += sliderHeight + 8f;

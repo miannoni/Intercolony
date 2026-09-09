@@ -25,12 +25,40 @@ namespace Intercolony
         public const float MinLaborCostMultiplier = 0.5f;
         public const float MaxLaborCostMultiplier = 2f;
 
+        public const int DefaultCommercialGoodwillIntervalDays = 15;
+        public const int DefaultCommercialGoodwillPerInterval = 1;
+        public const int DefaultCommercialGoodwillCeiling = 60;
+        public const int DefaultCommercialReputationRequired = 80;
+        public const int DefaultMinimumEmploymentDaysForGoodwill = 10;
+        public const float DefaultPositiveExperienceThreshold = 0.75f;
+        public const float DefaultNegativeExperienceThreshold = 0.35f;
+        public const int DefaultEmploymentGoodwillImpact = 3;
+        public const float DefaultRfqResponseSpeed = 1f;
+
         public const float MinRefreshDays = 0.25f;
         public const float MaxRefreshDays = 7f;
         public const int MinActiveOpportunities = 10;
         public const int MaxActiveOpportunities = 200;
         public const float MinEconomyDifficulty = 0.5f;
         public const float MaxEconomyDifficulty = 1.5f;
+        public const int MinCommercialGoodwillIntervalDays = 1;
+        public const int MaxCommercialGoodwillIntervalDays = 60;
+        public const int MinCommercialGoodwillPerInterval = 0;
+        public const int MaxCommercialGoodwillPerInterval = 5;
+        public const int MinCommercialGoodwillCeiling = 0;
+        public const int MaxCommercialGoodwillCeiling = 74;
+        public const int MinCommercialReputationRequired = 0;
+        public const int MaxCommercialReputationRequired = 100;
+        public const int MinMinimumEmploymentDaysForGoodwill = 1;
+        public const int MaxMinimumEmploymentDaysForGoodwill = 60;
+        public const float MinPositiveExperienceThreshold = 0.5f;
+        public const float MaxPositiveExperienceThreshold = 0.95f;
+        public const float MinNegativeExperienceThreshold = 0.05f;
+        public const float MaxNegativeExperienceThreshold = 0.5f;
+        public const int MinEmploymentGoodwillImpact = 0;
+        public const int MaxEmploymentGoodwillImpact = 10;
+        public const float MinRfqResponseSpeed = 0.5f;
+        public const float MaxRfqResponseSpeed = 2f;
 
         public IntercolonyLetterVolume letterVolume = IntercolonyLetterVolume.ImportantOnly;
         public float refreshDays = DefaultRefreshDays;
@@ -52,6 +80,15 @@ namespace Intercolony
         /// <summary>Whether proposal screens show the continuous appeal percentage beside its band.</summary>
         public bool showProposalAppealPercentage = false;
         public float laborCostMultiplier = DefaultLaborCostMultiplier;
+        public int commercialGoodwillIntervalDays = DefaultCommercialGoodwillIntervalDays;
+        public int commercialGoodwillPerInterval = DefaultCommercialGoodwillPerInterval;
+        public int commercialGoodwillCeiling = DefaultCommercialGoodwillCeiling;
+        public int commercialReputationRequired = DefaultCommercialReputationRequired;
+        public int minimumEmploymentDaysForGoodwill = DefaultMinimumEmploymentDaysForGoodwill;
+        public float positiveExperienceThreshold = DefaultPositiveExperienceThreshold;
+        public float negativeExperienceThreshold = DefaultNegativeExperienceThreshold;
+        public int employmentGoodwillImpact = DefaultEmploymentGoodwillImpact;
+        public float rfqResponseSpeed = DefaultRfqResponseSpeed;
 
         public override void ExposeData()
         {
@@ -77,6 +114,42 @@ namespace Intercolony
                 ref showProposalAppealPercentage, "showProposalAppealPercentage", false);
             Scribe_Values.Look(
                 ref laborCostMultiplier, "laborCostMultiplierV2", DefaultLaborCostMultiplier);
+            Scribe_Values.Look(
+                ref commercialGoodwillIntervalDays,
+                "commercialGoodwillIntervalDays",
+                DefaultCommercialGoodwillIntervalDays);
+            Scribe_Values.Look(
+                ref commercialGoodwillPerInterval,
+                "commercialGoodwillPerInterval",
+                DefaultCommercialGoodwillPerInterval);
+            Scribe_Values.Look(
+                ref commercialGoodwillCeiling,
+                "commercialGoodwillCeiling",
+                DefaultCommercialGoodwillCeiling);
+            Scribe_Values.Look(
+                ref commercialReputationRequired,
+                "commercialReputationRequired",
+                DefaultCommercialReputationRequired);
+            Scribe_Values.Look(
+                ref minimumEmploymentDaysForGoodwill,
+                "minimumEmploymentDaysForGoodwill",
+                DefaultMinimumEmploymentDaysForGoodwill);
+            Scribe_Values.Look(
+                ref positiveExperienceThreshold,
+                "positiveExperienceThreshold",
+                DefaultPositiveExperienceThreshold);
+            Scribe_Values.Look(
+                ref negativeExperienceThreshold,
+                "negativeExperienceThreshold",
+                DefaultNegativeExperienceThreshold);
+            Scribe_Values.Look(
+                ref employmentGoodwillImpact,
+                "employmentGoodwillImpact",
+                DefaultEmploymentGoodwillImpact);
+            Scribe_Values.Look(
+                ref rfqResponseSpeed,
+                "rfqResponseSpeed",
+                DefaultRfqResponseSpeed);
 
             if (enabledBuyOnlyTradeCategoryKeys == null)
             {
@@ -97,6 +170,45 @@ namespace Intercolony
                 economyDifficulty, MinEconomyDifficulty, MaxEconomyDifficulty);
             laborCostMultiplier = Mathf.Clamp(
                 laborCostMultiplier, MinLaborCostMultiplier, MaxLaborCostMultiplier);
+            commercialGoodwillIntervalDays = Mathf.Clamp(
+                commercialGoodwillIntervalDays,
+                MinCommercialGoodwillIntervalDays,
+                MaxCommercialGoodwillIntervalDays);
+            commercialGoodwillPerInterval = Mathf.Clamp(
+                commercialGoodwillPerInterval,
+                MinCommercialGoodwillPerInterval,
+                MaxCommercialGoodwillPerInterval);
+            commercialGoodwillCeiling = Mathf.Clamp(
+                commercialGoodwillCeiling,
+                MinCommercialGoodwillCeiling,
+                MaxCommercialGoodwillCeiling);
+            commercialReputationRequired = Mathf.Clamp(
+                commercialReputationRequired,
+                MinCommercialReputationRequired,
+                MaxCommercialReputationRequired);
+            minimumEmploymentDaysForGoodwill = Mathf.Clamp(
+                minimumEmploymentDaysForGoodwill,
+                MinMinimumEmploymentDaysForGoodwill,
+                MaxMinimumEmploymentDaysForGoodwill);
+            positiveExperienceThreshold = Mathf.Clamp(
+                positiveExperienceThreshold,
+                MinPositiveExperienceThreshold,
+                MaxPositiveExperienceThreshold);
+            negativeExperienceThreshold = Mathf.Clamp(
+                negativeExperienceThreshold,
+                MinNegativeExperienceThreshold,
+                MaxNegativeExperienceThreshold);
+            if (negativeExperienceThreshold >= positiveExperienceThreshold)
+            {
+                negativeExperienceThreshold = positiveExperienceThreshold - 0.01f;
+            }
+
+            employmentGoodwillImpact = Mathf.Clamp(
+                employmentGoodwillImpact,
+                MinEmploymentGoodwillImpact,
+                MaxEmploymentGoodwillImpact);
+            rfqResponseSpeed = Mathf.Clamp(
+                rfqResponseSpeed, MinRfqResponseSpeed, MaxRfqResponseSpeed);
         }
     }
 }
