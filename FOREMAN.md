@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C3 — settings for F08, F09 and F11, as one coherent pass. **C0, C1 AND C2 ARE CLOSED.**
-Unit: C3.1 — the settings surface: nine settings, declared, persisted, validated, drawn
-Worker: luna running — `…\scratchpad\unit-c3-1.out`
+Unit: C3.2 — F08 reads its four settings, and clamps to remaining headroom
+Worker: luna running — `…\scratchpad\unit-c3-2.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -162,8 +162,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 | | Unit | Status |
 |---|---|---|
 | ✅ | C3.0 — recon: the settings surface, the nine constants, F11's scheduling | accepted; D1-D5 recorded |
-| 🔨 | C3.1 — the settings surface, one owner, no consumer touched | Luna running |
-| ⬜ | C3.2 — F08 reads the settings, and clamps to remaining headroom | not started |
+| ✅ | C3.1 — the settings surface, one owner, no consumer touched | accepted, `2439f4a` |
+| 🔨 | C3.2 — F08 reads the settings, and clamps to remaining headroom | Luna running |
 | ⬜ | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | not started |
 | ⬜ | C3.4 — F09 reads the settings at resolution | not started |
 | ⬜ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | not started |
