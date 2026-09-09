@@ -20,6 +20,35 @@ namespace Intercolony
         }
     }
 
+    public enum CommercialGoodwillPressureStatus
+    {
+        Unavailable,
+        BelowPreferred,
+        Hostile,
+        AtCeiling,
+        GoodwillRestricted,
+        Earning
+    }
+
+    public readonly struct CommercialGoodwillPressureEvaluation
+    {
+        public readonly CommercialGoodwillPressureStatus Status;
+        public readonly Faction Faction;
+        public readonly int Delta;
+
+        public CommercialGoodwillPressureEvaluation(
+            CommercialGoodwillPressureStatus status,
+            Faction faction,
+            int delta)
+        {
+            Status = status;
+            Faction = faction;
+            Delta = delta;
+        }
+
+        public bool IsEarning => Status == CommercialGoodwillPressureStatus.Earning;
+    }
+
     /// <summary>
     /// Selects the bounded goodwill pressure created by very strong commercial standing.
     ///
@@ -67,23 +96,12 @@ namespace Intercolony
 
             foreach (KeyValuePair<int, CommercialReputation> entry in state.Reputations)
             {
-                CommercialReputation reputation = entry.Value;
-                if (reputation == null || reputation.Tier != ReputationTier.Preferred)
-                {
-                    continue;
-                }
-
-                // The record's factionName is only a historical/display snapshot. Ownership is
-                // resolved from the live settlement so a change of hands cannot credit the old
-                // faction.
-                Settlement settlement = IntercolonyMarketAccess.FindSettlement(entry.Key);
-                if (!IsEligibleSettlement(settlement, playerFaction))
-                {
-                    continue;
-                }
-
-                Faction faction = settlement.Faction;
-                if (!CanReceivePressure(faction, playerFaction) || byFaction.ContainsKey(faction))
+                CommercialGoodwillPressureEvaluation evaluation = EvaluateStatus(
+                    state,
+                    entry.Key,
+                    playerFaction);
+                if (!evaluation.IsEarning || evaluation.Faction == null ||
+                    byFaction.ContainsKey(evaluation.Faction))
                 {
                     continue;
                 }
@@ -91,8 +109,8 @@ namespace Intercolony
                 // One faction receives one result even when several of its settlements are
                 // Preferred.
                 byFaction.Add(
-                    faction,
-                    new CommercialGoodwillPressure(faction, GoodwillPressureDelta));
+                    evaluation.Faction,
+                    new CommercialGoodwillPressure(evaluation.Faction, evaluation.Delta));
             }
 
             foreach (CommercialGoodwillPressure pressure in byFaction.Values)
@@ -102,6 +120,18 @@ namespace Intercolony
 
             result.Sort(CompareByFactionLoadId);
             return result;
+        }
+
+        /// <summary>
+        /// Returns the same live decision that the quadrum tick uses for one settlement. The
+        /// faction is resolved from the live settlement, while the persisted faction name remains
+        /// display-only history.
+        /// </summary>
+        public static CommercialGoodwillPressureEvaluation EvaluateStatus(
+            IntercolonyWorldComponent state,
+            int settlementId)
+        {
+            return EvaluateStatus(state, settlementId, Faction.OfPlayer);
         }
 
         /// <summary>Applies the current commercial-standing decision to vanilla goodwill.</summary>
@@ -116,30 +146,90 @@ namespace Intercolony
             }
         }
 
-        private static bool IsEligibleSettlement(Settlement settlement, Faction playerFaction)
+        private static CommercialGoodwillPressureEvaluation EvaluateStatus(
+            IntercolonyWorldComponent state,
+            int settlementId,
+            Faction playerFaction)
         {
-            if (settlement == null)
+            if (state == null || state.Reputations == null || playerFaction == null)
             {
-                return false;
+                return new CommercialGoodwillPressureEvaluation(
+                    CommercialGoodwillPressureStatus.Unavailable,
+                    null,
+                    0);
             }
 
-            Faction faction = settlement.Faction;
+            CommercialReputation reputation = state.FindReputation(settlementId);
+            if (reputation == null)
+            {
+                return new CommercialGoodwillPressureEvaluation(
+                    CommercialGoodwillPressureStatus.Unavailable,
+                    null,
+                    0);
+            }
+
+            if (reputation.Tier != ReputationTier.Preferred)
+            {
+                return new CommercialGoodwillPressureEvaluation(
+                    CommercialGoodwillPressureStatus.BelowPreferred,
+                    null,
+                    0);
+            }
+
+            // The record's factionName is only a historical/display snapshot. Ownership is
+            // resolved from the live settlement so a change of hands cannot credit the old
+            // faction.
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
+            Faction faction = settlement?.Faction;
             if (faction == null || faction.IsPlayer || faction == playerFaction ||
                 faction.Hidden || faction.defeated)
             {
-                return false;
+                return new CommercialGoodwillPressureEvaluation(
+                    CommercialGoodwillPressureStatus.Unavailable,
+                    faction,
+                    0);
             }
 
             // HostilityPolicy is the mod's single live definition of being at war; it includes
             // both the hostile relation kind and HostileTo, and reads the current faction.
-            return !HostilityPolicy.IsAtWar(faction);
+            if (HostilityPolicy.IsAtWar(faction))
+            {
+                return new CommercialGoodwillPressureEvaluation(
+                    CommercialGoodwillPressureStatus.Hostile,
+                    faction,
+                    0);
+            }
+
+            int baseGoodwill = faction.BaseGoodwillWith(playerFaction);
+            if (baseGoodwill >= GoodwillBaseCeiling)
+            {
+                return new CommercialGoodwillPressureEvaluation(
+                    CommercialGoodwillPressureStatus.AtCeiling,
+                    faction,
+                    0);
+            }
+
+            if (!CanReceivePressure(faction, playerFaction, baseGoodwill))
+            {
+                return new CommercialGoodwillPressureEvaluation(
+                    CommercialGoodwillPressureStatus.GoodwillRestricted,
+                    faction,
+                    0);
+            }
+
+            return new CommercialGoodwillPressureEvaluation(
+                CommercialGoodwillPressureStatus.Earning,
+                faction,
+                GoodwillPressureDelta);
         }
 
-        private static bool CanReceivePressure(Faction faction, Faction playerFaction)
+        private static bool CanReceivePressure(
+            Faction faction,
+            Faction playerFaction,
+            int baseGoodwill)
         {
             // BaseGoodwillWith is the value TryAffectGoodwillWith writes. The ceiling must be
             // checked against it, not against the possibly capped effective value.
-            int baseGoodwill = faction.BaseGoodwillWith(playerFaction);
             if (baseGoodwill >= GoodwillBaseCeiling)
             {
                 return false;

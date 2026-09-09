@@ -4930,8 +4930,8 @@ namespace Intercolony
         private void DrawRelationRow(
             Rect rect, CommercialHistoryRelationRow row, int index, bool expanded)
         {
-            const float HeaderHeight = 58f;
-            Rect headerRect = new Rect(rect.x, rect.y, rect.width, HeaderHeight);
+            float headerHeight = RelationHeaderHeight(row, rect.width);
+            Rect headerRect = new Rect(rect.x, rect.y, rect.width, headerHeight);
             if (index % 2 == 1)
             {
                 Widgets.DrawLightHighlight(headerRect);
@@ -4945,16 +4945,20 @@ namespace Intercolony
 
             float nameWidth = rect.width * 0.34f;
             float scoreWidth = rect.width * 0.28f;
-            float factionWidth = rect.width - nameWidth - scoreWidth - 6f;
-            float nameHeight = Text.CalcHeight(row.settlementLabel, nameWidth - 6f);
+            float factionWidth = Mathf.Max(1f, rect.width - nameWidth - scoreWidth - 6f);
+            float nameTextWidth = Mathf.Max(1f, nameWidth - 6f);
+            float scoreTextWidth = Mathf.Max(1f, scoreWidth - 6f);
+            float nameHeight = Text.CalcHeight(row.settlementLabel, nameTextWidth);
             Widgets.Label(
-                new Rect(rect.x + 6f, rect.y + 4f, nameWidth - 6f, nameHeight),
+                new Rect(rect.x + 6f, rect.y + RelationHeaderTopPadding,
+                    nameTextWidth, nameHeight),
                 row.settlementLabel);
 
             GUI.color = row.hasReputation ? TierColour(row.tier) : Color.gray;
-            float scoreHeight = Text.CalcHeight(row.scoreLabel, scoreWidth - 6f);
+            float scoreHeight = Text.CalcHeight(row.scoreLabel, scoreTextWidth);
             Widgets.Label(
-                new Rect(rect.x + nameWidth, rect.y + 4f, scoreWidth - 6f, scoreHeight),
+                new Rect(rect.x + nameWidth, rect.y + RelationHeaderTopPadding,
+                    scoreTextWidth, scoreHeight),
                 row.scoreLabel);
             GUI.color = Color.white;
 
@@ -4963,17 +4967,49 @@ namespace Intercolony
             GUI.color = new Color(1f, 1f, 1f, 0.6f);
             float factionHeight = Text.CalcHeight(row.factionAndGoodwillLabel, factionWidth);
             Widgets.Label(
-                new Rect(rect.x + nameWidth + scoreWidth, rect.y + 4f, factionWidth, factionHeight),
+                new Rect(rect.x + nameWidth + scoreWidth, rect.y + RelationHeaderTopPadding,
+                    factionWidth, factionHeight),
                 row.factionAndGoodwillLabel);
             GUI.color = Color.white;
 
             GUI.color = new Color(1f, 1f, 1f, 0.65f);
-            float statsWidth = rect.width - 12f;
+            float statsWidth = Mathf.Max(1f, rect.width - 12f);
             float statsHeight = Text.CalcHeight(row.statsLabel, statsWidth);
             Widgets.Label(
-                new Rect(rect.x + 6f, rect.y + 28f, statsWidth, statsHeight),
+                new Rect(
+                    rect.x + 6f,
+                    rect.y + RelationHeaderTopPadding +
+                        RelationHeaderTopHeight(row, rect.width) + RelationHeaderSectionGap,
+                    statsWidth,
+                    statsHeight),
                 row.statsLabel);
             GUI.color = Color.white;
+
+            float pressureY = rect.y + RelationHeaderTopPadding +
+                              RelationHeaderTopHeight(row, rect.width) +
+                              RelationHeaderSectionGap + statsHeight +
+                              RelationHeaderSectionGap;
+            float pressureLabelWidth = RelationPressureLabelWidth(rect.width);
+            float pressureValueWidth = RelationPressureValueWidth(rect.width);
+            float pressureLabelHeight = Text.CalcHeight(
+                row.commercialPressureRow.label,
+                pressureLabelWidth);
+            float pressureValueHeight = Text.CalcHeight(
+                row.commercialPressureRow.value,
+                pressureValueWidth);
+
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(
+                new Rect(rect.x + 6f, pressureY, pressureLabelWidth, pressureLabelHeight),
+                row.commercialPressureRow.label);
+            GUI.color = Color.white;
+            Widgets.Label(
+                new Rect(
+                    rect.x + 6f + pressureLabelWidth + RelationPressureColumnGap,
+                    pressureY,
+                    pressureValueWidth,
+                    pressureValueHeight),
+                row.commercialPressureRow.value);
 
             if (ShouldBuildTooltip(headerRect))
             {
@@ -4990,15 +5026,82 @@ namespace Intercolony
             if (expanded)
             {
                 DrawRelationHistoryDetail(
-                    new Rect(rect.x, rect.y + HeaderHeight, rect.width, rect.height - HeaderHeight),
+                    new Rect(
+                        rect.x,
+                        rect.y + headerHeight,
+                        rect.width,
+                        rect.height - headerHeight),
                     row);
             }
+        }
+
+        private const float RelationHeaderTopPadding = 4f;
+        private const float RelationHeaderSectionGap = 3f;
+        private const float RelationHeaderBottomPadding = 6f;
+        private const float RelationPressureColumnGap = 12f;
+        private const float RelationPressureLabelMaxWidth = 170f;
+
+        private static float RelationHeaderHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            return RelationHeaderTopPadding +
+                   RelationHeaderTopHeight(row, width) +
+                   RelationHeaderSectionGap +
+                   RelationStatsHeight(row, width) +
+                   RelationHeaderSectionGap +
+                   RelationPressureHeight(row, width) +
+                   RelationHeaderBottomPadding;
+        }
+
+        private static float RelationHeaderTopHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            float nameWidth = width * 0.34f;
+            float scoreWidth = width * 0.28f;
+            float factionWidth = Mathf.Max(1f, width - nameWidth - scoreWidth - 6f);
+            return Mathf.Max(
+                Text.CalcHeight(row.settlementLabel, Mathf.Max(1f, nameWidth - 6f)),
+                Text.CalcHeight(row.scoreLabel, Mathf.Max(1f, scoreWidth - 6f)),
+                Text.CalcHeight(row.factionAndGoodwillLabel, factionWidth));
+        }
+
+        private static float RelationStatsHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            return Text.CalcHeight(row.statsLabel, Mathf.Max(1f, width - 12f));
+        }
+
+        private static float RelationPressureHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            float labelHeight = Text.CalcHeight(
+                row.commercialPressureRow.label,
+                RelationPressureLabelWidth(width));
+            float valueHeight = Text.CalcHeight(
+                row.commercialPressureRow.value,
+                RelationPressureValueWidth(width));
+            return Mathf.Max(labelHeight, valueHeight);
+        }
+
+        private static float RelationPressureLabelWidth(float width)
+        {
+            float contentWidth = Mathf.Max(1f, width - 12f);
+            return Mathf.Min(RelationPressureLabelMaxWidth, contentWidth * 0.36f);
+        }
+
+        private static float RelationPressureValueWidth(float width)
+        {
+            float contentWidth = Mathf.Max(1f, width - 12f);
+            return Mathf.Max(
+                1f,
+                contentWidth - RelationPressureLabelWidth(width) - RelationPressureColumnGap);
         }
 
         private static float RelationRowHeight(
             CommercialHistoryRelationRow row, float width, bool expanded)
         {
-            return 58f + (expanded ? RelationHistoryDetailHeight(row, width) : 0f);
+            return RelationHeaderHeight(row, width) +
+                   (expanded ? RelationHistoryDetailHeight(row, width) : 0f);
         }
 
         private static float RelationHistoryDetailHeight(
@@ -5011,6 +5114,15 @@ namespace Intercolony
 
             string summaryHeading = "Commercial history";
             y += Text.CalcHeight(summaryHeading, contentWidth) + 4f;
+
+            float pressureKeyHeight = Text.CalcHeight(
+                row.commercialPressureRow.label,
+                labelWidth);
+            float pressureValueHeight = Text.CalcHeight(
+                row.commercialPressureRow.value,
+                valueWidth);
+            y += Mathf.Max(pressureKeyHeight, pressureValueHeight) + 4f;
+
             for (int i = 0; i < row.summaryRows.Count; i++)
             {
                 CommercialHistorySummaryRow summary = row.summaryRows[i];
@@ -5019,6 +5131,9 @@ namespace Intercolony
                 y += Mathf.Max(keyHeight, valueHeight) + 4f;
             }
 
+            // The separator is drawn after the summary rows and consumes the same gap here that
+            // DrawRelationHistoryDetail consumes after drawing its line.
+            y += 4f;
             string timelineHeading = "Recent activity";
             y += Text.CalcHeight(timelineHeading, contentWidth) + 4f;
             if (row.timelineRows.Count == 0)
@@ -5051,6 +5166,24 @@ namespace Intercolony
             Widgets.Label(new Rect(rect.x + 6f, y, contentWidth, headingHeight), summaryHeading);
             y += headingHeight + 4f;
 
+            float pressureKeyHeight = Text.CalcHeight(
+                row.commercialPressureRow.label,
+                labelWidth);
+            float pressureValueHeight = Text.CalcHeight(
+                row.commercialPressureRow.value,
+                valueWidth);
+            float pressureRowHeight = Mathf.Max(pressureKeyHeight, pressureValueHeight);
+            Widgets.Label(
+                new Rect(rect.x + 6f, y, labelWidth, pressureKeyHeight),
+                row.commercialPressureRow.label);
+            Rect pressureValueRect = new Rect(valueX, y, valueWidth, pressureValueHeight);
+            Widgets.Label(pressureValueRect, row.commercialPressureRow.value);
+            if (!string.IsNullOrEmpty(row.commercialPressureRow.tooltip))
+            {
+                TooltipHandler.TipRegion(pressureValueRect, row.commercialPressureRow.tooltip);
+            }
+
+            y += pressureRowHeight + 4f;
             for (int i = 0; i < row.summaryRows.Count; i++)
             {
                 CommercialHistorySummaryRow summary = row.summaryRows[i];

@@ -51,6 +51,7 @@ namespace Intercolony
         internal readonly bool hasReputation;
         internal readonly string scoreLabel;
         internal readonly string statsLabel;
+        internal readonly CommercialHistorySummaryRow commercialPressureRow;
         internal readonly string rowTooltip;
         internal readonly List<CommercialHistorySummaryRow> summaryRows;
         internal readonly List<CommercialHistoryTimelineRow> timelineRows;
@@ -67,6 +68,7 @@ namespace Intercolony
             bool hasReputation,
             string scoreLabel,
             string statsLabel,
+            CommercialHistorySummaryRow commercialPressureRow,
             string rowTooltip,
             List<CommercialHistorySummaryRow> summaryRows,
             List<CommercialHistoryTimelineRow> timelineRows,
@@ -82,6 +84,7 @@ namespace Intercolony
             this.hasReputation = hasReputation;
             this.scoreLabel = scoreLabel;
             this.statsLabel = statsLabel;
+            this.commercialPressureRow = commercialPressureRow;
             this.rowTooltip = rowTooltip;
             this.summaryRows = summaryRows;
             this.timelineRows = timelineRows;
@@ -215,6 +218,10 @@ namespace Intercolony
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
             CommercialHistorySummary summary =
                 CommercialHistoryService.BuildSummary(state, settlementId);
+            CommercialGoodwillPressureEvaluation commercialPressure =
+                CommercialGoodwillPressureService.EvaluateStatus(state, settlementId);
+            CommercialHistorySummaryRow commercialPressureRow =
+                BuildCommercialPressureRow(commercialPressure);
 
             string settlementLabel = settlement?.Label.ToString();
             if (string.IsNullOrEmpty(settlementLabel))
@@ -268,7 +275,10 @@ namespace Intercolony
             }
 
             string emptyTimelineLabel = EmptyTimelineLabel(summary);
-            string rowTooltip = BuildRowTooltip(reputation, settlementId);
+            string rowTooltip = BuildRowTooltip(
+                reputation,
+                settlementId,
+                commercialPressureRow.tooltip);
             return new CommercialHistoryRelationRow(
                 settlementId,
                 settlementLabel,
@@ -280,6 +290,7 @@ namespace Intercolony
                 hasReputation,
                 scoreLabel,
                 statsLabel,
+                commercialPressureRow,
                 rowTooltip,
                 summaryRows,
                 timelineRows,
@@ -336,6 +347,82 @@ namespace Intercolony
                     ? "Known silver recorded by durable commercial aggregates; it may be incomplete."
                     : "The retained data cannot support a trade-value total for this settlement."));
             return rows;
+        }
+
+        private static CommercialHistorySummaryRow BuildCommercialPressureRow(
+            CommercialGoodwillPressureEvaluation evaluation)
+        {
+            string value;
+            switch (evaluation.Status)
+            {
+                case CommercialGoodwillPressureStatus.Earning:
+                    value = $"{evaluation.Delta:+#;-#;0} per quadrum (faction-wide) to base " +
+                            $"{CommercialGoodwillPressureService.GoodwillBaseCeiling}";
+                    break;
+                case CommercialGoodwillPressureStatus.AtCeiling:
+                    value = "Not earning; base ceiling reached (" +
+                            CommercialGoodwillPressureService.GoodwillBaseCeiling + ")";
+                    break;
+                case CommercialGoodwillPressureStatus.BelowPreferred:
+                    value = "Not earning; below Preferred";
+                    break;
+                case CommercialGoodwillPressureStatus.Hostile:
+                    value = "Not earning; hostile faction";
+                    break;
+                case CommercialGoodwillPressureStatus.GoodwillRestricted:
+                    value = "Not earning; goodwill restricted";
+                    break;
+                default:
+                    value = "Unavailable";
+                    break;
+            }
+
+            return new CommercialHistorySummaryRow(
+                "Goodwill pressure",
+                value,
+                CommercialPressureTooltip(evaluation));
+        }
+
+        private static string CommercialPressureTooltip(
+            CommercialGoodwillPressureEvaluation evaluation)
+        {
+            string delta = CommercialGoodwillPressureService.GoodwillPressureDelta
+                .ToString("+#;-#;0");
+            int ceiling = CommercialGoodwillPressureService.GoodwillBaseCeiling;
+
+            switch (evaluation.Status)
+            {
+                case CommercialGoodwillPressureStatus.Earning:
+                    return "Preferred commercial standing earns " + delta +
+                           $" base goodwill per quadrum for this faction. This is one " +
+                           "faction-wide pressure result even when several settlements qualify. " +
+                           $"It stops at a base goodwill of {ceiling} and never creates an alliance.";
+                case CommercialGoodwillPressureStatus.AtCeiling:
+                    return "Preferred commercial standing earns " + delta +
+                           $" base goodwill per quadrum only until this faction reaches a base " +
+                           $"goodwill of {ceiling}. The ceiling has been reached, so it is not " +
+                           "earning more; commercial pressure never creates an alliance.";
+                case CommercialGoodwillPressureStatus.BelowPreferred:
+                    return "Commercial standing below Preferred does not earn goodwill pressure. " +
+                           "Only Preferred standing earns " + delta +
+                           $" base goodwill per quadrum, up to a base goodwill ceiling of {ceiling}; " +
+                           "commercial pressure never creates an alliance.";
+                case CommercialGoodwillPressureStatus.Hostile:
+                    return "Commercial pressure never applies to a hostile faction, so this " +
+                           "standing is not earning goodwill. With a non-hostile faction, Preferred " +
+                           "standing earns " + delta +
+                           $" base goodwill per quadrum up to a base goodwill ceiling of {ceiling}, " +
+                           "never an alliance.";
+                case CommercialGoodwillPressureStatus.GoodwillRestricted:
+                    return "Preferred commercial standing would earn " + delta +
+                           " base goodwill per quadrum, but a goodwill situation currently " +
+                           "suppresses the faction's effective goodwill. The tick therefore earns " +
+                           $"nothing until that restriction is gone; pressure still stops at base " +
+                           $"goodwill {ceiling} and never creates an alliance.";
+                default:
+                    return "Commercial goodwill pressure is unavailable for this settlement, so " +
+                           "no pressure is applied.";
+            }
         }
 
         private static CommercialHistoryTimelineRow BuildTimelineRow(
@@ -468,11 +555,16 @@ namespace Intercolony
             return result;
         }
 
-        private static string BuildRowTooltip(CommercialReputation reputation, int settlementId)
+        private static string BuildRowTooltip(
+            CommercialReputation reputation,
+            int settlementId,
+            string commercialPressureTooltip)
         {
             if (reputation == null)
             {
-                return "This settlement has retained commercial evidence, but no persisted reputation record. Expand the row for the supported history.";
+                return "This settlement has retained commercial evidence, but no persisted " +
+                       "reputation record. Expand the row for the supported history.\n\n" +
+                       commercialPressureTooltip;
             }
 
             string economy = SettlementEconomyDisplay.SettlementEconomicSummary(settlementId);
@@ -482,7 +574,8 @@ namespace Intercolony
                    "A better record means larger orders, more frequent offers, slightly better " +
                    "prices and more generous deadlines.\n\n" +
                    "This is separate from faction goodwill, and it is held by this settlement " +
-                   "rather than its faction: another town of the same faction forms its own view.";
+                   "rather than its faction: another town of the same faction forms its own view." +
+                   "\n\n" + commercialPressureTooltip;
         }
 
         private static string HistoricalSettlementName(
