@@ -10,7 +10,7 @@ Pushed: the branch is on `origin` at the operator's request, tracking
 `origin/foreman/playtest-batch-2026-09-06`, 194 commits ahead of `main`. **`main` is untouched and
 no pull request was opened** — §I of the plan forbids merging and publishing.
 Updated: 2026-09-09 07:05
-Foreman load: 2026-09-09 11:03
+Foreman load: 2026-09-09 14:03
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
