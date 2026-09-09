@@ -264,8 +264,7 @@ namespace Intercolony
                     continue;
                 }
 
-                total += WageStructureUtility.EffectiveDailyWage(
-                    employee.wageStructure, employee.dailyWage) * days / eligibleGoods;
+                total += employee.ChargedDailyWage * days / eligibleGoods;
                 eligibleEmployees++;
             }
 
@@ -782,8 +781,7 @@ namespace Intercolony
             {
                 if (contract.status == EmploymentStatus.Active)
                 {
-                    daily += WageStructureUtility.EffectiveDailyWage(
-                        contract.wageStructure, contract.dailyWage);
+                    daily += contract.ChargedDailyWage;
                 }
             }
 

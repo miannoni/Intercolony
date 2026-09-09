@@ -201,6 +201,9 @@ namespace Intercolony
         private static void CheckFixedTermPayroll(
             Results r, IntercolonyWorldComponent state)
         {
+            const int dailyAsk = 80;
+            const int dailyPremiumPercent = 35;
+            const int arrears = 13;
             int now = GenTicks.TicksGame;
             int firstPayday = now + GenDate.TicksPerDay;
             int secondPayday = firstPayday + GenDate.TicksPerDay;
@@ -208,11 +211,11 @@ namespace Intercolony
             {
                 status = EmploymentStatus.Active,
                 wageStructure = WageStructure.Daily,
-                dailyWage = 80,
+                dailyWage = dailyAsk,
                 nextPaymentTick = firstPayday,
                 endTick = firstPayday + GenDate.TicksPerDay / 2,
                 termDays = 3,
-                arrearsSilver = 13
+                arrearsSilver = arrears
                 // pawn is deliberately left null; this forecast only needs scalar contract fields.
             };
 
@@ -224,8 +227,8 @@ namespace Intercolony
                 int secondDay = DayIndex(report, secondPayday);
                 int firstExpense = ExpenseAt(report, firstDay);
                 int secondExpense = ExpenseAt(report, secondDay);
-                int expectedFirst = PayrollService.PeriodDue(
-                    contract, firstPayday, contract.arrearsSilver);
+                // Independent oracle: 80 ask plus the 35% daily charge is 108, then 13 arrears.
+                int expectedFirst = dailyAsk * (100 + dailyPremiumPercent) / 100 + arrears;
 
                 // This must fail if payroll is smeared across days, ignores endTick, or projects
                 // a payday after the fixed term has ended.

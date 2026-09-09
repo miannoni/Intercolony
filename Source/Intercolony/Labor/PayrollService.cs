@@ -85,7 +85,7 @@ namespace Intercolony
             if (daysLeftInTerm < interval && daysLeftInTerm >= 0)
             {
                 int served = Mathf.Clamp(interval - daysLeftInTerm, 0, interval);
-                due = contract.dailyWage * served + arrears;
+                due = contract.ChargedDailyWage * served + arrears;
             }
 
             return due;
@@ -339,7 +339,8 @@ namespace Intercolony
             int workedTicks = Mathf.Max(0, workedUntil - periodStart);
             int workedDays = workedTicks / GenDate.TicksPerDay;
 
-            return Mathf.Clamp(workedDays, 0, contract.wageStructure.IntervalDays()) * contract.dailyWage;
+            return Mathf.Clamp(workedDays, 0, contract.wageStructure.IntervalDays()) *
+                   contract.ChargedDailyWage;
         }
 
         private static void RecordDebt(EmploymentContract contract, List<LaborDebt> debts,

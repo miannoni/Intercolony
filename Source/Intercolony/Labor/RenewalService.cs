@@ -284,7 +284,7 @@ namespace Intercolony
         /// <summary>Silver to end it today instead of working the notice out.</summary>
         public static int PayInLieu(EmploymentContract contract)
         {
-            return NoticeDays(contract) * (contract?.dailyWage ?? 0);
+            return NoticeDays(contract) * (contract?.ChargedDailyWage ?? 0);
         }
 
         /// <summary>

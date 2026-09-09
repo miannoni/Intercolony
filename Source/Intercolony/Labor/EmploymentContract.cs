@@ -349,8 +349,15 @@ namespace Intercolony
             ? PeriodPayment
             : WageStructureUtility.TotalCost(wageStructure, dailyWage, termDays);
 
+        /// <summary>
+        /// The per-day rate the colony is billed. <see cref="dailyWage"/> is the worker's ask;
+        /// every payroll path must use this property rather than multiplying the stored field.
+        /// </summary>
+        public int ChargedDailyWage =>
+            WageStructureUtility.EffectiveDailyWage(wageStructure, dailyWage);
+
         /// <summary>Amount a single pay period costs. Zero for prepaid.</summary>
-        public int PeriodPayment => WageStructureUtility.PeriodCost(wageStructure, dailyWage);
+        public int PeriodPayment => ChargedDailyWage * wageStructure.IntervalDays();
 
         /// <summary>
         /// Player-facing wording for the deposit. A none-value is described in words rather than

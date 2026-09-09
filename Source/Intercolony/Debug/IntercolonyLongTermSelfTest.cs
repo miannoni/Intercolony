@@ -255,10 +255,12 @@ namespace Intercolony
 
         private static void CheckNoticeRules(Results r)
         {
+            const int veteranDailyAsk = 40;
+            const int dailyPremiumPercent = 35;
             EmploymentContract fresh = Synthetic(CombatClause.Civilian, 40, 5);
             fresh.termDays = 0;
 
-            EmploymentContract veteran = Synthetic(CombatClause.Civilian, 40, 180);
+            EmploymentContract veteran = Synthetic(CombatClause.Civilian, veteranDailyAsk, 180);
             veteran.termDays = 0;
 
             int freshNotice = RenewalService.NoticeDays(fresh);
@@ -272,7 +274,9 @@ namespace Intercolony
                 "even a brand-new open-ended worker is owed some notice",
                 $"{freshNotice} days");
 
-            r.Check(RenewalService.PayInLieu(veteran) == veteranNotice * veteran.dailyWage,
+            // Independent oracle: Daily terms bill 40 * 135 / 100 = 54 per notice day.
+            r.Check(RenewalService.PayInLieu(veteran) ==
+                    veteranNotice * (veteranDailyAsk * (100 + dailyPremiumPercent) / 100),
                 "paying in lieu costs exactly the notice it replaces (§36.4)",
                 $"{RenewalService.PayInLieu(veteran)} silver");
 
