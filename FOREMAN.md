@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C2 — F07, the production rate must count real completions. **C0 AND C1 ARE CLOSED.**
-Unit: C2.1 — the sixth Harmony patch, on the moment a frame becomes a building
-Worker: luna running — `…\scratchpad\unit-c2-1.out`
+Unit: C2.2 — C2's assertions, eight of them, including a real frame completion
+Worker: luna running — `…\scratchpad\unit-c2-2.out`
 Last done: C1.2 + C1.2b, C1's seven assertions, accepted at `1c5cc56` — long-term 61/0/0, and the
 mutation that restores the due letter turns six of the seven red.
 Updated: 2026-09-09 17:35
@@ -121,8 +121,8 @@ variable, and nothing in Intercolony is called by ordinary vanilla construction 
 | | Unit | Status |
 |---|---|---|
 | ✅ | C2.0 — recon: the missing completion paths, and the denominator question | accepted; D1-D4 recorded |
-| 🔨 | C2.1 — normalise minified bill products, add the construction observer | Luna running |
-| ⬜ | C2.2 — C2's assertions | not started |
+| ✅ | C2.1 — normalise minified bill products, add the construction observer | accepted, `8cb5774` |
+| 🔨 | C2.2 — C2's assertions, eight of them | Luna running |
 
 ## C1 — the recon, and what I decided from it
 
