@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.13 — F24 dropped the 1-20 day clamp on ordinary travel
-Worker: luna running — `…\scratchpad\unit-7-13.out`
-Last done: 7.11b, the Pause/Stop assertions, accepted at `fe4c1ce` — produce 37/0/0, both mutations red.
-Updated: 2026-09-09 03:00
+Unit: 7.14 — F11's arrival must be asserted through `WorldComponentTick`
+Worker: luna running — `…\scratchpad\unit-7-14.out`
+Last done: 7.13, the travel clamp restored, accepted at `c67cd50` — labor 49/0/0, mutation red at both ends.
+Updated: 2026-09-09 03:15
 Foreman load: 2026-09-09 00:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -406,8 +406,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.10 + 7.10b — F19's figure reaches the margin, and W4 pins it | accepted, `eb2d11c` |
 | ✅ | 7.11 — Pause must not let a committed uninstall finish | accepted, `35e1f2b`; unasserted |
 | ✅ | 7.11b — its assertions, both directions | accepted, `fe4c1ce` |
-| 🔨 | 7.13 — F24 restored the 1-20 day ordinary travel clamp | Luna running |
-| ⬜ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | known defect 7 |
+| ✅ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | accepted, `c67cd50` |
+| 🔨 | 7.14 — F11's timing assertion must go through `WorldComponentTick` | Luna running |
 | ⬜ | 7.8 — F22 implementation, ~9 units | AWAITING OPERATOR DECISION |
 
 ## Closed-stage unit history
