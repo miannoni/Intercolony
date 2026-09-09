@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.10 — F19's direct-input figure must reach the margin
-Worker: luna running — `…\scratchpad\unit-7-10.out`
-Last done: 7.12b, the masterwork bond assertions, accepted at `b723d41` — labor 49/0/0, three assertions red under mutation.
-Updated: 2026-09-09 02:05
+Unit: 7.11 — Pause must not let a committed uninstall finish
+Worker: luna running — `…\scratchpad\unit-7-11.out`
+Last done: 7.10 + 7.10b, the direct-input margin and its oracle, accepted at `eb2d11c`.
+Updated: 2026-09-09 02:30
 Foreman load: 2026-09-09 00:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -117,6 +117,20 @@ what makes a colonist eligible; whether minimum compensation is daily, total or 
 it is paid; what job determines the training a returning colonist gains; what drives a settlement's
 labour demand, since no such field exists; what happens to carried inventory, bonded animals, beds
 and titles on departure; and what happens if no player map ever returns.
+
+## 7.11 — what the plan actually says about Pause and Stop
+
+They differ ON PURPOSE, and the difference is the whole unit
+(`docs/PLAYTEST_BATCH_SOURCE_PLAN.md:125-137`):
+
+  - **Pause** — construction under way may finish, and once installed **it remains installed**. So
+    an outstanding Uninstall designation has to be cancelled, or the object vanishes while paused
+    and the paused loop refuses to replace it.
+  - **Stop** — a committed uninstall **may finish**. Stop cancels nothing.
+
+Making the two behave alike would be a misreading in either direction. Accepted cost, recorded
+rather than discovered later: nothing in a designation records who placed it, so a player's own
+hand-placed Uninstall on the loop's building is cancelled by Pause too.
 
 ## Known defects — the queue behind units 7.9 to 7.14
 
@@ -389,8 +403,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.9b3b+c — displayed equals charged, with the literal oracle restored | accepted, `477ad58` |
 | ✅ | 7.12 — F23's bond ignores quality when valuing | accepted, `1bdac06`; unasserted by design |
 | ✅ | 7.12b — E1's oracle becomes quality-aware, fixture gets a masterwork | accepted, `b723d41` |
-| 🔨 | 7.10 — F19's direct-input figure must reach the margin | Luna running |
-| ⬜ | 7.11 — Pause must not let a committed uninstall finish | known defect 4 |
+| ✅ | 7.10 + 7.10b — F19's figure reaches the margin, and W4 pins it | accepted, `eb2d11c` |
+| 🔨 | 7.11 — Pause must not let a committed uninstall finish | Luna running |
 | ⬜ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | known defect 6 |
 | ⬜ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | known defect 7 |
 | ⬜ | 7.8 — F22 implementation, ~9 units | AWAITING OPERATOR DECISION |
