@@ -1,9 +1,11 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 9 — F06, the last finding, recon first. **STAGES 1-6 AND 8 ARE CLOSED.** Stage 7 is done apart from F22, which awaits the operator.
-Unit: 8.9 — the stage-8 play entry. **STAGE 9 IS BLOCKED — see the Harmony question below.**
-Worker: luna running — `…\scratchpad\unit-8-9.out`
-Last done: 9.0, the F06 recon — read-only, and it found the blocker.
+Unit: NONE. **THE RUN HAS REACHED A CLEAN HALT AND EVERYTHING EXECUTABLE IS DONE.** Both remaining
+findings need the operator: F22 needs a decision, F06 needs a sixth and seventh Harmony patch.
+Worker: idle
+Last done: the batch milestone record in `PROGRESS.md`. The whole suite on a fresh world is
+**1536 passed, 0 failed, 17 skipped, exit 0**.
 Updated: 2026-09-09 07:05
 Foreman load: 2026-09-09 07:03
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
@@ -132,7 +134,24 @@ Making the two behave alike would be a misreading in either direction. Accepted 
 rather than discovered later: nothing in a designation records who placed it, so a player's own
 hand-placed Uninstall on the loop's building is cancelled by Pause too.
 
-## STAGE 9 IS BLOCKED ON THE OPERATOR — F06 NEEDS TWO MORE HARMONY PATCHES
+## THE RUN IS AT A CLEAN HALT — TWO QUESTIONS FOR THE OPERATOR, 2026-09-09
+
+Twenty-three of twenty-five findings are built, asserted and disclosed across eight stages. The
+whole suite on a fresh world is 1536 / 0 / 17, exit 0. `PROGRESS.md` carries the milestone record
+and `docs/PENDING_PLAYTESTS.md` carries everything a suite cannot settle.
+
+**Nothing further can be dispatched without an answer to one of these:**
+
+  1. **F22** — start it, take only the custody proof, or drop it? About nine units, and the first
+     one must be the custody proof because of the game-over hazard.
+  2. **F06** — may the Harmony allowance go from five patches to seven? Without that the finding
+     cannot be built at all. And separately: should apparel-policy removal that leaves an
+     employee's own gear in colony storage count as returned for the equipment bond?
+
+Nothing else in the batch is waiting on anything. The unbuilt parts of F12, F21, F23 and F24 were
+scoped out deliberately and are recorded as such.
+
+## Why stage 9 is blocked — F06 needs two more Harmony patches
 
 Sol recon, 2026-09-09, read-only. I verified the two gates and the patch count myself.
 
@@ -522,7 +541,7 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 8.6 — F09's end evaluation and its guards | accepted, `c07fae7` |
 | ✅ | 8.8 — F09's five assertions | accepted, `ecf314a` |
 | ✅ | 8.7 — F09's disclosure in the departure letter | accepted, `d1640f3`. **STAGE 8 COMPLETE** |
-| 🔨 | 8.9 — the stage-8 play entry | Luna running |
+| ✅ | 8.9 — the stage-8 play entry | accepted, `400d0b3` |
 
 ## Units — stage 9
 
