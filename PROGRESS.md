@@ -2405,3 +2405,66 @@ Verification actually performed:
 - `dev.ps1 test all -Fresh`: nine consecutive fresh worlds, 1420-1422 passed, 0 failed,
   15-16 skipped, log clean every time.
 
+## Playtest batch F01-F25 — stages 1-8  (2026-09-09)
+
+Implemented:
+- Twenty-three of the twenty-five findings, in eight stages:
+  - F01 F02 F13 F15 — quiet automation and vanilla-command correctness.
+  - F03 F04 — Produce became programmable: area-level Produce/Pause/Stop, indefinite and
+    produce-until-target loops.
+  - F14 F16 F17 F18 F10 — agreement and employee UX, and procurement as an earned gate.
+  - F05 — receiving locations. F12 part-built, see below.
+  - F21 part-built and F11 — market geography: one owner for cost and time, and RFQ replies that
+    arrive over days instead of instantly.
+  - F07 F19 F20 — the Business view answers whether production covers commitments, what materials
+    a made good really costs, and what labour costs.
+  - F25 F23 F24 — the buyer-side labour market, the equipment bond, and emergency dispatch.
+  - F08 F09 — commerce slowly warms a faction to a hard ceiling; how an employee was treated
+    follows them home once.
+- The batch also fixed seven defects found by audit and mutation rather than by the suite, and two
+  of them were live money defects in shipped 1.0: a directly hired worker on Daily terms was quoted
+  135 and charged 182 because the premium was applied twice, and an equipment bond valued a
+  masterwork item at a plain one's price while matching returns on quality.
+- Schema went 57 to 58, once, with a migration verified against a real pre-58 save. Everything
+  added since rides 58 as additive nodes with safe defaults. Five Harmony patches, unchanged in
+  count since the crafting-completion observer.
+- Branch `foreman/playtest-batch-2026-09-06` is NOT merged and NOT released.
+
+Not implemented:
+- **F22, the reverse labour market.** Reconnoitred, not started, about nine units. Its first unit
+  must be a custody proof: a bare custom world pawn is not recognised as borrowed by vanilla's
+  game-over check, so the last colonist leaving on a job could end the game incorrectly. Six
+  design questions in it are unanswered by the source plan.
+- **F06, optional apparel policies.** Reconnoitred, blocked. An employee already carries a real
+  vanilla apparel policy, but as a quest lodger vanilla vetoes them twice — the Assign column
+  shows "Unchangeable" and the apparel optimizer refuses to run — and both vetoes are inside
+  vanilla methods. It needs a sixth and seventh Harmony patch, and the allowance was declared
+  spent at five.
+- **F12's caravan half.** Only order availability exists. There is no caravan formation, pawn or
+  animal selection, recurrence or multi-map routing; the mod has no caravan dispatch of its own.
+- **F21's model half.** No route difficulty, no provisions, no settlement logistics capability,
+  no real transport-method choice.
+- **F23's tiers**, availability gating by settlement wealth or tech, and the consequence for
+  stripping body modifications.
+- **F24's drop pods**, which the finding wants most; they should be gated on the settlement
+  logistics capability F21 never built.
+
+Known limitations:
+- Neither reputation decays. Only vanilla goodwill drifts.
+- F20 uses the source plan's authorised relevant-workforce approximation, not measured time: the
+  crafting seam carries who finished a bill, not hours worked.
+- Contracts already in a save cannot be corrected for the wage defect. Nothing in the persisted
+  shape distinguishes the two old meanings of the field.
+- A pre-existing defect was found beside F05 and deliberately left: a partial delivery in
+  `PurchaseOrderService.DeliverToColony` completes the order short and the player pays in full.
+- A pre-existing release defect: `package.ps1` never included `Patches/`, so no release zip has
+  ever carried the Economy tab patch.
+
+Manual test:
+- The whole in-game suite on a fresh world reports **1536 passed, 0 failed, 17 skipped, exit 0**,
+  which also means no new exceptions in the log. Everything this batch built has assertions
+  with mutation evidence — each new assertion was verified by breaking the production code and
+  watching that assertion go red. What no suite can settle is recorded in
+  `docs/PENDING_PLAYTESTS.md`, which now carries entries for F11, F23, F24, F25, stage 6, the
+  seven-defect series and stage 8.
+
