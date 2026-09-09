@@ -39,8 +39,9 @@ namespace Intercolony
 
         private void TickLoop(ProduceLoopRecord loop)
         {
-            // Pause leaves an in-flight blueprint, frame, or uninstall designation for vanilla to finish,
-            // while preventing a replacement blueprint and the next cycle; Stop remains Disable.
+            // Pause leaves an in-flight blueprint or frame for vanilla to finish, while cancelling the
+            // loop's outstanding uninstall designation so an installed object stays installed. It prevents
+            // a replacement blueprint and the next cycle; Stop remains Disable.
             if (loop.paused)
             {
                 return;
@@ -234,6 +235,31 @@ namespace Intercolony
             if (loop == null)
             {
                 return;
+            }
+
+            Building installedBuilding = null;
+            if (loop.thingDef != null && loop.cell.InBounds(map))
+            {
+                List<Thing> thingsAtCell = map.thingGrid.ThingsListAt(loop.cell);
+                for (int i = 0; i < thingsAtCell.Count; i++)
+                {
+                    if (thingsAtCell[i] is Building building && building.def == loop.thingDef)
+                    {
+                        installedBuilding = building;
+                        break;
+                    }
+                }
+            }
+
+            if (installedBuilding != null)
+            {
+                Designation uninstallDesignation = map.designationManager.DesignationOn(
+                    installedBuilding,
+                    DesignationDefOf.Uninstall);
+                if (uninstallDesignation != null)
+                {
+                    map.designationManager.RemoveDesignation(uninstallDesignation);
+                }
             }
 
             loop.paused = true;
