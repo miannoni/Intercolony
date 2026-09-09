@@ -447,6 +447,7 @@ namespace Intercolony
         /// <summary>Wage rules that must hold regardless of which worker was rolled.</summary>
         private static void CheckPricing(Results r, IntercolonyWorldComponent state, List<LaborCandidate> pool)
         {
+            bool chosenTravelBounds = CheckTravelBounds(state, pool, out string travelBoundsDetail);
             int positive = 0;
             int longerIsCheaperPerDay = 0;
             int sampled = 0;
@@ -481,9 +482,157 @@ namespace Intercolony
                 "a longer term never costs more per day (§36.1)",
                 $"{longerIsCheaperPerDay}/{sampled} sampled");
             r.Check(pool.TrueForAll(c => c.minTermDays > 0), "every candidate has a minimum term");
-            r.Check(pool.TrueForAll(c => c.travelDays > 0), "every candidate has a travel time");
+            r.Check(chosenTravelBounds &&
+                    pool.TrueForAll(c => c.travelDays >= 1 && c.travelDays <= 20),
+                "every candidate's travel time is bounded to 1-20 days",
+                travelBoundsDetail);
             r.Check(pool.TrueForAll(c => c.pawn != null && c.pawn.RaceProps.Humanlike),
                 "every candidate is a humanlike pawn");
+        }
+
+        /// <summary>
+        /// Drives the ordinary candidate refresh with the same source settlement at both distance
+        /// extremes. The source is already in the pool, so the seeded refresh will include it again
+        /// after its tile is moved temporarily; restoring the tile and refreshing in finally leaves
+        /// the live market as it was. The expected days are literals rather than a second call to
+        /// the production conversion.
+        /// </summary>
+        private static bool CheckTravelBounds(
+            IntercolonyWorldComponent state, List<LaborCandidate> pool, out string detail)
+        {
+            detail = "chosen-distance candidate fixture did not run";
+            Settlement source = null;
+            PlanetTile originalTile = PlanetTile.Invalid;
+            bool savedOriginalTile = false;
+
+            try
+            {
+                if (state == null || pool == null || Find.WorldGrid == null ||
+                    Find.WorldObjects == null || Find.AnyPlayerHomeMap == null)
+                {
+                    detail = "chosen-distance candidate fixture needs a world, world grid, and home map";
+                    return false;
+                }
+
+                foreach (LaborCandidate candidate in pool)
+                {
+                    source = candidate == null
+                        ? null
+                        : IntercolonyMarketAccess.FindSettlement(candidate.settlementId);
+                    if (source != null)
+                    {
+                        break;
+                    }
+                }
+
+                if (source == null)
+                {
+                    detail = "chosen-distance candidate fixture found no live source settlement";
+                    return false;
+                }
+
+                SettlementEconomicProfile profile = state.GetProfile(source);
+                if (profile == null)
+                {
+                    detail = $"chosen-distance candidate fixture could not profile {source.Label}";
+                    return false;
+                }
+
+                PlanetTile homeTile = Find.AnyPlayerHomeMap.Tile;
+                PlanetTile farTile = FindFarTravelFixtureTile(homeTile);
+                if (!farTile.Valid)
+                {
+                    detail = "chosen-distance candidate fixture found no world tile beyond 246 tiles";
+                    return false;
+                }
+
+                originalTile = source.Tile;
+                savedOriginalTile = true;
+
+                source.Tile = homeTile;
+                List<LaborCandidate> nearPool = LaborCandidateService.Refresh(state, force: true);
+                LaborCandidate near = FindCandidateFromSource(nearPool, source.ID);
+
+                int nearTravelDays = near?.travelDays ?? -1;
+                float nearDistance = near?.distanceTiles ?? float.NaN;
+
+                source.Tile = farTile;
+                List<LaborCandidate> farPool = LaborCandidateService.Refresh(state, force: true);
+                LaborCandidate far = FindCandidateFromSource(farPool, source.ID);
+
+                int farTravelDays = far?.travelDays ?? -1;
+                float farDistance = far?.distanceTiles ?? float.NaN;
+                bool listedCandidatesBounded = farPool != null && farPool.TrueForAll(candidate =>
+                    candidate != null && candidate.travelDays >= 1 && candidate.travelDays <= 20);
+                bool expectedExtremes = near != null && nearDistance < 6f && nearTravelDays == 1 &&
+                    far != null && farDistance > 246f && farTravelDays == 20;
+
+                detail =
+                    $"near fixture {nearDistance:0.###} tiles -> {nearTravelDays}d (expected 1d; " +
+                    "without the labour clamp this distance rounds to 0d); " +
+                    $"far fixture {farDistance:0.###} tiles -> {farTravelDays}d (expected 20d; " +
+                    "without the labour clamp it rounds above 20d); " +
+                    $"listed candidates bounded {listedCandidatesBounded}";
+                return expectedExtremes && listedCandidatesBounded;
+            }
+            catch (Exception ex)
+            {
+                detail = $"chosen-distance candidate fixture threw {ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+            finally
+            {
+                if (source != null && savedOriginalTile)
+                {
+                    source.Tile = originalTile;
+                    LaborCandidateService.Refresh(state, force: true);
+                }
+            }
+        }
+
+        private static PlanetTile FindFarTravelFixtureTile(PlanetTile homeTile)
+        {
+            PlanetTile occupiedFallback = PlanetTile.Invalid;
+            for (int tileId = 0; tileId < Find.WorldGrid.TilesCount; tileId++)
+            {
+                PlanetTile tile = new PlanetTile(tileId);
+                if (tile == homeTile ||
+                    Find.WorldGrid.ApproxDistanceInTiles(homeTile, tile) <= 246f)
+                {
+                    continue;
+                }
+
+                if (!Find.WorldObjects.AnyWorldObjectAt(tile))
+                {
+                    return tile;
+                }
+
+                if (!occupiedFallback.Valid)
+                {
+                    occupiedFallback = tile;
+                }
+            }
+
+            return occupiedFallback;
+        }
+
+        private static LaborCandidate FindCandidateFromSource(
+            List<LaborCandidate> candidates, int settlementId)
+        {
+            if (candidates == null)
+            {
+                return null;
+            }
+
+            foreach (LaborCandidate candidate in candidates)
+            {
+                if (candidate != null && candidate.settlementId == settlementId)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

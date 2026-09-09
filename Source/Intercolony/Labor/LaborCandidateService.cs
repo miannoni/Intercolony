@@ -55,6 +55,12 @@ namespace Intercolony
         /// <summary>Workers offered per settlement, when that settlement is drawn.</summary>
         private const int CandidatesPerSettlement = 2;
 
+        // Ordinary labor travel stays between one and twenty days: a worker who arrives the same
+        // day makes the hire decision meaningless, and one who takes half a year is not a hire
+        // anyone would make.
+        private const int MinLaborTravelDays = 1;
+        private const int MaxLaborTravelDays = 20;
+
         /// <summary>
         /// Longest term a worker will sign for (§36.2). Lives here rather than in the hiring window
         /// because it is a labor rule with an economic consequence, not a widget bound: §42's clause
@@ -725,7 +731,12 @@ namespace Intercolony
                 factionName = faction.Name ?? "",
                 faction = faction,
                 distanceTiles = distance,
-                travelDays = LogisticsQuote.TravelDaysFor(distance),
+                travelDays = distance < 0f
+                    ? LogisticsQuote.TravelDaysFor(distance)
+                    : Mathf.Clamp(
+                        LogisticsQuote.TravelDaysFor(distance),
+                        MinLaborTravelDays,
+                        MaxLaborTravelDays),
                 minTermDays = minTerm,
 
                 // The listed rate is the civilian rate — the cheapest terms available, and the
