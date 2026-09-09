@@ -215,7 +215,8 @@ namespace Intercolony
     /// enumerator is created rather than when its body yields. <see cref="RecordsUtility.Notify_BillDone"/>
     /// is the plainly patchable equivalent: vanilla calls it once after <c>ToList()</c> has
     /// materialized the completed product batch, before storing or dropping it. The postfix only
-    /// reads each product's definition and stack count, and never changes vanilla's call or data.
+    /// reads each product's inner definition and stack count, and never changes vanilla's call or
+    /// data.
     /// </summary>
     [HarmonyPatch(typeof(RecordsUtility), nameof(RecordsUtility.Notify_BillDone))]
     public static class RecordsUtility_Notify_BillDone_Patch
@@ -244,13 +245,80 @@ namespace Intercolony
                         continue;
                     }
 
-                    ProductionLedgerService.Record(state, product.def, product.stackCount);
+                    Thing inner = product.GetInnerIfMinified();
+                    if (inner == null)
+                    {
+                        continue;
+                    }
+
+                    ProductionLedgerService.Record(state, inner.def, inner.stackCount);
                 }
             }
             catch (System.Exception ex)
             {
                 // A recording failure must not turn a completed vanilla bill into a failed job.
                 IntercolonyLog.Error("Failed to record completed production: " + ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Observes the authoritative moment when a construction frame becomes its finished Thing.
+    ///
+    /// Vanilla's <c>CompleteConstruction(Pawn)</c> is void and keeps the finished Thing in a
+    /// local variable (see <c>Frame.cs:262-370</c>), while destroying the frame before creating
+    /// that local. The prefix therefore captures the frame's intended ThingDef and faction before
+    /// the original method runs. Ordinary vanilla construction does not call anything in
+    /// Intercolony, so this narrow observation is the completion seam available to F07.
+    /// </summary>
+    [HarmonyPatch(typeof(Frame), nameof(Frame.CompleteConstruction))]
+    public static class Frame_CompleteConstruction_Patch
+    {
+        private sealed class ConstructionObservation
+        {
+            public ThingDef thingDef;
+            public Faction faction;
+        }
+
+        private static void Prefix(Frame __instance, out ConstructionObservation __state)
+        {
+            __state = null;
+            if (__instance == null || __instance.def == null)
+            {
+                return;
+            }
+
+            __state = new ConstructionObservation
+            {
+                thingDef = __instance.def.entityDefToBuild as ThingDef,
+                faction = __instance.Faction
+            };
+        }
+
+        private static void Postfix(ConstructionObservation __state)
+        {
+            if (__state == null || __state.thingDef == null ||
+                __state.faction == null || __state.faction != Faction.OfPlayer)
+            {
+                return;
+            }
+
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            if (state == null)
+            {
+                return;
+            }
+
+            try
+            {
+                // One successful CompleteConstruction call creates one finished Thing; never
+                // infer a stack quantity from the frame or from later spawning/minification.
+                ProductionLedgerService.Record(state, __state.thingDef, 1);
+            }
+            catch (System.Exception ex)
+            {
+                // An observation failure must never break vanilla construction.
+                IntercolonyLog.Error("Failed to record completed construction: " + ex);
             }
         }
     }
