@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.9b1 — one owner for the charged daily rate, and every payroll path through it
-Worker: luna running — `…\scratchpad\unit-7-9b1.out`
-Last done: 7.9b, the wage-meaning recon — read-only, tree untouched, two claims spot-checked.
-Updated: 2026-09-09 00:10
+Unit: 7.9b3a — assertions for the two payroll branches that have none
+Worker: luna running — `…\scratchpad\unit-7-9b3a.out`
+Last done: 7.9b1, one owner for the charged rate, accepted at `7e230ad`.
+Updated: 2026-09-09 00:35
 Foreman load: 2026-09-08 22:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -52,9 +52,18 @@ already charged the doubled rate on full periods, so consistency costs it nothin
 What it cannot fix: a legacy direct-hire contract will keep displaying its stored 135 as the ask.
 There is no provenance in the save to recover the real 100 from. Accepted.
 
-Cut into three units: **7.9b1** one owner for the charged rate and every payroll path through it,
-**7.9b2** the writer at `:138` and the hire message at `:228`, **7.9b3** the assertions, which 7.9
-also still owes.
+Cut into units: **7.9b1** one owner for the charged rate and every payroll path through it
+(accepted, `7e230ad`), **7.9b3a** assertions for the two payroll branches that have none,
+**7.9b2** the writer at `:138` and the hire message at `:228`, **7.9b3b** the rest of the
+assertions, which 7.9 also still owes.
+
+**A GAP THE MUTATION FOUND, and it is why 7.9b3a jumped the queue.** Reverting the partial
+scheduled period to the raw stored wage left `cash-flow` at 11/0/0. Not a hollow assertion: the
+fixture cannot reach the branch, because its contract ends half a day into a one-day Daily interval,
+so `daysLeftInTerm` ceilings to 1 and the guard `1 < 1` sends it down the FULL period path. **The
+partial scheduled period and the end-of-employment settlement have no assertion at all**, and did
+not before this batch either. A colony could be billed one rate for a full period and another for a
+part period with nothing to catch it.
 
 ## What 7.9 was asked to do
 
@@ -374,9 +383,10 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.8.0 — F22 recon (Sol high, read-only) | accepted, `d83a500` |
 | ✅ | 7.9 — F25's wage: show what is charged, not only what is asked | accepted, `2d737e7`; assertions still owed |
 | ✅ | 7.9b — recon: what `dailyWage` means (Sol high, read-only) | accepted; decision recorded |
-| 🔨 | 7.9b1 — one owner for the charged rate, every payroll path through it | Luna running |
+| ✅ | 7.9b1 — one owner for the charged rate, every payroll path through it | accepted, `7e230ad` |
+| 🔨 | 7.9b3a — assertions for the partial period and the end settlement | Luna running |
 | ⬜ | 7.9b2 — the writer at `EmploymentService.cs:138` and the hire message | not started |
-| ⬜ | 7.9b3 — assertions for 7.9, 7.9b1 and 7.9b2 | not started |
+| ⬜ | 7.9b3b — the rest of the assertions 7.9 and 7.9b2 owe | not started |
 | ⬜ | 7.12 — F23's bond ignores quality when valuing | known defect 5 |
 | ⬜ | 7.10 — F19's direct-input figure must reach the margin | known defect 2 |
 | ⬜ | 7.11 — Pause must not let a committed uninstall finish | known defect 4 |
