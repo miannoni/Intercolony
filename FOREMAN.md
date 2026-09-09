@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C1 — F01, a routine contract cycle must be silent. **C0 IS CLOSED.**
-Unit: C1.0 — recon: where `Contract delivery due` is emitted, and what the code knows there
-Worker: sol recon running — `…\scratchpad\recon-c1.out`
+Unit: C1.1 — the due letter becomes a log; the exception path fires after auto-ready
+Worker: luna running — `…\scratchpad\unit-c1-1.out`
 Last done: C0.1, the scope lock, accepted at `f049bfb` — the plan is copied to
 `docs/PLAYTEST_CORRECTION_PLAN.md` byte-identical, and `PROGRESS.md` records the freezes.
 Updated: 2026-09-09 16:25
@@ -74,7 +74,46 @@ two workers on the same large UI or settings file.
 | | Unit | Status |
 |---|---|---|
 | ✅ | C0.1 — copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | accepted, `f049bfb` |
-| 🔨 | C1.0 — recon: the `Contract delivery due` emission and what it knows | Sol recon running |
+| ✅ | C1.0 — recon: the `Contract delivery due` emission and what it knows | accepted; decisions below |
+| 🔨 | C1.1 — the due letter becomes a log, the warning moves after auto-ready | Luna running |
+| ⬜ | C1.2 — C1's assertions | not started |
+
+## C1 — the recon, and what I decided from it
+
+Sol recon, read-only. Both load-bearing claims spot-checked in the source myself.
+
+**ONE emission site, and it fires before anything is known.** `ContractService.RaiseCycleOrder`
+sends `Contract delivery due` unconditionally at `ContractService.cs:1702`, immediately after
+creating the order — *before* `AdvanceAutoReady` has asked whether the cycle can proceed
+(`ContractService.cs:1272`). That ordering is the whole defect: the letter cannot know what it is
+announcing.
+
+**The exception path already mostly exists.** `AdvanceAutoReady` sends
+`Agreement delivery needs attention` naming the settlement, the order, the quantity, the reason and
+where to act, throttled by `order.autoReadyFailureNotified` (`ContractService.cs:1297-1320`).
+
+**DECIDED — three cases, and the plan's silent path only covers one of them:**
+
+  - **C1-D1 — auto-ready on and the cycle readies: SILENT.** No letter at all. This is the routine
+    success the plan wants quiet.
+  - **C1-D2 — auto-ready on and the cycle cannot ready: the existing warning, unchanged.** It
+    already answers which order, what is blocked and what to do.
+  - **C1-D3 — the player must act: ONE actionable letter, after auto-ready has run, not before.**
+    That covers auto-ready being off AND seller delivery, which *can never auto-ready* because
+    `SalesOrder.CanMarkReady` requires buyer pickup (`SalesOrder.cs:204`). Deleting the due letter
+    without this would leave both cases with no notice at all — a silent regression dressed as a
+    fix.
+
+**C1-D4 — no cross-reload deduplication.** The plan asks that repeated *ticks* not spam, and the
+existing transient marker does that. Making it survive a reload would mean persisted state for a
+letter, and the plan says avoid a bump unless world state genuinely needs one. Accepted and
+recorded rather than discovered later: the same unresolved problem can warn once more after a load.
+
+**C1-D5 — no feasibility model for seller delivery.** Recon is right that nothing can answer
+"can this delivery proceed" for seller delivery without caravan dispatch, and **that is frozen
+F12**. The boundary is respected by giving seller-delivery cycles the actionable letter instead of
+a prediction.
+
 
 ## The baseline, established before any edit
 
@@ -133,6 +172,13 @@ newer product direction, not by defect:
     after visiting another repo, or `dev.ps1` will not be found.
 
 ## Open for the operator
+
+- **2026-09-09, from the C1 recon and deliberately not acted on.** A recurring contract whose
+  counterparty becomes inaccessible is cancelled silently: status and a `ContractCancelled` timeline
+  record, no letter (`ContractService.cs:1655`). C1's philosophy suggests that deserves the player's
+  attention, but the contract is already terminal and there is nothing for them to do about it, so a
+  letter would be noise of a different kind. Left alone; say if you want it announced.
+
 
 Twenty-one play observations are owed, all in `docs/PENDING_PLAYTESTS.md`. The three that matter
 most: the F15 save-compatibility check; the partial-delivery defect in `DeliverToColony`, which
