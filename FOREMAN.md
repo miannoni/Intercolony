@@ -1,11 +1,11 @@
 # Foreman state — Intercolony
 
-Stage: C2 — F07, the production rate must count real completions. **C0 AND C1 ARE CLOSED.**
-Unit: C2.2b — the wrapper fixture went looking for a recipe it does not need
-Worker: luna running — `…\scratchpad\unit-c2-2b.out`; C2.2's eight assertions are UNCOMMITTED and must be kept
-Last done: C1.2 + C1.2b, C1's seven assertions, accepted at `1c5cc56` — long-term 61/0/0, and the
-mutation that restores the due letter turns six of the seven red.
-Updated: 2026-09-09 17:35
+Stage: C3 — settings for F08, F09 and F11, as one coherent pass. **C0, C1 AND C2 ARE CLOSED.**
+Unit: C3.0 — recon: the settings surface, the nine constants, and F11's real scheduling
+Worker: sol recon running — `…\scratchpad\recon-c3.out`
+Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
+mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
+Updated: 2026-09-09 19:05
 Foreman load: 2026-09-09 15:48
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -61,8 +61,8 @@ two workers on the same large UI or settings file.
 |---|---|---|---|
 | ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
 | ✅ | C1 — F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
-| 🔨 | C2 — F07: the production rate must count real completions | F07 | recon running |
-| ⬜ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | not started |
+| ✅ | C2 — F07: the production rate must count real completions | F07 | closed, `14ad416` |
+| 🔨 | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | recon running |
 | ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
 | ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
 | ⬜ | C6 — freeze F12 in the documentation | — | not started |
@@ -122,8 +122,13 @@ variable, and nothing in Intercolony is called by ordinary vanilla construction 
 |---|---|---|
 | ✅ | C2.0 — recon: the missing completion paths, and the denominator question | accepted; D1-D4 recorded |
 | ✅ | C2.1 — normalise minified bill products, add the construction observer | accepted, `8cb5774` |
-| 🔨 | C2.2 — C2's assertions, eight of them | seven green; four bite the construction observer |
-| 🔨 | C2.2b — drive the vanilla bill notification instead of hunting a recipe | Luna running |
+| ✅ | C2.2 + C2.2b — C2's eight assertions and the wrapper re-cut | accepted, `14ad416`. **C2 COMPLETE** |
+
+## Units — stage C3
+
+| | Unit | Status |
+|---|---|---|
+| 🔨 | C3.0 — recon: the settings surface, the nine constants, F11's scheduling | Sol recon running |
 
 ## C1 — the recon, and what I decided from it
 
