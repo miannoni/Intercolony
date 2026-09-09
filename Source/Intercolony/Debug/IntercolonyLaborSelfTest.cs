@@ -1235,8 +1235,10 @@ namespace Intercolony
                 return;
             }
 
-            Apparel removedItem = partialFixtureItems.Count > 0
-                ? partialFixtureItems[0] as Apparel
+            // Remove the Normal tuque so the Masterwork parka remains worn and is the returned
+            // item in this partial-bond path.
+            Apparel removedItem = partialFixtureItems.Count > 1
+                ? partialFixtureItems[1] as Apparel
                 : null;
             bool removedWasWorn = removedItem != null && worker.apparel != null &&
                 worker.apparel.WornApparel.Contains(removedItem);
@@ -1262,6 +1264,22 @@ namespace Intercolony
                 partialFixtureItems, worker, independentlyPricedBond,
                 out float totalReplacementValue, out float returnedReplacementValue,
                 out string itemDetail);
+            Apparel masterworkItem = partialFixtureItems.Count > 0
+                ? partialFixtureItems[0] as Apparel
+                : null;
+            QualityCategory returnedQuality = default(QualityCategory);
+            bool returnedMasterwork = ContainsReference(
+                    CaptureCarriedEquipmentForTest(worker), masterworkItem) &&
+                masterworkItem != null &&
+                masterworkItem.TryGetQuality(out returnedQuality) &&
+                returnedQuality == QualityCategory.Masterwork;
+            int expectedMasterworkRefund = returnedMasterwork && totalReplacementValue > 0f
+                ? Mathf.Clamp(
+                    Mathf.RoundToInt(
+                        independentlyPricedBond * VanillaDefinitionValue(masterworkItem) *
+                        Mathf.Max(0, masterworkItem.stackCount) / totalReplacementValue),
+                    0, independentlyPricedBond)
+                : 0;
             bool returnedSomeButNotAll = matchedAfterRemoval > 0 &&
                 matchedAfterRemoval < totalQuantity &&
                 returnedReplacementValue > 0f &&
@@ -1285,6 +1303,13 @@ namespace Intercolony
                     firstRefund == expectedPartialRefund,
                 "E3 part returned is part refunded, including the premium",
                 settlementDetail);
+            r.Check(returnedMasterwork && firstRefund == expectedMasterworkRefund,
+                "E3 returned Masterwork item refunds its Masterwork-priced bond share",
+                $"returned item {masterworkItem?.def?.defName ?? "null"}, quality {returnedQuality}, " +
+                $"unit value {VanillaDefinitionValue(masterworkItem):0.###}, total value " +
+                $"{totalReplacementValue:0.###}, charged bond {independentlyPricedBond:0.###}, " +
+                $"expected Masterwork share {expectedMasterworkRefund:0.###}, " +
+                $"first refund {firstRefund:0.###}");
 
             Pawn workerAfterFirstSettlement = contract.pawn;
             int silverBeforeSecondSettlement = PurchaseOrderService.CountColonySilver(map);
@@ -1350,6 +1375,22 @@ namespace Intercolony
                 if (parka == null || tuque == null)
                 {
                     failureReason = "ThingMaker did not create both apparel instances";
+                    return false;
+                }
+
+                CompQuality parkaQuality = parka.TryGetComp<CompQuality>();
+                if (parkaQuality == null)
+                {
+                    failureReason = "parka did not instantiate CompQuality";
+                    return false;
+                }
+
+                parkaQuality.SetQuality(
+                    QualityCategory.Masterwork, ArtGenerationContext.Outsider);
+                if (parkaQuality.Quality != QualityCategory.Masterwork)
+                {
+                    failureReason =
+                        $"parka quality setter did not apply Masterwork: {parkaQuality.Quality}";
                     return false;
                 }
 
@@ -1513,9 +1554,9 @@ namespace Intercolony
                 return 0f;
             }
 
-            return item.Stuff != null && item.def.MadeFromStuff
-                ? item.def.GetStatValueAbstract(StatDefOf.MarketValue, item.Stuff)
-                : item.def.BaseMarketValue;
+            // Thing.MarketValue is vanilla's instance-aware MarketValue stat, so the assertion
+            // includes the actual Thing's quality and remains independent of Intercolony pricing.
+            return item.MarketValue;
         }
 
         private static int CountMatchedEquipment(
