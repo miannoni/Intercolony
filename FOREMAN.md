@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 8 — F08 and F09, recon first. Stage 7 is done apart from F22, which awaits the operator. Stages 1-6 are CLOSED.
-Unit: 8.3 — disclose the pressure in the Relations row
-Worker: luna running — `…\scratchpad\unit-8-3.out`
-Last done: 8.4, F08's five assertions, accepted at `d103024` — reputation 30/0/0, both mutations red.
-Updated: 2026-09-09 05:05
+Unit: 8.5 — F09's two persisted fields and its daily sampler, observation only
+Worker: luna running — `…\scratchpad\unit-8-5.out`
+Last done: 8.3, the Relations disclosure, accepted at `08412cf` — F08 IS COMPLETE.
+Updated: 2026-09-09 05:30
 Foreman load: 2026-09-09 03:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -163,6 +163,25 @@ starting values for the play sitting, not laws:**
   - **D5 — no double credit.** Sale-price generosity already moves goodwill on its own
     (`SalesOrderService.cs:588-647`) and F10's purchase count is already inside the commercial
     score. F08 reads the score and nothing else.
+
+**F09's decisions, same authority — the plan leaves magnitude and window open (`:372-377`), so
+these are starting values for the play sitting:**
+
+  - **D6 — a lifetime average, never a moment.** Sample the worker's mood once a day and keep a
+    running total and count on the contract. The plan's own words are that momentary mood must not
+    be farmable, and an average over the whole employment is what makes it unfarmable.
+  - **D7 — no result before ten samples.** A ten-day minimum, so a two-day hire cannot move
+    diplomacy at all. Absent nodes on an old save read as zero samples, which means no result
+    rather than a fabricated neutral one.
+  - **D8 — ±3 goodwill, once, at the end.** Average at or above 0.75 gives +3; at or below 0.35
+    gives -3; anything between gives nothing. Small enough that it complements employer reputation
+    rather than replacing it, which is what the plan asks for.
+  - **D9 — never on an outcome that is already priced.** Death, walkout, combat misuse,
+    safe-passage denial and a skipped notice already move the origin faction's goodwill
+    (`EmployerReputationService.cs:141-175`). F09 produces NOTHING for those; it is for ordinary
+    completed and dismissed employments only. Two penalties for one act is the failure mode here.
+  - **D10 — never positive to a hostile origin, and nothing at all for a war severance.** F08 has
+    the same rule for the same reason.
 
 ## ALL SEVEN KNOWN DEFECTS ARE CLOSED, 2026-09-09
 
@@ -462,8 +481,11 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 8.1 — F08's decision logic, pure and uncalled | accepted, `91fc5e9` |
 | ✅ | 8.2 — apply it on a quadrum cadence from the world tick | accepted, `ccd1bdf` |
 | ✅ | 8.4 — F08's assertions, five of them, through the world tick | accepted, `d103024` |
-| 🔨 | 8.3 — disclose it in the Relations row | Luna running |
-| ⬜ | 8.5+ — F09, about 7-9 units, a small system | not started |
+| ✅ | 8.3 — disclose it in the Relations row | accepted, `08412cf`. **F08 IS COMPLETE** |
+| 🔨 | 8.5 — F09's persisted fields and daily sampler, observation only | Luna running |
+| ⬜ | 8.6 — F09's end evaluation and its guards | not started |
+| ⬜ | 8.7 — F09's disclosure in the departure letter | not started |
+| ⬜ | 8.8 — F09's assertions | not started |
 
 ## Closed-stage unit history
 
