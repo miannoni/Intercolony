@@ -1,21 +1,22 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.9 — F25's wage: show what is charged, not only what is asked
-Worker: idle — 7.9 returned; suite running at `…\scratchpad\verify-7-9.out`
-Last done: 7.8.0, the F22 recon, accepted at `d83a500`.
-Updated: 2026-09-08 22:20
+Unit: 7.9b — what `dailyWage` means, and the double premium behind it
+Worker: sol recon running — `…\scratchpad\recon-wage-meaning.out`
+Last done: 7.9, the wage disclosure, accepted at `2d737e7` — labor 48/0/0, payroll 42/0/0.
+Updated: 2026-09-08 23:55
 Foreman load: 2026-09-08 22:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
 <!-- Everything above this line is the header. A fresh session reads only the header. -->
 
-## 7.9 came back, and it uncovered a worse defect than the one it was sent to fix
+## 7.9 is accepted, and it uncovered a worse defect than the one it was sent to fix
 
-7.9's own work is in the tree, uncommitted, 13 production files: every site that shows or sums a
-daily wage now shows both the ask and what the colony is charged, and the business payroll estimate
-and F20's direct-labour figure stopped summing the raw figure. It builds clean. The suite is running.
+7.9 is committed at `2d737e7`: every site that shows or sums a daily wage names both the ask and
+what the colony is charged, and the business payroll estimate and F20's direct-labour figure
+stopped summing the raw figure. Labor 48/0/0, payroll 42/0/0, both exit 0. Production only — its
+assertions are still owed.
 
 **THE DEFECT IT EXPOSED — `dailyWage` MEANS TWO DIFFERENT THINGS DEPENDING ON WHICH HIRE PATH MADE
 THE CONTRACT, AND ONE OF THEM IS CHARGED TWICE.** All verified in the source:
@@ -346,7 +347,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.6–7.6f — F23's equipment bond, both halves + assertions | accepted, `ed99423` `a173619` `91dc10d` `9841ec9` |
 | ✅ | 7.7–7.7f — F24's emergency dispatch, its window fix, assertions, play entry | accepted, `4a78e0e` `a264c22` |
 | ✅ | 7.8.0 — F22 recon (Sol high, read-only) | accepted, `d83a500` |
-| 🔨 | 7.9 — F25's wage: show what is charged, not only what is asked | Luna running |
+| ✅ | 7.9 — F25's wage: show what is charged, not only what is asked | accepted, `2d737e7`; assertions still owed |
+| 🔨 | 7.9b — what `dailyWage` means, and the double premium | Sol recon running |
 | ⬜ | 7.12 — F23's bond ignores quality when valuing | known defect 5 |
 | ⬜ | 7.10 — F19's direct-input figure must reach the margin | known defect 2 |
 | ⬜ | 7.11 — Pause must not let a committed uninstall finish | known defect 4 |
