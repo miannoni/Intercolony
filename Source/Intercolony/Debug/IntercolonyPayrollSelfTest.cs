@@ -1,5 +1,7 @@
 ﻿using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -161,6 +163,7 @@ namespace Intercolony
             const int dailyAsk = 40;
             const int dailyPremiumPercent = 35;
             const int workedDays = 1;
+            const int fixtureSilver = 1000;
             int now = GenTicks.TicksGame;
             EmploymentContract contract = new EmploymentContract
             {
@@ -176,32 +179,73 @@ namespace Intercolony
                 termDays = 3,
                 termLapsedNotified = true
             };
+            string dailyDisclosure = WageStructureUtility.DailyWageDisclosure(
+                contract.wageStructure, contract.dailyWage);
+            int displayedAsk;
+            int displayedDailyWage;
+            bool dailyDisclosureParsed = TryParseDailyWageDisclosure(
+                dailyDisclosure, out displayedAsk, out displayedDailyWage);
             int expected = dailyAsk * (100 + dailyPremiumPercent) / 100 * workedDays;
 
             try
             {
                 state.AddEmployment(contract);
-                IntercolonyLaborSelfTestSupport.EnsureSilver(map, expected);
+                IntercolonyLaborSelfTestSupport.EnsureSilver(map, fixtureSilver);
                 int before = PurchaseOrderService.CountColonySilver(map);
 
                 PayrollService.SettleOnEnd(
                     contract, EmploymentStatus.Dismissed, state.LaborDebts, state);
 
                 int after = PurchaseOrderService.CountColonySilver(map);
-                // This must fail if a worker leaving part way through a period is settled at a
-                // different rate from a full period, even though the stored field is the ask.
+                int observedDeduction = before - after;
                 r.Check(
-                    before - after == expected && contract.paidSilver == expected &&
+                    observedDeduction == expected,
+                    "the daily premium is unchanged and partial settlement uses the charged rate, not the stored ask",
+                    $"observed={observedDeduction} silver, expected={expected} " +
+                    $"({dailyAsk}*{100 + dailyPremiumPercent}/100*{workedDays})");
+                r.Check(
+                    dailyDisclosureParsed && displayedAsk == dailyAsk &&
+                    observedDeduction == displayedDailyWage &&
                     contract.arrearsSilver == 0,
-                    "a worker leaving part way through a period is settled at the same daily rate as a full one, not a different player rate",
-                    $"observed={contract.paidSilver} silver, expected={expected} " +
-                    $"({dailyAsk}*{100 + dailyPremiumPercent}/100*{workedDays}), " +
-                    $"storage={before}->{after}");
+                    "the displayed daily colony-paid wage is the silver payroll actually deducts",
+                    $"displayed={displayedDailyWage} silver/day, observed={observedDeduction} silver, " +
+                    $"storage={before}->{after}, disclosure=\"{dailyDisclosure}\"");
+
+                string quadrumDisclosure = WageStructureUtility.DailyWageDisclosure(
+                    WageStructure.Quadrum, dailyAsk);
+                int quadrumAsk;
+                int quadrumCharge;
+                bool quadrumDisclosureParsed = TryParseDailyWageDisclosure(
+                    quadrumDisclosure, out quadrumAsk, out quadrumCharge);
+                r.Check(
+                    quadrumDisclosureParsed && quadrumAsk == dailyAsk &&
+                    quadrumAsk == quadrumCharge,
+                    "a quadrum contract shows the ask and colony-paid daily wage as the same number",
+                    $"ask={quadrumAsk} silver/day, charge={quadrumCharge} silver/day, " +
+                    $"disclosure=\"{quadrumDisclosure}\"");
             }
             finally
             {
                 state.Employments.Remove(contract);
             }
+        }
+
+        private static bool TryParseDailyWageDisclosure(
+            string disclosure, out int workerAsk, out int colonyPays)
+        {
+            workerAsk = -1;
+            colonyPays = -1;
+            Match match = Regex.Match(
+                disclosure ?? string.Empty,
+                @"\AWorker asks: (?<ask>[^|]+) silver/day \| Colony pays: " +
+                @"(?<charge>[^|]+) silver/day\z",
+                RegexOptions.CultureInvariant);
+
+            return match.Success &&
+                   int.TryParse(match.Groups["ask"].Value, NumberStyles.Number,
+                       CultureInfo.CurrentCulture, out workerAsk) &&
+                   int.TryParse(match.Groups["charge"].Value, NumberStyles.Number,
+                       CultureInfo.CurrentCulture, out colonyPays);
         }
 
         /// <summary>
