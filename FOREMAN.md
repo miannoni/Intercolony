@@ -1,15 +1,24 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F24 in progress; F22 after it. **STAGES 1 THROUGH 6 ARE CLOSED.**
-Unit: 7.7f — the F24 play entry
-Worker: luna running — `…\scratchpad\unit-7-7f.out`
-Last done: 7.7b-e accepted at `4a78e0e` — F24's emergency dispatch, its unusable-window fix, and
-four assertions each watched going red. Labour 48/0/0, log clean.
+Unit: 7.8.0 — F22 recon: what is the smallest honest first slice, and where does it attach
+Worker: sol recon running — `…\scratchpad\recon-f22.out`
+Last done: 7.7f at `a264c22` — the F24 play entry. F24 slice 1 is closed; F23 stays part-built.
+
+F22 IS THE LAST FINDING IN STAGE 7 and the recon says it is a system: a reverse listing, an offer
+queue, a colonist who leaves and returns, abstract training and job-type risk. This is the first
+unit dispatched to **Sol high read-only** under the new method rather than to Luna, because the
+question is what to build, not how. The prompt asks it to say how many units F22 really is and to be
+blunt if the honest first slice is still large — three findings in this batch have already turned
+out to be systems, and saying so early has been worth more than optimism every time.
+The one hard constraint it must respect: the operator authorised ONE schema bump and it is spent on
+58, so anything F22 persists has to be an additive node that reads correctly when absent. If Sol
+concludes a second bump is unavoidable, that goes back to the operator rather than being taken.
 Updated: 2026-09-09 00:30
 Run started: 2026-09-06 22:37
 Foreman load: 2026-09-09 00:30
-Review checkpoint: 6ec6c16 · reviewed never
-Review: running — `…\scratchpad\review-1.out` · 6ec6c16..493ee4b · started 2026-09-09 00:45
+Review checkpoint: 493ee4b · reviewed 2026-09-09 01:05
+Review: none
 Run base: 6ec6c16
 Foreman: 86cdc44 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -28,6 +37,24 @@ target fixed at launch, and may overlap Luna because it is read-only.
 first created this file — so the review lane audits only work this run produced, not the branch's
 earlier history. `Run started` is `469dddf`'s own timestamp. Both are evidence-based rather than the
 conservative "use HEAD / use now" fallbacks the migration allows.
+
+## Review findings — Sol review #1, `6ec6c16..493ee4b`, 94 commits, 2026-09-09
+
+Verdict: not materially sound. Seven findings; schema-58 persistence audited clean. I verified the
+two most serious against the code myself rather than accepting them.
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| 1 | High | **F25 shows the applicant's ask but charges 35% more.** `TryHireApplicant` stores the raw `openMarketAsk` in `contract.dailyWage`, and Daily payroll then applies `WageStructureUtility.EffectiveDailyWage`'s 35% premium on top. **VERIFIED**: `WageStructure.cs:53-58` applies the premium; `EmploymentContract.cs:353` routes `PeriodPayment` through `PeriodCost`; the applicant row says the worker is paid the ask. A displayed figure and a charged figure must come from one calculation — this run's own standing rule. `0189a8a`'s assertion is hollow at that seam: it checks `dailyWage == openMarketAsk` and never advances payroll. | **FIX NOW — 7.9** |
+| 2 | High | **F19's direct-input value never reaches the margin.** `ContractEstimate.Margin` subtracts `inputsIfBought`, the finished-good figure, and never `directInputsIfBought`. **VERIFIED** at `BusinessReportService.cs:69-71`. The UI shows both rows, so the new figure looks incorporated and is not. F19 exists to make profitability account for self-produced inputs, so this is its purpose unmet. **My under-specification** — I asked for a figure beside the old one and never said the margin should use it. | **FIX NOW — 7.10** |
+| 3 | High | F24's emergency pool empty under real market data. | **ALREADY FIXED** at `4a78e0e`, after this review's fixed target. No action. |
+| 4 | Med | **Pause after an uninstall designation can still uninstall the building.** `Pause` sets the flag but leaves an outstanding designation, and vanilla may finish it while the paused loop suppresses the replacement blueprint. F03 says an installed object stays installed while paused. | **SCHEDULE — 7.11** |
+| 5 | Med | **F23 values a bond by def and stuff but matches returns by quality.** So a worker can leave with a masterwork and forfeit only a normal-quality bond. **Asymmetric in the player's favour and an exploit.** Mine: I specified `BaseValue` without quality. | **FIX NOW — 7.12** |
+| 6 | Low | F24 dropped the old 1-20 day clamp on ORDINARY travel by delegating to `LogisticsQuote.TravelDaysFor`. Scope leak beyond the toggle. | **SCHEDULE — 7.13** |
+| 7 | Low | F11's timing assertion bypasses `WorldComponentTick`, the game-facing caller. | **SCHEDULE — 7.14** |
+
+Order: 7.9, then 7.12, then 7.10 — money first, then the exploit, then the unmet purpose. F22
+continues after them.
 
 ## F24 slice 1 — accepted at `4a78e0e`
 
