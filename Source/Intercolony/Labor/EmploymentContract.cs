@@ -630,8 +630,9 @@ namespace Intercolony
             // Shows the commitment and the structure, not just paidSilver. It used to read
             // "(22/day x 20d = 0)" for a periodic hire, which looks like a zero-value contract
             // rather than one where nothing has been paid yet.
-            string money = $"{dailyWage}/day × {TermLabel} {wageStructure.Label()}, " +
-                           $"{TotalCommitment} total, {paidSilver} paid";
+            string money = $"{WageStructureUtility.DailyWageDisclosure(wageStructure, dailyWage)}, " +
+                           $"{TermLabel} {wageStructure.Label()}, {TotalCommitment} total, " +
+                           $"{paidSilver} paid";
             if (arrearsSilver > 0)
             {
                 money += $", {arrearsSilver} owed";

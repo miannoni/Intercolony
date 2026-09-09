@@ -2,7 +2,7 @@
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
 Unit: 7.9 — F25's wage: show what is charged, not only what is asked
-Worker: luna running — `…\scratchpad\unit-7-9.out` (prompt `…\scratchpad\unit-7-9.prompt.txt`)
+Worker: idle — 7.9 returned; suite running at `…\scratchpad\verify-7-9.out`
 Last done: 7.8.0, the F22 recon, accepted at `d83a500`.
 Updated: 2026-09-08 22:20
 Foreman load: 2026-09-08 22:20
@@ -11,12 +11,29 @@ Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL
 
 <!-- Everything above this line is the header. A fresh session reads only the header. -->
 
-## The running worker
+## 7.9 came back, and it uncovered a worse defect than the one it was sent to fix
 
-7.9 is Luna, production code only; its assertions are a separate unit that has not been written.
-It was dispatched with a clean tree, so anything modified under `Source/Intercolony` is its output
-and must not be discarded. `grep -c "^tokens used"` on its output file says whether it finished.
-Verify before accepting: `dev.ps1 test labor -Fresh`, `dev.ps1 test ledger -Fresh`, then mutate.
+7.9's own work is in the tree, uncommitted, 13 production files: every site that shows or sums a
+daily wage now shows both the ask and what the colony is charged, and the business payroll estimate
+and F20's direct-labour figure stopped summing the raw figure. It builds clean. The suite is running.
+
+**THE DEFECT IT EXPOSED — `dailyWage` MEANS TWO DIFFERENT THINGS DEPENDING ON WHICH HIRE PATH MADE
+THE CONTRACT, AND ONE OF THEM IS CHARGED TWICE.** All verified in the source:
+
+  - `EmploymentService.cs:138` — the DIRECT hire path stores `EffectiveDailyWage(structure, ask)`,
+    the charged rate, and says so in its comment: "payroll reads dailyWage straight off it".
+  - `EmploymentContract.cs:353` — `PeriodPayment => PeriodCost(wageStructure, dailyWage)`, and
+    `WageStructure.cs:185` applies the premium AGAIN. **A 100/day ask on Daily terms is quoted at
+    135, stored as 135, and charged 182.**
+  - `TryHireApplicant`, F25's path, stores the raw ask, so the same field there means the ask and
+    the same payroll charges it once, correctly.
+  - `PayrollService.cs:88` and `:349` — the PARTIAL-period branches use `contract.dailyWage` raw,
+    so a part period is charged at a different rate from a full one in the same function.
+
+This is not a display bug and it is not new to this batch: the direct path is the one shipped 1.0
+uses, so a released colony overpays its Daily employees by 35% and was quoted otherwise. A fix has
+to settle what the field means, and the two candidate answers differ in what they do to saves that
+already exist — which is why the next unit is a Sol recon, not a Luna edit.
 
 ## What 7.9 was asked to do
 

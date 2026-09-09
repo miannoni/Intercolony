@@ -25,7 +25,7 @@ namespace Intercolony
         private Vector2 employeeScroll;
         private Vector2 candidateScroll;
 
-        private const float EmployeeRowHeight = 52f;
+        private const float EmployeeRowMinimumHeight = 52f;
         private const float CandidateRowHeight = 32f;
 
         /// <summary>
@@ -272,8 +272,9 @@ namespace Intercolony
             Widgets.Label(new Rect(0f, y, 400f, 34f), "On the payroll");
             Text.Font = GameFont.Small;
 
-            DrawPayrollSummary(new Rect(400f, y + 6f, inRect.width - 400f, 24f), live);
-            y += 38f;
+            float payrollSummaryHeight = DrawPayrollSummary(
+                new Rect(400f, y + 6f, inRect.width - 400f, 24f), live);
+            y += Mathf.Max(38f, payrollSummaryHeight + 6f);
 
             // Height is content-driven up to a cap, so one employee does not leave a huge empty
             // panel and eight do not push the listing off screen.
@@ -290,17 +291,19 @@ namespace Intercolony
             {
                 // The page is the employees' now, so the list gets the room rather than a quarter
                 // of it — the four-row cap existed because two other sections were below it.
-                float employeeBlock = Mathf.Min(live.Count * EmployeeRowHeight, inRect.height - 140f);
+                float employeeContentHeight = EmployeeRowsHeight(live, inRect.width - 16f);
+                float employeeBlock = Mathf.Min(employeeContentHeight, inRect.height - 140f);
 
                 Rect outRect = new Rect(0f, y, inRect.width, employeeBlock);
-                Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, live.Count * EmployeeRowHeight);
+                Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, employeeContentHeight);
                 BeginPageScrollView(outRect, ref employeeScroll, viewRect);
 
                 float rowY = 0f;
                 for (int i = 0; i < live.Count; i++)
                 {
-                    DrawEmployeeRow(new Rect(0f, rowY, viewRect.width, EmployeeRowHeight), live[i], i);
-                    rowY += EmployeeRowHeight;
+                    float rowHeight = EmployeeRowHeight(viewRect.width, live[i]);
+                    DrawEmployeeRow(new Rect(0f, rowY, viewRect.width, rowHeight), live[i], i);
+                    rowY += rowHeight;
                 }
 
                 EndPageScrollView();
@@ -423,10 +426,11 @@ namespace Intercolony
             return $"{applicant.Name}  —  {applicant.SkillSummary(4)}";
         }
 
-        private static string ApplicantValueLine(JobApplicant applicant)
+        private static string ApplicantValueLine(JobPosting posting, JobApplicant applicant)
         {
             return $"{applicant.settlementName} ({applicant.factionName}), {applicant.travelDays}d away — " +
-                   $"paid {applicant.openMarketAsk}/day";
+                   WageStructureUtility.DailyWageDisclosure(
+                       posting.wageStructure, applicant.openMarketAsk);
         }
 
         private static string ApplicantPaymentLine(JobPosting posting, int upFront)
@@ -476,7 +480,7 @@ namespace Intercolony
 
             float height = ApplicantRowTopPadding + ApplicantRowBottomPadding;
             height += ApplicantLabelHeight(ApplicantTitleLine(applicant), textWidth);
-            height += ApplicantLabelHeight(ApplicantValueLine(applicant), textWidth);
+            height += ApplicantLabelHeight(ApplicantValueLine(posting, applicant), textWidth);
             height += ApplicantLabelHeight(
                 ApplicantPaymentLine(posting, hireCostQuote.upfrontWages), textWidth);
             height += ApplicantLabelHeight(ApplicantStorageLine(available), textWidth);
@@ -567,11 +571,15 @@ namespace Intercolony
 
             // The worker's ask is the contract rate; the posted wage is only the filter that got
             // this applicant to apply.
-            string value = ApplicantValueLine(applicant);
+            string value = ApplicantValueLine(posting, applicant);
             float valueHeight = ApplicantLabelHeight(value, textWidth);
 
             GUI.color = new Color(1f, 1f, 1f, 0.65f);
-            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, valueHeight), value);
+            Rect valueRect = new Rect(rect.x + ApplicantTextInset, lineY, textWidth, valueHeight);
+            TooltipHandler.TipRegion(
+                valueRect,
+                WageStructureUtility.DailyWageTooltip(posting.wageStructure, applicant.openMarketAsk));
+            Widgets.Label(valueRect, value);
             GUI.color = Color.white;
             lineY += valueHeight;
 
@@ -831,11 +839,11 @@ namespace Intercolony
             return y + 6f;
         }
 
-        private static void DrawPayrollSummary(Rect rect, List<EmploymentContract> live)
+        private static float DrawPayrollSummary(Rect rect, List<EmploymentContract> live)
         {
             if (live.Count == 0)
             {
-                return;
+                return 0f;
             }
 
             int daily = 0;
@@ -843,7 +851,8 @@ namespace Intercolony
             int arrears = 0;
             foreach (EmploymentContract contract in live)
             {
-                daily += contract.dailyWage;
+                daily += WageStructureUtility.EffectiveDailyWage(
+                    contract.wageStructure, contract.dailyWage);
                 paid += contract.paidSilver;
                 arrears += contract.arrearsSilver;
             }
@@ -855,16 +864,60 @@ namespace Intercolony
             // point is that running out of silver has to be visible before it bites.
             GUI.color = arrears > 0 ? new Color(1f, 0.55f, 0.55f) : new Color(1f, 1f, 1f, 0.75f);
 
-            string text = $"{live.Count} hired   {daily} silver/day combined   {paid} paid so far";
+            string text = $"{live.Count} hired   {daily:N0} charged/day combined   " +
+                          $"{paid:N0} paid so far";
             if (arrears > 0)
             {
-                text += $"   —   {arrears} IN ARREARS";
+                text += $"   —   {arrears:N0} IN ARREARS";
             }
 
-            Widgets.Label(rect, text);
+            float textHeight = Text.CalcHeight(text, rect.width);
+            Rect textRect = new Rect(rect.x, rect.y, rect.width, textHeight);
+            TooltipHandler.TipRegion(
+                textRect,
+                "Charged/day uses each worker's ask passed through their selected wage structure. " +
+                "Daily terms cost more than prepaid because the colony can stop paying any morning; " +
+                "the worker charges a premium for that flexibility.");
+            Widgets.Label(textRect, text);
 
             GUI.color = Color.white;
             Text.Anchor = TextAnchor.UpperLeft;
+            return textHeight;
+        }
+
+        private static float EmployeeRowsHeight(
+            List<EmploymentContract> live, float rowWidth)
+        {
+            float height = 0f;
+            foreach (EmploymentContract contract in live)
+            {
+                height += EmployeeRowHeight(rowWidth, contract);
+            }
+
+            return height;
+        }
+
+        private static float EmployeeRowHeight(float rowWidth, EmploymentContract contract)
+        {
+            EmployeeRowLayout layout = EmployeeRowLayout.For(
+                new Rect(0f, 0f, rowWidth, EmployeeRowMinimumHeight));
+            float detailHeight = Text.CalcHeight(EmployeeDetailLine(contract), layout.textWidth);
+            return Mathf.Max(EmployeeRowMinimumHeight, 25f + detailHeight + 3f);
+        }
+
+        private static string EmployeeDetailLine(EmploymentContract contract)
+        {
+            string detail = WageStructureUtility.DailyWageDisclosure(
+                contract.wageStructure, contract.dailyWage) +
+                            $" — {contract.TermLabel} — {contract.StatusLine()}";
+            bool canAutoRenew = contract.status == EmploymentStatus.Active &&
+                                !contract.IsOpenEnded && !contract.ServingNotice;
+            if (canAutoRenew)
+            {
+                detail += contract.autoRenew ? "   auto-renew: on" : "   auto-renew: off";
+            }
+
+            return detail;
         }
 
         /// <summary>
@@ -951,11 +1004,7 @@ namespace Intercolony
             GUI.color = Color.white;
 
             GUI.color = StatusColour(contract);
-            string detail = $"{contract.dailyWage}/day × {contract.TermLabel} — {contract.StatusLine()}";
-            if (canAutoRenew)
-            {
-                detail += contract.autoRenew ? "   auto-renew: on" : "   auto-renew: off";
-            }
+            string detail = EmployeeDetailLine(contract);
 
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, Text.CalcHeight(detail, textWidth)), detail);
             GUI.color = Color.white;
@@ -992,15 +1041,20 @@ namespace Intercolony
 
                 if (hasLiveRenewalOffer)
                 {
-                    options.Add(new FloatMenuOption(
-                        $"Renew — {RenewalService.RenewalWage(contract)} silver a day",
+                    int renewalWage = RenewalService.RenewalWage(contract);
+                    FloatMenuOption renewalOption = new FloatMenuOption(
+                        $"Renew — {WageStructureUtility.DailyWageDisclosure(
+                            contract.wageStructure, renewalWage)}",
                         () =>
                         {
                             if (!RenewalService.Accept(contract, out string failReason))
                             {
                                 Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
                             }
-                        }));
+                        });
+                    renewalOption.tooltip = WageStructureUtility.DailyWageTooltip(
+                        contract.wageStructure, renewalWage);
+                    options.Add(renewalOption);
 
                     options.Add(new FloatMenuOption(
                         "Let them go at the end of the term",
@@ -1122,8 +1176,10 @@ namespace Intercolony
                 $"{contract.workerName} of {contract.factionName}\n" +
                 $"Home settlement: {contract.settlementName}\n" +
                 $"Skills at hire: {contract.workerSkills}\n\n" +
-                $"Term: {contract.TermLabel} at {contract.dailyWage} silver/day\n" +
+                $"Term: {contract.TermLabel}\n" +
+                $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}\n" +
                 $"Wage structure: {contract.wageStructure.Label()}\n" +
+                $"{WageStructureUtility.StructureTooltip(contract.wageStructure)}\n" +
                 $"Paid in advance: {contract.paidSilver} silver\n\n" +
                 $"Equipment bond: {contract.EquipmentBondLabel}\n\n" +
 
@@ -1355,7 +1411,7 @@ namespace Intercolony
             {
                 case WorkerColumn.Worker: return "Worker";
                 case WorkerColumn.Skills: return "Best skills";
-                case WorkerColumn.Wage: return "Silver/day";
+                case WorkerColumn.Wage: return "Ask/day";
                 case WorkerColumn.MinTerm: return "Min term";
                 case WorkerColumn.Travel: return "Arrives in";
                 default: return "From";
@@ -1455,7 +1511,7 @@ namespace Intercolony
             Cell((int)WorkerColumn.Skills, candidate.SkillSummary());
             // "from" because the listed rate is the civilian rate (§42's cheapest clause) and the
             // hiring dialog can only price it upwards. A bare number here would read as the price.
-            Cell((int)WorkerColumn.Wage, $"from {candidate.dailyWage}");
+            Cell((int)WorkerColumn.Wage, $"ask {candidate.dailyWage:N0}");
             Cell((int)WorkerColumn.MinTerm, $"{candidate.minTermDays}d");
             Cell((int)WorkerColumn.Travel, $"{candidate.travelDays}d");
             Cell((int)WorkerColumn.Source, candidate.settlementName);
@@ -1496,11 +1552,11 @@ namespace Intercolony
                 text += "\n";
             }
 
-            text += $"Asks {candidate.dailyWage} silver/day for their {candidate.minTermDays}-day minimum " +
+            text += $"Asks {candidate.dailyWage:N0} silver/day for their {candidate.minTermDays}-day minimum " +
                     "as a civilian.\n" +
                     "Longer terms cost less per day. Agreeing to fight costs more:\n" +
-                    $"  armed employee {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Armed.WageFactor())}/day, " +
-                    $"security contractor {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Security.WageFactor())}/day.\n" +
+                    $"  armed employee asks {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Armed.WageFactor()):N0}/day, " +
+                    $"security contractor asks {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Security.WageFactor()):N0}/day.\n" +
                     $"Takes {candidate.travelDays} days to reach the colony.";
 
             return text;

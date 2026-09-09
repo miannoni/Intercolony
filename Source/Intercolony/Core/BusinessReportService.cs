@@ -264,7 +264,8 @@ namespace Intercolony
                     continue;
                 }
 
-                total += employee.dailyWage * days / eligibleGoods;
+                total += WageStructureUtility.EffectiveDailyWage(
+                    employee.wageStructure, employee.dailyWage) * days / eligibleGoods;
                 eligibleEmployees++;
             }
 
@@ -761,7 +762,7 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// The colony's wage bill over a stretch of days.
+        /// The colony's charged wage bill over a stretch of days.
         ///
         /// Every active employee, not a share apportioned to one contract. Apportioning would need
         /// the mod to know who works on what, which it does not — and a made-up allocation is worse
@@ -781,7 +782,8 @@ namespace Intercolony
             {
                 if (contract.status == EmploymentStatus.Active)
                 {
-                    daily += contract.dailyWage;
+                    daily += WageStructureUtility.EffectiveDailyWage(
+                        contract.wageStructure, contract.dailyWage);
                 }
             }
 

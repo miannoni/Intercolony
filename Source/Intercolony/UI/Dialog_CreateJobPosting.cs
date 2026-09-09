@@ -99,6 +99,8 @@ namespace Intercolony
         private Vector2 optionsScroll;
 
         /// <summary>Cached band, recomputed only when an input that feeds it changes.</summary>
+        private int askRateLow;
+        private int askRateHigh;
         private int rateLow;
         private int rateHigh;
         private int qualified;
@@ -269,7 +271,7 @@ namespace Intercolony
                     {
                         structure = captured;
                         rateKey = int.MinValue;
-                    });
+                    }, WageStructureUtility.StructureTooltip(option));
             }
             GUI.EndGroup();
         }
@@ -406,13 +408,11 @@ namespace Intercolony
             switch (option)
             {
                 case WageStructure.Prepaid:
-                    return "Pay the worker's quoted rate for the whole term at hire. Cheapest total, " +
-                           "but the silver is spent if they die or you change your mind.";
+                    return "Pay the worker's quoted rate for the whole term at hire.";
                 case WageStructure.Daily:
-                    return "Pay a signing fee, then the worker's quoted rate at the end of each day. " +
-                           "Most flexible, but the dearest arrangement.";
+                    return "Pay a signing fee, then the charged daily rate at the end of each day.";
                 default:
-                    return "Pay a signing fee, then the worker's quoted rate every quadrum. A short " +
+                    return "Pay a signing fee, then the charged rate every quadrum. A short " +
                            "term pays the remainder pro rata at the end.";
             }
         }
@@ -448,20 +448,31 @@ namespace Intercolony
                 return "Nobody reachable can do this work.";
             }
 
-            string ask = rateLow == rateHigh
-                ? $"{rateLow} silver per day"
-                : $"{rateLow}–{rateHigh} silver per day";
+            string workerAsk = askRateLow == askRateHigh
+                ? $"{askRateLow:N0} silver/day"
+                : $"{askRateLow:N0}-{askRateHigh:N0} silver/day";
+            string charged = rateLow == rateHigh
+                ? $"{rateLow:N0} silver/day"
+                : $"{rateLow:N0}-{rateHigh:N0} silver/day";
             string workerNoun = $"{qualified} qualifying worker{(qualified == 1 ? "" : "s")}";
-            string verb = qualified == 1 ? "asks" : "ask";
-            return $"{workerNoun} {verb} {ask}.";
+            return $"{workerNoun}: worker asks {workerAsk}; colony pays {charged} under " +
+                   $"{structure.Label()} terms.";
         }
 
         private string GoingRateTooltip()
         {
+            if (!rateValid || qualified == 0)
+            {
+                return "No qualifying workers are reachable, so there is no going-rate band to " +
+                       "quote.";
+            }
+
             string standing = EmployerStandingLabel();
-            return $"This band uses the selected pay structure. Employer standing: {standing}. " +
-                   "Workers' asks include your standing as an employer, so this rate moves with " +
-                   "your record.";
+            return $"Worker asks: {askRateLow:N0}-{askRateHigh:N0} silver/day before the " +
+                   $"selected structure. Colony pays: {rateLow:N0}-{rateHigh:N0} silver/day " +
+                   $"under {structure.Label()} terms. Employer standing: {standing}. " +
+                   "Workers' asks include your standing as an employer, so both bands move with " +
+                   "your record. " + WageStructureUtility.StructureTooltip(structure);
         }
 
         private string EmployerStandingLabel()
@@ -488,9 +499,13 @@ namespace Intercolony
             }
 
             rateKey = key;
+            bool askValid = JobPostingService.GoingRate(
+                state, skill, minLevel, termDays, clause, WageStructure.Quadrum,
+                out askRateLow, out askRateHigh, out qualified);
             rateValid = JobPostingService.GoingRate(
                 state, skill, minLevel, termDays, clause, structure,
-                out rateLow, out rateHigh, out qualified);
+                out rateLow, out rateHigh, out int chargedQualified);
+            rateValid = rateValid && askValid && chargedQualified == qualified;
         }
 
         private void OpenSkillMenu()

@@ -160,7 +160,7 @@ namespace Intercolony
         /// </summary>
         public static string Summary(this CombatClause clause, int dailyWage)
         {
-            return $"{clause.LabelCap()} — {dailyWage} silver/day, " +
+            return $"{clause.LabelCap()} — worker asks {dailyWage:N0} silver/day, " +
                    $"{dailyWage * clause.DeathCompensationDays()} silver if they die";
         }
 

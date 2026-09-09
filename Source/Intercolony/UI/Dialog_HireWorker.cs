@@ -180,13 +180,24 @@ namespace Intercolony
             }
             y += openEndedHeight + 2f;
 
+            // Nothing can be prepaid when there is no end date. Correct the transient selection
+            // before drawing any wage disclosure so the summary and the selected option agree.
+            if (openEnded && structure == WageStructure.Prepaid)
+            {
+                structure = WageStructure.Quadrum;
+            }
+
             int wage = DailyWage;
 
-            string wageSummary = openEnded
-                ? $"{wage} silver/day, open-ended \u2014 they stay until one of you ends it."
-                : $"{wage} silver/day for {termDays} days.";
+            string wageSummary = WageStructureUtility.DailyWageDisclosure(structure, wage) + "\n" +
+                                 (openEnded
+                                     ? "Open-ended — they stay until one of you ends it."
+                                     : $"Term: {termDays} days.");
             float wageSummaryHeight = Text.CalcHeight(wageSummary, inRect.width);
-            Widgets.Label(new Rect(0f, y, inRect.width, wageSummaryHeight), wageSummary);
+            Rect wageSummaryRect = new Rect(0f, y, inRect.width, wageSummaryHeight);
+            TooltipHandler.TipRegion(
+                wageSummaryRect, WageStructureUtility.DailyWageTooltip(structure, wage));
+            Widgets.Label(wageSummaryRect, wageSummary);
             y += wageSummaryHeight + 2f;
 
             if (termDays > candidate.minTermDays)
@@ -197,21 +208,14 @@ namespace Intercolony
                 if (wage < atMinimum)
                 {
                     string longerTerm =
-                        $"Longer term: {wage}/day instead of {atMinimum}/day at their minimum.";
+                        $"Longer term worker ask: {wage:N0}/day instead of " +
+                        $"{atMinimum:N0}/day at their minimum.";
                     float longerTermHeight = Text.CalcHeight(longerTerm, inRect.width);
                     GUI.color = new Color(0.6f, 0.9f, 0.6f);
                     Widgets.Label(new Rect(0f, y, inRect.width, longerTermHeight), longerTerm);
                     GUI.color = Color.white;
                     y += longerTermHeight + 4f;
                 }
-            }
-
-            // --- Commit ---
-            if (openEnded && structure == WageStructure.Prepaid)
-            {
-                // Nothing to prepay when there is no agreed end. Silently corrected rather than
-                // disabled, so the player is not left staring at a greyed-out row wondering why.
-                structure = WageStructure.Quadrum;
             }
 
             int upFront = WageStructureUtility.UpFrontCost(structure, wage, termDays);
@@ -294,7 +298,8 @@ namespace Intercolony
                 int arrivalDays = LaborCandidateService.ArrivalDaysFor(candidate, true);
                 rows.Add(new TermRow(
                     "Emergency premium",
-                    $"+{premium:N0} silver/day ({LaborCandidateService.EmergencyDispatchWageMultiplier:0.#}x wage)",
+                    $"+{premium:N0} ask silver/day " +
+                    $"({LaborCandidateService.EmergencyDispatchWageMultiplier:0.#}x wage)",
                     EmergencyPremiumTooltip(ordinaryWage, wage)));
                 rows.Add(new TermRow(
                     "Arrival",
@@ -311,7 +316,7 @@ namespace Intercolony
         {
             return $"Emergency dispatch applies a {LaborCandidateService.EmergencyDispatchWageMultiplier:0.#}x " +
                    $"urgency multiplier in the shared wage calculation ({ordinaryWage:N0} ordinary to " +
-                   $"{emergencyWage:N0} silver/day). It pays for priority and mobilisation; it does " +
+                   $"{emergencyWage:N0} ask silver/day). It pays for priority and mobilisation; it does " +
                    "not guarantee that a worker exists or can fulfil the request.";
         }
 
@@ -427,7 +432,8 @@ namespace Intercolony
             string title = StructureTitle(option, wage);
             return LaborOptionRows.Draw(width, y, title,
                 WageStructureUtility.Explain(option, wage, termDays), structure == option,
-                () => structure = option);
+                () => structure = option,
+                WageStructureUtility.DailyWageTooltip(option, wage));
         }
 
         private float OptionsHeight(float width, int wage)

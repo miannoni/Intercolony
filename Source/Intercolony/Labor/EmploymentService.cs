@@ -224,7 +224,7 @@ namespace Intercolony
 
             Messages.Message(
                 $"Hired {contract.workerName} from {contract.settlementName} as a {clause.Label()} — " +
-                $"{dailyWage} silver/day × {termDays} days, " +
+                $"Term: {termDays} days. " +
                 $"{WageStructureUtility.Explain(structure, dailyWage, termDays)} " +
                 $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentBond)}. " +
                 $"Arrives in {arrivalDays} days.",
@@ -372,7 +372,8 @@ namespace Intercolony
 
             Messages.Message(
                 $"Hired {contract.workerName} from {contract.settlementName} as a {posting.combatClause.Label()} " +
-                $"at the worker's {dailyWage} silver/day × {posting.termDays} days. " +
+                $"for {posting.termDays} days — " +
+                $"{WageStructureUtility.DailyWageDisclosure(posting.wageStructure, dailyWage)}. " +
                 $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentBond)}. " +
                 $"Arrives in {applicant.travelDays} days.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
@@ -930,7 +931,8 @@ namespace Intercolony
                     $"{contract.workerName} of {contract.factionName} has arrived from {contract.settlementName} " +
                     $"to work for {contract.termDays} days.\n\n" +
                     $"Skills: {contract.workerSkills}\n" +
-                    $"Wage: {contract.dailyWage} silver/day, {contract.paidSilver} silver paid in advance.\n" +
+                    $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}\n" +
+                    $"{contract.paidSilver} silver paid in advance.\n" +
                     $"Equipment: {contract.EquipmentBondLabel}.\n" +
                     $"Terms: {contract.combatClause.LabelCap()}. {contract.combatClause.Explain()}\n\n" +
                     "They can be assigned work and given a bed like a colonist, but they are not one: " +
@@ -1172,7 +1174,8 @@ namespace Intercolony
             string body = $"{contract.outcomeNote}.\n\n" +
                           $"{contract.workerName} of {contract.factionName} " +
                           $"({contract.workerSkills}) is returning to {contract.settlementName}.\n" +
-                          $"Term: {contract.termDays} days at {contract.dailyWage} silver/day, " +
+                          $"Term: {contract.termDays} days — " +
+                          $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}, " +
                           $"{contract.paidSilver} silver paid in advance.";
 
             IntercolonyLetterImportance importance =

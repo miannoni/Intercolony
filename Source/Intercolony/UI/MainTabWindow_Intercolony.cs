@@ -4300,7 +4300,7 @@ namespace Intercolony
             }
 
             return method +
-                " Each eligible employee's daily wage is shared equally across the distinct " +
+                " Each eligible employee's charged daily wage is shared equally across the distinct " +
                 "current-agreement goods they could produce, then multiplied by this agreement's " +
                 "cycle length. " + estimate.eligibleEmployeeCount + " employee(s) contribute.";
         }
@@ -4328,7 +4328,7 @@ namespace Intercolony
                 "If you bought the goods instead", estimate.inputsIfBought, labelWidth, numberWidth);
             height += ContractDirectInputsLineHeight(estimate, labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
-                "Wage bill over the cycle", estimate.payroll, labelWidth, numberWidth);
+                "Charged wage bill over the cycle", estimate.payroll, labelWidth, numberWidth);
             height += ContractDirectLaborLineHeight(estimate, labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
                 "Delivery premium earned, and hauled for", estimate.transport,
@@ -4394,7 +4394,8 @@ namespace Intercolony
             int amount,
             float labelWidth,
             float numberX,
-            float numberWidth)
+            float numberWidth,
+            string tooltip = null)
         {
             string amountLabel = amount.ToString("N0");
             float labelHeight = 0f;
@@ -4419,7 +4420,15 @@ namespace Intercolony
                 GUI.color = previousColor;
             }
 
-            return Mathf.Max(labelHeight, amountHeight);
+            float rowHeight = Mathf.Max(labelHeight, amountHeight);
+            if (!tooltip.NullOrEmpty())
+            {
+                TooltipHandler.TipRegion(
+                    new Rect(rect.x + 6f, y, labelWidth + 8f + numberWidth, rowHeight),
+                    tooltip);
+            }
+
+            return rowHeight;
         }
 
         private static float DrawContractDirectInputsLine(
@@ -4568,8 +4577,12 @@ namespace Intercolony
             lineY += DrawContractDirectInputsLine(
                 rect, lineY, estimate, labelWidth, numberX, numberWidth);
             lineY += DrawContractEstimateLine(
-                rect, lineY, "Wage bill over the cycle", estimate.payroll,
-                labelWidth, numberX, numberWidth);
+                rect, lineY, "Charged wage bill over the cycle", estimate.payroll,
+                labelWidth, numberX, numberWidth,
+                "This estimate uses each employee's charged daily rate: the worker's ask " +
+                "passed through that employee's selected wage structure, multiplied across the " +
+                "agreement cycle. Daily terms cost more than prepaid because the colony can stop " +
+                "paying any morning; the worker charges a premium for that flexibility.");
             lineY += DrawContractDirectLaborLine(
                 rect, lineY, estimate, labelWidth, numberX, numberWidth);
             lineY += DrawContractEstimateLine(

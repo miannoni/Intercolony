@@ -277,9 +277,18 @@ namespace Intercolony
                 return y + LineHeight;
             }
 
-            Widgets.Label(new Rect(6f, y, inRect.width, LineHeight),
-                $"Wage bill: {daily} silver a day across the workforce");
-            y += LineHeight;
+            string wageBill = $"Wage bill: {daily:N0} silver/day charged across the workforce";
+            float wageBillWidth = Mathf.Max(1f, inRect.width - 6f);
+            float wageBillHeight = Text.CalcHeight(wageBill, wageBillWidth);
+            Rect wageBillRect = new Rect(6f, y, wageBillWidth, wageBillHeight);
+            TooltipHandler.TipRegion(
+                wageBillRect,
+                "This is the charged daily rate for each employee, calculated from the worker's " +
+                "ask and selected wage structure. Daily terms cost more than prepaid because the " +
+                "colony can stop paying any morning; the worker charges a premium for that " +
+                "flexibility.");
+            Widgets.Label(wageBillRect, wageBill);
+            y += wageBillHeight;
 
             // Coloured, because this is the line that should make a player act. §39's arrears
             // escalation is only playable if running dry is visible before it bites.
