@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
-Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.15 — the play entry for the whole defect series
-Worker: luna running — `…\scratchpad\unit-7-15.out`
-Last done: 7.14, the arrival asserted through the world tick, accepted at `b4cc6c9` — rfq 229/0/0, mutation red.
-Updated: 2026-09-09 03:40
+Stage: 8 — F08 and F09, recon first. Stage 7 is done apart from F22, which awaits the operator. Stages 1-6 are CLOSED.
+Unit: 8.0 — stage 8 recon: what relationship state already exists
+Worker: sol recon running — `…\scratchpad\recon-stage8.out`
+Last done: 7.15, the play entry for the seven fixes, accepted at `1f4440c`.
+Updated: 2026-09-09 03:55
 Foreman load: 2026-09-09 03:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -419,8 +419,14 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.11b — its assertions, both directions | accepted, `fe4c1ce` |
 | ✅ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | accepted, `c67cd50` |
 | ✅ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | accepted, `b4cc6c9` |
-| 🔨 | 7.15 — the play entry for the seven-defect series | Luna running |
+| ✅ | 7.15 — the play entry for the seven-defect series | accepted, `1f4440c` |
 | ⬜ | 7.8 — F22 implementation, ~9 units | AWAITING OPERATOR DECISION |
+
+## Units — stage 8
+
+| | Unit | Status |
+|---|---|---|
+| 🔨 | 8.0 — recon: what relationship state exists, and how big F08+F09 really are | Sol recon running |
 
 ## Closed-stage unit history
 
