@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.9b2 — the direct hire path stores the ask, not the charged rate
-Worker: luna running — `…\scratchpad\unit-7-9b2.out`
-Last done: 7.9b3a, the two missing payroll assertions, accepted at `66af13b` — both mutations red.
-Updated: 2026-09-09 00:55
+Unit: 7.9b3b — one assertion that the displayed rate is the charged rate
+Worker: luna running — `…\scratchpad\unit-7-9b3b.out`
+Last done: 7.9b2, the direct hire stores the ask, accepted at `ca5860f` — 368 assertions green, mutation red.
+Updated: 2026-09-09 01:20
 Foreman load: 2026-09-09 00:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -385,8 +385,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.9b — recon: what `dailyWage` means (Sol high, read-only) | accepted; decision recorded |
 | ✅ | 7.9b1 — one owner for the charged rate, every payroll path through it | accepted, `7e230ad` |
 | ✅ | 7.9b3a — assertions for the partial period and the end settlement | accepted, `66af13b` |
-| 🔨 | 7.9b2 — the writer at `EmploymentService.cs:138` and the hire message | Luna running |
-| ⬜ | 7.9b3b — the rest of the assertions 7.9 and 7.9b2 owe | not started |
+| ✅ | 7.9b2 — the writer at `EmploymentService.cs:138` and the hire message | accepted, `ca5860f` |
+| 🔨 | 7.9b3b — one assertion that the displayed rate is the charged rate | Luna running |
 | ⬜ | 7.12 — F23's bond ignores quality when valuing | known defect 5 |
 | ⬜ | 7.10 — F19's direct-input figure must reach the margin | known defect 2 |
 | ⬜ | 7.11 — Pause must not let a committed uninstall finish | known defect 4 |
