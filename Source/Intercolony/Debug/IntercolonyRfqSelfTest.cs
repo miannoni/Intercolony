@@ -472,7 +472,8 @@ namespace Intercolony
             List<ThingDef> tradable)
         {
             const string P1 = "P1 new RFQ has no arrived quotes and explains pending replies";
-            const string P2 = "P2 due RFQ replies arrive through AdvancePendingResponses";
+            const string P2 = "P2 due RFQ replies arrive through WorldComponentTick";
+            const string P2Gate = "P2 due RFQ replies wait for the deadline interval";
             const string P3 = "P3 nearer RFQ supplier answers sooner";
             const string P4 = "P4 RFQ replies are scheduled before request expiry";
 
@@ -481,6 +482,7 @@ namespace Intercolony
                 string reason = "world request or pending-response state was unavailable";
                 skip(P1, reason);
                 skip(P2, reason);
+                skip(P2Gate, reason);
                 skip(P3, reason);
                 skip(P4, reason);
                 return;
@@ -493,14 +495,54 @@ namespace Intercolony
             FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
                 "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
             int savedNextId = state.PeekNextId();
+            TickManager tickManager = Find.TickManager;
+            int savedTick = tickManager == null ? 0 : tickManager.TicksGame;
+            List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
+            List<RecurringContract> savedContracts =
+                new List<RecurringContract>(state.Contracts);
+            List<ProcurementContract> savedProcurementContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            List<PurchaseOrder> savedPurchaseOrders =
+                new List<PurchaseOrder>(state.PurchaseOrders);
+            List<EmploymentContract> savedEmployments =
+                new List<EmploymentContract>(state.Employments);
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
 
             try
             {
-                // The queue is world-global. Isolate this fixture so the clock jump used by P2
-                // cannot consume a live request's pending response, then restore the exact list
-                // in finally below.
+                // The queue is world-global. Isolate all state that the component tick polls so
+                // the clock jump used by P2 cannot consume a live obligation, then restore the
+                // exact lists in finally below.
+                state.Requests.Clear();
                 state.PendingRfqResponses.Clear();
+                state.Orders.Clear();
+                state.Contracts.Clear();
+                state.ProcurementContracts.Clear();
+                state.PurchaseOrders.Clear();
+                state.Employments.Clear();
+                state.Postings.Clear();
                 List<PurchaseRequest> fixtures = new List<PurchaseRequest>();
+
+                if (tickManager != null)
+                {
+                    // Keep the generated arrival off an interval boundary. GenDate.TicksPerDay
+                    // is 60000 ticks (reference/decompiled/RimWorld/GenDate.cs:9), an exact
+                    // multiple of the 2500-tick deadline beat, so the first due beat below also
+                    // leaves a useful non-interval boundary for the gate assertion.
+                    const int deadlineIntervalTicks =
+                        IntercolonyWorldComponent.DeadlineCheckIntervalTicks;
+                    int clockAlignmentTicks = Mathf.Max(
+                        deadlineIntervalTicks, IntercolonyWorldComponent.RefreshIntervalTicks);
+                    if (clockAlignmentTicks % deadlineIntervalTicks != 0)
+                    {
+                        clockAlignmentTicks = deadlineIntervalTicks;
+                    }
+
+                    int startRemainder = savedTick % clockAlignmentTicks;
+                    int fixtureStartTick = savedTick +
+                        ((1 - startRemainder + clockAlignmentTicks) % clockAlignmentTicks);
+                    tickManager.DebugSetTicksGame(fixtureStartTick);
+                }
 
                 PurchaseRequest waiting = CreateFirstResponseBearingRfq(
                     state, tradable, fixtures, ProcurementFulfillmentPreference.Either,
@@ -519,11 +561,14 @@ namespace Intercolony
                     {
                         skip(P1, reason);
                         skip(P2, "P1 could not build a request with a pending supplier response");
+                        skip(P2Gate,
+                            "P1 could not build a request with a pending supplier response");
                     }
                     else
                     {
                         check(P1, false, reason);
                         skip(P2, "P1 fixture had no pending response to advance");
+                        skip(P2Gate, "P1 fixture had no pending response to advance");
                     }
                 }
                 else
@@ -534,20 +579,60 @@ namespace Intercolony
                         HasPendingResponseExplanation(waiting.noResponseReason, waitingPending.Count),
                         waitingDetails + $"; explanation=\"{waiting.noResponseReason}\"");
 
-                    if (Find.TickManager == null)
+                    if (tickManager == null)
                     {
                         skip(P2, "RimWorld tick manager was unavailable");
+                        skip(P2Gate, "RimWorld tick manager was unavailable");
                     }
                     else
                     {
-                        int pendingBefore = waitingPending.Count;
-                        AdvanceRfqResponsesForSelfTest(state, waiting, skip);
-                        List<PendingRfqResponse> pendingAfter =
-                            PendingResponsesFor(state, waiting);
+                        const int deadlineIntervalTicks =
+                            IntercolonyWorldComponent.DeadlineCheckIntervalTicks;
+                        int pendingBefore = state.PendingRfqResponses.Count;
+                        int latestArrivalTick = waitingPending[0].arrivalTick;
+                        foreach (PendingRfqResponse pending in waitingPending)
+                        {
+                            latestArrivalTick = Mathf.Max(latestArrivalTick, pending.arrivalTick);
+                        }
+
+                        int arrivalRemainder = latestArrivalTick % deadlineIntervalTicks;
+                        int revealTick = latestArrivalTick +
+                            (arrivalRemainder == 0
+                                ? 0
+                                : deadlineIntervalTicks - arrivalRemainder);
+                        int nonIntervalTick = revealTick - 1;
+
+                        if (nonIntervalTick >= latestArrivalTick)
+                        {
+                            tickManager.DebugSetTicksGame(nonIntervalTick);
+                            state.WorldComponentTick();
+                            check(P2Gate,
+                                state.PendingRfqResponses.Count == pendingBefore &&
+                                waiting.quotes.Count == 0,
+                                $"tick={nonIntervalTick}; tickRemainder=" +
+                                $"{nonIntervalTick % deadlineIntervalTicks}; " +
+                                $"arrivalTick={latestArrivalTick}; pending={pendingBefore}; " +
+                                $"pendingAfter={state.PendingRfqResponses.Count}; " +
+                                $"visibleQuotes={waiting.quotes.Count}");
+                        }
+                        else
+                        {
+                            skip(P2Gate,
+                                $"latest arrival {latestArrivalTick} is already the interval " +
+                                $"tick {revealTick}; no due non-interval tick exists before it");
+                        }
+
+                        tickManager.DebugSetTicksGame(revealTick);
+                        state.WorldComponentTick();
+                        int pendingAfter = state.PendingRfqResponses.Count;
                         check(P2,
-                            waiting.quotes.Count == pendingBefore && pendingAfter.Count == 0,
+                            pendingAfter < pendingBefore && pendingAfter == 0 &&
+                            waiting.quotes.Count == pendingBefore,
+                            $"tick={revealTick}; tickRemainder=" +
+                            $"{revealTick % deadlineIntervalTicks}; " +
+                            $"latestArrivalTick={latestArrivalTick}; " +
                             $"pendingBefore={pendingBefore}; arrivedQuotes={waiting.quotes.Count}; " +
-                            $"pendingAfter={pendingAfter.Count}; " +
+                            $"pendingAfter={pendingAfter}; " +
                             $"arrivalDetails={waitingDetails}; expiryTick={waiting.expiryTick}");
                     }
                 }
@@ -648,10 +733,27 @@ namespace Intercolony
             }
             finally
             {
+                if (tickManager != null)
+                {
+                    tickManager.DebugSetTicksGame(savedTick);
+                }
+
                 state.Requests.Clear();
                 state.Requests.AddRange(savedRequests);
                 state.PendingRfqResponses.Clear();
                 state.PendingRfqResponses.AddRange(savedPendingResponses);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedOrders);
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedContracts);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedProcurementContracts);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedPurchaseOrders);
+                state.Employments.Clear();
+                state.Employments.AddRange(savedEmployments);
+                state.Postings.Clear();
+                state.Postings.AddRange(savedPostings);
                 if (nextIdField != null)
                 {
                     nextIdField.SetValue(state, savedNextId);
