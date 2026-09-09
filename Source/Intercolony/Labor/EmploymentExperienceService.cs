@@ -4,6 +4,23 @@ using Verse;
 
 namespace Intercolony
 {
+    internal sealed class EmploymentGoodwillEvaluation
+    {
+        internal EmploymentGoodwillEvaluation(
+            int goodwillDelta, Faction originFaction, float averageMood, string outcomeNote)
+        {
+            GoodwillDelta = goodwillDelta;
+            OriginFaction = originFaction;
+            AverageMood = averageMood;
+            OutcomeNote = outcomeNote;
+        }
+
+        internal int GoodwillDelta { get; }
+        internal Faction OriginFaction { get; }
+        internal float AverageMood { get; }
+        internal string OutcomeNote { get; }
+    }
+
     /// <summary>
     /// Records one normalized mood observation per day for workers who are present and working.
     /// It resolves the accumulated experience once, when EmploymentService closes a contract.
@@ -46,57 +63,53 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Resolves the accumulated employment experience at the end of an employment. The caller
-        /// supplies the terminal status because the contract has already been closed by the time
-        /// this runs. <paramref name="noticeSkipped"/> is transient context: a skipped notice is a
-        /// dismissed employment, but its goodwill consequence was already recorded by the notice
-        /// service and must not receive an F09 result as well.
+        /// Evaluates the accumulated employment experience at the end of an employment without
+        /// changing the contract or faction. The caller supplies the terminal status because the
+        /// contract has already been closed by the time this runs. <paramref name="noticeSkipped"/>
+        /// is transient context: a skipped notice is a dismissed employment, but its goodwill
+        /// consequence was already recorded by the notice service and must not receive an F09
+        /// result as well.
         /// </summary>
-        public static void ResolveGoodwill(EmploymentContract contract, EmploymentStatus status,
-            bool noticeSkipped = false)
+        internal static EmploymentGoodwillEvaluation EvaluateGoodwill(
+            EmploymentContract contract, EmploymentStatus status, bool noticeSkipped = false)
         {
             if (contract == null)
             {
-                return;
+                return NoResult(null);
             }
 
             if (status != EmploymentStatus.Completed && status != EmploymentStatus.Dismissed)
             {
-                AppendOutcomeNote(contract,
+                return NoResult(
                     $"F09: no goodwill result for {status}; this is not an ordinary completion or dismissal.");
-                return;
             }
 
             if (noticeSkipped)
             {
-                AppendOutcomeNote(contract,
+                return NoResult(
                     "F09: no goodwill result; the skipped notice was already priced.");
-                return;
             }
 
             // A breach has already moved the origin faction's goodwill, even if a later ordinary
             // end path closes the contract as Completed or Dismissed rather than Quit.
             if (contract.clauseBreaches > 0)
             {
-                AppendOutcomeNote(contract,
+                return NoResult(
                     "F09: no goodwill result; combat misuse was already priced.");
-                return;
             }
 
             if (contract.moodSampleCount <= 0)
             {
                 // Zero is NEVER SAMPLED, not a quantity and not an average of zero.
-                AppendOutcomeNote(contract,
+                return NoResult(
                     "F09: no goodwill result; no mood samples were recorded.");
-                return;
             }
 
             if (contract.moodSampleCount < MinimumSamplesForGoodwill)
             {
-                AppendOutcomeNote(contract,
+                return NoResult(
                     $"F09: no goodwill result; only {contract.moodSampleCount} mood samples were " +
                     $"recorded, and {MinimumSamplesForGoodwill} are required.");
-                return;
             }
 
             float averageMood = contract.moodSampleTotal / contract.moodSampleCount;
@@ -108,19 +121,17 @@ namespace Intercolony
 
             if (goodwillDelta == 0)
             {
-                AppendOutcomeNote(contract,
+                return NoResult(
                     $"F09: average mood {averageMood:0.00}; no goodwill change.");
-                return;
             }
 
             Faction originFaction = contract.employerFaction;
             if (originFaction == null)
             {
-                AppendOutcomeNote(contract,
+                return NoResult(
                     $"F09: average mood {averageMood:0.00} qualified for " +
                     $"{goodwillDelta:+0;-0} goodwill, but the origin faction is unavailable; " +
                     "no goodwill change.");
-                return;
             }
 
             // Match the existing writer's unavailable-faction guard here so the outcome note says
@@ -132,31 +143,59 @@ namespace Intercolony
                     : originFaction.Hidden
                         ? "the origin faction is hidden"
                         : "the origin faction is defeated";
-                AppendOutcomeNote(contract,
+                return NoResult(
                     $"F09: average mood {averageMood:0.00} qualified for " +
                     $"{goodwillDelta:+0;-0} goodwill, but {reason}; no goodwill change.");
-                return;
             }
 
             // HostilityPolicy.IsAtWar is the mod's one definition of a hostile relationship. A
             // positive employment result must never improve a faction that is already hostile.
             if (goodwillDelta > 0 && HostilityPolicy.IsAtWar(originFaction))
             {
-                AppendOutcomeNote(contract,
+                return NoResult(
                     $"F09: average mood {averageMood:0.00} qualified for " +
                     $"{goodwillDelta:+0;-0} goodwill, but the origin faction is hostile; " +
                     "no goodwill change.");
+            }
+
+            return new EmploymentGoodwillEvaluation(
+                goodwillDelta,
+                originFaction,
+                averageMood,
+                $"F09: average mood {averageMood:0.00}; goodwill result " +
+                $"{goodwillDelta:+0;-0} for {originFaction.Name}.");
+        }
+
+        /// <summary>Applies a fresh evaluation and records its outcome on the contract.</summary>
+        public static void ResolveGoodwill(EmploymentContract contract, EmploymentStatus status,
+            bool noticeSkipped = false)
+        {
+            ResolveGoodwill(contract, EvaluateGoodwill(contract, status, noticeSkipped));
+        }
+
+        internal static void ResolveGoodwill(
+            EmploymentContract contract, EmploymentGoodwillEvaluation evaluation)
+        {
+            if (contract == null || evaluation == null)
+            {
                 return;
             }
 
-            EmployerReputationService.AffectGoodwill(
-                originFaction,
-                goodwillDelta,
-                $"{contract.workerName} had an average employment mood of {averageMood:0.00}");
+            if (evaluation.GoodwillDelta != 0)
+            {
+                EmployerReputationService.AffectGoodwill(
+                    evaluation.OriginFaction,
+                    evaluation.GoodwillDelta,
+                    $"{contract.workerName} had an average employment mood of " +
+                    $"{evaluation.AverageMood:0.00}");
+            }
 
-            AppendOutcomeNote(contract,
-                $"F09: average mood {averageMood:0.00}; goodwill result " +
-                $"{goodwillDelta:+0;-0} for {originFaction.Name}.");
+            AppendOutcomeNote(contract, evaluation.OutcomeNote);
+        }
+
+        private static EmploymentGoodwillEvaluation NoResult(string outcomeNote)
+        {
+            return new EmploymentGoodwillEvaluation(0, null, 0f, outcomeNote);
         }
 
         private static void AppendOutcomeNote(EmploymentContract contract, string note)

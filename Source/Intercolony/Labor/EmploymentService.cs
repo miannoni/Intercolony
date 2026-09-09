@@ -1100,15 +1100,19 @@ namespace Intercolony
                 Find.WorldPawns.RemoveAndDiscardPawnViaGC(worker);
             }
 
+            // Evaluate before the letter so the one nonzero F09 result can be disclosed without
+            // making the letter depend on the history note that ResolveGoodwill appends below.
+            EmploymentGoodwillEvaluation goodwillEvaluation =
+                EmploymentExperienceService.EvaluateGoodwill(contract, status, noticeSkipped);
+
             // A letter, not a message. Arrival sends one, so departure must too — and a
             // transient corner toast is the wrong weight for "the worker you were relying on is
             // gone": it vanishes, leaves nothing in the history, and is easy to miss entirely
             // while the camera is elsewhere.
-            SendDepartureLetter(contract, status, worker);
+            SendDepartureLetter(contract, status, worker, goodwillEvaluation.GoodwillDelta);
 
-            // Resolve after the existing letter has read the original outcome note. F09 records
-            // its result on the contract for history, but its disclosure belongs to the next unit.
-            EmploymentExperienceService.ResolveGoodwill(contract, status, noticeSkipped);
+            // Keep the history note and reputation mutation in their original post-letter order.
+            EmploymentExperienceService.ResolveGoodwill(contract, goodwillEvaluation);
 
             // A closed record must not hold live references: the pawn walks off the map and may
             // be garbage-collected out of the world, and a dangling Scribe_References target
@@ -1142,7 +1146,8 @@ namespace Intercolony
             return quotedHireCost;
         }
 
-        private static void SendDepartureLetter(EmploymentContract contract, EmploymentStatus status, Pawn worker)
+        private static void SendDepartureLetter(
+            EmploymentContract contract, EmploymentStatus status, Pawn worker, int goodwillDelta)
         {
             // Severance sends its own letter from HostilityPolicy, which can say what a generic
             // departure letter cannot: which faction went to war, and what happened to the money.
@@ -1188,6 +1193,12 @@ namespace Intercolony
                           $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}, " +
                           $"{contract.paidSilver} silver paid in advance.";
 
+            string goodwillRow = GoodwillDisclosure(goodwillDelta);
+            if (!string.IsNullOrEmpty(goodwillRow))
+            {
+                body += "\n" + goodwillRow;
+            }
+
             IntercolonyLetterImportance importance =
                 status == EmploymentStatus.Completed
                     ? IntercolonyLetterImportance.Chatty
@@ -1204,6 +1215,21 @@ namespace Intercolony
             {
                 IntercolonyLetters.Send(importance, label, body, def);
             }
+        }
+
+        private static string GoodwillDisclosure(int goodwillDelta)
+        {
+            if (goodwillDelta > 0)
+            {
+                return $"Settlement view: better treatment (+{goodwillDelta} goodwill)";
+            }
+
+            if (goodwillDelta < 0)
+            {
+                return $"Settlement view: worse treatment ({goodwillDelta} goodwill)";
+            }
+
+            return null;
         }
 
         /// <summary>Whether any employee is currently working. Cheap enough to call from a patch.</summary>
