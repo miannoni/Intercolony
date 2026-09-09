@@ -1,11 +1,11 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
-Unit: 7.14 — F11's arrival must be asserted through `WorldComponentTick`
-Worker: luna running — `…\scratchpad\unit-7-14.out`
-Last done: 7.13, the travel clamp restored, accepted at `c67cd50` — labor 49/0/0, mutation red at both ends.
-Updated: 2026-09-09 03:15
-Foreman load: 2026-09-09 00:18
+Unit: 7.15 — the play entry for the whole defect series
+Worker: luna running — `…\scratchpad\unit-7-15.out`
+Last done: 7.14, the arrival asserted through the world tick, accepted at `b4cc6c9` — rfq 229/0/0, mutation red.
+Updated: 2026-09-09 03:40
+Foreman load: 2026-09-09 03:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
@@ -132,7 +132,18 @@ Making the two behave alike would be a misreading in either direction. Accepted 
 rather than discovered later: nothing in a designation records who placed it, so a player's own
 hand-placed Uninstall on the loop's building is cancelled by Pause too.
 
-## Known defects — the queue behind units 7.9 to 7.14
+## ALL SEVEN KNOWN DEFECTS ARE CLOSED, 2026-09-09
+
+Every one is fixed, asserted and mutation-proven — `2d737e7`, `7e230ad`, `66af13b`, `ca5860f`,
+`477ad58`, `1bdac06`, `b723d41`, `eb2d11c`, `35e1f2b`, `fe4c1ce`, `c67cd50`, `b4cc6c9`. Two of them
+also turned out to be worse than the audit said: the wage defect was a live overcharge on shipped
+1.0, and the partial-period branch it exposed had no assertion at all.
+
+**WHAT THE RUN NEEDS FROM THE OPERATOR NOW: a decision on F22.** It is the only thing left in stage
+7 and it is about nine units, with a game-over hazard in its first one. Stages 8 and 9 do not depend
+on it and can run first.
+
+## The seven defects, kept for the record
 
 Found on 2026-09-09 by a one-off audit of this run's own commits, back when the method still had an
 audit lane. The lane is gone; these stay, because they are defects in shipped code. Schema-58
@@ -407,7 +418,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.11 — Pause must not let a committed uninstall finish | accepted, `35e1f2b`; unasserted |
 | ✅ | 7.11b — its assertions, both directions | accepted, `fe4c1ce` |
 | ✅ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | accepted, `c67cd50` |
-| 🔨 | 7.14 — F11's timing assertion must go through `WorldComponentTick` | Luna running |
+| ✅ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | accepted, `b4cc6c9` |
+| 🔨 | 7.15 — the play entry for the seven-defect series | Luna running |
 | ⬜ | 7.8 — F22 implementation, ~9 units | AWAITING OPERATOR DECISION |
 
 ## Closed-stage unit history
