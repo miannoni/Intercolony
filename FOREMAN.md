@@ -1,11 +1,11 @@
 # Foreman state — Intercolony
 
-Stage: C0 — scope lock and regression baseline, under the NEW correction plan.
-Unit: C0.1 — copy the plan into the repo and record the scope lock in `PROGRESS.md`
-Worker: luna running — `…\scratchpad\unit-c0-1.out`
-Last done: the previous run reached a clean halt at `56180ea`; the whole suite on a fresh world was
-**1536 passed, 0 failed, 17 skipped, exit 0**.
-Updated: 2026-09-09 16:05
+Stage: C1 — F01, a routine contract cycle must be silent. **C0 IS CLOSED.**
+Unit: C1.0 — recon: where `Contract delivery due` is emitted, and what the code knows there
+Worker: sol recon running — `…\scratchpad\recon-c1.out`
+Last done: C0.1, the scope lock, accepted at `f049bfb` — the plan is copied to
+`docs/PLAYTEST_CORRECTION_PLAN.md` byte-identical, and `PROGRESS.md` records the freezes.
+Updated: 2026-09-09 16:25
 Foreman load: 2026-09-09 15:48
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -59,8 +59,8 @@ two workers on the same large UI or settings file.
 
 | | Stage | Scope | Status |
 |---|---|---|---|
-| 🔨 | C0 — scope lock and regression baseline | — | in progress |
-| ⬜ | C1 — F01: a routine contract cycle must be silent | F01 | not started |
+| ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
+| 🔨 | C1 — F01: a routine contract cycle must be silent | F01 | recon running |
 | ⬜ | C2 — F07: the production rate must count real completions | F07 | not started |
 | ⬜ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | not started |
 | ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
@@ -69,11 +69,12 @@ two workers on the same large UI or settings file.
 | ⬜ | C7 — freeze F22 in the documentation | — | not started |
 | ⬜ | C8 — whole-suite regression and clean halt | — | not started |
 
-## Units — stage C0
+## Units — stages C0 and C1
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | C0.1 — copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | Luna next |
+| ✅ | C0.1 — copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | accepted, `f049bfb` |
+| 🔨 | C1.0 — recon: the `Contract delivery due` emission and what it knows | Sol recon running |
 
 ## The baseline, established before any edit
 
