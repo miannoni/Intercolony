@@ -57,6 +57,13 @@ namespace Intercolony
             public int validStuffCount;
         }
 
+        private sealed class CraftedSubject
+        {
+            public RecipeDef recipe;
+            public ThingDef productDef;
+            public ThingDef stuffDef;
+        }
+
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
             Results r = new Results();
@@ -79,6 +86,8 @@ namespace Intercolony
                 CheckProductionLedger(r, state);
                 CheckBillDonePatch(r, state, map);
                 CheckProductionLedgerMigration(r, state);
+                CheckProductionCapture(
+                    r, state, map, loops, reservedCells, testRects, addedDesignations);
 
                 Subject subject = FindSubject();
                 if (subject == null)
@@ -452,6 +461,1577 @@ namespace Intercolony
                        $"{DescribeBucketCount(savedBuckets)} bucket(s) and save version " +
                        $"{state.SaveVersion}.");
             }
+        }
+
+        private static void CheckProductionCapture(
+            Results r,
+            IntercolonyWorldComponent state,
+            Map map,
+            ProduceLoopMapComponent loops,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects,
+            List<Designation> addedDesignations)
+        {
+            // This block belongs to the existing produce suite because that suite already owns
+            // the map fixture and the ledger restoration boundary. Each assertion below still
+            // restores the world ledger independently so a failed capture cannot poison the next
+            // production check.
+            CheckCraftedItemRate(r, state, map);
+            CheckConstructedFurnitureRate(r, state, map, loops, reservedCells, testRects);
+            CheckProduceFurnitureRate(
+                r, state, map, loops, reservedCells, testRects, addedDesignations);
+            CheckMultipleConstructedFurnitureRate(
+                r, state, map, loops, reservedCells, testRects);
+            CheckSaleAndRemovalDoNotProduce(
+                r, state, map, loops, reservedCells, testRects);
+            CheckNoProductionState(r, state);
+            CheckProductionLedgerScribeRoundTrip(r);
+            CheckMinifiableCraftedGood(r, state, map);
+        }
+
+        private static void CheckCraftedItemRate(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const string assertion = "one crafted item records 0.2/day";
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            List<ProductionBucket> savedBuckets =
+                buckets == null ? null : new List<ProductionBucket>(buckets);
+            CraftedSubject subject = FindCraftedSubject(requireMinifiable: false);
+            Pawn worker = FindExistingBillDoer(map, playerFaction: true);
+            List<Thing> products = new List<Thing>();
+            List<Thing> ingredients = new List<Thing>();
+            bool ok = false;
+            int units = -1;
+            float rate = 0f;
+            string failure = null;
+
+            try
+            {
+                if (buckets == null)
+                {
+                    failure = "the world production ledger is unavailable";
+                }
+                else if (IntercolonyWorldComponent.Current != state)
+                {
+                    failure =
+                        "the self-test state is not IntercolonyWorldComponent.Current, so the " +
+                        "real bill observer result cannot be attributed to this ledger";
+                }
+                else if (subject == null)
+                {
+                    failure = "no vanilla one-unit non-minifiable crafted recipe was available";
+                }
+                else if (worker == null)
+                {
+                    failure =
+                        "no existing living player-faction pawn with a records tracker was available";
+                }
+                else
+                {
+                    buckets.Clear();
+                    if (!TryMakeRecipeProducts(
+                            subject, worker, products, ingredients, out failure))
+                    {
+                        // The helper supplies the precise fixture failure.
+                    }
+                    else
+                    {
+                        RecordsUtility.Notify_BillDone(worker, products);
+                        units = CountCurrentProductionUnits(buckets, subject.productDef);
+                        rate = ProductionLedgerService.CompletedPerDay(state, subject.productDef);
+                        ok = products.Count == 1 && units == 1 && rate == 0.2f;
+                        failure =
+                            $"{subject.productDef.defName}; recorded {units} unit(s); " +
+                            $"reported {rate:R}/day; expected 1 unit and literal 0.2/day";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                string cleanupFailure = DestroyFixtureThings(products);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+
+                cleanupFailure = DestroyFixtureThings(ingredients);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+
+                cleanupFailure = RestoreProductionBuckets(buckets, savedBuckets);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+            }
+
+            r.Check(ok, assertion, failure);
+        }
+
+        private static void CheckConstructedFurnitureRate(
+            Results r,
+            IntercolonyWorldComponent state,
+            Map map,
+            ProduceLoopMapComponent loops,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "one constructed furniture item records 0.2/day";
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            List<ProductionBucket> savedBuckets =
+                buckets == null ? null : new List<ProductionBucket>(buckets);
+            Subject subject = FindFurnitureSubject();
+            Pawn worker = FindConstructionWorker(map);
+            Frame frame;
+            Building finished;
+            IntVec3 cell;
+            bool completed = false;
+            bool ok = false;
+            int units = -1;
+            float rate = 0f;
+            string failure = null;
+
+            try
+            {
+                if (buckets == null)
+                {
+                    failure = "the world production ledger is unavailable";
+                }
+                else if (IntercolonyWorldComponent.Current != state)
+                {
+                    failure =
+                        "the self-test state is not IntercolonyWorldComponent.Current, so the " +
+                        "real construction observer result cannot be attributed to this ledger";
+                }
+                else if (subject == null)
+                {
+                    failure =
+                        "vanilla DiningChair is unavailable or is not a minifiable stuff-built " +
+                        "furniture definition";
+                }
+                else if (worker == null)
+                {
+                    failure =
+                        "no existing living player-faction pawn with skills could be used as the " +
+                        "real-frame worker";
+                }
+                else
+                {
+                    buckets.Clear();
+                    completed = TryCompleteRealFurnitureFrame(
+                        map,
+                        loops,
+                        subject,
+                        worker,
+                        reservedCells,
+                        testRects,
+                        out cell,
+                        out frame,
+                        out finished,
+                        out failure);
+                    if (completed)
+                    {
+                        units = CountCurrentProductionUnits(buckets, subject.thingDef);
+                        rate = ProductionLedgerService.CompletedPerDay(state, subject.thingDef);
+                        ok = frame != null && frame.Destroyed && finished != null &&
+                            units == 1 && rate == 0.2f;
+                        failure =
+                            $"{subject.thingDef.defName} at {cell}; real frame completed " +
+                            $"{(frame != null && frame.Destroyed ? "yes" : "no")}; " +
+                            $"finished building {(finished == null ? "missing" : "present")}; " +
+                            $"recorded {units} unit(s); reported {rate:R}/day; " +
+                            "expected 1 unit and literal 0.2/day";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                string cleanupFailure = RestoreProductionBuckets(buckets, savedBuckets);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+            }
+
+            r.Check(ok, assertion, failure);
+        }
+
+        private static void CheckProduceFurnitureRate(
+            Results r,
+            IntercolonyWorldComponent state,
+            Map map,
+            ProduceLoopMapComponent loops,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects,
+            List<Designation> addedDesignations)
+        {
+            const string assertion =
+                "one furniture item completed through Produce records 0.2/day exactly once";
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            List<ProductionBucket> savedBuckets =
+                buckets == null ? null : new List<ProductionBucket>(buckets);
+            Subject subject = FindFurnitureSubject();
+            Pawn worker = FindConstructionWorker(map);
+            Building seed = null;
+            Blueprint_Build blueprint = null;
+            Frame frame = null;
+            Building finished = null;
+            IntVec3 cell = IntVec3.Invalid;
+            int seedUnits = -1;
+            int afterCompletionUnits = -1;
+            int afterSecondPassUnits = -1;
+            float rate = 0f;
+            bool seedWasNotRecorded = false;
+            bool blueprintWasPlaced = false;
+            bool completed = false;
+            bool ok = false;
+            string failure = null;
+
+            try
+            {
+                if (buckets == null)
+                {
+                    failure = "the world production ledger is unavailable";
+                }
+                else if (IntercolonyWorldComponent.Current != state)
+                {
+                    failure =
+                        "the self-test state is not IntercolonyWorldComponent.Current, so the " +
+                        "real Produce construction result cannot be attributed to this ledger";
+                }
+                else if (subject == null)
+                {
+                    failure =
+                        "vanilla DiningChair is unavailable or is not a minifiable stuff-built " +
+                        "furniture definition";
+                }
+                else if (worker == null)
+                {
+                    failure =
+                        "no existing living player-faction pawn with skills could be used as the " +
+                        "real-frame worker";
+                }
+                else if (!TryFindBuildCell(
+                             map,
+                             loops,
+                             subject,
+                             Rot4.North,
+                             reservedCells,
+                             out cell))
+                {
+                    failure =
+                        "no empty valid cell was available for the Produce seed and its ordinary " +
+                        "vanilla blueprint";
+                }
+                else
+                {
+                    buckets.Clear();
+                    RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+                    seed = SpawnFinishedBuilding(map, subject, cell, Rot4.North);
+                    if (seed == null)
+                    {
+                        failure = "could not spawn the finished furniture seed";
+                    }
+                    else
+                    {
+                        loops.Enable(cell, Rot4.North, subject.thingDef, subject.stuffDef, null);
+                        loops.RunPass();
+                        seedUnits = CountCurrentProductionUnits(buckets, subject.thingDef);
+                        seedWasNotRecorded = seedUnits == 0 &&
+                            !ProductionLedgerService.HasRecordedProduction(
+                                state, subject.thingDef);
+
+                        Designation seedDesignation = map.designationManager.DesignationOn(
+                            seed, DesignationDefOf.Uninstall);
+                        if (seedDesignation != null && !addedDesignations.Contains(seedDesignation))
+                        {
+                            addedDesignations.Add(seedDesignation);
+                        }
+
+                        seed.Destroy(DestroyMode.Vanish);
+                        loops.RunPass();
+                        blueprint = FindBlueprint(map, cell, subject.thingDef);
+                        blueprintWasPlaced = blueprint != null && blueprint.Spawned;
+                        if (!blueprintWasPlaced)
+                        {
+                            failure =
+                                "Produce did not place an ordinary spawned Blueprint_Build after " +
+                                "its finished seed was removed";
+                        }
+                        else
+                        {
+                            completed = TryCompleteBlueprintFrame(
+                                map,
+                                blueprint,
+                                subject,
+                                worker,
+                                out frame,
+                                out finished,
+                                out failure);
+                            if (completed)
+                            {
+                                afterCompletionUnits =
+                                    CountCurrentProductionUnits(buckets, subject.thingDef);
+                                rate = ProductionLedgerService.CompletedPerDay(
+                                    state, subject.thingDef);
+
+                                // The loop sees the finished result again and may add its next
+                                // Uninstall designation, but it must not record another completion.
+                                loops.RunPass();
+                                afterSecondPassUnits =
+                                    CountCurrentProductionUnits(buckets, subject.thingDef);
+                                Designation finishedDesignation =
+                                    finished == null
+                                        ? null
+                                        : map.designationManager.DesignationOn(
+                                            finished, DesignationDefOf.Uninstall);
+                                if (finishedDesignation != null &&
+                                    !addedDesignations.Contains(finishedDesignation))
+                                {
+                                    addedDesignations.Add(finishedDesignation);
+                                }
+
+                                ok = seedWasNotRecorded && blueprintWasPlaced &&
+                                    frame != null && frame.Destroyed && finished != null &&
+                                    afterCompletionUnits == 1 && rate == 0.2f &&
+                                    afterSecondPassUnits == 1;
+                                failure =
+                                    $"seed units {seedUnits}; ordinary Blueprint_Build " +
+                                    $"{(blueprintWasPlaced ? "placed" : "missing")}; real frame " +
+                                    $"completed {(frame != null && frame.Destroyed ? "yes" : "no")}; " +
+                                    $"units after completion {afterCompletionUnits}; units after " +
+                                    $"second Produce pass {afterSecondPassUnits}; reported {rate:R}/day; " +
+                                    "expected seed 0, one completed unit, unchanged one-unit total, " +
+                                    "and literal 0.2/day";
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                string cleanupFailure = RestoreProductionBuckets(buckets, savedBuckets);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+            }
+
+            r.Check(ok, assertion, failure);
+        }
+
+        private static void CheckMultipleConstructedFurnitureRate(
+            Results r,
+            IntercolonyWorldComponent state,
+            Map map,
+            ProduceLoopMapComponent loops,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "two constructed chairs aggregate to 0.4/day";
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            List<ProductionBucket> savedBuckets =
+                buckets == null ? null : new List<ProductionBucket>(buckets);
+            Subject subject = FindFurnitureSubject();
+            Pawn worker = FindConstructionWorker(map);
+            Frame firstFrame;
+            Frame secondFrame;
+            Building firstFinished;
+            Building secondFinished;
+            IntVec3 firstCell;
+            IntVec3 secondCell;
+            bool firstCompleted = false;
+            bool secondCompleted = false;
+            bool ok = false;
+            int units = -1;
+            float rate = 0f;
+            string failure = null;
+
+            try
+            {
+                if (buckets == null)
+                {
+                    failure = "the world production ledger is unavailable";
+                }
+                else if (IntercolonyWorldComponent.Current != state)
+                {
+                    failure =
+                        "the self-test state is not IntercolonyWorldComponent.Current, so the " +
+                        "real construction observer result cannot be attributed to this ledger";
+                }
+                else if (subject == null)
+                {
+                    failure =
+                        "vanilla DiningChair is unavailable or is not a minifiable stuff-built " +
+                        "furniture definition";
+                }
+                else if (worker == null)
+                {
+                    failure =
+                        "no existing living player-faction pawn with skills could be used as the " +
+                        "real-frame worker";
+                }
+                else
+                {
+                    buckets.Clear();
+                    firstCompleted = TryCompleteRealFurnitureFrame(
+                        map,
+                        loops,
+                        subject,
+                        worker,
+                        reservedCells,
+                        testRects,
+                        out firstCell,
+                        out firstFrame,
+                        out firstFinished,
+                        out failure);
+                    if (!firstCompleted)
+                    {
+                        // The helper supplies the precise fixture failure.
+                    }
+                    else
+                    {
+                        secondCompleted = TryCompleteRealFurnitureFrame(
+                            map,
+                            loops,
+                            subject,
+                            worker,
+                            reservedCells,
+                            testRects,
+                            out secondCell,
+                            out secondFrame,
+                            out secondFinished,
+                            out failure);
+                        if (secondCompleted)
+                        {
+                            units = CountCurrentProductionUnits(buckets, subject.thingDef);
+                            rate = ProductionLedgerService.CompletedPerDay(
+                                state, subject.thingDef);
+                            ok = firstFrame != null && firstFrame.Destroyed &&
+                                firstFinished != null && secondFrame != null &&
+                                secondFrame.Destroyed && secondFinished != null &&
+                                units == 2 && rate == 0.4f;
+                            failure =
+                                $"chairs at {firstCell} and {secondCell}; real frames completed " +
+                                $"{(firstFrame != null && firstFrame.Destroyed ? "yes" : "no")}/" +
+                                $"{(secondFrame != null && secondFrame.Destroyed ? "yes" : "no")}; " +
+                                $"recorded {units} unit(s); reported {rate:R}/day; " +
+                                "expected 2 units and literal 0.4/day";
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                string cleanupFailure = RestoreProductionBuckets(buckets, savedBuckets);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+            }
+
+            r.Check(ok, assertion, failure);
+        }
+
+        private static void CheckSaleAndRemovalDoNotProduce(
+            Results r,
+            IntercolonyWorldComponent state,
+            Map map,
+            ProduceLoopMapComponent loops,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion =
+                "selling or removing an existing item leaves production unchanged";
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            List<ProductionBucket> savedBuckets =
+                buckets == null ? null : new List<ProductionBucket>(buckets);
+            Subject subject = FindFurnitureSubject();
+            Pawn worker = FindConstructionWorker(map);
+            List<Thing> detachedSaleThings = new List<Thing>();
+            Building saleSource = null;
+            Thing saleWrapper = null;
+            Building removedSource = null;
+            Frame baselineFrame;
+            Building baselineFinished;
+            IntVec3 baselineCell;
+            IntVec3 saleCell;
+            IntVec3 removedCell;
+            bool baselineCompleted = false;
+            bool saleCompleted = false;
+            bool removalCompleted = false;
+            int baselineUnits = -1;
+            int saleUnits = -1;
+            int removalUnits = -1;
+            float baselineRate = 0f;
+            float saleRate = 0f;
+            float removalRate = 0f;
+            bool ok = false;
+            string failure = null;
+
+            try
+            {
+                if (buckets == null)
+                {
+                    failure = "the world production ledger is unavailable";
+                }
+                else if (IntercolonyWorldComponent.Current != state)
+                {
+                    failure =
+                        "the self-test state is not IntercolonyWorldComponent.Current, so the " +
+                        "real construction baseline cannot be attributed to this ledger";
+                }
+                else if (subject == null)
+                {
+                    failure =
+                        "vanilla DiningChair is unavailable or is not a minifiable stuff-built " +
+                        "furniture definition";
+                }
+                else if (worker == null)
+                {
+                    failure =
+                        "no existing living player-faction pawn with skills could be used as the " +
+                        "real-frame worker";
+                }
+                else
+                {
+                    buckets.Clear();
+                    baselineCompleted = TryCompleteRealFurnitureFrame(
+                        map,
+                        loops,
+                        subject,
+                        worker,
+                        reservedCells,
+                        testRects,
+                        out baselineCell,
+                        out baselineFrame,
+                        out baselineFinished,
+                        out failure);
+                    if (!baselineCompleted)
+                    {
+                        // The helper supplies the precise fixture failure.
+                    }
+                    else
+                    {
+                        baselineUnits =
+                            CountCurrentProductionUnits(buckets, subject.thingDef);
+                        baselineRate = ProductionLedgerService.CompletedPerDay(
+                            state, subject.thingDef);
+
+                        if (!TryFindBuildCell(
+                                map,
+                                loops,
+                                subject,
+                                Rot4.North,
+                                reservedCells,
+                                out saleCell))
+                        {
+                            failure = "no empty valid cell was available for the sale fixture";
+                        }
+                        else
+                        {
+                            RememberCell(
+                                saleCell,
+                                subject.thingDef,
+                                Rot4.North,
+                                reservedCells,
+                                testRects);
+                            saleSource = SpawnFinishedBuilding(
+                                map, subject, saleCell, Rot4.North);
+                            if (saleSource == null)
+                            {
+                                failure = "could not spawn the existing furniture sale fixture";
+                            }
+                            else
+                            {
+                                saleWrapper = saleSource.TryMakeMinified();
+                                if (saleWrapper != null && saleWrapper != saleSource)
+                                {
+                                    detachedSaleThings.Add(saleWrapper);
+                                }
+
+                                detachedSaleThings.Add(saleSource);
+                                bool saleFixtureIsReal = saleWrapper is MinifiedThing &&
+                                    saleWrapper.GetInnerIfMinified()?.def == subject.thingDef;
+                                if (!saleFixtureIsReal)
+                                {
+                                    failure =
+                                        "the existing chair could not become a real minified sale fixture";
+                                }
+                                else
+                                {
+                                    // Settlement_TraderTracker calls this exact vanilla hook for a
+                                    // player sale. It does not fabricate production or call the
+                                    // construction observer.
+                                    saleWrapper.PreTraded(
+                                        TradeAction.PlayerSells, worker, trader: null);
+                                    saleCompleted = true;
+                                    saleWrapper.Destroy(DestroyMode.Vanish);
+                                    saleUnits = CountCurrentProductionUnits(
+                                        buckets, subject.thingDef);
+                                    saleRate = ProductionLedgerService.CompletedPerDay(
+                                        state, subject.thingDef);
+
+                                    if (!TryFindBuildCell(
+                                            map,
+                                            loops,
+                                            subject,
+                                            Rot4.North,
+                                            reservedCells,
+                                            out removedCell))
+                                    {
+                                        failure =
+                                            "no empty valid cell was available for the destroy fixture";
+                                    }
+                                    else
+                                    {
+                                        RememberCell(
+                                            removedCell,
+                                            subject.thingDef,
+                                            Rot4.North,
+                                            reservedCells,
+                                            testRects);
+                                        removedSource = SpawnFinishedBuilding(
+                                            map, subject, removedCell, Rot4.North);
+                                        if (removedSource == null)
+                                        {
+                                            failure =
+                                                "could not spawn the existing furniture destroy fixture";
+                                        }
+                                        else
+                                        {
+                                            removedSource.Destroy(DestroyMode.Vanish);
+                                            removalCompleted = true;
+                                            removalUnits = CountCurrentProductionUnits(
+                                                buckets, subject.thingDef);
+                                            removalRate =
+                                                ProductionLedgerService.CompletedPerDay(
+                                                    state, subject.thingDef);
+                                            ok = baselineCompleted && saleCompleted &&
+                                                removalCompleted && baselineFrame != null &&
+                                                baselineFrame.Destroyed && baselineFinished != null &&
+                                                baselineUnits == 1 && saleUnits == 1 &&
+                                                removalUnits == 1 && baselineRate == 0.2f &&
+                                                saleRate == 0.2f && removalRate == 0.2f;
+                                            failure =
+                                                $"baseline {baselineUnits} unit(s) at {baselineRate:R}/day; " +
+                                                $"after PlayerSells {saleUnits} at {saleRate:R}/day; " +
+                                                $"after Destroy {removalUnits} at {removalRate:R}/day; " +
+                                                "expected each state to remain 1 unit and literal " +
+                                                "0.2/day, never negative";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                string cleanupFailure = DestroyFixtureThings(detachedSaleThings);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+
+                cleanupFailure = RestoreProductionBuckets(buckets, savedBuckets);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+            }
+
+            r.Check(ok, assertion, failure);
+        }
+
+        private static void CheckNoProductionState(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string assertion = "no positive completion reports no production";
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            List<ProductionBucket> savedBuckets =
+                buckets == null ? null : new List<ProductionBucket>(buckets);
+            ThingDef product = ThingDefOf.DiningChair;
+            bool hasRecordedProduction = false;
+            int units = -1;
+            float rate = 0f;
+            bool ok = false;
+            string failure = null;
+
+            try
+            {
+                if (buckets == null)
+                {
+                    failure = "the world production ledger is unavailable";
+                }
+                else if (product == null)
+                {
+                    failure = "vanilla DiningChair is unavailable for the empty-window fixture";
+                }
+                else
+                {
+                    buckets.Clear();
+                    units = CountCurrentProductionUnits(buckets, product);
+                    hasRecordedProduction =
+                        ProductionLedgerService.HasRecordedProduction(state, product);
+                    rate = ProductionLedgerService.CompletedPerDay(state, product);
+                    ok = units == 0 && !hasRecordedProduction && rate == 0f;
+                    failure =
+                        $"current-window units {units}; HasRecordedProduction " +
+                        $"{(hasRecordedProduction ? "true" : "false")}; reported {rate:R}/day; " +
+                        "expected 0 units, false/no-production state, and literal 0f only as " +
+                        "that state—not as a measured production rate";
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                string cleanupFailure = RestoreProductionBuckets(buckets, savedBuckets);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+            }
+
+            r.Check(ok, assertion, failure);
+        }
+
+        private static void CheckProductionLedgerScribeRoundTrip(Results r)
+        {
+            const string assertion =
+                "a non-empty production ledger survives a real Scribe round trip";
+            ThingDef product = ThingDefOf.ComponentIndustrial ?? ThingDefOf.DiningChair;
+            IntercolonyWorldComponent source = null;
+            IntercolonyWorldComponent loaded = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProductionLedger-{Guid.NewGuid():N}.xml");
+            string failure = null;
+            string cleanupFailure = null;
+            bool xmlContainsLedger = false;
+            int loadedBucketCount = -1;
+            int loadedUnits = -1;
+            float loadedRate = 0f;
+            bool loadedHasProduction = false;
+            bool ok = false;
+            LoadSaveMode savedScribeMode = Scribe.mode;
+
+            try
+            {
+                if (product == null)
+                {
+                    failure = "vanilla ComponentIndustrial and DiningChair were unavailable";
+                }
+                else
+                {
+                    source = new IntercolonyWorldComponent(null);
+                    int day = GenDate.DaysPassedAt(GenTicks.TicksGame);
+                    source.ProductionLedger.Add(new ProductionBucket
+                    {
+                        thingDef = product,
+                        day = day,
+                        count = 1
+                    });
+
+                    if (Scribe.loader == null)
+                    {
+                        failure =
+                            "RimWorld Scribe.loader was null, so a real save/load round trip was " +
+                            "not reachable in this self-test";
+                    }
+                    else
+                    {
+                        Scribe.saver.InitSaving(path, "intercolonyProductionLedgerTest");
+                        IntercolonyWorldComponent savedState = source;
+                        Scribe_Deep.Look(ref savedState, "state");
+                        Scribe.saver.FinalizeSaving();
+                        xmlContainsLedger = File.ReadAllText(path).IndexOf(
+                            "<productionLedger", StringComparison.Ordinal) >= 0;
+
+                        Scribe.loader.InitLoading(path);
+                        Scribe_Deep.Look(ref loaded, "state", (object)null);
+                        Scribe.loader.FinalizeLoading();
+
+                        List<ProductionBucket> loadedBuckets = loaded?.ProductionLedger;
+                        loadedBucketCount = loadedBuckets?.Count ?? -1;
+                        if (loadedBuckets != null && loadedBuckets.Count == 1 &&
+                            loadedBuckets[0] != null)
+                        {
+                            loadedUnits = loadedBuckets[0].count;
+                            loadedRate = ProductionLedgerService.CompletedPerDay(
+                                loaded, product);
+                            loadedHasProduction =
+                                ProductionLedgerService.HasRecordedProduction(loaded, product);
+                            ok = xmlContainsLedger && loadedBuckets[0].thingDef == product &&
+                                loadedBuckets[0].day == day && loadedUnits == 1 &&
+                                loadedHasProduction && loadedRate == 0.2f;
+                        }
+
+                        failure =
+                            $"XML productionLedger {(xmlContainsLedger ? "present" : "missing")}; " +
+                            $"loaded buckets {loadedBucketCount}; loaded units {loadedUnits}; " +
+                            $"loaded HasRecordedProduction " +
+                            $"{(loadedHasProduction ? "true" : "false")}; loaded rate " +
+                            $"{loadedRate:R}/day; expected one non-empty bucket with 1 unit and " +
+                            "literal 0.2/day after the real Scribe round trip";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    cleanupFailure = $"Scribe cleanup failed: {ex.GetType().Name}: {ex.Message}";
+                }
+
+                Scribe.mode = savedScribeMode;
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    cleanupFailure = AppendFailure(
+                        cleanupFailure,
+                        $"temporary Scribe file cleanup failed: {ex.GetType().Name}: {ex.Message}");
+                }
+
+                source?.ProductionLedger?.Clear();
+                loaded?.ProductionLedger?.Clear();
+            }
+
+            if (cleanupFailure != null)
+            {
+                failure = AppendFailure(failure, cleanupFailure);
+            }
+
+            r.Check(ok, assertion, failure);
+        }
+
+        private static void CheckMinifiableCraftedGood(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const string assertion =
+                "one crafted minifiable good records the good, not its wrapper";
+            List<ProductionBucket> buckets = state?.ProductionLedger;
+            List<ProductionBucket> savedBuckets =
+                buckets == null ? null : new List<ProductionBucket>(buckets);
+            ThingDef goodDef = DefDatabase<ThingDef>.GetNamedSilentFail("SculptureSmall");
+            ThingDef stuffDef = goodDef != null && goodDef.MadeFromStuff
+                ? ThingDefOf.WoodLog
+                : null;
+            Pawn worker = null;
+            List<Thing> products = new List<Thing>();
+            Thing wrapper = null;
+            Thing inner = null;
+            int goodUnits = -1;
+            int wrapperUnits = -1;
+            float rate = 0f;
+            bool ok = false;
+            bool fixtureUnavailable = false;
+            bool notificationCalled = false;
+            string failure = null;
+
+            try
+            {
+                if (buckets == null)
+                {
+                    fixtureUnavailable = true;
+                    failure = "the world production ledger is unavailable";
+                }
+                else if (IntercolonyWorldComponent.Current != state)
+                {
+                    failure =
+                        "the self-test state is not IntercolonyWorldComponent.Current, so the " +
+                        "real bill observer result cannot be attributed to this ledger";
+                }
+                else if (goodDef == null)
+                {
+                    fixtureUnavailable = true;
+                    failure = "vanilla SculptureSmall was unavailable for the direct " +
+                        "minifiable-good fixture";
+                }
+                else if (!goodDef.Minifiable)
+                {
+                    fixtureUnavailable = true;
+                    failure = "vanilla SculptureSmall was available but not minifiable";
+                }
+                else if (goodDef.MadeFromStuff && stuffDef == null)
+                {
+                    fixtureUnavailable = true;
+                    failure = "vanilla WoodLog was unavailable for the SculptureSmall " +
+                        "minifiable-good fixture";
+                }
+                else
+                {
+                    worker = FindExistingBillDoer(map, playerFaction: true);
+                    if (worker == null)
+                    {
+                        fixtureUnavailable = true;
+                        failure =
+                            "no existing living player-faction pawn with a records tracker was " +
+                            "available";
+                    }
+                }
+
+                if (failure == null)
+                {
+                    buckets.Clear();
+                    Thing good = ThingMaker.MakeThing(goodDef, stuffDef);
+                    if (good == null)
+                    {
+                        fixtureUnavailable = true;
+                        failure =
+                            "ThingMaker returned no SculptureSmall for the minifiable-good fixture";
+                    }
+                    else
+                    {
+                        good.stackCount = 1;
+                        products.Add(good);
+                        wrapper = good.MakeMinified();
+                        if (wrapper == null)
+                        {
+                            fixtureUnavailable = true;
+                            failure =
+                                "Thing.MakeMinified returned no MinifiedThing for SculptureSmall";
+                        }
+                        else
+                        {
+                            products[0] = wrapper;
+                            inner = wrapper.GetInnerIfMinified();
+                            if (inner == null)
+                            {
+                                fixtureUnavailable = true;
+                                failure =
+                                    "Thing.MakeMinified returned a wrapper with no inner good";
+                            }
+                            else
+                            {
+                                // Drive the real vanilla completion notification. The Harmony
+                                // postfix under test observes this call, just as it does for a
+                                // materialized GenRecipe product.
+                                notificationCalled = true;
+                                RecordsUtility.Notify_BillDone(worker, products);
+                                goodUnits = CountCurrentProductionUnits(buckets, goodDef);
+                                wrapperUnits = CountCurrentProductionUnits(buckets, wrapper.def);
+                                rate = ProductionLedgerService.CompletedPerDay(state, goodDef);
+                                ok = products.Count == 1 && wrapper is MinifiedThing &&
+                                    wrapper.def != goodDef && inner.def == goodDef &&
+                                    inner.stackCount == 1 && goodUnits == 1 &&
+                                    wrapperUnits == 0 && rate == 0.2f;
+                                failure =
+                                    $"wrapper {wrapper?.def?.defName ?? "null"}; " +
+                                    $"inner {inner?.def?.defName ?? "null"}; " +
+                                    $"good units {goodUnits}; wrapper units {wrapperUnits}; " +
+                                    $"reported good rate {rate:R}/day; expected inner good 1 unit, " +
+                                    "wrapper 0 units, and literal 0.2/day";
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                fixtureUnavailable = !notificationCalled;
+                failure = fixtureUnavailable
+                    ? $"could not build the direct minifiable-good fixture: " +
+                      $"{ex.GetType().Name}: {ex.Message}"
+                    : $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                string cleanupFailure = DestroyFixtureThings(products);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+
+                cleanupFailure = RestoreProductionBuckets(buckets, savedBuckets);
+                if (cleanupFailure != null)
+                {
+                    failure = AppendFailure(failure, cleanupFailure);
+                }
+            }
+
+            if (fixtureUnavailable)
+            {
+                r.Skip(assertion, failure);
+            }
+            else
+            {
+                r.Check(ok, assertion, failure);
+            }
+        }
+
+        private static Subject FindFurnitureSubject()
+        {
+            ThingDef chair = ThingDefOf.DiningChair;
+            if (chair == null || chair.building == null || !chair.building.isSittable)
+            {
+                return null;
+            }
+
+            return BuildSubjectForDefinition(chair);
+        }
+
+        private static Subject BuildSubjectForDefinition(ThingDef def)
+        {
+            if (def == null ||
+                !def.Minifiable ||
+                def.category != ThingCategory.Building ||
+                !def.MadeFromStuff ||
+                def.IsFrame ||
+                def.blueprintDef == null ||
+                def.frameDef == null ||
+                def.building == null ||
+                def.thingClass == null ||
+                !typeof(Building).IsAssignableFrom(def.thingClass) ||
+                !def.CanHaveFaction)
+            {
+                return null;
+            }
+
+            List<ThingDef> validStuffs = new List<ThingDef>();
+            foreach (ThingDef stuff in GenStuff.AllowedStuffsFor(def))
+            {
+                if (stuff != null && !validStuffs.Contains(stuff))
+                {
+                    validStuffs.Add(stuff);
+                }
+            }
+
+            if (validStuffs.Count == 0)
+            {
+                return null;
+            }
+
+            ThingDef defaultStuff = GenStuff.DefaultStuffFor(def);
+            ThingDef selectedStuff = null;
+            for (int i = 0; i < validStuffs.Count; i++)
+            {
+                if (validStuffs[i] == defaultStuff &&
+                    def.GetStatValueAbstract(StatDefOf.WorkToBuild, validStuffs[i]) > 0f)
+                {
+                    selectedStuff = validStuffs[i];
+                    break;
+                }
+            }
+
+            if (selectedStuff == null)
+            {
+                for (int i = 0; i < validStuffs.Count; i++)
+                {
+                    if (def.GetStatValueAbstract(StatDefOf.WorkToBuild, validStuffs[i]) > 0f)
+                    {
+                        selectedStuff = validStuffs[i];
+                        break;
+                    }
+                }
+            }
+
+            return selectedStuff == null
+                ? null
+                : new Subject
+                {
+                    thingDef = def,
+                    stuffDef = selectedStuff,
+                    nonDefaultStuff = selectedStuff != defaultStuff ? selectedStuff : null,
+                    validStuffCount = validStuffs.Count
+                };
+        }
+
+        private static CraftedSubject FindCraftedSubject(bool requireMinifiable)
+        {
+            ThingDef preferredProduct = requireMinifiable
+                ? DefDatabase<ThingDef>.GetNamedSilentFail("SculptureSmall")
+                : ThingDefOf.ComponentIndustrial;
+            RecipeDef preferredRecipe = null;
+            if (!requireMinifiable)
+            {
+                preferredRecipe = DefDatabase<RecipeDef>.GetNamedSilentFail(
+                    "Make_ComponentIndustrial");
+            }
+
+            if (preferredRecipe != null &&
+                IsCraftedRecipeCandidate(preferredRecipe, requireMinifiable) &&
+                preferredRecipe.products[0].thingDef == preferredProduct)
+            {
+                return MakeCraftedSubject(preferredRecipe);
+            }
+
+            CraftedSubject fallback = null;
+            foreach (RecipeDef recipe in DefDatabase<RecipeDef>.AllDefs)
+            {
+                if (!IsCraftedRecipeCandidate(recipe, requireMinifiable))
+                {
+                    continue;
+                }
+
+                CraftedSubject candidate = MakeCraftedSubject(recipe);
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                if (candidate.productDef == preferredProduct)
+                {
+                    return candidate;
+                }
+
+                fallback = fallback ?? candidate;
+            }
+
+            return fallback;
+        }
+
+        private static bool IsCraftedRecipeCandidate(
+            RecipeDef recipe, bool requireMinifiable)
+        {
+            if (recipe == null ||
+                recipe.products == null ||
+                recipe.products.Count != 1 ||
+                recipe.products[0] == null ||
+                recipe.products[0].thingDef == null ||
+                recipe.products[0].count != 1 ||
+                recipe.specialProducts != null && recipe.specialProducts.Count > 0 ||
+                recipe.efficiencyStat != null ||
+                recipe.UsesUnfinishedThing)
+            {
+                return false;
+            }
+
+            ThingDef product = recipe.products[0].thingDef;
+            bool isExpectedCategory = requireMinifiable
+                ? product.category == ThingCategory.Building
+                : product.category == ThingCategory.Item;
+            if (!isExpectedCategory || product.Minifiable != requireMinifiable)
+            {
+                return false;
+            }
+
+            return !product.HasComp<CompQuality>() || recipe.workSkill != null;
+        }
+
+        private static CraftedSubject MakeCraftedSubject(RecipeDef recipe)
+        {
+            ThingDef product = recipe?.products?[0]?.thingDef;
+            if (recipe == null || product == null)
+            {
+                return null;
+            }
+
+            ThingDef stuff = null;
+            if (product.MadeFromStuff)
+            {
+                foreach (ThingDef allowedStuff in GenStuff.AllowedStuffsFor(product))
+                {
+                    if (allowedStuff != null)
+                    {
+                        stuff = allowedStuff;
+                        break;
+                    }
+                }
+            }
+
+            if (product.MadeFromStuff && stuff == null)
+            {
+                return null;
+            }
+
+            return new CraftedSubject
+            {
+                recipe = recipe,
+                productDef = product,
+                stuffDef = stuff
+            };
+        }
+
+        private static Pawn FindConstructionWorker(Map map)
+        {
+            IReadOnlyList<Pawn> pawns = map?.mapPawns?.AllPawnsSpawned;
+            if (pawns == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (IsExistingBillDoer(pawn, playerFaction: true) && pawn.skills != null)
+                {
+                    return pawn;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryMakeRecipeProducts(
+            CraftedSubject subject,
+            Pawn worker,
+            List<Thing> products,
+            List<Thing> ingredients,
+            out string failure)
+        {
+            failure = null;
+            if (subject?.recipe == null || subject.productDef == null || worker == null)
+            {
+                failure = "the crafted recipe or player worker fixture was unavailable";
+                return false;
+            }
+
+            Thing dominantIngredient = null;
+            try
+            {
+                if (subject.stuffDef != null)
+                {
+                    dominantIngredient = ThingMaker.MakeThing(subject.stuffDef);
+                    if (dominantIngredient == null)
+                    {
+                        failure = "ThingMaker returned no dominant stuff ingredient";
+                        return false;
+                    }
+
+                    ingredients.Add(dominantIngredient);
+                }
+
+                foreach (Thing product in GenRecipe.MakeRecipeProducts(
+                             subject.recipe,
+                             worker,
+                             ingredients,
+                             dominantIngredient,
+                             billGiver: null))
+                {
+                    if (product != null)
+                    {
+                        products.Add(product);
+                    }
+                }
+
+                Thing inner = products.Count == 1
+                    ? products[0].GetInnerIfMinified()
+                    : null;
+                if (products.Count != 1 || inner == null || inner.def != subject.productDef ||
+                    inner.stackCount != 1)
+                {
+                    failure =
+                        $"GenRecipe produced {products.Count} product(s); expected one stack of " +
+                        $"{subject.productDef.defName}, got " +
+                        $"{inner?.def?.defName ?? "null"} x {inner?.stackCount.ToString() ?? "0"}";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure =
+                    $"could not materialize the real vanilla recipe product: " +
+                    $"{ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static bool TryCompleteRealFurnitureFrame(
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            Pawn worker,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects,
+            out IntVec3 cell,
+            out Frame frame,
+            out Building finished,
+            out string failure)
+        {
+            cell = IntVec3.Invalid;
+            frame = null;
+            finished = null;
+            failure = null;
+            if (worker == null || worker.Faction != Faction.OfPlayer)
+            {
+                failure = "the real-frame worker was not a player-faction pawn";
+                return false;
+            }
+
+            if (!TryFindBuildCell(
+                    map,
+                    loops,
+                    subject,
+                    Rot4.North,
+                    reservedCells,
+                    out cell))
+            {
+                failure = "no empty valid cell was available for a real furniture frame";
+                return false;
+            }
+
+            RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+            try
+            {
+                Blueprint_Build blueprint = GenConstruct.PlaceBlueprintForBuild(
+                    subject.thingDef,
+                    cell,
+                    map,
+                    Rot4.North,
+                    Faction.OfPlayer,
+                    subject.stuffDef);
+                if (blueprint == null || !blueprint.Spawned ||
+                    blueprint.def.entityDefToBuild != subject.thingDef)
+                {
+                    failure =
+                        "GenConstruct did not create a spawned ordinary Blueprint_Build for the " +
+                        "furniture definition";
+                    return false;
+                }
+
+                return TryCompleteBlueprintFrame(
+                    map,
+                    blueprint,
+                    subject,
+                    worker,
+                    out frame,
+                    out finished,
+                    out failure);
+            }
+            catch (Exception ex)
+            {
+                failure =
+                    $"could not create or complete the real furniture frame: " +
+                    $"{ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static bool TryCompleteBlueprintFrame(
+            Map map,
+            Blueprint_Build blueprint,
+            Subject subject,
+            Pawn worker,
+            out Frame frame,
+            out Building finished,
+            out string failure)
+        {
+            frame = null;
+            finished = null;
+            failure = null;
+            Thing createdThing = null;
+            try
+            {
+                if (blueprint == null || !blueprint.Spawned || subject?.thingDef == null ||
+                    worker == null || worker.Faction != Faction.OfPlayer)
+                {
+                    failure = "the Produce blueprint or player-faction worker fixture was invalid";
+                    return false;
+                }
+
+                bool jobEnded;
+                if (!blueprint.TryReplaceWithSolidThing(
+                        worker, out createdThing, out jobEnded))
+                {
+                    failure =
+                        $"Blueprint_Build.TryReplaceWithSolidThing returned false " +
+                        $"(job ended {(jobEnded ? "yes" : "no")})";
+                    return false;
+                }
+
+                frame = createdThing as Frame;
+                if (frame == null || !frame.Spawned || frame.Map != map ||
+                    frame.BuildDef != subject.thingDef || frame.Faction != Faction.OfPlayer)
+                {
+                    failure =
+                        "the ordinary vanilla blueprint did not become a spawned player-faction " +
+                        "Frame for the furniture definition";
+                    return false;
+                }
+
+                // This is the vanilla completion seam under test. The Harmony observer must hear
+                // this call; calling the patch method directly would prove nothing about vanilla.
+                frame.CompleteConstruction(worker);
+                finished = FindFinishedBuildingAt(map, frame.Position, subject.thingDef);
+                if (finished == null)
+                {
+                    failure =
+                        "Frame.CompleteConstruction returned without a spawned finished furniture " +
+                        "building at the frame cell";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure =
+                    $"could not complete the ordinary vanilla Frame: " +
+                    $"{ex.GetType().Name}: {ex.Message}";
+                return false;
+            }
+            finally
+            {
+                if (createdThing != null && !createdThing.Spawned && !createdThing.Destroyed)
+                {
+                    try
+                    {
+                        createdThing.Destroy(DestroyMode.Vanish);
+                    }
+                    catch (Exception ex)
+                    {
+                        failure = AppendFailure(
+                            failure,
+                            $"unspawned frame cleanup failed: {ex.GetType().Name}: {ex.Message}");
+                    }
+                }
+            }
+        }
+
+        private static Building FindFinishedBuildingAt(
+            Map map, IntVec3 cell, ThingDef thingDef)
+        {
+            if (map == null || thingDef == null || !cell.InBounds(map))
+            {
+                return null;
+            }
+
+            List<Thing> things = map.thingGrid.ThingsListAt(cell);
+            for (int i = 0; i < things.Count; i++)
+            {
+                if (things[i] is Building building && building.def == thingDef)
+                {
+                    return building;
+                }
+            }
+
+            return null;
+        }
+
+        private static int CountCurrentProductionUnits(
+            List<ProductionBucket> buckets, ThingDef thingDef)
+        {
+            if (buckets == null || thingDef == null)
+            {
+                return 0;
+            }
+
+            int today = GenDate.DaysPassedAt(GenTicks.TicksGame);
+            int count = 0;
+            for (int i = 0; i < buckets.Count; i++)
+            {
+                ProductionBucket bucket = buckets[i];
+                if (bucket != null && bucket.thingDef == thingDef && bucket.day == today)
+                {
+                    count += bucket.count;
+                }
+            }
+
+            return count;
+        }
+
+        private static string RestoreProductionBuckets(
+            List<ProductionBucket> buckets, List<ProductionBucket> savedBuckets)
+        {
+            if (buckets == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                buckets.Clear();
+                if (savedBuckets != null)
+                {
+                    buckets.AddRange(savedBuckets);
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return $"production ledger restoration failed: {ex.GetType().Name}: {ex.Message}";
+            }
+        }
+
+        private static string DestroyFixtureThings(List<Thing> things)
+        {
+            if (things == null || things.Count == 0)
+            {
+                return null;
+            }
+
+            HashSet<Thing> seen = new HashSet<Thing>();
+            StringBuilder failures = new StringBuilder();
+            for (int i = 0; i < things.Count; i++)
+            {
+                Thing thing = things[i];
+                if (thing == null || !seen.Add(thing) || thing.Destroyed)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    thing.Destroy(DestroyMode.Vanish);
+                }
+                catch (Exception ex)
+                {
+                    if (failures.Length > 0)
+                    {
+                        failures.Append("; ");
+                    }
+
+                    failures.Append("fixture thing cleanup failed: ")
+                        .Append(ex.GetType().Name)
+                        .Append(": ")
+                        .Append(ex.Message);
+                }
+            }
+
+            return failures.Length == 0 ? null : failures.ToString();
+        }
+
+        private static string AppendFailure(string failure, string additional)
+        {
+            if (additional == null)
+            {
+                return failure;
+            }
+
+            return failure == null ? additional : failure + "; " + additional;
         }
 
         private static Pawn FindExistingBillDoer(Map map, bool playerFaction)
