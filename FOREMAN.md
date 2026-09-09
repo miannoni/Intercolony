@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C1 — F01, a routine contract cycle must be silent. **C0 IS CLOSED.**
-Unit: C1.2 — C1's assertions, the six the plan asks for
-Worker: luna running — `…\scratchpad\unit-c1-2.out`
+Unit: C1.2b — the missing-goods fixture is not producing a missing-goods block
+Worker: luna running — `…\scratchpad\unit-c1-2b.out`; C1.2's seven assertions are UNCOMMITTED and must be kept
 Last done: C0.1, the scope lock, accepted at `f049bfb` — the plan is copied to
 `docs/PLAYTEST_CORRECTION_PLAN.md` byte-identical, and `PROGRESS.md` records the freezes.
 Updated: 2026-09-09 16:25
@@ -76,7 +76,8 @@ two workers on the same large UI or settings file.
 | ✅ | C0.1 — copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | accepted, `f049bfb` |
 | ✅ | C1.0 — recon: the `Contract delivery due` emission and what it knows | accepted; decisions below |
 | ✅ | C1.1 — the due letter becomes a log, the warning moves after auto-ready | accepted, `9b8e05e` |
-| 🔨 | C1.2 — C1's assertions, the six the plan asks for | Luna running |
+| 🔨 | C1.2 — C1's assertions, seven of them | six green, one fixture wrong |
+| 🔨 | C1.2b — make the missing-goods fixture actually run short of goods | Luna running |
 
 ## C1 — the recon, and what I decided from it
 
@@ -155,6 +156,12 @@ newer product direction, not by defect:
   - **A mutation that fails to compile looks exactly like one that found nothing.** Check the anchor
     is unique and the replacement builds; read the run's log, not the summary line.
   - **When a mutation does not bite, suspect the mutation before the assertion.**
+  - **A fixture that fails for the wrong reason passes for the wrong reason too.** C1.2's
+    missing-goods case produced exactly one correctly-labelled warning and still failed, because
+    `CanMarkReadyNow` has six different refusal branches and the fixture was tripping one of the
+    others. The letter count was right, the letter was wrong. **Assert on the branch you meant to
+    exercise, and print the reason in the failure detail** — labels alone cost a whole extra run to
+    diagnose.
   - **A fixture that assumes a world shape is flaky, and it will fail on a world that is merely
     small.** 7.13's travel-ceiling case needed a tile more than 246 tiles away; the next generated
     world had none, and the suite went red for a reason that had nothing to do with the code. Where
