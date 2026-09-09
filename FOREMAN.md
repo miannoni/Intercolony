@@ -1,44 +1,26 @@
 ﻿# Foreman state — Intercolony
 
-Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 not started. Stages 1-6 are CLOSED.
+Stage: 7 — F25 ✅, F23 part-built ✅, F24 part-built ✅, F22 reconnoitred. Stages 1-6 are CLOSED.
 Unit: 7.9 — F25's wage: show what is charged, not only what is asked
-Worker: luna WAS RUNNING at compaction — `…\scratchpad\unit-7-9.out`. See "On resume" below.
+Worker: luna running — `…\scratchpad\unit-7-9.out` (prompt `…\scratchpad\unit-7-9.prompt.txt`)
 Last done: 7.8.0, the F22 recon, accepted at `d83a500`.
-Updated: 2026-09-09 01:30
-Run started: 2026-09-06 22:37
-Foreman load: 2026-09-09 00:30
-Review checkpoint: 493ee4b · reviewed 2026-09-09 01:05
-Review: none
-Run base: 6ec6c16
-Foreman: 86cdc44 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
+Updated: 2026-09-08 22:20
+Foreman load: 2026-09-08 22:20
+Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
-## ON RESUME — READ THIS BEFORE DOING ANYTHING
+<!-- Everything above this line is the header. A fresh session reads only the header. -->
 
-**THE RUN IS DELIBERATELY PAUSED FOR A CONTEXT COMPACTION. DO NOT RESUME DEVELOPMENT AND DO NOT
-DISPATCH ANY WORKER ON THE FIRST TURN AFTER THE COMPACT.** The operator will update Foreman before
-work continues, and asked explicitly to be waited for. Stop and report state.
+## The running worker
 
-**THE 15-MINUTE HEARTBEAT IS CANCELLED** — cron `6efc4ee6` was deleted on purpose, so that it cannot
-fire and drive an automatic resume against that instruction. **It must be re-armed** (`*/15 * * * *`,
-recurring, the heartbeat prompt from the skill's section 2) when the operator says to continue.
-
-**A LUNA WORKER WAS STILL RUNNING** when this was written: unit 7.9, output at
-`…\scratchpad\unit-7-9.out`, prompt at `…\scratchpad\unit-7-9.prompt.txt`. At the moment of writing
-it had modified nothing — the tree was clean apart from an untracked `Playtesting annotations.docx`
-that is not ours. It may well have finished and written files since. So on resume:
-
-1. `git status --short`. Anything modified under `Source/Intercolony` is 7.9's output, not a
-   mystery, and must NOT be discarded.
-2. `grep -c "^tokens used" …\scratchpad\unit-7-9.out` to see whether it finished.
-3. Verify it under the normal rules before accepting — run `dev.ps1 test labor -Fresh` and
-   `dev.ps1 test ledger -Fresh`, then mutate. **7.9 is production-only; its assertions are a
-   separate unit that has not been written.**
-4. Only then commit it.
+7.9 is Luna, production code only; its assertions are a separate unit that has not been written.
+It was dispatched with a clean tree, so anything modified under `Source/Intercolony` is its output
+and must not be discarded. `grep -c "^tokens used"` on its output file says whether it finished.
+Verify before accepting: `dev.ps1 test labor -Fresh`, `dev.ps1 test ledger -Fresh`, then mutate.
 
 ## What 7.9 was asked to do
 
-Fix review finding 1, which I verified in the code myself. `EmploymentService.TryHireApplicant`
+Fix known defect 1, which I verified in the code myself. `EmploymentService.TryHireApplicant`
 stores an applicant's raw `openMarketAsk` in `contract.dailyWage`, the applicant row tells the
 player they are "paid <ask>/day", and Daily payroll then multiplies by
 `WageStructureUtility.EffectiveDailyWage`'s 35% premium (`WageStructure.cs:53-58`,
@@ -52,18 +34,17 @@ constant, or what is stored in `contract.dailyWage`. It was also asked to report
 displays or sums a daily wage, and to check the business payroll estimate specifically, which the
 audit says sums the raw figure and therefore understates what employees cost.
 
-## Method version note — migrated 2026-09-09
+## Method version note — migrated to `e46c835`, 2026-09-08
 
-Migrated from the pre-`86cdc44` Foreman on the operator's instruction. `Wakes: n · last full load
-at wake m` is gone: drift is now wall-clock, about two hours, not a wake count. The heartbeat is 15
-minutes, not 10. Recon and review go to **Sol high, read-only**; implementation stays on **Luna max,
-workspace-write**. An hourly Sol review lane audits committed work from `Review checkpoint` to a
-target fixed at launch, and may overlap Luna because it is read-only.
+**There is no Sol audit lane any more, and no review state.** `Run started`, `Run base`,
+`Review checkpoint` and `Review` were removed from the header by this migration; the findings the
+single review it ran produced are kept below as ordinary units, because they are real defects in
+shipped code and a method migration must not reopen or discard settled work.
 
-`Run base` and `Review checkpoint` are `6ec6c16`, the parent of `469dddf`, which is the commit that
-first created this file — so the review lane audits only work this run produced, not the branch's
-earlier history. `Run started` is `469dddf`'s own timestamp. Both are evidence-based rather than the
-conservative "use HEAD / use now" fallbacks the migration allows.
+The method now is: **Sol high read-only for reconnaissance only**, **Luna max workspace-write for
+implementation**, one recon/work lane so the two never overlap and two Sols never run at once, a
+15-minute heartbeat, and a full method reload about every two hours of wall clock (`Foreman load`),
+never a wake count.
 
 ## F22 — Sol recon, 2026-09-09. NOT STARTED, and it needs an operator decision
 
@@ -90,10 +71,11 @@ it is paid; what job determines the training a returning colonist gains; what dr
 labour demand, since no such field exists; what happens to carried inventory, bonded animals, beds
 and titles on departure; and what happens if no player map ever returns.
 
-## Review findings — Sol review #1, `6ec6c16..493ee4b`, 94 commits, 2026-09-09
+## Known defects — the queue behind units 7.9 to 7.14
 
-Verdict: not materially sound. Seven findings; schema-58 persistence audited clean. I verified the
-two most serious against the code myself rather than accepting them.
+Found on 2026-09-09 by a one-off audit of this run's own commits, back when the method still had an
+audit lane. The lane is gone; these stay, because they are defects in shipped code. Schema-58
+persistence audited clean. I verified the two most serious against the code myself.
 
 | # | Sev | Finding | Disposition |
 |---|---|---|---|
@@ -108,34 +90,10 @@ two most serious against the code myself rather than accepting them.
 Order: 7.9, then 7.12, then 7.10 — money first, then the exploit, then the unmet purpose. F22
 continues after them.
 
-## F24 slice 1 — accepted at `4a78e0e`
-
-Everything below was the state before that commit; it is kept because the reasoning is worth having
-and because the U1 root cause generalises. Nothing here is outstanding any more.
-
-  - **7.7c is the production fix and it works.** Emergency dispatch selects the nearest
-    `ceil(N x 0.5)` candidates and arrives in `ceil(ordinary / 3)` days with a one-day floor.
-    Verified on a real market: 8 of 15 candidates, arriving in 3 days against an ordinary 9.
-  - 7.7b/7.7d are the four assertions. **U2, U3 and U4 PASS** — 88/day becomes 352/day at 4x;
-    9-day travel becomes a 3-day arrival with matching ticks; emergency and ordinary contracts
-    scribe the same shape apart from the candidate-dependent `equipmentBond`.
-  - **U1 FAILED AND THE TEST WAS WRONG, NOT THE CODE.** 7.7e fixed it, and the real cause was not
-    what I guessed. There was no floor: the oracle already used `CeilToInt`. **The fixture's own
-    earlier hire called `Release()` on the shared candidate, nulling its pawn, and the oracle's
-    `pawn != null` filter then dropped it** — taking N from 15 to 14 so `ceil(14 x 0.5)` gave 7, and
-    removing the 3-day candidate, which is exactly the one that had been hired. Its name rendered as
-    `?` for the same reason: `LaborCandidate.Name` falls back after `Release`.
-    **An oracle that reads state the test itself has already mutated is measuring the wrong world.**
-    It now snapshots the ranking before the hire and ranks by travel days, then distance, then
-    original index.
-
-**NEXT ACTION: unit 7.7e — fix the expected-set computation in the TEST, not the production
-selection. Then mutate all four assertions and commit 7.7b + 7.7c + 7.7d together.**
-
 ## What remains in the run
 
-F22, then stage 8 (F08, F09) and stage 9 (F06), each starting with recon — which now means **Sol
-high read-only**, not Luna.
+The known defects above, then F22, then stage 8 (F08, F09) and stage 9 (F06) — each of those three
+starting with recon, which means **Sol high read-only**, not Luna.
 
 ## Standing rules this run has paid for
 
@@ -148,6 +106,10 @@ high read-only**, not Luna.
   - **A mutation that fails to compile looks exactly like one that found nothing.** Check the anchor
     is unique and the replacement builds; read the run's log, not the summary line.
   - **When a mutation does not bite, suspect the mutation before the assertion.**
+  - **An oracle that reads state the test itself has already mutated is measuring the wrong world.**
+    F24's U1 looked like an off-by-one in production; in fact the fixture's own earlier hire had
+    called `Release()` on the shared candidate, nulling its pawn, so the oracle's `pawn != null`
+    filter dropped it. Snapshot the ranking before the act, not after.
   - **Never let a zero mean unknown.** Say it in words.
   - **A charge the player was never shown is worse than the problem it fixes.**
   - Use `dev.ps1 bridge -Save`, not `run -Save`, to load a save.
@@ -196,7 +158,7 @@ keeps F25 a no-bump change.
 | F20 labour from actual work | 6 | BUILT, mutation-proven, `86f3868` + `78d6eba`: the relevant-workforce approximation shares eligible wages across eligible goods; measured-time attribution is not built |
 | F25 buyer-side labour market | 7 | BUILT, mutation-proven, `0189a8a` + `680c39e` + `3125bd6` + `fbb5290`: requirement-first postings, worker asks, a seeded spread, own-ask pay, and the save/create seams; no new persisted state or Harmony patch, and no reverse market |
 | F23 equipment and bond state | 7 | PART-BUILT, `ed99423` + `a173619`. The gear an employee ARRIVES with is recorded, valued at replacement plus a 10% premium, disclosed as its own row at hire beside the wage, charged there, and refunded proportionally item by item when the contract ends — on all nine ending paths, idempotently. NOT built: equipment tiers, availability gating by settlement wealth/tech/scarcity, and the severe consequence for stripping body modifications. Assertions in progress at 7.6c |
-| F24 urgent dispatch | 7 | PART-BUILT and mutation-proven, `edb99ac` + `4a78e0e` + `a264c22`. Emergency dispatch is a MODE ON THE IMMEDIATE DIRECT-HIRE PATH, which is why it needs NO persisted state — the recon's "needs new state" is true only of a post-and-wait urgent request. The pool is the nearest `ceil(N x 0.5)` candidates, the wage carries a 4x premium, arrival is `ceil(ordinary / 3)` with a one-day floor, and all of it is disclosed before the player commits. Its first version used an absolute 2-day window and could never produce a candidate, real markets being 10-19 travel days away; the rule is now relative to the market. NOT built: drop-pod arrival, which F24 wants most but which should be gated on a settlement logistics capability F21 never built; any queued urgent request; equipment level in the request. Review finding 6 is outstanding against it — it dropped the old 1-20 day clamp on ORDINARY travel |
+| F24 urgent dispatch | 7 | PART-BUILT and mutation-proven, `edb99ac` + `4a78e0e` + `a264c22`. Emergency dispatch is a MODE ON THE IMMEDIATE DIRECT-HIRE PATH, which is why it needs NO persisted state — the recon's "needs new state" is true only of a post-and-wait urgent request. The pool is the nearest `ceil(N x 0.5)` candidates, the wage carries a 4x premium, arrival is `ceil(ordinary / 3)` with a one-day floor, and all of it is disclosed before the player commits. Its first version used an absolute 2-day window and could never produce a candidate, real markets being 10-19 travel days away; the rule is now relative to the market. NOT built: drop-pod arrival, which F24 wants most but which should be gated on a settlement logistics capability F21 never built; any queued urgent request; equipment level in the request. Known defect 6 is outstanding against it — it dropped the old 1-20 day clamp on ORDINARY travel |
 | F22 reverse listing and offer queue | 7 | RECONNOITRED, NOT STARTED, `d83a500`. About NINE units. First unit must be the custody proof: a bare custom world pawn is not recognised as borrowed by vanilla's game-over check, so the last colonist leaving could end the game. Six design questions unanswered by the source plan. AWAITING AN OPERATOR DECISION on whether to start it, take only the custody proof, or defer behind stages 8 and 9 |
 | F08 F09 commercial relationships | 8 | not started |
 | **F06 optional apparel policies** | **9** | **PLACED IN STAGE 9 — not started, recon first; see the gap below** |
@@ -277,11 +239,10 @@ that actually shipped are:
 F23's bond half and F24's emergency dispatch are BUILT; both stay part-built with their unbuilt
 parts named. What remains, in order:
 
-1. **7.9 — F25's wage disclosure.** IN FLIGHT when this run was paused for compaction; see the
-   header. Fixes review finding 1.
-2. **7.12 — F23's bond ignores quality.** Review finding 5, an exploit.
-3. **7.10 — F19's figure must reach the margin.** Review finding 2.
-4. **7.11, 7.13, 7.14** — review findings 4, 6 and 7, scheduled rather than urgent.
+1. **7.9 — F25's wage disclosure.** IN FLIGHT, Luna running; see the header. Known defect 1.
+2. **7.12 — F23's bond ignores quality.** Known defect 5, an exploit.
+3. **7.10 — F19's figure must reach the margin.** Known defect 2.
+4. **7.11, 7.13, 7.14** — known defects 4, 6 and 7, scheduled rather than urgent.
 5. **F22** — about nine units, AWAITING AN OPERATOR DECISION. See the F22 recon section: the first
    unit must be the custody proof because of the game-over hazard.
 6. **Stage 8** — F08 and F09. Recon first, which now means Sol high read-only.
@@ -337,7 +298,7 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 4 — Player-side logistics | F05, F12 | closed 2026-09-08, F12 part-built |
 | ✅ | 5 — Market geography | F21, F11 | closed 2026-09-08 |
 | ✅ | 6 — Business intelligence and costing | F07, F19, F20 | closed 2026-09-08 |
-| 🔨 | 7 — Two-sided labor market | F25, F23, F24, F22 | F25 closed; F23, F24 and F22 not started |
+| 🔨 | 7 — Two-sided labor market | F25, F23, F24, F22 | F25, F23, F24 built; F22 reconnoitred only |
 | ⬜ | 8 — Commercial relationships | F08, F09 | not started |
 | ⬜ | 9 — Optional apparel policies | F06 | placed 2026-09-08, recon first, runs last |
 
@@ -368,12 +329,12 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 7.6–7.6f — F23's equipment bond, both halves + assertions | accepted, `ed99423` `a173619` `91dc10d` `9841ec9` |
 | ✅ | 7.7–7.7f — F24's emergency dispatch, its window fix, assertions, play entry | accepted, `4a78e0e` `a264c22` |
 | ✅ | 7.8.0 — F22 recon (Sol high, read-only) | accepted, `d83a500` |
-| 🔨 | 7.9 — F25's wage: show what is charged, not only what is asked | Luna was RUNNING at compaction |
-| ⬜ | 7.12 — F23's bond ignores quality when valuing | review finding 5 |
-| ⬜ | 7.10 — F19's direct-input figure must reach the margin | review finding 2 |
-| ⬜ | 7.11 — Pause must not let a committed uninstall finish | review finding 4 |
-| ⬜ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | review finding 6 |
-| ⬜ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | review finding 7 |
+| 🔨 | 7.9 — F25's wage: show what is charged, not only what is asked | Luna running |
+| ⬜ | 7.12 — F23's bond ignores quality when valuing | known defect 5 |
+| ⬜ | 7.10 — F19's direct-input figure must reach the margin | known defect 2 |
+| ⬜ | 7.11 — Pause must not let a committed uninstall finish | known defect 4 |
+| ⬜ | 7.13 — F24 restored the 1-20 day ordinary travel clamp | known defect 6 |
+| ⬜ | 7.14 — F11's timing assertion must go through `WorldComponentTick` | known defect 7 |
 | ⬜ | 7.8 — F22 implementation, ~9 units | AWAITING OPERATOR DECISION |
 
 ## Closed-stage unit history
