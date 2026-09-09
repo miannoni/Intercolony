@@ -23,9 +23,9 @@ namespace Intercolony
     /// <summary>
     /// Selects the bounded goodwill pressure created by very strong commercial standing.
     ///
-    /// This service deliberately does not apply its results, write persisted state, or run on a
-    /// cadence. The next unit can decide when to apply the returned deltas without making the
-    /// eligibility rules depend on a last-run field.
+    /// Evaluate remains pure; Apply consumes its results through the existing goodwill writer.
+    /// This service does not write persisted state or keep a last-run field, so cadence remains an
+    /// absolute-tick concern of the world component.
     /// </summary>
     public static class CommercialGoodwillPressureService
     {
@@ -102,6 +102,18 @@ namespace Intercolony
 
             result.Sort(CompareByFactionLoadId);
             return result;
+        }
+
+        /// <summary>Applies the current commercial-standing decision to vanilla goodwill.</summary>
+        public static void Apply(IntercolonyWorldComponent state)
+        {
+            foreach (CommercialGoodwillPressure pressure in Evaluate(state))
+            {
+                EmployerReputationService.AffectGoodwill(
+                    pressure.Faction,
+                    pressure.Delta,
+                    "commercial standing pressure");
+            }
         }
 
         private static bool IsEligibleSettlement(Settlement settlement, Faction playerFaction)

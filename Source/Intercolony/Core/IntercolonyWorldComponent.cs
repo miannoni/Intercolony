@@ -1765,6 +1765,11 @@ namespace Intercolony
                 // letters, and only one of them is an accusation.
                 HostilityPolicy.Sweep(this);
 
+                if (GenTicks.IsTickInterval(GenDate.TicksPerQuadrum))
+                {
+                    CommercialGoodwillPressureService.Apply(this);
+                }
+
                 if (orders.Count > 0)
                 {
                     SalesOrderService.FailOverdue(orders);
