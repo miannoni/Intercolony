@@ -1,35 +1,64 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 7 — F24 in progress; F22 after it. **STAGES 1 THROUGH 6 ARE CLOSED.**
-Unit: 7.7c — make F24's emergency window relative to the market
-Worker: running — `…\scratchpad\unit-7-7c.out`
-Last done: F24 slice 1 at `edb99ac`; F23's bond closed part-built at `9841ec9`.
-Updated: 2026-09-08, wake 189
-Wakes: 189 · last full load at wake 189
+Unit: 7.7e — fix U1's expected-set oracle in the labour self-test
+Worker: none
+Last done: 7.7d — verified, labour 47/1/0. U2, U3 and U4 pass; U1 fails and the TEST is wrong.
+Updated: 2026-09-09 00:30
+Run started: 2026-09-06 22:37
+Foreman load: 2026-09-09 00:30
+Review checkpoint: 6ec6c16 · reviewed never
+Review: none
+Run base: 6ec6c16
+Foreman: 86cdc44 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
+Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
-READ THE "RESUME BRIEF" BELOW. It is what a session with no memory should trust.
+<!-- Everything above this line is the header. A fresh session reads only the header. -->
 
-<!-- ONE WORKING NOTE, AT MOST FIFTEEN LINES. Replace it each wake. THE SIZE IS THE PART THAT KEEPS
-     BEING BROKEN — not the "don't prepend" part, which is now habit. The header has gone 50 -> 274,
-     50 -> 187, 51 -> 130 and 51 -> 123 because each wake's finding was interesting and got written
-     in full. Findings go in the COMMIT MESSAGE, which is where they are read again. This note only
-     needs enough to resume. -->
+## Method version note — migrated 2026-09-09
 
-WORKING NOTE — wake 189.
-  - F24's emergency dispatch as first built could never produce a candidate: window 2 travel days,
-    real market 10-19 days, pool empty. My error, found by 7.7b's assertions. 7.7c makes arrival a
-    fraction of ordinary travel and narrows the pool relative to the market.
-  - **7.7b's four assertions are IN THE TREE, UNCOMMITTED AND NOT YET MUTATION-VERIFIED.** They must
-    be watched going red before they are accepted, after 7.7c lands.
-  - 7.7b ran ~80 minutes before I stopped it, against a 5-10 minute rule. Its work was sound; the
-    cost was mine for not cutting the unit smaller.
-  - Left in the run: F22, then stage 8 (F08, F09) and stage 9 (F06), each starting with recon.
+Migrated from the pre-`86cdc44` Foreman on the operator's instruction. `Wakes: n · last full load
+at wake m` is gone: drift is now wall-clock, about two hours, not a wake count. The heartbeat is 15
+minutes, not 10. Recon and review go to **Sol high, read-only**; implementation stays on **Luna max,
+workspace-write**. An hourly Sol review lane audits committed work from `Review checkpoint` to a
+target fixed at launch, and may overlap Luna because it is read-only.
 
-STANDING RULES THIS RUN HAS PAID FOR, kept here because they survive a compaction:
+`Run base` and `Review checkpoint` are `6ec6c16`, the parent of `469dddf`, which is the commit that
+first created this file — so the review lane audits only work this run produced, not the branch's
+earlier history. `Run started` is `469dddf`'s own timestamp. Both are evidence-based rather than the
+conservative "use HEAD / use now" fallbacks the migration allows.
+
+## UNCOMMITTED WORK IN THE TREE — do not discard
+
+7.7b, 7.7c and 7.7d are all in the working tree and commit together. Nothing is staged.
+
+  - **7.7c is the production fix and it works.** Emergency dispatch selects the nearest
+    `ceil(N x 0.5)` candidates and arrives in `ceil(ordinary / 3)` days with a one-day floor.
+    Verified on a real market: 8 of 15 candidates, arriving in 3 days against an ordinary 9.
+  - 7.7b/7.7d are the four assertions. **U2, U3 and U4 PASS** — 88/day becomes 352/day at 4x;
+    9-day travel becomes a 3-day arrival with matching ticks; emergency and ordinary contracts
+    scribe the same shape apart from the candidate-dependent `equipmentBond`.
+  - **U1 FAILS AND THE TEST IS WRONG, NOT THE CODE.** Ordinary pool 15 with travel days
+    [3,4,4,5,5,9,9,9,9,10,10,11,11,16,16]. Production picked 8 — `ceil(15 x 0.5)` — and they are the
+    eight nearest, correctly including the 3-day candidate. The test expected SEVEN and its expected
+    set omits the 3-day candidate entirely: [4,4,5,5,9,9,9]. Wrong in count and in membership; it
+    looks like floor-instead-of-ceil plus a dropped first element, possibly around the candidate
+    whose name renders as "?".
+
+**NEXT ACTION: unit 7.7e — fix the expected-set computation in the TEST, not the production
+selection. Then mutate all four assertions and commit 7.7b + 7.7c + 7.7d together.**
+
+## What remains in the run
+
+F22, then stage 8 (F08, F09) and stage 9 (F06), each starting with recon — which now means **Sol
+high read-only**, not Luna.
+
+## Standing rules this run has paid for
+
   - **When a field stops being written, grep every reader.** A `> 0` check treats zero as corruption.
   - **When something stops happening immediately, find everything that assumed it was instant.**
-  - **A number chosen without looking at the data the game generates is a guess.** F24's two-day
-    window was five times smaller than the nearest settlement in the world.
+  - **A number chosen without looking at the data the game generates is a guess.** F24's original
+    two-day window was five times smaller than the nearest settlement in the world.
   - **The seam nobody asserts is the one between the caller and the service.**
   - **A skip is not evidence** — but a skip can BE the finding, as it was for F24.
   - **A mutation that fails to compile looks exactly like one that found nothing.** Check the anchor
@@ -39,16 +68,16 @@ STANDING RULES THIS RUN HAS PAID FOR, kept here because they survive a compactio
   - **A charge the player was never shown is worse than the problem it fixes.**
   - Use `dev.ps1 bridge -Save`, not `run -Save`, to load a save.
   - Write files with the file tools; PowerShell `Get-Content` + `Out-File` double-encodes UTF-8.
+  - The Bash tool's working directory persists between calls — `cd` back to `C:\dev\Intercolony`
+    after visiting another repo, or `dev.ps1` will not be found.
 
-Owed to the operator, all in `docs/PENDING_PLAYTESTS.md`: twenty-one play observations across stages
-1-7. The three that matter most are the F15 save-compatibility check, the partial-delivery defect in
-`DeliverToColony` which costs the player silver and needs a design decision, and F20's equal wage
-split — someone who only ever makes chairs still has half their wage charged to tables.
-Foreman: 10ee860 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
-Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md`, follow it,
-then re-run its section 0.
+## Open for the operator
 
-<!-- Everything above this line is the header. A fresh session reads only the header. -->
+Twenty-one play observations are owed, all in `docs/PENDING_PLAYTESTS.md`. The three that matter
+most: the F15 save-compatibility check; the partial-delivery defect in `DeliverToColony`, which
+costs the player silver and needs a design decision; and F20's equal wage split — someone who only
+ever makes chairs still has half their wage charged to tables.
+
 
 ## RESUME BRIEF — current at HEAD `47c1f5d`, 2026-09-08
 
