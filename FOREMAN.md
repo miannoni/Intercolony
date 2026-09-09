@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 8 — F08 and F09, recon first. Stage 7 is done apart from F22, which awaits the operator. Stages 1-6 are CLOSED.
-Unit: 8.0 — stage 8 recon: what relationship state already exists
-Worker: sol recon running — `…\scratchpad\recon-stage8.out`
-Last done: 7.15, the play entry for the seven fixes, accepted at `1f4440c`.
-Updated: 2026-09-09 03:55
+Unit: 8.1 — F08's decision logic, pure, called from nowhere yet
+Worker: luna running — `…\scratchpad\unit-8-1.out`
+Last done: 8.0, the stage-8 recon — read-only, three claims spot-checked, decisions recorded below.
+Updated: 2026-09-09 04:10
 Foreman load: 2026-09-09 03:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -131,6 +131,38 @@ They differ ON PURPOSE, and the difference is the whole unit
 Making the two behave alike would be a misreading in either direction. Accepted cost, recorded
 rather than discovered later: nothing in a designation records who placed it, so a player's own
 hand-placed Uninstall on the loop's building is cancelled by Pause too.
+
+## Stage 8 — the recon, and what I decided from it, 2026-09-09
+
+Sol recon, read-only, tree untouched. Three load-bearing claims spot-checked against the source
+myself: commercial reputation is per settlement keyed by `WorldObject.ID`
+(`IntercolonyWorldComponent.cs:522-535`), Preferred begins at 80 (`CommercialReputation.cs:78-86`),
+and **vanilla turns a faction into an ALLY at goodwill 75** (`FactionRelation.cs:34-36`).
+
+**No second schema bump.** F08 needs no persisted state at all. F09 needs two additive nodes on
+`EmploymentContract` with zero defaults, which ride 58 legitimately.
+
+**F08 is 3-4 units. F09 is 7-9 and is a small system**, because nothing in this mod samples mood
+today and F09 is defined in terms of consolidated employment experience.
+
+**DECIDED, from the recon and the plan's explicit "balance is open" (`:616-621`). These are
+starting values for the play sitting, not laws:**
+
+  - **D1 — eligibility.** Any settlement at Preferred, 80 or above, whose CURRENT owning faction is
+    not hostile and not at war. Live owning faction, never the saved faction-name string, because
+    settlements change hands and the existing lookup already tracks that.
+  - **D2 — one faction, one tick.** Deduplicate per faction: three Preferred towns of one faction
+    produce one application, not three.
+  - **D3 — the ceiling is 60, and that number is the whole safety property.** Vanilla allies at 75.
+    F08 must never be a hostility-to-alliance engine, so commercial pressure stops well below the
+    threshold that would create one. `+1` per quadrum, and nothing at all once base goodwill is at
+    or above the ceiling.
+  - **D4 — cap against BASE goodwill, and skip while a goodwill situation is suppressing the
+    effective value**, so credit cannot accumulate invisibly and then appear when a diplomatic
+    restriction expires.
+  - **D5 — no double credit.** Sale-price generosity already moves goodwill on its own
+    (`SalesOrderService.cs:588-647`) and F10's purchase count is already inside the commercial
+    score. F08 reads the score and nothing else.
 
 ## ALL SEVEN KNOWN DEFECTS ARE CLOSED, 2026-09-09
 
@@ -426,7 +458,12 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 
 | | Unit | Status |
 |---|---|---|
-| 🔨 | 8.0 — recon: what relationship state exists, and how big F08+F09 really are | Sol recon running |
+| ✅ | 8.0 — recon: what relationship state exists, and how big F08+F09 really are | accepted; decisions D1-D5 recorded |
+| 🔨 | 8.1 — F08's decision logic, pure and uncalled | Luna running |
+| ⬜ | 8.2 — apply it on a quadrum cadence from the world tick | not started |
+| ⬜ | 8.3 — disclose it in the Relations row | not started |
+| ⬜ | 8.4 — F08's assertions | not started |
+| ⬜ | 8.5+ — F09, about 7-9 units, a small system | not started |
 
 ## Closed-stage unit history
 
