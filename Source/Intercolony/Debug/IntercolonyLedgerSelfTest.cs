@@ -1031,26 +1031,34 @@ namespace Intercolony
 
                 int expectedNarrowMargin = componentEstimate == null
                     ? 0
-                    : componentEstimate.revenue + componentEstimate.inputsIfBought +
-                      expectedComponentDirectPayroll + componentEstimate.transport;
-                int wholePayrollMargin = componentEstimate == null
+                    : componentEstimate.revenue + componentEstimate.directInputsIfBought +
+                      componentEstimate.directPayroll + componentEstimate.transport;
+                int finishedGoodMargin = componentEstimate == null
                     ? 0
                     : componentEstimate.revenue + componentEstimate.inputsIfBought +
-                      expectedWholePayroll + componentEstimate.transport;
+                      componentEstimate.directPayroll + componentEstimate.transport;
+                int wholePayrollMargin = componentEstimate == null
+                    ? 0
+                    : componentEstimate.revenue + componentEstimate.directInputsIfBought +
+                      componentEstimate.payroll + componentEstimate.transport;
                 r.Check(
                     componentEstimate != null && componentEstimate.directLabor != null &&
                     componentEstimate.HasDirectLaborEstimate &&
                     componentEstimate.directPayroll == expectedComponentDirectPayroll &&
                     componentEstimate.payroll == expectedWholePayroll &&
                     componentEstimate.Margin == expectedNarrowMargin &&
-                    componentEstimate.Margin != wholePayrollMargin,
+                    componentEstimate.Margin != wholePayrollMargin &&
+                    componentEstimate.Margin != finishedGoodMargin,
                     marginAssertion,
                     $"{componentProduct.defName}: wages {ineligibleDailyWage}+{sharedDailyWage}/day " +
                     $"x {cycleDays}d; shared eligible-good count {sharedEligibleGoodCount}, " +
                     $"resulting share {expectedSharedDailyShare:0.###}/day; direct payroll " +
                     $"{componentEstimate?.directPayroll.ToString() ?? "<missing>"}, whole payroll " +
-                    $"{componentEstimate?.payroll.ToString() ?? "<missing>"}; expected margin " +
-                    $"{expectedNarrowMargin}, whole-payroll margin {wholePayrollMargin}, reported " +
+                    $"{componentEstimate?.payroll.ToString() ?? "<missing>"}; direct-input cost " +
+                    $"{componentEstimate?.directInputsIfBought.ToString() ?? "<missing>"}, " +
+                    $"finished-good input cost {componentEstimate?.inputsIfBought.ToString() ?? "<missing>"}; " +
+                    $"expected margin {expectedNarrowMargin}, whole-payroll margin " +
+                    $"{wholePayrollMargin}, finished-good margin {finishedGoodMargin}, reported " +
                     $"{componentEstimate?.Margin.ToString() ?? "<missing>"}");
             }
             catch (System.Exception ex)

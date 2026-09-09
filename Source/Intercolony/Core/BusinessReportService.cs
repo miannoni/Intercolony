@@ -63,12 +63,19 @@ namespace Intercolony
             public bool HasDirectLaborEstimate =>
                 directLabor != null && directLabor.status != DirectLaborCostStatus.Unavailable;
 
+            // Direct-input reports have explicit unresolved states rather than the labour report's
+            // single Unavailable sentinel. Only Resolved carries a usable direct-input figure;
+            // NoKnownRecipe and CannotBePriced must retain the finished-good fallback.
+            public bool HasDirectInputEstimate =>
+                directInputs != null && directInputs.status == DirectInputCostStatus.Resolved;
+
             // A malformed/incomplete report must not turn an unavailable direct estimate into a
             // numeric zero. Normal report reads resolve this state or explicitly find no eligible
             // employees; the old whole bill is retained only as the defensive fallback.
-            public int Margin => HasDirectLaborEstimate
-                ? revenue + inputsIfBought + directPayroll + transport
-                : revenue + inputsIfBought + payroll + transport;
+            public int Margin => revenue +
+                (HasDirectInputEstimate ? directInputsIfBought : inputsIfBought) +
+                (HasDirectLaborEstimate ? directPayroll : payroll) +
+                transport;
 
             /// <summary>What making the goods rather than buying them is worth, per cycle.</summary>
             public int MakingSaves => -inputsIfBought;
