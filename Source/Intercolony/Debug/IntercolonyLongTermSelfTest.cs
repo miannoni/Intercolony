@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -930,6 +931,11 @@ namespace Intercolony
                     $"canMarkReady={sellerDeliveryOrder.CanMarkReady}");
                 state.Contracts.Remove(sellerDeliveryContract);
                 state.Orders.Remove(sellerDeliveryOrder);
+
+                // The fixtures above start with an order that already exists. Keep them for the
+                // order-level auto-ready checks, but cover the defect's actual entry point too:
+                // a real contract whose next cycle is due and is advanced through the public path.
+                CheckDueCycleThroughAdvanceContracts(r, state, fulfillmentMap, probeDef);
             }
             finally
             {
@@ -960,6 +966,285 @@ namespace Intercolony
                 }
 
                 RemoveGeneratedLetters(existingLetters, existingArchivables);
+            }
+        }
+
+        private static void CheckDueCycleThroughAdvanceContracts(
+            Results r, IntercolonyWorldComponent state, Map fulfillmentMap, ThingDef probeDef)
+        {
+            const string DueFulfillableNoLetterAssertion =
+                "a due fully fulfillable cycle sends no player letter";
+            const string DueAutoReadyNoLetterAssertion =
+                "a due cycle whose auto-ready succeeds sends no player letter";
+            const string DueMissingGoodsAssertion =
+                "a due cycle with insufficient goods sends one actionable warning";
+            const string DueStateAssertion =
+                "a successful due cycle keeps its order linked and schedules the next cycle";
+            const string DueWarningThrottleAssertion =
+                "repeated due-cycle advances do not duplicate an unresolved warning";
+            const string DueAutoReadyOffAssertion =
+                "a due cycle with auto-ready off sends one actionable warning";
+            const string DueSellerDeliveryAssertion =
+                "a seller-delivery due cycle sends one actionable warning";
+            const string FailureLetterLabel = "Agreement delivery needs attention";
+
+            void SkipAll(string reason)
+            {
+                r.Skip(DueFulfillableNoLetterAssertion, reason);
+                r.Skip(DueAutoReadyNoLetterAssertion, reason);
+                r.Skip(DueMissingGoodsAssertion, reason);
+                r.Skip(DueStateAssertion, reason);
+                r.Skip(DueWarningThrottleAssertion, reason);
+                r.Skip(DueAutoReadyOffAssertion, reason);
+                r.Skip(DueSellerDeliveryAssertion, reason);
+            }
+
+            TickManager tickManager = Find.TickManager;
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            if (Find.LetterStack == null || settings == null)
+            {
+                SkipAll(Find.LetterStack == null
+                    ? "the letter stack is unavailable"
+                    : "Intercolony settings are unavailable");
+                return;
+            }
+
+            Settlement settlement = FindDueCycleSettlement();
+            if (tickManager == null || settlement == null || fulfillmentMap == null ||
+                probeDef == null)
+            {
+                SkipAll(
+                    tickManager == null
+                        ? "the tick manager is unavailable"
+                        : settlement == null
+                            ? "no accessible settlement was available for RaiseCycleOrder"
+                            : fulfillmentMap == null
+                                ? "no player-home fulfillment map"
+                                : "no isolated valid tradable item definition");
+                return;
+            }
+
+            List<RecurringContract> savedContracts =
+                new List<RecurringContract>(state.Contracts);
+            List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
+            List<Zone_Stockpile> testZones = new List<Zone_Stockpile>();
+            List<Thing> testThings = new List<Thing>();
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+            int savedTick = tickManager.TicksGame;
+            IntercolonyLetterVolume savedLetterVolume = settings.letterVolume;
+
+            try
+            {
+                settings.letterVolume = IntercolonyLetterVolume.Everything;
+
+                // Isolate AdvanceContracts from real obligations. The public path walks every
+                // contract in the component, so leaving the player's list in place would make
+                // this assertion depend on unrelated due work in the current save.
+                state.Contracts.Clear();
+                state.Orders.Clear();
+
+                string stockFailure = null;
+                bool storedStock = TrySpawnStoredStock(
+                    fulfillmentMap, probeDef, testZones, testThings, out stockFailure);
+                int dueTick = tickManager.TicksGame;
+
+                if (!storedStock)
+                {
+                    r.Skip(
+                        DueFulfillableNoLetterAssertion,
+                        stockFailure ?? "the shared real-stock fixture could not be placed");
+                    r.Skip(
+                        DueAutoReadyNoLetterAssertion,
+                        stockFailure ?? "the shared real-stock fixture could not be placed");
+                    r.Skip(
+                        DueStateAssertion,
+                        stockFailure ?? "the shared real-stock fixture could not be placed");
+                }
+                else
+                {
+                    // One fixture honestly proves both plan cases: the due cycle is fully
+                    // fulfillable, and its configured buyer-pickup flow auto-readies it.
+                    RecurringContract success = AddDueCycleFixture(
+                        state, settlement, probeDef, autoReadyOrders: true,
+                        FulfillmentMode.BuyerPickup, -89301, dueTick);
+                    List<Letter> successBefore = SnapshotLetters();
+                    ContractService.AdvanceContracts(state);
+                    List<Letter> successNewLetters = NewLettersSince(successBefore);
+                    SalesOrder successOrder = state.FindOrder(success.activeOrderId);
+
+                    r.Check(
+                        successNewLetters.Count == 0,
+                        DueFulfillableNoLetterAssertion,
+                        $"new letters={LetterLabels(successNewLetters)}");
+                    r.Check(
+                        successOrder != null &&
+                        successOrder.status == SalesOrderStatus.AwaitingCollection &&
+                        successNewLetters.Count == 0,
+                        DueAutoReadyNoLetterAssertion,
+                        $"order={successOrder?.status.ToString() ?? "missing"}, " +
+                        $"new letters={LetterLabels(successNewLetters)}");
+
+                    // A due cycle is not complete yet, so its durable evidence is the retained
+                    // order row and the contract's live linkage/schedule, not a completion record.
+                    bool orderRetained = successOrder != null &&
+                                         state.Orders.Contains(successOrder) &&
+                                         state.FindOrder(success.activeOrderId) == successOrder;
+                    bool orderLinked = successOrder != null &&
+                                       successOrder.contractId == success.id &&
+                                       success.activeOrderId == successOrder.id;
+                    bool nextCycleScheduled = success.nextCycleTick ==
+                                              dueTick + success.cadenceTicks;
+                    r.Check(
+                        orderRetained && orderLinked && nextCycleScheduled,
+                        DueStateAssertion,
+                        $"retained={orderRetained}, linked={orderLinked}, " +
+                        $"next={success.nextCycleTick}, expected={dueTick + success.cadenceTicks}");
+                }
+
+                // Keep the one stored matching unit: physical line validation must pass before
+                // CanMarkReadyNow can reach its free-quantity shortage branch. Occupy that unit
+                // with a separate open pickup commitment so the cycle is short only on goods
+                // still free to promise, not on the line-validation summary.
+                state.Contracts.Clear();
+                state.Orders.Clear();
+
+                // Auto-ready on + missing goods exercises its existing specific warning and its
+                // per-order throttle. The second pass is one tick later, while the order remains
+                // Accepted and unresolved.
+                int missingGoodsDueTick = tickManager.TicksGame;
+                RecurringContract missingGoods = AddDueCycleFixture(
+                    state, settlement, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.BuyerPickup, -89302, missingGoodsDueTick);
+                state.AddOrder(new SalesOrder
+                {
+                    id = -89305,
+                    contractId = -89305,
+                    settlementId = settlement.ID,
+                    settlementName = "Due-cycle stock commitment",
+                    factionName = settlement.Faction?.Name ?? "",
+                    line = new OrderLine(probeDef, 1),
+                    unitPrice = 1f,
+                    acceptedTick = missingGoodsDueTick,
+                    deadlineTick = missingGoodsDueTick + GenDate.TicksPerDay,
+                    fulfillment = FulfillmentMode.BuyerPickup,
+                    fulfillmentMap = fulfillmentMap,
+                    buyerArrivalTick = missingGoodsDueTick + 1,
+                    status = SalesOrderStatus.AwaitingCollection
+                });
+                List<Letter> missingBefore = SnapshotLetters();
+                ContractService.AdvanceContracts(state);
+                List<Letter> missingFirstLetters = NewLettersSince(missingBefore);
+                SalesOrder missingOrder = state.FindOrder(missingGoods.activeOrderId);
+                SalesOrderService.CanMarkReadyNow(
+                    missingOrder,
+                    SalesOrderService.GetFulfillmentMapForReady(missingOrder),
+                    out string missingReason);
+                bool missingWarningIsActionable =
+                    missingFirstLetters.Count == 1 &&
+                    CountLetterLabel(missingFirstLetters, FailureLetterLabel) == 1 &&
+                    HasActionableLetter(
+                        missingFirstLetters,
+                        FailureLetterLabel,
+                        "order #",
+                        "could not be marked ready automatically",
+                        "still needs",
+                        "Selling -> Orders");
+                r.Check(
+                    missingWarningIsActionable,
+                    DueMissingGoodsAssertion,
+                    $"new letters={LetterLabels(missingFirstLetters)}, " +
+                    $"reason={missingReason ?? "none"}, " +
+                    $"order={missingOrder?.status.ToString() ?? "missing"}");
+
+                tickManager.DebugSetTicksGame(missingGoodsDueTick + 1);
+                List<Letter> repeatedBefore = SnapshotLetters();
+                ContractService.AdvanceContracts(state);
+                List<Letter> repeatedLetters = NewLettersSince(repeatedBefore);
+                r.Check(
+                    missingFirstLetters.Count == 1 && repeatedLetters.Count == 0 &&
+                    CountLetterLabel(missingFirstLetters, FailureLetterLabel) == 1 &&
+                    missingOrder != null && missingOrder.status == SalesOrderStatus.Accepted,
+                    DueWarningThrottleAssertion,
+                    $"first={LetterLabels(missingFirstLetters)}, " +
+                    $"repeated={LetterLabels(repeatedLetters)}, " +
+                    $"status={missingOrder?.status.ToString() ?? "missing"}");
+
+                state.Contracts.Clear();
+                state.Orders.Clear();
+                tickManager.DebugSetTicksGame(savedTick);
+
+                RecurringContract autoReadyOff = AddDueCycleFixture(
+                    state, settlement, probeDef, autoReadyOrders: false,
+                    FulfillmentMode.BuyerPickup, -89304, savedTick);
+                List<Letter> autoReadyOffBefore = SnapshotLetters();
+                ContractService.AdvanceContracts(state);
+                List<Letter> autoReadyOffNewLetters = NewLettersSince(autoReadyOffBefore);
+                SalesOrder autoReadyOffOrder = state.FindOrder(autoReadyOff.activeOrderId);
+                r.Check(
+                    autoReadyOffNewLetters.Count == 1 &&
+                    CountLetterLabel(autoReadyOffNewLetters, FailureLetterLabel) == 1 &&
+                    HasActionableLetter(
+                        autoReadyOffNewLetters,
+                        FailureLetterLabel,
+                        "order #",
+                        "Auto-ready is off",
+                        "mark the order ready by hand") &&
+                    autoReadyOffOrder != null &&
+                    autoReadyOffOrder.status == SalesOrderStatus.Accepted,
+                    DueAutoReadyOffAssertion,
+                    $"new letters={LetterLabels(autoReadyOffNewLetters)}, " +
+                    $"order={autoReadyOffOrder?.status.ToString() ?? "missing"}");
+
+                state.Contracts.Clear();
+                state.Orders.Clear();
+                tickManager.DebugSetTicksGame(savedTick);
+
+                RecurringContract sellerDelivery = AddDueCycleFixture(
+                    state, settlement, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.SellerDelivery, -89303, savedTick);
+                List<Letter> sellerBefore = SnapshotLetters();
+                ContractService.AdvanceContracts(state);
+                List<Letter> sellerNewLetters = NewLettersSince(sellerBefore);
+                SalesOrder sellerOrder = state.FindOrder(sellerDelivery.activeOrderId);
+                bool sellerWarningIsActionable =
+                    sellerNewLetters.Count == 1 &&
+                    CountLetterLabel(sellerNewLetters, FailureLetterLabel) == 1 &&
+                    HasActionableLetter(
+                        sellerNewLetters,
+                        FailureLetterLabel,
+                        "order #",
+                        "seller-delivery",
+                        "arrange the delivery by hand");
+                r.Check(
+                    sellerWarningIsActionable && sellerOrder != null &&
+                    sellerOrder.status == SalesOrderStatus.Accepted &&
+                    !sellerOrder.CanMarkReady,
+                    DueSellerDeliveryAssertion,
+                    $"new letters={LetterLabels(sellerNewLetters)}, " +
+                    $"order={sellerOrder?.status.ToString() ?? "missing"}, " +
+                    $"canMarkReady={sellerOrder?.CanMarkReady.ToString() ?? "missing"}");
+            }
+            finally
+            {
+                tickManager.DebugSetTicksGame(savedTick);
+                settings.letterVolume = savedLetterVolume;
+
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedContracts);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedOrders);
+
+                DestroyTestThings(testThings);
+                foreach (Zone_Stockpile zone in testZones)
+                {
+                    zone?.Delete(playSound: false);
+                }
+
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+                r.Info(
+                    $"due-cycle contracts/orders restored ({savedContracts.Count}/{savedOrders.Count}), " +
+                    $"tick {savedTick} restored, and generated letters removed.");
             }
         }
 
@@ -1876,6 +2161,49 @@ namespace Intercolony
             return contract;
         }
 
+        private static RecurringContract AddDueCycleFixture(
+            IntercolonyWorldComponent state, Settlement settlement, ThingDef def,
+            bool autoReadyOrders, FulfillmentMode fulfillment, int contractId, int dueTick)
+        {
+            RecurringContract contract = new RecurringContract
+            {
+                id = contractId,
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "Due-cycle self-test buyer",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = def,
+                quantityPerCycle = 1,
+                cadenceTicks = GenDate.TicksPerDay,
+                totalCycles = 2,
+                unitPrice = 1f,
+                fulfillment = fulfillment,
+                status = ContractStatus.Active,
+                nextCycleTick = dueTick,
+                autoReadyOrders = autoReadyOrders
+            };
+
+            state.AddContract(contract);
+            return contract;
+        }
+
+        private static Settlement FindDueCycleSettlement()
+        {
+            if (Find.WorldObjects?.Settlements == null)
+            {
+                return null;
+            }
+
+            foreach (Settlement settlement in Find.WorldObjects.Settlements)
+            {
+                if (settlement != null && IntercolonyMarketAccess.IsAccessible(settlement))
+                {
+                    return settlement;
+                }
+            }
+
+            return null;
+        }
+
         private static List<Letter> SnapshotLetters()
         {
             return Find.LetterStack == null
@@ -1907,6 +2235,61 @@ namespace Intercolony
             foreach (Letter letter in letters)
             {
                 if (letter != null && letter.Label == label)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static int CountLetterLabel(List<Letter> letters, string label)
+        {
+            int count = 0;
+            if (letters == null)
+            {
+                return count;
+            }
+
+            foreach (Letter letter in letters)
+            {
+                if (letter != null && letter.Label == label)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static bool HasActionableLetter(
+            List<Letter> letters, string label, params string[] requiredFragments)
+        {
+            if (letters == null || requiredFragments == null)
+            {
+                return false;
+            }
+
+            foreach (Letter letter in letters)
+            {
+                if (letter == null || letter.Label != label || !(letter is ChoiceLetter choiceLetter))
+                {
+                    continue;
+                }
+
+                string text = choiceLetter.Text.ToString();
+                bool containsEveryFragment = true;
+                foreach (string fragment in requiredFragments)
+                {
+                    if (fragment == null ||
+                        text.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        containsEveryFragment = false;
+                        break;
+                    }
+                }
+
+                if (containsEveryFragment)
                 {
                     return true;
                 }
