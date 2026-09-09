@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
-Stage: 8 — F08 and F09, recon first. Stage 7 is done apart from F22, which awaits the operator. Stages 1-6 are CLOSED.
-Unit: 8.7 — F09's disclosure in the departure letter, the last unit of stage 8
-Worker: luna running — `…\scratchpad\unit-8-7.out`
-Last done: 8.8, F09's five assertions, accepted at `ecf314a` — long-term 54/0/0, both mutations red.
-Updated: 2026-09-09 06:50
+Stage: 9 — F06, the last finding, recon first. **STAGES 1-6 AND 8 ARE CLOSED.** Stage 7 is done apart from F22, which awaits the operator.
+Unit: 9.0 — F06 recon: what vanilla already does about apparel policies
+Worker: sol recon running — `…\scratchpad\recon-stage9.out`
+Last done: 8.7, F09's disclosure, accepted at `d1640f3` — **STAGE 8 IS COMPLETE**.
+Updated: 2026-09-09 07:05
 Foreman load: 2026-09-09 03:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -427,7 +427,7 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 5 — Market geography | F21, F11 | closed 2026-09-08 |
 | ✅ | 6 — Business intelligence and costing | F07, F19, F20 | closed 2026-09-08 |
 | 🔨 | 7 — Two-sided labor market | F25, F23, F24, F22 | F25, F23, F24 built; F22 reconnoitred only |
-| ⬜ | 8 — Commercial relationships | F08, F09 | not started |
+| ✅ | 8 — Commercial relationships | F08, F09 | closed 2026-09-09, both built, asserted and disclosed |
 | ⬜ | 9 — Optional apparel policies | F06 | placed 2026-09-08, recon first, runs last |
 
 ## Decisions
@@ -490,7 +490,14 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | ✅ | 8.5 + 8.5b — F09's sampler, and two assertion repairs | accepted, `10aa547` |
 | ✅ | 8.6 — F09's end evaluation and its guards | accepted, `c07fae7` |
 | ✅ | 8.8 — F09's five assertions | accepted, `ecf314a` |
-| 🔨 | 8.7 — F09's disclosure in the departure letter | Luna running |
+| ✅ | 8.7 — F09's disclosure in the departure letter | accepted, `d1640f3`. **STAGE 8 COMPLETE** |
+| ⬜ | 8.9 — the stage-8 play entry | not started |
+
+## Units — stage 9
+
+| | Unit | Status |
+|---|---|---|
+| 🔨 | 9.0 — F06 recon: what vanilla already does about apparel policies | Sol recon running |
 
 ## Closed-stage unit history
 
