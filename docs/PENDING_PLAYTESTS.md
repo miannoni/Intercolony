@@ -46,6 +46,55 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### Stage 8: F08 and F09 need a seasons-long diplomatic read
+
+Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. F08 and F09 are slow, quiet
+diplomatic systems whose character can only be judged by watching a game over seasons. The mechanics
+are verified and mutation-proven. Every number in this entry is a starting value for balance, not
+fixed by the source plan.
+
+**F08 - commerce slowly warms a faction.** A settlement at **Preferred** commercial standing, **80
+or above**, gives its faction **+1 base goodwill once a quadrum**. One faction gets one point however
+many of its settlements qualify. It stops at **base goodwill 60** and never applies to a faction at
+war. The **Relations** row says whether pressure is active and, when it is not, why: **below
+Preferred**, **at the ceiling**, **hostile**, or **goodwill currently restricted**.
+
+**F09 - how a worker was treated follows them home.** An employee's mood is sampled once a day for
+the life of the employment. When an ordinary employment ends, the average decides one goodwill change
+with the settlement that sent them: **+3** at or above **0.75**, **-3** at or below **0.35**, and
+nothing between. Fewer than **ten samples** produces nothing at all, so a short hire cannot move
+diplomacy. Endings that are already priced - death, a wage walkout, combat misuse, safe-passage
+denial, or a dismissal without notice - produce nothing extra. The departure letter carries one row
+when there is a result and stays silent when there is not.
+
+**Steps.** Run a long game with a faction whose settlement or settlements reach **Preferred** and
+**80 or above**, and watch whether **+1 a quadrum** is felt at all. Fifteen days per point is
+deliberately slow: judge whether a long game ever notices the change or whether it may as well not
+exist. Where more than one settlement qualifies, check that the faction gains one point rather than
+one per settlement. Watch the **Relations** row as pressure is active and as it stops; judge whether
+the four not-earning reasons are legible, especially **goodwill restricted**, which means a vanilla
+diplomatic situation is currently capping the faction.
+
+Judge whether the **60** ceiling reads as a sensible limit or an arbitrary wall. It is deliberately
+**15 points below the 75** at which vanilla would make the faction an ally: commerce must not be able
+to buy an alliance. Then follow ordinary employments through enough days to reach **ten samples** and
+end them normally. Compare a result from a high average, a low average and an average in between.
+Judge whether **+3** or **-3** is enough to change how you treat people or so small that it is
+decoration. It should complement employer reputation rather than replace it; the mod already moves
+**8**, **20** and **80** points for conduct. Judge whether ten days feels like the right minimum - a
+short contract earns nothing whatever the worker thought of you, which may read as fair or as a cheap-
+labour loophole.
+
+Finally, read the faction's goodwill and the departure letter together. Judge whether a player can tell
+why a faction warmed when F08 and F09 can both move goodwill quietly, while only F09 speaks in a
+departure letter. When a letter has a result, judge whether its row is noticed or lost in the rest of
+the letter about someone leaving.
+
+**Not built.** There is no decay on either reputation. Nothing in this mod ever fades; only vanilla
+goodwill drifts. F09 samples mood and nothing else - there is no separate memory of specific events
+beyond what employer reputation already tracks. F08 reads only the commercial score; sale-price
+generosity moves goodwill separately, and the two are deliberately not combined.
+
 ### Seven player-facing fixes need a numbers-and-meaning read
 
 Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. Seven defect fixes in this batch change a
