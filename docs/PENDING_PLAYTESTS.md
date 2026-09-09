@@ -46,6 +46,48 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### Seven player-facing fixes need a numbers-and-meaning read
+
+Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. Seven defect fixes in this batch change a
+number the player reads or is charged, so they need eyes in play. Every place a daily wage appears now
+shows both the worker's ask and the colony's charge under the chosen payment structure. A Daily term
+carries a **35% premium**: a **100/day** ask is a **135/day** charge. The tooltip explains why: paying
+day by day buys the freedom to stop any morning, and the worker charges for carrying that risk. The same
+fix also removes a real double charge: a directly hired Daily worker was quoted **135** and charged
+**182**; new hires are charged what they are quoted.
+
+Part periods are now billed at the same daily rate as full ones, so a worker who leaves mid-period is no
+longer settled at a different rate from the one paid during the week. An equipment bond now uses the
+gear's value with quality included: the old **1,062** bond for a masterwork parka was the price of a
+plain one, while a masterwork longsword was **2,651**. The profitability figure now costs a made good
+at its materials, not at the shelf price of buying the finished goods, so a recurring agreement's margin
+answers the intended question. Pausing a produce loop after its object has been designated for uninstall
+now leaves the produced object standing. Stop still lets a committed uninstall finish. Hiring travel is
+bounded to **one to twenty days**, so a close settlement no longer delivers a worker the same day.
+
+**Steps.** In a real colony, read several wage rows together, especially in the applicant list. Judge
+whether the ask and charge read as clarity or clutter, and whether the visible 35% premium now looks too
+expensive even though it was always charged. Hire a worker on Daily terms and compare what is quoted with
+what is charged. Then load an existing colony and watch its payroll; say whether any employee's daily
+cost looks wrong against what their card claims. This existing-save compatibility check is the one thing
+here with no assertion behind it, because no test can hold an old save.
+
+Let a worker leave partway through a period and read the final settlement. Judge whether it obviously
+uses the same fair daily rate as the period already paid. At hire, inspect a well-equipped mercenary's
+bond and judge whether quality makes it large enough to be a real decision, and whether it reads as a
+deposit rather than a fee. In **Business**, compare the two input rows beside each other and the
+resulting margin; judge whether the rows are legible and whether the margin matches a player's intuition
+about whether the recurring agreement is worth taking. On the same object, watch Pause and Stop back to
+back: after the object is designated for uninstall, pause the produce loop, then repeat with Stop. Judge
+whether Pause leaves the object standing while Stop lets the committed uninstall finish, or whether the
+two orders look inconsistent. Finally, hire from a close settlement and judge whether same-day hiring is
+missed.
+
+Assertions and mutation evidence cover the seven shipped fixes. Every one was found by an audit or by a
+mutation, not by the suite going red; four assertions passed throughout. Existing-save contracts
+deliberately keep whatever they already hold, because nothing in the save can distinguish the two old wage
+meanings. Stop's committed-uninstall rule is also deliberate.
+
 ### F07 committed output needs an early-warning read
 
 Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. For each good with an active
