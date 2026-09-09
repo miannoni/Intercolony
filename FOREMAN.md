@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C1 — F01, a routine contract cycle must be silent. **C0 IS CLOSED.**
-Unit: C1.1 — the due letter becomes a log; the exception path fires after auto-ready
-Worker: luna running — `…\scratchpad\unit-c1-1.out`
+Unit: C1.2 — C1's assertions, the six the plan asks for
+Worker: luna running — `…\scratchpad\unit-c1-2.out`
 Last done: C0.1, the scope lock, accepted at `f049bfb` — the plan is copied to
 `docs/PLAYTEST_CORRECTION_PLAN.md` byte-identical, and `PROGRESS.md` records the freezes.
 Updated: 2026-09-09 16:25
@@ -75,8 +75,8 @@ two workers on the same large UI or settings file.
 |---|---|---|
 | ✅ | C0.1 — copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | accepted, `f049bfb` |
 | ✅ | C1.0 — recon: the `Contract delivery due` emission and what it knows | accepted; decisions below |
-| 🔨 | C1.1 — the due letter becomes a log, the warning moves after auto-ready | Luna running |
-| ⬜ | C1.2 — C1's assertions | not started |
+| ✅ | C1.1 — the due letter becomes a log, the warning moves after auto-ready | accepted, `9b8e05e` |
+| 🔨 | C1.2 — C1's assertions, the six the plan asks for | Luna running |
 
 ## C1 — the recon, and what I decided from it
 
