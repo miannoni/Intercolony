@@ -1,10 +1,10 @@
 ﻿# Foreman state — Intercolony
 
 Stage: 8 — F08 and F09, recon first. Stage 7 is done apart from F22, which awaits the operator. Stages 1-6 are CLOSED.
-Unit: 8.1 — F08's decision logic, pure, called from nowhere yet
-Worker: luna running — `…\scratchpad\unit-8-1.out`
-Last done: 8.0, the stage-8 recon — read-only, three claims spot-checked, decisions recorded below.
-Updated: 2026-09-09 04:10
+Unit: 8.2 — apply F08's decision on a quadrum cadence, after the war sweep
+Worker: luna running — `…\scratchpad\unit-8-2.out`
+Last done: 8.1, F08's pure decision logic, accepted at `91fc5e9` — uncalled, so no suite run.
+Updated: 2026-09-09 04:25
 Foreman load: 2026-09-09 03:18
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -459,8 +459,8 @@ Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publ
 | | Unit | Status |
 |---|---|---|
 | ✅ | 8.0 — recon: what relationship state exists, and how big F08+F09 really are | accepted; decisions D1-D5 recorded |
-| 🔨 | 8.1 — F08's decision logic, pure and uncalled | Luna running |
-| ⬜ | 8.2 — apply it on a quadrum cadence from the world tick | not started |
+| ✅ | 8.1 — F08's decision logic, pure and uncalled | accepted, `91fc5e9` |
+| 🔨 | 8.2 — apply it on a quadrum cadence from the world tick | Luna running |
 | ⬜ | 8.3 — disclose it in the Relations row | not started |
 | ⬜ | 8.4 — F08's assertions | not started |
 | ⬜ | 8.5+ — F09, about 7-9 units, a small system | not started |
