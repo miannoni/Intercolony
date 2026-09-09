@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
-Stage: C3 — settings for F08, F09 and F11, as one coherent pass. **C0, C1 AND C2 ARE CLOSED.**
-Unit: C3.2 — F08 reads its four settings, and clamps to remaining headroom
-Worker: luna running — `…\scratchpad\unit-c3-2.out`
+Stage: **D — RUNTIME DEFECT TRIAGE. THE CORRECTION PLAN IS PAUSED AT C3.3 AND RESUMES THERE.**
+Unit: D.0 — recon on two defects found in real play, one potentially save-corrupting
+Worker: sol recon running — `…\scratchpad\recon-defects.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -62,7 +62,8 @@ two workers on the same large UI or settings file.
 | ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
 | ✅ | C1 — F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
 | ✅ | C2 — F07: the production rate must count real completions | F07 | closed, `14ad416` |
-| 🔨 | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | recon running |
+| ⏸ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | PAUSED at C3.3 for defect triage |
+| 🔨 | D — runtime defect triage, out of plan order, by operator instruction | — | recon running |
 | ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
 | ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
 | ⬜ | C6 — freeze F12 in the documentation | — | not started |
@@ -124,6 +125,52 @@ variable, and nothing in Intercolony is called by ordinary vanilla construction 
 | ✅ | C2.1 — normalise minified bill products, add the construction observer | accepted, `8cb5774` |
 | ✅ | C2.2 + C2.2b — C2's eight assertions and the wrapper re-cut | accepted, `14ad416`. **C2 COMPLETE** |
 
+## STAGE D — TWO RUNTIME DEFECTS FROM REAL PLAY, 2026-09-09
+
+The operator hit both repeatedly in a real game and asked for triage before any more feature work.
+**Feature dispatch is paused. It resumes at C3.3.** This does not authorise anything the correction
+plan freezes or defers.
+
+**DEFECT A — `Object with load ID Lord_140 is referenced (xml node name: lord) but is not
+deep-saved.`** Potentially save-corrupting, treated as P0 until disproven.
+
+**DEFECT B — a repeated `NullReferenceException` through `JoyGiver_VisitGrave`.** Note it is
+`JoyGiver`, not `JobGiver` as reported; it is reached through `JobGiver_IdleJoy` →
+`JobGiver_GetJoy`.
+
+### Evidence captured before it was lost
+
+The live `Player.log` had already been rotated away by my own test runs. **The operator's play log is
+preserved at `…\scratchpad\playtest-evidence\Player-prev-CAPTURED.log`** and the play save is
+`Saves\Playtest 1.0.rws` (19:18) — the `Autosave-*.rws` files are from test runs, not play.
+
+**THIRTEEN OTHER MODS WERE ACTIVE**, and two of them matter: **Orion.Hospitality**, which owns its
+own Lords for guests, and **avilmask.CommonSense**, which prefixes the exact job giver in defect B's
+stack. Nothing here may be blamed on Intercolony merely because it happened in an Intercolony game.
+
+### What I established myself, before the recon returned
+
+**Defect B's null is identified.** `JoyGiver_VisitGrave`'s validator evaluates
+`building_Grave.Corpse.InnerPawn.Faction`, and `Corpse.InnerPawn` **returns null when its inner
+container is empty** (`reference/decompiled/Verse/Corpse.cs:29-38`). So the broken state is a grave
+holding a corpse that has lost its pawn without being destroyed.
+
+**Defect A's holder is almost certainly a Job.** Only eight vanilla types scribe a field named
+`lord`, and the one that travels with a pawn is **`Verse.AI/Job.cs:503`**. A job outlives the lord
+it references.
+
+**And the mechanism is in plain sight:** `Pawn.SetFaction` calls
+`GetLord()?.Notify_PawnLost(this, ChangedFaction)` (`reference/decompiled/Verse/Pawn.cs:2714`) and
+**does not clear the pawn's job**. Any mod changing a pawn's faction while it holds a lord-linked
+job leaves a dangling reference. Intercolony changes faction at arrival
+(`EmploymentService.cs:892`), and `HostilityPolicy.cs:180` already has a comment showing the mod
+knows about this interaction.
+
+**The screenshots put an Intercolony arrival 18 seconds before the warning** — 12:40:06 "Breixo of
+Coalition of Braga has arrived", 12:40:24 the Lord_140 warning. Suggestive, not proof: the warning
+is emitted when SAVING, so that is an autosave firing near an arrival. **Ownership is not
+established until the save says which pawn holds the reference.**
+
 ## C3 — the recon, and what I decided from it
 
 Sol recon, read-only. The settings idiom, the nine constants and F11's scheduler are all mapped.
@@ -163,11 +210,17 @@ point of the ceiling is that commerce cannot buy an alliance.
 |---|---|---|
 | ✅ | C3.0 — recon: the settings surface, the nine constants, F11's scheduling | accepted; D1-D5 recorded |
 | ✅ | C3.1 — the settings surface, one owner, no consumer touched | accepted, `2439f4a` |
-| 🔨 | C3.2 — F08 reads the settings, and clamps to remaining headroom | Luna running |
-| ⬜ | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | not started |
+| ✅ | C3.2 — F08 reads the settings, and clamps to remaining headroom | accepted, `3b742f9` |
+| ⏸ | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | **NEXT when the plan resumes** |
 | ⬜ | C3.4 — F09 reads the settings at resolution | not started |
 | ⬜ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | not started |
 | ⬜ | C3.6 → C3.8 — assertions, one unit per host suite | not started |
+
+## Units — stage D
+
+| | Unit | Status |
+|---|---|---|
+| 🔨 | D.0 — recon on both defects, against the captured log and the play save | Sol recon running |
 
 ## C1 — the recon, and what I decided from it
 
