@@ -1,23 +1,28 @@
-# Foreman state — Intercolony
+# Foreman state â€” Intercolony
 
-Stage: **E — THE DEFECT GATE IS REOPENED. The correction plan pauses after C3.6 and resumes at C3.7.**
-Unit: E.2 — the self-test's deliberately-induced missing-def error must stop looking like a real one
-Worker: luna running — `…\scratchpad\unit-e2.out`. **It edits `IntercolonyRfqSelfTest.cs`, which
-already holds C3.6's finished but UNVERIFIED work — both must survive. Neither can be verified while
-the operator is playing, because `dev.ps1 test -Fresh` restarts their game.**
+Stage: **E â€” THE DEFECT GATE IS REOPENED. The correction plan pauses after C3.6 and resumes at C3.7.**
+Unit: E.2b â€” audit the adjacent synthetic "cycle 1 failed: published price is invalid" line
+Worker: luna running â€” `â€¦\scratchpad\unit-e2b.out`.
+
+**A DEBT THIS RUN MUST NOT FORGET: `fb3f97a` carries C3.6 and E.2 and BOTH ARE UNVERIFIED.** They
+were committed rather than held only so a lost session would not lose them. The moment RimWorld is
+not running, owe them `dev.ps1 test rfq -Fresh` plus a mutation pass â€” break the day-five clamp and
+watch F11.6 go red, break the exact-string match in `ExpectedMissingDefLogHandler` and watch the
+new S4 assertion go red. Until then neither is believed.
+
 Last done: E.1, the one-time empty-corpse repair, accepted at `c46e175`. Verified by construction
 rather than by a suite run: `Corpse.Destroy` guards its pawn access behind `!Bugged`
 (`reference/decompiled/Verse/Corpse.cs:244-248`) and `Bugged` is exactly the empty-container
 condition (`:151`), so vanilla already anticipates destroying one. **Running it against the
 operator's save is still owed and is theirs to do.**
-Updated: 2026-09-09 19:35
-Foreman load: 2026-09-09 15:48
-Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
+Updated: 2026-09-09 22:45
+Foreman load: 2026-09-09 19:50
+Foreman: e46c835 Â· source C:\dev\agent-foreman Â· https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
 <!-- Everything above this line is the header. A fresh session reads only the header. -->
 
-## THE PLAN CHANGED — read this before dispatching anything
+## THE PLAN CHANGED â€” read this before dispatching anything
 
 **`C:\dev\intercolony_playtest_correction_execution_plan.md` is now the authority** for the
 behaviours it covers, and it beats `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` wherever the two disagree.
@@ -28,64 +33,64 @@ The older plan still governs everything the correction plan does not mention. A 
 F22 is FROZEN and F06 is deferred. Neither is a pending decision any more, and **this run must not
 stop to ask about either**.
 
-### IN SCOPE — only these eight findings
+### IN SCOPE â€” only these eight findings
 
 F01, F07, F08, F09, F10, F11, F13, F17.
 
-### FROZEN — documented, never advanced
+### FROZEN â€” documented, never advanced
 
 **F12** and **F22**. Existing work stays; no implementation unit may follow their documentation
 freeze. F22's recon stays as historical technical information and is not a plan.
 
-### DEFERRED — do not touch, do not recon, do not "finish"
+### DEFERRED â€” do not touch, do not recon, do not "finish"
 
 F04, F06, F16, F19, F20, F21, F23, F24. Newer product direction is coming for each. If an in-scope
 unit turns out to depend on one, **stop at the boundary, record why, and do the independent work**.
 
-### REGRESSION-ONLY — closed, touch only if an in-scope change breaks them
+### REGRESSION-ONLY â€” closed, touch only if an in-scope change breaks them
 
 F02, F03, F05, F14, F15, F18, F25. A break there is a regression to fix narrowly, not a reopening.
 
 ### Standing constraints, unchanged
 
 Stay on `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never release.** Push
-regularly. Avoid a schema bump unless persisted world state genuinely needs one — ordinary mod
+regularly. Avoid a schema bump unless persisted world state genuinely needs one â€” ordinary mod
 settings never do. Prefer existing simulation events and mod-owned seams over polling, and the
 existing settings infrastructure over a second configuration mechanism.
 
 ### Serialisation the plan requires
 
-F08, F09 and F11's settings are ONE coherent slice or strictly serialised — they share the settings
+F08, F09 and F11's settings are ONE coherent slice or strictly serialised â€” they share the settings
 surface. F13 and F17 both touch the employee card and are serialised or owned by one worker. Never
 two workers on the same large UI or settings file.
 
 
-## Stages — the correction run
+## Stages â€” the correction run
 
 | | Stage | Scope | Status |
 |---|---|---|---|
-| ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
-| ✅ | C1 — F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
-| ✅ | C2 — F07: the production rate must count real completions | F07 | closed, `14ad416` |
-| ⏸ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08 ✅, F09 ✅, F11 | pauses after C3.6, resumes at C3.7 |
-| 🔨 | E — the defect gate reopened: old damage, and a noisy self-test | — | A proven old corruption |
-| ✅ | D — runtime defect triage, out of plan order, by operator instruction | — | closed, `28acfd1` |
-| ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
-| ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
-| ⬜ | C6 — freeze F12 in the documentation | — | not started |
-| ⬜ | C7 — freeze F22 in the documentation | — | not started |
-| ⬜ | C8 — whole-suite regression and clean halt | — | not started |
+| âœ… | C0 â€” scope lock and regression baseline | â€” | closed, `f049bfb` |
+| âœ… | C1 â€” F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
+| âœ… | C2 â€” F07: the production rate must count real completions | F07 | closed, `14ad416` |
+| â¸ | C3 â€” settings for goodwill pressure, employment experience and RFQ pacing | F08 âœ…, F09 âœ…, F11 | pauses after C3.6, resumes at C3.7 |
+| ðŸ”¨ | E â€” the defect gate reopened: old damage, and a noisy self-test | â€” | A proven old corruption |
+| âœ… | D â€” runtime defect triage, out of plan order, by operator instruction | â€” | closed, `28acfd1` |
+| â¬œ | C4 â€” F10: progression gates standing agreements, not Find Seller | F10 | not started |
+| â¬œ | C5 â€” F13 and F17: the employee card's interaction surface | F13, F17 | not started |
+| â¬œ | C6 â€” freeze F12 in the documentation | â€” | not started |
+| â¬œ | C7 â€” freeze F22 in the documentation | â€” | not started |
+| â¬œ | C8 â€” whole-suite regression and clean halt | â€” | not started |
 
-## Units — stages C0 and C1
+## Units â€” stages C0 and C1
 
 | | Unit | Status |
 |---|---|---|
-| ✅ | C0.1 — copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | accepted, `f049bfb` |
-| ✅ | C1.0 — recon: the `Contract delivery due` emission and what it knows | accepted; decisions below |
-| ✅ | C1.1 — the due letter becomes a log, the warning moves after auto-ready | accepted, `9b8e05e` |
-| ✅ | C1.2 + C1.2b — C1's seven assertions and the fixture repair | accepted, `1c5cc56`. **C1 COMPLETE** |
+| âœ… | C0.1 â€” copy the plan into `docs/`, record the scope lock in `PROGRESS.md` | accepted, `f049bfb` |
+| âœ… | C1.0 â€” recon: the `Contract delivery due` emission and what it knows | accepted; decisions below |
+| âœ… | C1.1 â€” the due letter becomes a log, the warning moves after auto-ready | accepted, `9b8e05e` |
+| âœ… | C1.2 + C1.2b â€” C1's seven assertions and the fixture repair | accepted, `1c5cc56`. **C1 COMPLETE** |
 
-## C2 — the recon, and what I decided from it
+## C2 â€” the recon, and what I decided from it
 
 Sol recon, read-only. Three load-bearing claims spot-checked in the source myself.
 
@@ -104,34 +109,34 @@ variable, and nothing in Intercolony is called by ordinary vanilla construction 
 
 **DECIDED:**
 
-  - **C2-D1 — one observer covers construction AND Produce.** Produce places an ordinary vanilla
+  - **C2-D1 â€” one observer covers construction AND Produce.** Produce places an ordinary vanilla
     build blueprint (`ProduceLoopMapComponent.cs:119`), so its completions go through the same
-    frame. **Do NOT also record at Produce's `finishedBuilding` branch** (`:82`) — that branch
+    frame. **Do NOT also record at Produce's `finishedBuilding` branch** (`:82`) â€” that branch
     cannot tell a newly finished object from a seed object the player enabled Produce on, and
     recording in both places would count a Produce chair twice.
-  - **C2-D2 — the bill observer records the wrong def for minifiable goods.** `GenRecipe` wraps a
+  - **C2-D2 â€” the bill observer records the wrong def for minifiable goods.** `GenRecipe` wraps a
     minifiable product in a `MinifiedThing` before returning it
     (`reference/decompiled/Verse/GenRecipe.cs:121`), and the postfix records `product.def`, so a
     crafted minifiable good is recorded under the wrapper. Normalise through the inner Thing.
-  - **C2-D3 — minification and reinstallation must stay invisible.** They do not call
+  - **C2-D3 â€” minification and reinstallation must stay invisible.** They do not call
     `CompleteConstruction`, so a chair built once counts once and selling it counts nothing. That
     is the property the assertions must pin.
-  - **C2-D4 — the extractive paths are OUT OF SCOPE and recorded, not silently skipped.** Recon
+  - **C2-D4 â€” the extractive paths are OUT OF SCOPE and recorded, not silently skipped.** Recon
     found that harvesting, mining, wool and milk, eggs and fishing all create contractable goods
-    without any bill and without any Intercolony seam. C2's own list — bills, constructed
-    furniture, Produce loops — is what this stage covers. Whether *harvesting* is "production" is a
+    without any bill and without any Intercolony seam. C2's own list â€” bills, constructed
+    furniture, Produce loops â€” is what this stage covers. Whether *harvesting* is "production" is a
     product decision, and the honest estimate for that answer is another 12-18 production units.
     It goes to the operator rather than into this stage.
 
-## Units — stage C2
+## Units â€” stage C2
 
 | | Unit | Status |
 |---|---|---|
-| ✅ | C2.0 — recon: the missing completion paths, and the denominator question | accepted; D1-D4 recorded |
-| ✅ | C2.1 — normalise minified bill products, add the construction observer | accepted, `8cb5774` |
-| ✅ | C2.2 + C2.2b — C2's eight assertions and the wrapper re-cut | accepted, `14ad416`. **C2 COMPLETE** |
+| âœ… | C2.0 â€” recon: the missing completion paths, and the denominator question | accepted; D1-D4 recorded |
+| âœ… | C2.1 â€” normalise minified bill products, add the construction observer | accepted, `8cb5774` |
+| âœ… | C2.2 + C2.2b â€” C2's eight assertions and the wrapper re-cut | accepted, `14ad416`. **C2 COMPLETE** |
 
-## STAGE E — THE DEFECT GATE REOPENED, 2026-09-09
+## STAGE E â€” THE DEFECT GATE REOPENED, 2026-09-09
 
 The operator saw the VisitGrave exception again AFTER `68ad1ea` landed, and separately found the
 self-test writing a red error into the live debug log. **Correction-plan dispatch is paused after
@@ -142,7 +147,7 @@ C3.6 and resumes at C3.7.**
 I captured the live log and the operator's re-saved `Playtest 1.0` at 22:17 and counted, in the
 save itself:
 
-  - **85 corpses. Exactly ONE is empty** — `Corpse_Human849086`, still `<innerList />`, still in
+  - **85 corpses. Exactly ONE is empty** â€” `Corpse_Human849086`, still `<innerList />`, still in
     `Grave508055`. That is Sinni, the same corpse the first investigation identified, from before
     the fix.
   - **No newly killed employee has lost its pawn.** If `68ad1ea` were incomplete there would be a
@@ -152,13 +157,13 @@ save itself:
 
 **So the production fix stands and is not reopened.** What remains is the operator's own save, which
 still carries the damage the fix cannot undo. Per their instruction: no null guard in
-`JoyGiver_VisitGrave`, no broad defensive production behaviour, nothing that invents Sinni back —
+`JoyGiver_VisitGrave`, no broad defensive production behaviour, nothing that invents Sinni back â€”
 an explicit one-time repair, backed up first, proving exactly what it changes.
 
 ### **B IS THE SELF-TEST CONTAMINATING THE LIVE LOG.**
 
 `IntercolonyRfqSelfTest.InjectSupplierListingCollection` deliberately persists a listing whose
-`ThingDef` does not exist — `Intercolony_SupplierListing_SelfTest_MissingDef` — to prove the loader
+`ThingDef` does not exist â€” `Intercolony_SupplierListing_SelfTest_MissingDef` â€” to prove the loader
 prunes it safely. Vanilla's Scribe writes a red `Log.Error` for the unresolvable def, so **a
 genuinely clean game is indistinguishable from a broken one in the very signal this run keeps using
 as evidence.** The assertion is right and stays; the way its expected diagnostic reaches the log is
@@ -166,29 +171,29 @@ what changes.
 
 ### **AN OPERATIONAL HAZARD, and it is mine to respect**
 
-**RimWorld is running right now — the operator is playing.** `dev.ps1 test … -Fresh` restarts the
+**RimWorld is running right now â€” the operator is playing.** `dev.ps1 test â€¦ -Fresh` restarts the
 game and would kill that session. No suite may be run until the operator says it is safe. My own
 earlier runs are also what rotated the first play log away; the captures now live in
-`…\scratchpad\playtest-evidence\`.
+`â€¦\scratchpad\playtest-evidence\`.
 
-## STAGE D — TWO RUNTIME DEFECTS FROM REAL PLAY, 2026-09-09
+## STAGE D â€” TWO RUNTIME DEFECTS FROM REAL PLAY, 2026-09-09
 
 The operator hit both repeatedly in a real game and asked for triage before any more feature work.
 **Feature dispatch is paused. It resumes at C3.3.** This does not authorise anything the correction
 plan freezes or defers.
 
-**DEFECT A — `Object with load ID Lord_140 is referenced (xml node name: lord) but is not
+**DEFECT A â€” `Object with load ID Lord_140 is referenced (xml node name: lord) but is not
 deep-saved.`** Potentially save-corrupting, treated as P0 until disproven.
 
-**DEFECT B — a repeated `NullReferenceException` through `JoyGiver_VisitGrave`.** Note it is
-`JoyGiver`, not `JobGiver` as reported; it is reached through `JobGiver_IdleJoy` →
+**DEFECT B â€” a repeated `NullReferenceException` through `JoyGiver_VisitGrave`.** Note it is
+`JoyGiver`, not `JobGiver` as reported; it is reached through `JobGiver_IdleJoy` â†’
 `JobGiver_GetJoy`.
 
 ### Evidence captured before it was lost
 
 The live `Player.log` had already been rotated away by my own test runs. **The operator's play log is
-preserved at `…\scratchpad\playtest-evidence\Player-prev-CAPTURED.log`** and the play save is
-`Saves\Playtest 1.0.rws` (19:18) — the `Autosave-*.rws` files are from test runs, not play.
+preserved at `â€¦\scratchpad\playtest-evidence\Player-prev-CAPTURED.log`** and the play save is
+`Saves\Playtest 1.0.rws` (19:18) â€” the `Autosave-*.rws` files are from test runs, not play.
 
 **THIRTEEN OTHER MODS WERE ACTIVE**, and two of them matter: **Orion.Hospitality**, which owns its
 own Lords for guests, and **avilmask.CommonSense**, which prefixes the exact job giver in defect B's
@@ -199,7 +204,7 @@ stack. Nothing here may be blamed on Intercolony merely because it happened in a
 **DEFECT B IS OURS, AND IT IS A REAL DEFECT IN SHIPPED CODE.** `EmploymentService.cs:1093-1102`
 discards a worker with the guard `!worker.Spawned && Find.WorldPawns.Contains(worker)`, under a
 comment that says "a worker dismissed before arrival". **A DEAD employee satisfies that predicate**
-— a dead pawn is despawned, and `WorldPawns.Contains` includes the dead collection
+â€” a dead pawn is despawned, and `WorldPawns.Contains` includes the dead collection
 (`reference/decompiled/RimWorld.Planet/WorldPawns.cs:191`, `:388`). The comment states an intent
 the code never implemented.
 
@@ -217,13 +222,13 @@ ended".
 **DEFECT A IS NOT OURS, and it must not be patched defensively.** The captured log names the
 holder outright: `curParent=Moth` (`Player-prev-CAPTURED.log:3023`). Moth is a `Town_Trader` in
 Faction_14, a departed trade caravan pawn with no Intercolony contract, quest or record. The
-reference lives in **Hospitality's `CompGuest.lord`** — its own serialized field, which vanilla
+reference lives in **Hospitality's `CompGuest.lord`** â€” its own serialized field, which vanilla
 cannot clear when it removes a Lord because vanilla only knows about `Pawn.lord`. Intercolony
 creates exit Lords through `QuestPart_Leave` and one directly in safe passage, but it never stores
 or persists a Lord reference.
 
 Worth knowing: the save has since been rewritten by continued play and Moth's node now reads
-`<lord>null</lord>` — the stale reference resolved to null on load and was saved back as null. The
+`<lord>null</lord>` â€” the stale reference resolved to null on load and was saved back as null. The
 warning is noisy rather than progressive, and the original bytes that reproduce it are gone.
 
 **They are independent.** Different pawns, factions, objects and causes; the only thing they share
@@ -247,90 +252,90 @@ job leaves a dangling reference. Intercolony changes faction at arrival
 (`EmploymentService.cs:892`), and `HostilityPolicy.cs:180` already has a comment showing the mod
 knows about this interaction.
 
-**The screenshots put an Intercolony arrival 18 seconds before the warning** — 12:40:06 "Breixo of
+**The screenshots put an Intercolony arrival 18 seconds before the warning** â€” 12:40:06 "Breixo of
 Coalition of Braga has arrived", 12:40:24 the Lord_140 warning. Suggestive, not proof: the warning
 is emitted when SAVING, so that is an autosave firing near an arrival. **Ownership is not
 established until the save says which pawn holds the reference.**
 
-## C3 — the recon, and what I decided from it
+## C3 â€” the recon, and what I decided from it
 
 Sol recon, read-only. The settings idiom, the nine constants and F11's scheduler are all mapped.
 
 **A DEFECT THE RECON FOUND, and it would have shipped: making the delta configurable BREAKS F08's
 safety property.** `CommercialGoodwillPressureService` only asks whether base goodwill is already at
 the ceiling and then applies the whole delta (`:203`, `:220`). At today's fixed `+1` that can never
-overshoot. At a configurable delta of 5 with a ceiling of 74, a faction at 73 lands on 78 — past
+overshoot. At a configurable delta of 5 with a ceiling of 74, a faction at 73 lands on 78 â€” past
 vanilla's ally threshold of 75 (`reference/decompiled/RimWorld/DiplomacyTuning.cs:25`). The entire
 point of the ceiling is that commerce cannot buy an alliance.
 
 **DECIDED:**
 
-  - **C3-D1 — one owner for the settings surface, and it goes first.** All nine settings —
-    declaration, `Scribe` keys, ranges, validation, sections, labels, tooltips — land in ONE unit
+  - **C3-D1 â€” one owner for the settings surface, and it goes first.** All nine settings â€”
+    declaration, `Scribe` keys, ranges, validation, sections, labels, tooltips â€” land in ONE unit
     before any consumer is touched. The plan demands it and the recon confirms
     `IntercolonySettings.cs` and `IntercolonyMod.cs` cannot take two workers.
-  - **C3-D2 — the application clamps to remaining headroom**, not merely "is it below the
+  - **C3-D2 â€” the application clamps to remaining headroom**, not merely "is it below the
     ceiling". And the ceiling setting itself clamps to at most 74. Two guards, because either alone
     still lets a large delta jump the threshold.
-  - **C3-D3 — F09's thresholds are validated in both places.** `ExposeData` clamps on load and
+  - **C3-D3 â€” F09's thresholds are validated in both places.** `ExposeData` clamps on load and
     save, but the UI writes live, so a consumer can see an invalid pair mid-drag. The invariant
     holds at assignment too.
-  - **C3-D4 — attractiveness means price relative to its siblings.** Every quote for a request is
+  - **C3-D4 â€” attractiveness means price relative to its siblings.** Every quote for a request is
     still in `request.quotes` while arrivals are scheduled (`RfqService.cs:242`), already sorted by
     quantity then total price, so a bounded bias against the cheaper offers is available without
     inventing a score. Bounded, and combined with the existing independent jitter, so the best
-    price is a tendency and never deterministically last — the plan is explicit about that.
-  - **C3-D6 — the "minimum employment days" setting counts SAMPLED DAYS, and the label must say
+    price is a tendency and never deterministically last â€” the plan is explicit about that.
+  - **C3-D6 â€” the "minimum employment days" setting counts SAMPLED DAYS, and the label must say
     so.** C3.4 reported honestly that the floor is a sample count, and that samples and calendar
     days diverge for a worker who was downed, absent or refusing work. **The behaviour is right and
     the label is wrong**: counting calendar days would let a worker downed for three weeks qualify
     on two observations, which is precisely the farming the floor exists to prevent. The label and
     tooltip change; the rule does not.
-  - **C3-D5 — the five-day cap is on ARRIVAL, and the request keeps its six-day life.** Expiry is
+  - **C3-D5 â€” the five-day cap is on ARRIVAL, and the request keeps its six-day life.** Expiry is
     inclusive (`PurchaseRequest.cs:225`) and the reveal path rejects an expired request before
     checking whether a reply is due, so a request that expired at day 5 would discard the very
     reply the cap scheduled.
 
-## Units — stage C3
+## Units â€” stage C3
 
 | | Unit | Status |
 |---|---|---|
-| ✅ | C3.0 — recon: the settings surface, the nine constants, F11's scheduling | accepted; D1-D5 recorded |
-| ✅ | C3.1 — the settings surface, one owner, no consumer touched | accepted, `2439f4a` |
-| ✅ | C3.2 — F08 reads the settings, and clamps to remaining headroom | accepted, `3b742f9` |
-| ✅ | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | accepted, `ba98e8b`. **F08 COMPLETE** |
-| ✅ | C3.4 — F09 reads the settings at resolution | accepted, `97d7ccf` |
-| ✅ | C3.4b — the "minimum days" label must say sampled days | accepted, `b8f2b47`. **F09 COMPLETE** |
-| ✅ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | accepted, `284af8d` |
-| 🔒 | C3.6 — F11's assertions, in the rfq suite | **written, HELD unverified — needs a suite run the operator's live game blocks** |
-| ⬜ | C3.7 — F08's settings assertions, in the reputation suite | not started |
-| ⬜ | C3.8 — F09's settings assertions, in the long-term suite | not started |
+| âœ… | C3.0 â€” recon: the settings surface, the nine constants, F11's scheduling | accepted; D1-D5 recorded |
+| âœ… | C3.1 â€” the settings surface, one owner, no consumer touched | accepted, `2439f4a` |
+| âœ… | C3.2 â€” F08 reads the settings, and clamps to remaining headroom | accepted, `3b742f9` |
+| âœ… | C3.3 â€” F08's Relations row stops hard-coding Preferred, quadrum, 60 | accepted, `ba98e8b`. **F08 COMPLETE** |
+| âœ… | C3.4 â€” F09 reads the settings at resolution | accepted, `97d7ccf` |
+| âœ… | C3.4b â€” the "minimum days" label must say sampled days | accepted, `b8f2b47`. **F09 COMPLETE** |
+| âœ… | C3.5 â€” F11's front-loaded scheduler, the cap, and the lifetime | accepted, `284af8d` |
+| ðŸ”’ | C3.6 â€” F11's assertions, in the rfq suite | **written, HELD unverified â€” needs a suite run the operator's live game blocks** |
+| â¬œ | C3.7 â€” F08's settings assertions, in the reputation suite | not started |
+| â¬œ | C3.8 â€” F09's settings assertions, in the long-term suite | not started |
 
-## Units — stage E
-
-| | Unit | Status |
-|---|---|---|
-| ✅ | E.0 — old-versus-new: count the empty corpses in the re-saved game | **done by me: 1 of 85, and it is Sinni's** |
-| ✅ | E.1 — a one-time repair for the operator's damaged save | `c46e175` |
-| 🔨 | E.2 — the self-test's expected error must not look like a real one | Luna running |
-| ⬜ | E.3 — the durable record, and the play proof the operator specified | not started |
-
-## Units — stage D
+## Units â€” stage E
 
 | | Unit | Status |
 |---|---|---|
-| ✅ | D.0 — recon on both defects, against the captured log and the play save | accepted; both claims spot-checked |
-| ✅ | D.1 — the discard guard must mean what its comment says | accepted, `68ad1ea` |
-| ✅ | D.2 — the regression assertion, through a real corpse and a save | accepted, `1bf7d30`; mutation turns three red |
-| ✅ | D.3 — the durable dispositions and the play entry | accepted, `28acfd1`. **STAGE D COMPLETE** |
+| âœ… | E.0 â€” old-versus-new: count the empty corpses in the re-saved game | **done by me: 1 of 85, and it is Sinni's** |
+| âœ… | E.1 â€” a one-time repair for the operator's damaged save | `c46e175` |
+| ðŸ”¨ | E.2 â€” the self-test's expected error must not look like a real one | Luna running |
+| â¬œ | E.3 â€” the durable record, and the play proof the operator specified | not started |
 
-## C1 — the recon, and what I decided from it
+## Units â€” stage D
+
+| | Unit | Status |
+|---|---|---|
+| âœ… | D.0 â€” recon on both defects, against the captured log and the play save | accepted; both claims spot-checked |
+| âœ… | D.1 â€” the discard guard must mean what its comment says | accepted, `68ad1ea` |
+| âœ… | D.2 â€” the regression assertion, through a real corpse and a save | accepted, `1bf7d30`; mutation turns three red |
+| âœ… | D.3 â€” the durable dispositions and the play entry | accepted, `28acfd1`. **STAGE D COMPLETE** |
+
+## C1 â€” the recon, and what I decided from it
 
 Sol recon, read-only. Both load-bearing claims spot-checked in the source myself.
 
 **ONE emission site, and it fires before anything is known.** `ContractService.RaiseCycleOrder`
 sends `Contract delivery due` unconditionally at `ContractService.cs:1702`, immediately after
-creating the order — *before* `AdvanceAutoReady` has asked whether the cycle can proceed
+creating the order â€” *before* `AdvanceAutoReady` has asked whether the cycle can proceed
 (`ContractService.cs:1272`). That ordering is the whole defect: the letter cannot know what it is
 announcing.
 
@@ -338,24 +343,24 @@ announcing.
 `Agreement delivery needs attention` naming the settlement, the order, the quantity, the reason and
 where to act, throttled by `order.autoReadyFailureNotified` (`ContractService.cs:1297-1320`).
 
-**DECIDED — three cases, and the plan's silent path only covers one of them:**
+**DECIDED â€” three cases, and the plan's silent path only covers one of them:**
 
-  - **C1-D1 — auto-ready on and the cycle readies: SILENT.** No letter at all. This is the routine
+  - **C1-D1 â€” auto-ready on and the cycle readies: SILENT.** No letter at all. This is the routine
     success the plan wants quiet.
-  - **C1-D2 — auto-ready on and the cycle cannot ready: the existing warning, unchanged.** It
+  - **C1-D2 â€” auto-ready on and the cycle cannot ready: the existing warning, unchanged.** It
     already answers which order, what is blocked and what to do.
-  - **C1-D3 — the player must act: ONE actionable letter, after auto-ready has run, not before.**
+  - **C1-D3 â€” the player must act: ONE actionable letter, after auto-ready has run, not before.**
     That covers auto-ready being off AND seller delivery, which *can never auto-ready* because
     `SalesOrder.CanMarkReady` requires buyer pickup (`SalesOrder.cs:204`). Deleting the due letter
-    without this would leave both cases with no notice at all — a silent regression dressed as a
+    without this would leave both cases with no notice at all â€” a silent regression dressed as a
     fix.
 
-**C1-D4 — no cross-reload deduplication.** The plan asks that repeated *ticks* not spam, and the
+**C1-D4 â€” no cross-reload deduplication.** The plan asks that repeated *ticks* not spam, and the
 existing transient marker does that. Making it survive a reload would mean persisted state for a
 letter, and the plan says avoid a bump unless world state genuinely needs one. Accepted and
 recorded rather than discovered later: the same unresolved problem can warn once more after a load.
 
-**C1-D5 — no feasibility model for seller delivery.** Recon is right that nothing can answer
+**C1-D5 â€” no feasibility model for seller delivery.** Recon is right that nothing can answer
 "can this delivery proceed" for seller delivery without caravan dispatch, and **that is frozen
 F12**. The boundary is respected by giving seller-delivery cycles the actionable letter instead of
 a prediction.
@@ -365,7 +370,7 @@ a prediction.
 
 Branch `foreman/playtest-batch-2026-09-06` at `56180ea`, pushed, working tree clean apart from an
 untracked `Playtesting annotations.docx` that is not ours. The milestone record for stages 1-8 is in
-`PROGRESS.md`. The whole suite on a fresh world: **1536 passed, 0 failed, 17 skipped, exit 0** —
+`PROGRESS.md`. The whole suite on a fresh world: **1536 passed, 0 failed, 17 skipped, exit 0** â€”
 run at `56180ea`'s tree, which no edit has touched since, so it stands as this run's baseline.
 
 ## What the correction plan changes about work already done
@@ -397,7 +402,7 @@ newer product direction, not by defect:
   - **A number chosen without looking at the data the game generates is a guess.** F24's original
     two-day window was five times smaller than the nearest settlement in the world.
   - **The seam nobody asserts is the one between the caller and the service.**
-  - **A skip is not evidence** — but a skip can BE the finding, as it was for F24.
+  - **A skip is not evidence** â€” but a skip can BE the finding, as it was for F24.
   - **A mutation that fails to compile looks exactly like one that found nothing.** Check the anchor
     is unique and the replacement builds; read the run's log, not the summary line.
   - **When a mutation does not bite, suspect the mutation before the assertion.**
@@ -405,9 +410,9 @@ newer product direction, not by defect:
     missing-goods case produced exactly one correctly-labelled warning and still failed, because
     `CanMarkReadyNow` has six different refusal branches and the fixture was tripping one of the
     others. The letter count was right, the letter was wrong. **Assert on the branch you meant to
-    exercise, and print the reason in the failure detail** — labels alone cost a whole extra run to
+    exercise, and print the reason in the failure detail** â€” labels alone cost a whole extra run to
     diagnose.
-  - **A green suite whose COUNT dropped is not a green suite — find out why before accepting.**
+  - **A green suite whose COUNT dropped is not a green suite â€” find out why before accepting.**
     The transition suite went 21 to 20 with no failure and no skip while a defect fix was in the
     tree. It turned out to be world variance: one assertion there is gated on the best negotiator
     having any Social at all, and that world rolled a zero. Checked rather than assumed, because a
@@ -415,7 +420,7 @@ newer product direction, not by defect:
   - **A fixture that assumes a world shape is flaky, and it will fail on a world that is merely
     small.** 7.13's travel-ceiling case needed a tile more than 246 tiles away; the next generated
     world had none, and the suite went red for a reason that had nothing to do with the code. Where
-    a world cannot exercise a bound, SKIP with the reason and the measurement — a red suite that
+    a world cannot exercise a bound, SKIP with the reason and the measurement â€” a red suite that
     means "small world" teaches everyone to ignore the colour.
   - **An oracle that reads state the test itself has already mutated is measuring the wrong world.**
     F24's U1 looked like an off-by-one in production; in fact the fixture's own earlier hire had
@@ -425,7 +430,7 @@ newer product direction, not by defect:
   - **A charge the player was never shown is worse than the problem it fixes.**
   - Use `dev.ps1 bridge -Save`, not `run -Save`, to load a save.
   - Write files with the file tools; PowerShell `Get-Content` + `Out-File` double-encodes UTF-8.
-  - The Bash tool's working directory persists between calls — `cd` back to `C:\dev\Intercolony`
+  - The Bash tool's working directory persists between calls â€” `cd` back to `C:\dev\Intercolony`
     after visiting another repo, or `dev.ps1` will not be found.
 
 ## Open for the operator
@@ -439,12 +444,12 @@ newer product direction, not by defect:
 
 Twenty-one play observations are owed, all in `docs/PENDING_PLAYTESTS.md`. The three that matter
 most: the F15 save-compatibility check; the partial-delivery defect in `DeliverToColony`, which
-costs the player silver and needs a design decision; and F20's equal wage split — someone who only
+costs the player silver and needs a design decision; and F20's equal wage split â€” someone who only
 ever makes chairs still has half their wage charged to tables.
 
 
 
-## RESUME BRIEF — current at HEAD `47c1f5d`, 2026-09-08
+## RESUME BRIEF â€” current at HEAD `47c1f5d`, 2026-09-08
 
 Branch: `foreman/playtest-batch-2026-09-06`. HEAD is `47c1f5d`, `test: a reply is never scheduled
 past the deadline that would delete it`. The latest suite figure to carry forward is **1503 passed /
@@ -463,27 +468,27 @@ keeps F25 a no-bump change.
 | F13 auto-renew on the employee row | 1 | DONE, `41dc1f5`; its overflow later fixed by F16/F17 |
 | F15 agreements default auto-ready on | 1 | DONE, `d48a1cf` + `e4d50c9` |
 | F03 area Produce/Pause/Stop | 2 | DONE, `ece7083` `e0ada0d` `16411e5` `c01d7db`, tests `f49db5a` `57e0981` |
-| F04 programmable produce | 2 | DONE for indefinite + produce-until-target, `4b14abb` `5656c75` `30b784e`. Worker eligibility, skill and quality controls NOT built — they live in vanilla's construction job, not the loop |
+| F04 programmable produce | 2 | DONE for indefinite + produce-until-target, `4b14abb` `5656c75` `30b784e`. Worker eligibility, skill and quality controls NOT built â€” they live in vanilla's construction job, not the loop |
 | F14 collapsible contracts | 3 | DONE both lists, `02d5710` `275577a` `c67cece` `7571391` |
-| F16/F17 employee card | 3 | DONE, `b1b5c7f`; also fixed F13's measured overflow, 1367f → 620f against 720f |
-| F18 procurement unit price | 3 | DONE, `8d533bc`. No assertions, deliberately — private UI string |
+| F16/F17 employee card | 3 | DONE, `b1b5c7f`; also fixed F13's measured overflow, 1367f â†’ 620f against 720f |
+| F18 procurement unit price | 3 | DONE, `8d533bc`. No assertions, deliberately â€” private UI string |
 | F10 procurement progression | 3 | DONE as an earned gate, `799d673`. Count is settlement-wide, not per product |
 | F05 receiving locations | 4 | DONE, `231df04` `caf4340` `74aff0f` `912a5fe` |
-| F12 programmed caravans | 4 | PART-BUILT. Only `OrderAvailability` + `GetAvailability` exist (`c19b9cb`, tests `8cb06a9`) — an order can report available/required. NOT built: the caravan itself, pawn/animal selection, the configuration surface, recurrence, multi-map routing, and the waiting behaviour. The mod has NO caravan formation of its own |
-| F21 logistics meaningful | 5 | PART-BUILT. `LogisticsQuote` is one owner for cost/time/method (`2efd13f`), drift-guarded (`6d6366a`), and the cost is disclosed (`8da0d9f` + `83f2340`). NOT built: route difficulty, provisions, settlement capability, real transport-method choice — none of those models exist |
+| F12 programmed caravans | 4 | PART-BUILT. Only `OrderAvailability` + `GetAvailability` exist (`c19b9cb`, tests `8cb06a9`) â€” an order can report available/required. NOT built: the caravan itself, pawn/animal selection, the configuration surface, recurrence, multi-map routing, and the waiting behaviour. The mod has NO caravan formation of its own |
+| F21 logistics meaningful | 5 | PART-BUILT. `LogisticsQuote` is one owner for cost/time/method (`2efd13f`), drift-guarded (`6d6366a`), and the cost is disclosed (`8da0d9f` + `83f2340`). NOT built: route difficulty, provisions, settlement capability, real transport-method choice â€” none of those models exist |
 | F11 progressive RFQ responses | 5 | BUILT, mutation-proven, `bd04ff6` + `47c1f5d`: quotes are still generated at request time and only their reveal is delayed; no price change, and one final letter rather than one per reply |
 | F07 commitment vs production | 6 | BUILT, mutation-proven, `e1467fd` + `5833061`: committed/day is compared with ledger-completed/day over five days; no stockpile inference or worker attribution, and suspended agreements remain counted as live |
 | F19 material replacement cost | 6 | BUILT, mutation-proven, `fae0dbe` + `be507f9`: direct ingredients only, deterministic and non-recursive; the existing finished-good figure is unchanged |
 | F20 labour from actual work | 6 | BUILT, mutation-proven, `86f3868` + `78d6eba`: the relevant-workforce approximation shares eligible wages across eligible goods; measured-time attribution is not built |
 | F25 buyer-side labour market | 7 | BUILT, mutation-proven, `0189a8a` + `680c39e` + `3125bd6` + `fbb5290`: requirement-first postings, worker asks, a seeded spread, own-ask pay, and the save/create seams; no new persisted state or Harmony patch, and no reverse market |
-| F23 equipment and bond state | 7 | PART-BUILT, `ed99423` + `a173619`. The gear an employee ARRIVES with is recorded, valued at replacement plus a 10% premium, disclosed as its own row at hire beside the wage, charged there, and refunded proportionally item by item when the contract ends — on all nine ending paths, idempotently. NOT built: equipment tiers, availability gating by settlement wealth/tech/scarcity, and the severe consequence for stripping body modifications. Assertions in progress at 7.6c |
-| F24 urgent dispatch | 7 | PART-BUILT and mutation-proven, `edb99ac` + `4a78e0e` + `a264c22`. Emergency dispatch is a MODE ON THE IMMEDIATE DIRECT-HIRE PATH, which is why it needs NO persisted state — the recon's "needs new state" is true only of a post-and-wait urgent request. The pool is the nearest `ceil(N x 0.5)` candidates, the wage carries a 4x premium, arrival is `ceil(ordinary / 3)` with a one-day floor, and all of it is disclosed before the player commits. Its first version used an absolute 2-day window and could never produce a candidate, real markets being 10-19 travel days away; the rule is now relative to the market. NOT built: drop-pod arrival, which F24 wants most but which should be gated on a settlement logistics capability F21 never built; any queued urgent request; equipment level in the request. Known defect 6 is outstanding against it — it dropped the old 1-20 day clamp on ORDINARY travel |
+| F23 equipment and bond state | 7 | PART-BUILT, `ed99423` + `a173619`. The gear an employee ARRIVES with is recorded, valued at replacement plus a 10% premium, disclosed as its own row at hire beside the wage, charged there, and refunded proportionally item by item when the contract ends â€” on all nine ending paths, idempotently. NOT built: equipment tiers, availability gating by settlement wealth/tech/scarcity, and the severe consequence for stripping body modifications. Assertions in progress at 7.6c |
+| F24 urgent dispatch | 7 | PART-BUILT and mutation-proven, `edb99ac` + `4a78e0e` + `a264c22`. Emergency dispatch is a MODE ON THE IMMEDIATE DIRECT-HIRE PATH, which is why it needs NO persisted state â€” the recon's "needs new state" is true only of a post-and-wait urgent request. The pool is the nearest `ceil(N x 0.5)` candidates, the wage carries a 4x premium, arrival is `ceil(ordinary / 3)` with a one-day floor, and all of it is disclosed before the player commits. Its first version used an absolute 2-day window and could never produce a candidate, real markets being 10-19 travel days away; the rule is now relative to the market. NOT built: drop-pod arrival, which F24 wants most but which should be gated on a settlement logistics capability F21 never built; any queued urgent request; equipment level in the request. Known defect 6 is outstanding against it â€” it dropped the old 1-20 day clamp on ORDINARY travel |
 | F22 reverse listing and offer queue | 7 | RECONNOITRED, NOT STARTED, `d83a500`. About NINE units. First unit must be the custody proof: a bare custom world pawn is not recognised as borrowed by vanilla's game-over check, so the last colonist leaving could end the game. Six design questions unanswered by the source plan. AWAITING AN OPERATOR DECISION on whether to start it, take only the custody proof, or defer behind stages 8 and 9 |
 | F08 F09 commercial relationships | 8 | not started |
-| **F06 optional apparel policies** | **9** | **PLACED IN STAGE 9 — not started, recon first; see the gap below** |
+| **F06 optional apparel policies** | **9** | **PLACED IN STAGE 9 â€” not started, recon first; see the gap below** |
 
 
-### THE TWO OPERATOR DECISIONS — BOTH ANSWERED YES, 2026-09-08
+### THE TWO OPERATOR DECISIONS â€” BOTH ANSWERED YES, 2026-09-08
 
 The questions, kept verbatim because the answers only mean something beside them:
 
@@ -503,9 +508,9 @@ crafting-completion seam. It reads that something was made and by whom, and chan
 what vanilla does. This is the fifth Harmony patch and the whole allowance.
 
 **THE F20 QUALIFICATION, from the operator and binding:** actual-work attribution is preferred
-**only where technically defensible**. If the completion seam would produce false precision — and
+**only where technically defensible**. If the completion seam would produce false precision â€” and
 attributing a product's whole labour cost to whoever happened to finish it is exactly that, since
-the seam carries a finisher, not hours worked — or if getting real hours would mean materially more
+the seam carries a finisher, not hours worked â€” or if getting real hours would mean materially more
 invasive instrumentation, then use the source plan's explicitly authorised **relevant-workforce
 approximation** instead. F20 made that call on the seam it actually received: the completion
 observation carries a finisher, not hours worked, so the shipped feature uses the approximation and
@@ -514,7 +519,7 @@ does not claim measured time.
 **Scope of the bump.** One bump, to 58, designed to carry this batch's new persisted state:
 production history (F07/F20), the RFQ pending queue (F11), equipment bond state (F23), urgent
 dispatch (F24), the reverse listing and offer queue (F22). Later additions inside the batch ride on
-58 as additive nodes with safe defaults — `Scribe_Values.Look` omits a value equal to its default
+58 as additive nodes with safe defaults â€” `Scribe_Values.Look` omits a value equal to its default
 (`reference/decompiled/Verse/Scribe_Values.cs:29`), so an absent node IS the old shape and reads
 correctly. If a stage ever needs a shape change a default cannot express, that is a second bump and
 it comes back to the operator.
@@ -538,86 +543,86 @@ that actually shipped are:
   `:137`-`:143`, where suspended agreements are deliberately treated as live. F07's shipped row
   keeps that existing meaning, and play still has to judge whether it reads well.
 
-### Next executable work, in dependency order — rewritten 2026-09-09
+### Next executable work, in dependency order â€” rewritten 2026-09-09
 
 F23's bond half and F24's emergency dispatch are BUILT; both stay part-built with their unbuilt
 parts named. What remains, in order:
 
-1. **7.9 — F25's wage disclosure.** IN FLIGHT, Luna running; see the header. Known defect 1.
-2. **7.12 — F23's bond ignores quality.** Known defect 5, an exploit.
-3. **7.10 — F19's figure must reach the margin.** Known defect 2.
-4. **7.11, 7.13, 7.14** — known defects 4, 6 and 7, scheduled rather than urgent.
-5. **F22** — about nine units, AWAITING AN OPERATOR DECISION. See the F22 recon section: the first
+1. **7.9 â€” F25's wage disclosure.** IN FLIGHT, Luna running; see the header. Known defect 1.
+2. **7.12 â€” F23's bond ignores quality.** Known defect 5, an exploit.
+3. **7.10 â€” F19's figure must reach the margin.** Known defect 2.
+4. **7.11, 7.13, 7.14** â€” known defects 4, 6 and 7, scheduled rather than urgent.
+5. **F22** â€” about nine units, AWAITING AN OPERATOR DECISION. See the F22 recon section: the first
    unit must be the custody proof because of the game-over hazard.
-6. **Stage 8** — F08 and F09. Recon first, which now means Sol high read-only.
-7. **Stage 9** — F06. Recon first; it has had none.
+6. **Stage 8** â€” F08 and F09. Recon first, which now means Sol high read-only.
+7. **Stage 9** â€” F06. Recon first; it has had none.
 
 Then the run's remaining obligation is the play sitting, not code.
 
 ### Open items retained from the operator list
 
-- **2026-09-08 — a pre-existing defect found next to F05, deliberately not fixed.**
+- **2026-09-08 â€” a pre-existing defect found next to F05, deliberately not fixed.**
   `PurchaseOrderService.DeliverToColony` refunds only when ZERO goods were placed; with any
   non-zero count it calls `Complete` with what was placed, so a delivery that could only fit part
   of the order silently completes it short and the player pays in full for goods they did not get.
   It predates this branch and F05 makes it easier to hit, since a receiving destination can fill.
-  Fixing it means deciding what SHOULD happen — hold the order, partial refund, or overflow
-  elsewhere — which is your call, not a side effect of a logistics unit.
+  Fixing it means deciding what SHOULD happen â€” hold the order, partial refund, or overflow
+  elsewhere â€” which is your call, not a side effect of a logistics unit.
 
-- **2026-09-08 — F12 is bigger than this batch, and needs a decision.** Recon found the mod has NO
+- **2026-09-08 â€” F12 is bigger than this batch, and needs a decision.** Recon found the mod has NO
   caravan formation or dispatch of its own at all: auto-ready is buyer-pickup only
   (`SalesOrder.cs:204`), and forming a caravan would mean going through vanilla's
   `CaravanFormingUtility.StartFormingCaravan`. A full "preprogrammed recurring caravan" therefore
   needs persisted pawn and animal selection, a configuration surface on the agreement, caravan
-  formation, recurring re-formation, and multi-map routing — a feature, not a finding-sized change.
+  formation, recurring re-formation, and multi-map routing â€” a feature, not a finding-sized change.
   The shipped bounded slice is the half that is genuinely useful and testable on its own: the
   order's availability expressed as available/required, and the rule that a short order WAITS and
   says so rather than leaving partial. The caravan formation itself was not attempted here. Say if
   you would rather it were, or would rather stage 4 stop after F05.
 
-- **2026-09-07 — RELEASE DEFECT, pre-existing, needs a decision before the next release.**
+- **2026-09-07 â€” RELEASE DEFECT, pre-existing, needs a decision before the next release.**
   `package.ps1` builds a release from `$ReleaseDirectories = @("About", "Assemblies", "Defs")`
   (`package.ps1:45`). `Patches/` is not in that list, so no release zip has ever contained
-  `Patches/WorldObjectDefs.xml` — the patch that puts the Economy tab on the Settlement world
-  object — and the new designator registration would not ship either. The shipped 1.0.0 is
+  `Patches/WorldObjectDefs.xml` â€” the patch that puts the Economy tab on the Settlement world
+  object â€” and the new designator registration would not ship either. The shipped 1.0.0 is
   therefore missing that tab. Found by the 2.4b worker while confirming its own file would ship;
   verified against `package.ps1` directly. Not fixed here: it is outside the playtest batch and
   changing what a release contains is the operator's call.
 
-- **2026-09-07** — F15 changes only the two C# field initializers to true and deliberately leaves
+- **2026-09-07** â€” F15 changes only the two C# field initializers to true and deliberately leaves
   both `Scribe_Values.Look` defaults at false. A true Scribe default would switch automation on
   inside saves the player already has, including agreements they had turned off by hand. New
   agreements default on; loaded ones keep what was saved.
 
-Source plan: `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` (findings F01–F25).
-Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publish** — §I of the plan.
+Source plan: `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` (findings F01â€“F25).
+Branch: `foreman/playtest-batch-2026-09-06`. **Never merge to `main`, never publish** â€” Â§I of the plan.
 
 ## Decisions
 
-- **2026-09-06** — Stage order is dependency-driven, not plan order. F24 needs F21's logistics
+- **2026-09-06** â€” Stage order is dependency-driven, not plan order. F24 needs F21's logistics
   capability and F25's market pricing, so labor comes after geography. Do not reorder to match
   the plan's lettered sections.
-- **2026-09-06** — F03 and F04 stay separate units from each other and from F02 even though all
-  three touch the produce loop. §G of the plan forbids collapsing them into one requirement.
-- **2026-09-06** — The source plan was copied to `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` so workers,
+- **2026-09-06** â€” F03 and F04 stay separate units from each other and from F02 even though all
+  three touch the produce loop. Â§G of the plan forbids collapsing them into one requirement.
+- **2026-09-06** â€” The source plan was copied to `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` so workers,
   which have no chat history, can cite it. The copy at `C:\dev\` is the operator's original.
-- **2026-09-07** — F01 is scoped to the *readying* letter only (`SalesOrderService.cs:754`),
+- **2026-09-07** â€” F01 is scoped to the *readying* letter only (`SalesOrderService.cs:754`),
   suppressed for the automatic caller via an optional `announce` parameter defaulting to true.
   The downstream "Order collected" letter (`SalesOrderService.cs:982`) stays loud: it reports
   payment received, which is a value event the player should see, not a routine mechanical step.
   No schema change, and every manual ready path keeps its letter by default.
-- **2026-09-09** — `EmploymentContract.dailyWage` stores the WORKER'S ASK. The charged rate is
+- **2026-09-09** â€” `EmploymentContract.dailyWage` stores the WORKER'S ASK. The charged rate is
   derived from it, never stored, and every payroll and display path goes through one owner. No
   `workerAsk` node, no second schema bump. Neither this nor the alternative can rescue both legacy
-  cohorts — shipped 1.0 already mixes them with no discriminator — so the tie was broken on
+  cohorts â€” shipped 1.0 already mixes them with no discriminator â€” so the tie was broken on
   convention and on the fact that this option makes no existing contract worse. Do not re-litigate.
-- **2026-09-07** — Procurement needs no F01 change. Recon established there is no per-cycle
+- **2026-09-07** â€” Procurement needs no F01 change. Recon established there is no per-cycle
   procurement success letter to suppress; the only procurement success letter is the terminal
   `Procurement agreement completed` notice (`ProcurementContractService.cs:1185`), which is a
   whole-agreement outcome and stays.
 
 
-## Closed history — the first run, stages 1 to 9
+## Closed history â€” the first run, stages 1 to 9
 
 Its unit tables and stage tables were replaced when the correction plan arrived. Every unit
 is in the git log on this branch, and `PROGRESS.md` carries the milestone record. Nothing
