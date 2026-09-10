@@ -1,21 +1,20 @@
 # Foreman state — Intercolony
 
 Stage: **C3 — the defect gate is CLOSED. The correction plan resumes at C3.7.**
-Unit: C3.7 — F08's settings assertions in the `reputation` suite
-Worker: luna running — `…\scratchpad\unit-c37.out`.
+Unit: C3.8 — F09's settings assertions in the `long-term` suite
+Worker: luna running — `…\scratchpad\unit-c38.out`.
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
 
-Last done: C3.6 + C3.6b at `ed6faaa` — **F11's eleven assertions are mutation-proven.** rfq 236/0/0
-exit 0, log CLEAN. Removing the five-day clamp turns F11.6 and F11.10 red; removing the
-attractiveness bias turns F11.4 red; ignoring `rfqResponseSpeed` turns F11.7 red. The two assertions
-red on the first run were a wrong pinned jitter in the fixture, not a defect in `RfqService` — its
-formula matches the oracle exactly. E.2 and E.2b are also mutation-proven, and E.3 recorded the whole
-defect gate at `f1aa604`. **Still owed and theirs, not mine: run the empty-corpse repair on the
-Playtest 1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
-Updated: 2026-09-10 01:05
-Foreman load: 2026-09-09 19:50
+Last done: C3.7 at `072ff97` — **F08's thirteen assertions are mutation-proven.** reputation 38/0/0
+exit 0, log CLEAN. Hardcoding the ceiling back to 60 turns G10 and G11 red; hardcoding the delta to
+1 turns G8 and G13 red; hardcoding the interval to 15 turns G6 red; hardcoding the required
+reputation to 80 turns G9 red. Before that, C3.6 + C3.6b at `ed6faaa`, rfq 236/0/0, F11's eleven
+assertions mutation-proven three ways. **Still owed and theirs, not mine: run the empty-corpse repair
+on the Playtest 1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
+Updated: 2026-09-10 01:45
+Foreman load: 2026-09-10 01:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
