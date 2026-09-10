@@ -4046,14 +4046,16 @@ namespace Intercolony
                 Path.GetTempPath(), $"Intercolony-SupplierListing-S4-{Guid.NewGuid():N}.xml");
             string expectedDiagnostic =
                 "Could not load reference to " + typeof(ThingDef) + " named " + missingDefName;
-            ExpectedMissingDefLogHandler diagnosticHandler = null;
+            ExpectedLogHandler diagnosticHandler = null;
 
             try
             {
                 if (canExerciseUnresolvable)
                 {
-                    diagnosticHandler = new ExpectedMissingDefLogHandler(
-                        expectedDiagnostic, Debug.unityLogger.logHandler);
+                    diagnosticHandler = new ExpectedLogHandler(
+                        LogType.Error,
+                        Debug.unityLogger.logHandler,
+                        new[] { expectedDiagnostic });
                     Debug.unityLogger.logHandler = diagnosticHandler;
                 }
 
@@ -4121,82 +4123,6 @@ namespace Intercolony
                     $"def name {missingDefName} already resolves in this install");
                 skip("S4 unresolvable listing is pruned",
                     $"def name {missingDefName} already resolves in this install");
-            }
-        }
-
-        private sealed class ExpectedMissingDefLogHandler : ILogHandler
-        {
-            private readonly ILogHandler previous;
-            private readonly string expectedText;
-            private readonly List<string> unexpectedErrors = new List<string>();
-
-            public ExpectedMissingDefLogHandler(string expectedText, ILogHandler previous)
-            {
-                if (previous == null)
-                {
-                    throw new InvalidOperationException("Unity logger had no handler to wrap");
-                }
-
-                this.expectedText = expectedText;
-                this.previous = previous;
-            }
-
-            public ILogHandler Previous => previous;
-
-            public int ExpectedCount { get; private set; }
-
-            public int UnexpectedErrorCount => unexpectedErrors.Count;
-
-            public string FirstUnexpectedError =>
-                unexpectedErrors.Count == 0 ? null : unexpectedErrors[0];
-
-            public void LogException(Exception exception, UnityEngine.Object context)
-            {
-                unexpectedErrors.Add(exception?.ToString() ?? "null exception");
-                previous.LogException(exception, context);
-            }
-
-            public void LogFormat(
-                LogType logType,
-                UnityEngine.Object context,
-                string format,
-                params object[] args)
-            {
-                string text = Render(format, args);
-                if (logType == LogType.Error &&
-                    string.Equals(text, expectedText, StringComparison.Ordinal))
-                {
-                    ExpectedCount++;
-                }
-                else if (logType == LogType.Error ||
-                         logType == LogType.Exception ||
-                         logType == LogType.Assert)
-                {
-                    unexpectedErrors.Add(text ?? "null log text");
-                }
-
-                if (!(logType == LogType.Error &&
-                      string.Equals(text, expectedText, StringComparison.Ordinal)))
-                {
-                    previous.LogFormat(logType, context, format, args);
-                }
-            }
-
-            private static string Render(string format, object[] args)
-            {
-                if (args == null || args.Length == 0)
-                {
-                    return format;
-                }
-
-                try
-                {
-                    return string.Format(format, args);
-                }
-                catch (Exception)
-                {
-                    return format;
-                }
             }
         }
 

@@ -1327,6 +1327,7 @@ namespace Intercolony
             List<Zone_Stockpile> silverZones = new List<Zone_Stockpile>();
             List<Letter> existingLetters = SnapshotLetters();
             List<IArchivable> existingArchivables = SnapshotArchivables();
+            ExpectedLogHandler diagnosticHandler = null;
 
             try
             {
@@ -1503,6 +1504,26 @@ namespace Intercolony
                 }
 
                 int waitingPrice = silverBeforeWait + 1;
+                int waitingTotal = IntercolonyPricing.TotalPayment(waitingPrice, 1);
+                string supplierName = supplier.Label ?? "Procurement self-test supplier";
+                string insufficientSilverReason =
+                    $"Not enough silver in storage: {silverBeforeWait} of {waitingTotal} needed.";
+                const string invalidPriceReason = "The supplier's published price is invalid.";
+                List<string> expectedDiagnostics = new List<string>
+                {
+                    PrefixIntercolonyLog(
+                        $"Procurement contract -89203 cycle 1 failed: {insufficientSilverReason}"),
+                    PrefixIntercolonyLog(
+                        $"Procurement contract -89204 cycle 1 failed: {insufficientSilverReason}"),
+                    PrefixIntercolonyLog(
+                        $"Procurement contract -89206 cycle 1 failed: {invalidPriceReason}"),
+                    PrefixProcurementFailureLetterLog(supplierName, insufficientSilverReason),
+                    PrefixProcurementFailureLetterLog(supplierName, insufficientSilverReason),
+                    PrefixProcurementFailureLetterLog(supplierName, invalidPriceReason)
+                };
+                diagnosticHandler = new ExpectedLogHandler(
+                    LogType.Log, Debug.unityLogger.logHandler, expectedDiagnostics);
+                Debug.unityLogger.logHandler = diagnosticHandler;
                 ProcurementContract waiting = AddFixture(
                     -89202, autoReadyOrders: true, quantity: 1,
                     unitPrice: waitingPrice, nextCycleTick: now);
@@ -1617,15 +1638,33 @@ namespace Intercolony
                                   "invalidTerms", invalidBefore, invalidAfter));
                     state.ProcurementContracts.Remove(invalidTerms);
                 }
+
+                r.Check(
+                    diagnosticHandler.ExpectedCount == expectedDiagnostics.Count &&
+                    diagnosticHandler.UnexpectedErrorCount == 0,
+                    "expected procurement failure diagnostics stay scoped to the self-test",
+                    $"expected={expectedDiagnostics.Count}; captured={diagnosticHandler.ExpectedCount}; " +
+                    $"unexpected errors={diagnosticHandler.UnexpectedErrorCount}; " +
+                    $"first unexpected={diagnosticHandler.FirstUnexpectedError ?? "none"}");
             }
             finally
             {
-                if (paymentMap != null && ThingDefOf.Silver != null &&
-                    !TrySetStoredSilver(
-                        paymentMap, savedSilver, savedSilverCells, silverZones,
-                        out string restoreFailure))
+                try
                 {
-                    r.Info($"stored silver restoration failed: {restoreFailure}");
+                    if (diagnosticHandler != null)
+                    {
+                        Debug.unityLogger.logHandler = diagnosticHandler.Previous;
+                    }
+                }
+                finally
+                {
+                    if (paymentMap != null && ThingDefOf.Silver != null &&
+                        !TrySetStoredSilver(
+                            paymentMap, savedSilver, savedSilverCells, silverZones,
+                            out string restoreFailure))
+                    {
+                        r.Info($"stored silver restoration failed: {restoreFailure}");
+                    }
                 }
 
                 DeleteTestZones(silverZones);
@@ -1678,6 +1717,37 @@ namespace Intercolony
                 RemoveGeneratedLetters(existingLetters, existingArchivables);
                 r.Info("procurement wait fixtures, orders, letters, and stored silver restored.");
             }
+        }
+
+        private static string PrefixIntercolonyLog(string text)
+        {
+            string normalized = string.IsNullOrEmpty(text)
+                ? string.Empty
+                : text.Replace("\r\n", "\n").TrimEnd('\n');
+            string[] lines = normalized.Split('\n');
+            StringBuilder prefixed = new StringBuilder(normalized.Length + lines.Length * 15);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i > 0)
+                {
+                    prefixed.Append('\n');
+                }
+
+                prefixed.Append("[Intercolony] ").Append(lines[i]);
+            }
+
+            return prefixed.ToString();
+        }
+
+        private static string PrefixProcurementFailureLetterLog(
+            string supplierName, string failureReason)
+        {
+            return PrefixIntercolonyLog(
+                "Letter shown (Always): Procurement cycle failed\n" +
+                $"Cycle 1 of 2 for {supplierName} could not be fulfilled.\n\n" +
+                $"{failureReason}\n\n" +
+                "This cycle is counted as failed; the agreement remains active and its next " +
+                "cycle is still scheduled.");
         }
 
         private static ProcurementDiagnosticSnapshot CaptureProcurementDiagnostics(
