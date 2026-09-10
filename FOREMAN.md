@@ -1,8 +1,16 @@
 # Foreman state — Intercolony
 
 Stage: **C8 — whole-suite regression and clean halt. THIS IS THE LAST STAGE.**
-Unit: C8.1 — `dev.ps1 test all -Fresh`, run by me, not a worker
-Worker: none. Suite running — `…\scratchpad\verify-all.out`.
+Unit: C8.1b — F10's four assertions SKIP in the whole-suite run and must not
+Worker: luna running — `…\scratchpad\unit-c81b.out`.
+
+**THE FIRST WHOLE-SUITE RUN WAS 1596/0/21, exit 0, log CLEAN, world-pawn delta 0** — against a
+baseline of 1536/0/17. But **all four extra skips are F10's**, every one saying "no accessible
+settlement has a genuinely absent CommercialReputation dictionary entry". They pass in an isolated
+`rfq` run and skip in the run that gates the branch, because earlier suites create a record for
+every settlement first. C8.1b makes the fixture construct the absent state instead of waiting for
+one, snapshotting and restoring the real record. **C8 does not close until the whole-suite run shows
+those four passing.**
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
@@ -17,7 +25,7 @@ turns the `true` half red, flipping the persisted default turns both red.
 the Playtest 1.0 save; the hire→arrive→die→save→reload proof; and the F13/F17 card checks — tick
 visible, click works, reopen redraws, and every moved action still reachable from `...`. All three
 are in `docs/PENDING_PLAYTESTS.md`. **F13 and F17 are NOT play-verified until the third is done.**
-Updated: 2026-09-10 05:35
+Updated: 2026-09-10 05:55
 Foreman load: 2026-09-10 04:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
