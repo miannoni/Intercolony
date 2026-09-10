@@ -1,10 +1,18 @@
 # Foreman state — Intercolony
 
-Stage: **F — A NEW RUNTIME DEFECT FROM PLAY, opened 2026-09-10. The correction plan itself is
-COMPLETE and closed; this is triage on top of it, not a reopening.**
-Unit: none — **WAITING ON ONE ANSWER FROM THE OPERATOR**, see F-D9 below. Do not build a diagnostic
-tool before that answer arrives; it may not be needed.
+Stage: **HALTED CLEANLY. The correction plan is COMPLETE, and stage F's triage is CLOSED.**
+Unit: none. **STAGE F IS CLOSED at `234fa56`. Do not dispatch anything without a new instruction.**
 Worker: none.
+
+**BOTH F DEFECTS ARE NOT OURS, each with a reason rather than a shrug.** The operator answered the
+confirming question — **five medical beds, six casualties** — which is exactly the condition that
+turns vanilla's rare bed race into a reliable one. The repeat count is explained too: the pawn holds
+a **queued** LayDown job and `JobQueue.AnyCanBeginNow` re-evaluates it on every check
+(`reference/decompiled/Verse.AI/JobQueue.cs:101-111`), so one stuck pawn re-emits the error until
+the queue clears. Recorded, not patched, per the standing rule. **One product observation was raised
+and deliberately NOT acted on:** Intercolony makes a dozen armed employees ordinary, so a fight now
+produces more simultaneous casualties than a vanilla-sized infirmary is built for. Whether that
+deserves anything is the operator's call and they have not made it.
 
 **THE DEFECT, and the operator's own observations, which are the load-bearing facts:**
 
@@ -107,7 +115,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 16:25 — F.1 done; waiting on one answer from the operator
+Updated: 2026-09-10 17:05 — stage F closed; halted
 Foreman load: 2026-09-10 16:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -172,7 +180,7 @@ two workers on the same large UI or settings file.
 | ✅ | C6 — freeze F12 in the documentation | — | closed, `aa413e3` |
 | ✅ | C7 — freeze F22 in the documentation | — | closed, `aa413e3` |
 | ✅ | C8 — whole-suite regression and clean halt | — | closed, `ed0a3d5`. **1601/0/16, exit 0** |
-| 🔨 | F — a new runtime defect from play: injured employees and the infirmary | — | recon running |
+| ✅ | F — new runtime defects from play: the infirmary and `Lord_165` | — | closed, `234fa56`. **Neither is ours** |
 
 ## Units — stages C0 and C1
 
