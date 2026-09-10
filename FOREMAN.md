@@ -1,20 +1,21 @@
 # Foreman state — Intercolony
 
-Stage: **C4 — F10: progression gates standing agreements, not Find Seller. C3 IS COMPLETE.**
-Unit: C4.1b — F10.4's fixture aliases one live `CommercialReputation` and reads it twice
-Worker: luna running — `…\scratchpad\unit-c41b.out`. **C4.1's four assertions are UNCOMMITTED in
-`IntercolonyRfqSelfTest.cs` and must be kept** — rfq is 240/1/0 and the single red is the aliasing,
-not a production defect.
+Stage: **C5 — F13 and F17: the employee card's interaction surface. C4 IS COMPLETE.**
+Unit: C5.0 — recon: the card's rows, the `...` menu, and the Auto-ready control F13 must imitate
+Worker: **sol recon, read-only** — `…\scratchpad\unit-c50.out`. Recon only: its output becomes
+decisions and a Luna unit, never a commit on its own.
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
 
-Last done: **C3 IS COMPLETE** at `1ae4ef6`. All three findings have their settings, their production
-behaviour and mutation-proven evidence: F11 rfq 236/0/0 (three mutations), F08 reputation 38/0/0
-(four), F09 long-term 78/0/0 (six, including that the breach and skipped-notice guards still outrank
-generous settings). **Still owed and theirs, not mine: run the empty-corpse repair on the Playtest
-1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
-Updated: 2026-09-10 03:20
+Last done: **C4 IS COMPLETE** at `d20973e`, rfq 240/0/0. **F10 needed no production change** — the
+plan's premise was wrong and the gate was already only on the standing path. Four assertions now
+pin the absence, and three mutations prove them: introducing a reputation floor into RFQ discovery
+turns F10.1 red, requiring a record in `AcceptQuote` turns F10.2 red, and removing the earned gate
+turns F10.3 and F10.4 red. Before that, **C3 complete** at `1ae4ef6`. **Still owed and theirs, not
+mine: run the empty-corpse repair on the Playtest 1.0 save, and the hire→arrive→die→save→reload
+proof in `PENDING_PLAYTESTS.md`.**
+Updated: 2026-09-10 03:50
 Foreman load: 2026-09-10 01:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -74,8 +75,8 @@ two workers on the same large UI or settings file.
 | ✅ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | closed, `1ae4ef6` |
 | ✅ | E — the defect gate reopened: old damage, and a noisy self-test | — | closed, `f1aa604` |
 | ✅ | D — runtime defect triage, out of plan order, by operator instruction | — | closed, `28acfd1` |
-| 🔨 | C4 — F10: progression gates standing agreements, not Find Seller | F10 | **no leak; zero production change**, assertions running |
-| ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
+| ✅ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | closed, `d20973e`. **No leak; zero production change** |
+| 🔨 | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | recon running |
 | ⬜ | C6 — freeze F12 in the documentation | — | not started |
 | ⬜ | C7 — freeze F22 in the documentation | — | not started |
 | ⬜ | C8 — whole-suite regression and clean halt | — | not started |
@@ -349,6 +350,13 @@ procurement to, so there is nothing to mirror across.
     `Dialog_ProposeProcurementAgreement.CandidateThingDefs` (`:836-864`) restricting candidates to a
     settlement's `CommercialHistory` or `SupplierListings` is deliberate progression or merely UI
     discoverability. It sits on the standing path only, so F10 is unaffected either way.
+
+## Units — stage C4
+
+| | Unit | Status |
+|---|---|---|
+| ✅ | C4.0 — recon: has a progression gate leaked onto the spot path? | **no.** Decisions above |
+| ✅ | C4.1 + C4.1b — F10's four assertions, and the aliasing that hid one | `d20973e`, **mutation-proven**. rfq 240/0/0. **C4 COMPLETE** |
 
 ## Units — stage E
 
