@@ -1,30 +1,30 @@
 # Foreman state — Intercolony
 
-Stage: **C8 — whole-suite regression and clean halt. THIS IS THE LAST STAGE.**
-Unit: C8.2 — the closing record in `PROGRESS.md`. **THE LAST UNIT OF THE RUN.**
-Worker: luna running — `…\scratchpad\unit-c82.out`.
+Stage: **HALTED CLEANLY. THE PLAYTEST CORRECTION EXECUTION PLAN IS COMPLETE.**
+Unit: none. **Do not dispatch anything without a new instruction from the operator.**
+Worker: none.
 
-**THE WHOLE SUITE IS GREEN ON A FRESH WORLD: 1601 passed, 0 failed, 16 skipped, exit 0, log signal
-CLEAN, world-pawn delta 0.** Baseline was 1536/0/17. The sixteen skips are the long-standing
-world-variance ones and skipped identically before this branch existed. F10's four now RUN — the
-first whole-suite pass had them skipping at `1596/0/21` because earlier suites trade with every
-settlement, and `46c77ad` makes the fixture construct the never-traded state instead of waiting for
-it. **After C8.2 lands, this run halts.**
+**ALL EIGHT AUTHORISED FINDINGS ARE CLOSED — F01, F07, F08, F09, F10, F11, F13, F17 — plus the two
+out-of-order runtime-defect stages D and E, and the F12/F22 documentation freezes.** Whole suite on
+a fresh world: **1601 passed, 0 failed, 16 skipped, exit 0**, log signal CLEAN, world-pawn delta 0.
+Baseline was 1536/0/17; the sixteen skips are the long-standing world-variance ones and skipped
+identically before this branch existed. Closing record at `ed0a3d5`.
 
-**THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
-often as needed. The verification block is gone.** Suites and mutations run freely from here.
+**THREE THINGS ARE OWED TO THE OPERATOR AND ONLY THEY CAN DO THEM**, all in
+`docs/PENDING_PLAYTESTS.md`:
 
-Last done: **C5 IS COMPLETE** at `61d3969`, labor 63/0/0. Auto-renew is a `CheckboxLabeled` on the
-card; Keep them / Not now / Renew / Let go / Cancel / Dismiss moved into `...`; `Pay` stayed. The
-`...` predicate became "the option list is non-empty" — leaving it as it was would have made Dismiss
-unreachable. A new real Scribe round trip proves `autoRenew` survives both ways; renaming the key
-turns the `true` half red, flipping the persisted default turns both red.
+  1. run `Debug actions → Intercolony → Repair empty corpses` on the Playtest 1.0 save — a backup is
+     captured at `…\scratchpad\playtest-evidence\E-Playtest-1.0-CAPTURED.rws`;
+  2. the employment proof: hire → arrive → die → look in the grave → save → quit → reload → look
+     again → no NEW `JobGiver_VisitGrave` exception in the post-load delta;
+  3. the F13/F17 card checks — tick visible at a glance, click toggles it, reopening redraws it, and
+     every moved action still reachable from `...`.
 
-**THREE THINGS ARE OWED TO THE OPERATOR AND ONLY THEY CAN DO THEM:** run the empty-corpse repair on
-the Playtest 1.0 save; the hire→arrive→die→save→reload proof; and the F13/F17 card checks — tick
-visible, click works, reopen redraws, and every moved action still reachable from `...`. All three
-are in `docs/PENDING_PLAYTESTS.md`. **F13 and F17 are NOT play-verified until the third is done.**
-Updated: 2026-09-10 06:20
+**F13, F17 and the employment fix are NOT play-verified until those are done, and a green suite does
+not substitute.** `main` is untouched; nothing was merged and nothing was released.
+
+**If a new run starts here, it needs a new plan.** This one has no unfinished units.
+Updated: 2026-09-10 06:40 — RUN COMPLETE
 Foreman load: 2026-09-10 04:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -88,7 +88,7 @@ two workers on the same large UI or settings file.
 | ✅ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | closed, `61d3969` |
 | ✅ | C6 — freeze F12 in the documentation | — | closed, `aa413e3` |
 | ✅ | C7 — freeze F22 in the documentation | — | closed, `aa413e3` |
-| 🔨 | C8 — whole-suite regression and clean halt | — | suite running |
+| ✅ | C8 — whole-suite regression and clean halt | — | closed, `ed0a3d5`. **1601/0/16, exit 0** |
 
 ## Units — stages C0 and C1
 
