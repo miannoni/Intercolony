@@ -306,8 +306,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | C3.4b — the "minimum days" label must say sampled days | accepted, `b8f2b47`. **F09 COMPLETE** |
 | ✅ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | accepted, `284af8d` |
 | ✅ | C3.6 + C3.6b — F11's eleven assertions, in the rfq suite | `fb3f97a` + `ed6faaa`, **mutation-proven**. rfq 236/0/0 |
-| 🔨 | C3.7 — F08's settings assertions, in the reputation suite | Luna running |
-| ⬜ | C3.8 — F09's settings assertions, in the long-term suite | not started |
+| ✅ | C3.7 — F08's thirteen settings assertions, in the reputation suite | `072ff97`, **mutation-proven**. reputation 38/0/0 |
+| 🔨 | C3.8 — F09's settings assertions, in the long-term suite | Luna running |
 
 ## Units — stage E
 
