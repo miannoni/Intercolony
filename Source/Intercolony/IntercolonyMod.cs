@@ -512,8 +512,10 @@ namespace Intercolony
             "Sets the commercial reputation needed before a relationship can add goodwill. Higher " +
             "values require a stronger trading relationship.";
         private const string MinimumEmploymentDaysTooltip =
-            "Sets how long a worker must be employed before their experience can change goodwill. " +
-            "Shorter employments still record experience but do not qualify for this goodwill change.";
+            "Sets the minimum number of observed days before a worker's experience can change goodwill. " +
+            "A day counts only when the worker was actually present and working; days when they were " +
+            "downed, absent, or refusing work do not count. This stops a very short employment from " +
+            "moving diplomacy.";
         private const string PositiveExperienceThresholdTooltip =
             "An average mood at or above this level counts as a positive employment experience and " +
             "can improve goodwill.";
@@ -567,10 +569,7 @@ namespace Intercolony
 
         private static string MinimumEmploymentDaysLabel(float days)
         {
-            int roundedDays = Mathf.RoundToInt(days);
-            return roundedDays == 1
-                ? "Minimum employment for goodwill: 1 day"
-                : $"Minimum employment for goodwill: {roundedDays} days";
+            return $"Observed days for goodwill: {Mathf.RoundToInt(days)}";
         }
 
         private static string PositiveExperienceThresholdLabel(float threshold)
