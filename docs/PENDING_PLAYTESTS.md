@@ -2117,6 +2117,30 @@ Hospitality `CompGuest.lord` reference resolved to null and was written back as 
 If it becomes something worse than that warning — such as a load failure or spreading corruption —
 it belongs to Hospitality.
 
+**Acceptance proof for the employment fix.** The runtime defect is **not to be marked play-verified
+until this exact sequence has been performed**. A green suite is not this proof:
+
+1. Hire a **NEW** employee under the current branch.
+2. The employee arrives.
+3. The employee dies on the map.
+4. Confirm that the corpse visibly contains that employee.
+5. Save.
+6. Quit to the main menu.
+7. Reload.
+8. Confirm that the corpse still contains the employee.
+9. Confirm that colonists can evaluate **VisitGrave** joy.
+10. Confirm that no **NEW** `JobGiver_VisitGrave` `NullReferenceException` appears in the post-load
+    `Player.log` delta.
+
+The last step is the distinction that matters: it separates new damage from old damage. An already
+empty corpse or an exception carried by the old save is not new damage.
+
+### Existing empty-corpse damage needs one repair run
+
+Run **Debug actions → Intercolony → Repair empty corpses (DESTRUCTIVE)** on the operator's
+**Playtest 1.0** save and confirm that the exception stops. The fallback backup is
+`scratchpad\playtest-evidence\E-Playtest-1.0-CAPTURED.rws`.
+
 ---
 
 ## Proven in play

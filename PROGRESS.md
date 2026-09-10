@@ -2538,3 +2538,60 @@ The two defects are independent — different pawns, factions, objects and cause
 Manual test:
 - Neither defect is play-verified. Neither has been seen fixed in a real game yet.
 
+## Runtime defect gate — empty corpses and expected self-test failures  (2026-09-10)
+
+Implemented:
+- During real play the operator hit a repeating `NullReferenceException` from vanilla's
+  `JoyGiver_VisitGrave`, thrown every time any colonist looked for joy. `EmploymentService` had
+  discarded a dead employee's pawn from `WorldPawns` while vanilla still held that pawn by reference
+  inside a corpse, leaving a corpse with an empty inner container in a grave. `JoyGiver_VisitGrave`
+  reads `building_Grave.Corpse.InnerPawn.Faction`, and `InnerPawn` returns null for an empty container.
+- Fixed at `68ad1ea`: the discard is now refused unless the worker never arrived. The guard tests
+  `!worker.Dead` and `contract.arrivedTick == EmploymentContract.NotArrived` as well as the original
+  conditions. A worker who arrived and then died is vanilla's to own.
+- The same exception appeared again after the fix, but the re-saved `Playtest 1.0` contains **85
+  corpses, of which exactly one is empty** — `Corpse_Human849086`, still carrying `<innerList />`,
+  inside `Grave508055`. That corpse is Sinni, who died before the fix existed. No new empty corpse
+  has appeared since. The recurrence is old damage being read, not new damage being made, so
+  `68ad1ea` stands.
+- Repaired the damage already done at `c46e175` with the debug action **Debug actions → Intercolony →
+  Repair empty corpses (DESTRUCTIVE)**. It scans loaded maps for corpses with an empty container,
+  destroys those and only those, and prints one line per removal plus a total. It never runs
+  automatically. It does not touch the grave: a grave that loses its corpse is an ordinary empty
+  grave the player can reuse. It does not recreate the pawn, because the pawn does not exist and
+  inventing one would be worse than the defect. Destroying an empty corpse is something vanilla
+  already anticipates: `Corpse.Destroy` guards its pawn access behind `!Bugged`
+  (`reference/decompiled/Verse/Corpse.cs:244-248`) and `Bugged` is exactly the empty-container
+  condition (`:151`).
+- The self-test log isolation work at `fb3f97a` and `49be300` covers two deliberate provocations:
+  one persists a supplier listing whose `ThingDef` does not exist to prove the loader prunes it, and
+  the other builds a procurement contract at a zero unit price to prove invalid terms fail
+  immediately. Both provocations are correct and both assertions are unchanged. `ExpectedLogHandler`
+  now wraps the Unity log handler for the span of each operation, withholds exactly the expected
+  messages matched on full text, counts them so the test can assert they occurred, forwards
+  everything else, and is restored in a `finally`. Nothing globally suppresses Verse output and no
+  production loader was special-cased.
+
+Not implemented:
+- The separate Hospitality Lord warning from unit D remains not ours and deliberately unpatched;
+  see the preceding **Runtime defect triage — two defects from real play** entry.
+- The scope fence remains in force: **F12 and F22 are FROZEN**; **F04, F06, F16, F19, F20, F21,
+  F23 and F24 are DEFERRED**.
+
+Known limitations:
+- The self-test work at `fb3f97a` and `49be300` is committed but **NOT YET VERIFIED**. No suite run
+  and no mutation pass has been performed because the operator was playing and `dev.ps1 test -Fresh`
+  restarts their game. It was committed so a lost session would not lose the work, not because it is
+  believed.
+- The empty-corpse repair has not been run against the operator's save. It is theirs to run, on the
+  backup already captured.
+- `Log.Error` enqueues into the in-game message queue before it reaches Unity (`reference/decompiled/Verse/Log.cs:145`
+  then `:165`), so a withheld diagnostic still appears in the dev log window during a test run. Only
+  the `Player.log` signal is affected. Removing the queue entry would mean rebuilding a private
+  vanilla `Queue<LogMessage>` by reflection, which was judged more invasive than the problem.
+
+Manual test:
+- Not performed. The runtime defect remains unverified in real play; the exact hire, arrival, death,
+  save, quit-to-menu, reload, visible-corpse, VisitGrave-joy and no-new-post-load-exception sequence
+  is recorded in `docs/PENDING_PLAYTESTS.md`.
+
