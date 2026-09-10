@@ -17,6 +17,141 @@ namespace Intercolony
     {
         private const string Category = "Intercolony";
 
+        /// <summary>
+        /// One-time cleanup for the pre-68ad1ea save damage: an empty Corpse has no pawn to
+        /// restore, so remove only that corpse and leave its grave/casket in place.
+        ///
+        /// The scan is deliberately limited to the current game's loaded maps. Map corpse
+        /// listings cover loose corpses; every Building_Casket is then inspected for held
+        /// corpses, which covers graves and caskets without treating a valid corpse as damaged.
+        /// </summary>
+        [DebugAction(Category, "Repair empty corpses (DESTRUCTIVE)",
+            allowedGameStates = AllowedGameStates.Playing, displayPriority = 42)]
+        private static void RepairEmptyCorpses()
+        {
+            List<Map> maps = Find.Maps;
+            List<EmptyCorpseRepairCandidate> candidates = new List<EmptyCorpseRepairCandidate>();
+            HashSet<Corpse> seenCorpses = new HashSet<Corpse>();
+            int mapsScanned = 0;
+
+            if (maps != null)
+            {
+                for (int i = 0; i < maps.Count; i++)
+                {
+                    Map map = maps[i];
+                    if (map == null)
+                    {
+                        continue;
+                    }
+
+                    mapsScanned++;
+
+                    // ThingRequestGroup.Corpse is the map's loose-corpse listing. A corpse held
+                    // by a casket is not a spawned map thing, so it is inspected below through
+                    // the casket's direct ThingOwner instead.
+                    List<Thing> looseCorpses =
+                        map.listerThings.ThingsInGroup(ThingRequestGroup.Corpse);
+                    for (int j = 0; j < looseCorpses.Count; j++)
+                    {
+                        if (looseCorpses[j] is Corpse looseCorpse)
+                        {
+                            AddEmptyCorpseCandidate(
+                                looseCorpse, $"loose on map {map}", candidates, seenCorpses);
+                        }
+                    }
+
+                    // Building_Grave derives from Building_CorpseCasket, which derives from
+                    // Building_Casket. Inspecting every casket also covers any other corpse
+                    // casket type without relying on a grave-only accessor.
+                    List<Thing> allThings = map.listerThings.AllThings;
+                    for (int j = 0; j < allThings.Count; j++)
+                    {
+                        if (!(allThings[j] is Building_Casket casket))
+                        {
+                            continue;
+                        }
+
+                        ThingOwner contents = casket.GetDirectlyHeldThings();
+                        if (contents == null)
+                        {
+                            continue;
+                        }
+
+                        string container = $"{casket.ThingID} ({casket.GetType().Name})";
+                        for (int k = 0; k < contents.Count; k++)
+                        {
+                            if (contents[k] is Corpse containedCorpse)
+                            {
+                                AddEmptyCorpseCandidate(
+                                    containedCorpse, container, candidates, seenCorpses);
+                            }
+                        }
+                    }
+                }
+            }
+
+            StringBuilder report = new StringBuilder();
+            report.AppendLine(
+                $"Empty corpse repair: scanned {mapsScanned} loaded map(s); looked at loose " +
+                "map corpses and the direct contents of every grave/casket on each map.");
+
+            if (candidates.Count == 0)
+            {
+                report.AppendLine("No empty corpses found; nothing changed.");
+                report.Append("Total removed: 0 empty corpse(s).");
+                Report(report.ToString());
+                return;
+            }
+
+            int removed = 0;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                EmptyCorpseRepairCandidate candidate = candidates[i];
+                candidate.corpse.Destroy(DestroyMode.Vanish);
+                if (!candidate.corpse.Destroyed)
+                {
+                    continue;
+                }
+
+                report.AppendLine(
+                    $"Removed empty corpse {candidate.corpseId} at {candidate.position} " +
+                    $"from {candidate.container}.");
+                removed++;
+            }
+
+            report.Append($"Total removed: {removed} empty corpse(s).");
+            Report(report.ToString());
+        }
+
+        private sealed class EmptyCorpseRepairCandidate
+        {
+            public Corpse corpse;
+            public string corpseId;
+            public IntVec3 position;
+            public string container;
+        }
+
+        private static void AddEmptyCorpseCandidate(
+            Corpse corpse,
+            string container,
+            List<EmptyCorpseRepairCandidate> candidates,
+            HashSet<Corpse> seenCorpses)
+        {
+            if (corpse == null || corpse.Destroyed || corpse.InnerPawn != null ||
+                !seenCorpses.Add(corpse))
+            {
+                return;
+            }
+
+            candidates.Add(new EmptyCorpseRepairCandidate
+            {
+                corpse = corpse,
+                corpseId = corpse.ThingID,
+                position = corpse.PositionHeld,
+                container = container
+            });
+        }
+
         [DebugAction(Category, "Open debug window", allowedGameStates = AllowedGameStates.Playing, displayPriority = 100)]
         private static void OpenDebugWindow()
         {
