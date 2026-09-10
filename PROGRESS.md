@@ -2620,3 +2620,72 @@ Known limitations:
 Manual test:
 - None; no code changed.
 
+## Playtest correction run — C8 closeout  (2026-09-10)
+
+Implemented:
+- Closed the eight findings authorised by the correction plan:
+  - **F01** (`1c5cc56`) — A routine contract cycle is now silent. `Contract delivery due`
+    became a log line, and one actionable letter now fires after auto-ready for orders that are
+    still merely Accepted.
+  - **F07** (`14ad416`) — Production rate now counts real completions. This is the sixth Harmony
+    patch, on `Frame.CompleteConstruction`, with its justification recorded; the bill observer
+    unwraps `MinifiedThing`, so a crafted minifiable good is not recorded under its wrapper.
+  - **F08, F09, F11** (`1ae4ef6`) — Nine settings for commercial goodwill pressure, employment
+    experience and RFQ pacing are all read live and clamped. F11's schedule was rebalanced so a
+    normal cohort commonly answers on day one and nothing is scheduled past day five.
+  - **F10** (`d20973e`, `46c77ad`) — No production change was needed. The read-only audit and the
+    four absence assertions are the record; the reason is set out below.
+  - **F13 and F17** (`61d3969`) — Auto-renew is a `CheckboxLabeled` on the employee card; the
+    occasional contract actions moved into `...`; `Pay {arrears}` deliberately stayed.
+  - **C6 and C7** (`aa413e3`) — F12 and F22 are frozen where a future run will read it.
+- Out of plan order, the two runtime defects triaged from real play and the defect gate reopened
+  and closed are recorded in the existing **Runtime defect triage — two defects from real play**
+  and **Runtime defect gate — empty corpses and expected self-test failures** entries
+  (`28acfd1`, `f1aa604`). They are cross-referenced here rather than restated.
+- Three findings from this run are worth keeping plainly:
+  - **The plan's premise for F10 was wrong.** It suspected that a progression gate had leaked onto
+    Find Seller and spot purchasing. A read-only audit found none: the reputation-and-history gate
+    lives only in `ProcurementContractService.TryValidateAgreementProgression`, and nothing on the
+    spot path calls it. Selling already behaved the way the plan wanted procurement to. F10 became
+    four assertions pinning an absence, and zero lines of production code.
+  - **Four separate pieces of evidence looked complete and were not, and every one was caught by
+    mutation or by a second run, never by reading.** A pinned jitter value in the F11 fixture was
+    simply wrong; the independent oracle exposed it, while `RfqService` was correct all along. An
+    F10.4 fixture read one live `CommercialReputation` twice through the same reference, so its own
+    first-purchase count reported 2. The four F10 assertions passed alone but **skipped in the
+    whole-suite run**, because earlier suites trade with every settlement and the never-traded
+    precondition no longer existed.
+  - **A deliberately provoked diagnostic was spending the signal reserved for real ones.** Two
+    self-tests induce failures on purpose; their output was indistinguishable from genuine defects
+    in `Player.log`, in a project that deliberately denies exit 0 to a run whose log gained
+    exceptions. `ExpectedLogHandler` now withholds exactly the expected messages, counts them so the
+    test can assert they happened, and forwards everything else.
+
+Not implemented:
+- **F12 and F22 are FROZEN**; **F04, F06, F16, F19, F20, F21, F23 and F24 are DEFERRED** pending
+  newer product direction. F02, F03, F05, F14, F15, F18 and F25 stayed regression-only, and none
+  of them broke.
+- The full employee-card redesign, which the plan forbade twice.
+
+Known limitations:
+- **F13 and F17 are NOT play-verified.** Whether the tick reads at a glance, whether the click
+  target works, whether reopening the tab redraws the right state, and whether every moved action is
+  still reachable from `...` are all things a person has to see. They are in
+  `docs/PENDING_PLAYTESTS.md`.
+- **The employment fix is NOT play-verified either.** The operator's own acceptance sequence —
+  hire, arrive, die, look in the grave, save, quit, reload, look again, and no new
+  `JobGiver_VisitGrave` exception in the post-load delta — has not been performed.
+- **The empty-corpse repair has never been run against the operator's save.** It is theirs to run.
+- `Log.Error` still reaches the in-game message queue before Unity, so a withheld diagnostic still
+  appears in the dev log window during a test run. Only the `Player.log` signal is affected.
+- The literal 22-pixel heights on the employee card's worker-name and combat-clause labels remain
+  real CLAUDE.md rule-7 debt, already recorded and deliberately not fixed here.
+
+Manual test:
+- Evidence: Whole suite on a fresh world: **1601 passed, 0 failed, 16 skipped, exit 0**, log signal CLEAN,
+  world-pawn delta 0. The baseline this run started from was 1536/0/17. The sixteen remaining
+  skips are the long-standing world-variance ones — no pregnant animal, no prisoner, no second
+  colony — and they skipped identically before this branch existed.
+- The three outstanding human proofs above are all recorded in `docs/PENDING_PLAYTESTS.md`. A
+  green suite does not substitute for any of them.
+
