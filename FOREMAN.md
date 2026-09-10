@@ -1,19 +1,20 @@
 # Foreman state — Intercolony
 
-Stage: **E — THE DEFECT GATE IS REOPENED. The correction plan pauses after C3.6 and resumes at C3.7.**
-Unit: C3.6b — q101's pinned jitter is 1, not 0, and one stale PROGRESS.md line
-Worker: luna running — `…\scratchpad\unit-c36b.out`.
+Stage: **C3 — the defect gate is CLOSED. The correction plan resumes at C3.7.**
+Unit: C3.7 — F08's settings assertions in the `reputation` suite
+Worker: luna running — `…\scratchpad\unit-c37.out`.
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
 
-Last done: E.2 and E.2b, both **proven by mutation, not merely green**. `long-term` 62/0/0 exit 0
-with the three synthetic `cycle 1 failed` lines gone from `Player.log`; `rfq` log signal CLEAN.
-Breaking `ExpectedLogHandler`'s match turns the long-term assertion red at `expected=6; captured=0`
-and the rfq S4 assertion red at `expected=0; unexpected=1`, and both suppressed lines reappear. E.3
-recorded the whole gate at `f1aa604`. **Still owed and theirs, not mine: run the empty-corpse repair
-on the Playtest 1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
-Updated: 2026-09-10 00:40
+Last done: C3.6 + C3.6b at `ed6faaa` — **F11's eleven assertions are mutation-proven.** rfq 236/0/0
+exit 0, log CLEAN. Removing the five-day clamp turns F11.6 and F11.10 red; removing the
+attractiveness bias turns F11.4 red; ignoring `rfqResponseSpeed` turns F11.7 red. The two assertions
+red on the first run were a wrong pinned jitter in the fixture, not a defect in `RfqService` — its
+formula matches the oracle exactly. E.2 and E.2b are also mutation-proven, and E.3 recorded the whole
+defect gate at `f1aa604`. **Still owed and theirs, not mine: run the empty-corpse repair on the
+Playtest 1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
+Updated: 2026-09-10 01:05
 Foreman load: 2026-09-09 19:50
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -70,8 +71,8 @@ two workers on the same large UI or settings file.
 | ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
 | ✅ | C1 — F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
 | ✅ | C2 — F07: the production rate must count real completions | F07 | closed, `14ad416` |
-| ⏸ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08 ✅, F09 ✅, F11 | pauses after C3.6, resumes at C3.7 |
-| 🔨 | E — the defect gate reopened: old damage, and a noisy self-test | — | A proven old corruption |
+| 🔨 | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08 ✅, F09 ✅, F11 ✅ | assertions remain: C3.7, C3.8 |
+| ✅ | E — the defect gate reopened: old damage, and a noisy self-test | — | closed, `f1aa604` |
 | ✅ | D — runtime defect triage, out of plan order, by operator instruction | — | closed, `28acfd1` |
 | ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
 | ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
@@ -137,8 +138,8 @@ variable, and nothing in Intercolony is called by ordinary vanilla construction 
 ## STAGE E — THE DEFECT GATE REOPENED, 2026-09-09
 
 The operator saw the VisitGrave exception again AFTER `68ad1ea` landed, and separately found the
-self-test writing a red error into the live debug log. **Correction-plan dispatch is paused after
-C3.6 and resumes at C3.7.**
+self-test writing a red error into the live debug log. **CLOSED 2026-09-10 at `f1aa604`. Both items
+resolved and mutation-proven; the plan resumed at C3.7.**
 
 ### **A IS OLD CORRUPTION. PROVEN, NOT INFERRED.**
 
@@ -305,8 +306,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | C3.4 — F09 reads the settings at resolution | accepted, `97d7ccf` |
 | ✅ | C3.4b — the "minimum days" label must say sampled days | accepted, `b8f2b47`. **F09 COMPLETE** |
 | ✅ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | accepted, `284af8d` |
-| 🔒 | C3.6 — F11's assertions, in the rfq suite | **written, HELD unverified — needs a suite run the operator's live game blocks** |
-| ⬜ | C3.7 — F08's settings assertions, in the reputation suite | not started |
+| ✅ | C3.6 + C3.6b — F11's eleven assertions, in the rfq suite | `fb3f97a` + `ed6faaa`, **mutation-proven**. rfq 236/0/0 |
+| 🔨 | C3.7 — F08's settings assertions, in the reputation suite | Luna running |
 | ⬜ | C3.8 — F09's settings assertions, in the long-term suite | not started |
 
 ## Units — stage E
@@ -318,7 +319,7 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | E.2 — the self-test's expected error must not look like a real one | `fb3f97a`, **mutation-proven** |
 | ✅ | E.2b — audit the adjacent synthetic procurement-failure line | `49be300` **UNVERIFIED**. White `Log.Message`, so it never cost the exit code, but `dev.ps1:130` showed it to the operator as a failure. Letters were already cleaned up. No production defect. |
 | ✅ | E.3 — the durable record, and the play proof the operator specified | `f1aa604` |
-| 🔨 | C3.6b — q101's pinned jitter is 1, not 0; and one stale PROGRESS.md line | Luna running |
+| ✅ | C3.6b — q101's pinned jitter is 1, not 0; and one stale PROGRESS.md line | `ed6faaa`, **mutation-proven** |
 
 ## Units — stage D
 
