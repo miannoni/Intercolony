@@ -1,18 +1,39 @@
 # Foreman state — Intercolony
 
-Stage: **HALTED CLEANLY. The correction plan is COMPLETE, and stage F's triage is CLOSED.**
-Unit: none. **STAGE F IS CLOSED at `234fa56`. Do not dispatch anything without a new instruction.**
-Worker: none.
+Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
+Unit: F.3 — the exhaustive re-audit of the installed DLLs, and the supersede in `PROGRESS.md`
+Worker: dispatching.
 
-**BOTH F DEFECTS ARE NOT OURS, each with a reason rather than a shrug.** The operator answered the
-confirming question — **five medical beds, six casualties** — which is exactly the condition that
-turns vanilla's rare bed race into a reliable one. The repeat count is explained too: the pawn holds
-a **queued** LayDown job and `JobQueue.AnyCanBeginNow` re-evaluates it on every check
-(`reference/decompiled/Verse.AI/JobQueue.cs:101-111`), so one stuck pawn re-emits the error until
-the queue clears. Recorded, not patched, per the standing rule. **One product observation was raised
-and deliberately NOT acted on:** Intercolony makes a dozen armed employees ordinary, so a fight now
-produces more simultaneous casualties than a vanilla-sized infirmary is built for. Whether that
-deserves anything is the operator's call and they have not made it.
+## THE VERDICT IS NOW: **NOT DETERMINED.** Vanilla rescue/bed contention is PLAUSIBLE, NOT PROVEN.
+
+**I GOT THIS WRONG AND THE CORRECTION IS THE IMPORTANT PART. `Hospitality DOES patch
+WorkGiver_RescueDowned`** — a `ShouldSkip` postfix and a `HasJobOnThing` prefix, both at
+`reference/mods/Hospitality-1.6/Hospitality/Patches/WorkGiver_RescueDowned_Patch.cs:10` and `:30`.
+They were in the F.1 report I received. My summary quoted only the `IsValidBedFor` postfix and
+concluded "Hospitality cannot cause it" while silently dropping those two from the same report.
+**Never inherit that inventory as fact; re-derive it from the installed binary.**
+
+**Two further things the operator was right about:**
+
+  - **"5 beds, 6 casualties" is CONSISTENT WITH contention. It is not causal proof** that this error
+    is vanilla's or that Intercolony is uninvolved. It was treated as confirmation and it is not.
+  - **TWO pawns emitted the error, Breixo AND Kazuki.** "The sixth casualty had no bed" explains at
+    most one. Any accepted theory must explain how two separate pawns each acquired an invalid
+    LayDown job. This is unexplained.
+
+**THE LOAD-BEARING FACT, from the stack, is the one to chase:**
+
+    GetBedSleepingSlotPosFor ← JobInBedUtility.InBedOrRestSpotNow
+      ← JobDriver_LayDown.CanBeginNowWhileLyingDown ← Job.CanBeginNow ← JobQueue.AnyCanBeginNow
+
+At the moment of failure the employee holds a **queued LayDown job whose target bed cannot give them
+a slot**. **Where that job came from, and when its bed stopped being usable, is what must be
+explained.** Nothing closes until captured runtime evidence connects: rescue/bed selection → the
+specific target bed → LayDown creation/enqueue → the bed becoming unavailable → the error.
+
+**NO PERMANENT FIX MAY BE BUILT YET.** The next work is temporary, narrowly scoped diagnostics for
+Intercolony employees only, on the error-adjacent path, with no per-tick spam and nothing that
+materially shifts timing or bed selection.
 
 **THE DEFECT, and the operator's own observations, which are the load-bearing facts:**
 
@@ -62,8 +83,13 @@ Sol read-only, `…\scratchpad\unit-f0b.out`. Three load-bearing citations spot-
   - **F-D7 — Common Sense is RULED OUT.** It patches `JobGiver_GetJoy.TryGiveJob` and
     `WorkGiver_VisitSickPawn.JobOnThing` and nothing else in the rest/bed/rescue chain, and it never
     suppresses a vanilla null-return (`reference/mods/CommonSense-1.6/...`).
-  - **F-D8 — Hospitality CANNOT cause this error, and the reason is precise.** Its only relevant
-    patch is a postfix on `RestUtility.IsValidBedFor`
+  - **F-D8 — WITHDRAWN AND WRONG. Hospitality DOES patch `WorkGiver_RescueDowned`**, both a
+    `ShouldSkip` postfix and a `HasJobOnThing` prefix
+    (`reference/mods/Hospitality-1.6/Hospitality/Patches/WorkGiver_RescueDowned_Patch.cs:10`, `:30`).
+    Both were in the F.1 report; my summary dropped them and concluded the opposite. The
+    `ShouldSkip` postfix in particular **widens** when the rescue workgiver runs at all — it forces
+    "do not skip" whenever any downed guest is on the map. The superseded text follows. Its only
+    relevant patch is a postfix on `RestUtility.IsValidBedFor`
     (`reference/mods/Hospitality-1.6/Hospitality/Patches/RestUtility_Patch.cs:10-31`) which returns
     early when `__result` is already false. **It can only NARROW validity, never widen it**, so it
     cannot make a full bed pass a check it would otherwise fail. It patches nothing else in the
@@ -71,7 +97,10 @@ Sol read-only, `…\scratchpad\unit-f0b.out`. Three load-bearing citations spot-
     `JobDriver_LayDown`. Its guest predicate is `PresentGuests.Contains(pawn)`, rebuilt from
     `LordJob_VisitColony` lords, and the save shows `CompGuest.bed` and `.lord` **null** for both
     Breixo and Kazuki.
-  - **F-D9 — THE LEADING EXPLANATION, and what would confirm it.** Every check narrows or is absent,
+  - **F-D9 — WITHDRAWN AS A VERDICT; it remains a hypothesis only.** "5 beds, 6 casualties" is
+    consistent with contention and is not causal proof, and it explains at most ONE stuck pawn while
+    TWO emitted the error. The superseded text follows. THE LEADING HYPOTHESIS, and what would
+    confirm it: Every check narrows or is absent,
     so the bed must have passed `IsValidBedFor` with a free slot at selection and been full by the
     time `GetBedSleepingSlotPosFor` ran. That is vanilla's own race, and
     `WorkGiver_RescueDowned.JobOnThing` re-looks-up the bed without a null check
@@ -115,7 +144,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 17:05 — stage F closed; halted
+Updated: 2026-09-10 18:20 — F REOPENED; the not-ours verdict is withdrawn
 Foreman load: 2026-09-10 16:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -180,7 +209,7 @@ two workers on the same large UI or settings file.
 | ✅ | C6 — freeze F12 in the documentation | — | closed, `aa413e3` |
 | ✅ | C7 — freeze F22 in the documentation | — | closed, `aa413e3` |
 | ✅ | C8 — whole-suite regression and clean halt | — | closed, `ed0a3d5`. **1601/0/16, exit 0** |
-| ✅ | F — new runtime defects from play: the infirmary and `Lord_165` | — | closed, `234fa56`. **Neither is ours** |
+| 🔨 | F — new runtime defects from play: the infirmary and `Lord_165` | — | **REOPENED. The infirmary verdict is WITHDRAWN — not determined.** `Lord_165` stands as Hospitality's |
 
 ## Units — stages C0 and C1
 
