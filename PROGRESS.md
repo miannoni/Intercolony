@@ -2689,3 +2689,86 @@ Manual test:
 - The three outstanding human proofs above are all recorded in `docs/PENDING_PLAYTESTS.md`. A
   green suite does not substitute for any of them.
 
+## Runtime defect triage — infirmary bed scarcity and Hospitality Lord_165  (2026-09-10)
+
+Disposition:
+- **DEFECT ONE — not ours. Vanilla, under bed scarcity.** During real play in a mature colony, the
+  operator saw a red, repeating `Could not find good sleeping slot position for <employee>` dozens
+  of times. The named pawns were Intercolony armed employees. It fired only at the infirmary, after
+  a fight, when wounded employees needed treatment. The operator confirmed that both pawns already
+  had their own assigned beds, and that this had been happening for a long time rather than since
+  any recent change.
+- A medical bed clears its individual owners
+  (`reference/decompiled/RimWorld/Building_Bed.cs:110-121`, `:738-750`), so on a medical bed the
+  ownership tests in `GetBedSleepingSlotPosFor` are trivially satisfied and the error can only mean
+  **every slot was occupied and this pawn was not one of the occupants**
+  (`reference/decompiled/RimWorld/RestUtility.cs:360-383`).
+- **Vanilla does not exclude quest lodgers from medical-bed assignment.** The faction gate in
+  `IsValidBedFor` compares the traveller's `Faction` and `HostFaction` and never consults
+  `IsQuestLodger()` (`RestUtility.cs:185-190`). An active employee is player-faction with a null
+  `HostFaction`, so vanilla admits them to rescue and to bed-finding alike. **This killed the leading
+  hypothesis** — that a lodger was allowed into the rescue path and denied the bed-assignment path —
+  and it should not be proposed again.
+- **Intercolony has no bed selector.** Its only bed call in the whole mod is `UnclaimBed()` at
+  employment teardown (`Labor/EmploymentService.cs:1072-1085`), and its only lodger-related Harmony
+  patch is caravan-only (`Compatibility/HarmonyPatches.cs:99-150`).
+- **Common Sense is ruled out.** It patches `JobGiver_GetJoy.TryGiveJob` and
+  `WorkGiver_VisitSickPawn.JobOnThing`, nothing in the rest/bed/rescue chain, and it never suppresses
+  a vanilla null-return.
+- **Hospitality cannot cause it, and the reason is precise.** Its only relevant patch is a postfix
+  on `RestUtility.IsValidBedFor` that returns early when the result is already false
+  (`reference/mods/Hospitality-1.6/Hospitality/Patches/RestUtility_Patch.cs:10-31`). **It can only
+  narrow validity, never widen it**, so it cannot make a full bed pass a check it would otherwise
+  fail. It patches nothing else in the chain, and the save shows its `CompGuest.bed` and `.lord`
+  null for both named employees.
+- The mechanism is confirmed against the code. The bed passed `IsValidBedFor` with a free slot when
+  it was chosen, and was full by the time the pawn arrived to lie down.
+  `WorkGiver_RescueDowned.JobOnThing` re-looks-up the bed and builds the job **without null-checking
+  the result** (`reference/decompiled/RimWorld/WorkGiver_RescueDowned.cs:66-73`). The repetition is
+  explained too: the pawn holds a **queued** LayDown job, and `JobQueue.AnyCanBeginNow` re-evaluates
+  every queued job's `CanBeginNow` (`reference/decompiled/Verse.AI/JobQueue.cs:101-111`), which for
+  LayDown reaches `InBedOrRestSpotNow` and the failing slot lookup
+  (`reference/decompiled/RimWorld/JobDriver_LayDown.cs:41-44`). One stuck pawn therefore re-emits the
+  error on every check until the queue clears, which explains a repeat count in the dozens from a
+  single incident.
+- The confirming observation from the operator was **five medical beds, six casualties**. More
+  wounded than beds is exactly the condition that turns a rare race into a reliable one.
+- **Disposition: record it, do not patch around it.** This follows the standing rule set during the
+  unit-D triage: vanilla or another mod's invalid state is not to be hidden behind a defensive guard
+  in Intercolony. Nothing was changed.
+- As a product observation, not a defect, Intercolony makes it ordinary to field a dozen or more
+  armed employees, so a fight now produces more simultaneous casualties than a vanilla colony's
+  infirmary is usually built for. The mod did not break anything; it changed the scale at which an
+  existing vanilla limit is reached.
+
+- **DEFECT TWO — not ours — Hospitality's, and established for this instance rather than inherited
+  from the earlier `Lord_140` finding.** That earlier entry was instance-specific and did not
+  automatically cover a new id. The latest autosave holds twelve `<lord>Lord_165</lord>` references,
+  every holder a `Faction_13` pawn — Pact of Toberium, a siege group — all in Hospitality's
+  `CompGuest` layout. Intercolony has no `Lord`, `LordJob` or `lordManager` field and persists no Lord
+  reference (`Labor/EmploymentContract.cs:466-477`). Same disposition: recorded, not patched.
+- The earlier **Runtime defect triage — two defects from real play** and **Runtime defect gate — empty
+  corpses and expected self-test failures** entries remain the records for those earlier runtime
+  findings; they are cross-referenced here rather than restated.
+
+Implemented:
+- `reference/mods/` did not exist in this checkout even though `CLAUDE.md:34-38` describes it as the
+  home for third-party source used as a reference. Hospitality 1.6 and Common Sense 1.6 are now
+  decompiled into it with `ilspycmd`. The directory is gitignored, so nothing entered the repository,
+  but the next investigation of a mod interaction starts with the source already on disk instead of
+  guessing.
+
+Not implemented:
+- No code or runtime patch was made; both defects were recorded and deliberately left unpatched.
+- The scope fence remains in force: **F12 and F22 are FROZEN; F04, F06, F16, F19, F20, F21, F23 and
+  F24 are DEFERRED.**
+
+Known limitations:
+- The race was not observed under a debugger; it is inferred from the code paths plus the
+  five-beds-six-casualties observation. That inference is strong but it is an inference, and it is
+  labelled as one here.
+- No change was made, so there is nothing to regression-test.
+
+Manual test:
+- None — no code changed.
+
