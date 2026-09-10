@@ -2772,3 +2772,14 @@ Known limitations:
 Manual test:
 - None — no code changed.
 
+### SUPERSEDE — installed Hospitality/Common Sense binary re-audit (2026-09-10)
+
+- **The sleeping-slot verdict is withdrawn. It is now: NOT DETERMINED — vanilla rescue/bed contention is plausible but NOT proven.**
+- **The specific reasoning error:** this entry asserted that Hospitality patches nothing else in the rescue/bed chain. The installed Hospitality 1.6 binary does: `reference/mods/Hospitality-1.6/Hospitality/Patches/WorkGiver_RescueDowned_Patch.cs:10-27` is a `ShouldSkip` postfix, and `:30-47` is a `HasJobOnThing` prefix. The earlier inventory therefore cannot be treated as established.
+- **Five beds, six casualties** is consistent with contention, but it is not causal proof and was wrongly treated as confirmation.
+- **Two pawns emitted the error, not one.** The sixth casualty having no bed explains at most one emission. Any accepted theory must account for both emissions; none does yet.
+- **What would close this:** captured runtime evidence connecting rescue/bed selection -> the specific target bed -> LayDown creation and enqueue -> that bed becoming unavailable -> the `GetBedSleepingSlotPosFor` error. Temporary instrumentation to capture exactly that is being built separately.
+- **The `Lord_165` verdict is NOT withdrawn.** It is separately evidenced from the save and still stands as Hospitality's.
+- The re-audit also found Hospitality patches on `RestUtility.IsValidBedFor`, `Building_Bed.ForPrisoners`/`GetGizmos`, `Pawn_Ownership.UnclaimBed`/`OwnedBed`, `Toils_LayDown.ApplyBedThoughts`, and the inherited base `JobDriver.DriverTick`; Common Sense patches `Pawn_JobTracker.StartJob`, `EndCurrentJob`, and `CleanupCurrentJob`. It found no direct patch to `WorkGiver_TakeToBed.FindBed`, `JobDriver_TakeToBed`, `JobDriver_LayDown`, `Toils_Bed`, `JobQueue`, `JobInBedUtility`, `CompAssignableToPawn_Bed`, or `JobDefOf.Rescue`.
+- Rescue-adjacent, but not direct patches to the listed target types, are Hospitality patches on `Pawn_GuestTracker.SetGuestStatus`, `Pawn_RelationsTracker.Notify_RescuedBy`, `Faction.Notify_MemberExitedMap`, `JobGiver_Work.PawnCanUseWorkGiver`, and `Pawn.VerifyReservations`; the exact employee state does not resolve all of their `IsGuest()` and runtime guards.
+
