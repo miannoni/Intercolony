@@ -1,9 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: **C5 — F13 and F17: the employee card's interaction surface. C4 IS COMPLETE.**
-Unit: C5.0 — recon: the card's rows, the `...` menu, and the Auto-ready control F13 must imitate
-Worker: **sol recon, read-only** — `…\scratchpad\unit-c50.out`. Recon only: its output becomes
-decisions and a Luna unit, never a commit on its own.
+Unit: C5.1 — F13 and F17 together, one file, one renderer
+Worker: luna running — `…\scratchpad\unit-c51.out`.
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
@@ -15,7 +14,7 @@ turns F10.1 red, requiring a record in `AcceptQuote` turns F10.2 red, and removi
 turns F10.3 and F10.4 red. Before that, **C3 complete** at `1ae4ef6`. **Still owed and theirs, not
 mine: run the empty-corpse repair on the Playtest 1.0 save, and the hire→arrive→die→save→reload
 proof in `PENDING_PLAYTESTS.md`.**
-Updated: 2026-09-10 03:50
+Updated: 2026-09-10 04:20
 Foreman load: 2026-09-10 01:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -350,6 +349,42 @@ procurement to, so there is nothing to mirror across.
     `Dialog_ProposeProcurementAgreement.CandidateThingDefs` (`:836-864`) restricting candidates to a
     settlement's `CommercialHistory` or `SupplierListings` is deliberate progression or merely UI
     discoverability. It sits on the standing path only, so F10 is unaffected either way.
+
+## C5 — the recon, and what I decided from it
+
+Sol recon, read-only, `…\scratchpad\unit-c50.out`. The menu predicate, the row geometry and the
+`autoRenew` persistence spot-checked by me.
+
+**The whole change is one file**, `UI/MainTabWindow_Intercolony_Labor.cs`: one renderer
+(`DrawEmployeeRow:975-1149`), one layout helper (`EmployeeRowLayout.For:940-972`, giving a 28×30
+`...` rect and two 110×30 action rects), one height helper (`EmployeeRowHeight:900-906`,
+`max(52, 25 + CalcHeight(detail) + 3)` — **button presence does not affect height**).
+
+**DECIDED:**
+
+  - **C5-D1 — F13 and F17 are ONE unit.** They move the same rects; the plan requires them
+    serialised or owned by one worker anyway.
+  - **C5-D2 — Auto-renew is `Widgets.CheckboxLabeled` in the freed `rightAction`**, the same widget
+    and convention as Auto-ready (`MainTabWindow_Intercolony.cs:4709-4730`). Not a hand-rolled tick.
+  - **C5-D3 — it is drawn ONLY when `canAutoRenew`.** An unchecked box on a contract that can never
+    auto-renew reads as "off", and "off" and "not applicable" are different states. Same class of
+    mistake as the six sentinel defects, in a new costume.
+  - **C5-D4 — auto-renew leaves `EmployeeDetailLine` (`:913-918`).** CLAUDE.md rule 8: a summary
+    never repeats what is already on screen. Cards shrink slightly as a side effect, correctly.
+  - **C5-D5 — `Pay {arrears}` STAYS on the card, and this is my call, not the plan's.** The plan
+    moves "occasional contract actions"; a wage debt is neither occasional nor a contract action.
+    Burying it would make it easier to keep owing a worker money.
+  - **C5-D6 — the `...` predicate becomes "the option list is non-empty".** Leaving it as
+    `hasLiveRenewalOffer || canAutoRenew` while moving Dismiss into the menu would make Dismiss
+    unreachable for an ordinary worker — a functional regression wearing a layout change's clothes.
+  - **C5-D7 — the rule-7 debt at `:989-1002` is NOT fixed here.** The worker-name and combat-clause
+    labels take literal 22-pixel heights while carrying interpolated strings. Real debt, already in
+    `docs/PENDING_PLAYTESTS.md:575-588`, and fixing it is the redesign this stage explicitly refuses.
+  - **C5-D8 — most of F13's acceptance evidence CANNOT come from a self-test, and must not be
+    claimed to.** Tick/X visibility, the physical click target, the redraw after reopening, and
+    "`...` is not required" are all human proofs. What a suite can honestly cover is the persisted
+    field surviving a Scribe round trip and the downstream renewal semantics, which
+    `IntercolonyLongTermSelfTest.cs:992-1047` already does.
 
 ## Units — stage C4
 
