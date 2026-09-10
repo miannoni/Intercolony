@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C3 — settings for F08, F09 and F11. **STAGE D IS CLOSED; the correction plan has RESUMED.**
-Unit: C3.4 — F09 reads its four settings at resolution time
-Worker: luna running — `…\scratchpad\unit-c3-4.out`
+Unit: C3.4b — the "minimum days" label must say what it counts
+Worker: luna running — `…\scratchpad\unit-c3-4b.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -234,6 +234,12 @@ point of the ceiling is that commerce cannot buy an alliance.
     quantity then total price, so a bounded bias against the cheaper offers is available without
     inventing a score. Bounded, and combined with the existing independent jitter, so the best
     price is a tendency and never deterministically last — the plan is explicit about that.
+  - **C3-D6 — the "minimum employment days" setting counts SAMPLED DAYS, and the label must say
+    so.** C3.4 reported honestly that the floor is a sample count, and that samples and calendar
+    days diverge for a worker who was downed, absent or refusing work. **The behaviour is right and
+    the label is wrong**: counting calendar days would let a worker downed for three weeks qualify
+    on two observations, which is precisely the farming the floor exists to prevent. The label and
+    tooltip change; the rule does not.
   - **C3-D5 — the five-day cap is on ARRIVAL, and the request keeps its six-day life.** Expiry is
     inclusive (`PurchaseRequest.cs:225`) and the reveal path rejects an expired request before
     checking whether a reply is due, so a request that expired at day 5 would discard the very
@@ -247,7 +253,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | C3.1 — the settings surface, one owner, no consumer touched | accepted, `2439f4a` |
 | ✅ | C3.2 — F08 reads the settings, and clamps to remaining headroom | accepted, `3b742f9` |
 | ✅ | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | accepted, `ba98e8b`. **F08 COMPLETE** |
-| 🔨 | C3.4 — F09 reads the settings at resolution | Luna running |
+| ✅ | C3.4 — F09 reads the settings at resolution | accepted, `97d7ccf` |
+| 🔨 | C3.4b — the "minimum days" label must say sampled days | Luna running |
 | ⬜ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | not started |
 | ⬜ | C3.6 → C3.8 — assertions, one unit per host suite | not started |
 
