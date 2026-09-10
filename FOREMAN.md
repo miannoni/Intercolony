@@ -1,8 +1,9 @@
 # Foreman state — Intercolony
 
 Stage: **C5 — F13 and F17: the employee card's interaction surface. C4 IS COMPLETE.**
-Unit: C5.1 — F13 and F17 together, one file, one renderer
-Worker: luna running — `…\scratchpad\unit-c51.out`.
+Unit: C5.2 — the tooltip's lost warning, the `autoRenew` round trip, and the human proofs
+Worker: luna running — `…\scratchpad\unit-c52.out`. **C5.1's finished work is UNCOMMITTED in
+`UI/MainTabWindow_Intercolony_Labor.cs` and must be kept.**
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
@@ -14,8 +15,8 @@ turns F10.1 red, requiring a record in `AcceptQuote` turns F10.2 red, and removi
 turns F10.3 and F10.4 red. Before that, **C3 complete** at `1ae4ef6`. **Still owed and theirs, not
 mine: run the empty-corpse repair on the Playtest 1.0 save, and the hire→arrive→die→save→reload
 proof in `PENDING_PLAYTESTS.md`.**
-Updated: 2026-09-10 04:20
-Foreman load: 2026-09-10 01:20
+Updated: 2026-09-10 04:45
+Foreman load: 2026-09-10 04:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
