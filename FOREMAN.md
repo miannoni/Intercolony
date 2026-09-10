@@ -1,21 +1,22 @@
 # Foreman state — Intercolony
 
 Stage: **E — THE DEFECT GATE IS REOPENED. The correction plan pauses after C3.6 and resumes at C3.7.**
-Unit: E.2b — audit the adjacent synthetic "cycle 1 failed: published price is invalid" line
-Worker: luna running — `…\scratchpad\unit-e2b.out`.
+Unit: E.3 — the durable record in `PROGRESS.md`, and the operator's play proof in `PENDING_PLAYTESTS.md`
+Worker: luna running — `…\scratchpad\unit-e3.out`.
 
-**A DEBT THIS RUN MUST NOT FORGET: `fb3f97a` carries C3.6 and E.2 and BOTH ARE UNVERIFIED.** They
-were committed rather than held only so a lost session would not lose them. The moment RimWorld is
-not running they owe `dev.ps1 test rfq -Fresh` plus a mutation pass — break the day-five clamp and
-watch F11.6 go red, break the exact-string match in `ExpectedMissingDefLogHandler` and watch the new
-S4 assertion go red. Until then neither is believed.
+**A DEBT THIS RUN MUST NOT FORGET: `fb3f97a` and `49be300` ARE UNVERIFIED.** They were committed
+rather than held only so a lost session would not lose them. The moment RimWorld is not running they
+owe `dev.ps1 test rfq -Fresh` and `dev.ps1 test long-term -Fresh` plus a mutation pass — break the
+day-five clamp and watch F11.6 go red; break the exact-string match in `ExpectedLogHandler` and watch
+the new S4 and procurement-diagnostic assertions go red. Until then neither is believed. **The
+long-term suite ran 61/0/0 before this touched it; a drop is a signal, not noise.**
 
 Last done: E.1, the one-time empty-corpse repair, accepted at `c46e175`. Verified by construction
 rather than by a suite run: `Corpse.Destroy` guards its pawn access behind `!Bugged`
 (`reference/decompiled/Verse/Corpse.cs:244-248`) and `Bugged` is exactly the empty-container
 condition (`:151`), so vanilla already anticipates destroying one. **Running it against the
 operator's save is still owed and is theirs to do.**
-Updated: 2026-09-09 22:50
+Updated: 2026-09-10 00:15
 Foreman load: 2026-09-09 19:50
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -318,7 +319,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | E.0 — old-versus-new: count the empty corpses in the re-saved game | **done by me: 1 of 85, and it is Sinni's** |
 | ✅ | E.1 — a one-time repair for the operator's damaged save | `c46e175` |
 | ✅ | E.2 — the self-test's expected error must not look like a real one | `fb3f97a` **UNVERIFIED** |
-| 🔨 | E.2b — audit the adjacent synthetic procurement-failure line | Luna running |
+| ✅ | E.2b — audit the adjacent synthetic procurement-failure line | `49be300` **UNVERIFIED**. White `Log.Message`, so it never cost the exit code, but `dev.ps1:130` showed it to the operator as a failure. Letters were already cleaned up. No production defect. |
+| 🔨 | E.3 — the durable record, and the play proof the operator specified | Luna running |
 | ⬜ | E.3 — the durable record, and the play proof the operator specified | not started |
 
 ## Units — stage D
