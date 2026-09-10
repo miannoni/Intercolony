@@ -73,7 +73,7 @@ two workers on the same large UI or settings file.
 | ✅ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | closed, `1ae4ef6` |
 | ✅ | E — the defect gate reopened: old damage, and a noisy self-test | — | closed, `f1aa604` |
 | ✅ | D — runtime defect triage, out of plan order, by operator instruction | — | closed, `28acfd1` |
-| 🔨 | C4 — F10: progression gates standing agreements, not Find Seller | F10 | recon running |
+| 🔨 | C4 — F10: progression gates standing agreements, not Find Seller | F10 | **no leak; zero production change**, assertions running |
 | ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
 | ⬜ | C6 — freeze F12 in the documentation | — | not started |
 | ⬜ | C7 — freeze F22 in the documentation | — | not started |
