@@ -225,6 +225,13 @@ The request should feel as though information is propagating through a world eco
 
 ## F12 — Preprogrammed and recurring player caravans for agreements
 
+> F12 — FROZEN.
+> Existing order-availability work retained.
+> Recurring/preprogrammed caravan design intentionally deferred.
+> Do not dispatch further implementation without a newer product plan.
+
+The section below is retained as the record of the intended design, not as a task list; do not build preprogrammed caravan formation, saved pawn selection, saved animal selection, recurring automatic player caravans, automatic caravan dispatch, multi-map routing, or new caravan state machines. The authority for this freeze is `docs/PLAYTEST_CORRECTION_PLAN.md` section 8, with the scope-lock record at `PROGRESS.md:2470-2490`; no implementation unit follows the documentation freeze—the freeze is the end of the work, not a step before it.
+
 Long-term Selling and Procurement agreements should allow the player to preconfigure the caravan that will perform future delivery or pickup operations.
 
 The objective is genuine **set-and-forget caravan logistics**.
@@ -699,6 +706,12 @@ This should feel structurally closer to Procurement/RFQ behavior than to guessin
 ---
 
 ## F22 — The player can supply their own colonists to the labor market
+
+> F22 — FROZEN.
+> Reverse/player-supplied labor market intentionally not part of the current release scope.
+> Do not dispatch custody proof or any implementation unit without a newer product plan.
+
+The section below is retained as the record of the intended design, not as a task list, and F22's existing recon in particular remains historical technical information; do not build player-colonist labor listings, external pawn custody, the game-over custody workaround, off-map employment lifecycle, external employment offer generation, abstract training, injury/death risk, or return-to-colony lifecycle. The authority for this freeze is `docs/PLAYTEST_CORRECTION_PLAN.md` section 9, with the scope-lock record at `PROGRESS.md:2470-2490`; no implementation unit follows the documentation freeze—the freeze is the end of the work, not a step before it.
 
 The labor market should become two-sided.
 

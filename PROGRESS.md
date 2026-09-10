@@ -2599,3 +2599,24 @@ Manual test:
   save, quit-to-menu, reload, visible-corpse, VisitGrave-joy and no-new-post-load-exception sequence
   is recorded in `docs/PENDING_PLAYTESTS.md`.
 
+## Playtest correction run — C6/C7 documentation freeze  (2026-09-10)
+
+Implemented:
+- Executed C6 and C7 by adding freeze markers directly beneath the F12 and F22 headings in
+  `docs/PLAYTEST_BATCH_SOURCE_PLAN.md`; the existing bodies remain the retained design record,
+  and F22's existing recon remains historical technical information.
+- The source-plan notices identify the prohibited implementation work, cross-reference sections 8
+  and 9 of `docs/PLAYTEST_CORRECTION_PLAN.md` and the scope-lock record, and state that no
+  implementation unit follows the documentation freeze.
+
+Not implemented:
+- No F12 or F22 implementation was performed; no code changed.
+
+Known limitations:
+- The existing scope-lock entry at `PROGRESS.md:2470-2490` was left untouched. It was not
+  sufficient by itself because a future Foreman run reads the source plan where the task is
+  described, so the freeze is now visible at the F12 and F22 headings as well.
+
+Manual test:
+- None; no code changed.
+
