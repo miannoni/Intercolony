@@ -25,8 +25,10 @@ namespace Intercolony
     {
         private const int SupplyProbeSettlementId = 971_102;
         private const int PurchaseFixtureSilver = 4;
-        private const float MinimumUsefulRfqDistanceGapTiles = 48f;
-        private const int MaximumF11FixtureDefinitions = 32;
+        // With the decompiled Rand/HashCombineInt path, this seed and the fixture quote IDs
+        // produce jitter [0, 0, 0, 1, 2] for q101, q107, q108, q104, q105 respectively.
+        private const int F11FixtureEconomySeed = 0xF11000;
+        private const int F11FixtureRequestId = 51_100;
 
         private static bool IsLegacyAppealBucket(float appeal)
         {
@@ -97,7 +99,7 @@ namespace Intercolony
 
             List<PurchaseRequest> created = new List<PurchaseRequest>();
 
-            CheckF11ResponseTiming(Check, Skip, state, tradable);
+            CheckF11DeterministicResponseTiming(Check, Skip, state, tradable);
             CheckEffectiveSupplyForRfq(Check, state);
             CheckRfqResponseCountUsesEffectiveSupply(Check, Skip, state);
             CheckLogisticsQuoteOwnership(Check, Skip, state);
@@ -465,610 +467,1022 @@ namespace Intercolony
             return Summarize();
         }
 
-        private static void CheckF11ResponseTiming(
+        private static void CheckF11DeterministicResponseTiming(
             Action<string, bool, string> check,
             Action<string, string> skip,
             IntercolonyWorldComponent state,
             List<ThingDef> tradable)
         {
-            const string P1 = "P1 new RFQ has no arrived quotes and explains pending replies";
-            const string P2 = "P2 due RFQ replies arrive through WorldComponentTick";
-            const string P2Gate = "P2 due RFQ replies wait for the deadline interval";
-            const string P3 = "P3 nearer RFQ supplier answers sooner";
-            const string P4 = "P4 RFQ replies are scheduled before request expiry";
+            const string A0 = "F11.0 pinned jitter follows the literal timing formula";
+            const string A1 = "F11.1 a normal multi-supplier request reveals a day-one reply";
+            const string A2 = "F11.2 a multi-supplier request spreads replies over time";
+            const string A3 = "F11.3 a supplier with the higher distance floor answers later";
+            const string A4 = "F11.4 the best-ranked offer has a one-day timing bias";
+            const string A5 = "F11.5 the cheapest quote is not always the last response";
+            const string A6 = "F11.6 no response is scheduled past day five";
+            const string A7 = "F11.7 response speed changes the same cohort measurably";
+            const string A8 = "F11.8 Scribe preserves exact pending arrival ticks";
+            const string A9 = "F11.9 quote terms stay frozen at different reveal times";
+            const string A10 = "F11.10 a reply exactly at the day-five cap is revealed";
 
-            if (state == null || state.Requests == null || state.PendingRfqResponses == null)
+            if (state == null || state.Requests == null || state.PendingRfqResponses == null ||
+                Find.TickManager == null || Find.LetterStack == null || Find.Archive == null ||
+                tradable == null || tradable.Count == 0)
             {
-                string reason = "world request or pending-response state was unavailable";
-                skip(P1, reason);
-                skip(P2, reason);
-                skip(P2Gate, reason);
-                skip(P3, reason);
-                skip(P4, reason);
+                SkipF11ResponseAssertions(
+                    skip, "the live RFQ state, tick manager, letter stack, archive, or a tradable " +
+                    "fixture was unavailable");
                 return;
             }
 
-            List<PurchaseRequest> savedRequests =
-                new List<PurchaseRequest>(state.Requests);
+            FieldInfo economySeedField = typeof(IntercolonyWorldComponent).GetField(
+                "economySeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo currentTimeSpeedField = typeof(TickManager).GetField(
+                "curTimeSpeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo queueResponses = typeof(RfqService).GetMethod(
+                "QueueResponses", BindingFlags.Static | BindingFlags.NonPublic);
+            ThingDef fixtureDef = ThingDefOf.Steel ?? tradable[0];
+            if (economySeedField == null || currentTimeSpeedField == null ||
+                queueResponses == null || fixtureDef == null)
+            {
+                SkipF11ResponseAssertions(
+                    skip, "the private state seed/time-speed field, RFQ queue seam, or fixture " +
+                    "definition was unavailable");
+                return;
+            }
+
+            List<PurchaseRequest> savedRequests = new List<PurchaseRequest>(state.Requests);
             List<PendingRfqResponse> savedPendingResponses =
                 new List<PendingRfqResponse>(state.PendingRfqResponses);
-            FieldInfo nextIdField = typeof(IntercolonyWorldComponent).GetField(
-                "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
-            int savedNextId = state.PeekNextId();
+            int savedEconomySeed = (int)economySeedField.GetValue(state);
             TickManager tickManager = Find.TickManager;
-            int savedTick = tickManager == null ? 0 : tickManager.TicksGame;
-            List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
-            List<RecurringContract> savedContracts =
-                new List<RecurringContract>(state.Contracts);
-            List<ProcurementContract> savedProcurementContracts =
-                new List<ProcurementContract>(state.ProcurementContracts);
-            List<PurchaseOrder> savedPurchaseOrders =
-                new List<PurchaseOrder>(state.PurchaseOrders);
-            List<EmploymentContract> savedEmployments =
-                new List<EmploymentContract>(state.Employments);
-            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            int savedTick = tickManager.TicksGame;
+            TimeSpeed savedTimeSpeed = (TimeSpeed)currentTimeSpeedField.GetValue(tickManager);
+            TimeSpeed savedPrePauseTimeSpeed = tickManager.prePauseTimeSpeed;
+            float savedResponseSpeed = IntercolonyMod.Settings.rfqResponseSpeed;
+            LetterStack letterStack = Find.LetterStack;
+            Archive archive = Find.Archive;
+            List<Letter> savedLetters = new List<Letter>(letterStack.LettersListForReading);
+            List<IArchivable> savedArchivables =
+                new List<IArchivable>(archive.ArchivablesListForReading);
 
             try
             {
-                // The queue is world-global. Isolate all state that the component tick polls so
-                // the clock jump used by P2 cannot consume a live obligation, then restore the
-                // exact lists in finally below.
+                // The live component is used for the primary fixture so the assertions exercise
+                // the same request and pending-response collections as a player save. Every list,
+                // the deterministic seed, the clock, and the global setting are restored below.
                 state.Requests.Clear();
                 state.PendingRfqResponses.Clear();
-                state.Orders.Clear();
-                state.Contracts.Clear();
-                state.ProcurementContracts.Clear();
-                state.PurchaseOrders.Clear();
-                state.Employments.Clear();
-                state.Postings.Clear();
-                List<PurchaseRequest> fixtures = new List<PurchaseRequest>();
+                economySeedField.SetValue(state, F11FixtureEconomySeed);
+                int createdTick = savedTick;
+                tickManager.DebugSetTicksGame(createdTick);
+                IntercolonyMod.Settings.rfqResponseSpeed = 1f;
 
-                if (tickManager != null)
+                F11CohortFixture cohort = BuildF11Cohort(fixtureDef, createdTick, multiQuote: true);
+                List<F11QuoteTerms> frozenTerms = CaptureF11Terms(cohort);
+                if (!QueueF11Responses(queueResponses, state, cohort, out string queueFailure))
                 {
-                    // Keep the generated arrival off an interval boundary. GenDate.TicksPerDay
-                    // is 60000 ticks (reference/decompiled/RimWorld/GenDate.cs:9), an exact
-                    // multiple of the 2500-tick deadline beat, so the first due beat below also
-                    // leaves a useful non-interval boundary for the gate assertion.
-                    const int deadlineIntervalTicks =
-                        IntercolonyWorldComponent.DeadlineCheckIntervalTicks;
-                    int clockAlignmentTicks = Mathf.Max(
-                        deadlineIntervalTicks, IntercolonyWorldComponent.RefreshIntervalTicks);
-                    if (clockAlignmentTicks % deadlineIntervalTicks != 0)
+                    FailF11ResponseAssertions(
+                        check, queueFailure ?? "the deterministic cohort could not be queued");
+                    return;
+                }
+
+                string formulaFailure;
+                bool formulaMatches = F11ScheduleMatches(
+                    cohort, 1f, out formulaFailure);
+                check(
+                    A0,
+                    formulaMatches,
+                    F11ScheduleDetails(cohort, 1f) +
+                    $"; mismatch={formulaFailure ?? "none"}; " +
+                    "jitter is pinned by economySeed, request id, quote id, and 0xF11A");
+
+                // Use the real WorldComponent Scribe path before revealing any member of the
+                // cohort. Loading while the request is still at its creation tick keeps the
+                // six-day request open, so PostLoadInit can validate every pending entry rather
+                // than pruning an intentionally late one or seeing a duplicate revealed quote.
+                IntercolonyWorldComponent roundTripSource =
+                    NewF11DetachedState(economySeedField);
+                roundTripSource.Requests.Add(cohort.request);
+                roundTripSource.PendingRfqResponses.AddRange(cohort.pending);
+                F11RoundTripResult roundTrip = RoundTripF11State(
+                    roundTripSource, "rfq-response-timing");
+                string roundTripDetail;
+                check(
+                    A8,
+                    F11RoundTripMatches(
+                        roundTrip?.loaded, cohort, frozenTerms, out roundTripDetail),
+                    roundTripDetail ??
+                    $"failure={roundTrip?.failure ?? "none"}; " +
+                    F11ScheduleDetails(cohort, 1f));
+
+                F11QuoteFixture early = FindF11QuoteFixture(cohort, 107);
+                F11QuoteFixture best = FindF11QuoteFixture(cohort, 101);
+                F11QuoteFixture farther = FindF11QuoteFixture(cohort, 105);
+                F11QuoteFixture lateNonCap = FindF11QuoteFixture(cohort, 104);
+                PendingRfqResponse earlyPending = FindF11Pending(
+                    cohort.pending, early?.quote?.id ?? -1);
+                PendingRfqResponse fartherPending = FindF11Pending(
+                    cohort.pending, farther?.quote?.id ?? -1);
+                int expectedEarlyDay = early == null
+                    ? -1
+                    : ExpectedF11ArrivalDays(early, 1f);
+                int initialQuoteCount = cohort.request.quotes.Count;
+                int pendingBeforeDayOne = state.PendingRfqResponses.Count;
+
+                tickManager.DebugSetTicksGame(
+                    cohort.request.createdTick + expectedEarlyDay * GenDate.TicksPerDay);
+                int revealedOnDayOne = RfqService.AdvancePendingResponses(state);
+                Quotation arrivedEarly = FindF11Quote(
+                    cohort.request, early?.quote?.id ?? -1);
+                check(
+                    A1,
+                    expectedEarlyDay == 1 &&
+                    initialQuoteCount == 0 &&
+                    earlyPending != null &&
+                    earlyPending.arrivalTick ==
+                        cohort.request.createdTick + GenDate.TicksPerDay &&
+                    revealedOnDayOne > 0 &&
+                    arrivedEarly != null &&
+                    state.PendingRfqResponses.Count < pendingBeforeDayOne,
+                    F11ScheduleDetails(cohort, 1f) +
+                    $"; initialQuotes={initialQuoteCount}; revealedOnDayOne={revealedOnDayOne}; " +
+                    $"visibleEarly={(arrivedEarly == null ? "no" : "yes")}");
+
+                HashSet<int> actualArrivalDays = new HashSet<int>();
+                bool allScheduledDaysValid = true;
+                foreach (PendingRfqResponse pending in cohort.pending)
+                {
+                    if (pending == null)
                     {
-                        clockAlignmentTicks = deadlineIntervalTicks;
+                        allScheduledDaysValid = false;
+                        continue;
                     }
 
-                    int startRemainder = savedTick % clockAlignmentTicks;
-                    int fixtureStartTick = savedTick +
-                        ((1 - startRemainder + clockAlignmentTicks) % clockAlignmentTicks);
-                    tickManager.DebugSetTicksGame(fixtureStartTick);
+                    int arrivalDays = F11ArrivalDays(cohort.request, pending);
+                    actualArrivalDays.Add(arrivalDays);
+                    allScheduledDaysValid &= arrivalDays >= 1;
                 }
 
-                PurchaseRequest waiting = CreateFirstResponseBearingRfq(
-                    state, tradable, fixtures, ProcurementFulfillmentPreference.Either,
-                    out int p1Attempts);
-                List<PendingRfqResponse> waitingPending =
-                    PendingResponsesFor(state, waiting);
+                check(
+                    A2,
+                    allScheduledDaysValid && actualArrivalDays.Count > 1,
+                    F11ScheduleDetails(cohort, 1f) +
+                    $"; distinctArrivalDays={actualArrivalDays.Count}");
 
-                if (waiting == null || waitingPending.Count == 0)
+                int nearerDistanceFloor = early == null
+                    ? -1
+                    : F11DistanceFloorDays(early.quote.distanceTiles);
+                int fartherDistanceFloor = farther == null
+                    ? -1
+                    : F11DistanceFloorDays(farther.quote.distanceTiles);
+                int nearerArrivalDay = earlyPending == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, earlyPending);
+                int fartherArrivalDay = fartherPending == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, fartherPending);
+                check(
+                    A3,
+                    nearerDistanceFloor >= 0 &&
+                    fartherDistanceFloor > nearerDistanceFloor &&
+                    nearerArrivalDay < fartherArrivalDay,
+                    $"near={early?.quote?.distanceTiles ?? -1f:F0} tiles/floor " +
+                    $"{nearerDistanceFloor}d/arrival {nearerArrivalDay}d; " +
+                    $"far={farther?.quote?.distanceTiles ?? -1f:F0} tiles/floor " +
+                    $"{fartherDistanceFloor}d/arrival {fartherArrivalDay}d");
+
+                // The singleton uses the same request and quote IDs as the multi-quote fixture,
+                // so its seeded jitter is identical. Only the cohort rank changes, isolating the
+                // one-day attractiveness bias without asking the scheduler for an oracle value.
+                IntercolonyWorldComponent singletonState = NewF11DetachedState(economySeedField);
+                F11CohortFixture singleton = BuildF11Cohort(
+                    fixtureDef, createdTick, multiQuote: false);
+                IntercolonyMod.Settings.rfqResponseSpeed = 1f;
+                bool singletonQueued = QueueF11Responses(
+                    queueResponses, singletonState, singleton, out string singletonFailure);
+                PendingRfqResponse singletonBestPending = FindF11Pending(
+                    singleton.pending, singleton.quotes[0].quote.id);
+                int multiBestDay = best == null || FindF11Pending(
+                    cohort.pending, best.quote.id) == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, FindF11Pending(cohort.pending, best.quote.id));
+                int singletonBestDay = singletonBestPending == null
+                    ? -1
+                    : F11ArrivalDays(singleton.request, singletonBestPending);
+                int multiBestRaw = best == null ? -1 : ExpectedF11RawDays(best);
+                int singletonBestRaw = singleton.quotes[0] == null
+                    ? -1
+                    : ExpectedF11RawDays(singleton.quotes[0]);
+                check(
+                    A4,
+                    singletonQueued &&
+                    singletonFailure == null &&
+                    best != null &&
+                    singleton.quotes.Count == 1 &&
+                    best.jitter == singleton.quotes[0].jitter &&
+                    multiBestRaw == singletonBestRaw + 1 &&
+                    multiBestDay == singletonBestDay + 1,
+                    $"multiRaw={multiBestRaw}; singletonRaw={singletonBestRaw}; " +
+                    $"multiArrival={multiBestDay}d; singletonArrival={singletonBestDay}d; " +
+                    $"samePinnedJitter={(best == null ? "unknown" : best.jitter.ToString())}; " +
+                    $"singletonFailure={singletonFailure ?? "none"}");
+
+                F11QuoteFixture cheapest = FindCheapestF11Quote(cohort);
+                int cheapestArrivalDay = cheapest == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, FindF11Pending(
+                        cohort.pending, cheapest.quote.id));
+                int latestArrivalDay = -1;
+                int latestQuoteId = -1;
+                foreach (PendingRfqResponse pending in cohort.pending)
                 {
-                    string reason = waiting == null
-                        ? $"no response-bearing request among {p1Attempts} fixture definition(s)"
-                        : "request revealed quotes immediately or had no pending response; " +
-                          RfqTimingDetails(waiting, waitingPending);
-
-                    if (waiting == null)
+                    if (pending == null)
                     {
-                        skip(P1, reason);
-                        skip(P2, "P1 could not build a request with a pending supplier response");
-                        skip(P2Gate,
-                            "P1 could not build a request with a pending supplier response");
+                        continue;
                     }
-                    else
+
+                    int arrivalDay = F11ArrivalDays(cohort.request, pending);
+                    if (arrivalDay > latestArrivalDay)
                     {
-                        check(P1, false, reason);
-                        skip(P2, "P1 fixture had no pending response to advance");
-                        skip(P2Gate, "P1 fixture had no pending response to advance");
-                    }
-                }
-                else
-                {
-                    string waitingDetails = RfqTimingDetails(waiting, waitingPending);
-                    check(P1,
-                        waiting.quotes.Count == 0 &&
-                        HasPendingResponseExplanation(waiting.noResponseReason, waitingPending.Count),
-                        waitingDetails + $"; explanation=\"{waiting.noResponseReason}\"");
-
-                    if (tickManager == null)
-                    {
-                        skip(P2, "RimWorld tick manager was unavailable");
-                        skip(P2Gate, "RimWorld tick manager was unavailable");
-                    }
-                    else
-                    {
-                        const int deadlineIntervalTicks =
-                            IntercolonyWorldComponent.DeadlineCheckIntervalTicks;
-                        int pendingBefore = state.PendingRfqResponses.Count;
-                        int latestArrivalTick = waitingPending[0].arrivalTick;
-                        foreach (PendingRfqResponse pending in waitingPending)
-                        {
-                            latestArrivalTick = Mathf.Max(latestArrivalTick, pending.arrivalTick);
-                        }
-
-                        int arrivalRemainder = latestArrivalTick % deadlineIntervalTicks;
-                        int revealTick = latestArrivalTick +
-                            (arrivalRemainder == 0
-                                ? 0
-                                : deadlineIntervalTicks - arrivalRemainder);
-                        int nonIntervalTick = revealTick - 1;
-
-                        if (nonIntervalTick >= latestArrivalTick)
-                        {
-                            tickManager.DebugSetTicksGame(nonIntervalTick);
-                            state.WorldComponentTick();
-                            check(P2Gate,
-                                state.PendingRfqResponses.Count == pendingBefore &&
-                                waiting.quotes.Count == 0,
-                                $"tick={nonIntervalTick}; tickRemainder=" +
-                                $"{nonIntervalTick % deadlineIntervalTicks}; " +
-                                $"arrivalTick={latestArrivalTick}; pending={pendingBefore}; " +
-                                $"pendingAfter={state.PendingRfqResponses.Count}; " +
-                                $"visibleQuotes={waiting.quotes.Count}");
-                        }
-                        else
-                        {
-                            skip(P2Gate,
-                                $"latest arrival {latestArrivalTick} is already the interval " +
-                                $"tick {revealTick}; no due non-interval tick exists before it");
-                        }
-
-                        tickManager.DebugSetTicksGame(revealTick);
-                        state.WorldComponentTick();
-                        int pendingAfter = state.PendingRfqResponses.Count;
-                        check(P2,
-                            pendingAfter < pendingBefore && pendingAfter == 0 &&
-                            waiting.quotes.Count == pendingBefore,
-                            $"tick={revealTick}; tickRemainder=" +
-                            $"{revealTick % deadlineIntervalTicks}; " +
-                            $"latestArrivalTick={latestArrivalTick}; " +
-                            $"pendingBefore={pendingBefore}; arrivedQuotes={waiting.quotes.Count}; " +
-                            $"pendingAfter={pendingAfter}; " +
-                            $"arrivalDetails={waitingDetails}; expiryTick={waiting.expiryTick}");
+                        latestArrivalDay = arrivalDay;
+                        latestQuoteId = pending.quote?.id ?? -1;
                     }
                 }
 
-                PendingRfqResponse nearer;
-                PendingRfqResponse farther;
-                PurchaseRequest distanceRequest;
-                List<float> p3Distances;
-                if (!TryFindDistanceOrderedRfq(
-                        state, tradable, fixtures, out distanceRequest,
-                        out nearer, out farther, out p3Distances))
+                check(
+                    A5,
+                    cheapest != null &&
+                    best != null &&
+                    cheapest.quote.id == best.quote.id &&
+                    cheapestArrivalDay >= 0 &&
+                    cheapestArrivalDay < latestArrivalDay,
+                    $"cheapest=q{cheapest?.quote?.id.ToString() ?? "missing"} " +
+                    $"at {cheapestArrivalDay}d; last=q{latestQuoteId} at {latestArrivalDay}d; " +
+                    F11ScheduleDetails(cohort, 1f));
+
+                int capRawDays = farther == null ? -1 : ExpectedF11RawDays(farther);
+                int capArrivalDay = fartherPending == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, fartherPending);
+                bool allAtMostFiveDays = true;
+                foreach (PendingRfqResponse pending in cohort.pending)
                 {
-                    skip(P3,
-                        "no two pending supplier replies were found at a useful distance gap; " +
-                        $"distancesFound={FormatDistances(p3Distances)}");
-                }
-                else
-                {
-                    float nearerDelayDays =
-                        (nearer.arrivalTick - distanceRequest.createdTick) /
-                        (float)GenDate.TicksPerDay;
-                    float fartherDelayDays =
-                        (farther.arrivalTick - distanceRequest.createdTick) /
-                        (float)GenDate.TicksPerDay;
-                    check(P3,
-                        nearer.arrivalTick < farther.arrivalTick,
-                        $"nearDistance={nearer.quote.distanceTiles:F2} tiles; " +
-                        $"nearDelay={nearerDelayDays:F2} days; nearArrivalTick={nearer.arrivalTick}; " +
-                        $"farDistance={farther.quote.distanceTiles:F2} tiles; " +
-                        $"farDelay={fartherDelayDays:F2} days; farArrivalTick={farther.arrivalTick}; " +
-                        $"expiryTick={distanceRequest.expiryTick}");
+                    allAtMostFiveDays &= pending != null &&
+                        F11ArrivalDays(cohort.request, pending) <= 5;
                 }
 
-                float furthestAvailableDistance;
-                float furthestSampleDistance;
-                List<float> p4Distances;
-                PurchaseRequest furthestRequest = FindFurthestResponseRfq(
-                    state, tradable, fixtures, out furthestAvailableDistance,
-                    out furthestSampleDistance, out p4Distances);
-                List<PendingRfqResponse> furthestPending =
-                    PendingResponsesFor(state, furthestRequest);
-                bool reachedFurthestAvailable = furthestAvailableDistance < 0f ||
-                    furthestSampleDistance >= furthestAvailableDistance - 0.01f;
+                check(
+                    A6,
+                    allAtMostFiveDays &&
+                    capRawDays > 5 &&
+                    capArrivalDay == 5,
+                    F11ScheduleDetails(cohort, 1f) +
+                    $"; farSupplier=q{farther?.quote?.id.ToString() ?? "missing"}; " +
+                    $"unclampedRaw={capRawDays}d; scheduled={capArrivalDay}d; " +
+                    "the cap is expected to turn the far supplier's unclamped 8d into 5d");
 
-                if (furthestRequest == null || furthestPending.Count == 0 ||
-                    furthestSampleDistance < 0f || !reachedFurthestAvailable)
-                {
-                    skip(P4,
-                        "no pending reply from the furthest available settlement sample; " +
-                        $"furthestAvailableDistance={furthestAvailableDistance:F2} tiles; " +
-                        $"furthestSampleDistance={furthestSampleDistance:F2} tiles; " +
-                        $"distancesFound={FormatDistances(p4Distances)}");
-                }
-                else
-                {
-                    const int independentPollingIntervalTicks = GenDate.TicksPerHour;
-                    bool safeForEveryPendingReply = true;
-                    int latestArrivalTick = furthestRequest.createdTick;
-                    int smallestMarginTicks = int.MaxValue;
-                    string firstUnsafeReply = null;
-                    foreach (PendingRfqResponse pending in furthestPending)
-                    {
-                        if (pending == null || pending.quote == null)
-                        {
-                            safeForEveryPendingReply = false;
-                            firstUnsafeReply = "null pending reply";
-                            continue;
-                        }
+                IntercolonyMod.Settings.rfqResponseSpeed = 0.5f;
+                IntercolonyWorldComponent slowState = NewF11DetachedState(economySeedField);
+                F11CohortFixture slow = BuildF11Cohort(
+                    fixtureDef, createdTick, multiQuote: true);
+                bool slowQueued = QueueF11Responses(
+                    queueResponses, slowState, slow, out string slowFailure);
 
-                        latestArrivalTick = Mathf.Max(latestArrivalTick, pending.arrivalTick);
-                        int marginTicks = furthestRequest.expiryTick - pending.arrivalTick;
-                        smallestMarginTicks = Mathf.Min(smallestMarginTicks, marginTicks);
-                        if (pending.arrivalTick >= furthestRequest.expiryTick ||
-                            marginTicks <= independentPollingIntervalTicks)
-                        {
-                            safeForEveryPendingReply = false;
-                            firstUnsafeReply =
-                                $"arrivalTick={pending.arrivalTick}, expiryTick={furthestRequest.expiryTick}, " +
-                                $"marginTicks={marginTicks}";
-                        }
-                    }
+                IntercolonyMod.Settings.rfqResponseSpeed = 2.0f;
+                IntercolonyWorldComponent fastState = NewF11DetachedState(economySeedField);
+                F11CohortFixture fast = BuildF11Cohort(
+                    fixtureDef, createdTick, multiQuote: true);
+                bool fastQueued = QueueF11Responses(
+                    queueResponses, fastState, fast, out string fastFailure);
+                bool slowMatches = F11ScheduleMatches(
+                    slow, 0.5f, out string slowMismatch);
+                bool fastMatches = F11ScheduleMatches(
+                    fast, 2.0f, out string fastMismatch);
+                int slowTotalDays = F11TotalArrivalDays(slow);
+                int fastTotalDays = F11TotalArrivalDays(fast);
+                int differentTimingCount = F11DifferentArrivalCount(slow, fast);
+                check(
+                    A7,
+                    slowQueued &&
+                    fastQueued &&
+                    slowFailure == null &&
+                    fastFailure == null &&
+                    slowMatches &&
+                    fastMatches &&
+                    F11SameCohortShape(slow, fast) &&
+                    slowTotalDays > fastTotalDays &&
+                    differentTimingCount > 0,
+                    $"slow={F11ScheduleDetails(slow, 0.5f)}; " +
+                    $"fast={F11ScheduleDetails(fast, 2.0f)}; " +
+                    $"slowTotal={slowTotalDays}d; fastTotal={fastTotalDays}d; " +
+                    $"differentQuotes={differentTimingCount}; " +
+                    $"mismatch={slowMismatch ?? fastMismatch ?? "none"}");
 
-                    float latestDelayDays =
-                        (latestArrivalTick - furthestRequest.createdTick) /
-                        (float)GenDate.TicksPerDay;
-                    float smallestMarginDays = smallestMarginTicks == int.MaxValue
-                        ? 0f
-                        : smallestMarginTicks / (float)GenDate.TicksPerDay;
-                    check(P4,
-                        safeForEveryPendingReply,
-                        $"furthestAvailableDistance={furthestAvailableDistance:F2} tiles; " +
-                        $"furthestSampleDistance={furthestSampleDistance:F2} tiles; " +
-                        $"pending={furthestPending.Count}; latestDelay={latestDelayDays:F2} days; " +
-                        $"latestArrivalTick={latestArrivalTick}; expiryTick={furthestRequest.expiryTick}; " +
-                        $"smallestMargin={smallestMarginDays:F2} days ({smallestMarginTicks} ticks); " +
-                        $"firstUnsafeReply={firstUnsafeReply ?? "none"}");
-                }
+                // Existing RFQs have already frozen their arrivals. Return the setting to the
+                // fixture's default before using the live primary request again; no scheduler
+                // call below is allowed to recalculate any of its pending ticks.
+                IntercolonyMod.Settings.rfqResponseSpeed = 1f;
+                int delayedRevealTick = cohort.request.createdTick +
+                    ExpectedF11ArrivalDays(lateNonCap, 1f) * GenDate.TicksPerDay;
+                tickManager.DebugSetTicksGame(delayedRevealTick);
+                RfqService.AdvancePendingResponses(state);
+                Quotation arrivedLate = FindF11Quote(
+                    cohort.request, lateNonCap?.quote?.id ?? -1);
+
+                F11QuoteTerms earlyTerms = early == null
+                    ? null
+                    : FindF11Terms(frozenTerms, early.quote.id);
+                F11QuoteTerms lateTerms = lateNonCap == null
+                    ? null
+                    : FindF11Terms(frozenTerms, lateNonCap.quote.id);
+                bool earlyTermsFrozen = earlyTerms != null &&
+                    arrivedEarly != null && earlyTerms.Matches(arrivedEarly);
+                bool lateTermsFrozen = lateTerms != null &&
+                    arrivedLate != null && lateTerms.Matches(arrivedLate);
+                bool acceptedPricesRemainFrozen = early != null &&
+                    lateNonCap != null &&
+                    arrivedEarly != null &&
+                    arrivedLate != null &&
+                    earlyTerms != null &&
+                    lateTerms != null &&
+                    arrivedEarly.TotalPrice == earlyTerms.TotalPrice &&
+                    arrivedLate.TotalPrice == lateTerms.TotalPrice;
+                check(
+                    A9,
+                    earlyTermsFrozen &&
+                    lateTermsFrozen &&
+                    acceptedPricesRemainFrozen &&
+                    arrivedEarly != arrivedLate,
+                    $"early=q{early?.quote?.id.ToString() ?? "missing"} " +
+                    $"price={(arrivedEarly == null ? "missing" : arrivedEarly.TotalPrice.ToString())}; " +
+                    $"late=q{lateNonCap?.quote?.id.ToString() ?? "missing"} " +
+                    $"price={(arrivedLate == null ? "missing" : arrivedLate.TotalPrice.ToString())}; " +
+                    $"earlyTerms={earlyTermsFrozen}; lateTerms={lateTermsFrozen}; " +
+                    $"pricesFrozen={acceptedPricesRemainFrozen}");
+
+                int capRevealTick = cohort.request.createdTick + 5 * GenDate.TicksPerDay;
+                tickManager.DebugSetTicksGame(capRevealTick);
+                int revealedAtCap = RfqService.AdvancePendingResponses(state);
+                Quotation arrivedAtCap = FindF11Quote(
+                    cohort.request, farther?.quote?.id ?? -1);
+                PendingRfqResponse capPending = FindF11Pending(
+                    cohort.pending, farther?.quote?.id ?? -1);
+                check(
+                    A10,
+                    capPending != null &&
+                    capPending.arrivalTick == capRevealTick &&
+                    cohort.request.expiryTick ==
+                        cohort.request.createdTick + 6 * GenDate.TicksPerDay &&
+                    !cohort.request.HasExpired(capRevealTick) &&
+                    revealedAtCap > 0 &&
+                    arrivedAtCap != null &&
+                    !state.PendingRfqResponses.Contains(capPending),
+                    $"far=q{farther?.quote?.id.ToString() ?? "missing"}; " +
+                    $"unclampedRaw={capRawDays}d; scheduledTick={capPending?.arrivalTick ?? -1}; " +
+                    $"capTick={capRevealTick}; expiryTick={cohort.request.expiryTick}; " +
+                    $"revealedAtCap={revealedAtCap}; visible={(arrivedAtCap == null ? "no" : "yes")}");
             }
             finally
             {
-                if (tickManager != null)
-                {
-                    tickManager.DebugSetTicksGame(savedTick);
-                }
-
+                // These are global or player-save state. Restore them even when a fixture or the
+                // real Scribe path throws, so a failed diagnostic cannot alter later assertions
+                // or the player's game.
                 state.Requests.Clear();
                 state.Requests.AddRange(savedRequests);
                 state.PendingRfqResponses.Clear();
                 state.PendingRfqResponses.AddRange(savedPendingResponses);
-                state.Orders.Clear();
-                state.Orders.AddRange(savedOrders);
-                state.Contracts.Clear();
-                state.Contracts.AddRange(savedContracts);
-                state.ProcurementContracts.Clear();
-                state.ProcurementContracts.AddRange(savedProcurementContracts);
-                state.PurchaseOrders.Clear();
-                state.PurchaseOrders.AddRange(savedPurchaseOrders);
-                state.Employments.Clear();
-                state.Employments.AddRange(savedEmployments);
-                state.Postings.Clear();
-                state.Postings.AddRange(savedPostings);
-                if (nextIdField != null)
-                {
-                    nextIdField.SetValue(state, savedNextId);
-                }
+                economySeedField.SetValue(state, savedEconomySeed);
+                tickManager.DebugSetTicksGame(savedTick);
+                currentTimeSpeedField.SetValue(tickManager, savedTimeSpeed);
+                tickManager.prePauseTimeSpeed = savedPrePauseTimeSpeed;
+                IntercolonyMod.Settings.rfqResponseSpeed = savedResponseSpeed;
+
+                // The real final-response path also posts a vanilla letter and archives it.
+                // Restore both list contents exactly; this also reverses any archive culling
+                // that could have happened while the synthetic letter was added.
+                letterStack.LettersListForReading.Clear();
+                letterStack.LettersListForReading.AddRange(savedLetters);
+                archive.ArchivablesListForReading.Clear();
+                archive.ArchivablesListForReading.AddRange(savedArchivables);
             }
         }
 
-        private static PurchaseRequest CreateFirstResponseBearingRfq(
-            IntercolonyWorldComponent state,
-            List<ThingDef> tradable,
-            List<PurchaseRequest> fixtures,
-            ProcurementFulfillmentPreference fulfillmentPreference,
-            out int attempts)
+        private static void SkipF11ResponseAssertions(
+            Action<string, string> skip,
+            string reason)
         {
-            attempts = 0;
-            foreach (ThingDef def in F11FixtureDefinitions(tradable))
+            skip("F11.0 pinned jitter follows the literal timing formula", reason);
+            skip("F11.1 a normal multi-supplier request reveals a day-one reply", reason);
+            skip("F11.2 a multi-supplier request spreads replies over time", reason);
+            skip("F11.3 a supplier with the higher distance floor answers later", reason);
+            skip("F11.4 the best-ranked offer has a one-day timing bias", reason);
+            skip("F11.5 the cheapest quote is not always the last response", reason);
+            skip("F11.6 no response is scheduled past day five", reason);
+            skip("F11.7 response speed changes the same cohort measurably", reason);
+            skip("F11.8 Scribe preserves exact pending arrival ticks", reason);
+            skip("F11.9 quote terms stay frozen at different reveal times", reason);
+            skip("F11.10 a reply exactly at the day-five cap is revealed", reason);
+        }
+
+        private static void FailF11ResponseAssertions(
+            Action<string, bool, string> check,
+            string detail)
+        {
+            check("F11.0 pinned jitter follows the literal timing formula", false, detail);
+            check("F11.1 a normal multi-supplier request reveals a day-one reply", false, detail);
+            check("F11.2 a multi-supplier request spreads replies over time", false, detail);
+            check("F11.3 a supplier with the higher distance floor answers later", false, detail);
+            check("F11.4 the best-ranked offer has a one-day timing bias", false, detail);
+            check("F11.5 the cheapest quote is not always the last response", false, detail);
+            check("F11.6 no response is scheduled past day five", false, detail);
+            check("F11.7 response speed changes the same cohort measurably", false, detail);
+            check("F11.8 Scribe preserves exact pending arrival ticks", false, detail);
+            check("F11.9 quote terms stay frozen at different reveal times", false, detail);
+            check("F11.10 a reply exactly at the day-five cap is revealed", false, detail);
+        }
+
+        private sealed class F11CohortFixture
+        {
+            public PurchaseRequest request;
+            public List<F11QuoteFixture> quotes = new List<F11QuoteFixture>();
+            public List<PendingRfqResponse> pending = new List<PendingRfqResponse>();
+        }
+
+        private sealed class F11QuoteFixture
+        {
+            public Quotation quote;
+            public int jitter;
+            public bool bestRanked;
+        }
+
+        private sealed class F11QuoteTerms
+        {
+            public int id;
+            public int settlementId;
+            public string settlementName;
+            public string factionName;
+            public int refreshWindow;
+            public int quantityOffered;
+            public float unitPrice;
+            public int leadTimeDays;
+            public bool supplierDelivers;
+            public QualityCategory? offeredQuality;
+            public ThingDef offeredStuff;
+            public float distanceTiles;
+            public string priceExplanation;
+
+            public int TotalPrice => Mathf.RoundToInt(unitPrice * quantityOffered);
+
+            public static F11QuoteTerms Capture(Quotation quote)
             {
-                attempts++;
-                PurchaseRequest request = RfqService.CreateRequest(
-                    state, def, null, 1, 15, fulfillmentPreference);
-                if (request == null)
+                return new F11QuoteTerms
                 {
-                    continue;
+                    id = quote.id,
+                    settlementId = quote.settlementId,
+                    settlementName = quote.settlementName,
+                    factionName = quote.factionName,
+                    refreshWindow = quote.refreshWindow,
+                    quantityOffered = quote.quantityOffered,
+                    unitPrice = quote.unitPrice,
+                    leadTimeDays = quote.leadTimeDays,
+                    supplierDelivers = quote.supplierDelivers,
+                    offeredQuality = quote.offeredQuality,
+                    offeredStuff = quote.offeredStuff,
+                    distanceTiles = quote.distanceTiles,
+                    priceExplanation = quote.priceExplanation
+                };
+            }
+
+            public bool Matches(Quotation quote)
+            {
+                return quote != null &&
+                       id == quote.id &&
+                       settlementId == quote.settlementId &&
+                       settlementName == quote.settlementName &&
+                       factionName == quote.factionName &&
+                       refreshWindow == quote.refreshWindow &&
+                       quantityOffered == quote.quantityOffered &&
+                       unitPrice == quote.unitPrice &&
+                       leadTimeDays == quote.leadTimeDays &&
+                       supplierDelivers == quote.supplierDelivers &&
+                       offeredQuality == quote.offeredQuality &&
+                       offeredStuff == quote.offeredStuff &&
+                       distanceTiles == quote.distanceTiles &&
+                       priceExplanation == quote.priceExplanation &&
+                       TotalPrice == quote.TotalPrice;
+            }
+        }
+
+        private sealed class F11RoundTripResult
+        {
+            public IntercolonyWorldComponent loaded;
+            public string failure;
+        }
+
+        private static F11CohortFixture BuildF11Cohort(
+            ThingDef fixtureDef,
+            int createdTick,
+            bool multiQuote)
+        {
+            F11CohortFixture fixture = new F11CohortFixture
+            {
+                request = new PurchaseRequest
+                {
+                    id = F11FixtureRequestId,
+                    thingDef = fixtureDef,
+                    quantityRequested = 10,
+                    desiredDays = 15,
+                    createdTick = createdTick,
+                    // The production request lifetime is six days. Keeping this literal in the
+                    // fixture makes the cap/reveal boundary independently auditable.
+                    expiryTick = createdTick + 6 * GenDate.TicksPerDay,
+                    status = PurchaseRequestStatus.Open,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.Either,
+                    quotes = new List<Quotation>()
+                }
+            };
+
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Cheapest and first in the request's already-ranked cohort: the scheduler's
+                // one-day attractiveness bias applies here. Jitter 0 is pinned for this exact
+                // economy seed/request/quote identity.
+                quote = NewF11Quotation(101, 24f, 8f),
+                jitter = 0,
+                bestRanked = multiQuote
+            });
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Same near floor, with jitter 0: this is the guaranteed day-one response.
+                quote = NewF11Quotation(107, 24f, 9f),
+                jitter = 0,
+                bestRanked = false
+            });
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Distance floor 2 and jitter 0: gives the cohort a middle day.
+                quote = NewF11Quotation(108, 96f, 10f),
+                jitter = 0,
+                bestRanked = false
+            });
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Distance floor 3 and jitter 1: a late but uncapped response for the terms test.
+                quote = NewF11Quotation(104, 144f, 11f),
+                jitter = 1,
+                bestRanked = false
+            });
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Distance floor 6 and jitter 2: raw 8 days at 1.0x, so this fixture must hit
+                // the five-day cap. It is deliberately not the cheapest quote.
+                quote = NewF11Quotation(105, 288f, 12f),
+                jitter = 2,
+                bestRanked = false
+            });
+
+            if (!multiQuote)
+            {
+                F11QuoteFixture singletonBest = fixture.quotes[0];
+                singletonBest.bestRanked = false;
+                fixture.quotes = new List<F11QuoteFixture> { singletonBest };
+            }
+
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                fixture.request.quotes.Add(quoteFixture.quote);
+            }
+
+            return fixture;
+        }
+
+        private static Quotation NewF11Quotation(int id, float distanceTiles, float unitPrice)
+        {
+            return new Quotation
+            {
+                id = id,
+                settlementId = 70_000 + id,
+                settlementName = $"F11 Supplier {id}",
+                factionName = "F11 Fixture Faction",
+                refreshWindow = 1,
+                quantityOffered = 10,
+                unitPrice = unitPrice,
+                leadTimeDays = 1,
+                supplierDelivers = false,
+                distanceTiles = distanceTiles,
+                priceExplanation = "F11 deterministic quote fixture"
+            };
+        }
+
+        private static List<F11QuoteTerms> CaptureF11Terms(F11CohortFixture fixture)
+        {
+            List<F11QuoteTerms> result = new List<F11QuoteTerms>();
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                result.Add(F11QuoteTerms.Capture(quoteFixture.quote));
+            }
+
+            return result;
+        }
+
+        private static IntercolonyWorldComponent NewF11DetachedState(FieldInfo economySeedField)
+        {
+            IntercolonyWorldComponent state = new IntercolonyWorldComponent(null);
+            economySeedField.SetValue(state, F11FixtureEconomySeed);
+            return state;
+        }
+
+        private static bool QueueF11Responses(
+            MethodInfo queueResponses,
+            IntercolonyWorldComponent state,
+            F11CohortFixture fixture,
+            out string failure)
+        {
+            failure = null;
+            fixture.pending.Clear();
+            state.AddRequest(fixture.request);
+            try
+            {
+                object result = queueResponses.Invoke(
+                    null, new object[] { state, fixture.request });
+                int queuedCount = result is int ? (int)result : -1;
+                foreach (PendingRfqResponse pending in state.PendingRfqResponses)
+                {
+                    if (pending != null && pending.requestId == fixture.request.id)
+                    {
+                        fixture.pending.Add(pending);
+                    }
                 }
 
-                fixtures.Add(request);
-                if (request.AnyQuotes || PendingResponsesFor(state, request).Count > 0)
+                if (queuedCount != fixture.quotes.Count ||
+                    fixture.pending.Count != fixture.quotes.Count ||
+                    fixture.request.quotes.Count != 0)
                 {
-                    return request;
+                    failure =
+                        $"queue returned {queuedCount}, pending={fixture.pending.Count}, " +
+                        $"requestQuotes={fixture.request.quotes.Count}, expected={fixture.quotes.Count}";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (TargetInvocationException ex)
+            {
+                Exception cause = ex.InnerException ?? ex;
+                failure = cause.GetType().Name + ": " + cause.Message;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                failure = ex.GetType().Name + ": " + ex.Message;
+                return false;
+            }
+        }
+
+        private static bool F11ScheduleMatches(
+            F11CohortFixture fixture,
+            float responseSpeed,
+            out string mismatch)
+        {
+            mismatch = null;
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                PendingRfqResponse pending = FindF11Pending(
+                    fixture.pending, quoteFixture.quote.id);
+                int expectedRaw = ExpectedF11RawDays(quoteFixture);
+                int expectedArrival = ExpectedF11ArrivalDays(quoteFixture, responseSpeed);
+                int actualArrival = pending == null
+                    ? -1
+                    : F11ArrivalDays(fixture.request, pending);
+                if (pending == null || actualArrival != expectedArrival)
+                {
+                    mismatch =
+                        $"q{quoteFixture.quote.id}: raw={expectedRaw}; expected={expectedArrival}d; " +
+                        $"actual={actualArrival}d";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static int ExpectedF11RawDays(F11QuoteFixture quoteFixture)
+        {
+            Quotation quote = quoteFixture?.quote;
+            if (quote == null)
+            {
+                return -1;
+            }
+
+            // This is the independent oracle. Keep the product literals here rather than
+            // reading private scheduler constants or asking the scheduler for its answer.
+            int preparationDays = Mathf.Clamp(
+                Mathf.CeilToInt(Mathf.Max(1, quote.leadTimeDays) / 2f), 1, 2);
+            int distanceDays = quote.distanceTiles < 0f
+                ? 3
+                : Mathf.Max(1, Mathf.CeilToInt(quote.distanceTiles / 48f));
+            int baseDays = Mathf.Max(preparationDays, distanceDays);
+            int biasDays = quoteFixture.bestRanked ? 1 : 0;
+            return baseDays + biasDays + quoteFixture.jitter;
+        }
+
+        private static int ExpectedF11ArrivalDays(
+            F11QuoteFixture quoteFixture,
+            float responseSpeed)
+        {
+            int rawDays = ExpectedF11RawDays(quoteFixture);
+            return rawDays < 0
+                ? -1
+                : Mathf.Clamp(Mathf.CeilToInt(rawDays / responseSpeed), 1, 5);
+        }
+
+        private static int F11DistanceFloorDays(float distanceTiles)
+        {
+            return distanceTiles < 0f
+                ? 3
+                : Mathf.Max(1, Mathf.CeilToInt(distanceTiles / 48f));
+        }
+
+        private static int F11ArrivalDays(
+            PurchaseRequest request,
+            PendingRfqResponse pending)
+        {
+            if (request == null || pending == null)
+            {
+                return -1;
+            }
+
+            return (pending.arrivalTick - request.createdTick) / GenDate.TicksPerDay;
+        }
+
+        private static string F11ScheduleDetails(
+            F11CohortFixture fixture,
+            float responseSpeed)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append($"speed={responseSpeed:0.0}x");
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                PendingRfqResponse pending = FindF11Pending(
+                    fixture.pending, quoteFixture.quote.id);
+                int actual = F11ArrivalDays(fixture.request, pending);
+                sb.Append(
+                    $"; q{quoteFixture.quote.id} {quoteFixture.quote.distanceTiles:F0}t " +
+                    $"${quoteFixture.quote.TotalPrice} jitter={quoteFixture.jitter} " +
+                    $"raw={ExpectedF11RawDays(quoteFixture)}d " +
+                    $"expected={ExpectedF11ArrivalDays(quoteFixture, responseSpeed)}d " +
+                    $"actual={actual}d");
+            }
+
+            return sb.ToString();
+        }
+
+        private static F11QuoteFixture FindF11QuoteFixture(
+            F11CohortFixture fixture,
+            int quoteId)
+        {
+            if (fixture == null)
+            {
+                return null;
+            }
+
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                if (quoteFixture?.quote != null && quoteFixture.quote.id == quoteId)
+                {
+                    return quoteFixture;
                 }
             }
 
             return null;
         }
 
-        private static bool TryFindDistanceOrderedRfq(
-            IntercolonyWorldComponent state,
-            List<ThingDef> tradable,
-            List<PurchaseRequest> fixtures,
-            out PurchaseRequest selectedRequest,
-            out PendingRfqResponse nearer,
-            out PendingRfqResponse farther,
-            out List<float> distancesFound)
+        private static PendingRfqResponse FindF11Pending(
+            List<PendingRfqResponse> pendingResponses,
+            int quoteId)
         {
-            selectedRequest = null;
-            nearer = null;
-            farther = null;
-            distancesFound = AccessibleSupplierDistances(state);
-            float largestGap = -1f;
-
-            foreach (ThingDef def in F11FixtureDefinitions(tradable))
+            if (pendingResponses == null)
             {
-                PurchaseRequest request = RfqService.CreateRequest(
-                    state, def, null, 1, 15,
-                    ProcurementFulfillmentPreference.PlayerPickup);
-                if (request == null)
+                return null;
+            }
+
+            foreach (PendingRfqResponse pending in pendingResponses)
+            {
+                if (pending?.quote != null && pending.quote.id == quoteId)
                 {
-                    continue;
-                }
-
-                fixtures.Add(request);
-                List<PendingRfqResponse> pending = PendingResponsesFor(state, request);
-                foreach (PendingRfqResponse response in pending)
-                {
-                    if (response?.quote != null)
-                    {
-                        distancesFound.Add(response.quote.distanceTiles);
-                    }
-                }
-
-                for (int i = 0; i < pending.Count; i++)
-                {
-                    PendingRfqResponse left = pending[i];
-                    if (left?.quote == null || left.quote.distanceTiles < 0f)
-                    {
-                        continue;
-                    }
-
-                    for (int j = i + 1; j < pending.Count; j++)
-                    {
-                        PendingRfqResponse right = pending[j];
-                        if (right?.quote == null || right.quote.distanceTiles < 0f ||
-                            Mathf.Approximately(left.quote.distanceTiles, right.quote.distanceTiles))
-                        {
-                            continue;
-                        }
-
-                        PendingRfqResponse candidateNearer =
-                            left.quote.distanceTiles < right.quote.distanceTiles ? left : right;
-                        PendingRfqResponse candidateFarther =
-                            left.quote.distanceTiles < right.quote.distanceTiles ? right : left;
-                        float gap = candidateFarther.quote.distanceTiles -
-                                     candidateNearer.quote.distanceTiles;
-                        if (gap >= MinimumUsefulRfqDistanceGapTiles && gap > largestGap)
-                        {
-                            largestGap = gap;
-                            selectedRequest = request;
-                            nearer = candidateNearer;
-                            farther = candidateFarther;
-                        }
-                    }
+                    return pending;
                 }
             }
 
-            return selectedRequest != null;
+            return null;
         }
 
-        private static PurchaseRequest FindFurthestResponseRfq(
-            IntercolonyWorldComponent state,
-            List<ThingDef> tradable,
-            List<PurchaseRequest> fixtures,
-            out float furthestAvailableDistance,
-            out float furthestSampleDistance,
-            out List<float> distancesFound)
+        private static Quotation FindF11Quote(PurchaseRequest request, int quoteId)
         {
-            furthestAvailableDistance = -1f;
-            foreach (float distance in AccessibleSupplierDistances(state))
+            if (request?.quotes == null)
             {
-                furthestAvailableDistance = Mathf.Max(furthestAvailableDistance, distance);
+                return null;
             }
 
-            PurchaseRequest furthestRequest = null;
-            furthestSampleDistance = -1f;
-            distancesFound = new List<float>();
-            foreach (ThingDef def in F11FixtureDefinitions(tradable))
+            foreach (Quotation quote in request.quotes)
             {
-                PurchaseRequest request = RfqService.CreateRequest(
-                    state, def, null, 1, 15,
-                    ProcurementFulfillmentPreference.PlayerPickup);
-                if (request == null)
+                if (quote != null && quote.id == quoteId)
                 {
-                    continue;
-                }
-
-                fixtures.Add(request);
-                float requestFurthestDistance = -1f;
-                foreach (PendingRfqResponse pending in PendingResponsesFor(state, request))
-                {
-                    if (pending?.quote == null)
-                    {
-                        continue;
-                    }
-
-                    distancesFound.Add(pending.quote.distanceTiles);
-                    requestFurthestDistance = Mathf.Max(
-                        requestFurthestDistance, pending.quote.distanceTiles);
-                }
-
-                if (requestFurthestDistance > furthestSampleDistance)
-                {
-                    furthestSampleDistance = requestFurthestDistance;
-                    furthestRequest = request;
-                }
-
-                if (furthestAvailableDistance >= 0f &&
-                    furthestSampleDistance >= furthestAvailableDistance)
-                {
-                    break;
+                    return quote;
                 }
             }
 
-            return furthestRequest;
+            return null;
         }
 
-        private static List<float> AccessibleSupplierDistances(
-            IntercolonyWorldComponent state)
+        private static F11QuoteFixture FindCheapestF11Quote(F11CohortFixture fixture)
         {
-            List<float> distances = new List<float>();
-            List<Settlement> settlements = Find.WorldObjects?.Settlements;
-            if (settlements == null)
+            F11QuoteFixture cheapest = null;
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
             {
-                return distances;
-            }
-
-            foreach (Settlement settlement in settlements)
-            {
-                if (IntercolonyMarketAccess.IsAccessible(settlement) &&
-                    state.GetProfile(settlement) != null)
+                if (quoteFixture?.quote == null ||
+                    cheapest?.quote == null ||
+                    quoteFixture.quote.TotalPrice < cheapest.quote.TotalPrice)
                 {
-                    distances.Add(MarketOpportunityGenerator.DistanceToPlayer(settlement));
+                    cheapest = quoteFixture;
                 }
             }
 
-            return distances;
+            return cheapest;
         }
 
-        private static List<ThingDef> F11FixtureDefinitions(List<ThingDef> tradable)
+        private static int F11TotalArrivalDays(F11CohortFixture fixture)
         {
-            List<ThingDef> result = new List<ThingDef>();
-            if (tradable == null || tradable.Count == 0)
+            int total = 0;
+            foreach (PendingRfqResponse pending in fixture.pending)
             {
-                return result;
+                total += F11ArrivalDays(fixture.request, pending);
             }
 
-            if (tradable.Contains(ThingDefOf.Steel))
-            {
-                result.Add(ThingDefOf.Steel);
-            }
+            return total;
+        }
 
-            int sampleCount = Mathf.Min(tradable.Count, MaximumF11FixtureDefinitions);
-            for (int i = 0; i < sampleCount; i++)
+        private static int F11DifferentArrivalCount(
+            F11CohortFixture left,
+            F11CohortFixture right)
+        {
+            int different = 0;
+            foreach (F11QuoteFixture quoteFixture in left.quotes)
             {
-                int index = sampleCount == 1
-                    ? 0
-                    : Mathf.RoundToInt(i * (tradable.Count - 1f) / (sampleCount - 1f));
-                ThingDef def = tradable[index];
-                if (def != null && !result.Contains(def))
+                PendingRfqResponse leftPending = FindF11Pending(
+                    left.pending, quoteFixture.quote.id);
+                PendingRfqResponse rightPending = FindF11Pending(
+                    right.pending, quoteFixture.quote.id);
+                if (leftPending == null || rightPending == null ||
+                    F11ArrivalDays(left.request, leftPending) !=
+                    F11ArrivalDays(right.request, rightPending))
                 {
-                    result.Add(def);
+                    different++;
                 }
             }
 
-            return result;
+            return different;
         }
 
-        private static List<PendingRfqResponse> PendingResponsesFor(
-            IntercolonyWorldComponent state,
-            PurchaseRequest request)
+        private static bool F11SameCohortShape(
+            F11CohortFixture left,
+            F11CohortFixture right)
         {
-            List<PendingRfqResponse> result = new List<PendingRfqResponse>();
-            if (state?.PendingRfqResponses == null || request == null)
-            {
-                return result;
-            }
-
-            foreach (PendingRfqResponse pending in state.PendingRfqResponses)
-            {
-                if (pending != null && pending.requestId == request.id)
-                {
-                    result.Add(pending);
-                }
-            }
-
-            return result;
-        }
-
-        private static bool HasPendingResponseExplanation(string explanation, int pendingCount)
-        {
-            if (string.IsNullOrEmpty(explanation) || pendingCount <= 0)
+            if (left == null || right == null || left.request.id != right.request.id ||
+                left.quotes.Count != right.quotes.Count)
             {
                 return false;
             }
 
-            string countPrefix = pendingCount == 1
-                ? "One supplier response"
-                : $"{pendingCount} supplier responses";
-            return explanation.StartsWith(countPrefix, StringComparison.Ordinal) &&
-                   explanation.Contains("still coming");
+            for (int i = 0; i < left.quotes.Count; i++)
+            {
+                Quotation a = left.quotes[i].quote;
+                Quotation b = right.quotes[i].quote;
+                if (a.id != b.id ||
+                    a.settlementId != b.settlementId ||
+                    a.quantityOffered != b.quantityOffered ||
+                    !Mathf.Approximately(a.unitPrice, b.unitPrice) ||
+                    a.leadTimeDays != b.leadTimeDays ||
+                    !Mathf.Approximately(a.distanceTiles, b.distanceTiles) ||
+                    left.quotes[i].jitter != right.quotes[i].jitter)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
-        private static string RfqTimingDetails(
-            PurchaseRequest request,
-            List<PendingRfqResponse> pending)
+        private static F11QuoteTerms FindF11Terms(
+            List<F11QuoteTerms> terms,
+            int quoteId)
         {
-            if (request == null || pending == null || pending.Count == 0)
+            if (terms == null)
             {
-                return $"pending={pending?.Count ?? 0}; arrivedQuotes={request?.quotes?.Count ?? 0}; " +
-                       $"expiryTick={request?.expiryTick ?? -1}";
+                return null;
             }
 
-            float nearestDistance = float.MaxValue;
-            float furthestDistance = -1f;
-            int earliestArrivalTick = int.MaxValue;
-            int latestArrivalTick = request.createdTick;
-            int validCount = 0;
-            foreach (PendingRfqResponse response in pending)
+            foreach (F11QuoteTerms term in terms)
             {
-                if (response?.quote == null)
+                if (term != null && term.id == quoteId)
                 {
-                    continue;
+                    return term;
                 }
-
-                validCount++;
-                nearestDistance = Mathf.Min(nearestDistance, response.quote.distanceTiles);
-                furthestDistance = Mathf.Max(furthestDistance, response.quote.distanceTiles);
-                earliestArrivalTick = Mathf.Min(earliestArrivalTick, response.arrivalTick);
-                latestArrivalTick = Mathf.Max(latestArrivalTick, response.arrivalTick);
             }
 
-            float earliestDelayDays = earliestArrivalTick == int.MaxValue
-                ? 0f
-                : (earliestArrivalTick - request.createdTick) / (float)GenDate.TicksPerDay;
-            float latestDelayDays =
-                (latestArrivalTick - request.createdTick) / (float)GenDate.TicksPerDay;
-            return $"pending={validCount}; distances={nearestDistance:F2}-{furthestDistance:F2} tiles; " +
-                   $"delays={earliestDelayDays:F2}-{latestDelayDays:F2} days; " +
-                   $"arrivalTicks={earliestArrivalTick}-{latestArrivalTick}; " +
-                   $"expiryTick={request.expiryTick}";
+            return null;
         }
 
-        private static string FormatDistances(List<float> distances)
+        private static bool F11RoundTripMatches(
+            IntercolonyWorldComponent loaded,
+            F11CohortFixture source,
+            List<F11QuoteTerms> frozenTerms,
+            out string detail)
         {
-            if (distances == null || distances.Count == 0)
+            detail = $"loaded={(loaded == null ? "null" : "state")}";
+            if (loaded == null || loaded.Requests == null || loaded.Requests.Count != 1 ||
+                loaded.PendingRfqResponses == null ||
+                loaded.PendingRfqResponses.Count != source.pending.Count)
             {
-                return "none";
+                return false;
             }
 
-            StringBuilder sb = new StringBuilder();
-            int shown = Mathf.Min(distances.Count, 12);
-            for (int i = 0; i < shown; i++)
+            PurchaseRequest loadedRequest = loaded.Requests[0];
+            if (loadedRequest == null || loadedRequest.id != source.request.id ||
+                loadedRequest.createdTick != source.request.createdTick ||
+                loadedRequest.expiryTick != source.request.expiryTick ||
+                loadedRequest.quotes == null || loadedRequest.quotes.Count != 0)
             {
-                if (i > 0)
+                detail += "; request shape changed";
+                return false;
+            }
+
+            foreach (F11QuoteFixture quoteFixture in source.quotes)
+            {
+                PendingRfqResponse expected = FindF11Pending(
+                    source.pending, quoteFixture.quote.id);
+                PendingRfqResponse actual = FindF11Pending(
+                    loaded.PendingRfqResponses, quoteFixture.quote.id);
+                F11QuoteTerms terms = FindF11Terms(frozenTerms, quoteFixture.quote.id);
+                if (expected == null || actual == null || terms == null ||
+                    actual.requestId != expected.requestId ||
+                    actual.arrivalTick != expected.arrivalTick ||
+                    !terms.Matches(actual.quote))
                 {
-                    sb.Append(", ");
+                    detail += $"; q{quoteFixture.quote.id} did not survive exactly";
+                    return false;
                 }
-
-                sb.Append(distances[i].ToString("F2"));
             }
 
-            if (distances.Count > shown)
+            detail += $"; request={loadedRequest.id}; pending={loaded.PendingRfqResponses.Count}; " +
+                      "arrival ticks and frozen quote terms match";
+            return true;
+        }
+
+        private static F11RoundTripResult RoundTripF11State(
+            IntercolonyWorldComponent source,
+            string label)
+        {
+            IntercolonyWorldComponent savedState = source;
+            IntercolonyWorldComponent loadedState = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-{label}-{Guid.NewGuid():N}.xml");
+            try
             {
-                sb.Append($", ... ({distances.Count} total)");
+                Scribe.saver.InitSaving(path, label);
+                Scribe_Deep.Look(ref savedState, "state");
+                Scribe.saver.FinalizeSaving();
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedState, "state", (object)null);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = ex.GetType().Name + ": " + ex.Message;
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch
+                {
+                    // Preserve the Scribe failure if a temp file cannot be removed.
+                }
             }
 
-            return sb.ToString();
+            return new F11RoundTripResult
+            {
+                loaded = loadedState,
+                failure = failure
+            };
         }
 
         private static void AdvanceRfqResponsesForSelfTest(
@@ -3591,6 +4005,9 @@ namespace Intercolony
                     "Steel definition is unavailable in this install");
                 skip("S4 unresolvable listing is pruned",
                     "Steel definition is unavailable in this install");
+                skip(
+                    "S4 expected missing-def diagnostic is observed without hiding other errors",
+                    "Steel definition is unavailable in this install");
                 return;
             }
 
@@ -3627,9 +4044,19 @@ namespace Intercolony
             string failure = null;
             string path = Path.Combine(
                 Path.GetTempPath(), $"Intercolony-SupplierListing-S4-{Guid.NewGuid():N}.xml");
+            string expectedDiagnostic =
+                "Could not load reference to " + typeof(ThingDef) + " named " + missingDefName;
+            ExpectedMissingDefLogHandler diagnosticHandler = null;
 
             try
             {
+                if (canExerciseUnresolvable)
+                {
+                    diagnosticHandler = new ExpectedMissingDefLogHandler(
+                        expectedDiagnostic, Debug.unityLogger.logHandler);
+                    Debug.unityLogger.logHandler = diagnosticHandler;
+                }
+
                 Scribe.saver.InitSaving(path, "supplierListingWorldTest");
                 Scribe_Deep.Look(ref savedState, "state");
                 Scribe.saver.FinalizeSaving();
@@ -3644,10 +4071,20 @@ namespace Intercolony
             }
             finally
             {
-                Scribe.ForceStop();
-                if (File.Exists(path))
+                try
                 {
-                    File.Delete(path);
+                    if (diagnosticHandler != null)
+                    {
+                        Debug.unityLogger.logHandler = diagnosticHandler.Previous;
+                    }
+                }
+                finally
+                {
+                    Scribe.ForceStop();
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
                 }
             }
 
@@ -3664,6 +4101,13 @@ namespace Intercolony
             if (canExerciseUnresolvable)
             {
                 check(
+                    "S4 expected missing-def diagnostic is observed without hiding other errors",
+                    diagnosticHandler != null && diagnosticHandler.ExpectedCount > 0 &&
+                    diagnosticHandler.UnexpectedErrorCount == 0,
+                    $"expected count={diagnosticHandler?.ExpectedCount ?? 0}; " +
+                    $"unexpected error count={diagnosticHandler?.UnexpectedErrorCount ?? 0}; " +
+                    $"first unexpected={diagnosticHandler?.FirstUnexpectedError ?? "none"}");
+                check(
                     "S4 unresolvable listing is pruned",
                     failure == null && !ContainsListingId(loadedListings, missingId),
                     $"count {savedListings.Count}->{loadedListings?.Count ?? -1}; " +
@@ -3672,8 +4116,87 @@ namespace Intercolony
             }
             else
             {
+                skip(
+                    "S4 expected missing-def diagnostic is observed without hiding other errors",
+                    $"def name {missingDefName} already resolves in this install");
                 skip("S4 unresolvable listing is pruned",
                     $"def name {missingDefName} already resolves in this install");
+            }
+        }
+
+        private sealed class ExpectedMissingDefLogHandler : ILogHandler
+        {
+            private readonly ILogHandler previous;
+            private readonly string expectedText;
+            private readonly List<string> unexpectedErrors = new List<string>();
+
+            public ExpectedMissingDefLogHandler(string expectedText, ILogHandler previous)
+            {
+                if (previous == null)
+                {
+                    throw new InvalidOperationException("Unity logger had no handler to wrap");
+                }
+
+                this.expectedText = expectedText;
+                this.previous = previous;
+            }
+
+            public ILogHandler Previous => previous;
+
+            public int ExpectedCount { get; private set; }
+
+            public int UnexpectedErrorCount => unexpectedErrors.Count;
+
+            public string FirstUnexpectedError =>
+                unexpectedErrors.Count == 0 ? null : unexpectedErrors[0];
+
+            public void LogException(Exception exception, UnityEngine.Object context)
+            {
+                unexpectedErrors.Add(exception?.ToString() ?? "null exception");
+                previous.LogException(exception, context);
+            }
+
+            public void LogFormat(
+                LogType logType,
+                UnityEngine.Object context,
+                string format,
+                params object[] args)
+            {
+                string text = Render(format, args);
+                if (logType == LogType.Error &&
+                    string.Equals(text, expectedText, StringComparison.Ordinal))
+                {
+                    ExpectedCount++;
+                }
+                else if (logType == LogType.Error ||
+                         logType == LogType.Exception ||
+                         logType == LogType.Assert)
+                {
+                    unexpectedErrors.Add(text ?? "null log text");
+                }
+
+                if (!(logType == LogType.Error &&
+                      string.Equals(text, expectedText, StringComparison.Ordinal)))
+                {
+                    previous.LogFormat(logType, context, format, args);
+                }
+            }
+
+            private static string Render(string format, object[] args)
+            {
+                if (args == null || args.Length == 0)
+                {
+                    return format;
+                }
+
+                try
+                {
+                    return string.Format(format, args);
+                }
+                catch (Exception)
+                {
+                    return format;
+                }
             }
         }
 
