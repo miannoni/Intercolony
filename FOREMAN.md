@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: C3 — settings for F08, F09 and F11. **STAGE D IS CLOSED; the correction plan has RESUMED.**
-Unit: C3.4b — the "minimum days" label must say what it counts
-Worker: luna running — `…\scratchpad\unit-c3-4b.out`
+Unit: C3.5 — F11's front-loaded scheduler, the five-day cap, the speed multiplier
+Worker: luna running — `…\scratchpad\unit-c3-5.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -254,8 +254,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | C3.2 — F08 reads the settings, and clamps to remaining headroom | accepted, `3b742f9` |
 | ✅ | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | accepted, `ba98e8b`. **F08 COMPLETE** |
 | ✅ | C3.4 — F09 reads the settings at resolution | accepted, `97d7ccf` |
-| 🔨 | C3.4b — the "minimum days" label must say sampled days | Luna running |
-| ⬜ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | not started |
+| ✅ | C3.4b — the "minimum days" label must say sampled days | accepted, `b8f2b47`. **F09 COMPLETE** |
+| 🔨 | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | Luna running |
 | ⬜ | C3.6 → C3.8 — assertions, one unit per host suite | not started |
 
 ## Units — stage D
