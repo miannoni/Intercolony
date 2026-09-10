@@ -2,9 +2,12 @@
 
 Stage: **F — A NEW RUNTIME DEFECT FROM PLAY, opened 2026-09-10. The correction plan itself is
 COMPLETE and closed; this is triage on top of it, not a reopening.**
-Unit: F.0 — recon: who sends an injured employee to a medical bed that has no free slot
-Worker: **sol recon, read-only** — `…\scratchpad\unit-f0b.out`. Recon only: its output becomes
-decisions and a Luna unit, never a commit on its own.
+Unit: F.1 — decompile Hospitality 1.6 and Common Sense 1.6, inventory what they patch in the
+bed/rescue chain
+Worker: luna running — `…\scratchpad\unit-f1.out`. It writes ONLY into `reference/mods/`, which is
+gitignored; no tracked file may change. **The first dispatch failed with "Not inside a trusted
+directory" because the shell cwd had been reset to `C:\dev` — codex must be launched from inside the
+repo. Not a task failure.**
 
 **THE DEFECT, and the operator's own observations, which are the load-bearing facts:**
 
@@ -27,6 +30,33 @@ from stage D actually covers a new `Lord_165` not-deep-saved warning, or only lo
 
 **A first recon was dispatched and STOPPED mid-run** when the operator supplied the infirmary detail;
 the sharpened brief is `unit-f0b.prompt.txt`. That was deliberate, not a failure.
+
+### F.0 recon result — two verdicts, and MY OWN HYPOTHESIS WAS WRONG
+
+Sol read-only, `…\scratchpad\unit-f0b.out`. Three load-bearing citations spot-checked by me.
+
+  - **F-D1 — the lodger hypothesis is DEAD. Do not revive it.** `IsValidBedFor`'s faction gate
+    compares the traveller's `Faction` and `HostFaction` and never consults `IsQuestLodger()`
+    (`reference/decompiled/RimWorld/RestUtility.cs:185-190`, verified). An active employee is
+    player-faction with a null `HostFaction`, so vanilla admits them to rescue and to medical-bed
+    finding alike. There is no "rescued but denied a bed because lodger" split.
+  - **F-D2 — Intercolony has no bed selector at all.** One `UnclaimBed()` at teardown
+    (`Labor/EmploymentService.cs:1072-1085`); the only lodger patch is caravan-only
+    (`Compatibility/HarmonyPatches.cs:99-150`). Nothing in the mod picks an infirmary bed, bypasses
+    a vacancy check, or changes a bed's occupancy.
+  - **F-D3 — a real vanilla race surface exists.** `WorkGiver_RescueDowned.JobOnThing` calls
+    `FindBed` a second time and builds the job **without null-checking the result**
+    (`reference/decompiled/RimWorld/WorkGiver_RescueDowned.cs:66-73`, verified). Occupancy can also
+    change between selection and slot resolution.
+  - **F-D4 — VERDICT ON THE SLEEPING-SLOT ERROR: NOT DETERMINED.** What settles it is a patch
+    inventory for the loaded Hospitality and Common Sense builds. `reference/mods/` did not exist,
+    which is why F.1 is decompiling both.
+  - **F-D5 — VERDICT ON `Lord_165`: NOT OURS, and proven for THIS instance rather than inherited.**
+    The latest autosave holds twelve `<lord>Lord_165</lord>` references, every holder a `Faction_13`
+    pawn — Pact of Toberium, a siege group — all in Hospitality's `CompGuest` layout. Intercolony
+    has no `Lord`, `LordJob` or `lordManager` field and persists no Lord reference
+    (`Labor/EmploymentContract.cs:466-477`). Same disposition as `Lord_140`: **record it, do not
+    patch around it.**
 
 **ALL EIGHT AUTHORISED FINDINGS ARE CLOSED — F01, F07, F08, F09, F10, F11, F13, F17 — plus the two
 out-of-order runtime-defect stages D and E, and the F12/F22 documentation freezes.** Whole suite on
@@ -54,7 +84,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 15:35 — the plan is complete; a NEW runtime defect is in triage
+Updated: 2026-09-10 16:05 — the plan is complete; a NEW runtime defect is in triage
 Foreman load: 2026-09-10 04:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
