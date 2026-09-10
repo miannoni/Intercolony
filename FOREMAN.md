@@ -1,13 +1,16 @@
 # Foreman state — Intercolony
 
 Stage: **E — THE DEFECT GATE IS REOPENED. The correction plan pauses after C3.6 and resumes at C3.7.**
-Unit: E.1 — a one-time debug repair for the operator's already-damaged save
-Worker: luna running — `…\scratchpad\unit-e1.out`. **C3.6's finished work is UNCOMMITTED in
-`IntercolonyRfqSelfTest.cs` and must be kept — it is complete but cannot be verified while the
-operator is playing, because `dev.ps1 test -Fresh` restarts their game.**
-Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
-mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
-Updated: 2026-09-09 19:05
+Unit: E.2 — the self-test's deliberately-induced missing-def error must stop looking like a real one
+Worker: luna running — `…\scratchpad\unit-e2.out`. **It edits `IntercolonyRfqSelfTest.cs`, which
+already holds C3.6's finished but UNVERIFIED work — both must survive. Neither can be verified while
+the operator is playing, because `dev.ps1 test -Fresh` restarts their game.**
+Last done: E.1, the one-time empty-corpse repair, accepted at `c46e175`. Verified by construction
+rather than by a suite run: `Corpse.Destroy` guards its pawn access behind `!Bugged`
+(`reference/decompiled/Verse/Corpse.cs:244-248`) and `Bugged` is exactly the empty-container
+condition (`:151`), so vanilla already anticipates destroying one. **Running it against the
+operator's save is still owed and is theirs to do.**
+Updated: 2026-09-09 19:35
 Foreman load: 2026-09-09 15:48
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -308,8 +311,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 | | Unit | Status |
 |---|---|---|
 | ✅ | E.0 — old-versus-new: count the empty corpses in the re-saved game | **done by me: 1 of 85, and it is Sinni's** |
-| 🔨 | E.1 — a one-time repair for the operator's damaged save | Luna running |
-| ⬜ | E.2 — the self-test's expected error must not look like a real one | not started |
+| ✅ | E.1 — a one-time repair for the operator's damaged save | `c46e175` |
+| 🔨 | E.2 — the self-test's expected error must not look like a real one | Luna running |
 | ⬜ | E.3 — the durable record, and the play proof the operator specified | not started |
 
 ## Units — stage D
