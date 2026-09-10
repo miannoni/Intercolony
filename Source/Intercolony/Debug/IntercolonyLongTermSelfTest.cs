@@ -322,11 +322,17 @@ namespace Intercolony
             List<IArchivable> existingArchivables = SnapshotArchivables();
             EmployerReputation savedStanding = state.EmployerStanding?.Snapshot();
             int savedTick = tickManager.TicksGame;
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            int savedMinimumEmploymentDaysForGoodwill =
+                settings.minimumEmploymentDaysForGoodwill;
+            float savedPositiveExperienceThreshold = settings.positiveExperienceThreshold;
+            float savedNegativeExperienceThreshold = settings.negativeExperienceThreshold;
+            int savedEmploymentGoodwillImpact = settings.employmentGoodwillImpact;
 
             try
             {
                 int fixtureGoodwill = originFaction.NaturalGoodwill;
-                if (fixtureGoodwill + 3 > 100 || fixtureGoodwill - 3 < -100 ||
+                if (fixtureGoodwill + 7 > 100 || fixtureGoodwill - 7 < -100 ||
                     !SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill))
                 {
                     SkipF09EmploymentGoodwillAssertions(
@@ -334,6 +340,14 @@ namespace Intercolony
                         "neutral fixture without an effective cap");
                     return;
                 }
+
+                // Keep the already-shipped checks deterministic even if the player entered the
+                // self-test with custom F09 settings. The cases below deliberately replace these
+                // literals with non-default values and restore the live settings in finally.
+                settings.minimumEmploymentDaysForGoodwill = 10;
+                settings.positiveExperienceThreshold = 0.75f;
+                settings.negativeExperienceThreshold = 0.35f;
+                settings.employmentGoodwillImpact = 3;
 
                 EmploymentContract happy = F09Contract(
                     originFaction, -93001, 7.5f, 10);
@@ -401,9 +415,299 @@ namespace Intercolony
                     "F09 adds no goodwill change to an already-priced quit",
                     $"pre-priced ending {beforePricedEnding}->{beforeF09}; End {beforeF09}->{afterQuit}; " +
                     "the other penalty is deliberately not sized here");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract minimumEligible = F09Contract(
+                    originFaction, -93006, 3.5f, 5);
+                state.AddEmployment(minimumEligible);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.70f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int minimumEligibleBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    minimumEligible, EmploymentStatus.Completed,
+                    "F09 minimum-day lower-bound self-test");
+                int minimumEligibleAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    minimumEligibleAfter == minimumEligibleBefore + 7,
+                    "F09 non-default minimum 5 days lets 5 samples qualify for +7 goodwill",
+                    $"minimum=5; samples=5; total=3.5; average=0.70; " +
+                    $"base goodwill {minimumEligibleBefore}->{minimumEligibleAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract minimumRejected = F09Contract(
+                    originFaction, -93007, 3.5f, 5);
+                state.AddEmployment(minimumRejected);
+                settings.minimumEmploymentDaysForGoodwill = 6;
+                settings.positiveExperienceThreshold = 0.70f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int minimumRejectedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    minimumRejected, EmploymentStatus.Completed,
+                    "F09 minimum-day upper-bound self-test");
+                int minimumRejectedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    minimumRejectedAfter == minimumRejectedBefore &&
+                    minimumRejected.outcomeNote.Contains(
+                        "only 5 mood samples were recorded, and 6 are required."),
+                    "F09 non-default minimum 6 days rejects the same 5 samples",
+                    $"minimum=6; samples=5; total=3.5; average=0.70; " +
+                    $"base goodwill {minimumRejectedBefore}->{minimumRejectedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract positiveQualified = F09Contract(
+                    originFaction, -93008, 4f, 5);
+                state.AddEmployment(positiveQualified);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.70f;
+                settings.negativeExperienceThreshold = 0.25f;
+                settings.employmentGoodwillImpact = 7;
+                int positiveQualifiedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    positiveQualified, EmploymentStatus.Completed,
+                    "F09 positive-threshold lower-bound self-test");
+                int positiveQualifiedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    positiveQualifiedAfter == positiveQualifiedBefore + 7,
+                    "F09 non-default positive threshold 0.70 qualifies a 0.80 average",
+                    $"positive=0.70; negative=0.25; samples=5; total=4; average=0.80; " +
+                    $"base goodwill {positiveQualifiedBefore}->{positiveQualifiedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract positiveRejected = F09Contract(
+                    originFaction, -93009, 4f, 5);
+                state.AddEmployment(positiveRejected);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.85f;
+                settings.negativeExperienceThreshold = 0.25f;
+                settings.employmentGoodwillImpact = 7;
+                int positiveRejectedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    positiveRejected, EmploymentStatus.Completed,
+                    "F09 positive-threshold upper-bound self-test");
+                int positiveRejectedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    positiveRejectedAfter == positiveRejectedBefore &&
+                    positiveRejected.outcomeNote.Contains(
+                        "F09: average mood 0.80; no goodwill change."),
+                    "F09 non-default positive threshold 0.85 rejects the same 0.80 average",
+                    $"positive=0.85; negative=0.25; samples=5; total=4; average=0.80; " +
+                    $"base goodwill {positiveRejectedBefore}->{positiveRejectedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract negativeQualified = F09Contract(
+                    originFaction, -93010, 1.5f, 5);
+                state.AddEmployment(negativeQualified);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.40f;
+                settings.employmentGoodwillImpact = 7;
+                int negativeQualifiedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    negativeQualified, EmploymentStatus.Completed,
+                    "F09 negative-threshold lower-bound self-test");
+                int negativeQualifiedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    negativeQualifiedAfter == negativeQualifiedBefore - 7,
+                    "F09 non-default negative threshold 0.40 qualifies a 0.30 average",
+                    $"positive=0.80; negative=0.40; samples=5; total=1.5; average=0.30; " +
+                    $"base goodwill {negativeQualifiedBefore}->{negativeQualifiedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract negativeRejected = F09Contract(
+                    originFaction, -93011, 1.5f, 5);
+                state.AddEmployment(negativeRejected);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.25f;
+                settings.employmentGoodwillImpact = 7;
+                int negativeRejectedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    negativeRejected, EmploymentStatus.Completed,
+                    "F09 negative-threshold upper-bound self-test");
+                int negativeRejectedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    negativeRejectedAfter == negativeRejectedBefore &&
+                    negativeRejected.outcomeNote.Contains(
+                        "F09: average mood 0.30; no goodwill change."),
+                    "F09 non-default negative threshold 0.25 rejects the same 0.30 average",
+                    $"positive=0.80; negative=0.25; samples=5; total=1.5; average=0.30; " +
+                    $"base goodwill {negativeRejectedBefore}->{negativeRejectedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract largerPositiveImpact = F09Contract(
+                    originFaction, -93012, 4.5f, 5);
+                state.AddEmployment(largerPositiveImpact);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int largerPositiveImpactBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    largerPositiveImpact, EmploymentStatus.Completed,
+                    "F09 positive impact magnitude self-test");
+                int largerPositiveImpactAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    largerPositiveImpactAfter == largerPositiveImpactBefore + 7,
+                    "F09 non-default impact 7 applies exactly +7 goodwill",
+                    $"impact=7; positive=0.80; negative=0.20; samples=5; total=4.5; " +
+                    $"average=0.90; base goodwill {largerPositiveImpactBefore}->" +
+                    $"{largerPositiveImpactAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract largerNegativeImpact = F09Contract(
+                    originFaction, -93013, 0.5f, 5);
+                state.AddEmployment(largerNegativeImpact);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int largerNegativeImpactBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    largerNegativeImpact, EmploymentStatus.Completed,
+                    "F09 negative impact magnitude self-test");
+                int largerNegativeImpactAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    largerNegativeImpactAfter == largerNegativeImpactBefore - 7,
+                    "F09 non-default impact 7 applies exactly -7 goodwill",
+                    $"impact=7; positive=0.80; negative=0.20; samples=5; total=0.5; " +
+                    $"average=0.10; base goodwill {largerNegativeImpactBefore}->" +
+                    $"{largerNegativeImpactAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract neutralBand = F09Contract(
+                    originFaction, -93014, 2.5f, 5);
+                state.AddEmployment(neutralBand);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int neutralBandBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    neutralBand, EmploymentStatus.Completed,
+                    "F09 neutral-band decision self-test");
+                int neutralBandAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    neutralBandAfter == neutralBandBefore &&
+                    neutralBand.outcomeNote.Contains(
+                        "F09: average mood 0.50; no goodwill change."),
+                    "F09 non-default neutral band makes zero goodwill a decision, not a failure",
+                    $"positive=0.80; negative=0.20; samples=5; total=2.5; average=0.50; " +
+                    $"neutral-band decision; base goodwill {neutralBandBefore}->{neutralBandAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract breached = F09Contract(
+                    originFaction, -93015, 1f, 1);
+                breached.clauseBreaches = 1;
+                state.AddEmployment(breached);
+                settings.minimumEmploymentDaysForGoodwill = 1;
+                settings.positiveExperienceThreshold = 0.50f;
+                settings.negativeExperienceThreshold = 0.05f;
+                settings.employmentGoodwillImpact = 7;
+                int breachedBeforePricing = originFaction.BaseGoodwillWith(playerFaction);
+                EmployerReputationService.NoteCombatMisuse(state, breached);
+                int breachedBeforeF09 = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    breached, EmploymentStatus.Completed, "F09 breach-guard self-test");
+                int breachedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    breachedAfter == breachedBeforeF09 &&
+                    breached.outcomeNote.Contains("combat misuse was already priced."),
+                    "F09 breach guard overrides generous settings",
+                    $"clauseBreaches=1; minimum=1; positive=0.50; negative=0.05; " +
+                    $"impact=7; pre-priced goodwill {breachedBeforePricing}->{breachedBeforeF09}; " +
+                    $"F09 goodwill {breachedBeforeF09}->{breachedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract skippedNotice = F09Contract(
+                    originFaction, -93016, 1f, 1);
+                state.AddEmployment(skippedNotice);
+                settings.minimumEmploymentDaysForGoodwill = 1;
+                settings.positiveExperienceThreshold = 0.50f;
+                settings.negativeExperienceThreshold = 0.05f;
+                settings.employmentGoodwillImpact = 7;
+                int skippedNoticeBeforePricing = originFaction.BaseGoodwillWith(playerFaction);
+                EmployerReputationService.NoteNoticeSkipped(state, skippedNotice);
+                int skippedNoticeBeforeF09 = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    skippedNotice, EmploymentStatus.Dismissed,
+                    "F09 skipped-notice guard self-test", noticeSkipped: true);
+                int skippedNoticeAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    skippedNoticeAfter == skippedNoticeBeforeF09 &&
+                    skippedNotice.outcomeNote.Contains(
+                        "the skipped notice was already priced."),
+                    "F09 skipped-notice guard overrides generous settings",
+                    $"pre-priced goodwill {skippedNoticeBeforePricing}->" +
+                    $"{skippedNoticeBeforeF09}; F09 goodwill {skippedNoticeBeforeF09}->" +
+                    $"{skippedNoticeAfter}; minimum=1; positive=0.50; negative=0.05; impact=7");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract zeroImpact = F09Contract(
+                    originFaction, -93017, 4f, 5);
+                state.AddEmployment(zeroImpact);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 0;
+                int zeroImpactBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    zeroImpact, EmploymentStatus.Completed, "F09 zero-impact self-test");
+                int zeroImpactAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    zeroImpactAfter == zeroImpactBefore &&
+                    zeroImpact.outcomeNote.Contains(
+                        "F09: average mood 0.80; no goodwill change."),
+                    "F09 impact 0 disables goodwill without losing the resolution",
+                    $"impact=0; minimum=5; positive=0.80; negative=0.20; " +
+                    $"samples=5; total=4; average=0.80; base goodwill {zeroImpactBefore}->" +
+                    $"{zeroImpactAfter}");
+                r.Check(
+                    zeroImpact.moodSampleCount == 5 &&
+                    Mathf.Abs(zeroImpact.moodSampleTotal - 4f) < 0.0001f,
+                    "F09 impact 0 preserves the recorded sample count and total",
+                    $"impact=0; samples {zeroImpact.moodSampleCount}; " +
+                    $"total {zeroImpact.moodSampleTotal:0.##}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract neverSampled = F09Contract(
+                    originFaction, -93018, 7.5f, 0);
+                state.AddEmployment(neverSampled);
+                settings.minimumEmploymentDaysForGoodwill = 1;
+                settings.positiveExperienceThreshold = 0.50f;
+                settings.negativeExperienceThreshold = 0.05f;
+                settings.employmentGoodwillImpact = 7;
+                int neverSampledBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    neverSampled, EmploymentStatus.Completed,
+                    "F09 never-sampled completion self-test");
+                int neverSampledAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    neverSampledAfter == neverSampledBefore,
+                    "F09 never-sampled contract changes no goodwill",
+                    $"samples=0; total=7.5; generous settings; " +
+                    $"base goodwill {neverSampledBefore}->{neverSampledAfter}");
+                r.Check(
+                    neverSampled.outcomeNote.Contains("no mood samples were recorded"),
+                    "F09 never-sampled note says no mood samples were recorded",
+                    $"outcome={neverSampled.outcomeNote}");
+                r.Check(
+                    neverSampled.moodSampleCount == 0 &&
+                    Mathf.Abs(neverSampled.moodSampleTotal - 7.5f) < 0.0001f &&
+                    !neverSampled.outcomeNote.Contains("average mood") &&
+                    !neverSampled.outcomeNote.Contains("7.5"),
+                    "F09 never-sampled contract is not averaged or formatted as a quantity",
+                    $"samples={neverSampled.moodSampleCount}; total={neverSampled.moodSampleTotal:0.##}; " +
+                    $"outcome={neverSampled.outcomeNote}");
             }
             finally
             {
+                settings.minimumEmploymentDaysForGoodwill = savedMinimumEmploymentDaysForGoodwill;
+                settings.positiveExperienceThreshold = savedPositiveExperienceThreshold;
+                settings.negativeExperienceThreshold = savedNegativeExperienceThreshold;
+                settings.employmentGoodwillImpact = savedEmploymentGoodwillImpact;
                 tickManager.DebugSetTicksGame(savedTick);
                 RestoreFactionGoodwill(savedGoodwill);
                 RestoreList(state.Employments, savedEmployments);
@@ -413,7 +717,11 @@ namespace Intercolony
                 r.Info(
                     $"F09 fixture restored {savedGoodwill.Count} faction/player goodwill " +
                     $"relations, {savedEmployments.Count} employment records, employer standing, " +
-                    $"and tick {savedTick}; generated departure letters were removed.");
+                    $"tick {savedTick}, and all four employment-goodwill settings " +
+                    $"({savedMinimumEmploymentDaysForGoodwill}d/" +
+                    $"{savedPositiveExperienceThreshold:0.##}/" +
+                    $"{savedNegativeExperienceThreshold:0.##}/" +
+                    $"{savedEmploymentGoodwillImpact}); generated departure letters were removed.");
             }
         }
 
@@ -443,8 +751,8 @@ namespace Intercolony
                     faction, allowNull: true);
                 if (factionRelation == null || factionRelation.other == null ||
                     playerRelation == null || playerRelation.other == null ||
-                    !faction.CanChangeGoodwillFor(playerFaction, 3) ||
-                    !faction.CanChangeGoodwillFor(playerFaction, -3))
+                    !faction.CanChangeGoodwillFor(playerFaction, 7) ||
+                    !faction.CanChangeGoodwillFor(playerFaction, -7))
                 {
                     continue;
                 }
@@ -581,6 +889,39 @@ namespace Intercolony
                 "F09 short employment leaves vanilla goodwill unchanged despite perfect mood", reason);
             r.Skip(
                 "F09 adds no goodwill change to an already-priced quit", reason);
+            r.Skip(
+                "F09 non-default minimum 5 days lets 5 samples qualify for +7 goodwill", reason);
+            r.Skip(
+                "F09 non-default minimum 6 days rejects the same 5 samples", reason);
+            r.Skip(
+                "F09 non-default positive threshold 0.70 qualifies a 0.80 average", reason);
+            r.Skip(
+                "F09 non-default positive threshold 0.85 rejects the same 0.80 average", reason);
+            r.Skip(
+                "F09 non-default negative threshold 0.40 qualifies a 0.30 average", reason);
+            r.Skip(
+                "F09 non-default negative threshold 0.25 rejects the same 0.30 average", reason);
+            r.Skip(
+                "F09 non-default impact 7 applies exactly +7 goodwill", reason);
+            r.Skip(
+                "F09 non-default impact 7 applies exactly -7 goodwill", reason);
+            r.Skip(
+                "F09 non-default neutral band makes zero goodwill a decision, not a failure",
+                reason);
+            r.Skip(
+                "F09 breach guard overrides generous settings", reason);
+            r.Skip(
+                "F09 skipped-notice guard overrides generous settings", reason);
+            r.Skip(
+                "F09 impact 0 disables goodwill without losing the resolution", reason);
+            r.Skip(
+                "F09 impact 0 preserves the recorded sample count and total", reason);
+            r.Skip(
+                "F09 never-sampled contract changes no goodwill", reason);
+            r.Skip(
+                "F09 never-sampled note says no mood samples were recorded", reason);
+            r.Skip(
+                "F09 never-sampled contract is not averaged or formatted as a quantity", reason);
         }
 
         // --- §115 renewal ------------------------------------------------------------------
