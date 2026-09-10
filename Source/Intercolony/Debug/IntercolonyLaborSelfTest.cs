@@ -1,11 +1,13 @@
 ﻿using System.Collections.Generic;
 using System.Text;
+using System.IO;
 using System;
 using System.Xml;
 using System.Reflection;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
+using Verse.AI;
 using Verse;
 using Verse.AI.Group;
 
@@ -19,9 +21,9 @@ namespace Intercolony
     /// than a convenient stand-in. Phase 4 taught that a test built against a private copy of
     /// the logic passes vacuously, and Phase 14 that it can also fail spuriously.
     ///
-    /// Save/load survival is the one criterion no self-test can reach: it needs a real
-    /// save-and-reload cycle. It is checked by hand, and the manual steps are printed here so
-    /// they are not forgotten.
+    /// The employment record's ordinary save/load shape is checked elsewhere in this suite. The
+    /// death fixture below also round-trips the vanilla corpse reference through a temporary
+    /// Scribe file, because that is where a discarded pawn becomes an empty corpse.
     /// </summary>
     public static class IntercolonyLaborSelfTest
     {
@@ -86,9 +88,12 @@ namespace Intercolony
             float savedStanding = savedStandingOwner?.Score ?? 0f;
             int savedLedger = state.Ledger.Count;
             int savedLedgerStartTick = state.LedgerStartTick;
+            int savedTick = GenTicks.TicksGame;
             int worldPawnsBefore = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
             List<Pawn> fixturePawns = new List<Pawn>();
             List<Thing> fixtureItems = new List<Thing>();
+            List<Corpse> fixtureCorpses = new List<Corpse>();
+            List<Building_Grave> fixtureGraves = new List<Building_Grave>();
             IntercolonyLaborSelfTestSupport.ResetLedger();
 
             try
@@ -391,6 +396,8 @@ namespace Intercolony
 
                 // --- Dismissal before arrival ---
                 CheckEarlyDismissal(r, state, map, fixturePawns);
+                CheckDeadEmployeeCorpse(
+                    r, state, map, fixturePawns, fixtureCorpses, fixtureGraves);
                 CheckPartialEquipmentBond(r, state, map, fixturePawns, fixtureItems);
 
                 r.sb.AppendLine();
@@ -406,39 +413,63 @@ namespace Intercolony
             }
             finally
             {
-                CleanupAddedEmployments(r, state, savedEmployments);
-
-                savedStandingOwner?.Adjust(savedStanding - savedStandingOwner.Score);
-                while (state.Ledger.Count > savedLedger)
+                try
                 {
-                    state.Ledger.RemoveAt(state.Ledger.Count - 1);
-                }
+                    CleanupAddedEmployments(r, state, savedEmployments);
 
-                state.LedgerStartTick = savedLedgerStartTick;
-                LaborCandidateService.Clear();
-                foreach (Pawn fixturePawn in fixturePawns)
+                    savedStandingOwner?.Adjust(savedStanding - savedStandingOwner.Score);
+                    while (state.Ledger.Count > savedLedger)
+                    {
+                        state.Ledger.RemoveAt(state.Ledger.Count - 1);
+                    }
+
+                    state.LedgerStartTick = savedLedgerStartTick;
+                    LaborCandidateService.Clear();
+
+                    // A grave owns its corpse, and the corpse owns the dead pawn by reference. Tear
+                    // down in that order so the final pawn cleanup cannot empty a live fixture corpse.
+                    foreach (Building_Grave fixtureGrave in fixtureGraves)
+                    {
+                        CleanupFixtureGrave(r, fixtureGrave);
+                    }
+
+                    foreach (Corpse fixtureCorpse in fixtureCorpses)
+                    {
+                        CleanupFixtureCorpse(r, fixtureCorpse);
+                    }
+
+                    foreach (Pawn fixturePawn in fixturePawns)
+                    {
+                        CleanupFixturePawn(r, fixturePawn);
+                    }
+
+                    foreach (Thing fixtureItem in fixtureItems)
+                    {
+                        CleanupFixtureItem(r, fixtureItem);
+                    }
+
+                    int returned =
+                        IntercolonyLaborSelfTestSupport.RestoreStorageSilver(map, savedSilver);
+                    if (returned > 0)
+                    {
+                        r.Info($"returned {returned} silver to restore the labor fixture.");
+                    }
+
+                    IntercolonyLaborSelfTestSupport.ResetLedger();
+
+                    int worldPawnsAfter = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
+                    r.Check(worldPawnsAfter <= worldPawnsBefore,
+                        "no world pawns leaked by the labor fixtures",
+                        $"{worldPawnsBefore:0.###} before, {worldPawnsAfter:0.###} after");
+                }
+                finally
                 {
-                    CleanupFixturePawn(fixturePawn);
+                    if (Find.TickManager != null && Find.TickManager.TicksGame != savedTick)
+                    {
+                        Find.TickManager.DebugSetTicksGame(savedTick);
+                        r.Info($"restored the game tick to {savedTick} after the labor fixtures.");
+                    }
                 }
-
-                foreach (Thing fixtureItem in fixtureItems)
-                {
-                    CleanupFixtureItem(fixtureItem);
-                }
-
-                int returned =
-                    IntercolonyLaborSelfTestSupport.RestoreStorageSilver(map, savedSilver);
-                if (returned > 0)
-                {
-                    r.Info($"returned {returned} silver to restore the labor fixture.");
-                }
-
-                IntercolonyLaborSelfTestSupport.ResetLedger();
-
-                int worldPawnsAfter = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
-                r.Check(worldPawnsAfter <= worldPawnsBefore,
-                    "no world pawns leaked by the labor fixtures",
-                    $"{worldPawnsBefore:0.###} before, {worldPawnsAfter:0.###} after");
             }
 
             return Summarize(r);
@@ -1347,6 +1378,347 @@ namespace Intercolony
             r.Check(contract.pawn == null, "dismissed record holds no pawn reference");
         }
 
+        /// <summary>
+        /// A real death after arrival must close the employment without discarding the pawn that
+        /// vanilla's corpse still owns by reference. Advance is used for the ending because that
+        /// is the hourly game path that notices an active worker's death and calls End(Failed).
+        /// </summary>
+        private static void CheckDeadEmployeeCorpse(
+            Results r, IntercolonyWorldComponent state, Map map,
+            List<Pawn> fixturePawns, List<Corpse> fixtureCorpses,
+            List<Building_Grave> fixtureGraves)
+        {
+            List<LaborCandidate> pool = LaborCandidateService.Refresh(state, force: true);
+            if (pool.Count == 0)
+            {
+                r.Skip("dead employee corpse regression", "a forced candidate refresh returned no worker");
+                return;
+            }
+
+            LaborCandidate candidate = pool[0];
+            EmploymentHireCostQuote hireQuote =
+                IntercolonyLaborSelfTestSupport.QuoteHireCost(
+                    state, candidate, candidate.minTermDays, WageStructure.Prepaid,
+                    CombatClause.Civilian, out string quoteFailReason);
+            if (hireQuote == null)
+            {
+                r.Skip("dead employee corpse regression", $"the hire cost could not be quoted: {quoteFailReason}");
+                return;
+            }
+
+            int added = IntercolonyLaborSelfTestSupport.EnsureSilver(
+                map, IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote));
+            if (added > 0)
+            {
+                r.Info($"added {added} silver so the dead-employee fixture could run.");
+            }
+
+            EmploymentContract contract = EmploymentService.TryHire(
+                state, candidate, candidate.minTermDays, map, out string failReason,
+                WageStructure.Prepaid, CombatClause.Civilian, hireQuote);
+            if (contract == null)
+            {
+                r.Check(false, "dead-employee fixture hire succeeded", failReason);
+                return;
+            }
+
+            Pawn worker = contract.pawn;
+            TrackPawn(fixturePawns, worker);
+            contract.arrivalTick = GenTicks.TicksGame;
+            EmploymentService.Advance(state.Employments);
+
+            r.Check(worker != null && worker.Spawned,
+                "dead-employee fixture arrived before it was killed",
+                worker == null ? "worker reference was null" : $"spawned={worker.Spawned}");
+            if (worker == null || !worker.Spawned)
+            {
+                return;
+            }
+
+            // Pawn.Kill(null) is the vanilla death entry point. A spawned pawn takes the real
+            // map-corpse branch, which constructs Corpse.InnerPawn and places that corpse.
+            worker.Kill(null);
+            r.Check(worker.Dead, "vanilla Kill marked the employee dead");
+
+            Corpse corpse = FindCorpseForPawn(map, worker);
+            TrackCorpse(fixtureCorpses, corpse);
+            r.Check(corpse != null,
+                "vanilla Kill created a real corpse for the employee",
+                corpse == null ? "no map corpse contains this pawn" : corpse.ToString());
+            if (corpse == null)
+            {
+                return;
+            }
+
+            // A grave is useful for exercising the same holder JoyGiver_VisitGrave reads. If the
+            // map has no legal cell, the standalone corpse still gives the required container
+            // and Scribe assertions below.
+            Building_Grave grave = null;
+            if (ThingDefOf.Grave == null)
+            {
+                r.Info("grave fixture skipped: ThingDefOf.Grave was unavailable.");
+            }
+            else if (!CellFinder.TryFindRandomCell(
+                map,
+                cell => !cell.Fogged(map) && cell.Standable(map) &&
+                        cell.GetFirstBuilding(map) == null &&
+                        cell.GetFirstItem(map) == null && cell.GetFirstPawn(map) == null,
+                out IntVec3 graveCell))
+            {
+                r.Info("grave fixture skipped: no empty standable cell was available.");
+            }
+            else
+            {
+                grave = ThingMaker.MakeThing(ThingDefOf.Grave) as Building_Grave;
+                if (grave == null)
+                {
+                    r.Info("grave fixture skipped: ThingDefOf.Grave did not make a Building_Grave.");
+                }
+                else
+                {
+                    TrackGrave(fixtureGraves, grave);
+                    GenSpawn.Spawn(grave, graveCell, map);
+                    grave.SetFactionDirect(Faction.OfPlayer);
+                    if (corpse.Spawned)
+                    {
+                        corpse.DeSpawn();
+                    }
+
+                    bool accepted = grave.TryAcceptThing(corpse);
+                    r.Check(accepted && grave.HasCorpse && ReferenceEquals(grave.Corpse, corpse),
+                        "the real corpse was placed in a spawned grave",
+                        $"accepted={accepted}, hasCorpse={grave.HasCorpse}");
+                    if (!accepted)
+                    {
+                        r.Info("grave fixture fell back to the standalone corpse for Scribe coverage.");
+                    }
+                }
+            }
+
+            bool wasInWorldBeforeEnd = Find.WorldPawns != null && Find.WorldPawns.Contains(worker);
+            r.Check(wasInWorldBeforeEnd,
+                "vanilla death put the dead employee in WorldPawns before employment cleanup");
+
+            // This is the real active-death ending path, not a direct call to EmploymentService.End.
+            EmploymentService.Advance(state.Employments);
+
+            bool stillInWorld = Find.WorldPawns != null && Find.WorldPawns.Contains(worker);
+            r.Check(!worker.Discarded,
+                "dead employee is not discarded by game-style employment ending");
+            r.Check(stillInWorld,
+                "dead employee remains in WorldPawns after game-style employment ending",
+                $"inWorld={stillInWorld}");
+
+            ThingOwner corpseContents = corpse.GetDirectlyHeldThings();
+            r.Check(ReferenceEquals(corpse.InnerPawn, worker),
+                "corpse.InnerPawn is still the dead employee");
+            r.Check(corpseContents != null && corpseContents.Count > 0,
+                "corpse inner container still contains the dead employee",
+                $"contents={corpseContents?.Count ?? -1}");
+
+            Building_Grave graveForRoundTrip =
+                grave != null && grave.HasCorpse && ReferenceEquals(grave.Corpse, corpse)
+                    ? grave
+                    : null;
+            CheckVisitGraveValidator(r, map, graveForRoundTrip);
+            if (graveForRoundTrip == null && corpse.Spawned)
+            {
+                corpse.DeSpawn();
+            }
+
+            DeadEmployeeCorpseRoundTripProbe loaded =
+                RoundTripDeadEmployeeCorpse(worker, corpse, graveForRoundTrip, out string roundTripFailure);
+            if (roundTripFailure != null)
+            {
+                string roundTripShape = graveForRoundTrip == null
+                    ? "standalone corpse"
+                    : "grave-contained corpse";
+                r.Skip($"{roundTripShape} survives a Scribe save/load round trip", roundTripFailure);
+            }
+            else
+            {
+                TrackGrave(fixtureGraves, loaded?.grave);
+                Corpse loadedCorpse = loaded?.grave?.Corpse ?? loaded?.corpse;
+                TrackCorpse(fixtureCorpses, loadedCorpse);
+                if (loaded?.worldPawns != null)
+                {
+                    foreach (Pawn loadedPawn in loaded.worldPawns)
+                    {
+                        TrackPawn(fixturePawns, loadedPawn);
+                    }
+                }
+
+                Pawn loadedWorker = loaded?.worldPawns != null && loaded.worldPawns.Count > 0
+                    ? loaded.worldPawns[0]
+                    : null;
+                ThingOwner loadedContents = loadedCorpse?.GetDirectlyHeldThings();
+                r.Check(loadedWorker != null && loadedCorpse != null &&
+                        ReferenceEquals(loadedCorpse.InnerPawn, loadedWorker) &&
+                        loadedContents != null && loadedContents.Count > 0,
+                    "corpse reference and inner container survive a Scribe save/load round trip",
+                    $"loadedPawn={loadedWorker != null}, loadedCorpse={loadedCorpse != null}, " +
+                    $"innerPawnMatch={loadedCorpse != null && ReferenceEquals(loadedCorpse.InnerPawn, loadedWorker)}, " +
+                    $"contents={loadedContents?.Count ?? -1}");
+            }
+        }
+
+        private static void CheckVisitGraveValidator(
+            Results r, Map map, Building_Grave grave)
+        {
+            if (grave == null || !grave.HasCorpse)
+            {
+                r.Skip("JoyGiver_VisitGrave validator does not throw for the intact grave",
+                    "no spawned grave fixture was available");
+                return;
+            }
+
+            JoyGiverDef visitGraveDef = null;
+            foreach (JoyGiverDef joyGiverDef in DefDatabase<JoyGiverDef>.AllDefsListForReading)
+            {
+                if (joyGiverDef?.giverClass == typeof(JoyGiver_VisitGrave))
+                {
+                    visitGraveDef = joyGiverDef;
+                    break;
+                }
+            }
+
+            if (visitGraveDef == null)
+            {
+                r.Skip("JoyGiver_VisitGrave validator does not throw for the intact grave",
+                    "vanilla JoyGiverDef was unavailable");
+                return;
+            }
+
+            Pawn joyPawn = null;
+            if (map?.mapPawns?.FreeColonists != null)
+            {
+                foreach (Pawn colonist in map.mapPawns.FreeColonists)
+                {
+                    if (colonist != null && colonist.Spawned && !colonist.Dead &&
+                        colonist.needs?.joy != null &&
+                        !grave.Fogged() &&
+                        colonist.CanReserveAndReach(grave, PathEndMode.Touch, Danger.None))
+                    {
+                        joyPawn = colonist;
+                        break;
+                    }
+                }
+            }
+
+            if (joyPawn == null)
+            {
+                r.Skip("JoyGiver_VisitGrave validator does not throw for the intact grave",
+                    "no live colonist could reach the fixture grave");
+                return;
+            }
+
+            Exception validatorFailure = null;
+            try
+            {
+                // This is the actual vanilla entry point; it evaluates the grave validator before
+                // making a job, including the Corpse.InnerPawn.Faction dereference.
+                visitGraveDef.Worker.TryGiveJob(joyPawn);
+            }
+            catch (Exception ex)
+            {
+                validatorFailure = ex;
+            }
+
+            r.Check(validatorFailure == null,
+                "JoyGiver_VisitGrave validator did not throw for the intact grave",
+                validatorFailure == null
+                    ? null
+                    : $"{validatorFailure.GetType().Name}: {validatorFailure.Message}");
+        }
+
+        private static Corpse FindCorpseForPawn(Map map, Pawn pawn)
+        {
+            if (map?.listerThings == null || pawn == null)
+            {
+                return null;
+            }
+
+            foreach (Thing thing in map.listerThings.ThingsInGroup(ThingRequestGroup.Corpse))
+            {
+                Corpse corpse = thing as Corpse;
+                if (corpse != null && ReferenceEquals(corpse.InnerPawn, pawn))
+                {
+                    return corpse;
+                }
+            }
+
+            return null;
+        }
+
+        private static DeadEmployeeCorpseRoundTripProbe RoundTripDeadEmployeeCorpse(
+            Pawn worker, Corpse corpse, Building_Grave grave, out string failure)
+        {
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-DeadEmployeeCorpse-{Guid.NewGuid():N}.xml");
+            DeadEmployeeCorpseRoundTripProbe saved = new DeadEmployeeCorpseRoundTripProbe
+            {
+                worldPawns = new List<Pawn> { worker },
+                grave = grave,
+                corpse = grave == null ? corpse : null
+            };
+            DeadEmployeeCorpseRoundTripProbe loaded = null;
+            failure = null;
+
+            try
+            {
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    failure =
+                        "RimWorld Scribe.saver or Scribe.loader was null, so a real temp-file " +
+                        "save/load round trip was not reachable in this self-test";
+                    return null;
+                }
+
+                Scribe.saver.InitSaving(path, "intercolonyDeadEmployeeCorpseTest");
+                Scribe_Deep.Look(ref saved, "probe");
+                Scribe.saver.FinalizeSaving();
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loaded, "probe");
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (failure == null)
+                    {
+                        failure = $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (failure == null)
+                    {
+                        failure = $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            return loaded;
+        }
+
         private static void CheckPartialEquipmentBond(
             Results r, IntercolonyWorldComponent state, Map map,
             List<Pawn> fixturePawns, List<Thing> fixtureItems)
@@ -1853,6 +2225,22 @@ namespace Intercolony
             }
         }
 
+        private static void TrackCorpse(List<Corpse> fixtureCorpses, Corpse corpse)
+        {
+            if (corpse != null && !fixtureCorpses.Contains(corpse))
+            {
+                fixtureCorpses.Add(corpse);
+            }
+        }
+
+        private static void TrackGrave(List<Building_Grave> fixtureGraves, Building_Grave grave)
+        {
+            if (grave != null && !fixtureGraves.Contains(grave))
+            {
+                fixtureGraves.Add(grave);
+            }
+        }
+
         private static void CleanupAddedEmployments(
             Results r, IntercolonyWorldComponent state, int savedEmployments)
         {
@@ -1889,33 +2277,104 @@ namespace Intercolony
             }
         }
 
-        private static void CleanupFixturePawn(Pawn pawn)
+        private static void CleanupFixturePawn(Results r, Pawn pawn)
         {
-            if (pawn == null || pawn.Discarded || Find.WorldPawns == null)
+            try
+            {
+                if (pawn == null || pawn.Discarded || Find.WorldPawns == null)
+                {
+                    return;
+                }
+
+                if (pawn.Spawned)
+                {
+                    pawn.DeSpawn();
+                }
+
+                if (Find.WorldPawns.Contains(pawn))
+                {
+                    Find.WorldPawns.RemoveAndDiscardPawnViaGC(pawn);
+                }
+                else if (!pawn.Discarded)
+                {
+                    Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
+                }
+            }
+            catch (Exception ex)
+            {
+                r.Check(false, "labor fixture pawn cleans up",
+                    $"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private static void CleanupFixtureGrave(Results r, Building_Grave grave)
+        {
+            if (grave == null || grave.Destroyed)
             {
                 return;
             }
 
-            if (pawn.Spawned)
+            try
             {
-                pawn.DeSpawn();
+                // Destroying the holder first clears its ThingOwner, including a corpse that was
+                // buried there. The separate corpse pass below covers an unburied/fallback corpse.
+                grave.Destroy(DestroyMode.Vanish);
             }
-
-            if (Find.WorldPawns.Contains(pawn))
+            catch (Exception ex)
             {
-                Find.WorldPawns.RemoveAndDiscardPawnViaGC(pawn);
-            }
-            else if (!pawn.Discarded)
-            {
-                Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
+                r.Check(false, "labor fixture grave cleans up",
+                    $"{ex.GetType().Name}: {ex.Message}");
             }
         }
 
-        private static void CleanupFixtureItem(Thing item)
+        private static void CleanupFixtureCorpse(Results r, Corpse corpse)
         {
-            if (item != null && !item.Destroyed)
+            if (corpse == null || corpse.Destroyed)
             {
-                item.Destroy(DestroyMode.Vanish);
+                return;
+            }
+
+            try
+            {
+                corpse.Destroy(DestroyMode.Vanish);
+            }
+            catch (Exception ex)
+            {
+                r.Check(false, "labor fixture corpse cleans up",
+                    $"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private static void CleanupFixtureItem(Results r, Thing item)
+        {
+            try
+            {
+                if (item != null && !item.Destroyed)
+                {
+                    item.Destroy(DestroyMode.Vanish);
+                }
+            }
+            catch (Exception ex)
+            {
+                r.Check(false, "labor fixture item cleans up",
+                    $"{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        public class DeadEmployeeCorpseRoundTripProbe : IExposable
+        {
+            public List<Pawn> worldPawns;
+            public Building_Grave grave;
+            public Corpse corpse;
+
+            public void ExposeData()
+            {
+                // Save the pawn deeply before the corpse's ThingOwner resolves its reference to
+                // that pawn on load. This is the same reference shape WorldPawns uses for dead
+                // pawns, but in a small temporary XML document rather than a player save.
+                Scribe_Collections.Look(ref worldPawns, "worldPawns", true, LookMode.Deep);
+                Scribe_Deep.Look(ref grave, "grave");
+                Scribe_Deep.Look(ref corpse, "corpse");
             }
         }
 
