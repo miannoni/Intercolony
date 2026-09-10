@@ -29,6 +29,14 @@ namespace Intercolony
         // produce jitter [0, 0, 0, 1, 2] for q101, q107, q108, q104, q105 respectively.
         private const int F11FixtureEconomySeed = 0xF11000;
         private const int F11FixtureRequestId = 51_100;
+        private const string F10NoHistoryQuoteAssertion =
+            "F10.1 a supplier with no reputation record can quote through RFQ";
+        private const string F10NoHistoryPurchaseAssertion =
+            "F10.2 a no-history spot purchase creates reputation only on completion";
+        private const string F10NoHistoryAgreementAssertion =
+            "F10.3 no-history supplier is refused a standing procurement agreement";
+        private const string F10TwoPurchasesAssertion =
+            "F10.4 two completed purchases alone do not unlock a standing agreement";
 
         private static bool IsLegacyAppealBucket(float appeal)
         {
@@ -3887,6 +3895,65 @@ namespace Intercolony
             return result;
         }
 
+        private static List<CommercialHistoryEntry> CloneCommercialHistory(
+            List<CommercialHistoryEntry> source)
+        {
+            List<CommercialHistoryEntry> result = new List<CommercialHistoryEntry>();
+            if (source == null)
+            {
+                return result;
+            }
+
+            foreach (CommercialHistoryEntry entry in source)
+            {
+                result.Add(entry == null
+                    ? null
+                    : new CommercialHistoryEntry
+                    {
+                        settlementId = entry.settlementId,
+                        thingDef = entry.thingDef,
+                        completedSaleCount = entry.completedSaleCount,
+                        totalQuantitySupplied = entry.totalQuantitySupplied,
+                        totalTradeValue = entry.totalTradeValue
+                    });
+            }
+
+            return result;
+        }
+
+        private static List<SettlementMarketState> CloneMarketStates(
+            List<SettlementMarketState> source)
+        {
+            List<SettlementMarketState> result = new List<SettlementMarketState>();
+            if (source == null)
+            {
+                return result;
+            }
+
+            foreach (SettlementMarketState state in source)
+            {
+                if (state == null)
+                {
+                    result.Add(null);
+                    continue;
+                }
+
+                result.Add(new SettlementMarketState
+                {
+                    settlementId = state.settlementId,
+                    demandPressure = state.demandPressure == null
+                        ? null
+                        : (float[])state.demandPressure.Clone(),
+                    supplyPressure = state.supplyPressure == null
+                        ? null
+                        : (float[])state.supplyPressure.Clone(),
+                    lastAdvancedRefresh = state.lastAdvancedRefresh
+                });
+            }
+
+            return result;
+        }
+
         private static void CheckSupplierListingSentinel(
             Action<string, bool, string> check)
         {
@@ -4283,6 +4350,7 @@ namespace Intercolony
             try
             {
                 CheckProcurementAgreementProgression(check);
+                CheckF10NoHistoryProcurementPath(check, skip, state);
                 CheckProcurementContractSentinels(check);
                 CheckProcurementContractStatuses(check);
                 CheckProcurementContractValidity(check, skip);
@@ -4334,6 +4402,685 @@ namespace Intercolony
                     nextIdField.SetValue(state, savedNextId);
                 }
             }
+        }
+
+        private static void CheckF10NoHistoryProcurementPath(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            const float expectedStartingScore = 50f;
+            const float expectedAgreementReputation = 62f;
+            const int expectedCompletedPurchases = 2;
+            const float expectedPurchaseDelta = 2f;
+            const int contractQuantityPerCycle = 10;
+            const int contractCadenceDays = 1;
+            const int contractTotalCycles = 2;
+
+            TickManager tickManager = Find.TickManager;
+            LetterStack letterStack = Find.LetterStack;
+            Archive archive = Find.Archive;
+            FieldInfo consumptionField = state == null
+                ? null
+                : typeof(IntercolonyWorldComponent).GetField(
+                    "supplierOfferConsumption", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo economySeedField = state == null
+                ? null
+                : typeof(IntercolonyWorldComponent).GetField(
+                    "economySeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo nextIdField = state == null
+                ? null
+                : typeof(IntercolonyWorldComponent).GetField(
+                    "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            if (state == null || state.Requests == null || state.PendingRfqResponses == null ||
+                state.PurchaseOrders == null || state.ProcurementContracts == null ||
+                state.Reputations == null || state.CommercialHistory == null ||
+                state.CommercialTimeline == null || state.MarketStates == null ||
+                state.Ledger == null || tickManager == null || letterStack == null ||
+                archive == null || Find.WorldObjects == null || ThingDefOf.Silver == null ||
+                consumptionField == null || economySeedField == null || nextIdField == null)
+            {
+                SkipF10NoHistoryProcurementAssertions(
+                    skip, "the live F10 state, world, tick, letter/archive, or restoration seam " +
+                    "was unavailable");
+                return;
+            }
+
+            List<SupplierOfferConsumption> liveConsumption =
+                consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
+            if (liveConsumption == null)
+            {
+                SkipF10NoHistoryProcurementAssertions(
+                    skip, "the live supplier-consumption list was unavailable for restoration");
+                return;
+            }
+
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            List<PurchaseRequest> savedRequests = new List<PurchaseRequest>(state.Requests);
+            List<PendingRfqResponse> savedPendingResponses =
+                new List<PendingRfqResponse>(state.PendingRfqResponses);
+            List<PurchaseOrder> savedOrders = new List<PurchaseOrder>(state.PurchaseOrders);
+            List<ProcurementContract> savedContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<CommercialHistoryEntry> savedCommercialHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
+            List<CommercialHistoryEntry> savedCommercialHistoryValues =
+                CloneCommercialHistory(state.CommercialHistory);
+            List<CommercialEventRecord> savedCommercialTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedCommercialTimelineStartTick = state.CommercialTimelineStartTick;
+            List<SettlementMarketState> savedMarketStates =
+                new List<SettlementMarketState>(state.MarketStates);
+            List<SettlementMarketState> savedMarketStateValues =
+                CloneMarketStates(state.MarketStates);
+            List<LedgerEntry> savedLedger = new List<LedgerEntry>(state.Ledger);
+            int savedLedgerStartTick = state.LedgerStartTick;
+            List<SupplierOfferConsumption> savedConsumption = CloneConsumptions(liveConsumption);
+            int savedEconomySeed = (int)economySeedField.GetValue(state);
+            int savedNextId = (int)nextIdField.GetValue(state);
+            int savedTick = tickManager.TicksGame;
+            List<Letter> savedLetters = new List<Letter>(letterStack.LettersListForReading);
+            List<IArchivable> savedArchivables =
+                new List<IArchivable>(archive.ArchivablesListForReading);
+            Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
+            Thing fixtureSilver = null;
+            Zone_Stockpile fixtureSilverZone = null;
+
+            void RestoreFixtureState()
+            {
+                state.Requests.Clear();
+                state.Requests.AddRange(savedRequests);
+                state.PendingRfqResponses.Clear();
+                state.PendingRfqResponses.AddRange(savedPendingResponses);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedOrders);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedContracts);
+
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+
+                for (int i = 0; i < savedCommercialHistory.Count; i++)
+                {
+                    CommercialHistoryEntry original = savedCommercialHistory[i];
+                    CommercialHistoryEntry snapshot = savedCommercialHistoryValues[i];
+                    if (original == null || snapshot == null)
+                    {
+                        continue;
+                    }
+
+                    original.settlementId = snapshot.settlementId;
+                    original.thingDef = snapshot.thingDef;
+                    original.completedSaleCount = snapshot.completedSaleCount;
+                    original.totalQuantitySupplied = snapshot.totalQuantitySupplied;
+                    original.totalTradeValue = snapshot.totalTradeValue;
+                }
+
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedCommercialHistory);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedCommercialTimelineStartTick;
+
+                for (int i = 0; i < savedMarketStates.Count; i++)
+                {
+                    SettlementMarketState original = savedMarketStates[i];
+                    SettlementMarketState snapshot = savedMarketStateValues[i];
+                    if (original == null || snapshot == null)
+                    {
+                        continue;
+                    }
+
+                    original.settlementId = snapshot.settlementId;
+                    original.lastAdvancedRefresh = snapshot.lastAdvancedRefresh;
+                    original.demandPressure = snapshot.demandPressure == null
+                        ? null
+                        : (float[])snapshot.demandPressure.Clone();
+                    original.supplyPressure = snapshot.supplyPressure == null
+                        ? null
+                        : (float[])snapshot.supplyPressure.Clone();
+                }
+
+                state.MarketStates.Clear();
+                state.MarketStates.AddRange(savedMarketStates);
+                state.RefreshMarketStateIndex();
+                state.Ledger.Clear();
+                state.Ledger.AddRange(savedLedger);
+                state.LedgerStartTick = savedLedgerStartTick;
+
+                liveConsumption.Clear();
+                liveConsumption.AddRange(savedConsumption);
+                economySeedField.SetValue(state, savedEconomySeed);
+                nextIdField.SetValue(state, savedNextId);
+                RestoreStoredSilver(paymentMap, savedSilver);
+
+                if (fixtureSilver != null && !fixtureSilver.Destroyed)
+                {
+                    fixtureSilver.Destroy(DestroyMode.Vanish);
+                }
+
+                fixtureSilverZone?.Delete(playSound: false);
+                fixtureSilver = null;
+                fixtureSilverZone = null;
+                tickManager.DebugSetTicksGame(savedTick);
+
+                letterStack.LettersListForReading.Clear();
+                letterStack.LettersListForReading.AddRange(savedLetters);
+                archive.ArchivablesListForReading.Clear();
+                archive.ArchivablesListForReading.AddRange(savedArchivables);
+            }
+
+            bool EnsureFixtureSilver(int requiredSilver, out string reason)
+            {
+                reason = null;
+                if (requiredSilver <= 0)
+                {
+                    return true;
+                }
+
+                foreach (Thing silver in savedSilver.Keys)
+                {
+                    if (silver == null || silver.Destroyed || silver.stackCount >= requiredSilver)
+                    {
+                        continue;
+                    }
+
+                    int neededForReserve = requiredSilver - silver.stackCount;
+                    if (silver.stackCount + neededForReserve <= ThingDefOf.Silver.stackLimit)
+                    {
+                        silver.stackCount += neededForReserve;
+                    }
+                }
+
+                int availableSilver = PurchaseOrderService.CountColonySilver(paymentMap);
+                if (availableSilver >= requiredSilver)
+                {
+                    return true;
+                }
+
+                int neededSilver = requiredSilver - availableSilver;
+                if (neededSilver <= ThingDefOf.Silver.stackLimit &&
+                    TryCreateStoredSilver(
+                        paymentMap, neededSilver, out fixtureSilver, out fixtureSilverZone) &&
+                    PurchaseOrderService.CountColonySilver(paymentMap) >= requiredSilver)
+                {
+                    return true;
+                }
+
+                reason =
+                    $"stored silver was {PurchaseOrderService.CountColonySilver(paymentMap)}, " +
+                    $"needed {requiredSilver}, and the fixture could not create enough temporary " +
+                    "stored silver";
+                return false;
+            }
+
+            bool SavedSilverStacksSurvivePayment(int paymentAmount)
+            {
+                foreach (Thing silver in savedSilver.Keys)
+                {
+                    if (silver != null && !silver.Destroyed && silver.stackCount <= paymentAmount)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            try
+            {
+                state.Requests.Clear();
+                state.PendingRfqResponses.Clear();
+                state.PurchaseOrders.Clear();
+                state.ProcurementContracts.Clear();
+
+                if (!TryFindNoHistoryRfqFixture(
+                        state, out PurchaseRequest request, out Settlement settlement,
+                        out Quotation quote, out ThingDef product, out string fixtureReason))
+                {
+                    SkipF10NoHistoryProcurementAssertions(skip, fixtureReason);
+                    return;
+                }
+
+                bool noRecordBeforeQuote = IsNoReputationRecord(state, settlement);
+                float defaultScore = ReputationService.ScoreFor(state, settlement);
+                bool noRecordAfterQuote = IsNoReputationRecord(state, settlement);
+                check(
+                    F10NoHistoryQuoteAssertion,
+                    noRecordBeforeQuote &&
+                    noRecordAfterQuote &&
+                    Mathf.Approximately(defaultScore, expectedStartingScore) &&
+                    quote != null && quote.settlementId == settlement.ID &&
+                    quote.quantityOffered > 0 && request.AnyQuotes,
+                    $"settlement={settlement.ID}; product={product?.defName ?? "null"}; " +
+                    $"recordBefore={(noRecordBeforeQuote ? "absent" : "present")}; " +
+                    $"recordAfter={(noRecordAfterQuote ? "absent" : "present")}; " +
+                    $"dictionaryKey={state.Reputations.ContainsKey(settlement.ID)}; " +
+                    $"ScoreFor={defaultScore:F2}; quote=" +
+                    $"{(quote == null ? "none" : $"{quote.quantityOffered}x @ {quote.unitPrice:F2}")}; " +
+                    $"request={request.id}");
+
+                RestoreFixtureState();
+
+                if (quote == null)
+                {
+                    skip(
+                        F10NoHistoryPurchaseAssertion,
+                        "the selected reachable no-history settlement produced no RFQ quote");
+                }
+                else if (paymentMap == null || ThingDefOf.Silver == null)
+                {
+                    skip(
+                        F10NoHistoryPurchaseAssertion,
+                        "a player payment map or the vanilla silver definition was unavailable");
+                }
+                else if (!ReferenceEquals(IntercolonyWorldComponent.Current, state))
+                {
+                    skip(
+                        F10NoHistoryPurchaseAssertion,
+                        "PurchaseOrderService.Complete resolves a different or missing live world " +
+                        "component");
+                }
+                else
+                {
+                    state.Requests.Add(request);
+                    request.status = PurchaseRequestStatus.Open;
+                    request.quantityOrdered = 0;
+                    request.quotes.Clear();
+                    request.quotes.Add(quote);
+                    int spotQuantity = 1;
+                    int spotCost = IntercolonyPricing.TotalPayment(quote.unitPrice, spotQuantity);
+                    if (!EnsureFixtureSilver(spotCost + 1, out string silverReason))
+                    {
+                        skip(F10NoHistoryPurchaseAssertion, silverReason);
+                    }
+                    else if (!SavedSilverStacksSurvivePayment(spotCost))
+                    {
+                        skip(
+                            F10NoHistoryPurchaseAssertion,
+                            "the fixture could not leave every original stored-silver stack alive " +
+                            "after payment");
+                    }
+                    else
+                    {
+                        bool noRecordBeforePurchase = IsNoReputationRecord(state, settlement);
+                        PurchaseOrder order = PurchaseOrderService.AcceptQuote(
+                            state, request, quote, paymentMap, spotQuantity);
+                        bool noRecordAfterAcceptance = order != null &&
+                            IsNoReputationRecord(state, settlement);
+                        if (order != null)
+                        {
+                            PurchaseOrderService.Complete(
+                                order, "F10 no-history spot purchase fixture");
+                        }
+
+                        CommercialReputation afterCompletion =
+                            state.FindReputation(settlement.ID);
+                        check(
+                            F10NoHistoryPurchaseAssertion,
+                            noRecordBeforePurchase && order != null &&
+                            noRecordAfterAcceptance &&
+                            order.status == PurchaseOrderStatus.Completed &&
+                            afterCompletion != null &&
+                            afterCompletion.purchasesCompleted == 1 &&
+                            Mathf.Approximately(
+                                afterCompletion.Score,
+                                expectedStartingScore + expectedPurchaseDelta),
+                            $"settlement={settlement.ID}; before=" +
+                            $"{(noRecordBeforePurchase ? "absent" : "present")}; " +
+                            $"afterAccept={(noRecordAfterAcceptance ? "absent" : "present")}; " +
+                            $"order={(order == null ? "null" : order.id.ToString())}; " +
+                            $"status={order?.status.ToString() ?? "null"}; after=" +
+                            $"{(afterCompletion == null ? "absent" : "present")}; " +
+                            $"score={afterCompletion?.Score.ToString("F2") ?? "null"}; " +
+                            $"expectedFirstScore={expectedStartingScore + expectedPurchaseDelta:F2}; " +
+                            $"completed={afterCompletion?.purchasesCompleted.ToString() ?? "null"}");
+                    }
+                }
+
+                RestoreFixtureState();
+                state.ProcurementContracts.Clear();
+                bool noRecordBeforeAgreement = IsNoReputationRecord(state, settlement);
+                float agreementDefaultScore = ReputationService.ScoreFor(state, settlement);
+                bool noRecordAfterAgreementDefault = IsNoReputationRecord(state, settlement);
+                int agreementCompletedPurchases =
+                    state.FindReputation(settlement.ID)?.purchasesCompleted ?? 0;
+                ProcurementContractProposalResult noHistoryProposal =
+                    ProcurementContractService.ProposeContract(
+                        state, settlement, product, contractQuantityPerCycle,
+                        contractCadenceDays, contractTotalCycles, null,
+                        FulfillmentMode.SellerDelivery);
+                check(
+                    F10NoHistoryAgreementAssertion,
+                    noRecordBeforeAgreement &&
+                    noRecordAfterAgreementDefault &&
+                    Mathf.Approximately(agreementDefaultScore, expectedStartingScore) &&
+                    agreementCompletedPurchases == 0 &&
+                    !noHistoryProposal.Success &&
+                    noHistoryProposal.Failure ==
+                        ProcurementContractProposalFailure.ReputationTooLow &&
+                    NamesProgressionReputationRequirement(
+                        noHistoryProposal.Reason, expectedAgreementReputation),
+                    $"settlement={settlement.ID}; recordBefore=" +
+                    $"{(noRecordBeforeAgreement ? "absent" : "present")}; " +
+                    $"recordAfterScoreFor=" +
+                    $"{(noRecordAfterAgreementDefault ? "absent" : "present")}; " +
+                    $"dictionaryKey={state.Reputations.ContainsKey(settlement.ID)}; " +
+                    $"ScoreFor={agreementDefaultScore:F2}; " +
+                    $"completedPurchases={agreementCompletedPurchases}; " +
+                    $"success={noHistoryProposal.Success}; failure={noHistoryProposal.Failure}; " +
+                    $"reason={noHistoryProposal.Reason ?? "none"}");
+
+                RestoreFixtureState();
+                if (!ReferenceEquals(IntercolonyWorldComponent.Current, state))
+                {
+                    skip(
+                        F10TwoPurchasesAssertion,
+                        "PurchaseOrderService.Complete resolves a different or missing live world " +
+                        "component");
+                }
+                else
+                {
+                    state.ProcurementContracts.Clear();
+                    bool noRecordBeforeTwoPurchases = IsNoReputationRecord(state, settlement);
+                    PurchaseOrder firstHistoryPurchase = MakeF10HistoryPurchase(
+                        state, settlement, product);
+                    state.PurchaseOrders.Add(firstHistoryPurchase);
+                    PurchaseOrderService.Complete(
+                        firstHistoryPurchase, "F10 first completed purchase fixture");
+                    CommercialReputation afterFirstPurchase =
+                        state.FindReputation(settlement.ID);
+                    float firstPurchaseScore = afterFirstPurchase?.Score ?? -1f;
+                    // Capture before the second completion mutates the same live reputation object.
+                    int firstPurchaseCompleted =
+                        afterFirstPurchase?.purchasesCompleted ?? -1;
+
+                    PurchaseOrder secondHistoryPurchase = MakeF10HistoryPurchase(
+                        state, settlement, product);
+                    state.PurchaseOrders.Add(secondHistoryPurchase);
+                    PurchaseOrderService.Complete(
+                        secondHistoryPurchase, "F10 second completed purchase fixture");
+                    CommercialReputation afterTwoPurchases =
+                        state.FindReputation(settlement.ID);
+                    float nominalTwoPurchaseScore = expectedStartingScore +
+                        expectedPurchaseDelta * expectedCompletedPurchases;
+                    ProcurementContractProposalResult twoPurchaseProposal =
+                        ProcurementContractService.ProposeContract(
+                            state, settlement, product, contractQuantityPerCycle,
+                            contractCadenceDays, contractTotalCycles, null,
+                            FulfillmentMode.SellerDelivery);
+                    check(
+                        F10TwoPurchasesAssertion,
+                        noRecordBeforeTwoPurchases &&
+                        firstHistoryPurchase.status == PurchaseOrderStatus.Completed &&
+                        secondHistoryPurchase.status == PurchaseOrderStatus.Completed &&
+                        afterFirstPurchase != null &&
+                        firstPurchaseCompleted == 1 &&
+                        Mathf.Approximately(
+                            firstPurchaseScore,
+                            expectedStartingScore + expectedPurchaseDelta) &&
+                        afterTwoPurchases != null &&
+                        afterTwoPurchases.purchasesCompleted == expectedCompletedPurchases &&
+                        afterTwoPurchases.Score > firstPurchaseScore &&
+                        afterTwoPurchases.Score < expectedAgreementReputation &&
+                        Mathf.Abs(afterTwoPurchases.Score - nominalTwoPurchaseScore) <=
+                            expectedPurchaseDelta * 0.05f &&
+                        !twoPurchaseProposal.Success &&
+                        twoPurchaseProposal.Failure ==
+                            ProcurementContractProposalFailure.ReputationTooLow &&
+                        NamesProgressionReputationRequirement(
+                            twoPurchaseProposal.Reason, expectedAgreementReputation),
+                        $"settlement={settlement.ID}; before=" +
+                        $"{(noRecordBeforeTwoPurchases ? "absent" : "present")}; " +
+                        $"firstScore={firstPurchaseScore:F2}; firstCompleted=" +
+                        $"{firstPurchaseCompleted}; " +
+                        $"secondScore={afterTwoPurchases?.Score.ToString("F2") ?? "null"}; " +
+                        $"completed={afterTwoPurchases?.purchasesCompleted.ToString() ?? "null"}; " +
+                        $"nominalScore={nominalTwoPurchaseScore:F2}; " +
+                        $"success={twoPurchaseProposal.Success}; " +
+                        $"failure={twoPurchaseProposal.Failure}; " +
+                        $"reason={twoPurchaseProposal.Reason ?? "none"}");
+                }
+            }
+            finally
+            {
+                RestoreFixtureState();
+            }
+        }
+
+        private static void SkipF10NoHistoryProcurementAssertions(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip(F10NoHistoryQuoteAssertion, reason);
+            skip(F10NoHistoryPurchaseAssertion, reason);
+            skip(F10NoHistoryAgreementAssertion, reason);
+            skip(F10TwoPurchasesAssertion, reason);
+        }
+
+        private static bool IsNoReputationRecord(
+            IntercolonyWorldComponent state,
+            Settlement settlement)
+        {
+            return state != null && settlement != null && state.Reputations != null &&
+                   !state.Reputations.ContainsKey(settlement.ID) &&
+                   state.FindReputation(settlement.ID) == null;
+        }
+
+        private static bool NamesProgressionReputationRequirement(
+            string reason,
+            float expectedAgreementReputation)
+        {
+            return !string.IsNullOrEmpty(reason) &&
+                   reason.IndexOf("Commercial reputation", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   reason.Contains(expectedAgreementReputation.ToString("0"));
+        }
+
+        private static bool TryFindNoHistoryRfqFixture(
+            IntercolonyWorldComponent state,
+            out PurchaseRequest request,
+            out Settlement settlement,
+            out Quotation quote,
+            out ThingDef product,
+            out string reason)
+        {
+            request = null;
+            settlement = null;
+            quote = null;
+            product = null;
+            reason = null;
+
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                reason = "the world supplied no settlements to inspect for an absent reputation record";
+                return false;
+            }
+
+            bool hasAbsentSettlement = false;
+            foreach (Settlement candidate in settlements)
+            {
+                if (candidate != null &&
+                    IntercolonyMarketAccess.IsAccessible(candidate) &&
+                    state.GetProfileForReadOnly(candidate) != null &&
+                    IsNoReputationRecord(state, candidate))
+                {
+                    hasAbsentSettlement = true;
+                    break;
+                }
+            }
+
+            if (!hasAbsentSettlement)
+            {
+                reason =
+                    "no accessible settlement has a genuinely absent CommercialReputation " +
+                    "dictionary record (the world cannot supply a never-traded fixture)";
+                return false;
+            }
+
+            HashSet<int> absentSettlementIds = new HashSet<int>();
+            foreach (Settlement candidateSettlement in settlements)
+            {
+                if (candidateSettlement != null &&
+                    IntercolonyMarketAccess.IsAccessible(candidateSettlement) &&
+                    state.GetProfileForReadOnly(candidateSettlement) != null &&
+                    IsNoReputationRecord(state, candidateSettlement))
+                {
+                    absentSettlementIds.Add(candidateSettlement.ID);
+                }
+            }
+
+            List<ThingDef> tradable = IntercolonyProductClassifier.TradableDefs;
+            if (tradable == null || tradable.Count == 0)
+            {
+                reason = "no tradable definition was available for the no-history RFQ fixture";
+                return false;
+            }
+
+            PurchaseRequest fallbackRequest = null;
+            Settlement fallbackSettlement = null;
+            ThingDef fallbackProduct = null;
+            foreach (ThingDef candidateDef in tradable)
+            {
+                if (candidateDef == null)
+                {
+                    continue;
+                }
+
+                state.Requests.Clear();
+                state.PendingRfqResponses.Clear();
+                PurchaseRequest candidateRequest = RfqService.CreateRequest(
+                    state, candidateDef, null, 1, 15);
+                if (candidateRequest == null)
+                {
+                    continue;
+                }
+
+                string advanceFailure = null;
+                AdvanceRfqResponsesForSelfTest(
+                    state, candidateRequest,
+                    (name, detail) => advanceFailure = detail);
+                if (advanceFailure != null)
+                {
+                    reason = "the real RFQ response path could not be advanced: " + advanceFailure;
+                    return false;
+                }
+
+                foreach (Quotation candidateQuote in candidateRequest.quotes)
+                {
+                    Settlement candidateSettlement = candidateQuote == null
+                        ? null
+                        : IntercolonyMarketAccess.FindSettlement(candidateQuote.settlementId);
+                    if (candidateQuote != null && candidateSettlement != null &&
+                        candidateQuote.quantityOffered > 0 &&
+                        absentSettlementIds.Contains(candidateSettlement.ID) &&
+                        IntercolonyMarketAccess.IsAccessible(candidateSettlement) &&
+                        state.GetProfileForReadOnly(candidateSettlement) != null)
+                    {
+                        request = candidateRequest;
+                        settlement = candidateSettlement;
+                        quote = candidateQuote;
+                        product = candidateDef;
+                        return true;
+                    }
+                }
+
+                if (fallbackRequest == null)
+                {
+                    foreach (Settlement candidateSettlement in settlements)
+                    {
+                        if (candidateSettlement == null ||
+                            !absentSettlementIds.Contains(candidateSettlement.ID))
+                        {
+                            continue;
+                        }
+
+                        SettlementEconomicProfile candidateProfile =
+                            state.GetProfileForReadOnly(candidateSettlement);
+                        if (candidateProfile == null ||
+                            !F10CanTechnicallySupply(
+                                candidateDef, candidateSettlement, candidateProfile))
+                        {
+                            continue;
+                        }
+
+                        fallbackRequest = candidateRequest;
+                        fallbackSettlement = candidateSettlement;
+                        fallbackProduct = candidateDef;
+                        break;
+                    }
+                }
+
+                state.Requests.Clear();
+                state.PendingRfqResponses.Clear();
+                foreach (int absentSettlementId in absentSettlementIds)
+                {
+                    state.Reputations.Remove(absentSettlementId);
+                }
+            }
+
+            reason =
+                "the real RFQ path produced no quote from an accessible settlement whose " +
+                "CommercialReputation record was genuinely absent";
+            if (fallbackRequest != null && fallbackSettlement != null && fallbackProduct != null)
+            {
+                request = fallbackRequest;
+                settlement = fallbackSettlement;
+                product = fallbackProduct;
+                reason =
+                    "no quotation arrived from the selected reachable no-history settlement; " +
+                    "the RFQ assertion will fail rather than hide a progression gate";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool F10CanTechnicallySupply(
+            ThingDef product,
+            Settlement settlement,
+            SettlementEconomicProfile profile)
+        {
+            Rand.PushState(Gen.HashCombineInt(
+                product.shortHash, settlement.ID, 0xF10, 0x6C));
+            try
+            {
+                return RfqService.CanTechnicallySupply(product, profile);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+        }
+
+        private static PurchaseOrder MakeF10HistoryPurchase(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product)
+        {
+            int now = GenTicks.TicksGame;
+            return new PurchaseOrder
+            {
+                id = state.NextId(),
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "F10 fixture settlement",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = product,
+                quantity = 1,
+                unitPrice = 1f,
+                paidSilver = 1,
+                supplierDelivers = true,
+                orderedTick = now,
+                readyTick = now,
+                pickupExpiryTick = now + 10 * GenDate.TicksPerDay,
+                status = PurchaseOrderStatus.Confirmed
+            };
         }
 
         private static void CheckProcurementAgreementProgression(
