@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Text;
 using RimWorld;
@@ -372,6 +373,12 @@ namespace Intercolony
             int savedTick = tickManager.TicksGame;
             IntercolonySettings settings = IntercolonyMod.Settings;
             float savedRefreshDays = settings.refreshDays;
+            int savedCommercialGoodwillIntervalDays =
+                settings.commercialGoodwillIntervalDays;
+            int savedCommercialGoodwillPerInterval =
+                settings.commercialGoodwillPerInterval;
+            int savedCommercialGoodwillCeiling = settings.commercialGoodwillCeiling;
+            int savedCommercialReputationRequired = settings.commercialReputationRequired;
             FactionRelationKind savedFactionRelationKind = fixtureFactionRelation.kind;
             int savedFactionBaseGoodwill = fixtureFactionRelation.baseGoodwill;
             FactionRelationKind savedPlayerRelationKind = fixturePlayerRelation.kind;
@@ -407,22 +414,43 @@ namespace Intercolony
                     return result;
                 }
 
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 1;
+                settings.commercialGoodwillCeiling = 60;
+                settings.commercialReputationRequired = 80;
                 CommercialReputation boundaryReputation =
                     InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                CommercialGoodwillPressureEvaluation defaultEvaluation =
+                    CommercialGoodwillPressureService.EvaluateStatus(
+                        state, preferredSettlement.ID);
                 tickManager.DebugSetTicksGame(quadrumBoundaryTick);
                 int boundaryBefore = fixtureFaction.BaseGoodwillWith(playerFaction);
                 state.WorldComponentTick();
                 int boundaryAfter = fixtureFaction.BaseGoodwillWith(playerFaction);
                 result.Check(
                     "G1 preferred settlement applies exactly +1 at a quadrum boundary",
+                    defaultEvaluation.Status == CommercialGoodwillPressureStatus.Earning &&
+                    defaultEvaluation.Faction == fixtureFaction &&
+                    defaultEvaluation.Delta == 1 &&
+                    defaultEvaluation.ConfiguredDelta == 1 &&
+                    defaultEvaluation.IntervalDays == 15 &&
+                    defaultEvaluation.GoodwillCeiling == 60 &&
+                    defaultEvaluation.RequiredReputationScore == 80 &&
                     boundaryReputation.Score >= 80f &&
                     fixtureFaction.RelationKindWith(playerFaction) == FactionRelationKind.Neutral &&
+                    boundaryBefore == neutralFixtureGoodwill &&
                     boundaryBefore < ceilingFixtureGoodwill &&
                     boundaryAfter == boundaryBefore + 1,
                     $"tick={quadrumBoundaryTick}; quadrumRemainder=" +
                     $"{quadrumBoundaryTick % GenDate.TicksPerQuadrum}; " +
+                    "settings=15d/+1/60/80; " +
+                    $"evaluation={defaultEvaluation.Status}; " +
                     $"score={boundaryReputation.Score:F1}; baseGoodwill={boundaryBefore}->{boundaryAfter}");
 
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 1;
+                settings.commercialGoodwillCeiling = 60;
+                settings.commercialReputationRequired = 80;
                 SetGoodwillPressureRelation(
                     fixtureFactionRelation, fixturePlayerRelation,
                     FactionRelationKind.Neutral, neutralFixtureGoodwill);
@@ -442,6 +470,10 @@ namespace Intercolony
                     $"score={offBoundaryReputation.Score:F1}; baseGoodwill=" +
                     $"{offBoundaryBefore}->{offBoundaryAfter}");
 
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 1;
+                settings.commercialGoodwillCeiling = 60;
+                settings.commercialReputationRequired = 80;
                 SetGoodwillPressureRelation(
                     fixtureFactionRelation, fixturePlayerRelation,
                     FactionRelationKind.Neutral, ceilingFixtureGoodwill);
@@ -473,22 +505,32 @@ namespace Intercolony
                         "a ceiling of 80 would observe 60->61 and report FAIL");
                 }
 
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 1;
+                settings.commercialGoodwillCeiling = 60;
+                settings.commercialReputationRequired = 80;
                 SetGoodwillPressureRelation(
                     fixtureFactionRelation, fixturePlayerRelation,
                     FactionRelationKind.Hostile, hostileFixtureGoodwill);
                 CommercialReputation hostileReputation =
                     InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                CommercialGoodwillPressureEvaluation hostileEvaluation =
+                    CommercialGoodwillPressureService.EvaluateStatus(
+                        state, preferredSettlement.ID);
                 tickManager.DebugSetTicksGame(quadrumBoundaryTick);
                 int hostileBefore = fixtureFaction.BaseGoodwillWith(playerFaction);
                 state.WorldComponentTick();
                 int hostileAfter = fixtureFaction.BaseGoodwillWith(playerFaction);
                 result.Check(
-                    "G4 hostile faction gains no goodwill pressure",
+                    "G4 hostile faction cannot receive goodwill pressure",
+                    hostileEvaluation.Status == CommercialGoodwillPressureStatus.Hostile &&
+                    !hostileEvaluation.IsEarning &&
                     hostileReputation.Score >= 80f &&
                     fixtureFaction.RelationKindWith(playerFaction) == FactionRelationKind.Hostile &&
                     hostileAfter == hostileBefore,
                     $"tick={quadrumBoundaryTick}; quadrumRemainder=" +
                     $"{quadrumBoundaryTick % GenDate.TicksPerQuadrum}; " +
+                    $"evaluation={hostileEvaluation.Status}; " +
                     $"score={hostileReputation.Score:F1}; baseGoodwill={hostileBefore}->{hostileAfter}");
 
                 if (secondPreferredSettlement == null)
@@ -499,12 +541,18 @@ namespace Intercolony
                 }
                 else
                 {
+                    settings.commercialGoodwillIntervalDays = 15;
+                    settings.commercialGoodwillPerInterval = 1;
+                    settings.commercialGoodwillCeiling = 60;
+                    settings.commercialReputationRequired = 80;
                     SetGoodwillPressureRelation(
                         fixtureFactionRelation, fixturePlayerRelation,
                         FactionRelationKind.Neutral, neutralFixtureGoodwill);
                     CommercialReputation firstDeduplicationReputation =
                         InstallPreferredGoodwillFixture(
                             state, preferredSettlement, secondPreferredSettlement);
+                    List<CommercialGoodwillPressure> deduplicationPressures =
+                        CommercialGoodwillPressureService.Evaluate(state);
                     tickManager.DebugSetTicksGame(quadrumBoundaryTick);
                     int deduplicationBefore = fixtureFaction.BaseGoodwillWith(playerFaction);
                     state.WorldComponentTick();
@@ -512,12 +560,320 @@ namespace Intercolony
                     result.Check(
                         "G5 two preferred settlements of one faction deduplicate to +1",
                         firstDeduplicationReputation.Score >= 80f &&
+                        deduplicationPressures.Count == 1 &&
+                        deduplicationPressures[0].Faction == fixtureFaction &&
+                        deduplicationPressures[0].Delta == 1 &&
                         deduplicationAfter == deduplicationBefore + 1,
                         $"tick={quadrumBoundaryTick}; settlementIds=" +
                         $"{preferredSettlement.ID},{secondPreferredSettlement.ID}; " +
+                        $"pressureResults={deduplicationPressures.Count}; " +
                         $"baseGoodwill={deduplicationBefore}->{deduplicationAfter}; " +
                         "expected one faction-level point, not two settlement-level points");
                 }
+
+                settings.commercialGoodwillIntervalDays = 5;
+                settings.commercialGoodwillPerInterval = 1;
+                settings.commercialGoodwillCeiling = 60;
+                settings.commercialReputationRequired = 80;
+                SetGoodwillPressureRelation(
+                    fixtureFactionRelation, fixturePlayerRelation,
+                    FactionRelationKind.Neutral, neutralFixtureGoodwill);
+                CommercialReputation shorterIntervalReputation =
+                    InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                CommercialGoodwillPressureEvaluation shorterIntervalEvaluation =
+                    CommercialGoodwillPressureService.EvaluateStatus(
+                        state, preferredSettlement.ID);
+                tickManager.DebugSetTicksGame(5 * GenDate.TicksPerDay);
+                int shorterIntervalBefore = fixtureFaction.BaseGoodwillWith(playerFaction);
+                state.WorldComponentTick();
+                int shorterIntervalAfter = fixtureFaction.BaseGoodwillWith(playerFaction);
+                result.Check(
+                    "G6 shorter interval applies at its five-day cadence",
+                    shorterIntervalEvaluation.Status == CommercialGoodwillPressureStatus.Earning &&
+                    shorterIntervalEvaluation.IntervalDays == 5 &&
+                    shorterIntervalEvaluation.Delta == 1 &&
+                    shorterIntervalReputation.Score >= 80f &&
+                    shorterIntervalBefore == neutralFixtureGoodwill &&
+                    shorterIntervalAfter == shorterIntervalBefore + 1,
+                    $"tick={5 * GenDate.TicksPerDay}; interval=" +
+                        $"{shorterIntervalEvaluation.IntervalDays}d; " +
+                        $"score={shorterIntervalReputation.Score:F1}; " +
+                        $"baseGoodwill={shorterIntervalBefore}->{shorterIntervalAfter}");
+
+                SetGoodwillPressureRelation(
+                    fixtureFactionRelation, fixturePlayerRelation,
+                    FactionRelationKind.Neutral, neutralFixtureGoodwill);
+                CommercialReputation beforeShorterIntervalReputation =
+                    InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                tickManager.DebugSetTicksGame(4 * GenDate.TicksPerDay);
+                int beforeShorterIntervalGoodwill =
+                    fixtureFaction.BaseGoodwillWith(playerFaction);
+                state.WorldComponentTick();
+                int afterShorterIntervalGoodwill =
+                    fixtureFaction.BaseGoodwillWith(playerFaction);
+                result.Check(
+                    "G7 shorter interval still waits before five days",
+                    beforeShorterIntervalReputation.Score >= 80f &&
+                    beforeShorterIntervalGoodwill == neutralFixtureGoodwill &&
+                    afterShorterIntervalGoodwill == beforeShorterIntervalGoodwill,
+                    $"tick={4 * GenDate.TicksPerDay}; interval=5d; " +
+                        $"score={beforeShorterIntervalReputation.Score:F1}; " +
+                        $"baseGoodwill={beforeShorterIntervalGoodwill}->" +
+                        $"{afterShorterIntervalGoodwill}");
+
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 4;
+                settings.commercialGoodwillCeiling = 60;
+                settings.commercialReputationRequired = 80;
+                SetGoodwillPressureRelation(
+                    fixtureFactionRelation, fixturePlayerRelation,
+                    FactionRelationKind.Neutral, neutralFixtureGoodwill);
+                CommercialReputation largerDeltaReputation =
+                    InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                CommercialGoodwillPressureEvaluation largerDeltaEvaluation =
+                    CommercialGoodwillPressureService.EvaluateStatus(
+                        state, preferredSettlement.ID);
+                List<CommercialGoodwillPressure> largerDeltaPressures =
+                    CommercialGoodwillPressureService.Evaluate(state);
+                int largerDeltaBefore = fixtureFaction.BaseGoodwillWith(playerFaction);
+                CommercialGoodwillPressureService.Apply(state);
+                int largerDeltaAfter = fixtureFaction.BaseGoodwillWith(playerFaction);
+                result.Check(
+                    "G8 larger goodwill delta changes the amount applied",
+                    largerDeltaEvaluation.Status == CommercialGoodwillPressureStatus.Earning &&
+                    largerDeltaEvaluation.ConfiguredDelta == 4 &&
+                    largerDeltaEvaluation.Delta == 4 &&
+                    largerDeltaEvaluation.GoodwillCeiling == 60 &&
+                    largerDeltaReputation.Score >= 80f &&
+                    largerDeltaPressures.Count == 1 &&
+                    largerDeltaPressures[0].Faction == fixtureFaction &&
+                    largerDeltaPressures[0].Delta == 4 &&
+                    largerDeltaBefore == neutralFixtureGoodwill &&
+                    largerDeltaAfter >= largerDeltaBefore + 4,
+                    $"configuredDelta={largerDeltaEvaluation.ConfiguredDelta}; " +
+                        $"appliedDelta={largerDeltaEvaluation.Delta}; " +
+                        $"pressureResults={largerDeltaPressures.Count}; " +
+                        $"baseGoodwill={largerDeltaBefore}->{largerDeltaAfter}");
+
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 1;
+                settings.commercialGoodwillCeiling = 60;
+                settings.commercialReputationRequired = 80;
+                SetGoodwillPressureRelation(
+                    fixtureFactionRelation, fixturePlayerRelation,
+                    FactionRelationKind.Neutral, neutralFixtureGoodwill);
+                CommercialReputation thresholdReputation =
+                    InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                CommercialGoodwillPressureEvaluation qualifyingEvaluation =
+                    CommercialGoodwillPressureService.EvaluateStatus(
+                        state, preferredSettlement.ID);
+                settings.commercialReputationRequired = 90;
+                CommercialGoodwillPressureEvaluation higherThresholdEvaluation =
+                    CommercialGoodwillPressureService.EvaluateStatus(
+                        state, preferredSettlement.ID);
+                result.Check(
+                    "G9 higher reputation threshold removes qualification",
+                    thresholdReputation.Score > 80f && thresholdReputation.Score < 90f &&
+                    qualifyingEvaluation.Status == CommercialGoodwillPressureStatus.Earning &&
+                    qualifyingEvaluation.RequiredReputationScore == 80 &&
+                    qualifyingEvaluation.Delta == 1 &&
+                    higherThresholdEvaluation.Status ==
+                        CommercialGoodwillPressureStatus.BelowThreshold &&
+                    higherThresholdEvaluation.RequiredReputationScore == 90 &&
+                    higherThresholdEvaluation.Delta == 0,
+                    $"score={thresholdReputation.Score:F1}; " +
+                        $"required=80->{higherThresholdEvaluation.RequiredReputationScore}; " +
+                        $"status={qualifyingEvaluation.Status}->" +
+                        $"{higherThresholdEvaluation.Status}");
+
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 4;
+                settings.commercialGoodwillCeiling = 53;
+                settings.commercialReputationRequired = 80;
+                SetGoodwillPressureRelation(
+                    fixtureFactionRelation, fixturePlayerRelation,
+                    FactionRelationKind.Neutral, 53);
+                int configurableCeilingEffectiveGoodwill =
+                    fixtureFaction.GoodwillWith(playerFaction);
+                if (configurableCeilingEffectiveGoodwill < 53)
+                {
+                    result.Skip(
+                        "G10 configured goodwill ceiling stops at 53",
+                        $"vanilla effective goodwill cap was " +
+                        $"{configurableCeilingEffectiveGoodwill} at fixture base 53");
+                }
+                else
+                {
+                    CommercialReputation configurableCeilingReputation =
+                        InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                    CommercialGoodwillPressureEvaluation configurableCeilingEvaluation =
+                        CommercialGoodwillPressureService.EvaluateStatus(
+                            state, preferredSettlement.ID);
+                    int configurableCeilingBefore =
+                        fixtureFaction.BaseGoodwillWith(playerFaction);
+                    CommercialGoodwillPressureService.Apply(state);
+                    int configurableCeilingAfter =
+                        fixtureFaction.BaseGoodwillWith(playerFaction);
+                    result.Check(
+                        "G10 configured goodwill ceiling stops at 53",
+                        configurableCeilingEvaluation.Status ==
+                            CommercialGoodwillPressureStatus.AtCeiling &&
+                        configurableCeilingEvaluation.GoodwillCeiling == 53 &&
+                        configurableCeilingEvaluation.Delta == 0 &&
+                        configurableCeilingReputation.Score >= 80f &&
+                        configurableCeilingBefore == 53 &&
+                        configurableCeilingAfter == configurableCeilingBefore &&
+                        fixtureFaction.RelationKindWith(playerFaction) ==
+                            FactionRelationKind.Neutral,
+                        $"configuredCeiling=53; evaluation=" +
+                            $"{configurableCeilingEvaluation.Status}; " +
+                            $"baseGoodwill={configurableCeilingBefore}->" +
+                            $"{configurableCeilingAfter}");
+                }
+
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 5;
+                settings.commercialGoodwillCeiling = 74;
+                settings.commercialReputationRequired = 80;
+                SetGoodwillPressureRelation(
+                    fixtureFactionRelation, fixturePlayerRelation,
+                    FactionRelationKind.Neutral, 73);
+                int maximumCeilingEffectiveGoodwill =
+                    fixtureFaction.GoodwillWith(playerFaction);
+                if (maximumCeilingEffectiveGoodwill < 73)
+                {
+                    result.Skip(
+                        "G11 maximum commercial ceiling cannot create an alliance",
+                        $"vanilla effective goodwill cap was " +
+                        $"{maximumCeilingEffectiveGoodwill} at fixture base 73");
+                }
+                else
+                {
+                    CommercialReputation maximumCeilingReputation =
+                        InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                    CommercialGoodwillPressureEvaluation maximumCeilingEvaluation =
+                        CommercialGoodwillPressureService.EvaluateStatus(
+                            state, preferredSettlement.ID);
+                    int maximumCeilingBefore = fixtureFaction.BaseGoodwillWith(playerFaction);
+                    CommercialGoodwillPressureService.Apply(state);
+                    int maximumCeilingAfter = fixtureFaction.BaseGoodwillWith(playerFaction);
+                    result.Check(
+                        "G11 maximum commercial ceiling cannot create an alliance",
+                        settings.commercialGoodwillCeiling == 74 &&
+                        CommercialGoodwillPressureService.VanillaAllyThreshold == 75 &&
+                        74 < 75 &&
+                        maximumCeilingEvaluation.Status ==
+                            CommercialGoodwillPressureStatus.Earning &&
+                        maximumCeilingEvaluation.GoodwillCeiling == 74 &&
+                        maximumCeilingEvaluation.Delta == 1 &&
+                        maximumCeilingReputation.Score >= 80f &&
+                        maximumCeilingBefore == 73 &&
+                        maximumCeilingAfter == 74 &&
+                        maximumCeilingAfter < 75 &&
+                        fixtureFaction.RelationKindWith(playerFaction) ==
+                            FactionRelationKind.Neutral,
+                        $"configuredCeiling=74; vanillaAllyThreshold=" +
+                            $"{CommercialGoodwillPressureService.VanillaAllyThreshold}; " +
+                            $"baseGoodwill={maximumCeilingBefore}->{maximumCeilingAfter}; " +
+                            $"relation={fixtureFaction.RelationKindWith(playerFaction)}");
+                }
+
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    result.Skip(
+                        "G12 commercial goodwill settings survive a Scribe save/load round trip",
+                        "RimWorld Scribe.saver or Scribe.loader was unavailable");
+                }
+                else
+                {
+                    IntercolonySettings savedSettings = new IntercolonySettings
+                    {
+                        commercialGoodwillIntervalDays = 7,
+                        commercialGoodwillPerInterval = 4,
+                        commercialGoodwillCeiling = 53,
+                        commercialReputationRequired = 67
+                    };
+                    IntercolonySettings loadedSettings = null;
+                    string settingsRoundTripFailure = null;
+                    string settingsPath = Path.Combine(
+                        Path.GetTempPath(),
+                        $"Intercolony-CommercialGoodwillSettings-{Guid.NewGuid():N}.xml");
+                    try
+                    {
+                        Scribe.saver.InitSaving(settingsPath, "commercialGoodwillSettingsTest");
+                        Scribe_Deep.Look(ref savedSettings, "settings");
+                        Scribe.saver.FinalizeSaving();
+
+                        Scribe.loader.InitLoading(settingsPath);
+                        Scribe_Deep.Look(ref loadedSettings, "settings");
+                        Scribe.loader.FinalizeLoading();
+                    }
+                    catch (Exception ex)
+                    {
+                        settingsRoundTripFailure =
+                            $"{ex.GetType().Name}: {ex.Message}";
+                    }
+                    finally
+                    {
+                        Scribe.ForceStop();
+                        if (File.Exists(settingsPath))
+                        {
+                            File.Delete(settingsPath);
+                        }
+                    }
+
+                    string loadedSettingsValues = loadedSettings == null
+                        ? "none"
+                        : $"{loadedSettings.commercialGoodwillIntervalDays}/" +
+                          $"{loadedSettings.commercialGoodwillPerInterval}/" +
+                          $"{loadedSettings.commercialGoodwillCeiling}/" +
+                          $"{loadedSettings.commercialReputationRequired}";
+                    result.Check(
+                        "G12 commercial goodwill settings survive a Scribe save/load round trip",
+                        settingsRoundTripFailure == null && loadedSettings != null &&
+                        loadedSettings.commercialGoodwillIntervalDays == 7 &&
+                        loadedSettings.commercialGoodwillPerInterval == 4 &&
+                        loadedSettings.commercialGoodwillCeiling == 53 &&
+                        loadedSettings.commercialReputationRequired == 67,
+                        $"failure={settingsRoundTripFailure ?? "none"}; " +
+                            $"loaded={loadedSettingsValues}; expected=7/4/53/67");
+                }
+
+                settings.commercialGoodwillIntervalDays = 15;
+                settings.commercialGoodwillPerInterval = 0;
+                settings.commercialGoodwillCeiling = 60;
+                settings.commercialReputationRequired = 80;
+                SetGoodwillPressureRelation(
+                    fixtureFactionRelation, fixturePlayerRelation,
+                    FactionRelationKind.Neutral, neutralFixtureGoodwill);
+                CommercialReputation zeroDeltaReputation =
+                    InstallPreferredGoodwillFixture(state, preferredSettlement, null);
+                CommercialGoodwillPressureEvaluation zeroDeltaEvaluation =
+                    CommercialGoodwillPressureService.EvaluateStatus(
+                        state, preferredSettlement.ID);
+                List<CommercialGoodwillPressure> zeroDeltaPressures =
+                    CommercialGoodwillPressureService.Evaluate(state);
+                int zeroDeltaBefore = fixtureFaction.BaseGoodwillWith(playerFaction);
+                CommercialGoodwillPressureService.Apply(state);
+                int zeroDeltaAfter = fixtureFaction.BaseGoodwillWith(playerFaction);
+                result.Check(
+                    "G13 zero goodwill delta disables positive pressure only",
+                    zeroDeltaEvaluation.Status == CommercialGoodwillPressureStatus.Earning &&
+                    zeroDeltaEvaluation.IsPositivePressureDisabled &&
+                    zeroDeltaEvaluation.ConfiguredDelta == 0 &&
+                    zeroDeltaEvaluation.Delta == 0 &&
+                    zeroDeltaReputation.Score >= 80f &&
+                    zeroDeltaPressures.Count == 1 &&
+                    zeroDeltaPressures[0].Faction == fixtureFaction &&
+                    zeroDeltaPressures[0].Delta == 0 &&
+                    zeroDeltaBefore == neutralFixtureGoodwill &&
+                    zeroDeltaAfter == zeroDeltaBefore &&
+                    fixtureFaction.RelationKindWith(playerFaction) ==
+                        FactionRelationKind.Neutral,
+                    $"evaluation={zeroDeltaEvaluation.Status}; " +
+                        $"pressureResults={zeroDeltaPressures.Count}; " +
+                        $"baseGoodwill={zeroDeltaBefore}->{zeroDeltaAfter}; " +
+                        "reputation remained qualifying");
 
                 result.sb.AppendLine(
                     "  (boundary tick also entered HostilityPolicy.Sweep and the empty hourly " +
@@ -528,6 +884,11 @@ namespace Intercolony
             {
                 tickManager.DebugSetTicksGame(savedTick);
                 settings.refreshDays = savedRefreshDays;
+                settings.commercialGoodwillIntervalDays =
+                    savedCommercialGoodwillIntervalDays;
+                settings.commercialGoodwillPerInterval = savedCommercialGoodwillPerInterval;
+                settings.commercialGoodwillCeiling = savedCommercialGoodwillCeiling;
+                settings.commercialReputationRequired = savedCommercialReputationRequired;
 
                 // Restore both vanilla relation entries directly so the original base goodwill,
                 // effective relation kind, and the player's mirror are exact even when a fixture
@@ -559,6 +920,11 @@ namespace Intercolony
                     $"{fixturePlayerRelation.baseGoodwill} (saved {savedPlayerBaseGoodwill}); " +
                     $"relation kinds restored; tick restored to {savedTick}; " +
                     $"refreshDays restored to {savedRefreshDays:0.##}; " +
+                    $"goodwill settings restored to " +
+                    $"{settings.commercialGoodwillIntervalDays}/" +
+                    $"{settings.commercialGoodwillPerInterval}/" +
+                    $"{settings.commercialGoodwillCeiling}/" +
+                    $"{settings.commercialReputationRequired}; " +
                     $"reputation records restored to {state.Reputations.Count})");
             }
 
@@ -573,9 +939,19 @@ namespace Intercolony
             result.Skip(
                 "G2 preferred settlement does not apply off the quadrum boundary", reason);
             result.Skip("G3 base goodwill ceiling holds at 60", reason);
-            result.Skip("G4 hostile faction gains no goodwill pressure", reason);
+            result.Skip("G4 hostile faction cannot receive goodwill pressure", reason);
             result.Skip(
                 "G5 two preferred settlements of one faction deduplicate to +1", reason);
+            result.Skip("G6 shorter interval applies at its five-day cadence", reason);
+            result.Skip("G7 shorter interval still waits before five days", reason);
+            result.Skip("G8 larger goodwill delta changes the amount applied", reason);
+            result.Skip("G9 higher reputation threshold removes qualification", reason);
+            result.Skip("G10 configured goodwill ceiling stops at 53", reason);
+            result.Skip(
+                "G11 maximum commercial ceiling cannot create an alliance", reason);
+            result.Skip(
+                "G12 commercial goodwill settings survive a Scribe save/load round trip", reason);
+            result.Skip("G13 zero goodwill delta disables positive pressure only", reason);
         }
 
         private static CommercialReputation InstallPreferredGoodwillFixture(
