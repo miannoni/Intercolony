@@ -1,8 +1,32 @@
 # Foreman state — Intercolony
 
-Stage: **HALTED CLEANLY. THE PLAYTEST CORRECTION EXECUTION PLAN IS COMPLETE.**
-Unit: none. **Do not dispatch anything without a new instruction from the operator.**
-Worker: none.
+Stage: **F — A NEW RUNTIME DEFECT FROM PLAY, opened 2026-09-10. The correction plan itself is
+COMPLETE and closed; this is triage on top of it, not a reopening.**
+Unit: F.0 — recon: who sends an injured employee to a medical bed that has no free slot
+Worker: **sol recon, read-only** — `…\scratchpad\unit-f0b.out`. Recon only: its output becomes
+decisions and a Luna unit, never a commit on its own.
+
+**THE DEFECT, and the operator's own observations, which are the load-bearing facts:**
+
+    Could not find good sleeping slot position for Breixo. Perhaps AnyUnoccupiedSleepingSlot check
+    is missing somewhere.
+
+Red, repeating. **Breixo and Kazuki are Intercolony armed employees** — the log says so. **Both
+already have their own assigned beds.** **It happens only at the INFIRMARY, when an employee is
+injured after a fight and needs treatment.** It has been happening a long time, not since any recent
+change. Intercolony's own `Employee downed — treatment needed` letters appear just before it.
+
+A medical bed clears its owners, so on one the ownership checks in `GetBedSleepingSlotPosFor`
+(`reference/decompiled/RimWorld/RestUtility.cs:360-383`) are trivially satisfied and **the error can
+only mean the bed had no free slot and the pawn was not already in one**. Vanilla's own message
+accuses the caller of skipping `AnyUnoccupiedSleepingSlot`. **The hypothesis under test: our
+employees are quest lodgers, and a lodger allowed into the rescue path but excluded from the
+bed-assignment path produces exactly this.** Hospitality is loaded and manages guest beds, so it is a
+live alternative, not a shrug. A second, smaller question rides along: whether the `Lord_140` verdict
+from stage D actually covers a new `Lord_165` not-deep-saved warning, or only looks like it does.
+
+**A first recon was dispatched and STOPPED mid-run** when the operator supplied the infirmary detail;
+the sharpened brief is `unit-f0b.prompt.txt`. That was deliberate, not a failure.
 
 **ALL EIGHT AUTHORISED FINDINGS ARE CLOSED — F01, F07, F08, F09, F10, F11, F13, F17 — plus the two
 out-of-order runtime-defect stages D and E, and the F12/F22 documentation freezes.** Whole suite on
@@ -21,14 +45,16 @@ identically before this branch existed. Closing record at `ed0a3d5`.
      Backup at `…\scratchpad\playtest-evidence\E-Playtest-1.0-CAPTURED.rws`;
   2. the employment proof: hire → arrive → die → look in the grave → save → quit → reload → look
      again → no NEW `JobGiver_VisitGrave` exception in the post-load delta;
-  3. the F13/F17 card checks — tick visible at a glance, click toggles it, reopening redraws it, and
-     every moved action still reachable from `...`.
+  3. the F13/F17 card checks — **the operator reports these VALIDATED on 2026-09-10.** Held short of
+     fully play-verified in the record until the last half is confirmed: that every moved action —
+     Keep them, Not now, Renew, Let go, Cancel, Dismiss — is still reachable from `...`. That is the
+     half a changed enabled-predicate could have broken invisibly.
 
 **F13, F17 and the employment fix are NOT play-verified until those are done, and a green suite does
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 15:10 — RUN COMPLETE; the empty-corpse repair has now been run in play
+Updated: 2026-09-10 15:35 — the plan is complete; a NEW runtime defect is in triage
 Foreman load: 2026-09-10 04:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -93,6 +119,7 @@ two workers on the same large UI or settings file.
 | ✅ | C6 — freeze F12 in the documentation | — | closed, `aa413e3` |
 | ✅ | C7 — freeze F22 in the documentation | — | closed, `aa413e3` |
 | ✅ | C8 — whole-suite regression and clean halt | — | closed, `ed0a3d5`. **1601/0/16, exit 0** |
+| 🔨 | F — a new runtime defect from play: injured employees and the infirmary | — | recon running |
 
 ## Units — stages C0 and C1
 
