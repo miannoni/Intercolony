@@ -1,8 +1,25 @@
 # Foreman state — Intercolony
 
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: F.3 — the exhaustive re-audit of the installed DLLs, and the supersede in `PROGRESS.md`
-Worker: dispatching.
+Unit: F.4 — the temporary bed diagnostics, in ONE revertable file
+Worker: luna running — `…\scratchpad\unit-f4.out`.
+
+**F.3 IS DONE at `829355e` AND IT FOUND A SECOND WRONG EXONERATION.** Provenance was fixed properly
+this time: both DLLs SHA-256'd, and the Hospitality binary confirmed byte-identical to the public
+`develop` build at commit `6b67697`.
+
+  - **F-D10 — COMMON SENSE WAS ALSO CLEARED TOO EARLY, and this one is the live lead.** The
+    installed build patches `Pawn_JobTracker.StartJob`, `EndCurrentJob` and `CleanupCurrentJob`. The
+    `EndCurrentJob` prefix, with `clean_after_tending` on, calls `DetermineNextJob` **reflectively
+    while a job is ending** and then `jobQueue.EnqueueFirst(...)`
+    (`reference/mods/CommonSense-1.6/CommonSense/OpportunisticTasks.cs:126-176`, read by me). **The
+    failure is raised from `JobQueue.AnyCanBeginNow`, evaluating a QUEUED job, in an infirmary,
+    after tending.** Not proof — but "nothing in the rest/bed/rescue chain" was not a true statement
+    about queues.
+  - **F-D11 — most applicability questions are "cannot tell without runtime state", and that is the
+    honest answer.** Hospitality's `IsGuest()` is `PresentGuests.Contains(pawn)` — map membership,
+    not `GuestStatus` (`reference/mods/Hospitality-1.6/Hospitality/Utilities/GuestUtility.cs:147`) —
+    so no amount of reading settles whether it admits our employees. That is what F.4 exists for.
 
 ## THE VERDICT IS NOW: **NOT DETERMINED.** Vanilla rescue/bed contention is PLAUSIBLE, NOT PROVEN.
 
@@ -219,8 +236,8 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 18:55 — F reopened and running; G recorded and GATED
-Foreman load: 2026-09-10 16:35
+Updated: 2026-09-10 19:30 — F.3 done; a SECOND exoneration was wrong; F.4 building
+Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
