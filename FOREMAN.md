@@ -13,8 +13,12 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 **THREE THINGS ARE OWED TO THE OPERATOR AND ONLY THEY CAN DO THEM**, all in
 `docs/PENDING_PLAYTESTS.md`:
 
-  1. run `Debug actions → Intercolony → Repair empty corpses` on the Playtest 1.0 save — a backup is
-     captured at `…\scratchpad\playtest-evidence\E-Playtest-1.0-CAPTURED.rws`;
+  1. ~~run the empty-corpse repair on the Playtest 1.0 save~~ **DONE 2026-09-10 by the operator.** It
+     printed exactly what the save predicted: `Removed empty corpse Corpse_Human849086 at
+     (138, 0, 185) from Grave508055 (Building_Grave)`, total 1. No `JoyGiver_VisitGrave` exception
+     has appeared in the log since. **Still open: whether they SAVED afterwards — the repair is an
+     in-memory change and quitting without saving restores the empty corpse and the exception.**
+     Backup at `…\scratchpad\playtest-evidence\E-Playtest-1.0-CAPTURED.rws`;
   2. the employment proof: hire → arrive → die → look in the grave → save → quit → reload → look
      again → no NEW `JobGiver_VisitGrave` exception in the post-load delta;
   3. the F13/F17 card checks — tick visible at a glance, click toggles it, reopening redraws it, and
@@ -24,7 +28,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 06:40 — RUN COMPLETE
+Updated: 2026-09-10 15:10 — RUN COMPLETE; the empty-corpse repair has now been run in play
 Foreman load: 2026-09-10 04:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
