@@ -1,9 +1,9 @@
 # Foreman state — Intercolony
 
 Stage: **C4 — F10: progression gates standing agreements, not Find Seller. C3 IS COMPLETE.**
-Unit: C4.0 — recon: where, if anywhere, a progression gate leaked onto the spot-procurement path
-Worker: **sol recon, read-only** — `…\scratchpad\unit-c40.out`. Recon only: its output becomes
-decisions and a Luna unit, never a commit on its own.
+Unit: C4.1 — F10's four assertions. **THE PLAN'S PREMISE IS WRONG: there is no leak and the
+production change is ZERO.**
+Worker: luna running — `…\scratchpad\unit-c41.out`.
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
@@ -13,7 +13,7 @@ behaviour and mutation-proven evidence: F11 rfq 236/0/0 (three mutations), F08 r
 (four), F09 long-term 78/0/0 (six, including that the breach and skipped-notice guards still outrank
 generous settings). **Still owed and theirs, not mine: run the empty-corpse repair on the Playtest
 1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
-Updated: 2026-09-10 02:10
+Updated: 2026-09-10 02:40
 Foreman load: 2026-09-10 01:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -308,6 +308,46 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | C3.6 + C3.6b — F11's eleven assertions, in the rfq suite | `fb3f97a` + `ed6faaa`, **mutation-proven**. rfq 236/0/0 |
 | ✅ | C3.7 — F08's thirteen settings assertions, in the reputation suite | `072ff97`, **mutation-proven**. reputation 38/0/0 |
 | ✅ | C3.8 — F09's fifteen settings assertions, in the long-term suite | `1ae4ef6`, **mutation-proven**. long-term 78/0/0. **C3 COMPLETE** |
+
+## C4 — the recon, and what I decided from it
+
+Sol recon, read-only, `…\scratchpad\unit-c40.out`. Four load-bearing citations spot-checked by me
+against the source.
+
+**THE PLAN'S PREMISE FOR F10 IS WRONG, AND THAT IS THE FINDING.** Section 6 suspects a progression
+gate leaked onto the spot-procurement path. It has not. The gate exists in exactly one place —
+`ProcurementContractService.cs:526-536`, reading `ReputationService.ScoreFor` and the record's
+`purchasesCompleted` into `TryValidateAgreementProgression`, which wants `MinimumReputation = 62f`
+and `MinimumCompletedPurchasesForAgreement = 2` (`:170-174`). Nothing on the spot path calls it:
+not `RfqService.CreateRequest`, not discovery, not `TryQuote`, not `PurchaseOrderService.AcceptQuote`,
+not `SupplierListingService.CanPurchase`. `IntercolonyMarketAccess` says as much in its own header —
+it checks hostility only and names prior-trade requirements as deliberately left for later
+(`Market/IntercolonyMarketAccess.cs:15-20`). Selling already behaves the way the plan wants
+procurement to, so there is nothing to mirror across.
+
+**DECIDED:**
+
+  - **C4-D1 — the production change for F10 is ZERO.** No file outside `Source/Intercolony/Debug`
+    may change in this stage. A unit that "fixes" the leak would be removing a gate that is not
+    there.
+  - **C4-D2 — what is missing is evidence, not behaviour.** Nothing proves the spot path works for
+    a settlement the player has never traded with, so a future change could introduce the very gate
+    the plan feared and no assertion would notice. C4.1 pins it.
+  - **C4-D3 — an absent reputation record is NOT a score of zero.** `ReputationService.ScoreFor`
+    returns `CommercialReputation.StartingScore` (50) when there is no record
+    (`Reputation/ReputationService.cs:203-212`). The existing threshold test exercises a synthetic
+    `(0, 0)` the game never produces. The new assertions drive the real default.
+  - **C4-D4 — two completed purchases alone are NOT eligibility.** Each adds 2 points, so a new
+    relationship reaches count 2 at score 54, still under 62. The requirements are conjunctive, and
+    that is the case a reader most easily assumes passes.
+  - **C4-D5 — the selling side is already proven and is not reopened.**
+    `IntercolonyContractSelfTest.cs:356-386` and `:450-452` already cover zero and one completed
+    sale being insufficient, two exact-good sales qualifying, and one settlement's history not
+    leaking to another.
+  - **Not determined, and recorded rather than guessed:** whether
+    `Dialog_ProposeProcurementAgreement.CandidateThingDefs` (`:836-864`) restricting candidates to a
+    settlement's `CommercialHistory` or `SupplierListings` is deliberate progression or merely UI
+    discoverability. It sits on the standing path only, so F10 is unaffected either way.
 
 ## Units — stage E
 
