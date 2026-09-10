@@ -1,9 +1,10 @@
 # Foreman state — Intercolony
 
 Stage: **C4 — F10: progression gates standing agreements, not Find Seller. C3 IS COMPLETE.**
-Unit: C4.1 — F10's four assertions. **THE PLAN'S PREMISE IS WRONG: there is no leak and the
-production change is ZERO.**
-Worker: luna running — `…\scratchpad\unit-c41.out`.
+Unit: C4.1b — F10.4's fixture aliases one live `CommercialReputation` and reads it twice
+Worker: luna running — `…\scratchpad\unit-c41b.out`. **C4.1's four assertions are UNCOMMITTED in
+`IntercolonyRfqSelfTest.cs` and must be kept** — rfq is 240/1/0 and the single red is the aliasing,
+not a production defect.
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
@@ -13,7 +14,7 @@ behaviour and mutation-proven evidence: F11 rfq 236/0/0 (three mutations), F08 r
 (four), F09 long-term 78/0/0 (six, including that the breach and skipped-notice guards still outrank
 generous settings). **Still owed and theirs, not mine: run the empty-corpse repair on the Playtest
 1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
-Updated: 2026-09-10 02:40
+Updated: 2026-09-10 03:20
 Foreman load: 2026-09-10 01:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
