@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
 Stage: **D — RUNTIME DEFECT TRIAGE. THE CORRECTION PLAN IS PAUSED AT C3.3 AND RESUMES THERE.**
-Unit: D.2 — the regression assertion, through a real corpse and a save
-Worker: luna running — `…\scratchpad\unit-d2.out`
+Unit: D.3 — the durable dispositions in `PROGRESS.md` and the play entry
+Worker: luna running — `…\scratchpad\unit-d3.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -257,8 +257,8 @@ point of the ceiling is that commerce cannot buy an alliance.
 |---|---|---|
 | ✅ | D.0 — recon on both defects, against the captured log and the play save | accepted; both claims spot-checked |
 | ✅ | D.1 — the discard guard must mean what its comment says | accepted, `68ad1ea` |
-| 🔨 | D.2 — the regression assertion, through a real corpse and a save | Luna running |
-| ⬜ | D.3 — record defect A's not-ours disposition in `PROGRESS.md` | not started |
+| ✅ | D.2 — the regression assertion, through a real corpse and a save | accepted, `1bf7d30`; mutation turns three red |
+| 🔨 | D.3 — the durable dispositions and the play entry | Luna running |
 
 ## C1 — the recon, and what I decided from it
 
