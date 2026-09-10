@@ -27,12 +27,6 @@ namespace Intercolony
     /// </summary>
     public static class EmploymentExperienceService
     {
-        // These are starting values for balance, not fixed by the plan.
-        private const int MinimumSamplesForGoodwill = 10;
-        private const float PositiveMoodThreshold = 0.75f;
-        private const float NegativeMoodThreshold = 0.35f;
-        private const int GoodwillDelta = 3;
-
         public static void Sample(List<EmploymentContract> contracts)
         {
             if (contracts == null)
@@ -98,6 +92,14 @@ namespace Intercolony
                     "F09: no goodwill result; combat misuse was already priced.");
             }
 
+            // Read the balance knobs when resolving, not while sampling, so setting changes
+            // affect future resolutions without changing experience already recorded.
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            int minimumSamplesForGoodwill = settings.minimumEmploymentDaysForGoodwill;
+            float positiveMoodThreshold = settings.positiveExperienceThreshold;
+            float negativeMoodThreshold = settings.negativeExperienceThreshold;
+            int goodwillImpact = settings.employmentGoodwillImpact;
+
             if (contract.moodSampleCount <= 0)
             {
                 // Zero is NEVER SAMPLED, not a quantity and not an average of zero.
@@ -105,18 +107,18 @@ namespace Intercolony
                     "F09: no goodwill result; no mood samples were recorded.");
             }
 
-            if (contract.moodSampleCount < MinimumSamplesForGoodwill)
+            if (contract.moodSampleCount < minimumSamplesForGoodwill)
             {
                 return NoResult(
                     $"F09: no goodwill result; only {contract.moodSampleCount} mood samples were " +
-                    $"recorded, and {MinimumSamplesForGoodwill} are required.");
+                    $"recorded, and {minimumSamplesForGoodwill} are required.");
             }
 
             float averageMood = contract.moodSampleTotal / contract.moodSampleCount;
-            int goodwillDelta = averageMood >= PositiveMoodThreshold
-                ? GoodwillDelta
-                : averageMood <= NegativeMoodThreshold
-                    ? -GoodwillDelta
+            int goodwillDelta = averageMood >= positiveMoodThreshold
+                ? goodwillImpact
+                : averageMood <= negativeMoodThreshold
+                    ? -goodwillImpact
                     : 0;
 
             if (goodwillDelta == 0)
