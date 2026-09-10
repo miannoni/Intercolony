@@ -1,19 +1,19 @@
 # Foreman state — Intercolony
 
-Stage: **C3 — the defect gate is CLOSED. The correction plan resumes at C3.7.**
-Unit: C3.8 — F09's settings assertions in the `long-term` suite
-Worker: luna running — `…\scratchpad\unit-c38.out`.
+Stage: **C4 — F10: progression gates standing agreements, not Find Seller. C3 IS COMPLETE.**
+Unit: C4.0 — recon: where, if anywhere, a progression gate leaked onto the spot-procurement path
+Worker: **sol recon, read-only** — `…\scratchpad\unit-c40.out`. Recon only: its output becomes
+decisions and a Luna unit, never a commit on its own.
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
 
-Last done: C3.7 at `072ff97` — **F08's thirteen assertions are mutation-proven.** reputation 38/0/0
-exit 0, log CLEAN. Hardcoding the ceiling back to 60 turns G10 and G11 red; hardcoding the delta to
-1 turns G8 and G13 red; hardcoding the interval to 15 turns G6 red; hardcoding the required
-reputation to 80 turns G9 red. Before that, C3.6 + C3.6b at `ed6faaa`, rfq 236/0/0, F11's eleven
-assertions mutation-proven three ways. **Still owed and theirs, not mine: run the empty-corpse repair
-on the Playtest 1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
-Updated: 2026-09-10 01:45
+Last done: **C3 IS COMPLETE** at `1ae4ef6`. All three findings have their settings, their production
+behaviour and mutation-proven evidence: F11 rfq 236/0/0 (three mutations), F08 reputation 38/0/0
+(four), F09 long-term 78/0/0 (six, including that the breach and skipped-notice guards still outrank
+generous settings). **Still owed and theirs, not mine: run the empty-corpse repair on the Playtest
+1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
+Updated: 2026-09-10 02:10
 Foreman load: 2026-09-10 01:20
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -70,10 +70,10 @@ two workers on the same large UI or settings file.
 | ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
 | ✅ | C1 — F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
 | ✅ | C2 — F07: the production rate must count real completions | F07 | closed, `14ad416` |
-| 🔨 | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08 ✅, F09 ✅, F11 ✅ | assertions remain: C3.7, C3.8 |
+| ✅ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | closed, `1ae4ef6` |
 | ✅ | E — the defect gate reopened: old damage, and a noisy self-test | — | closed, `f1aa604` |
 | ✅ | D — runtime defect triage, out of plan order, by operator instruction | — | closed, `28acfd1` |
-| ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
+| 🔨 | C4 — F10: progression gates standing agreements, not Find Seller | F10 | recon running |
 | ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
 | ⬜ | C6 — freeze F12 in the documentation | — | not started |
 | ⬜ | C7 — freeze F22 in the documentation | — | not started |
@@ -307,7 +307,7 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | accepted, `284af8d` |
 | ✅ | C3.6 + C3.6b — F11's eleven assertions, in the rfq suite | `fb3f97a` + `ed6faaa`, **mutation-proven**. rfq 236/0/0 |
 | ✅ | C3.7 — F08's thirteen settings assertions, in the reputation suite | `072ff97`, **mutation-proven**. reputation 38/0/0 |
-| 🔨 | C3.8 — F09's settings assertions, in the long-term suite | Luna running |
+| ✅ | C3.8 — F09's fifteen settings assertions, in the long-term suite | `1ae4ef6`, **mutation-proven**. long-term 78/0/0. **C3 COMPLETE** |
 
 ## Units — stage E
 
