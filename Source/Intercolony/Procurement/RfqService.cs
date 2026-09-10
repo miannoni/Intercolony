@@ -21,17 +21,26 @@ namespace Intercolony
     public static class RfqService
     {
         /// <summary>
-        /// Base lifespan for a request. Requests whose scheduled replies all arrive before this
-        /// deadline keep it; a later final arrival extends the deadline at creation.
+        /// Base lifespan for a request. The response schedule is capped below this boundary so a
+        /// reply at the maximum arrival day still has time to be revealed.
         /// </summary>
         public const int RequestLifespanDays = 6;
 
+        /// <summary>Hard maximum delay from request creation to a scheduled response.</summary>
+        private const int MaxResponseDelayDays = 5;
+
         /// <summary>
-        /// Gives the final scheduled reply one full response-poll interval, plus one tick, before
-        /// the inclusive request-expiry boundary can discard it.
+        /// RFQ information propagates faster than the physical delivery lead time. Keeping this
+        /// response-specific scale in RfqService leaves LogisticsQuote's shared travel estimate
+        /// untouched while retaining a meaningful distance gradient.
         /// </summary>
-        private const int ResponseExpiryMarginTicks =
-            IntercolonyWorldComponent.DeadlineCheckIntervalTicks + 1;
+        private const float ResponseDistanceTilesPerDay = 48f;
+
+        /// <summary>Compresses the existing quotation lead-time signal into a short reply setup.</summary>
+        private const int MaxResponsePreparationDays = 2;
+
+        /// <summary>Small tendency for the existing best-ranked offer to arrive later.</summary>
+        private const int AttractiveQuoteBiasDays = 1;
 
         /// <summary>Baseline chance a plausible supplier bothers to answer at all.</summary>
         private const float BaseResponseChance = 0.55f;
@@ -226,8 +235,8 @@ namespace Intercolony
         /// Moves the quotations generated for a live request into the world-owned arrival queue.
         /// The quotation objects are not regenerated or copied, so their prices and promised
         /// properties remain exactly the values rolled at request creation. The request deadline
-        /// is extended here, if necessary, from the latest scheduled arrival while creation still
-        /// has the complete response schedule in hand.
+        /// remains the existing six-day lifespan; the response schedule is capped at five days, so
+        /// no old distance-based extension is needed.
         /// </summary>
         private static int QueueResponses(
             IntercolonyWorldComponent state,
@@ -240,7 +249,6 @@ namespace Intercolony
             }
 
             int queued = 0;
-            int latestArrivalTick = request.createdTick;
             foreach (Quotation quote in request.quotes)
             {
                 if (quote == null)
@@ -256,13 +264,9 @@ namespace Intercolony
                     quote = quote,
                     arrivalTick = arrivalTick
                 });
-                latestArrivalTick = Mathf.Max(latestArrivalTick, arrivalTick);
                 queued++;
             }
 
-            request.expiryTick = Mathf.Max(
-                request.expiryTick,
-                latestArrivalTick + ResponseExpiryMarginTicks);
             request.quotes.Clear();
             return queued;
         }
@@ -382,10 +386,11 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Uses the quotation's existing lead time as the preparation floor and its persisted
-        /// distance as the same travel-day component used by <see cref="LogisticsQuote"/>.
-        /// A small isolated timing roll keeps equal-distance replies from becoming a rigid queue;
-        /// it runs after quote generation and cannot change any quoted term.
+        /// Rebalances the response pace without changing the quotation's promised logistics.
+        /// Distance is deliberately compressed for the information-reply window, while the
+        /// existing lead time contributes a short preparation signal. The best-ranked quote in
+        /// the already-sorted sibling cohort gets only a one-day tendency to arrive later; the
+        /// independent 0..2 day jitter keeps that tendency from becoming an ordering rule.
         /// </summary>
         private static int ResponseDelayDays(
             IntercolonyWorldComponent state,
@@ -397,9 +402,17 @@ namespace Intercolony
                 return 1;
             }
 
-            int leadTimeDays = Mathf.Max(1, quote.leadTimeDays);
-            int distanceDays = Mathf.Max(1, LogisticsQuote.TravelDaysFor(quote.distanceTiles));
-            int delayDays = Mathf.Max(leadTimeDays, distanceDays);
+            int preparationDays = Mathf.Clamp(
+                Mathf.CeilToInt(Mathf.Max(1, quote.leadTimeDays) / 2f),
+                1,
+                MaxResponsePreparationDays);
+            int distanceDays = ResponseDistanceDays(quote.distanceTiles);
+            int delayDays = Mathf.Max(preparationDays, distanceDays);
+            if (request?.quotes != null && request.quotes.Count > 1 &&
+                request.quotes.IndexOf(quote) == 0)
+            {
+                delayDays += AttractiveQuoteBiasDays;
+            }
 
             // Keep this draw independent from GenerateResponses. The quote's random rolls have
             // already finished, and the pushed state means scheduling does not perturb game RNG.
@@ -410,12 +423,33 @@ namespace Intercolony
                 0xF11A));
             try
             {
-                return delayDays + Rand.RangeInclusive(0, 2);
+                delayDays += Rand.RangeInclusive(0, 2);
             }
             finally
             {
                 Rand.PopState();
             }
+
+            float responseSpeed = Mathf.Clamp(
+                IntercolonyMod.Settings.rfqResponseSpeed,
+                IntercolonySettings.MinRfqResponseSpeed,
+                IntercolonySettings.MaxRfqResponseSpeed);
+            int speedAdjustedDelay = Mathf.CeilToInt(delayDays / responseSpeed);
+            return Mathf.Clamp(speedAdjustedDelay, 1, MaxResponseDelayDays);
+        }
+
+        /// <summary>
+        /// Converts distance for the response-information window. Unknown distance remains the
+        /// established three-day answer; it is never treated as a measured zero or a short route.
+        /// </summary>
+        private static int ResponseDistanceDays(float distanceTiles)
+        {
+            if (distanceTiles < 0f)
+            {
+                return 3;
+            }
+
+            return Mathf.Max(1, Mathf.CeilToInt(distanceTiles / ResponseDistanceTilesPerDay));
         }
 
         private static int CompareQuotes(Quotation a, Quotation b)
