@@ -2141,6 +2141,29 @@ Run **Debug actions → Intercolony → Repair empty corpses (DESTRUCTIVE)** on 
 **Playtest 1.0** save and confirm that the exception stops. The fallback backup is
 `scratchpad\playtest-evidence\E-Playtest-1.0-CAPTURED.rws`.
 
+### F13/F17 labor-card controls need one real-play check
+
+Added 2026-09-10 on branch `foreman/playtest-batch-2026-09-06`. The labor suite now checks the
+`autoRenew` save/load round trip, but it cannot prove what the player sees or reaches on a real
+employee card. F13 and F17 are **not to be marked play-verified until a person has done these
+checks**. A green suite is not a substitute.
+
+**Steps.** Use real employee cards and the contract states needed to expose each action.
+
+1. Confirm that both the **ON** and **OFF** Auto-renew states read at a glance on a real employee
+   card.
+2. Click the checkbox on the card itself, without opening `...`, and confirm that it toggles.
+3. Close and reopen the **Labor** tab and confirm that the card redraws the correct state.
+4. Open `...` and confirm that **Keep them**, **Not now**, **Renew**, **Let go**, **Cancel** and
+   **Dismiss** are all still reachable where applicable, and that each still does what it did before.
+
+**Pass.** All four checks work on a real card, with no action reachable only through a different
+control or silently changed by the new menu condition.
+
+**Failure.** Either state is hard to distinguish, the direct checkbox does not toggle, reopening
+the tab redraws the wrong state, or any named `...` action is missing or behaves differently. Keep
+F13 and F17 unverified until the failure is understood and the sequence passes.
+
 ---
 
 ## Proven in play

@@ -98,6 +98,8 @@ namespace Intercolony
 
             try
             {
+                CheckAutoRenewPersistence(r);
+
                 // --- Candidate pool ---
                 List<LaborCandidate> pool = LaborCandidateService.Refresh(state);
                 r.Check(pool.Count > 0, "candidate pool is not empty", $"{pool.Count} workers offered");
@@ -1211,6 +1213,101 @@ namespace Intercolony
                 $"[{NodeNamesDetail(emergencyUnexpected)}], candidate-dependent node allowed " +
                 $"[{NodeNamesDetail(candidateDependentNodes)}], unexpected contract fields " +
                 $"[{NodeNamesDetail(unexpectedContractFields)}]");
+        }
+
+        private static void CheckAutoRenewPersistence(Results r)
+        {
+            EmploymentContract enabled = RoundTripAutoRenew(
+                true, "intercolony-labor-auto-renew-on",
+                out string enabledFailure, out bool enabledNodePresent);
+            EmploymentContract disabled = RoundTripAutoRenew(
+                false, "intercolony-labor-auto-renew-off",
+                out string disabledFailure, out bool disabledNodePresent);
+
+            r.Check(
+                enabledFailure == null && enabledNodePresent &&
+                enabled != null && enabled.autoRenew,
+                "auto-renew=true survives an EmploymentContract save/load",
+                $"saved true, node present {enabledNodePresent}, loaded " +
+                $"{(enabled == null ? "missing" : enabled.autoRenew.ToString())}; " +
+                $"failure={enabledFailure ?? "none"}");
+            r.Check(
+                disabledFailure == null && !disabledNodePresent &&
+                disabled != null && !disabled.autoRenew,
+                "auto-renew=false survives an EmploymentContract save/load",
+                $"saved false, node present {disabledNodePresent}, loaded " +
+                $"{(disabled == null ? "missing" : disabled.autoRenew.ToString())}; " +
+                $"failure={disabledFailure ?? "none"}");
+        }
+
+        private static EmploymentContract RoundTripAutoRenew(
+            bool savedValue, string label, out string failure, out bool autoRenewNodePresent)
+        {
+            EmploymentContract savedContract = new EmploymentContract
+            {
+                autoRenew = savedValue
+            };
+            EmploymentContract loadedContract = null;
+            failure = null;
+            autoRenewNodePresent = false;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-{label}-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    failure = "vanilla Scribe saver or loader was unavailable";
+                    return null;
+                }
+
+                Scribe.saver.InitSaving(path, label);
+                Scribe_Deep.Look(ref savedContract, "contract");
+                Scribe.saver.FinalizeSaving();
+
+                XmlDocument document = new XmlDocument();
+                document.Load(path);
+                autoRenewNodePresent = document.SelectSingleNode("//autoRenew") != null;
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedContract, "contract");
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (failure == null)
+                    {
+                        failure = $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (failure == null)
+                    {
+                        failure = $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            return loadedContract;
         }
 
         private static HashSet<string> PersistedContractNodeNames(

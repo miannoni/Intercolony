@@ -910,13 +910,6 @@ namespace Intercolony
             string detail = WageStructureUtility.DailyWageDisclosure(
                 contract.wageStructure, contract.dailyWage) +
                             $" — {contract.TermLabel} — {contract.StatusLine()}";
-            bool canAutoRenew = contract.status == EmploymentStatus.Active &&
-                                !contract.IsOpenEnded && !contract.ServingNotice;
-            if (canAutoRenew)
-            {
-                detail += contract.autoRenew ? "   auto-renew: on" : "   auto-renew: off";
-            }
-
             return detail;
         }
 
@@ -1024,54 +1017,62 @@ namespace Intercolony
             }
 
             bool hasLiveRenewalOffer = RenewalService.HasLiveOffer(contract);
+            bool hasLiveTransitionOffer = TransitionService.HasLiveOffer(contract);
+            List<FloatMenuOption> options = new List<FloatMenuOption>();
+
+            // An offer to stay for good outranks everything, including renewal: it is the rarest
+            // thing this tab ever shows and it is a decision the player has earned (§44).
+            if (hasLiveTransitionOffer)
+            {
+                options.Add(new FloatMenuOption(
+                    "Keep them", () => OpenTransitionDialog(contract)));
+                options.Add(new FloatMenuOption(
+                    "Not now", () => TransitionService.Decline(contract)));
+            }
+
+            // A live renewal offer outranks the dismiss option: it expires on its own, and it is
+            // the thing the player is being asked about (§115).
+            if (hasLiveRenewalOffer)
+            {
+                int renewalWage = RenewalService.RenewalWage(contract);
+                FloatMenuOption renewalOption = new FloatMenuOption(
+                    $"Renew — {WageStructureUtility.DailyWageDisclosure(
+                        contract.wageStructure, renewalWage)}",
+                    () =>
+                    {
+                        if (!RenewalService.Accept(contract, out string failReason))
+                        {
+                            Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                        }
+                    });
+                renewalOption.tooltip = WageStructureUtility.DailyWageTooltip(
+                    contract.wageStructure, renewalWage);
+                options.Add(renewalOption);
+
+                options.Add(new FloatMenuOption(
+                    "Let them go at the end of the term",
+                    () => RenewalService.Decline(contract)));
+            }
+
+            if (!hasLiveTransitionOffer && !hasLiveRenewalOffer &&
+                contract.status != EmploymentStatus.Severed)
+            {
+                options.Add(new FloatMenuOption(
+                    contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss",
+                    () => ConfirmDismiss(contract)));
+            }
 
             if (ShouldBuildTooltip(layout.contractActions))
             {
                 TooltipHandler.TipRegion(
                     layout.contractActions,
-                    "Contract actions for this worker.\n" +
-                    "Auto-renew accepts a renewal the worker offers and cannot make a worker stay " +
-                    "who does not want to.");
+                    "Contract actions for this worker.");
             }
 
             if (Widgets.ButtonText(layout.contractActions, "...",
-                    active: hasLiveRenewalOffer || canAutoRenew))
+                    active: options.Count > 0))
             {
-                List<FloatMenuOption> options = new List<FloatMenuOption>();
-
-                if (hasLiveRenewalOffer)
-                {
-                    int renewalWage = RenewalService.RenewalWage(contract);
-                    FloatMenuOption renewalOption = new FloatMenuOption(
-                        $"Renew — {WageStructureUtility.DailyWageDisclosure(
-                            contract.wageStructure, renewalWage)}",
-                        () =>
-                        {
-                            if (!RenewalService.Accept(contract, out string failReason))
-                            {
-                                Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
-                            }
-                        });
-                    renewalOption.tooltip = WageStructureUtility.DailyWageTooltip(
-                        contract.wageStructure, renewalWage);
-                    options.Add(renewalOption);
-
-                    options.Add(new FloatMenuOption(
-                        "Let them go at the end of the term",
-                        () => RenewalService.Decline(contract)));
-                }
-
-                if (canAutoRenew)
-                {
-                    options.Add(new FloatMenuOption(
-                        contract.autoRenew ? "Auto-renew: on" : "Auto-renew: off",
-                        () => contract.autoRenew = !contract.autoRenew));
-                }
-
-                if (options.Count > 0)
-                {
-                    Find.WindowStack.Add(new FloatMenu(options));
-                }
+                Find.WindowStack.Add(new FloatMenu(options));
             }
 
             // Paying what is owed takes priority over dismissing: it is the action that fixes
@@ -1100,51 +1101,16 @@ namespace Intercolony
                 return;
             }
 
-            // An offer to stay for good outranks everything, including renewal: it is the rarest
-            // thing this tab ever shows and it is a decision the player has earned (§44).
-            if (TransitionService.HasLiveOffer(contract))
+            if (canAutoRenew)
             {
-                Rect settleRect = layout.leftAction;
-                if (Widgets.ButtonText(settleRect, "Keep them"))
+                Widgets.CheckboxLabeled(layout.rightAction, "Auto-renew", ref contract.autoRenew);
+                if (ShouldBuildTooltip(layout.rightAction))
                 {
-                    OpenTransitionDialog(contract);
+                    TooltipHandler.TipRegion(
+                        layout.rightAction,
+                        "Automatically accept eligible renewal offers. " +
+                        "It cannot make a worker stay who does not want to.");
                 }
-
-                Rect laterRect = layout.rightAction;
-                if (Widgets.ButtonText(laterRect, "Not now"))
-                {
-                    TransitionService.Decline(contract);
-                }
-
-                return;
-            }
-
-            // A live renewal offer outranks the dismiss button: it expires on its own, and it is
-            // the thing the player is being asked about (§115).
-            if (RenewalService.HasLiveOffer(contract))
-            {
-                Rect renewRect = layout.leftAction;
-                if (Widgets.ButtonText(renewRect, $"Renew {contract.renewalWage}"))
-                {
-                    if (!RenewalService.Accept(contract, out string failReason))
-                    {
-                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
-                    }
-                }
-
-                Rect declineRect = layout.rightAction;
-                if (Widgets.ButtonText(declineRect, "Let go"))
-                {
-                    RenewalService.Decline(contract);
-                }
-
-                return;
-            }
-
-            Rect endRect = layout.rightAction;
-            if (Widgets.ButtonText(endRect, contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss"))
-            {
-                ConfirmDismiss(contract);
             }
         }
 
