@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
-Stage: **C6 + C7 — freeze F12 and F22 in the documentation. C5 IS COMPLETE.**
-Unit: C6/C7 together — mark the freeze where the task is described, not only in the scope lock
-Worker: luna running — `…\scratchpad\unit-c67.out`.
+Stage: **C8 — whole-suite regression and clean halt. THIS IS THE LAST STAGE.**
+Unit: C8.1 — `dev.ps1 test all -Fresh`, run by me, not a worker
+Worker: none. Suite running — `…\scratchpad\verify-all.out`.
 
 **THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
 often as needed. The verification block is gone.** Suites and mutations run freely from here.
@@ -17,7 +17,7 @@ turns the `true` half red, flipping the persisted default turns both red.
 the Playtest 1.0 save; the hire→arrive→die→save→reload proof; and the F13/F17 card checks — tick
 visible, click works, reopen redraws, and every moved action still reachable from `...`. All three
 are in `docs/PENDING_PLAYTESTS.md`. **F13 and F17 are NOT play-verified until the third is done.**
-Updated: 2026-09-10 05:15
+Updated: 2026-09-10 05:35
 Foreman load: 2026-09-10 04:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -79,9 +79,9 @@ two workers on the same large UI or settings file.
 | ✅ | D — runtime defect triage, out of plan order, by operator instruction | — | closed, `28acfd1` |
 | ✅ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | closed, `d20973e`. **No leak; zero production change** |
 | ✅ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | closed, `61d3969` |
-| 🔨 | C6 — freeze F12 in the documentation | — | Luna running, batched with C7 |
-| 🔨 | C7 — freeze F22 in the documentation | — | Luna running, batched with C6 |
-| ⬜ | C8 — whole-suite regression and clean halt | — | not started |
+| ✅ | C6 — freeze F12 in the documentation | — | closed, `aa413e3` |
+| ✅ | C7 — freeze F22 in the documentation | — | closed, `aa413e3` |
+| 🔨 | C8 — whole-suite regression and clean halt | — | suite running |
 
 ## Units — stages C0 and C1
 
