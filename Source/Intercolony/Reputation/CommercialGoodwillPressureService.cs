@@ -24,7 +24,7 @@ namespace Intercolony
     public enum CommercialGoodwillPressureStatus
     {
         Unavailable,
-        BelowPreferred,
+        BelowThreshold,
         Hostile,
         AtCeiling,
         GoodwillRestricted,
@@ -36,18 +36,32 @@ namespace Intercolony
         public readonly CommercialGoodwillPressureStatus Status;
         public readonly Faction Faction;
         public readonly int Delta;
+        public readonly int ConfiguredDelta;
+        public readonly int IntervalDays;
+        public readonly int GoodwillCeiling;
+        public readonly int RequiredReputationScore;
 
         public CommercialGoodwillPressureEvaluation(
             CommercialGoodwillPressureStatus status,
             Faction faction,
-            int delta)
+            int delta,
+            int configuredDelta,
+            int intervalDays,
+            int goodwillCeiling,
+            int requiredReputationScore)
         {
             Status = status;
             Faction = faction;
             Delta = delta;
+            ConfiguredDelta = configuredDelta;
+            IntervalDays = intervalDays;
+            GoodwillCeiling = goodwillCeiling;
+            RequiredReputationScore = requiredReputationScore;
         }
 
         public bool IsEarning => Status == CommercialGoodwillPressureStatus.Earning;
+
+        public bool IsPositivePressureDisabled => ConfiguredDelta == 0;
     }
 
     /// <summary>
@@ -59,6 +73,10 @@ namespace Intercolony
     /// </summary>
     public static class CommercialGoodwillPressureService
     {
+        /// <summary>How many in-game days separate commercial pressure applications.</summary>
+        public static int GoodwillPressureIntervalDays =>
+            IntercolonyMod.Settings.commercialGoodwillIntervalDays;
+
         /// <summary>Goodwill gained by each qualifying faction per application.</summary>
         public static int GoodwillPressureDelta =>
             IntercolonyMod.Settings.commercialGoodwillPerInterval;
@@ -111,7 +129,7 @@ namespace Intercolony
                 }
 
                 // One faction receives one result even when several of its settlements are
-                // Preferred.
+                // Meets the configured commercial-reputation threshold.
                 byFaction.Add(
                     evaluation.Faction,
                     new CommercialGoodwillPressure(evaluation.Faction, evaluation.Delta));
@@ -160,12 +178,21 @@ namespace Intercolony
             int settlementId,
             Faction playerFaction)
         {
+            int intervalDays = GoodwillPressureIntervalDays;
+            int configuredDelta = GoodwillPressureDelta;
+            int goodwillCeiling = GoodwillBaseCeiling;
+            int requiredReputationScore = IntercolonyMod.Settings.commercialReputationRequired;
+
             if (state == null || state.Reputations == null || playerFaction == null)
             {
                 return new CommercialGoodwillPressureEvaluation(
                     CommercialGoodwillPressureStatus.Unavailable,
                     null,
-                    0);
+                    0,
+                    configuredDelta,
+                    intervalDays,
+                    goodwillCeiling,
+                    requiredReputationScore);
             }
 
             CommercialReputation reputation = state.FindReputation(settlementId);
@@ -174,15 +201,23 @@ namespace Intercolony
                 return new CommercialGoodwillPressureEvaluation(
                     CommercialGoodwillPressureStatus.Unavailable,
                     null,
-                    0);
+                    0,
+                    configuredDelta,
+                    intervalDays,
+                    goodwillCeiling,
+                    requiredReputationScore);
             }
 
-            if (reputation.Score < IntercolonyMod.Settings.commercialReputationRequired)
+            if (reputation.Score < requiredReputationScore)
             {
                 return new CommercialGoodwillPressureEvaluation(
-                    CommercialGoodwillPressureStatus.BelowPreferred,
+                    CommercialGoodwillPressureStatus.BelowThreshold,
                     null,
-                    0);
+                    0,
+                    configuredDelta,
+                    intervalDays,
+                    goodwillCeiling,
+                    requiredReputationScore);
             }
 
             // The record's factionName is only a historical/display snapshot. Ownership is
@@ -196,7 +231,11 @@ namespace Intercolony
                 return new CommercialGoodwillPressureEvaluation(
                     CommercialGoodwillPressureStatus.Unavailable,
                     faction,
-                    0);
+                    0,
+                    configuredDelta,
+                    intervalDays,
+                    goodwillCeiling,
+                    requiredReputationScore);
             }
 
             // HostilityPolicy is the mod's single live definition of being at war; it includes
@@ -206,42 +245,59 @@ namespace Intercolony
                 return new CommercialGoodwillPressureEvaluation(
                     CommercialGoodwillPressureStatus.Hostile,
                     faction,
-                    0);
+                    0,
+                    configuredDelta,
+                    intervalDays,
+                    goodwillCeiling,
+                    requiredReputationScore);
             }
 
             int baseGoodwill = faction.BaseGoodwillWith(playerFaction);
-            if (baseGoodwill >= GoodwillBaseCeiling)
+            if (baseGoodwill >= goodwillCeiling)
             {
                 return new CommercialGoodwillPressureEvaluation(
                     CommercialGoodwillPressureStatus.AtCeiling,
                     faction,
-                    0);
+                    0,
+                    configuredDelta,
+                    intervalDays,
+                    goodwillCeiling,
+                    requiredReputationScore);
             }
 
-            if (!CanReceivePressure(faction, playerFaction, baseGoodwill))
+            if (!CanReceivePressure(faction, playerFaction, baseGoodwill, goodwillCeiling))
             {
                 return new CommercialGoodwillPressureEvaluation(
                     CommercialGoodwillPressureStatus.GoodwillRestricted,
                     faction,
-                    0);
+                    0,
+                    configuredDelta,
+                    intervalDays,
+                    goodwillCeiling,
+                    requiredReputationScore);
             }
 
-            int remainingHeadroom = Math.Max(0, GoodwillBaseCeiling - baseGoodwill);
-            int appliedDelta = Math.Max(0, Math.Min(GoodwillPressureDelta, remainingHeadroom));
+            int remainingHeadroom = Math.Max(0, goodwillCeiling - baseGoodwill);
+            int appliedDelta = Math.Max(0, Math.Min(configuredDelta, remainingHeadroom));
             return new CommercialGoodwillPressureEvaluation(
                 CommercialGoodwillPressureStatus.Earning,
                 faction,
-                appliedDelta);
+                appliedDelta,
+                configuredDelta,
+                intervalDays,
+                goodwillCeiling,
+                requiredReputationScore);
         }
 
         private static bool CanReceivePressure(
             Faction faction,
             Faction playerFaction,
-            int baseGoodwill)
+            int baseGoodwill,
+            int goodwillCeiling)
         {
             // BaseGoodwillWith is the value TryAffectGoodwillWith writes. The ceiling must be
             // checked against it, not against the possibly capped effective value.
-            if (baseGoodwill >= GoodwillBaseCeiling)
+            if (baseGoodwill >= goodwillCeiling)
             {
                 return false;
             }

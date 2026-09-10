@@ -42,7 +42,7 @@ namespace Intercolony
         /// setting changes the next absolute-tick schedule without adding world state or catch-up.
         /// </summary>
         public static int CommercialGoodwillIntervalTicks =>
-            IntercolonyMod.Settings.commercialGoodwillIntervalDays * GenDate.TicksPerDay;
+            CommercialGoodwillPressureService.GoodwillPressureIntervalDays * GenDate.TicksPerDay;
 
         /// <summary>Version this state was last written at. 0 means "predates versioning".</summary>
         private int saveVersion = CurrentSaveVersion;

@@ -4994,8 +4994,8 @@ namespace Intercolony
             float pressureLabelHeight = Text.CalcHeight(
                 row.commercialPressureRow.label,
                 pressureLabelWidth);
-            float pressureValueHeight = Text.CalcHeight(
-                row.commercialPressureRow.value,
+            float pressureValueHeight = RelationPressureValueHeight(
+                row.commercialPressureRow,
                 pressureValueWidth);
 
             GUI.color = new Color(1f, 1f, 1f, 0.65f);
@@ -5077,10 +5077,26 @@ namespace Intercolony
             float labelHeight = Text.CalcHeight(
                 row.commercialPressureRow.label,
                 RelationPressureLabelWidth(width));
-            float valueHeight = Text.CalcHeight(
-                row.commercialPressureRow.value,
+            float valueHeight = RelationPressureValueHeight(
+                row.commercialPressureRow,
                 RelationPressureValueWidth(width));
             return Mathf.Max(labelHeight, valueHeight);
+        }
+
+        private static float RelationPressureValueHeight(
+            CommercialHistorySummaryRow pressureRow, float width)
+        {
+            float height = Text.CalcHeight(pressureRow.value, width);
+            for (int i = 0; i < CommercialHistoryUiService.CommercialPressureValueHeightSamples.Length; i++)
+            {
+                height = Mathf.Max(
+                    height,
+                    Text.CalcHeight(
+                        CommercialHistoryUiService.CommercialPressureValueHeightSamples[i],
+                        width));
+            }
+
+            return height;
         }
 
         private static float RelationPressureLabelWidth(float width)
@@ -5118,8 +5134,8 @@ namespace Intercolony
             float pressureKeyHeight = Text.CalcHeight(
                 row.commercialPressureRow.label,
                 labelWidth);
-            float pressureValueHeight = Text.CalcHeight(
-                row.commercialPressureRow.value,
+            float pressureValueHeight = RelationPressureValueHeight(
+                row.commercialPressureRow,
                 valueWidth);
             y += Mathf.Max(pressureKeyHeight, pressureValueHeight) + 4f;
 
@@ -5169,8 +5185,8 @@ namespace Intercolony
             float pressureKeyHeight = Text.CalcHeight(
                 row.commercialPressureRow.label,
                 labelWidth);
-            float pressureValueHeight = Text.CalcHeight(
-                row.commercialPressureRow.value,
+            float pressureValueHeight = RelationPressureValueHeight(
+                row.commercialPressureRow,
                 valueWidth);
             float pressureRowHeight = Mathf.Max(pressureKeyHeight, pressureValueHeight);
             Widgets.Label(
