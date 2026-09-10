@@ -2502,3 +2502,39 @@ Baseline:
 Status:
 - The branch is not merged and not released.
 
+## Runtime defect triage — two defects from real play  (2026-09-09)
+
+Disposition:
+- **DEFECT B — ours, fixed.** A dead employee was being discarded from the world pawn pool by a
+  cleanup in `EmploymentService.End` whose comment said "a worker dismissed before arrival" but whose
+  predicate only tested unspawned-and-in-the-pool — which a dead pawn satisfies. Vanilla holds a dead
+  pawn **BY REFERENCE** inside its corpse, so the discard emptied the corpse: the save wrote the
+  reference as null and the load dropped it, leaving a grave holding a corpse with nothing in it.
+  Vanilla's `JoyGiver_VisitGrave` then threw a `NullReferenceException` on
+  `Corpse.InnerPawn.Faction` for every colonist looking for joy — the repeated exception the operator
+  saw.
+- Fixed at `68ad1ea` by making the predicate say what the comment meant: never discard a dead worker,
+  and only discard a contract that never recorded arrival. Asserted at `1bf7d30`, including through a
+  real Scribe save and load; restoring the old guard turns three assertions red.
+- This prevents new damage and cannot repair an existing save. The affected employee in the
+  operator's game was Sinni, and she can only be recovered from an earlier backup.
+
+- **DEFECT A — not ours, recorded and deliberately not patched.** The save warning
+  `Object with load ID Lord_140 is referenced (xml node name: lord) but is not deep-saved` comes from
+  a stale Lord reference held by **Hospitality's `CompGuest.lord`** field — its own serialized field,
+  which vanilla cannot clear when it removes a Lord because vanilla only knows about `Pawn.lord`. The
+  captured log names the holder outright: `curParent=Moth`, a departed `Town_Trader` in another
+  faction with no Intercolony contract, quest or record of any kind. Intercolony creates exit Lords
+  through vanilla's `QuestPart_Leave` and one directly during safe passage, but never stores or
+  persists a Lord reference.
+- The mitigating observation is that the save was rewritten by continued play and that field now
+  reads `<lord>null</lord>` — the stale reference resolved to null on load and was saved back as null,
+  so it is noise rather than spreading corruption.
+- Nothing was done about it because patching vanilla or clearing Lords defensively would hide another
+  mod's state bug rather than fix it, and the operator's instruction was explicit on that point.
+
+The two defects are independent — different pawns, factions, objects and causes.
+
+Manual test:
+- Neither defect is play-verified. Neither has been seen fixed in a real game yet.
+

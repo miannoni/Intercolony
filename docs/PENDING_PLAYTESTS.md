@@ -2094,6 +2094,29 @@ Contracts**, a cycle waiting rather than failing when the colony is short of sil
 agreements, and that the per-agreement margin estimate now appears on the **Selling → Contracts** row
 instead, with the row growing to fit it and not overlapping the row's buttons or the row beneath.
 
+### Runtime grave persistence and the external Lord warning need one clean real-play check
+
+Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. The suite and a Scribe round trip
+cover the new grave guard, but only real play can show that a dead employee remains visible in a grave
+after the game is actually saved, quit to menu and loaded again. Neither defect has been seen fixed in
+a real game yet.
+
+**Watch for the grave defect recurring.** Have an employee die on the colony's map, save, quit to
+menu, and reload. Check that the grave still shows its occupant and that the post-reload `Player.log`
+delta is clean — specifically, there must be no `JoyGiver_VisitGrave` `NullReferenceException`.
+
+**The existing save is already damaged.** This fix prevents new damage and cannot undo the old empty
+corpse. If the exception persists in that particular colony, compare the grave state before and after
+the round trip and the log delta: an already-empty grave or an exception attached to the old save is
+the old corruption, not a new failure. A new failure is a newly killed employee whose grave visibly
+has its occupant before save, then loses it after save → quit to menu → reload, with a new
+`JoyGiver_VisitGrave` exception in the post-reload delta.
+
+**The `Lord_140` warning may still appear.** It is not ours and is expected to be harmless: the stale
+Hospitality `CompGuest.lord` reference resolved to null and was written back as `<lord>null</lord>`.
+If it becomes something worse than that warning — such as a load failure or spreading corruption —
+it belongs to Hospitality.
+
 ---
 
 ## Proven in play
