@@ -2579,10 +2579,14 @@ Not implemented:
   F23 and F24 are DEFERRED**.
 
 Known limitations:
-- The self-test work at `fb3f97a` and `49be300` is committed but **NOT YET VERIFIED**. No suite run
-  and no mutation pass has been performed because the operator was playing and `dev.ps1 test -Fresh`
-  restarts their game. It was committed so a lost session would not lose the work, not because it is
-  believed.
+- The `long-term` suite runs **62/0/0**, exit 0, log signal CLEAN, and the three synthetic
+  `Procurement contract … cycle 1 failed` lines no longer appear in `Player.log` at all. Mutating
+  `ExpectedLogHandler` so its expected-text match can never succeed turns the new assertion red for
+  the right reason — `expected=6; captured=0` — and the three suppressed lines reappear immediately.
+  The same mutation turns the `rfq` suite's `S4 expected missing-def diagnostic is observed without
+  hiding other errors` red with `expected count=0; unexpected error count=1`, and the
+  `Could not load reference to Verse.ThingDef named Intercolony_SupplierListing_SelfTest_MissingDef`
+  line comes back. So both are verified by mutation, not merely green.
 - The empty-corpse repair has not been run against the operator's save. It is theirs to run, on the
   backup already captured.
 - `Log.Error` enqueues into the in-game message queue before it reaches Unity (`reference/decompiled/Verse/Log.cs:145`

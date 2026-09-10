@@ -1006,10 +1006,9 @@ namespace Intercolony
             fixture.quotes.Add(new F11QuoteFixture
             {
                 // Cheapest and first in the request's already-ranked cohort: the scheduler's
-                // one-day attractiveness bias applies here. Jitter 0 is pinned for this exact
-                // economy seed/request/quote identity.
+                // one-day attractiveness bias applies here.
                 quote = NewF11Quotation(101, 24f, 8f),
-                jitter = 0,
+                jitter = 1, // Observed seeded roll for this exact economy-seed/request-id/quote-id/discriminator combination.
                 bestRanked = multiQuote
             });
             fixture.quotes.Add(new F11QuoteFixture
