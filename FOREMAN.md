@@ -2,12 +2,9 @@
 
 Stage: **F — A NEW RUNTIME DEFECT FROM PLAY, opened 2026-09-10. The correction plan itself is
 COMPLETE and closed; this is triage on top of it, not a reopening.**
-Unit: F.1 — decompile Hospitality 1.6 and Common Sense 1.6, inventory what they patch in the
-bed/rescue chain
-Worker: luna running — `…\scratchpad\unit-f1.out`. It writes ONLY into `reference/mods/`, which is
-gitignored; no tracked file may change. **The first dispatch failed with "Not inside a trusted
-directory" because the shell cwd had been reset to `C:\dev` — codex must be launched from inside the
-repo. Not a task failure.**
+Unit: none — **WAITING ON ONE ANSWER FROM THE OPERATOR**, see F-D9 below. Do not build a diagnostic
+tool before that answer arrives; it may not be needed.
+Worker: none.
 
 **THE DEFECT, and the operator's own observations, which are the load-bearing facts:**
 
@@ -51,6 +48,32 @@ Sol read-only, `…\scratchpad\unit-f0b.out`. Three load-bearing citations spot-
   - **F-D4 — VERDICT ON THE SLEEPING-SLOT ERROR: NOT DETERMINED.** What settles it is a patch
     inventory for the loaded Hospitality and Common Sense builds. `reference/mods/` did not exist,
     which is why F.1 is decompiling both.
+  - **F-D6 — Hospitality and Common Sense are now decompiled** into `reference/mods/Hospitality-1.6`
+    and `reference/mods/CommonSense-1.6` (gitignored, nothing tracked changed). Keep them; the
+    project convention in `CLAUDE.md:34-38` expects that directory to exist and it did not.
+  - **F-D7 — Common Sense is RULED OUT.** It patches `JobGiver_GetJoy.TryGiveJob` and
+    `WorkGiver_VisitSickPawn.JobOnThing` and nothing else in the rest/bed/rescue chain, and it never
+    suppresses a vanilla null-return (`reference/mods/CommonSense-1.6/...`).
+  - **F-D8 — Hospitality CANNOT cause this error, and the reason is precise.** Its only relevant
+    patch is a postfix on `RestUtility.IsValidBedFor`
+    (`reference/mods/Hospitality-1.6/Hospitality/Patches/RestUtility_Patch.cs:10-31`) which returns
+    early when `__result` is already false. **It can only NARROW validity, never widen it**, so it
+    cannot make a full bed pass a check it would otherwise fail. It patches nothing else in the
+    chain — not `CanUseBedNow`, not `FindPatientBedFor`, not `GetBedSleepingSlotPosFor`, not
+    `JobDriver_LayDown`. Its guest predicate is `PresentGuests.Contains(pawn)`, rebuilt from
+    `LordJob_VisitColony` lords, and the save shows `CompGuest.bed` and `.lord` **null** for both
+    Breixo and Kazuki.
+  - **F-D9 — THE LEADING EXPLANATION, and what would confirm it.** Every check narrows or is absent,
+    so the bed must have passed `IsValidBedFor` with a free slot at selection and been full by the
+    time `GetBedSleepingSlotPosFor` ran. That is vanilla's own race, and
+    `WorkGiver_RescueDowned.JobOnThing` re-looks-up the bed without a null check
+    (`reference/decompiled/RimWorld/WorkGiver_RescueDowned.cs:66-73`). **A race is normally rare; it
+    fires constantly here because Intercolony makes it normal to field fifteen armed employees who
+    are all wounded in the same fight and all race for the same few medical beds.** That is a
+    consequence of the product, not a defect in it. **CONFIRMING QUESTION FOR THE OPERATOR: how many
+    medical beds does the infirmary have, and how many pawns were hurt at once when the error last
+    fired?** Far more casualties than beds confirms it; one casualty and a free bed refutes it and
+    reopens the search.
   - **F-D5 — VERDICT ON `Lord_165`: NOT OURS, and proven for THIS instance rather than inherited.**
     The latest autosave holds twelve `<lord>Lord_165</lord>` references, every holder a `Faction_13`
     pawn — Pact of Toberium, a siege group — all in Hospitality's `CompGuest` layout. Intercolony
@@ -84,7 +107,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 16:05 — the plan is complete; a NEW runtime defect is in triage
+Updated: 2026-09-10 16:25 — F.1 done; waiting on one answer from the operator
 Foreman load: 2026-09-10 04:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
