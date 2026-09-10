@@ -1,6 +1,6 @@
 # Foreman state — Intercolony
 
-Stage: C3 — settings for F08, F09 and F11. **STAGE D IS CLOSED; the correction plan has RESUMED.**
+Stage: **E — THE DEFECT GATE IS REOPENED. The correction plan pauses after C3.6 and resumes at C3.7.**
 Unit: C3.6 — F11's assertions, the nine the plan asks for
 Worker: luna running — `…\scratchpad\unit-c3-6.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
@@ -62,7 +62,8 @@ two workers on the same large UI or settings file.
 | ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
 | ✅ | C1 — F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
 | ✅ | C2 — F07: the production rate must count real completions | F07 | closed, `14ad416` |
-| 🔨 | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | resumed at C3.3 |
+| ⏸ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08 ✅, F09 ✅, F11 | pauses after C3.6, resumes at C3.7 |
+| 🔨 | E — the defect gate reopened: old damage, and a noisy self-test | — | A proven old corruption |
 | ✅ | D — runtime defect triage, out of plan order, by operator instruction | — | closed, `28acfd1` |
 | ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
 | ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
@@ -124,6 +125,46 @@ variable, and nothing in Intercolony is called by ordinary vanilla construction 
 | ✅ | C2.0 — recon: the missing completion paths, and the denominator question | accepted; D1-D4 recorded |
 | ✅ | C2.1 — normalise minified bill products, add the construction observer | accepted, `8cb5774` |
 | ✅ | C2.2 + C2.2b — C2's eight assertions and the wrapper re-cut | accepted, `14ad416`. **C2 COMPLETE** |
+
+## STAGE E — THE DEFECT GATE REOPENED, 2026-09-09
+
+The operator saw the VisitGrave exception again AFTER `68ad1ea` landed, and separately found the
+self-test writing a red error into the live debug log. **Correction-plan dispatch is paused after
+C3.6 and resumes at C3.7.**
+
+### **A IS OLD CORRUPTION. PROVEN, NOT INFERRED.**
+
+I captured the live log and the operator's re-saved `Playtest 1.0` at 22:17 and counted, in the
+save itself:
+
+  - **85 corpses. Exactly ONE is empty** — `Corpse_Human849086`, still `<innerList />`, still in
+    `Grave508055`. That is Sinni, the same corpse the first investigation identified, from before
+    the fix.
+  - **No newly killed employee has lost its pawn.** If `68ad1ea` were incomplete there would be a
+    second empty corpse; there is not one.
+  - The exception in the live log sits at line 3098, AFTER `State loaded` at 3044, so it comes from
+    the loaded playtest save rather than a fresh world.
+
+**So the production fix stands and is not reopened.** What remains is the operator's own save, which
+still carries the damage the fix cannot undo. Per their instruction: no null guard in
+`JoyGiver_VisitGrave`, no broad defensive production behaviour, nothing that invents Sinni back —
+an explicit one-time repair, backed up first, proving exactly what it changes.
+
+### **B IS THE SELF-TEST CONTAMINATING THE LIVE LOG.**
+
+`IntercolonyRfqSelfTest.InjectSupplierListingCollection` deliberately persists a listing whose
+`ThingDef` does not exist — `Intercolony_SupplierListing_SelfTest_MissingDef` — to prove the loader
+prunes it safely. Vanilla's Scribe writes a red `Log.Error` for the unresolvable def, so **a
+genuinely clean game is indistinguishable from a broken one in the very signal this run keeps using
+as evidence.** The assertion is right and stays; the way its expected diagnostic reaches the log is
+what changes.
+
+### **AN OPERATIONAL HAZARD, and it is mine to respect**
+
+**RimWorld is running right now — the operator is playing.** `dev.ps1 test … -Fresh` restarts the
+game and would kill that session. No suite may be run until the operator says it is safe. My own
+earlier runs are also what rotated the first play log away; the captures now live in
+`…\scratchpad\playtest-evidence\`.
 
 ## STAGE D — TWO RUNTIME DEFECTS FROM REAL PLAY, 2026-09-09
 
@@ -259,6 +300,15 @@ point of the ceiling is that commerce cannot buy an alliance.
 | 🔨 | C3.6 — F11's assertions, in the rfq suite | Luna running |
 | ⬜ | C3.7 — F08's settings assertions, in the reputation suite | not started |
 | ⬜ | C3.8 — F09's settings assertions, in the long-term suite | not started |
+
+## Units — stage E
+
+| | Unit | Status |
+|---|---|---|
+| ✅ | E.0 — old-versus-new: count the empty corpses in the re-saved game | **done by me: 1 of 85, and it is Sinni's** |
+| ⬜ | E.1 — a one-time repair for the operator's damaged save | next, after C3.6 lands |
+| ⬜ | E.2 — the self-test's expected error must not look like a real one | not started |
+| ⬜ | E.3 — the durable record, and the play proof the operator specified | not started |
 
 ## Units — stage D
 
