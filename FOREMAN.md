@@ -35,6 +35,81 @@ specific target bed → LayDown creation/enqueue → the bed becoming unavailabl
 Intercolony employees only, on the error-adjacent path, with no per-tick spam and nothing that
 materially shifts timing or bed selection.
 
+**F.4's INSTRUMENTATION MUST BE TRIVIALLY REMOVABLE — ONE FILE, ONE COMMIT, REVERTABLE WHOLE.**
+Stage G below requires proving it is gone from the release candidate, and that proof is far cheaper
+if the instrumentation never spreads across files. Build it that way from the start.
+
+---
+
+# STAGE G — STEAM WORKSHOP RELEASE CANDIDATE. **GATED. DO NOT START.**
+
+**The operator asked for this on 2026-09-10 and gated it explicitly: it does not begin until stage F
+is DURABLY CLOSED.** F is currently REOPENED with a NOT DETERMINED verdict and its instrumentation
+unbuilt, so **this stage has not begun and no unit of it may be dispatched.** Recorded here so it
+survives a compaction and is picked up in the right order, not so it can be started early.
+
+**Closing F requires the operator to reproduce with F.4's instrumentation in play.** That is theirs
+to do; do not treat elapsed time or a quiet log as closure.
+
+## What G is, when it is allowed to start
+
+A **release preparation pass, not another development batch.** No features, no opportunistic
+refactors, no balance changes, no unrelated cleanup.
+
+  1. Read `CLAUDE.md` and `docs/RELEASE_PROCEDURE.md` first, before anything else.
+  2. Audit this branch against the **released `main`/1.0 build**. **Do NOT trust
+     `docs/RELEASE_NOTES_1_0_1.md` or `docs/WORKSHOP_CHANGENOTES_1_0_1.bbcode` — the operator says
+     both are stale**, still describing 1.0.1 as only the old Procurement fixes. Rewrite both from
+     the actual diff and history of this branch. **Changenotes are PLAYER-FACING, organised by
+     meaningful improvement — never by Foreman finding number or implementation internal.**
+  3. **Prove F.4's temporary instrumentation is gone**, unless some part was deliberately kept as
+     production-safe permanent diagnostics — and if so, say which and why.
+  4. Establish for real: mod version; save schema; the migration path from the public release;
+     player-facing changes since the current Workshop version; and the limitations that genuinely
+     remain.
+  5. Bring every release-facing artefact into agreement with reality — `About/About.xml`, release
+     notes, Workshop changenotes, compatibility and migration notes, README/current-state docs, and
+     whatever else the established procedure requires.
+  6. **The release gate:** clean build; full fresh-world suite; a clean unexpected-`Player.log`
+     delta; save/load and migration verification appropriate to the ACTUAL current schema; any
+     repository release-gate tests; and F's final disposition represented honestly. **Do not hide
+     skipped tests. Distinguish a harmless world-condition skip from genuine release uncertainty** —
+     the current suite has sixteen of the former and they must be named as such, not buried.
+  7. Build with `package.ps1`. **Audit the PACKAGE ITSELF, not the source tree:** correct
+     `About.xml` and version, correct DLL, RimWorld 1.6 metadata, Harmony dependency intact,
+     `About/Preview.png` present and under the Steam cap documented in the procedure (it was
+     933,975 bytes against a 1 MB limit), and **no `Source/`, no `reference/`, no `docs/`, no
+     `.git/`, no Foreman or recon or scratchpad artefacts, no diagnostic-only files, no unrelated
+     third-party content.**
+  8. Smoke-test the **packaged copy**, using the safe procedure in `docs/RELEASE_PROCEDURE.md` —
+     not the development junction by accident. **BE EXTREMELY CAREFUL WITH THE
+     `Mods\Intercolony` JUNCTION: follow the repository's documented commands exactly and NEVER
+     recursively delete through a junction.** Restore the operator's normal development
+     junction/setup exactly afterwards.
+
+## THE STOP CONDITIONS — absolute, and none of them are mine to take
+
+**DO NOT publish or update the Steam Workshop. DO NOT create a second Workshop item. DO NOT merge to
+`main`. DO NOT tag. DO NOT create a GitHub release. DO NOT push a public release.** The handoff is
+prepared and handed over; the irreversible action is the operator's alone.
+
+`.workshop/PublishedFileId.txt` **exists** — confirmed 2026-09-10. `About/PublishedFileId.txt` does
+**not**, which is correct: `package.ps1` deliberately does not copy it, so the upload copy must have
+it restored by hand from `.workshop/`. **THE CHECK IS THAT RIMWORLD'S MENU READS "Update on Steam
+Workshop". IF IT READS "Upload", THAT IS A STOP CONDITION** — proceeding creates a second Workshop
+item.
+
+## The report G must end with
+
+Release-candidate version; HEAD; save schema; player-facing changes since public 1.0; build result;
+full-suite result; save/migration result; `Player.log` result; package audit; packaged smoke test;
+known limitations; remaining human evidence; the exact package path to upload; the exact Workshop
+steps left for the operator; the final changenotes ready to paste; and a verdict of
+**`READY TO UPDATE WORKSHOP`** or **`NOT READY`** with the precise reason.
+
+**Do not call it READY while any release-blocking uncertainty remains** — and an open F is exactly
+such an uncertainty.
+
 **THE DEFECT, and the operator's own observations, which are the load-bearing facts:**
 
     Could not find good sleeping slot position for Breixo. Perhaps AnyUnoccupiedSleepingSlot check
@@ -144,7 +219,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 18:20 — F REOPENED; the not-ours verdict is withdrawn
+Updated: 2026-09-10 18:55 — F reopened and running; G recorded and GATED
 Foreman load: 2026-09-10 16:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -210,6 +285,7 @@ two workers on the same large UI or settings file.
 | ✅ | C7 — freeze F22 in the documentation | — | closed, `aa413e3` |
 | ✅ | C8 — whole-suite regression and clean halt | — | closed, `ed0a3d5`. **1601/0/16, exit 0** |
 | 🔨 | F — new runtime defects from play: the infirmary and `Lord_165` | — | **REOPENED. The infirmary verdict is WITHDRAWN — not determined.** `Lord_165` stands as Hospitality's |
+| ⏸ | G — Steam Workshop release candidate | — | **GATED ON F. NOT STARTED.** See the header |
 
 ## Units — stages C0 and C1
 
