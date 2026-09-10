@@ -1,22 +1,19 @@
 # Foreman state — Intercolony
 
 Stage: **E — THE DEFECT GATE IS REOPENED. The correction plan pauses after C3.6 and resumes at C3.7.**
-Unit: E.3 — the durable record in `PROGRESS.md`, and the operator's play proof in `PENDING_PLAYTESTS.md`
-Worker: luna running — `…\scratchpad\unit-e3.out`.
+Unit: C3.6b — q101's pinned jitter is 1, not 0, and one stale PROGRESS.md line
+Worker: luna running — `…\scratchpad\unit-c36b.out`.
 
-**A DEBT THIS RUN MUST NOT FORGET: `fb3f97a` and `49be300` ARE UNVERIFIED.** They were committed
-rather than held only so a lost session would not lose them. The moment RimWorld is not running they
-owe `dev.ps1 test rfq -Fresh` and `dev.ps1 test long-term -Fresh` plus a mutation pass — break the
-day-five clamp and watch F11.6 go red; break the exact-string match in `ExpectedLogHandler` and watch
-the new S4 and procurement-diagnostic assertions go red. Until then neither is believed. **The
-long-term suite ran 61/0/0 before this touched it; a drop is a signal, not noise.**
+**THE OPERATOR HAS STOPPED PLAYING (2026-09-10, ~00:20) and said to close and restart the game as
+often as needed. The verification block is gone.** Suites and mutations run freely from here.
 
-Last done: E.1, the one-time empty-corpse repair, accepted at `c46e175`. Verified by construction
-rather than by a suite run: `Corpse.Destroy` guards its pawn access behind `!Bugged`
-(`reference/decompiled/Verse/Corpse.cs:244-248`) and `Bugged` is exactly the empty-container
-condition (`:151`), so vanilla already anticipates destroying one. **Running it against the
-operator's save is still owed and is theirs to do.**
-Updated: 2026-09-10 00:15
+Last done: E.2 and E.2b, both **proven by mutation, not merely green**. `long-term` 62/0/0 exit 0
+with the three synthetic `cycle 1 failed` lines gone from `Player.log`; `rfq` log signal CLEAN.
+Breaking `ExpectedLogHandler`'s match turns the long-term assertion red at `expected=6; captured=0`
+and the rfq S4 assertion red at `expected=0; unexpected=1`, and both suppressed lines reappear. E.3
+recorded the whole gate at `f1aa604`. **Still owed and theirs, not mine: run the empty-corpse repair
+on the Playtest 1.0 save, and the hire→arrive→die→save→reload proof in `PENDING_PLAYTESTS.md`.**
+Updated: 2026-09-10 00:40
 Foreman load: 2026-09-09 19:50
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -318,10 +315,10 @@ point of the ceiling is that commerce cannot buy an alliance.
 |---|---|---|
 | ✅ | E.0 — old-versus-new: count the empty corpses in the re-saved game | **done by me: 1 of 85, and it is Sinni's** |
 | ✅ | E.1 — a one-time repair for the operator's damaged save | `c46e175` |
-| ✅ | E.2 — the self-test's expected error must not look like a real one | `fb3f97a` **UNVERIFIED** |
+| ✅ | E.2 — the self-test's expected error must not look like a real one | `fb3f97a`, **mutation-proven** |
 | ✅ | E.2b — audit the adjacent synthetic procurement-failure line | `49be300` **UNVERIFIED**. White `Log.Message`, so it never cost the exit code, but `dev.ps1:130` showed it to the operator as a failure. Letters were already cleaned up. No production defect. |
-| 🔨 | E.3 — the durable record, and the play proof the operator specified | Luna running |
-| ⬜ | E.3 — the durable record, and the play proof the operator specified | not started |
+| ✅ | E.3 — the durable record, and the play proof the operator specified | `f1aa604` |
+| 🔨 | C3.6b — q101's pinned jitter is 1, not 0; and one stale PROGRESS.md line | Luna running |
 
 ## Units — stage D
 
