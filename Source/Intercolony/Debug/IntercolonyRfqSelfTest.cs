@@ -4488,8 +4488,12 @@ namespace Intercolony
             Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
             Thing fixtureSilver = null;
             Zone_Stockpile fixtureSilverZone = null;
+            Settlement fixtureSettlement = null;
+            bool fixtureReputationSnapshotTaken = false;
+            bool fixtureHadReputation = false;
+            CommercialReputation savedFixtureReputation = null;
 
-            void RestoreFixtureState()
+            void RestoreFixtureState(bool restoreFixtureReputation = false)
             {
                 state.Requests.Clear();
                 state.Requests.AddRange(savedRequests);
@@ -4504,6 +4508,15 @@ namespace Intercolony
                 foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
                 {
                     state.Reputations[entry.Key] = entry.Value;
+                }
+
+                if (fixtureReputationSnapshotTaken && fixtureSettlement != null)
+                {
+                    state.Reputations.Remove(fixtureSettlement.ID);
+                    if (restoreFixtureReputation && fixtureHadReputation)
+                    {
+                        state.Reputations[fixtureSettlement.ID] = savedFixtureReputation;
+                    }
                 }
 
                 for (int i = 0; i < savedCommercialHistory.Count; i++)
@@ -4576,6 +4589,15 @@ namespace Intercolony
                 archive.ArchivablesListForReading.AddRange(savedArchivables);
             }
 
+            void PrepareFixtureReputation(Settlement selectedSettlement)
+            {
+                fixtureSettlement = selectedSettlement;
+                fixtureHadReputation = state.Reputations.TryGetValue(
+                    selectedSettlement.ID, out savedFixtureReputation);
+                fixtureReputationSnapshotTaken = true;
+                state.Reputations.Remove(selectedSettlement.ID);
+            }
+
             bool EnsureFixtureSilver(int requiredSilver, out string reason)
             {
                 reason = null;
@@ -4641,7 +4663,8 @@ namespace Intercolony
                 state.ProcurementContracts.Clear();
 
                 if (!TryFindNoHistoryRfqFixture(
-                        state, out PurchaseRequest request, out Settlement settlement,
+                        state, PrepareFixtureReputation,
+                        out PurchaseRequest request, out Settlement settlement,
                         out Quotation quote, out ThingDef product, out string fixtureReason))
                 {
                     SkipF10NoHistoryProcurementAssertions(skip, fixtureReason);
@@ -4850,7 +4873,7 @@ namespace Intercolony
             }
             finally
             {
-                RestoreFixtureState();
+                RestoreFixtureState(restoreFixtureReputation: true);
             }
         }
 
@@ -4884,6 +4907,7 @@ namespace Intercolony
 
         private static bool TryFindNoHistoryRfqFixture(
             IntercolonyWorldComponent state,
+            Action<Settlement> prepareSettlement,
             out PurchaseRequest request,
             out Settlement settlement,
             out Quotation quote,
@@ -4899,41 +4923,27 @@ namespace Intercolony
             List<Settlement> settlements = Find.WorldObjects?.Settlements;
             if (settlements == null)
             {
-                reason = "the world supplied no settlements to inspect for an absent reputation record";
+                reason = "the world supplied no settlements to inspect for an accessible RFQ fixture";
                 return false;
             }
 
-            bool hasAbsentSettlement = false;
+            HashSet<int> usableSettlementIds = new HashSet<int>();
             foreach (Settlement candidate in settlements)
             {
                 if (candidate != null &&
                     IntercolonyMarketAccess.IsAccessible(candidate) &&
-                    state.GetProfileForReadOnly(candidate) != null &&
-                    IsNoReputationRecord(state, candidate))
+                    state.GetProfileForReadOnly(candidate) != null)
                 {
-                    hasAbsentSettlement = true;
-                    break;
+                    usableSettlementIds.Add(candidate.ID);
                 }
             }
 
-            if (!hasAbsentSettlement)
+            if (usableSettlementIds.Count == 0)
             {
                 reason =
-                    "no accessible settlement has a genuinely absent CommercialReputation " +
-                    "dictionary record (the world cannot supply a never-traded fixture)";
+                    "no accessible settlement with a readable economic profile was available " +
+                    "for the no-history RFQ fixture";
                 return false;
-            }
-
-            HashSet<int> absentSettlementIds = new HashSet<int>();
-            foreach (Settlement candidateSettlement in settlements)
-            {
-                if (candidateSettlement != null &&
-                    IntercolonyMarketAccess.IsAccessible(candidateSettlement) &&
-                    state.GetProfileForReadOnly(candidateSettlement) != null &&
-                    IsNoReputationRecord(state, candidateSettlement))
-                {
-                    absentSettlementIds.Add(candidateSettlement.ID);
-                }
             }
 
             List<ThingDef> tradable = IntercolonyProductClassifier.TradableDefs;
@@ -4943,7 +4953,8 @@ namespace Intercolony
                 return false;
             }
 
-            PurchaseRequest fallbackRequest = null;
+            Settlement selectedSettlement = null;
+            ThingDef selectedProduct = null;
             Settlement fallbackSettlement = null;
             ThingDef fallbackProduct = null;
             foreach (ThingDef candidateDef in tradable)
@@ -4979,24 +4990,27 @@ namespace Intercolony
                         : IntercolonyMarketAccess.FindSettlement(candidateQuote.settlementId);
                     if (candidateQuote != null && candidateSettlement != null &&
                         candidateQuote.quantityOffered > 0 &&
-                        absentSettlementIds.Contains(candidateSettlement.ID) &&
+                        usableSettlementIds.Contains(candidateSettlement.ID) &&
                         IntercolonyMarketAccess.IsAccessible(candidateSettlement) &&
                         state.GetProfileForReadOnly(candidateSettlement) != null)
                     {
-                        request = candidateRequest;
-                        settlement = candidateSettlement;
-                        quote = candidateQuote;
-                        product = candidateDef;
-                        return true;
+                        selectedSettlement = candidateSettlement;
+                        selectedProduct = candidateDef;
+                        break;
                     }
                 }
 
-                if (fallbackRequest == null)
+                if (selectedSettlement != null)
+                {
+                    break;
+                }
+
+                if (fallbackSettlement == null)
                 {
                     foreach (Settlement candidateSettlement in settlements)
                     {
                         if (candidateSettlement == null ||
-                            !absentSettlementIds.Contains(candidateSettlement.ID))
+                            !usableSettlementIds.Contains(candidateSettlement.ID))
                         {
                             continue;
                         }
@@ -5010,7 +5024,6 @@ namespace Intercolony
                             continue;
                         }
 
-                        fallbackRequest = candidateRequest;
                         fallbackSettlement = candidateSettlement;
                         fallbackProduct = candidateDef;
                         break;
@@ -5019,27 +5032,72 @@ namespace Intercolony
 
                 state.Requests.Clear();
                 state.PendingRfqResponses.Clear();
-                foreach (int absentSettlementId in absentSettlementIds)
+            }
+
+            if (selectedSettlement == null && fallbackSettlement != null && fallbackProduct != null)
+            {
+                selectedSettlement = fallbackSettlement;
+                selectedProduct = fallbackProduct;
+                reason =
+                    "no quotation arrived from the selected reachable settlement; " +
+                    "the RFQ assertion will fail rather than hide a progression gate";
+            }
+            else if (selectedSettlement == null)
+            {
+                reason =
+                    "the real RFQ path found no accessible settlement technically able to " +
+                    "supply any tradable definition";
+                return false;
+            }
+
+            if (prepareSettlement == null)
+            {
+                reason = "the no-history RFQ fixture had no reputation-preparation path";
+                return false;
+            }
+
+            // Preserve the existing quote-first selection, then make the chosen supplier genuinely
+            // no-history before running the request that supplies the assertion's quote.
+            prepareSettlement(selectedSettlement);
+            state.Requests.Clear();
+            state.PendingRfqResponses.Clear();
+            PurchaseRequest preparedRequest = RfqService.CreateRequest(
+                state, selectedProduct, null, 1, 15);
+            if (preparedRequest == null)
+            {
+                reason = "the selected accessible settlement could not create its RFQ request";
+                return false;
+            }
+
+            string preparedAdvanceFailure = null;
+            AdvanceRfqResponsesForSelfTest(
+                state, preparedRequest,
+                (name, detail) => preparedAdvanceFailure = detail);
+            if (preparedAdvanceFailure != null)
+            {
+                reason =
+                    "the real RFQ response path could not be advanced: " + preparedAdvanceFailure;
+                return false;
+            }
+
+            request = preparedRequest;
+            settlement = selectedSettlement;
+            product = selectedProduct;
+            foreach (Quotation preparedQuote in preparedRequest.quotes)
+            {
+                if (preparedQuote != null && preparedQuote.quantityOffered > 0 &&
+                    preparedQuote.settlementId == selectedSettlement.ID)
                 {
-                    state.Reputations.Remove(absentSettlementId);
+                    quote = preparedQuote;
+                    return true;
                 }
             }
 
             reason =
-                "the real RFQ path produced no quote from an accessible settlement whose " +
-                "CommercialReputation record was genuinely absent";
-            if (fallbackRequest != null && fallbackSettlement != null && fallbackProduct != null)
-            {
-                request = fallbackRequest;
-                settlement = fallbackSettlement;
-                product = fallbackProduct;
-                reason =
-                    "no quotation arrived from the selected reachable no-history settlement; " +
-                    "the RFQ assertion will fail rather than hide a progression gate";
-                return true;
-            }
-
-            return false;
+                "no quotation arrived from the selected reachable settlement after its " +
+                "reputation record was removed; the RFQ assertion will fail rather than hide " +
+                "a progression gate";
+            return true;
         }
 
         private static bool F10CanTechnicallySupply(
