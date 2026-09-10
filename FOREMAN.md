@@ -1,8 +1,8 @@
 # Foreman state — Intercolony
 
-Stage: **D — RUNTIME DEFECT TRIAGE. THE CORRECTION PLAN IS PAUSED AT C3.3 AND RESUMES THERE.**
-Unit: D.3 — the durable dispositions in `PROGRESS.md` and the play entry
-Worker: luna running — `…\scratchpad\unit-d3.out`
+Stage: C3 — settings for F08, F09 and F11. **STAGE D IS CLOSED; the correction plan has RESUMED.**
+Unit: C3.3 — the Relations row stops stating the old fixed numbers as facts
+Worker: luna running — `…\scratchpad\unit-c3-3.out`
 Last done: C2.2 + C2.2b, F07's eight assertions, accepted at `14ad416` — produce 45/0/0, and two
 mutations bite: removing the construction observer turns four red, removing the unwrap turns one.
 Updated: 2026-09-09 19:05
@@ -62,8 +62,8 @@ two workers on the same large UI or settings file.
 | ✅ | C0 — scope lock and regression baseline | — | closed, `f049bfb` |
 | ✅ | C1 — F01: a routine contract cycle must be silent | F01 | closed, `1c5cc56` |
 | ✅ | C2 — F07: the production rate must count real completions | F07 | closed, `14ad416` |
-| ⏸ | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | PAUSED at C3.3 for defect triage |
-| 🔨 | D — runtime defect triage, out of plan order, by operator instruction | — | recon running |
+| 🔨 | C3 — settings for goodwill pressure, employment experience and RFQ pacing | F08, F09, F11 | resumed at C3.3 |
+| ✅ | D — runtime defect triage, out of plan order, by operator instruction | — | closed, `28acfd1` |
 | ⬜ | C4 — F10: progression gates standing agreements, not Find Seller | F10 | not started |
 | ⬜ | C5 — F13 and F17: the employee card's interaction surface | F13, F17 | not started |
 | ⬜ | C6 — freeze F12 in the documentation | — | not started |
@@ -246,7 +246,7 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | C3.0 — recon: the settings surface, the nine constants, F11's scheduling | accepted; D1-D5 recorded |
 | ✅ | C3.1 — the settings surface, one owner, no consumer touched | accepted, `2439f4a` |
 | ✅ | C3.2 — F08 reads the settings, and clamps to remaining headroom | accepted, `3b742f9` |
-| ⏸ | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | **NEXT when the plan resumes** |
+| 🔨 | C3.3 — F08's Relations row stops hard-coding Preferred, quadrum, 60 | Luna running |
 | ⬜ | C3.4 — F09 reads the settings at resolution | not started |
 | ⬜ | C3.5 — F11's front-loaded scheduler, the cap, and the lifetime | not started |
 | ⬜ | C3.6 → C3.8 — assertions, one unit per host suite | not started |
@@ -258,7 +258,7 @@ point of the ceiling is that commerce cannot buy an alliance.
 | ✅ | D.0 — recon on both defects, against the captured log and the play save | accepted; both claims spot-checked |
 | ✅ | D.1 — the discard guard must mean what its comment says | accepted, `68ad1ea` |
 | ✅ | D.2 — the regression assertion, through a real corpse and a save | accepted, `1bf7d30`; mutation turns three red |
-| 🔨 | D.3 — the durable dispositions and the play entry | Luna running |
+| ✅ | D.3 — the durable dispositions and the play entry | accepted, `28acfd1`. **STAGE D COMPLETE** |
 
 ## C1 — the recon, and what I decided from it
 
