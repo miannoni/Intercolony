@@ -1,5 +1,25 @@
 # Foreman state — Intercolony
 
+Stage: **G — STEAM WORKSHOP RELEASE CANDIDATE. Started 2026-09-11. F IS CLOSED.**
+
+**F CLOSED as a bounded triage, all three items NON-BLOCKING**, by operator instruction:
+DoBill reservation error — two occurrences, one job, self-recovering, Common Sense's path.
+`Lord_*` not-deep-saved — transient; the save has **zero dangling Lord references** (referenced
+`{165}`, deep-saved `{165,192,198,199,205,210}`) and **reloads clean at schema 58**. Ownership of the
+Lord and of the infirmary sleeping-slot error both remain **NOT DETERMINED** — neither is re-asserted
+as "not ours", and neither corrupts state. The infirmary error is not pursued further unless it
+naturally reappears.
+
+**THE TEMPORARY INSTRUMENTATION IS GONE.** Reverted at `8fc7df7` and `32ddf49`; `git diff` from the
+pre-instrumentation commit to HEAD shows **only `FOREMAN.md`**. That is G's item-4 proof.
+
+**Fresh-world suite after the revert: 1601/0/16, exit 0, log CLEAN, pawn delta 0** — baseline
+unchanged. A run against the mature at-war save returned 1165/39/159; **that is world condition, not
+regression** (no trade partners, no labour candidates) and must be reported that way, never buried.
+
+---
+
+Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
 Unit: F.5 — **THE REPRODUCTION ATTEMPT DID NOT CAPTURE THE TARGET EVENT. Two questions are with the
 operator; do not dispatch until they answer.**
@@ -158,6 +178,32 @@ survives a compaction and is picked up in the right order, not so it can be star
 
 **Closing F requires the operator to reproduce with F.4's instrumentation in play.** That is theirs
 to do; do not treat elapsed time or a quiet log as closure.
+
+## THREE ADDITIONAL REQUIREMENTS, added by the operator 2026-09-11. Already decided; not optional.
+
+  - **G-R1 — ship the operator's playtested settings as the FRESH-INSTALL DEFAULTS.** Update the
+    defaults in `Source/Intercolony/IntercolonySettings.cs` to the configuration they have been
+    playing with. **EXISTING USERS' EXPLICITLY SAVED SETTINGS MUST SURVIVE UNTOUCHED — do not
+    forcibly reset them.** Note the mechanism this depends on and get it right: `Scribe_Values.Look`
+    **omits a value equal to the default**, so a saved setting that happens to match the OLD default
+    writes no node, and changing the default silently changes that user's value on next load. That
+    is the trap in this requirement; solve it deliberately rather than by editing constants and
+    hoping.
+  - **G-R2 — make an explicit semantic-version decision BEFORE packaging.** `About.xml` reads
+    `1.0.1`. This branch is **288 commits beyond released `main`**, carries a substantial
+    gameplay and polish batch, adds nine player-facing settings, changes UI, and moves the save
+    schema **56 → 58**. Evaluate honestly whether **1.1.0** is the truthful version. Record the
+    decision and its reasoning; do not let the number default by inertia.
+  - **G-R3 — bake F's two gate lessons in PERMANENTLY, not as a one-off checklist item.**
+      1. **Validate `Player.log` from PROCESS STARTUP, not only the `dev.ps1` delta window.** A
+         diagnostic with an unresolvable Harmony target aborted `HarmonyPatches`'s static
+         constructor and **silently disabled all six production patches**, while a full suite run
+         reported 1601/0/16 with a CLEAN log signal.
+      2. **Force and VERIFY a genuinely rebuilt DLL.** `Copy-Item` preserves source timestamps, so a
+         restored file can look older than the DLL built from a mutation, MSBuild skips the rebuild,
+         and a "Build succeeded" line accompanies a launch of the **stale mutated binary**.
+     Both belong in the tooling or the procedure where they cannot be forgotten — `dev.ps1`,
+     `package.ps1` or `docs/RELEASE_PROCEDURE.md` — not only in a report.
 
 ## What G is, when it is allowed to start
 
@@ -330,7 +376,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 20:50 — repro missed the target; Lord verdict reopened; awaiting the operator
+Updated: 2026-09-11 21:00 — F CLOSED non-blocking; STAGE G STARTED
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
