@@ -21,9 +21,42 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: F.5 — **THE REPRODUCTION ATTEMPT DID NOT CAPTURE THE TARGET EVENT. Two questions are with the
-operator; do not dispatch until they answer.**
-Worker: none.
+Unit: G.1 — the settings defaults, with a migration that does not disturb existing players
+Worker: luna running — `…\scratchpad\unit-g1.out`. F.6's closure record landed at `99edf77`.
+
+### **G-D1 — VERSION DECISION: 1.1.0, not 1.0.1. DECIDED, with reasons.**
+
+`About.xml` says `1.0.1`, which was set for a Procurement bugfix long before this batch. Against
+released `main` this branch is **288 commits** and carries: **nine new player-facing settings**
+(F08, F09, F11), a **rebalanced RFQ schedule**, a **sixth Harmony patch** for production capture,
+**UI changes to the employee card** (F13/F17), and a **save schema move 56 → 58**. Under semver that
+is new backward-compatible functionality, which is a **MINOR** bump. Calling it a patch release
+would misdescribe it to anyone triaging a bug report, and `About.xml`'s version is the figure a bug
+report gets tied to. **Set `<modVersion>` to `1.1.0` BEFORE `package.ps1` runs** — the script takes
+its package version from that field.
+
+### **G-D2 — the settings values are taken from the LIVE SETTINGS FILE, not the screenshots.**
+
+`Config\Mod_Intercolony_IntercolonyMod.xml` is authoritative and better than any screenshot:
+`Scribe_Values.Look` omits a value equal to its default, so **every node present in that file is a
+deliberate deviation.** Ten deviations found, five of which the screenshots did not show:
+`letterVolume` → `Minimal`; `refreshDays` → `0.25`; `activeOpportunities` → `50`;
+`enabledBuyOnlyTradeCategoryKeys` → `FoodMeals` + `StoneBlocks`; `commercialGoodwillIntervalDays`
+→ `7`; `commercialGoodwillPerInterval` → `2`; `commercialGoodwillCeiling` → `60 → 15`;
+`commercialReputationRequired` → `85`; `minimumEmploymentDaysForGoodwill` → `4`;
+`employmentGoodwillImpact` → `2`.
+
+### **G-D3 — THE TRAP IN G-R1, AND THE DESIGN THAT AVOIDS IT.**
+
+Because `Scribe` omits defaults, an existing player sitting on the OLD default has **no node** for
+that setting. Change the constant and their next load silently adopts the NEW value — exactly what
+the operator forbade. **The fix is a `settingsVersion` stamp plus `Legacy*` constants**: a
+pre-version file reads absent nodes against the legacy default, so the player keeps what they had; a
+fresh install has no file at all, so the field initialisers deliver the new defaults. **Do NOT copy
+the `economyDifficultyV2` / `laborCostMultiplierV2` precedent at `IntercolonySettings.cs:100-116`**
+— that key-rename exists to force a reset and is the opposite of what is wanted here.
+`enabledBuyOnlyTradeCategoryKeys` is the awkward one: `Scribe_Collections.Look` takes no default, so
+"fresh install" and "existing player with none enabled" must be told apart explicitly.
 
 **2026-09-11 20:42 — the operator reported recreating the incident. They did not.** What their
 screenshots show is `Could not reserve Thing_Steel1069317 ... for Kazuki for job DoBill`, with
@@ -376,7 +409,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 21:00 — F CLOSED non-blocking; STAGE G STARTED
+Updated: 2026-09-11 21:20 — G.1 running; version decided 1.1.0
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
