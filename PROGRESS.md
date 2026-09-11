@@ -2783,3 +2783,90 @@ Manual test:
 - The re-audit also found Hospitality patches on `RestUtility.IsValidBedFor`, `Building_Bed.ForPrisoners`/`GetGizmos`, `Pawn_Ownership.UnclaimBed`/`OwnedBed`, `Toils_LayDown.ApplyBedThoughts`, and the inherited base `JobDriver.DriverTick`; Common Sense patches `Pawn_JobTracker.StartJob`, `EndCurrentJob`, and `CleanupCurrentJob`. It found no direct patch to `WorkGiver_TakeToBed.FindBed`, `JobDriver_TakeToBed`, `JobDriver_LayDown`, `Toils_Bed`, `JobQueue`, `JobInBedUtility`, `CompAssignableToPawn_Bed`, or `JobDefOf.Rescue`.
 - Rescue-adjacent, but not direct patches to the listed target types, are Hospitality patches on `Pawn_GuestTracker.SetGuestStatus`, `Pawn_RelationsTracker.Notify_RescuedBy`, `Faction.Notify_MemberExitedMap`, `JobGiver_Work.PawnCanUseWorkGiver`, and `Pawn.VerifyReservations`; the exact employee state does not resolve all of their `IsGuest()` and runtime guards.
 
+## Runtime defect triage closure — bounded release-blocker gate  (2026-09-11)
+
+Disposition:
+- This closes the bounded triage requested by the operator. The rule was explicit: persistent
+  broken state, save/load corruption, stuck pawns, broken contracts or uncontrolled error spam
+  stops the release; anything self-recovering and isolated is recorded as non-blocking and not
+  chased further. All three items below are **NON-BLOCKING**.
+- The earlier Stage-F entry **Runtime defect triage — infirmary bed scarcity and Hospitality
+  Lord_165**, together with its **SUPERSEDE — installed Hospitality/Common Sense binary re-audit**
+  block, remains the investigation record for the bed and Lord findings. This entry records the
+  bounded closure disposition and the new runtime evidence rather than restating that analysis.
+- **The `Could not reserve` DoBill error — NON-BLOCKING, and Common Sense's path.** There were
+  exactly **two occurrences**, both from the same pawn and the same job (`Job_6461396`), on
+  `Thing_Steel` and `Thing_ComponentIndustrial`. There were **zero recurrences** in the 695 log
+  lines that followed. The pawn completed his employment lifecycle normally: contract end,
+  severed, safe passage complete. The stack names
+  `CommonSense.JobDriver_DoBill_MakeNewToils_CommonSensePatch` calling
+  `Pawn_CarryTracker.TryStartCarry` -> `ReservationUtility.Reserve`. It was self-recovering,
+  isolated and produced no spam. Recorded, not chased.
+- **The `Lord_* is referenced but is not deep-saved` warning — NON-BLOCKING, transient.** The
+  warning fires during a save, around the mass safe-passage event when a war emptied the payroll.
+  A new `Lord_166` appeared alongside the existing `Lord_165`. In the newest autosave, every Lord
+  id referenced anywhere in the file is also deep-saved: referenced `{165}`, deep-saved
+  `{165, 192, 198, 199, 205, 210}`, **dangling references: none**. `Lord_166` is absent entirely;
+  it existed transiently and was gone by the time the save settled.
+- That save reloads clean: no `Could not load reference`, `not deep-saved`, cross-reference error
+  or exception. Intercolony's world component loaded at **schema 58**. The warning is therefore a
+  transient report about an object mid-teardown at the moment of writing, not a persistent
+  dangling reference. Recorded as non-blocking.
+- Plainly: the earlier **"not ours" verdict on `Lord_165` was reopened and is NOT being re-asserted
+  here**. The appearance of a new `Lord_166` next to Intercolony's own
+  `HostilityPolicy.WalkOutFactionless`, which calls
+  `LordMaker.MakeNewLord(null, new LordJob_ExitMapBest(...))` at
+  `Source/Intercolony/Core/HostilityPolicy.cs:186-189`, means ownership is **not determined**.
+  Whoever creates these Lords, the saved state is consistent and reloads intact; that narrower
+  conclusion is sufficient for release.
+- **The infirmary sleeping-slot error — STILL NOT DETERMINED, and deliberately not pursued.**
+  Temporary instrumentation was built, gate-verified and armed. It never fired: zero
+  `Could not find good sleeping slot` errors and zero incident dumps in the reproduction session.
+  The reproduction attempt captured item 1 instead. A war then removed the two pawns involved from
+  the map under safe passage, so the original conditions no longer exist. Per the operator's
+  instruction, this is not pursued further unless the error naturally reappears. It remains
+  **NOT DETERMINED** and non-blocking: it is a vanilla log error that corrupts no state.
+
+Implemented:
+- The temporary instrumentation is gone. Both commits were reverted; the source tree is
+  byte-identical to its pre-instrumentation state — `git diff` between the pre-diagnostics commit
+  and HEAD shows **only `FOREMAN.md`**. No file named `BedDiagnostics` and no `BAD QUEUED LAYDOWN`
+  string remains anywhere under `Source/`.
+- A harness blind spot was found and retained as a release-gate rule. A clean `dev.ps1` log delta
+  does not prove startup was clean because the delta window opens after
+  `[StaticConstructorOnStartup]` has run. A diagnostic with an unresolvable Harmony target threw
+  inside `PatchAll`, aborted `Intercolony.HarmonyPatches`'s static constructor and silently
+  disabled all six production patches, while a full suite run reported **1601/0/16 with a clean
+  log signal**. Startup-log validation from process launch is now required in the release gate.
+- A second trap was found in the mutation-testing method itself: `Copy-Item` preserves the source
+  timestamp, so restoring a mutated file makes it look older than the DLL built from the mutation.
+  MSBuild then skips the rebuild and the next launch runs the mutated binary while every line says
+  "Build succeeded". Touch the file explicitly after restoring it.
+
+Not implemented:
+- No production fix was made for the transient Lord warning or the infirmary sleeping-slot error,
+  and no ownership verdict was supplied for either. The DoBill occurrence was recorded and not
+  chased under the bounded triage rule.
+- The scope fence remains in force: **F12 and F22 are FROZEN; F04, F06, F16, F19, F20, F21, F23
+  and F24 are DEFERRED.**
+
+Known limitations:
+- The infirmary error's ownership is unresolved, by decision rather than by omission.
+- `Lord_*` ownership is likewise unresolved; only the save-integrity question is answered.
+- The Lord integrity check covered the safe-passage case in one real save. It is one save, not a
+  proof over all schedules.
+
+Manual test:
+- The post-safe-passage autosave was loaded, its load log was inspected from process launch, and
+  Intercolony's world component was confirmed to load at **schema 58** with no cross-reference
+  errors.
+- Evidence: the whole suite on a **fresh** world after the revert returned **1601 passed, 0 failed,
+  16 skipped, exit 0**, log signal CLEAN, world-pawn delta 0. This is unchanged from the
+  pre-instrumentation baseline.
+- The same suite against the mature at-war save returned **1165/39/159**. This is **NOT evidence of
+  a regression**. Every failure is a world condition — no accessible trade partners and no labour
+  candidates in a colony at war with everyone: `0 opportunities from 12 settlements`, `0 settlements
+  evaluated`, `candidate pool is not empty (0 workers offered)`. The suite is built for a fresh
+  quicktest world and is not a valid integrity oracle on a mature save. The fresh-world run is the
+  apples-to-apples comparison, and it is green.
+
