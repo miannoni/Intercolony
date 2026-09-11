@@ -6,9 +6,11 @@
  * compatibility workaround, or permanent Harmony surface. The single switch below is the
  * operator's off switch; the release pass must remove this file entirely.
  *
- * Registration note: HarmonyPatches already calls Harmony.PatchAll() for this assembly, so no
- * existing-file registration change is required. Every patch below is a passive prefix/postfix:
- * no result, argument, reservation, claim, or control-flow decision is changed.
+ * Registration note: HarmonyPatches still calls Harmony.PatchAll() for this assembly. Every
+ * diagnostic patch class therefore has a guarded Prepare() that resolves its exact target before
+ * Harmony sees it; an unavailable diagnostic is skipped and reported without failing PatchAll.
+ * The startup check is attached to the existing post-PatchAll Verbose log call. Every patch below
+ * is passive: no result, argument, reservation, claim, or control-flow decision is changed.
  */
 
 using System;
@@ -31,6 +33,8 @@ namespace Intercolony
     {
         // OPERATOR SWITCH - set false to silence all diagnostic work in this file.
         public const bool Enabled = true;
+
+        private const string DiagnosticHarmonyId = "miannoni.intercolony";
 
         private const int LifecycleRingCapacity = 24;
         private const int RescueRingCapacity = 8;
@@ -62,6 +66,7 @@ namespace Intercolony
 
         private static long nextSequence;
         private static int internalFailureReported;
+        private static int startupPatchCheckReported;
 
         internal sealed class EvaluationScope
         {
@@ -1999,11 +2004,677 @@ namespace Intercolony
         {
             return Enabled;
         }
+
+        // Harmony resolves an annotated target only after Prepare() returns true. Keep all
+        // resolution here explicit and exact so a changed or ambiguous game API becomes a
+        // skipped diagnostic, never an exception from the production PatchAll() call.
+        private static MethodInfo ResolveMethodExact(
+            Type declaringType, string methodName, Type[] argumentTypes, string targetName)
+        {
+            if (declaringType == null)
+            {
+                throw new ArgumentNullException(nameof(declaringType));
+            }
+
+            Type[] expectedArguments = argumentTypes ?? Type.EmptyTypes;
+            MethodInfo match = null;
+            int matchCount = 0;
+            MethodInfo[] candidates = declaringType.GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic |
+                BindingFlags.Instance | BindingFlags.Static);
+
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                MethodInfo candidate = candidates[i];
+                if (candidate.Name != methodName ||
+                    !ParameterTypesMatch(candidate.GetParameters(), expectedArguments))
+                {
+                    continue;
+                }
+
+                match = candidate;
+                matchCount++;
+            }
+
+            if (matchCount != 1)
+            {
+                throw new MissingMethodException(
+                    targetName + " resolved to " + matchCount + " methods.");
+            }
+
+            return match;
+        }
+
+        private static ConstructorInfo ResolveConstructorExact(
+            Type declaringType, Type[] argumentTypes, string targetName)
+        {
+            if (declaringType == null)
+            {
+                throw new ArgumentNullException(nameof(declaringType));
+            }
+
+            Type[] expectedArguments = argumentTypes ?? Type.EmptyTypes;
+            ConstructorInfo match = null;
+            int matchCount = 0;
+            ConstructorInfo[] candidates = declaringType.GetConstructors(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                ConstructorInfo candidate = candidates[i];
+                if (!ParameterTypesMatch(candidate.GetParameters(), expectedArguments))
+                {
+                    continue;
+                }
+
+                match = candidate;
+                matchCount++;
+            }
+
+            if (matchCount != 1)
+            {
+                throw new MissingMethodException(
+                    targetName + " resolved to " + matchCount + " constructors.");
+            }
+
+            return match;
+        }
+
+        private static bool ParameterTypesMatch(
+            ParameterInfo[] parameters, Type[] expectedArguments)
+        {
+            if (parameters == null || expectedArguments == null ||
+                parameters.Length != expectedArguments.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (parameters[i].ParameterType != expectedArguments[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        internal static MethodBase ResolveJobGiverTarget()
+        {
+            return ResolveMethodExact(
+                typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage),
+                new Type[] { typeof(Pawn), typeof(JobIssueParams) },
+                "ThinkNode_JobGiver.TryIssueJobPackage(Pawn, JobIssueParams)");
+        }
+
+        internal static MethodBase ResolveHospitalitySleepTarget()
+        {
+            Type type = AccessTools.TypeByName("Hospitality.JobGiver_Sleep");
+            return type == null
+                ? null
+                : ResolveMethodExact(
+                    type, "TryIssueJobPackage",
+                    new Type[] { typeof(Pawn), typeof(JobIssueParams) },
+                    "Hospitality.JobGiver_Sleep.TryIssueJobPackage(Pawn, JobIssueParams)");
+        }
+
+        internal static MethodBase ResolveJobConstructorTarget(
+            Type[] argumentTypes, string targetName)
+        {
+            return ResolveConstructorExact(typeof(Job), argumentTypes, targetName);
+        }
+
+        internal static List<MethodBase> ResolveJobConstructorTargets()
+        {
+            return new List<MethodBase>
+            {
+                ResolveJobConstructorTarget(
+                    Type.EmptyTypes, "Job..ctor()"),
+                ResolveJobConstructorTarget(
+                    new Type[] { typeof(JobDef) }, "Job..ctor(JobDef)"),
+                ResolveJobConstructorTarget(
+                    new Type[] { typeof(JobDef), typeof(LocalTargetInfo) },
+                    "Job..ctor(JobDef, LocalTargetInfo)"),
+                ResolveJobConstructorTarget(
+                    new Type[]
+                    {
+                        typeof(JobDef), typeof(LocalTargetInfo), typeof(LocalTargetInfo)
+                    },
+                    "Job..ctor(JobDef, LocalTargetInfo, LocalTargetInfo)"),
+                ResolveJobConstructorTarget(
+                    new Type[]
+                    {
+                        typeof(JobDef), typeof(LocalTargetInfo), typeof(LocalTargetInfo),
+                        typeof(LocalTargetInfo)
+                    },
+                    "Job..ctor(JobDef, LocalTargetInfo, LocalTargetInfo, LocalTargetInfo)"),
+                ResolveJobConstructorTarget(
+                    new Type[] { typeof(JobDef), typeof(LocalTargetInfo), typeof(int), typeof(bool) },
+                    "Job..ctor(JobDef, LocalTargetInfo, int, bool)"),
+                ResolveJobConstructorTarget(
+                    new Type[] { typeof(JobDef), typeof(int), typeof(bool) },
+                    "Job..ctor(JobDef, int, bool)")
+            };
+        }
+
+        internal static MethodBase ResolveJobMakerTarget(
+            Type[] argumentTypes, string targetName)
+        {
+            return ResolveMethodExact(
+                typeof(JobMaker), nameof(JobMaker.MakeJob), argumentTypes, targetName);
+        }
+
+        internal static List<MethodBase> ResolveJobMakerTargets()
+        {
+            return new List<MethodBase>
+            {
+                ResolveJobMakerTarget(
+                    new Type[] { typeof(JobDef) },
+                    "JobMaker.MakeJob(JobDef)"),
+                ResolveJobMakerTarget(
+                    new Type[] { typeof(JobDef), typeof(LocalTargetInfo) },
+                    "JobMaker.MakeJob(JobDef, LocalTargetInfo)"),
+                ResolveJobMakerTarget(
+                    new Type[]
+                    {
+                        typeof(JobDef), typeof(LocalTargetInfo), typeof(LocalTargetInfo)
+                    },
+                    "JobMaker.MakeJob(JobDef, LocalTargetInfo, LocalTargetInfo)"),
+                ResolveJobMakerTarget(
+                    new Type[]
+                    {
+                        typeof(JobDef), typeof(LocalTargetInfo), typeof(LocalTargetInfo),
+                        typeof(LocalTargetInfo)
+                    },
+                    "JobMaker.MakeJob(JobDef, LocalTargetInfo, LocalTargetInfo, LocalTargetInfo)"),
+                ResolveJobMakerTarget(
+                    new Type[] { typeof(JobDef), typeof(LocalTargetInfo), typeof(int), typeof(bool) },
+                    "JobMaker.MakeJob(JobDef, LocalTargetInfo, int, bool)"),
+                ResolveJobMakerTarget(
+                    new Type[] { typeof(JobDef), typeof(int), typeof(bool) },
+                    "JobMaker.MakeJob(JobDef, int, bool)")
+            };
+        }
+
+        internal static MethodBase ResolveReturnToPoolTarget()
+        {
+            return ResolveMethodExact(
+                typeof(JobMaker), nameof(JobMaker.ReturnToPool), new Type[] { typeof(Job) },
+                "JobMaker.ReturnToPool(Job)");
+        }
+
+        internal static MethodBase ResolveJobEvaluationTarget()
+        {
+            return ResolveMethodExact(
+                typeof(Job), nameof(Job.CanBeginNow), new Type[] { typeof(Pawn), typeof(bool) },
+                "Job.CanBeginNow(Pawn, bool)");
+        }
+
+        internal static MethodBase ResolveSleepingSlotTarget()
+        {
+            return ResolveMethodExact(
+                typeof(RestUtility), nameof(RestUtility.GetBedSleepingSlotPosFor),
+                new Type[] { typeof(Pawn), typeof(Building_Bed) },
+                "RestUtility.GetBedSleepingSlotPosFor(Pawn, Building_Bed)");
+        }
+
+        internal static MethodBase ResolveTrackerConstructorTarget()
+        {
+            return ResolveConstructorExact(
+                typeof(Pawn_JobTracker), new Type[] { typeof(Pawn) },
+                "Pawn_JobTracker..ctor(Pawn)");
+        }
+
+        internal static MethodBase ResolveTrackerExposeDataTarget()
+        {
+            return ResolveMethodExact(
+                typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.ExposeData), Type.EmptyTypes,
+                "Pawn_JobTracker.ExposeData()");
+        }
+
+        internal static MethodBase ResolveTrackerStartJobTarget()
+        {
+            return ResolveMethodExact(
+                typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.StartJob),
+                new Type[]
+                {
+                    typeof(Job), typeof(JobCondition), typeof(ThinkNode), typeof(bool), typeof(bool),
+                    typeof(ThinkTreeDef), typeof(Nullable<JobTag>), typeof(bool), typeof(bool),
+                    typeof(Nullable<bool>), typeof(bool), typeof(bool), typeof(bool)
+                },
+                "Pawn_JobTracker.StartJob(Job, JobCondition, ThinkNode, bool, bool, ThinkTreeDef, " +
+                "JobTag?, bool, bool, bool?, bool, bool, bool)");
+        }
+
+        internal static MethodBase ResolveTrackerEndCurrentJobTarget()
+        {
+            return ResolveMethodExact(
+                typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.EndCurrentJob),
+                new Type[] { typeof(JobCondition), typeof(bool), typeof(bool) },
+                "Pawn_JobTracker.EndCurrentJob(JobCondition, bool, bool)");
+        }
+
+        internal static MethodBase ResolveTrackerTryTakeOrderedJobTarget()
+        {
+            return ResolveMethodExact(
+                typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.TryTakeOrderedJob),
+                new Type[] { typeof(Job), typeof(Nullable<JobTag>), typeof(bool) },
+                "Pawn_JobTracker.TryTakeOrderedJob(Job, JobTag?, bool)");
+        }
+
+        internal static MethodBase ResolveEnqueueFirstTarget()
+        {
+            return ResolveMethodExact(
+                typeof(JobQueue), nameof(JobQueue.EnqueueFirst),
+                new Type[] { typeof(Job), typeof(Nullable<JobTag>) },
+                "JobQueue.EnqueueFirst(Job, JobTag?)");
+        }
+
+        internal static MethodBase ResolveEnqueueLastTarget()
+        {
+            return ResolveMethodExact(
+                typeof(JobQueue), nameof(JobQueue.EnqueueLast),
+                new Type[] { typeof(Job), typeof(Nullable<JobTag>) },
+                "JobQueue.EnqueueLast(Job, JobTag?)");
+        }
+
+        internal static MethodBase ResolveRescueDecisionTarget()
+        {
+            return ResolveMethodExact(
+                typeof(WorkGiver_RescueDowned), nameof(WorkGiver_RescueDowned.HasJobOnThing),
+                new Type[] { typeof(Pawn), typeof(Thing), typeof(bool) },
+                "WorkGiver_RescueDowned.HasJobOnThing(Pawn, Thing, bool)");
+        }
+
+        internal static MethodBase ResolveRescueJobTarget()
+        {
+            return ResolveMethodExact(
+                typeof(WorkGiver_RescueDowned), nameof(WorkGiver_RescueDowned.JobOnThing),
+                new Type[] { typeof(Pawn), typeof(Thing), typeof(bool) },
+                "WorkGiver_RescueDowned.JobOnThing(Pawn, Thing, bool)");
+        }
+
+        internal static MethodBase ResolveFindBedForTarget()
+        {
+            return ResolveMethodExact(
+                typeof(RestUtility), nameof(RestUtility.FindBedFor),
+                new Type[]
+                {
+                    typeof(Pawn), typeof(Pawn), typeof(bool), typeof(bool),
+                    typeof(Nullable<GuestStatus>)
+                },
+                "RestUtility.FindBedFor(Pawn, Pawn, bool, bool, GuestStatus?)");
+        }
+
+        internal static MethodBase ResolveTuckTarget()
+        {
+            return ResolveMethodExact(
+                typeof(RestUtility), nameof(RestUtility.TuckIntoBed),
+                new Type[] { typeof(Building_Bed), typeof(Pawn), typeof(Pawn), typeof(bool) },
+                "RestUtility.TuckIntoBed(Building_Bed, Pawn, Pawn, bool)");
+        }
+
+        internal static MethodBase ResolveStartupCheckTarget()
+        {
+            return ResolveMethodExact(
+                typeof(IntercolonyLog), nameof(IntercolonyLog.Verbose), new Type[] { typeof(string) },
+                "IntercolonyLog.Verbose(string)");
+        }
+
+        internal static bool PrepareTarget(string targetName, Func<MethodBase> resolver)
+        {
+            if (!DiagnosticsEnabled())
+            {
+                return false;
+            }
+
+            try
+            {
+                MethodBase target = resolver();
+                if (target != null)
+                {
+                    return true;
+                }
+
+                ReportRegistrationFailure(targetName, "target resolved to null; patch skipped.");
+            }
+            catch (Exception ex)
+            {
+                ReportRegistrationFailure(targetName, ex);
+            }
+
+            return false;
+        }
+
+        internal static bool PrepareTargetSet(
+            string targetName, Func<List<MethodBase>> resolver, int expectedCount)
+        {
+            if (!DiagnosticsEnabled())
+            {
+                return false;
+            }
+
+            try
+            {
+                List<MethodBase> targets = resolver();
+                if (targets == null || targets.Count != expectedCount)
+                {
+                    ReportRegistrationFailure(
+                        targetName,
+                        "expected " + expectedCount + " distinct targets, but resolved " +
+                        (targets == null ? "null" : targets.Count.ToString()) + "; patch skipped.");
+                    return false;
+                }
+
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    if (targets[i] == null)
+                    {
+                        ReportRegistrationFailure(
+                            targetName, "target " + (i + 1) + " resolved to null; patch skipped.");
+                        return false;
+                    }
+
+                    for (int j = i + 1; j < targets.Count; j++)
+                    {
+                        if (targets[i] == targets[j])
+                        {
+                            ReportRegistrationFailure(
+                                targetName,
+                                "target " + (i + 1) + " duplicated target " + (j + 1) +
+                                "; patch skipped.");
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                ReportRegistrationFailure(targetName, ex);
+                return false;
+            }
+        }
+
+        internal static void ReportRegistrationFailure(string targetName, Exception ex)
+        {
+            ReportRegistrationFailure(targetName, ExceptionText(ex));
+        }
+
+        internal static void ReportRegistrationFailure(string targetName, string detail)
+        {
+            try
+            {
+                if (DiagnosticsEnabled())
+                {
+                    IntercolonyLog.Error(
+                        "TEMPORARY BED DIAGNOSTICS PATCH REGISTRATION FAILED for " + targetName +
+                        ": " + detail);
+                }
+            }
+            catch
+            {
+                // Registration reporting must never become a second startup failure.
+            }
+        }
+
+        private static bool HasExpectedPatch(MethodBase target, Type patchType)
+        {
+            Patches patchInfo = Harmony.GetPatchInfo(target);
+            return patchInfo != null &&
+                (ContainsExpectedPatch(patchInfo.Prefixes, patchType) ||
+                 ContainsExpectedPatch(patchInfo.Postfixes, patchType) ||
+                 ContainsExpectedPatch(patchInfo.Transpilers, patchType) ||
+                 ContainsExpectedPatch(patchInfo.Finalizers, patchType));
+        }
+
+        private static bool ContainsExpectedPatch(IEnumerable<Patch> patches, Type patchType)
+        {
+            if (patches == null)
+            {
+                return false;
+            }
+
+            foreach (Patch patch in patches)
+            {
+                try
+                {
+                    if (patch != null && patch.owner == DiagnosticHarmonyId &&
+                        patch.PatchMethod != null && patch.PatchMethod.DeclaringType == patchType)
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // Ignore one unreadable patch record and inspect the remaining records.
+                }
+            }
+
+            return false;
+        }
+
+        private static void VerifyTargetPatch(
+            string targetName, Func<MethodBase> resolver, Type patchType)
+        {
+            try
+            {
+                MethodBase target = resolver();
+                if (target == null)
+                {
+                    ReportRegistrationFailure(
+                        targetName, "startup self-check resolved the target to null.");
+                }
+                else if (!HasExpectedPatch(target, patchType))
+                {
+                    ReportRegistrationFailure(
+                        targetName,
+                        "startup self-check resolved exactly one method, but no diagnostic patch " +
+                        "from " + patchType.FullName + " is present after PatchAll.");
+                }
+            }
+            catch (Exception ex)
+            {
+                ReportRegistrationFailure(targetName, ex);
+            }
+        }
+
+        internal static void VerifyStartupPatches()
+        {
+            if (!DiagnosticsEnabled() || Interlocked.Exchange(ref startupPatchCheckReported, 1) != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                VerifyTargetPatch(
+                    "ThinkNode_JobGiver.TryIssueJobPackage(Pawn, JobIssueParams)",
+                    ResolveJobGiverTarget, typeof(IntercolonyBedDiagnostics_JobGiverPatch));
+
+                bool hospitalityPresent = false;
+                try
+                {
+                    hospitalityPresent = AccessTools.TypeByName("Hospitality.JobGiver_Sleep") != null;
+                }
+                catch (Exception ex)
+                {
+                    ReportRegistrationFailure("Hospitality.JobGiver_Sleep type lookup", ex);
+                }
+
+                if (hospitalityPresent)
+                {
+                    VerifyTargetPatch(
+                        "Hospitality.JobGiver_Sleep.TryIssueJobPackage(Pawn, JobIssueParams)",
+                        ResolveHospitalitySleepTarget,
+                        typeof(IntercolonyBedDiagnostics_HospitalitySleepPatch));
+                }
+
+                VerifyTargetPatch(
+                    "Job..ctor()",
+                    () => ResolveJobConstructorTarget(Type.EmptyTypes, "Job..ctor()"),
+                    typeof(IntercolonyBedDiagnostics_JobConstructorPatch));
+                VerifyTargetPatch(
+                    "Job..ctor(JobDef)",
+                    () => ResolveJobConstructorTarget(
+                        new Type[] { typeof(JobDef) }, "Job..ctor(JobDef)"),
+                    typeof(IntercolonyBedDiagnostics_JobConstructorPatch));
+                VerifyTargetPatch(
+                    "Job..ctor(JobDef, LocalTargetInfo)",
+                    () => ResolveJobConstructorTarget(
+                        new Type[] { typeof(JobDef), typeof(LocalTargetInfo) },
+                        "Job..ctor(JobDef, LocalTargetInfo)"),
+                    typeof(IntercolonyBedDiagnostics_JobConstructorPatch));
+                VerifyTargetPatch(
+                    "Job..ctor(JobDef, LocalTargetInfo, LocalTargetInfo)",
+                    () => ResolveJobConstructorTarget(
+                        new Type[]
+                        {
+                            typeof(JobDef), typeof(LocalTargetInfo), typeof(LocalTargetInfo)
+                        },
+                        "Job..ctor(JobDef, LocalTargetInfo, LocalTargetInfo)"),
+                    typeof(IntercolonyBedDiagnostics_JobConstructorPatch));
+                VerifyTargetPatch(
+                    "Job..ctor(JobDef, LocalTargetInfo, LocalTargetInfo, LocalTargetInfo)",
+                    () => ResolveJobConstructorTarget(
+                        new Type[]
+                        {
+                            typeof(JobDef), typeof(LocalTargetInfo), typeof(LocalTargetInfo),
+                            typeof(LocalTargetInfo)
+                        },
+                        "Job..ctor(JobDef, LocalTargetInfo, LocalTargetInfo, LocalTargetInfo)"),
+                    typeof(IntercolonyBedDiagnostics_JobConstructorPatch));
+                VerifyTargetPatch(
+                    "Job..ctor(JobDef, LocalTargetInfo, int, bool)",
+                    () => ResolveJobConstructorTarget(
+                        new Type[] { typeof(JobDef), typeof(LocalTargetInfo), typeof(int), typeof(bool) },
+                        "Job..ctor(JobDef, LocalTargetInfo, int, bool)"),
+                    typeof(IntercolonyBedDiagnostics_JobConstructorPatch));
+                VerifyTargetPatch(
+                    "Job..ctor(JobDef, int, bool)",
+                    () => ResolveJobConstructorTarget(
+                        new Type[] { typeof(JobDef), typeof(int), typeof(bool) },
+                        "Job..ctor(JobDef, int, bool)"),
+                    typeof(IntercolonyBedDiagnostics_JobConstructorPatch));
+
+                VerifyTargetPatch(
+                    "JobMaker.MakeJob(JobDef)",
+                    () => ResolveJobMakerTarget(
+                        new Type[] { typeof(JobDef) }, "JobMaker.MakeJob(JobDef)"),
+                    typeof(IntercolonyBedDiagnostics_JobMakerPatch));
+                VerifyTargetPatch(
+                    "JobMaker.MakeJob(JobDef, LocalTargetInfo)",
+                    () => ResolveJobMakerTarget(
+                        new Type[] { typeof(JobDef), typeof(LocalTargetInfo) },
+                        "JobMaker.MakeJob(JobDef, LocalTargetInfo)"),
+                    typeof(IntercolonyBedDiagnostics_JobMakerPatch));
+                VerifyTargetPatch(
+                    "JobMaker.MakeJob(JobDef, LocalTargetInfo, LocalTargetInfo)",
+                    () => ResolveJobMakerTarget(
+                        new Type[]
+                        {
+                            typeof(JobDef), typeof(LocalTargetInfo), typeof(LocalTargetInfo)
+                        },
+                        "JobMaker.MakeJob(JobDef, LocalTargetInfo, LocalTargetInfo)"),
+                    typeof(IntercolonyBedDiagnostics_JobMakerPatch));
+                VerifyTargetPatch(
+                    "JobMaker.MakeJob(JobDef, LocalTargetInfo, LocalTargetInfo, LocalTargetInfo)",
+                    () => ResolveJobMakerTarget(
+                        new Type[]
+                        {
+                            typeof(JobDef), typeof(LocalTargetInfo), typeof(LocalTargetInfo),
+                            typeof(LocalTargetInfo)
+                        },
+                        "JobMaker.MakeJob(JobDef, LocalTargetInfo, LocalTargetInfo, LocalTargetInfo)"),
+                    typeof(IntercolonyBedDiagnostics_JobMakerPatch));
+                VerifyTargetPatch(
+                    "JobMaker.MakeJob(JobDef, LocalTargetInfo, int, bool)",
+                    () => ResolveJobMakerTarget(
+                        new Type[] { typeof(JobDef), typeof(LocalTargetInfo), typeof(int), typeof(bool) },
+                        "JobMaker.MakeJob(JobDef, LocalTargetInfo, int, bool)"),
+                    typeof(IntercolonyBedDiagnostics_JobMakerPatch));
+                VerifyTargetPatch(
+                    "JobMaker.MakeJob(JobDef, int, bool)",
+                    () => ResolveJobMakerTarget(
+                        new Type[] { typeof(JobDef), typeof(int), typeof(bool) },
+                        "JobMaker.MakeJob(JobDef, int, bool)"),
+                    typeof(IntercolonyBedDiagnostics_JobMakerPatch));
+
+                VerifyTargetPatch(
+                    "JobMaker.ReturnToPool(Job)",
+                    ResolveReturnToPoolTarget, typeof(IntercolonyBedDiagnostics_JobPoolPatch));
+                VerifyTargetPatch(
+                    "Job.CanBeginNow(Pawn, bool)",
+                    ResolveJobEvaluationTarget, typeof(IntercolonyBedDiagnostics_JobEvaluationPatch));
+                VerifyTargetPatch(
+                    "RestUtility.GetBedSleepingSlotPosFor(Pawn, Building_Bed)",
+                    ResolveSleepingSlotTarget, typeof(IntercolonyBedDiagnostics_SleepingSlotPatch));
+                VerifyTargetPatch(
+                    "Pawn_JobTracker..ctor(Pawn)",
+                    ResolveTrackerConstructorTarget,
+                    typeof(IntercolonyBedDiagnostics_TrackerConstructorPatch));
+                VerifyTargetPatch(
+                    "Pawn_JobTracker.ExposeData()",
+                    ResolveTrackerExposeDataTarget,
+                    typeof(IntercolonyBedDiagnostics_TrackerExposeDataPatch));
+                VerifyTargetPatch(
+                    "Pawn_JobTracker.StartJob(Job, JobCondition, ThinkNode, bool, bool, " +
+                    "ThinkTreeDef, JobTag?, bool, bool, bool?, bool, bool, bool)",
+                    ResolveTrackerStartJobTarget,
+                    typeof(IntercolonyBedDiagnostics_StartJobPatch));
+                VerifyTargetPatch(
+                    "Pawn_JobTracker.EndCurrentJob(JobCondition, bool, bool)",
+                    ResolveTrackerEndCurrentJobTarget,
+                    typeof(IntercolonyBedDiagnostics_EndCurrentJobPatch));
+                VerifyTargetPatch(
+                    "Pawn_JobTracker.TryTakeOrderedJob(Job, JobTag?, bool)",
+                    ResolveTrackerTryTakeOrderedJobTarget,
+                    typeof(IntercolonyBedDiagnostics_TryTakeOrderedJobPatch));
+                VerifyTargetPatch(
+                    "JobQueue.EnqueueFirst(Job, JobTag?)",
+                    ResolveEnqueueFirstTarget, typeof(IntercolonyBedDiagnostics_EnqueueFirstPatch));
+                VerifyTargetPatch(
+                    "JobQueue.EnqueueLast(Job, JobTag?)",
+                    ResolveEnqueueLastTarget, typeof(IntercolonyBedDiagnostics_EnqueueLastPatch));
+                VerifyTargetPatch(
+                    "WorkGiver_RescueDowned.HasJobOnThing(Pawn, Thing, bool)",
+                    ResolveRescueDecisionTarget,
+                    typeof(IntercolonyBedDiagnostics_RescueDecisionPatch));
+                VerifyTargetPatch(
+                    "WorkGiver_RescueDowned.JobOnThing(Pawn, Thing, bool)",
+                    ResolveRescueJobTarget, typeof(IntercolonyBedDiagnostics_RescueJobPatch));
+                VerifyTargetPatch(
+                    "RestUtility.FindBedFor(Pawn, Pawn, bool, bool, GuestStatus?)",
+                    ResolveFindBedForTarget, typeof(IntercolonyBedDiagnostics_FindBedForPatch));
+                VerifyTargetPatch(
+                    "RestUtility.TuckIntoBed(Building_Bed, Pawn, Pawn, bool)",
+                    ResolveTuckTarget, typeof(IntercolonyBedDiagnostics_TuckPatch));
+                VerifyTargetPatch(
+                    "IntercolonyLog.Verbose(string)",
+                    ResolveStartupCheckTarget,
+                    typeof(IntercolonyBedDiagnostics_StartupCheckPatch));
+            }
+            catch (Exception ex)
+            {
+                ReportRegistrationFailure("startup diagnostic patch self-check", ex);
+            }
+        }
     }
 
-    [HarmonyPatch(typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage))]
+    [HarmonyPatch(
+        typeof(ThinkNode_JobGiver), nameof(ThinkNode_JobGiver.TryIssueJobPackage),
+        new[] { typeof(Pawn), typeof(JobIssueParams) })]
     internal static class IntercolonyBedDiagnostics_JobGiverPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "ThinkNode_JobGiver.TryIssueJobPackage(Pawn, JobIssueParams)",
+                IntercolonyBedDiagnostics.ResolveJobGiverTarget);
+        }
+
         public static void Prefix(
             Pawn pawn, out IntercolonyBedDiagnostics.EmployeeJobCreationScope __state)
         {
@@ -2045,12 +2716,19 @@ namespace Intercolony
         {
             try
             {
-                return FindTarget() != null;
+                if (AccessTools.TypeByName("Hospitality.JobGiver_Sleep") == null)
+                {
+                    return false;
+                }
+
+                return IntercolonyBedDiagnostics.PrepareTarget(
+                    "Hospitality.JobGiver_Sleep.TryIssueJobPackage(Pawn, JobIssueParams)",
+                    IntercolonyBedDiagnostics.ResolveHospitalitySleepTarget);
             }
             catch (Exception ex)
             {
-                IntercolonyBedDiagnostics.ReportPatchFailure(
-                    "finding Hospitality.JobGiver_Sleep", ex);
+                IntercolonyBedDiagnostics.ReportRegistrationFailure(
+                    "Hospitality.JobGiver_Sleep.TryIssueJobPackage(Pawn, JobIssueParams)", ex);
                 return false;
             }
         }
@@ -2059,23 +2737,14 @@ namespace Intercolony
         {
             try
             {
-                return FindTarget();
+                return IntercolonyBedDiagnostics.ResolveHospitalitySleepTarget();
             }
             catch (Exception ex)
             {
-                IntercolonyBedDiagnostics.ReportPatchFailure(
-                    "resolving Hospitality.JobGiver_Sleep target", ex);
+                IntercolonyBedDiagnostics.ReportRegistrationFailure(
+                    "Hospitality.JobGiver_Sleep.TryIssueJobPackage(Pawn, JobIssueParams)", ex);
                 return null;
             }
-        }
-
-        private static MethodBase FindTarget()
-        {
-            Type type = AccessTools.TypeByName("Hospitality.JobGiver_Sleep");
-            return type == null
-                ? null
-                : AccessTools.Method(
-                    type, "TryIssueJobPackage", new[] { typeof(Pawn), typeof(JobIssueParams) });
         }
 
         public static void Prefix(
@@ -2107,9 +2776,20 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(Job), MethodType.Constructor)]
+    [HarmonyPatch]
     internal static class IntercolonyBedDiagnostics_JobConstructorPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTargetSet(
+                "Job constructors", IntercolonyBedDiagnostics.ResolveJobConstructorTargets, 7);
+        }
+
+        internal static IEnumerable<MethodBase> TargetMethods()
+        {
+            return IntercolonyBedDiagnostics.ResolveJobConstructorTargets();
+        }
+
         public static void Postfix(Job __instance)
         {
             try
@@ -2127,32 +2807,19 @@ namespace Intercolony
     [HarmonyPatch]
     internal static class IntercolonyBedDiagnostics_JobMakerPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTargetSet(
+                "JobMaker.MakeJob overloads",
+                IntercolonyBedDiagnostics.ResolveJobMakerTargets, 6);
+        }
+
         internal static IEnumerable<MethodBase> TargetMethods()
         {
-            List<MethodBase> methods = new List<MethodBase>();
-            try
-            {
-                MethodInfo[] candidates = typeof(JobMaker).GetMethods(
-                    BindingFlags.Public | BindingFlags.Static);
-                for (int i = 0; i < candidates.Length; i++)
-                {
-                    ParameterInfo[] parameters = candidates[i].GetParameters();
-                    // The parameterless pool factory returns before a JobDef exists. A later
-                    // field assignment has no passive setter seam; employee Start/Enqueue
-                    // lifecycle capture is the deliberate fallback for that uncommon shape.
-                    if (candidates[i].Name == nameof(JobMaker.MakeJob) &&
-                        candidates[i].ReturnType == typeof(Job) && parameters.Length > 0 &&
-                        parameters[0].ParameterType == typeof(JobDef))
-                    {
-                        methods.Add(candidates[i]);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                IntercolonyBedDiagnostics.ReportPatchFailure("finding JobMaker.MakeJob overloads", ex);
-            }
-            return methods;
+            // The parameterless pool factory returns before a JobDef exists. A later field
+            // assignment has no passive setter seam; employee Start/Enqueue lifecycle capture
+            // is the deliberate fallback for that uncommon shape.
+            return IntercolonyBedDiagnostics.ResolveJobMakerTargets();
         }
 
         public static void Postfix(Job __result)
@@ -2168,9 +2835,16 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(JobMaker), nameof(JobMaker.ReturnToPool))]
+    [HarmonyPatch(
+        typeof(JobMaker), nameof(JobMaker.ReturnToPool), new[] { typeof(Job) })]
     internal static class IntercolonyBedDiagnostics_JobPoolPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "JobMaker.ReturnToPool(Job)", IntercolonyBedDiagnostics.ResolveReturnToPoolTarget);
+        }
+
         public static void Prefix(Job job)
         {
             try
@@ -2184,9 +2858,16 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(Job), nameof(Job.CanBeginNow))]
+    [HarmonyPatch(
+        typeof(Job), nameof(Job.CanBeginNow), new[] { typeof(Pawn), typeof(bool) })]
     internal static class IntercolonyBedDiagnostics_JobEvaluationPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "Job.CanBeginNow(Pawn, bool)", IntercolonyBedDiagnostics.ResolveJobEvaluationTarget);
+        }
+
         public static void Prefix(
             Job __instance, Pawn pawn, bool whileLyingDown,
             out IntercolonyBedDiagnostics.EvaluationScope __state)
@@ -2216,9 +2897,18 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(RestUtility), nameof(RestUtility.GetBedSleepingSlotPosFor))]
+    [HarmonyPatch(
+        typeof(RestUtility), nameof(RestUtility.GetBedSleepingSlotPosFor),
+        new[] { typeof(Pawn), typeof(Building_Bed) })]
     internal static class IntercolonyBedDiagnostics_SleepingSlotPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "RestUtility.GetBedSleepingSlotPosFor(Pawn, Building_Bed)",
+                IntercolonyBedDiagnostics.ResolveSleepingSlotTarget);
+        }
+
         public static void Prefix(Pawn pawn, Building_Bed bed)
         {
             try
@@ -2232,9 +2922,17 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(Pawn_JobTracker), MethodType.Constructor)]
+    [HarmonyPatch(
+        typeof(Pawn_JobTracker), MethodType.Constructor, new[] { typeof(Pawn) })]
     internal static class IntercolonyBedDiagnostics_TrackerConstructorPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "Pawn_JobTracker..ctor(Pawn)",
+                IntercolonyBedDiagnostics.ResolveTrackerConstructorTarget);
+        }
+
         public static void Postfix(Pawn_JobTracker __instance, Pawn newPawn)
         {
             try
@@ -2248,9 +2946,17 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.ExposeData))]
+    [HarmonyPatch(
+        typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.ExposeData), new Type[] { })]
     internal static class IntercolonyBedDiagnostics_TrackerExposeDataPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "Pawn_JobTracker.ExposeData()",
+                IntercolonyBedDiagnostics.ResolveTrackerExposeDataTarget);
+        }
+
         public static void Postfix(Pawn_JobTracker __instance, Pawn ___pawn)
         {
             try
@@ -2265,9 +2971,24 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.StartJob))]
+    [HarmonyPatch(
+        typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.StartJob),
+        new Type[]
+        {
+            typeof(Job), typeof(JobCondition), typeof(ThinkNode), typeof(bool), typeof(bool),
+            typeof(ThinkTreeDef), typeof(Nullable<JobTag>), typeof(bool), typeof(bool),
+            typeof(Nullable<bool>), typeof(bool), typeof(bool), typeof(bool)
+        })]
     internal static class IntercolonyBedDiagnostics_StartJobPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "Pawn_JobTracker.StartJob(Job, JobCondition, ThinkNode, bool, bool, " +
+                "ThinkTreeDef, JobTag?, bool, bool, bool?, bool, bool, bool)",
+                IntercolonyBedDiagnostics.ResolveTrackerStartJobTarget);
+        }
+
         [HarmonyPriority(Priority.First)]
         public static void Prefix(
             Pawn_JobTracker __instance, Pawn ___pawn, Job newJob, bool fromQueue,
@@ -2301,9 +3022,18 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.EndCurrentJob))]
+    [HarmonyPatch(
+        typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.EndCurrentJob),
+        new[] { typeof(JobCondition), typeof(bool), typeof(bool) })]
     internal static class IntercolonyBedDiagnostics_EndCurrentJobPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "Pawn_JobTracker.EndCurrentJob(JobCondition, bool, bool)",
+                IntercolonyBedDiagnostics.ResolveTrackerEndCurrentJobTarget);
+        }
+
         [HarmonyPriority(Priority.First)]
         public static void Prefix(
             Pawn_JobTracker __instance, Pawn ___pawn, JobCondition condition,
@@ -2335,9 +3065,18 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.TryTakeOrderedJob))]
+    [HarmonyPatch(
+        typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.TryTakeOrderedJob),
+        new[] { typeof(Job), typeof(Nullable<JobTag>), typeof(bool) })]
     internal static class IntercolonyBedDiagnostics_TryTakeOrderedJobPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "Pawn_JobTracker.TryTakeOrderedJob(Job, JobTag?, bool)",
+                IntercolonyBedDiagnostics.ResolveTrackerTryTakeOrderedJobTarget);
+        }
+
         public static void Prefix(
             Pawn ___pawn, out IntercolonyBedDiagnostics.TrackerScope __state)
         {
@@ -2367,9 +3106,18 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(JobQueue), nameof(JobQueue.EnqueueFirst))]
+    [HarmonyPatch(
+        typeof(JobQueue), nameof(JobQueue.EnqueueFirst),
+        new[] { typeof(Job), typeof(Nullable<JobTag>) })]
     internal static class IntercolonyBedDiagnostics_EnqueueFirstPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "JobQueue.EnqueueFirst(Job, JobTag?)",
+                IntercolonyBedDiagnostics.ResolveEnqueueFirstTarget);
+        }
+
         public static void Postfix(JobQueue __instance, Job j, JobTag? tag)
         {
             try
@@ -2383,9 +3131,18 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(JobQueue), nameof(JobQueue.EnqueueLast))]
+    [HarmonyPatch(
+        typeof(JobQueue), nameof(JobQueue.EnqueueLast),
+        new[] { typeof(Job), typeof(Nullable<JobTag>) })]
     internal static class IntercolonyBedDiagnostics_EnqueueLastPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "JobQueue.EnqueueLast(Job, JobTag?)",
+                IntercolonyBedDiagnostics.ResolveEnqueueLastTarget);
+        }
+
         public static void Postfix(JobQueue __instance, Job j, JobTag? tag)
         {
             try
@@ -2399,9 +3156,18 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(WorkGiver_RescueDowned), nameof(WorkGiver_RescueDowned.HasJobOnThing))]
+    [HarmonyPatch(
+        typeof(WorkGiver_RescueDowned), nameof(WorkGiver_RescueDowned.HasJobOnThing),
+        new[] { typeof(Pawn), typeof(Thing), typeof(bool) })]
     internal static class IntercolonyBedDiagnostics_RescueDecisionPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "WorkGiver_RescueDowned.HasJobOnThing(Pawn, Thing, bool)",
+                IntercolonyBedDiagnostics.ResolveRescueDecisionTarget);
+        }
+
         [HarmonyPriority(Priority.First)]
         public static void Prefix(
             Pawn pawn, Thing t, out IntercolonyBedDiagnostics.RescueLookupScope __state)
@@ -2431,9 +3197,18 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(WorkGiver_RescueDowned), nameof(WorkGiver_RescueDowned.JobOnThing))]
+    [HarmonyPatch(
+        typeof(WorkGiver_RescueDowned), nameof(WorkGiver_RescueDowned.JobOnThing),
+        new[] { typeof(Pawn), typeof(Thing), typeof(bool) })]
     internal static class IntercolonyBedDiagnostics_RescueJobPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "WorkGiver_RescueDowned.JobOnThing(Pawn, Thing, bool)",
+                IntercolonyBedDiagnostics.ResolveRescueJobTarget);
+        }
+
         [HarmonyPriority(Priority.First)]
         public static void Prefix(
             Pawn pawn, Thing t, out IntercolonyBedDiagnostics.RescueLookupScope __state)
@@ -2484,6 +3259,13 @@ namespace Intercolony
         new[] { typeof(Pawn), typeof(Pawn), typeof(bool), typeof(bool), typeof(Nullable<GuestStatus>) })]
     internal static class IntercolonyBedDiagnostics_FindBedForPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "RestUtility.FindBedFor(Pawn, Pawn, bool, bool, GuestStatus?)",
+                IntercolonyBedDiagnostics.ResolveFindBedForTarget);
+        }
+
         public static void Postfix(Pawn sleeper, Pawn traveler, Building_Bed __result)
         {
             try
@@ -2498,9 +3280,18 @@ namespace Intercolony
         }
     }
 
-    [HarmonyPatch(typeof(RestUtility), nameof(RestUtility.TuckIntoBed))]
+    [HarmonyPatch(
+        typeof(RestUtility), nameof(RestUtility.TuckIntoBed),
+        new[] { typeof(Building_Bed), typeof(Pawn), typeof(Pawn), typeof(bool) })]
     internal static class IntercolonyBedDiagnostics_TuckPatch
     {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "RestUtility.TuckIntoBed(Building_Bed, Pawn, Pawn, bool)",
+                IntercolonyBedDiagnostics.ResolveTuckTarget);
+        }
+
         public static void Prefix(
             Building_Bed bed, Pawn taker, Pawn takee, bool rescued,
             out IntercolonyBedDiagnostics.TuckScope __state)
@@ -2525,6 +3316,34 @@ namespace Intercolony
             catch (Exception ex)
             {
                 IntercolonyBedDiagnostics.ReportPatchFailure("RestUtility.TuckIntoBed postfix", ex);
+            }
+        }
+    }
+
+    // HarmonyPatches logs this message immediately after PatchAll() returns. This postfix is
+    // therefore the first point in this file that is guaranteed to run after the shared
+    // registration pass has completed.
+    [HarmonyPatch(
+        typeof(IntercolonyLog), nameof(IntercolonyLog.Verbose), new[] { typeof(string) })]
+    internal static class IntercolonyBedDiagnostics_StartupCheckPatch
+    {
+        public static bool Prepare()
+        {
+            return IntercolonyBedDiagnostics.PrepareTarget(
+                "IntercolonyLog.Verbose(string)",
+                IntercolonyBedDiagnostics.ResolveStartupCheckTarget);
+        }
+
+        public static void Postfix()
+        {
+            try
+            {
+                IntercolonyBedDiagnostics.VerifyStartupPatches();
+            }
+            catch (Exception ex)
+            {
+                IntercolonyBedDiagnostics.ReportRegistrationFailure(
+                    "startup diagnostic patch self-check", ex);
             }
         }
     }
