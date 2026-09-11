@@ -1,8 +1,19 @@
 # Foreman state — Intercolony
 
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: F.4 — the temporary bed diagnostics, in ONE revertable file
-Worker: luna running — `…\scratchpad\unit-f4.out`.
+Unit: F.5 — **WAITING ON THE OPERATOR'S REPRODUCTION.** Nothing to dispatch until the dump exists.
+Worker: none.
+
+**THE DIAGNOSTICS ARE BUILT AND COMMITTED AT `cdd855a`**, one file,
+`Source/Intercolony/Debug/IntercolonyBedDiagnostics.cs`, 2531 lines, build clean 0/0.
+**`git revert cdd855a` removes it whole — stage G depends on that.** An `Enabled` const at the top
+silences it without a revert.
+
+**ONE SUITE RUN IS STILL OWED BEFORE THE REPRODUCTION IS SPENT.** The instrumentation patches very
+hot paths — `Job..ctor`, `JobMaker.MakeJob`, `Job.CanBeginNow`, `Pawn_JobTracker.StartJob`/
+`EndCurrentJob` — and a fault there would waste the operator's reproduction. `dev.ps1 test all
+-Fresh` restarts their game, so **ask before running it; they were actively playing when this
+landed.**
 
 **F.3 IS DONE at `829355e` AND IT FOUND A SECOND WRONG EXONERATION.** Provenance was fixed properly
 this time: both DLLs SHA-256'd, and the Hospitality binary confirmed byte-identical to the public
@@ -236,7 +247,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 19:30 — F.3 done; a SECOND exoneration was wrong; F.4 building
+Updated: 2026-09-10 20:10 — diagnostics built at cdd855a; awaiting the reproduction
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
