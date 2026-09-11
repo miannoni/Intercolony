@@ -1,8 +1,29 @@
 # Foreman state — Intercolony
 
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: F.4b — fix the unresolvable patch target and isolate the file's blast radius
-Worker: luna running — `…\scratchpad\unit-f4b.out`.
+Unit: F.5 — **WAITING ON THE OPERATOR'S REPRODUCTION.** The gate passed; the game is loaded and
+running on the verified build. Nothing to dispatch until the dump exists.
+Worker: none.
+
+**ALL FIVE PRE-REPRODUCTION GATES PASS, on `7003d4c`.** Fresh `Player.log` from process launch, one
+`loaded, version` line: no `HarmonyException`, no `Undefined target method`, no static-constructor
+failure, no registration failure. `Harmony patches applied.` present, so the static constructor
+completed and the six production patches are in. Hospitality and Common Sense both active.
+
+**GATE 5 WAS PROVEN BY MUTATION, NOT BY SILENCE** — the sentinel only reports failures, so quiet
+could have meant "all fifteen applied" or "the checker never ran". Breaking one target deliberately
+named it exactly (`REGISTRATION FAILED for RestUtility.GetBedSleepingSlotPosFor(Pawn, Building_Bed):
+resolved to 0 methods`) **while `Harmony patches applied.` still appeared** — which also proves
+F.4b's isolation works. Restored and re-verified clean.
+
+## **A HARNESS TRAP THAT INVALIDATED A RUN — READ BEFORE ANY FUTURE MUTATION TEST**
+
+**`Copy-Item` PRESERVES THE SOURCE TIMESTAMP.** Restoring a mutated file therefore makes it look
+OLDER than the DLL built from the mutation, MSBuild skips recompilation in under a second, and the
+next launch silently runs **the mutated binary while every log line says "Build succeeded"**. It
+cost one bad gate run here and was caught only because a failure line persisted when it should not
+have. **Every mutation script in this session used that restore pattern.** Touch the file explicitly
+(`(Get-Item $f).LastWriteTime = Get-Date`) after restoring, and verify the DLL timestamp moved.
 
 ## **THE HARNESS HAS A BLIND SPOT. THIS IS THE MOST IMPORTANT THING ON THIS PAGE.**
 
@@ -277,7 +298,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 — F.4b fixing the patch target; a five-point pre-repro gate is now required
+Updated: 2026-09-11 20:31 — gate PASSED; awaiting the operator's reproduction
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
