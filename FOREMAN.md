@@ -1,19 +1,46 @@
 # Foreman state — Intercolony
 
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: F.5 — **WAITING ON THE OPERATOR'S REPRODUCTION.** Nothing to dispatch until the dump exists.
-Worker: none.
+Unit: F.4b — fix the unresolvable patch target and isolate the file's blast radius
+Worker: luna running — `…\scratchpad\unit-f4b.out`.
 
-**THE DIAGNOSTICS ARE BUILT AND COMMITTED AT `cdd855a`**, one file,
-`Source/Intercolony/Debug/IntercolonyBedDiagnostics.cs`, 2531 lines, build clean 0/0.
-**`git revert cdd855a` removes it whole — stage G depends on that.** An `Enabled` const at the top
-silences it without a revert.
+## **THE HARNESS HAS A BLIND SPOT. THIS IS THE MOST IMPORTANT THING ON THIS PAGE.**
 
-**ONE SUITE RUN IS STILL OWED BEFORE THE REPRODUCTION IS SPENT.** The instrumentation patches very
-hot paths — `Job..ctor`, `JobMaker.MakeJob`, `Job.CanBeginNow`, `Pawn_JobTracker.StartJob`/
-`EndCurrentJob` — and a fault there would waste the operator's reproduction. `dev.ps1 test all
--Fresh` restarts their game, so **ask before running it; they were actively playing when this
-landed.**
+**A CLEAN `dev.ps1` LOG DELTA DOES NOT PROVE STARTUP WAS CLEAN.** The delta window opens when the
+test starts; `[StaticConstructorOnStartup]` runs before that. A fatal patching failure is therefore
+invisible to it.
+
+Proven, not theorised: `cdd855a` shipped
+`[HarmonyPatch(typeof(Pawn_JobTracker), MethodType.Constructor)]` with no argument types. The
+constructor is `Pawn_JobTracker(Pawn newPawn)`
+(`reference/decompiled/Verse.AI/Pawn_JobTracker.cs:85`), so Harmony could not resolve it, threw
+inside `PatchAll`, and **aborted `Intercolony.HarmonyPatches`'s static constructor — taking ALL SIX
+production patches down with it.** The full suite ran **1601/0/16, "Log signal: CLEAN"** against that
+build. The gate did not lie; it could not see.
+
+**I reported that green run to the operator as validation of the instrumentation. It was not, and
+they were about to spend a reproduction on a build with Intercolony's patches switched off.**
+
+**STAGE G'S RELEASE GATE MUST VALIDATE THE STARTUP LOG FROM PROCESS LAUNCH**, not only the delta.
+Operator instruction, 2026-09-10. Recorded again in the G section below.
+
+## F.5 — THE PRE-REPRODUCTION GATE. All five must pass before the operator is asked to play.
+
+Operator instruction: do not ask for the manual reproduction until every one of these holds.
+
+  1. restart RimWorld completely on the rebuilt DLL;
+  2. read the startup log **from process launch**, not the delta window;
+  3. prove there is no `HarmonyException`, no `Undefined target method`, no static-constructor
+     failure;
+  4. prove **Intercolony's six production Harmony patches are actually applied**;
+  5. prove **all fifteen temporary diagnostic patches are actually applied**.
+
+**Environment is sound — checked and retracting an earlier worry.** Steam `ActiveUser` is non-zero
+(logged in), and `Config\ModsConfig.xml` lists all fourteen mods active including **Hospitality and
+Common Sense**; `Playtest 1.0.rws`'s own `modIds` agrees. The five-mod list I flagged earlier was a
+truncated tail I misread.
+
+`cdd855a` remains the single revert that removes the instrumentation; F.4b must not break that.
 
 **F.3 IS DONE at `829355e` AND IT FOUND A SECOND WRONG EXONERATION.** Provenance was fixed properly
 this time: both DLLs SHA-256'd, and the Hospitality binary confirmed byte-identical to the public
@@ -99,8 +126,11 @@ refactors, no balance changes, no unrelated cleanup.
      notes, Workshop changenotes, compatibility and migration notes, README/current-state docs, and
      whatever else the established procedure requires.
   6. **The release gate:** clean build; full fresh-world suite; a clean unexpected-`Player.log`
-     delta; save/load and migration verification appropriate to the ACTUAL current schema; any
-     repository release-gate tests; and F's final disposition represented honestly. **Do not hide
+     delta; **STARTUP-LOG VALIDATION FROM PROCESS LAUNCH — mandatory, operator instruction
+     2026-09-10, because a post-start delta being CLEAN does NOT prove startup was clean and this
+     run proved it the hard way (see the header);** save/load and migration verification appropriate
+     to the ACTUAL current schema; any repository release-gate tests; and F's final disposition
+     represented honestly. **Do not hide
      skipped tests. Distinguish a harmless world-condition skip from genuine release uncertainty** —
      the current suite has sixteen of the former and they must be named as such, not buried.
   7. Build with `package.ps1`. **Audit the PACKAGE ITSELF, not the source tree:** correct
@@ -247,7 +277,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-10 20:10 — diagnostics built at cdd855a; awaiting the reproduction
+Updated: 2026-09-11 — F.4b fixing the patch target; a five-point pre-repro gate is now required
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
