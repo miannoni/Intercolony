@@ -1,9 +1,41 @@
 # Foreman state — Intercolony
 
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: F.5 — **WAITING ON THE OPERATOR'S REPRODUCTION.** The gate passed; the game is loaded and
-running on the verified build. Nothing to dispatch until the dump exists.
+Unit: F.5 — **THE REPRODUCTION ATTEMPT DID NOT CAPTURE THE TARGET EVENT. Two questions are with the
+operator; do not dispatch until they answer.**
 Worker: none.
+
+**2026-09-11 20:42 — the operator reported recreating the incident. They did not.** What their
+screenshots show is `Could not reserve Thing_Steel1069317 ... for Kazuki for job DoBill`, with
+**`CommonSense.JobDriver_DoBill_MakeNewToils_CommonSensePatch`** in the stack — a bill-work
+reservation failure, not the infirmary defect. Verified in the log directly rather than from the
+pictures: **`Could not find good sleeping slot` = 0 occurrences, `BAD QUEUED LAYDOWN INCIDENT` = 0.**
+The instrumentation is armed and gate-verified; the event simply did not occur.
+
+**WHY IT MAY NOW BE HARD TO TRIGGER: a war with Coalition of Braga emptied the payroll.** The log
+shows mass `Safe passage complete` — **Breixo and Kazuki both went home.** Both pawns from the
+original incident are off the map, and an infirmary pile-up needs employees who are still employed
+and still present.
+
+### **F-D12 — MY `Lord_165` VERDICT IS NO LONGER SAFE, AND THIS IS A NEW LEAD**
+
+A **new `Lord_166`** not-deep-saved warning appeared, and the surrounding lines are damning:
+
+    [Intercolony] Contract 535207 suspended by war with Coalition of Braga.
+    [Intercolony] Safe passage complete: Employment #111272 Encambracam ...
+    Object with load ID Lord_165 is referenced (xml node name: lord) but is not deep-saved.
+
+**Intercolony DOES create Lords on exactly this path.** `HostilityPolicy.WalkOutFactionless` calls
+`LordMaker.MakeNewLord(null, new LordJob_ExitMapBest(...), worker.MapHeld, ...)`
+(`Source/Intercolony/Core/HostilityPolicy.cs:186-189`, read by me). My earlier "not ours" rested on
+a save snapshot showing `Lord_165` held by Hospitality's `CompGuest` on siege pawns — real evidence,
+but a NEW Lord id appearing immediately alongside our own Lord creation means **the verdict cannot
+stand as written.** Note `MakeNewLord` registers with `map.lordManager`, whose `lords` list IS
+deep-saved (`reference/decompiled/Verse.AI.Group/LordManager.cs:26`), so the interesting question is
+what happens to that Lord when its factionless pawn leaves the map.
+
+**Open with the operator, both of which change what happens next:** whether any employees remain on
+the map, and whether to keep chasing the infirmary repro or pivot to the Lord warnings.
 
 **ALL FIVE PRE-REPRODUCTION GATES PASS, on `7003d4c`.** Fresh `Player.log` from process launch, one
 `loaded, version` line: no `HarmonyException`, no `Undefined target method`, no static-constructor
@@ -298,7 +330,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 20:31 — gate PASSED; awaiting the operator's reproduction
+Updated: 2026-09-11 20:50 — repro missed the target; Lord verdict reopened; awaiting the operator
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
