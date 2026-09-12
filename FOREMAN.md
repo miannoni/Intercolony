@@ -21,6 +21,30 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
+Unit: G.3b — **G.3's stale-binary guard checks the WRONG DIRECTION and must be content-based**
+
+### G-D5 — I REJECTED G.3's stale-binary guard after reproducing the real incident myself
+
+The guard tests `binary.LastWriteTimeUtc -lt newestSource.LastWriteTimeUtc` (`dev.ps1:429`) — "is
+the DLL **older** than the newest source". **The F incident is the reverse.** `Copy-Item` restores a
+file with its **original, older** timestamp, so the DLL ends up **newer** than every source while
+still containing the mutation.
+
+**Reproduced end to end by me, not argued:** built with a mutation (DLL `21:53:41`), restored the
+source with its timestamp pushed back to `21:18:42`, rebuilt. **MSBuild skipped, the DLL was
+unchanged and still mutated, and the guard printed "Binary current" with exit 0.**
+
+The worker's own verification touched a source *forward* in time — a case the guard does catch but
+which MSBuild already handles correctly. **A guard that only fires where there is no bug.** Lesson
+for this run: when a unit demonstrates its own guard, check that the demonstration reproduces the
+ORIGINAL incident rather than a convenient proxy.
+
+Fix in flight: hash the compiled source set at build time into a sidecar and compare on every check,
+so a backwards-moving timestamp cannot hide a stale binary. Keep the timestamp check alongside — it
+catches a genuinely different case. **A missing sidecar must FAIL, not pass**, which is the same
+lesson as the startup sentinel: absence of evidence was being read as evidence.
+
+Superseded unit line:
 Unit: G.3 — bake the two gate lessons into `dev.ps1` / `package.ps1` / the procedure
 Worker: luna running — `…\scratchpad\unit-g3.out`.
 
@@ -436,7 +460,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 22:05 — G.2 done, 1.1.0 set; G.3 running
+Updated: 2026-09-11 22:15 — G.3 guard rejected and being rebuilt content-based
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
