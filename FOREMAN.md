@@ -21,7 +21,7 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: G.4c — make every counted skip visible, and guard the invariant
+Unit: G.4c — make every counted skip visible; then G.4d — eliminate the self-referential skips
 
 ### G-D6 — THE HARNESS DISCARDS SKIP EVIDENCE. Found, cause proven, fix in flight.
 
@@ -39,6 +39,35 @@ Event 1, Brand 1, Order 3, Animal 12 = 17; only Order and Animal survive = 15 pr
 be neither hidden nor misclassified. Two assertions whose identity was destroyed cannot honestly be
 called harmless world variance. G.4c also adds a guard that warns when printed count ≠ reported
 count, so a third format announces itself instead of quietly losing evidence.
+
+### G-R4 — G.4d: SELF-REFERENTIAL SKIPS MUST BE ELIMINATED, NOT MERELY DOCUMENTED
+
+**Operator instruction, 2026-09-12.** Documenting the three self-referential skips is not enough.
+**The production function under test must not also decide whether its own fixture exists**, because
+a regression then turns its assertion into SKIPPED instead of FAIL and hides itself behind a green
+run.
+
+For each of the three: build a deterministic fixture **independently of the production logic under
+test**, or detect the prerequisite by an **independent mechanism**. **If the prerequisite is an
+invariant of the fresh quicktest world, its absence is a FAIL, not a SKIP.** Keep SKIP only for
+genuinely external, world-contingent prerequisites.
+
+The three, located:
+
+  1. `IntercolonyOrderSelfTest.cs:2881` — skips when `wholeMapWalk` is empty, but that walk is built
+     through **`IntercolonyProductClassifier.IsFungibleTradeItem`** (`:2749`), which the assertion is
+     partly testing. A fresh colony always holds stored resources, so an independently-confirmed
+     stock plus an empty production walk is a **FAIL**.
+  2. `IntercolonyOrderSelfTest.cs:1215-1262` — finds its fixture with
+     **`OrderValidator.MatchingColonyAnimals`** (`:1245`), the function it then asserts, and falls
+     through to `skip` at `:1260`.
+  3. A sibling animal assertion of the same shape, to be identified and named.
+
+**ACCEPTANCE FOR THE WHOLE GATE, and G.5 does not start until all five hold:** counted skips ==
+printed skips; every remaining skip individually identifiable; **no self-referential skip capable of
+masking a regression**; full fresh-world suite rerun after the changes; startup log clean under the
+strengthened gate. **Each of the three must be mutation-proven to report FAIL where it previously
+reported SKIPPED.**
 
 ### G-D7 — RECON PUSHED BACK ON MY OWN FRAMING, AND IT WAS RIGHT
 
