@@ -21,7 +21,7 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: G.3b — **G.3's stale-binary guard checks the WRONG DIRECTION and must be content-based**
+Unit: G.4b — recon: the suite counts 17 skips but prints only 15
 
 ### G-D5 — I REJECTED G.3's stale-binary guard after reproducing the real incident myself
 
@@ -460,7 +460,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 22:15 — G.3 guard rejected and being rebuilt content-based
+Updated: 2026-09-11 22:40 — G.3 accepted; release gate green; chasing a skip-count gap
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
