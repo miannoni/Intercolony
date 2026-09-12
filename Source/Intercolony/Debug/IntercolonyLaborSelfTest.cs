@@ -99,6 +99,7 @@ namespace Intercolony
             try
             {
                 CheckAutoRenewPersistence(r);
+                CheckSettingsDefaultMigration(r);
 
                 // --- Candidate pool ---
                 List<LaborCandidate> pool = LaborCandidateService.Refresh(state);
@@ -1213,6 +1214,308 @@ namespace Intercolony
                 $"[{NodeNamesDetail(emergencyUnexpected)}], candidate-dependent node allowed " +
                 $"[{NodeNamesDetail(candidateDependentNodes)}], unexpected contract fields " +
                 $"[{NodeNamesDetail(unexpectedContractFields)}]");
+        }
+
+        private sealed class SettingsRoundTrip
+        {
+            public IntercolonySettings loaded;
+            public HashSet<string> savedNodes;
+            public string failure;
+        }
+
+        private static void CheckSettingsDefaultMigration(Results r)
+        {
+            if (Scribe.saver == null || Scribe.loader == null)
+            {
+                r.Skip(
+                    "settings defaults and migration round trips",
+                    "vanilla Scribe saver or loader was unavailable");
+                return;
+            }
+
+            IntercolonySettings freshSaved = new IntercolonySettings();
+            bool freshConstructorDefaults = freshSaved.settingsVersion == 1 &&
+                SettingsHaveFreshDefaults(freshSaved);
+            SettingsRoundTrip fresh = RoundTripSettings(
+                freshSaved, "intercolony-settings-fresh", null);
+            r.Check(
+                freshConstructorDefaults &&
+                fresh.savedNodes != null && fresh.savedNodes.Contains("settingsVersion") &&
+                fresh.failure == null && SettingsHaveFreshDefaults(fresh.loaded),
+                "fresh-install settings use the new defaults",
+                $"constructor={DescribeSettings(freshSaved)}; loaded={DescribeSettings(fresh.loaded)}; " +
+                    $"failure={fresh.failure ?? "none"}");
+
+            IntercolonySettings untouchedSaved = new IntercolonySettings
+            {
+                settingsVersion = -1
+            };
+            SettingsRoundTrip untouched = RoundTripSettings(
+                untouchedSaved,
+                "intercolony-settings-legacy-untouched",
+                RemoveMigratedSettingsNodes);
+            r.Check(
+                untouched.failure == null && SettingsHaveLegacyDefaults(untouched.loaded),
+                "pre-version untouched settings keep their old effective values",
+                $"loaded={DescribeSettings(untouched.loaded)}; " +
+                    $"failure={untouched.failure ?? "none"}");
+
+            IntercolonySettings explicitSaved = new IntercolonySettings
+            {
+                settingsVersion = -1,
+                letterVolume = IntercolonyLetterVolume.Everything,
+                refreshDays = 0.25f,
+                activeOpportunities = 37,
+                enabledBuyOnlyTradeCategoryKeys = new HashSet<string>(
+                    new[] { "FoodMeals" }),
+                commercialGoodwillIntervalDays = 7,
+                commercialGoodwillPerInterval = 5,
+                commercialGoodwillCeiling = 15,
+                commercialReputationRequired = 85,
+                minimumEmploymentDaysForGoodwill = 4,
+                employmentGoodwillImpact = 2
+            };
+            SettingsRoundTrip explicitRoundTrip = RoundTripSettings(
+                explicitSaved, "intercolony-settings-legacy-explicit", null);
+            r.Check(
+                explicitRoundTrip.failure == null &&
+                explicitRoundTrip.savedNodes != null &&
+                !explicitRoundTrip.savedNodes.Contains("settingsVersion") &&
+                HasAllMigratedSettingsNodes(explicitRoundTrip.savedNodes) &&
+                SettingsHaveExplicitValues(explicitRoundTrip.loaded),
+                "pre-version explicitly saved settings keep their exact values",
+                $"savedNodes={NodeNamesDetail(explicitRoundTrip.savedNodes)}; " +
+                    $"loaded={DescribeSettings(explicitRoundTrip.loaded)}; " +
+                    $"failure={explicitRoundTrip.failure ?? "none"}");
+        }
+
+        private static SettingsRoundTrip RoundTripSettings(
+            IntercolonySettings savedSettings,
+            string label,
+            Action<XmlDocument> editDocument)
+        {
+            SettingsRoundTrip result = new SettingsRoundTrip();
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-{label}-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.ForceStop();
+                Scribe.saver.InitSaving(path, label);
+                Scribe_Deep.Look(ref savedSettings, "settings");
+                Scribe.saver.FinalizeSaving();
+
+                XmlDocument document = new XmlDocument();
+                document.Load(path);
+                result.savedNodes = SettingsNodeNames(document);
+                if (editDocument != null)
+                {
+                    editDocument(document);
+                    document.Save(path);
+                }
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref result.loaded, "settings");
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                result.failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (result.failure == null)
+                    {
+                        result.failure =
+                            $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (result.failure == null)
+                    {
+                        result.failure =
+                            $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static HashSet<string> SettingsNodeNames(XmlDocument document)
+        {
+            XmlNode settingsNode = document.SelectSingleNode("//settings");
+            if (settingsNode == null)
+            {
+                return null;
+            }
+
+            HashSet<string> names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (XmlNode child in settingsNode.ChildNodes)
+            {
+                if (child.NodeType == XmlNodeType.Element)
+                {
+                    names.Add(child.Name);
+                }
+            }
+
+            return names;
+        }
+
+        private static void RemoveMigratedSettingsNodes(XmlDocument document)
+        {
+            XmlNode settingsNode = document.SelectSingleNode("//settings");
+            if (settingsNode == null)
+            {
+                throw new InvalidOperationException("Scribe settings wrapper was missing");
+            }
+
+            foreach (string name in MigratedSettingsNodeNames())
+            {
+                XmlNode node = settingsNode[name];
+                if (node != null)
+                {
+                    settingsNode.RemoveChild(node);
+                }
+            }
+        }
+
+        private static string[] MigratedSettingsNodeNames()
+        {
+            return new[]
+            {
+                "settingsVersion",
+                "letterVolume",
+                "refreshDays",
+                "activeOpportunities",
+                "enabledBuyOnlyTradeCategoryKeys",
+                "commercialGoodwillIntervalDays",
+                "commercialGoodwillPerInterval",
+                "commercialGoodwillCeiling",
+                "commercialReputationRequired",
+                "minimumEmploymentDaysForGoodwill",
+                "employmentGoodwillImpact"
+            };
+        }
+
+        private static bool HasAllMigratedSettingsNodes(HashSet<string> nodes)
+        {
+            if (nodes == null)
+            {
+                return false;
+            }
+
+            foreach (string name in MigratedSettingsNodeNames())
+            {
+                if (name == "settingsVersion")
+                {
+                    continue;
+                }
+
+                if (!nodes.Contains(name))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool SettingsHaveFreshDefaults(IntercolonySettings settings)
+        {
+            return settings != null && settings.settingsVersion == 1 &&
+                settings.letterVolume == IntercolonyLetterVolume.Minimal &&
+                settings.refreshDays == 0.25f &&
+                settings.activeOpportunities == 50 &&
+                HasExactly(settings.enabledBuyOnlyTradeCategoryKeys,
+                    "FoodMeals", "StoneBlocks") &&
+                settings.commercialGoodwillIntervalDays == 7 &&
+                settings.commercialGoodwillPerInterval == 2 &&
+                settings.commercialGoodwillCeiling == 15 &&
+                settings.commercialReputationRequired == 85 &&
+                settings.minimumEmploymentDaysForGoodwill == 4 &&
+                settings.employmentGoodwillImpact == 2;
+        }
+
+        private static bool SettingsHaveLegacyDefaults(IntercolonySettings settings)
+        {
+            return settings != null && settings.settingsVersion == 1 &&
+                settings.letterVolume == IntercolonyLetterVolume.ImportantOnly &&
+                settings.refreshDays == 1f &&
+                settings.activeOpportunities == 60 &&
+                HasExactly(settings.enabledBuyOnlyTradeCategoryKeys) &&
+                settings.commercialGoodwillIntervalDays == 15 &&
+                settings.commercialGoodwillPerInterval == 1 &&
+                settings.commercialGoodwillCeiling == 60 &&
+                settings.commercialReputationRequired == 80 &&
+                settings.minimumEmploymentDaysForGoodwill == 10 &&
+                settings.employmentGoodwillImpact == 3;
+        }
+
+        private static bool SettingsHaveExplicitValues(IntercolonySettings settings)
+        {
+            return settings != null && settings.settingsVersion == 1 &&
+                settings.letterVolume == IntercolonyLetterVolume.Everything &&
+                settings.refreshDays == 0.25f &&
+                settings.activeOpportunities == 37 &&
+                HasExactly(settings.enabledBuyOnlyTradeCategoryKeys, "FoodMeals") &&
+                settings.commercialGoodwillIntervalDays == 7 &&
+                settings.commercialGoodwillPerInterval == 5 &&
+                settings.commercialGoodwillCeiling == 15 &&
+                settings.commercialReputationRequired == 85 &&
+                settings.minimumEmploymentDaysForGoodwill == 4 &&
+                settings.employmentGoodwillImpact == 2;
+        }
+
+        private static bool HasExactly(HashSet<string> actual, params string[] expected)
+        {
+            if (actual == null || actual.Count != expected.Length)
+            {
+                return false;
+            }
+
+            foreach (string value in expected)
+            {
+                if (!actual.Contains(value))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string DescribeSettings(IntercolonySettings settings)
+        {
+            if (settings == null)
+            {
+                return "missing";
+            }
+
+            return $"version={settings.settingsVersion}; letter={settings.letterVolume}; " +
+                $"refresh={settings.refreshDays}; active={settings.activeOpportunities}; " +
+                $"categories={NodeNamesDetail(settings.enabledBuyOnlyTradeCategoryKeys)}; " +
+                $"goodwill={settings.commercialGoodwillIntervalDays}/" +
+                $"{settings.commercialGoodwillPerInterval}/" +
+                $"{settings.commercialGoodwillCeiling}/" +
+                $"{settings.commercialReputationRequired}; minimumDays=" +
+                $"{settings.minimumEmploymentDaysForGoodwill}; impact=" +
+                $"{settings.employmentGoodwillImpact}";
         }
 
         private static void CheckAutoRenewPersistence(Results r)
