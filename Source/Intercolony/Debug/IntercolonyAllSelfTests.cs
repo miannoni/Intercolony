@@ -295,7 +295,14 @@ namespace Intercolony
             AppendTable(sb, suite.results);
             AppendLeakCheck(sb, state, timelineBefore, pressureBefore, nextIdBefore);
             AppendVerdict(sb, suite.results);
-            AppendFailureDetail(sb, suite.results);
+            int printedSkipLines = AppendFailureDetail(sb, suite.results);
+            if (printedSkipLines != suite.skipped)
+            {
+                sb.AppendLine();
+                sb.AppendLine(
+                    $"  WARNING: aggregate skip evidence mismatch: reported {suite.skipped} " +
+                    $"skipped assertions, but {printedSkipLines} SKIPPED lines were printed.");
+            }
 
             stopwatch.Stop();
             suite.success = suite.failed == 0 && suite.notRun == 0;
@@ -491,8 +498,9 @@ namespace Intercolony
         /// lines as well, because a skipped suite is otherwise indistinguishable from a clean
         /// one in the bridge report.
         /// </summary>
-        private static void AppendFailureDetail(StringBuilder sb, List<SuiteResult> results)
+        private static int AppendFailureDetail(StringBuilder sb, List<SuiteResult> results)
         {
+            int printedSkipLines = 0;
             foreach (SuiteResult result in results)
             {
                 if (result.skipReason != null)
@@ -509,7 +517,9 @@ namespace Intercolony
                     {
                         string trimmed = line.Trim();
                         if (!trimmed.StartsWith("SKIPPED ", StringComparison.Ordinal) ||
-                            (!trimmed.Contains(" — ") && !trimmed.Contains(" - ")))
+                            (!trimmed.Contains(" — ") && !trimmed.Contains(" - ") &&
+                             !(trimmed.Contains(" (") &&
+                               trimmed.EndsWith(")", StringComparison.Ordinal))))
                         {
                             continue;
                         }
@@ -522,6 +532,7 @@ namespace Intercolony
                         }
 
                         sb.AppendLine($"  {trimmed}");
+                        printedSkipLines++;
                     }
 
                     continue;
@@ -530,7 +541,29 @@ namespace Intercolony
                 sb.AppendLine();
                 sb.AppendLine($"  --- {result.name} ---");
                 sb.AppendLine(result.output);
+                if (result.Ran)
+                {
+                    printedSkipLines += CountSkipLines(result.output);
+                }
             }
+
+            return printedSkipLines;
+        }
+
+        private static int CountSkipLines(string output)
+        {
+            int count = 0;
+            string[] lines = output.Split(
+                new[] { "\r\n", "\n" }, StringSplitOptions.None);
+            foreach (string line in lines)
+            {
+                if (line.Trim().StartsWith("SKIPPED ", StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
     }
 }
