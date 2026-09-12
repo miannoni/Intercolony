@@ -1,0 +1,122 @@
+[h1]1.1.0[/h1]
+
+Intercolony 1.1.0 adds production automation, agreements that can look after routine work, a real
+procurement workflow, delivery destinations, a five-day Business view, and a deeper hiring market.
+
+[hr][/hr]
+[h1]Produce[/h1]
+
+[list]
+[*][b]Produce[/b] can be marked on minifiable furniture, blueprints and frames. Let the colony
+repeat the build cycle in the same place, either indefinitely or until it has enough of the good.
+[*][b]Pause production[/b] and [b]Stop production[/b] are different actions. All three commands
+can be dragged over an area from [b]Architect → Orders[/b].
+[*]Cancelling a Produce blueprint stops its loop instead of bringing it back.
+[/list]
+
+[h1]Agreements look after themselves[/h1]
+
+[list]
+[*]A selling agreement can ready a buyer-pickup cycle when its goods are available. Routine
+automatic success no longer adds an [b]Order ready[/b] letter.
+[*]A procurement cycle can wait for silver and try again instead of failing immediately.
+[*]Employees can auto-renew when the worker offers another term. [b]Auto-renew[/b] is visible and
+clickable on the employee card; the other contract actions are in its actions menu.
+[*]New recurring agreements start automated, while agreements already in your save keep their
+existing choices. Contract rows open when they need attention and stay compact otherwise.
+[/list]
+
+[h1]Procurement[/h1]
+
+[list]
+[*][b]Procurement → Contracts[/b] is now a real screen. Propose a standing purchase, preview its
+terms before sending, follow the answer, and manage live or concluded agreements.
+[*]Proposal and contract rows show the term, delivery arrangement, per-unit price and per-cycle
+price. A purchase agreement has to be earned through reputation and completed purchases from that
+settlement, and furniture can be covered by an agreement.
+[*]Supplier replies arrive over time, with nearer suppliers answering sooner. Proposal screens show
+the likely acceptance band before you commit.
+[/list]
+
+[h1]Deliveries and Business[/h1]
+
+[list]
+[*]Mark a stockpile or shelf [b]Receive deliveries[/b] and supplier goods will prefer a marked
+destination that accepts them and has room.
+[*][b]Business[/b] now shows five days of committed revenue, expenses and net cash flow.
+[*]See what the colony committed to make beside what it actually completed over the last five days.
+Direct material costs and the labour of employees who can make the good now feed the margin.
+[/list]
+
+[h1]Hiring[/h1]
+
+[list]
+[*]Job postings ask for a requirement and report the going rate. A hired applicant is paid their
+own ask, and a bad employer attracts worse applicants rather than merely fewer.
+[*]An employee's weapons and apparel are shown as an [b]Equipment bond[/b] at hire. The bond is
+replacement value plus 10%, is included in [b]Due at hire[/b], and returns item by item for gear the
+worker still carries when employment ends.
+[*][b]Emergency dispatch[/b] offers the nearest half of the market, a 4× wage premium, and a
+journey shortened to one third with a one-day minimum.
+[/list]
+
+[h1]Relationships and settings[/h1]
+
+[list]
+[*]Commercial standing can improve faction goodwill over time, stopping below alliance. The
+[b]Relations[/b] row explains why the pressure is or is not active.
+[*]After enough ordinary employment, the worker's observed experience can improve or reduce
+goodwill with the settlement that sent them. The departure letter explains the result.
+[*]Nine new settings cover commercial goodwill, employment experience and supplier-response speed.
+[/list]
+
+[h1]Fixes[/h1]
+
+[list]
+[*]Wage displays now separate the worker's ask from the colony's charge, and direct hires are no
+longer quoted one amount and charged another.
+[*]Profitability uses a made good's materials, equipment bonds include quality, and ordinary hiring
+travel is limited to one to twenty days.
+[*]Selling and supplier markets no longer rebuild every row every frame, and [b]Find Buyer[/b]
+searches storage rather than the whole map.
+[*]A newly dead employee is no longer discarded from the grave that contains them during cleanup.
+Existing empty graves are not repaired automatically.
+[/list]
+
+[h1]New defaults[/h1]
+
+Fresh installs now start with quieter [b]Minimal[/b] letters, a [b]0.25-day[/b] market refresh,
+[b]50[/b] active opportunities, and cooked meals and stone blocks enabled for selling. Commercial
+goodwill is faster but much more limited by default: [b]+2 every 7 days[/b], requiring [b]85[/b]
+commercial reputation and stopping at [b]15[/b] goodwill. Employment goodwill uses four observed
+days and an impact of [b]±2[/b].
+
+[b]Existing players keep their saved settings; nothing is reset.[/b]
+
+[h1]Saves[/h1]
+
+A 1.0 save from [b]schema 56[/b] loads and upgrades to save format [b]58[/b]. The upgrade adds
+per-agreement auto-renew and auto-ready flags with existing values off, then adds production
+tracking with no invented history. Existing agreements are not silently enabled.
+
+[h1]Known limits[/h1]
+
+The new Produce controls, automatic agreements, receiving destinations, Business view, supplier
+timing, contract layout, equipment bonds and emergency hiring still need human play checks; they
+are not presented here as play-verified.
+
+[list]
+[*]A Produce loop can stall if minified furniture has nowhere to be hauled.
+[*]A pre-existing delivery issue can complete a partly placed supplier delivery while charging the
+full order.
+[*]There is no automatic recurring caravan or animal dispatch, reverse player-supplied labour
+market, equipment-tier request, or transport-pod arrival. Equipment bonds and emergency dispatch
+are the shipped portions of those larger ideas.
+[*]Automatic ready is for buyer-pickup cycles; seller-delivery agreements still need a hand-formed
+caravan.
+[*]The new grave save/load guard still needs a clean real-play check; existing empty graves are not
+repaired automatically.
+[/list]
+
+Problems to the [url=https://github.com/miannoni/Intercolony/issues]GitHub issue tracker[/url], please,
+with your mod list and [b]Player.log[/b].
