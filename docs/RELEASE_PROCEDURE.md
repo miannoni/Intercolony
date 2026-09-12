@@ -50,6 +50,41 @@ Plan for the item being visible immediately:
 
 ---
 
+## The automated release gate
+
+Run these checks before an upload. They are part of the gate, not optional notes:
+
+1. `powershell -ExecutionPolicy Bypass -File dev.ps1 build` must report that the release DLL is
+   current and that the compiled-source hash is verified. `dev.ps1` keeps the timestamp comparison
+   with the newest compiled `.cs` source, but it also hashes a canonical manifest of the exact
+   compiled source set: each relative path and its file contents, with no timestamps. That hash is
+   recorded in the gitignored `Assemblies/Intercolony.dll.sources.sha256` sidecar. A first build
+   that creates a previously absent DLL may establish the sidecar; an existing DLL without one
+   fails closed. A changed source hash is accepted only when this invocation demonstrably changed
+   the DLL; if MSBuild reports success while leaving the DLL unchanged, the guard fails. A missing
+   or unreadable sidecar cannot
+   prove the binary is current and fails verification. `package.ps1` repeats both the timestamp
+   and content checks before it copies anything, because packaging does not compile and shipping a
+   stale binary is worse than testing one. The sidecar is build provenance and is deliberately not
+   copied into the release artifact. This exists because a mutation test restored a source file
+   with `Copy-Item`, which preserved the old timestamp; MSBuild then said “Build succeeded” while
+   the next launch still used the mutated DLL.
+
+2. Every `dev.ps1` launch path waits for startup validation. It reads the `Player.log` portion
+   belonging to that process launch, independently of the interactive log-delta offset, and fails
+   on `HarmonyException`, `Undefined target method`, `Error in static constructor`, or
+   `TypeInitializationException`. It also requires the exact success sentinel
+   `[Intercolony] Harmony patches applied.`; its absence means the static constructor did not
+   finish. Startup failures are infrastructure failures and return exit code `2`; assertion
+   failures remain `1`. This exists because a constructor patch declared without its `Pawn`
+   argument types made `Harmony.PatchAll` abort, disabling all six production patches. The full
+   suite still reported `1601 passed, 0 failed, 16 skipped` because the error occurred before the
+   test log window opened.
+
+The startup sentinel is emitted in development mode after Harmony registration completes, so keep
+Development mode enabled for the launch and test gate described below. A clean test delta is not a
+substitute for either gate.
+
 ## Before you start
 
 1. Final `About/Preview.png` in place and **under 1 MB**.

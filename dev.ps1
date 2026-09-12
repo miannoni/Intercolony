@@ -9,7 +9,7 @@
     OTHER TASKS:
         .\dev.ps1              # build -> restart game -> wait -> show log
         .\dev.ps1 build        # build only
-        .\dev.ps1 run          # build + restart game, don't wait
+        .\dev.ps1 run          # build + restart game, wait for startup, don't wait for a map
         .\dev.ps1 run -MainMenu   # ...but boot to the menu so a real save can be
                                   # selected and loaded by hand.
         .\dev.ps1 log          # everything from this session (filtered)
@@ -89,6 +89,21 @@ $Saves    = Join-Path $env:USERPROFILE `
 $StateFile  = Join-Path $Repo ".dev-log-offset"
 $MarkFile   = Join-Path $Repo ".dev-log-marks"
 $TestOutput = Join-Path ([System.IO.Path]::GetTempPath()) "Intercolony-dev-test-output.txt"
+$Assembly   = Join-Path $Repo "Assemblies\Intercolony.dll"
+$SourceRoot = Join-Path $Repo "Source\Intercolony"
+$SourceHashFile = Join-Path $Repo "Assemblies\Intercolony.dll.sources.sha256"
+
+# This line is emitted only after Harmony.PatchAll has completed. It is therefore the
+# positive startup signal: a clean log delta is not enough because the test window may
+# begin after a static-constructor failure.
+$StartupSentinel = "[Intercolony] Harmony patches applied."
+$StartupFatalPatterns = @(
+    "HarmonyException",
+    "Undefined target method",
+    "Error in static constructor",
+    "TypeInitializationException"
+)
+$script:StartupLogBeforeLaunch = $null
 
 # Boot straight into a throwaway test map unless -MainMenu or -Save was asked for.
 # Autostart must receive no launch arguments: combining it with -quicktest consumes
@@ -165,6 +180,82 @@ function Get-AllLines {
     return (Read-LockedFile $Log) -split "`r?`n"
 }
 
+function Get-CompiledSources {
+    # Match the SDK project's implicit Compile items; generated obj/bin files are not source
+    # inputs and should not make a good release DLL look stale.
+    return @(Get-ChildItem -LiteralPath $SourceRoot -Filter "*.cs" -File -Recurse |
+        Where-Object { $_.FullName -notmatch '\\(obj|bin)\\' })
+}
+
+function Get-SourceSetHash($sources) {
+    # Hash a canonical manifest of relative paths and per-file contents. The paths make the
+    # file set part of the hash, while deliberately excluding absolute paths and timestamps.
+    $manifest = New-Object System.Text.StringBuilder
+    $orderedSources = @($sources | Sort-Object @{ Expression = {
+        $_.FullName.Substring($SourceRoot.Length).TrimStart('\').Replace('\', '/')
+    }; Ascending = $true })
+    foreach ($source in $orderedSources) {
+        $relativePath = $source.FullName.Substring($SourceRoot.Length).TrimStart('\').Replace('\', '/')
+        $fileHash = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        [void]$manifest.Append($relativePath.Length)
+        [void]$manifest.Append(":")
+        [void]$manifest.Append($relativePath)
+        [void]$manifest.Append(":")
+        [void]$manifest.Append($fileHash)
+        [void]$manifest.Append("`n")
+    }
+
+    $sha = New-Object System.Security.Cryptography.SHA256Managed
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($manifest.ToString())
+        $digest = $sha.ComputeHash($bytes)
+    } finally {
+        $sha.Dispose()
+    }
+    return ([BitConverter]::ToString($digest)).Replace("-", "").ToLowerInvariant()
+}
+
+function Read-RecordedSourceHash($path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+    try {
+        $value = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::ASCII).Trim()
+    } catch {
+        return $null
+    }
+    if ($value -notmatch '^[0-9a-fA-F]{64}$') {
+        return $null
+    }
+    return $value.ToLowerInvariant()
+}
+
+function Write-RecordedSourceHash($path, $hash) {
+    $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+    [System.IO.File]::WriteAllText($path, $hash + [Environment]::NewLine, $utf8NoBom)
+}
+
+function Get-BinaryFingerprint($path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $null
+    }
+    $item = Get-Item -LiteralPath $path
+    return [pscustomobject]@{
+        Length          = $item.Length
+        LastWriteTimeUtc = $item.LastWriteTimeUtc
+        Hash            = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+}
+
+function Test-BinaryChanged($before, $after) {
+    if ($null -eq $before -or $null -eq $after) {
+        return $true
+    }
+    return ($before.Length -ne $after.Length -or
+            $before.LastWriteTimeUtc -ne $after.LastWriteTimeUtc -or
+            $before.Hash -ne $after.Hash)
+}
+
 function Show-New {
     $lines = Get-AllLines
     if ($null -eq $lines) { return }
@@ -195,6 +286,98 @@ function Show-New {
     }
 
     Show-Lines $slice "new since last check"
+}
+
+function Get-StartupLogText {
+    $current = Read-LockedFile $Log
+    if ($null -eq $script:StartupLogBeforeLaunch) {
+        return $current
+    }
+
+    # RimWorld normally recreates Player.log at launch. If it appends instead, discard the
+    # exact pre-launch prefix; neither case is allowed to fall back to the persistent delta
+    # offset, which is deliberately for interactive 'new' output only.
+    if ($current.StartsWith($script:StartupLogBeforeLaunch, [System.StringComparison]::Ordinal)) {
+        return $current.Substring($script:StartupLogBeforeLaunch.Length)
+    }
+    return $current
+}
+
+function Get-StartupValidation($text) {
+    $fatalLines = New-Object System.Collections.Generic.List[string]
+    $sentinelIndex = $text.IndexOf($StartupSentinel, [System.StringComparison]::Ordinal)
+    $startupText = if ($sentinelIndex -ge 0) {
+        $text.Substring(0, $sentinelIndex + $StartupSentinel.Length)
+    } else {
+        $text
+    }
+    $lines = @($startupText -split "`r?`n")
+    foreach ($line in $lines) {
+        foreach ($pattern in $StartupFatalPatterns) {
+            if ($line -match [regex]::Escape($pattern)) {
+                [void]$fatalLines.Add($line.Trim())
+                break
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        HasLog       = -not [string]::IsNullOrWhiteSpace($text)
+        Sentinel     = $sentinelIndex -ge 0
+        FatalLines   = @($fatalLines)
+    }
+}
+
+function Write-StartupValidationFailure($validation) {
+    if (-not $validation.HasLog) {
+        Write-Host "STARTUP CHECK FAILED: Player.log is empty or unavailable." -ForegroundColor Red
+    }
+    if ($validation.FatalLines.Count -gt 0) {
+        Write-Host "STARTUP CHECK FAILED: fatal startup pattern(s) found:" -ForegroundColor Red
+        foreach ($line in @($validation.FatalLines | Select-Object -First 10)) {
+            Write-Host "  $line" -ForegroundColor Red
+        }
+    }
+    if (-not $validation.Sentinel) {
+        Write-Host "STARTUP CHECK FAILED: startup sentinel is missing: $StartupSentinel" -ForegroundColor Red
+    }
+}
+
+function Test-StartupLog {
+    $validation = Get-StartupValidation (Get-StartupLogText)
+    if (-not $validation.HasLog -or $validation.FatalLines.Count -gt 0 -or -not $validation.Sentinel) {
+        Write-StartupValidationFailure $validation
+        return $false
+    }
+
+    Write-Host "Startup check: CLEAN (sentinel present; no fatal startup patterns)." -ForegroundColor Green
+    return $true
+}
+
+function Wait-ForStartup {
+    Write-Host "Waiting for startup sentinel in Player.log (timeout ${TimeoutSec}s)..." -ForegroundColor Cyan
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $validation = Get-StartupValidation (Get-StartupLogText)
+        if ($validation.FatalLines.Count -gt 0) {
+            Write-StartupValidationFailure $validation
+            return $false
+        }
+        if ($validation.Sentinel) {
+            Write-Host "Startup check: CLEAN (sentinel present; no fatal startup patterns)." -ForegroundColor Green
+            return $true
+        }
+        if (-not (Get-Process -Name "RimWorldWin64" -ErrorAction SilentlyContinue)) {
+            Write-Host "STARTUP CHECK FAILED: RimWorld exited before the startup sentinel appeared." -ForegroundColor Red
+            Write-StartupValidationFailure $validation
+            return $false
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    Write-Host "STARTUP CHECK FAILED: timed out before the startup sentinel appeared." -ForegroundColor Red
+    Write-StartupValidationFailure (Get-StartupValidation (Get-StartupLogText))
+    return $false
 }
 
 function Add-Mark($text) {
@@ -294,6 +477,8 @@ function Invoke-Build([switch]$Bridge) {
         Write-Host "No csproj yet - XML-only change, nothing to build." -ForegroundColor Yellow
         return $true
     }
+    $binaryBefore = Get-BinaryFingerprint $Assembly
+    $recordedSourceHash = Read-RecordedSourceHash $SourceHashFile
     # Compiler output belongs on the console, not in this function's return stream. If it
     # leaked beside the Boolean, callers could mistake a failed build's non-empty array for true.
     if ($Bridge) {
@@ -305,12 +490,66 @@ function Invoke-Build([switch]$Bridge) {
         Write-Host "BUILD FAILED - not launching." -ForegroundColor Red
         return $false
     }
+
+    $sources = @(Get-CompiledSources)
+    if ($sources.Count -eq 0) {
+        Write-Host "BUILD FAILED - no compiled C# sources found under $SourceRoot." -ForegroundColor Red
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $Assembly -PathType Leaf)) {
+        Write-Host "BUILD FAILED - compiled binary not found at $Assembly." -ForegroundColor Red
+        return $false
+    }
+    $newestSource = $sources | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    $binary = Get-Item -LiteralPath $Assembly
+    if ($binary.LastWriteTimeUtc -lt $newestSource.LastWriteTimeUtc) {
+        Write-Host "BUILD FAILED - stale binary: $Assembly is older than the newest compiled source." -ForegroundColor Red
+        Write-Host ("  binary: {0} ({1:o})" -f $binary.FullName, $binary.LastWriteTimeUtc) -ForegroundColor Red
+        Write-Host ("  source: {0} ({1:o})" -f $newestSource.FullName, $newestSource.LastWriteTimeUtc) -ForegroundColor Red
+        Write-Host "Rebuild before launching or testing; the current DLL is not proof of the current source." -ForegroundColor Red
+        return $false
+    }
+
+    $currentSourceHash = Get-SourceSetHash $sources
+    $binaryAfter = Get-BinaryFingerprint $Assembly
+    $binaryChanged = Test-BinaryChanged $binaryBefore $binaryAfter
+    if ($null -eq $recordedSourceHash) {
+        # A sidecar may be established only for a first build that created the DLL. If an
+        # existing DLL has lost its sidecar, even a rebuild cannot recover the missing proof
+        # retroactively; require the operator to acknowledge that gap rather than pass it.
+        if ($null -ne $binaryBefore -or -not $binaryChanged) {
+            Write-Host "BUILD FAILED - source hash sidecar is missing or unreadable: $SourceHashFile." -ForegroundColor Red
+            Write-Host "An existing DLL cannot be proven current without its recorded source hash." -ForegroundColor Red
+            return $false
+        }
+        Write-RecordedSourceHash $SourceHashFile $currentSourceHash
+        Write-Host "Recorded compiled-source hash in $SourceHashFile." -ForegroundColor Green
+    } elseif ($currentSourceHash -ne $recordedSourceHash) {
+        if (-not $binaryChanged) {
+            Write-Host "BUILD FAILED - compiled-source hash mismatch: the DLL did not change during this build." -ForegroundColor Red
+            Write-Host ("  sidecar: {0} (recorded {1})" -f $SourceHashFile, $recordedSourceHash) -ForegroundColor Red
+            Write-Host ("  current:  {0}" -f $currentSourceHash) -ForegroundColor Red
+            Write-Host "MSBuild reported success, but the binary cannot be proven current; rebuild before launching or testing." -ForegroundColor Red
+            return $false
+        }
+        Write-RecordedSourceHash $SourceHashFile $currentSourceHash
+        Write-Host "Updated compiled-source hash after the DLL changed." -ForegroundColor Green
+    } else {
+        Write-Host ("Compiled-source hash current: {0}." -f $currentSourceHash) -ForegroundColor Green
+    }
+
+    Write-Host ("Binary current: {0} is at least as new as {1}." -f $binary.Name, $newestSource.Name) -ForegroundColor Green
     Write-Host "Build OK." -ForegroundColor Green
     return $true
 }
 
 function Start-RimWorld([switch]$Bridge) {
     if (-not (Test-Path $Exe)) { throw "RimWorld not found at $Exe" }
+    $script:StartupLogBeforeLaunch = if (Test-Path -LiteralPath $Log -PathType Leaf) {
+        Read-LockedFile $Log
+    } else {
+        ""
+    }
     Set-Offset 0
     if (Test-Path $MarkFile) { Remove-Item $MarkFile -Force }
     Write-Host "Launching RimWorld $($LaunchArgs -join ' ')..." -ForegroundColor Cyan
@@ -530,9 +769,14 @@ function Start-BridgeSession([switch]$SkipBuild, [switch]$LeaveAutostartForCalle
             Copy-Item -LiteralPath $sourceSave -Destination $autostartSave -Force
             Start-RimWorld -Bridge
             $script:BridgeSessionLaunched = $true
-            # Large real saves (22 MB and above) can take well over the normal 180s.
-            $saveTimeoutSec = [Math]::Max($BridgeTimeoutSec, 600)
-            $sessionReady = Wait-ForBridge -RequireMap -ReadinessTimeoutSec $saveTimeoutSec
+            $startupReady = Wait-ForStartup
+            if ($startupReady) {
+                # Large real saves (22 MB and above) can take well over the normal 180s.
+                $saveTimeoutSec = [Math]::Max($BridgeTimeoutSec, 600)
+                $sessionReady = Wait-ForBridge -RequireMap -ReadinessTimeoutSec $saveTimeoutSec
+            } else {
+                $sessionReady = $false
+            }
         } catch {
             Write-Host "BRIDGE SAVE LAUNCH FAILED: $($_.Exception.Message)" -ForegroundColor Red
         } finally {
@@ -553,6 +797,7 @@ function Start-BridgeSession([switch]$SkipBuild, [switch]$LeaveAutostartForCalle
         Write-Host "BRIDGE LAUNCH FAILED: $($_.Exception.Message)" -ForegroundColor Red
         return $false
     }
+    if (-not (Wait-ForStartup)) { return $false }
     return (Wait-ForBridge -RequireMap)
 }
 
@@ -969,6 +1214,16 @@ function Invoke-DevTest($Name) {
         return 2
     }
 
+    # This is deliberately independent of $StateFile and the test's log delta. A test can
+    # pass after startup failed if its delta begins too late; the launch sentinel is the
+    # positive proof that the mod's static constructor completed.
+    if (-not (Test-StartupLog)) {
+        $startupFailure = "TEST INFRASTRUCTURE FAILED: startup log validation failed."
+        Write-Host $startupFailure -ForegroundColor Red
+        & $archiveFailure $Name $startupFailure $null
+        return 2
+    }
+
     try {
         $pawnsBefore = Get-WorldPawnCount
         $postingsBefore = Get-OpenPostingCount
@@ -1246,6 +1501,7 @@ switch ($Task) {
         if (-not (Invoke-Build)) { exit 1 }
         Stop-RimWorld
         Start-RimWorld
+        if (-not (Wait-ForStartup)) { exit 2 }
     }
 
     "bridge" {
@@ -1271,6 +1527,7 @@ switch ($Task) {
         if (-not (Invoke-Build)) { exit 1 }
         Stop-RimWorld
         Start-RimWorld
+        if (-not (Wait-ForStartup)) { exit 2 }
         Wait-ForLoad | Out-Null
         Write-Host ""
         $lines = Get-AllLines
