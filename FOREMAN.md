@@ -21,6 +21,35 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
+Unit: G.4c — make every counted skip visible, and guard the invariant
+
+### G-D6 — THE HARNESS DISCARDS SKIP EVIDENCE. Found, cause proven, fix in flight.
+
+The suite reports **17 skipped** and prints **15**. Two skip records are silently lost.
+
+**Cause, from recon and confirmed by me in the source:** the aggregate report keeps a `SKIPPED` line
+only if it contains `" — "` or `" - "` (`IntercolonyAllSelfTests.cs:511-512`), but two suites emit a
+**parenthetical** reason — `SKIPPED  {label}  ({detail})` at `IntercolonyBrandSelfTest.cs:64` and
+`IntercolonyEventSelfTest.cs:269`. Their COUNTS still reach the total, which is parsed from each
+suite's own summary line (`:244`, `:360`, summed at `:279`). **Count and list come from different
+representations, so the filter drops two lines while the number keeps them.** Contributions were
+Event 1, Brand 1, Order 3, Animal 12 = 17; only Order and Animal survive = 15 printed.
+
+**Why this blocks the release report rather than being cosmetic:** the operator required that skips
+be neither hidden nor misclassified. Two assertions whose identity was destroyed cannot honestly be
+called harmless world variance. G.4c also adds a guard that warns when printed count ≠ reported
+count, so a third format announces itself instead of quietly losing evidence.
+
+### G-D7 — RECON PUSHED BACK ON MY OWN FRAMING, AND IT WAS RIGHT
+
+Applying the "world condition vs genuine uncertainty" rule strictly, **three of the fifteen visible
+skips are NOT harmless**: the Find Buyer stock-traversal comparison and two animal-matching ones
+**decide whether their own fixture exists using the production logic under test**
+(`IntercolonyOrderSelfTest.cs:2743`, `:2881`, `:1217-1260`). A regression in those predicates would
+produce a SKIP rather than a FAILURE — the same self-referential trap as a hollow assertion. **The
+release report must say so rather than lumping all skips together.**
+
+Superseded unit line:
 Unit: G.4b — recon: the suite counts 17 skips but prints only 15
 
 ### G-D5 — I REJECTED G.3's stale-binary guard after reproducing the real incident myself
@@ -460,7 +489,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 22:40 — G.3 accepted; release gate green; chasing a skip-count gap
+Updated: 2026-09-12 — G.4c fixing the lost skip evidence
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
