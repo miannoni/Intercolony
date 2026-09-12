@@ -22,7 +22,14 @@ regression** (no trade partners, no labour candidates) and must be reported that
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
 Unit: G.3 — bake the two gate lessons into `dev.ps1` / `package.ps1` / the procedure
-Worker: luna running — `…\scratchpad\unit-g2.out`.
+Worker: luna running — `…\scratchpad\unit-g3.out`.
+
+**G.2 LANDED AT `215cb1a`.** Version is **1.1.0**; both documents rewritten from
+`git log v1.0.0..HEAD` and renamed with `git mv`. Changenotes verified clean of finding numbers and
+internal vocabulary (0 hits for Harmony/assertion/self-test/F-numbers). **THE MIGRATION CLAIM WAS
+CONFIRMED IN CODE, NOT ASSUMED** — `IntercolonyWorldComponent.cs:2774` and `:2784` hold the 56→57 and
+57→58 steps: agreement flags arrive **off**, and the production ledger starts **empty** rather than
+inventing a history the player never measured.
 
 **G.1 IS DONE AND MUTATION-PROVEN at `7a1a9d9`.** Ten defaults moved to the operator's playtested
 values; labor 66/0/0. **Three mutations, each attacking one of the operator's three required
