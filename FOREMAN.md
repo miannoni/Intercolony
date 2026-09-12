@@ -21,7 +21,7 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: G.2 — bump to 1.1.0, rewrite the stale release notes and Workshop changenotes from history
+Unit: G.3 — bake the two gate lessons into `dev.ps1` / `package.ps1` / the procedure
 Worker: luna running — `…\scratchpad\unit-g2.out`.
 
 **G.1 IS DONE AND MUTATION-PROVEN at `7a1a9d9`.** Ten defaults moved to the operator's playtested
@@ -429,7 +429,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 21:45 — G.1 mutation-proven; G.2 rewriting the notes
+Updated: 2026-09-11 22:05 — G.2 done, 1.1.0 set; G.3 running
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
