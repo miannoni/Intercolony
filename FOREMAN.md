@@ -21,8 +21,28 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: G.1 — the settings defaults, with a migration that does not disturb existing players
-Worker: luna running — `…\scratchpad\unit-g1.out`. F.6's closure record landed at `99edf77`.
+Unit: G.2 — bump to 1.1.0, rewrite the stale release notes and Workshop changenotes from history
+Worker: luna running — `…\scratchpad\unit-g2.out`.
+
+**G.1 IS DONE AND MUTATION-PROVEN at `7a1a9d9`.** Ten defaults moved to the operator's playtested
+values; labor 66/0/0. **Three mutations, each attacking one of the operator's three required
+outcomes, all bite:** restoring the old fresh-install default turns the fresh-install assertion red;
+corrupting a `Legacy*` constant turns BOTH existing-player assertions red — the untouched player is
+migrated against their will, which is the precise defect the design exists to prevent; making the
+version stamp indistinguishable from an unwritten node turns all three red.
+
+**The fresh-install claim is confirmed in vanilla, not assumed:** `LoadedModManager.ReadModSettings`
+returns `new T()` when no settings file exists
+(`reference/decompiled/Verse/LoadedModManager.cs:521-549`), so `ExposeData` never runs in loading
+mode for a new player and the field initialisers are what they get.
+
+### G-D4 — the audit against released `main`, measured
+
+`v1.0.0` is at `e7053b6`. **91 player-facing `feat`/`fix` commits** since; 73 files and ~34k lines
+changed under `Source/`, **55 of them production** (non-`Debug`). **Save schema 56 → 58** — 57 added
+per-contract auto-renew/auto-ready flags, 58 the persisted production record. This is the evidence
+for G-D1's 1.1.0, and it is why the stale `1.0.1` notes cannot be extended: they predate nearly all
+of it.
 
 ### **G-D1 — VERSION DECISION: 1.1.0, not 1.0.1. DECIDED, with reasons.**
 
@@ -409,7 +429,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-11 21:20 — G.1 running; version decided 1.1.0
+Updated: 2026-09-11 21:45 — G.1 mutation-proven; G.2 rewriting the notes
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
