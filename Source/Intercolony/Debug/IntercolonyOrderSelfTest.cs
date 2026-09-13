@@ -213,7 +213,7 @@ namespace Intercolony
             Check("no caravan reports the full shortfall", noCaravan.missingQuantity == 10,
                 noCaravan.missingQuantity.ToString());
             Check("failure summary is non-empty", !string.IsNullOrEmpty(noCaravan.Summary()));
-            RunMixedAnimalColonyValidationCheck(map, Check, Skip);
+            RunMixedAnimalColonyValidationCheck(state, map, Check, Skip);
 
             // --- §99 acceptance: one centralized validation path supports all test cases ---
             // The four cases named in §99, each driven through OrderValidator.Matches with a
@@ -1210,16 +1210,25 @@ namespace Intercolony
         }
 
         private static void RunMixedAnimalColonyValidationCheck(
-            Map map, Action<string, bool, string> check, Action<string, string> skip)
+            IntercolonyWorldComponent state,
+            Map map,
+            Action<string, bool, string> check,
+            Action<string, string> skip)
         {
             const string assertion =
                 "enough matching colony animals validate alongside non-matching same-species animals";
-            List<Pawn> animals = FindBuyerService.EligibleColonyAnimalCandidates(map);
+            List<Pawn> animals = map?.mapPawns?.SpawnedColonyAnimals;
+            if (animals == null)
+            {
+                skip(assertion, "the current map has no spawned colony-animal list");
+                return;
+            }
 
             for (int i = 0; i < animals.Count; i++)
             {
                 Pawn matching = animals[i];
-                if (matching.gender != Gender.Female && matching.gender != Gender.Male)
+                if (!IsIndependentlyEligibleColonyAnimal(matching, state) ||
+                    IsIndependentlyCommittedAnimal(matching, state))
                 {
                     continue;
                 }
@@ -1227,8 +1236,15 @@ namespace Intercolony
                 for (int j = i + 1; j < animals.Count; j++)
                 {
                     Pawn rejected = animals[j];
-                    if (rejected.def != matching.def || rejected.gender == matching.gender ||
+                    if (!IsIndependentlyEligibleColonyAnimal(rejected, state) ||
+                        IsIndependentlyCommittedAnimal(rejected, state) ||
+                        rejected.def != matching.def || rejected.gender == matching.gender ||
                         (rejected.gender != Gender.Female && rejected.gender != Gender.Male))
+                    {
+                        continue;
+                    }
+
+                    if (matching.gender != Gender.Female && matching.gender != Gender.Male)
                     {
                         continue;
                     }
@@ -1242,10 +1258,18 @@ namespace Intercolony
                     SalesOrder oppositeProbe = NewOrder(rejected.def, 1, 0f);
                     oppositeProbe.id = -917_403;
                     oppositeProbe.line.animalSpec = new AnimalSpec { gender = rejected.gender };
-                    if (OrderValidator.MatchingColonyAnimals(probe, map, 1).Count == 0 ||
-                        OrderValidator.MatchingColonyAnimals(oppositeProbe, map, 1).Count == 0)
+
+                    List<Pawn> productionMatches =
+                        OrderValidator.MatchingColonyAnimals(probe, map, 1);
+                    List<Pawn> productionOppositeMatches =
+                        OrderValidator.MatchingColonyAnimals(oppositeProbe, map, 1);
+                    if (productionMatches.Count == 0 || productionOppositeMatches.Count == 0)
                     {
-                        continue;
+                        check(assertion, false,
+                            $"independent pair {matching.LabelShort}/{rejected.LabelShort} " +
+                            $"was found, but production matching returned " +
+                            $"{productionMatches.Count}/{productionOppositeMatches.Count}");
+                        return;
                     }
 
                     OrderValidationResult validation = OrderValidator.ValidateColony(probe, map);
@@ -1259,6 +1283,69 @@ namespace Intercolony
 
             skip(assertion,
                 "no eligible, uncommitted opposite-sex pair of one species on this map");
+        }
+
+        private static bool IsIndependentlyEligibleColonyAnimal(
+            Pawn pawn, IntercolonyWorldComponent state)
+        {
+            if (pawn == null || pawn.Destroyed || pawn.Dead || !pawn.IsAnimal ||
+                pawn.RaceProps == null || pawn.RaceProps.Humanlike ||
+                pawn.Faction != Faction.OfPlayer || pawn.HomeFaction != Faction.OfPlayer ||
+                pawn.HostFaction != null || pawn.Downed || pawn.InMentalState ||
+                pawn.IsPrisoner || pawn.IsSlave || pawn.IsColonist ||
+                pawn.IsQuestLodger() || pawn.IsQuestHelper())
+            {
+                return false;
+            }
+
+            List<EmploymentContract> employments = state?.Employments;
+            if (employments == null)
+            {
+                return true;
+            }
+
+            foreach (EmploymentContract contract in employments)
+            {
+                if (contract?.status == EmploymentStatus.Active && contract.pawn == pawn)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsIndependentlyCommittedAnimal(
+            Pawn pawn, IntercolonyWorldComponent state)
+        {
+            if (pawn == null)
+            {
+                return true;
+            }
+
+            List<SalesOrder> orders = state?.Orders;
+            if (orders == null)
+            {
+                return false;
+            }
+
+            foreach (SalesOrder order in orders)
+            {
+                if (order == null ||
+                    (order.status != SalesOrderStatus.Accepted &&
+                     order.status != SalesOrderStatus.AwaitingCollection) ||
+                    order.designatedAnimals == null)
+                {
+                    continue;
+                }
+
+                if (order.designatedAnimals.Contains(pawn))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static SalesOrder NewOrder(ThingDef def, int quantity, float unitPrice)
@@ -2880,9 +2967,68 @@ namespace Intercolony
 
             if (wholeMapWalk.Count == 0)
             {
-                skip("Find Buyer stock traversal comparison has no stored stock evidence",
-                    "comparison ran against an empty colony");
+                if (HasIndependentStoredTradeEvidence(map))
+                {
+                    check("Find Buyer stock traversal comparison has no stored stock evidence",
+                        false,
+                        "vanilla storage/resource scans found stored tradeable stock, but the " +
+                        "production whole-map walk found none");
+                }
+                else
+                {
+                    skip("Find Buyer stock traversal comparison has no stored stock evidence",
+                        "independent vanilla storage/resource scans found no stored tradeable stock");
+                }
             }
+        }
+
+        private static bool HasIndependentStoredTradeEvidence(Map map)
+        {
+            if (map?.listerThings?.AllThings != null)
+            {
+                foreach (Thing thing in map.listerThings.AllThings)
+                {
+                    if (thing == null || !thing.IsInAnyStorage())
+                    {
+                        continue;
+                    }
+
+                    Thing inner = thing.GetInnerIfMinified();
+                    if (inner == null || inner.stackCount <= 0 ||
+                        !IsIndependentTradeableDef(inner.def, thing is MinifiedThing))
+                    {
+                        continue;
+                    }
+
+                    return true;
+                }
+            }
+
+            if (map?.resourceCounter?.AllCountedAmounts != null)
+            {
+                foreach (KeyValuePair<ThingDef, int> entry in
+                    map.resourceCounter.AllCountedAmounts)
+                {
+                    if (entry.Value > 0 && IsIndependentTradeableDef(entry.Key, false))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsIndependentTradeableDef(ThingDef def, bool minified)
+        {
+            if (def == null || def == ThingDefOf.Silver || def.IsCorpse ||
+                def.category == ThingCategory.Pawn || !def.tradeability.PlayerCanSell())
+            {
+                return false;
+            }
+
+            return def.category == ThingCategory.Item ||
+                   (minified && def.category == ThingCategory.Building && def.Minifiable);
         }
 
         private static void RunBuyerPickupMapChecks(

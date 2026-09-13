@@ -1337,27 +1337,32 @@ namespace Intercolony
                 return;
             }
 
-            List<AnimalStockGroup> groups = FindBuyerService.ColonyAnimals(map);
-            AnimalStockGroup group = groups.Find(g =>
-                FindBuyerService.AvailableAnimalQuantity(
-                    state, map, g.race, g.spec) > 0);
-            if (group == null)
+            if (!TryFindIndependentAnimalCommitmentFixture(
+                    state, map, out Pawn fixturePawn, out ThingDef race, out AnimalSpec spec))
             {
                 skip("committed animal is not offered twice",
-                    "no eligible uncommitted colony-animal group");
+                    "no independently eligible, uncommitted colony-animal group");
                 return;
             }
 
             int before = FindBuyerService.AvailableAnimalQuantity(
-                state, map, group.race, group.spec);
+                state, map, race, spec);
+            if (before <= 0)
+            {
+                check("committed animal is not offered twice", false,
+                    $"independent fixture {fixturePawn.LabelShort} exists, but production " +
+                    $"availability returned {before}");
+                return;
+            }
+
             SalesOrder planted = new SalesOrder
             {
                 id = -917_401,
                 opportunityId = 0,
                 contractId = 0,
-                line = new OrderLine(group.race, 1)
+                line = new OrderLine(race, 1)
                 {
-                    animalSpec = group.spec.Copy()
+                    animalSpec = spec.Copy()
                 },
                 status = SalesOrderStatus.Accepted,
                 fulfillment = FulfillmentMode.SellerDelivery
@@ -1367,15 +1372,164 @@ namespace Intercolony
             try
             {
                 int after = FindBuyerService.AvailableAnimalQuantity(
-                    state, map, group.race, group.spec);
+                    state, map, race, spec);
                 check("committed animal is not offered twice",
                     after == Mathf.Max(0, before - 1),
-                    $"{group.spec.ShortLabel(group.race)}: {before} before, {after} after");
+                    $"{spec.ShortLabel(race)}: {before} before, {after} after");
             }
             finally
             {
                 state.Orders.Remove(planted);
             }
+        }
+
+        private static bool TryFindIndependentAnimalCommitmentFixture(
+            IntercolonyWorldComponent state, Map map,
+            out Pawn fixturePawn, out ThingDef race, out AnimalSpec spec)
+        {
+            fixturePawn = null;
+            race = null;
+            spec = null;
+
+            List<Pawn> animals = map?.mapPawns?.SpawnedColonyAnimals;
+            if (animals == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < animals.Count; i++)
+            {
+                Pawn candidate = animals[i];
+                if (!TryBuildIndependentAnimalSpec(candidate, state, out AnimalSpec candidateSpec))
+                {
+                    continue;
+                }
+
+                int physical = 0;
+                for (int j = 0; j < animals.Count; j++)
+                {
+                    Pawn other = animals[j];
+                    if (other?.def != candidate.def ||
+                        !TryBuildIndependentAnimalSpec(other, state, out AnimalSpec otherSpec) ||
+                        otherSpec.gender != candidateSpec.gender ||
+                        otherSpec.lifeStage != candidateSpec.lifeStage ||
+                        otherSpec.pregnant != candidateSpec.pregnant)
+                    {
+                        continue;
+                    }
+
+                    physical++;
+                }
+
+                if (physical > CountIndependentAnimalCommitments(state, candidate.def))
+                {
+                    fixturePawn = candidate;
+                    race = candidate.def;
+                    spec = candidateSpec;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryBuildIndependentAnimalSpec(
+            Pawn pawn, IntercolonyWorldComponent state, out AnimalSpec spec)
+        {
+            spec = null;
+            if (!IsIndependentlyEligibleColonyAnimal(pawn, state))
+            {
+                return false;
+            }
+
+            LifeStageDef lifeStage = pawn.ageTracker?.CurLifeStage;
+            List<LifeStageAge> stages = pawn.RaceProps?.lifeStageAges;
+            if (lifeStage == null || stages == null || CountStage(stages, lifeStage) != 1)
+            {
+                return false;
+            }
+
+            bool pregnant = IsPregnant(pawn);
+            if (pregnant && (pawn.RaceProps.gestationPeriodDays <= 0f ||
+                             pawn.def.HasComp<CompEggLayer>()))
+            {
+                return false;
+            }
+
+            spec = new AnimalSpec
+            {
+                gender = pawn.gender,
+                lifeStage = lifeStage,
+                pregnant = pregnant
+            };
+            return true;
+        }
+
+        private static int CountIndependentAnimalCommitments(
+            IntercolonyWorldComponent state, ThingDef race)
+        {
+            int committed = 0;
+            List<SalesOrder> orders = state?.Orders;
+            if (orders == null)
+            {
+                return 0;
+            }
+
+            foreach (SalesOrder order in orders)
+            {
+                if (order == null || !IsIndependentOpenAnimalCommitment(order) ||
+                    order.ThingDef != race)
+                {
+                    continue;
+                }
+
+                int quantity = order.line?.quantity ?? 0;
+                committed += Mathf.Max(0, quantity - order.deliveredQuantity);
+            }
+
+            return committed;
+        }
+
+        private static bool IsIndependentOpenAnimalCommitment(SalesOrder order)
+        {
+            if (order.status != SalesOrderStatus.Accepted &&
+                order.status != SalesOrderStatus.AwaitingCollection)
+            {
+                return false;
+            }
+
+            return (order.opportunityId == 0 && order.contractId == 0) ||
+                   order.status == SalesOrderStatus.AwaitingCollection;
+        }
+
+        private static bool IsIndependentlyEligibleColonyAnimal(
+            Pawn pawn, IntercolonyWorldComponent state)
+        {
+            if (pawn == null || pawn.Destroyed || pawn.Dead || pawn.RaceProps == null ||
+                !pawn.RaceProps.Animal || pawn.RaceProps.Humanlike ||
+                pawn.Faction != Faction.OfPlayer || pawn.HomeFaction != Faction.OfPlayer ||
+                pawn.HostFaction != null || pawn.Downed || pawn.InMentalState ||
+                pawn.IsPrisoner || pawn.IsSlave || pawn.IsColonist ||
+                pawn.IsQuestLodger() || pawn.IsQuestHelper())
+            {
+                return false;
+            }
+
+            List<EmploymentContract> employments = state?.Employments;
+            if (employments == null)
+            {
+                return true;
+            }
+
+            foreach (EmploymentContract contract in employments)
+            {
+                if (contract?.status == EmploymentStatus.Active && contract.pawn == pawn)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static void CheckCaravanHandoffRevalidation(
