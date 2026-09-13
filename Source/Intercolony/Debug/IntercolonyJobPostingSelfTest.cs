@@ -64,6 +64,9 @@ namespace Intercolony
             /// <summary>Workers actually queued, which the applicant cap truncates.</summary>
             public int applicants;
 
+            /// <summary>Queued applicants that do not satisfy the posting's requirement.</summary>
+            public int queuedBarViolations;
+
             public float averageBestSkill;
             public int bestSkill;
         }
@@ -272,7 +275,7 @@ namespace Intercolony
         ///
         /// Every draw goes through the real posting service. The unbounded interested count reports
         /// the market shape; the queued applicants prove that the matcher applied the same
-        /// requirement before its six-person waiting-list cap.
+        /// requirement before its configured waiting-list cap.
         /// </summary>
         private static void CheckRequirementsDriveApplicants(
             Results r, IntercolonyWorldComponent state)
@@ -320,11 +323,21 @@ namespace Intercolony
 
                 bool materiallyFewer = demanding.interested < noMinimum.interested &&
                                        demanding.interested * 2 < noMinimum.interested;
-                bool matcherAppliedBar = demanding.applicants < noMinimum.applicants;
+                int applicantCap = JobPostingService.MaxWaitingApplicants;
+                bool queueCapBound = noMinimum.applicants == applicantCap &&
+                                     demanding.applicants == applicantCap;
+                bool queuedApplicantsMeetBar = demanding.queuedBarViolations == 0;
+                bool matcherAppliedBar = queuedApplicantsMeetBar &&
+                                         (queueCapBound || demanding.applicants < noMinimum.applicants);
+                string queueEvidence = queueCapBound
+                    ? $"queued count comparison not discriminating: both draws reached applicant " +
+                      $"cap {applicantCap}; demanding queue bar violations {demanding.queuedBarViolations}"
+                    : $"no minimum queued {noMinimum.applicants}, demanding {demanding.applicants}; " +
+                      $"demanding queue bar violations {demanding.queuedBarViolations}";
 
                 r.Check(quantityMonotonic && materiallyFewer && matcherAppliedBar,
                     "a higher skill minimum reaches no more workers and a demanding minimum reaches materially fewer (§114)",
-                    $"{shape}; no minimum queued {noMinimum.applicants}, demanding {demanding.applicants}");
+                    $"{shape}; {queueEvidence}");
             }
 
             const int highMinimum = 16;
@@ -1358,6 +1371,14 @@ namespace Intercolony
                 interested = JobPostingService.CountInterested(
                     state, skill, minLevel, term, wage, CombatClause.Civilian)
             };
+
+            foreach (JobApplicant applicant in posting.Applicants)
+            {
+                if (!posting.MeetsRequirement(applicant?.pawn))
+                {
+                    draw.queuedBarViolations++;
+                }
+            }
 
             if (draw.applicants > 0)
             {
