@@ -432,6 +432,10 @@ namespace Intercolony
             PayrollService.SettleOnEnd(contract, EmploymentStatus.Completed, state?.LaborDebts, state);
             CompensationService.ClaimOnEnd(state, contract);
 
+            // Conversion also ends the employment, even though the pawn stays on the map. Settle
+            // while the worker's equipment and apparel are still available to inspect.
+            EmploymentEquipmentService.SettleBond(contract);
+
             contract.status = EmploymentStatus.Converted;
             contract.outcomeNote = note ?? "";
             contract.transitionResolved = true;

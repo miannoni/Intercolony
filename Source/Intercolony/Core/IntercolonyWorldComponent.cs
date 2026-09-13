@@ -24,10 +24,11 @@ namespace Intercolony
     {
         /// <summary>
         /// Current schema version of Intercolony's persisted state (DESIGN.md §62).
-        /// Bump this whenever the saved shape changes, and add a migration step in
-        /// <see cref="MigrateIfNeeded"/>.
+        /// Bump this when a saved-shape change needs migration, and add the step in
+        /// <see cref="MigrateIfNeeded"/>. Additive nodes with safe defaults may ride the current
+        /// schema when the batch explicitly authorises them to do so.
         /// </summary>
-        public const int CurrentSaveVersion = 56;
+        public const int CurrentSaveVersion = 58;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -35,6 +36,13 @@ namespace Intercolony
         /// </summary>
         public static int RefreshIntervalTicks =>
             Mathf.RoundToInt(IntercolonyMod.Settings.refreshDays * GenDate.TicksPerDay);
+
+        /// <summary>
+        /// How often commercial goodwill pressure fires, in ticks. Read live so changing the mod
+        /// setting changes the next absolute-tick schedule without adding world state or catch-up.
+        /// </summary>
+        public static int CommercialGoodwillIntervalTicks =>
+            CommercialGoodwillPressureService.GoodwillPressureIntervalDays * GenDate.TicksPerDay;
 
         /// <summary>Version this state was last written at. 0 means "predates versioning".</summary>
         private int saveVersion = CurrentSaveVersion;
@@ -345,6 +353,34 @@ namespace Intercolony
         public List<PurchaseRequest> Requests => requests;
 
         /// <summary>
+        /// Already-generated RFQ quotations that have not reached their request yet. This is a
+        /// separate persisted node because an unarrived answer must not be present in the request's
+        /// actionable quotation list.
+        /// </summary>
+        private List<PendingRfqResponse> pendingRfqResponses = new List<PendingRfqResponse>();
+
+        public List<PendingRfqResponse> PendingRfqResponses => pendingRfqResponses;
+
+        public int PendingRfqResponseCountFor(int requestId)
+        {
+            if (pendingRfqResponses == null || requestId <= 0)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            foreach (PendingRfqResponse pending in pendingRfqResponses)
+            {
+                if (pending != null && pending.requestId == requestId)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>
         /// Units already bought from each supplier's finite offer in a market window.
         /// This belongs to the world rather than a request so withdrawing and recreating an
         /// RFQ cannot restore stock the supplier has already sold.
@@ -380,7 +416,8 @@ namespace Intercolony
 
         /// <summary>
         /// Consumes units from one supplier's finite offer for this market window. Every matching
-        /// live quotation is reduced immediately, including quotations created before the purchase.
+        /// arrived or pending quotation is reduced immediately, including quotations created
+        /// before the purchase.
         /// </summary>
         public void ConsumeSupplierOffer(
             int refreshWindow, ThingDef thingDef, int settlementId, int quantityPurchased)
@@ -444,6 +481,28 @@ namespace Intercolony
                     }
                 }
             }
+
+            for (int i = pendingRfqResponses.Count - 1; i >= 0; i--)
+            {
+                PendingRfqResponse pending = pendingRfqResponses[i];
+                Quotation quote = pending?.quote;
+                PurchaseRequest request = pending == null
+                    ? null
+                    : FindRequest(pending.requestId);
+                if (request == null || !request.IsOpen || quote == null ||
+                    request.thingDef == null || request.thingDef.shortHash != thingDefShortHash ||
+                    quote.refreshWindow != refreshWindow || quote.settlementId != settlementId)
+                {
+                    continue;
+                }
+
+                quote.quantityOffered = Mathf.Max(
+                    0, quote.quantityOffered - quantityPurchased);
+                if (quote.quantityOffered == 0)
+                {
+                    pendingRfqResponses.RemoveAt(i);
+                }
+            }
         }
 
         public void AddRequest(PurchaseRequest request)
@@ -452,6 +511,19 @@ namespace Intercolony
             {
                 requests.Add(request);
             }
+        }
+
+        public PurchaseRequest FindRequest(int requestId)
+        {
+            foreach (PurchaseRequest request in requests)
+            {
+                if (request != null && request.id == requestId)
+                {
+                    return request;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -720,6 +792,15 @@ namespace Intercolony
         public List<LedgerEntry> Ledger => ledger;
 
         /// <summary>
+        /// Completed production by exact good and absolute in-game day. World-scoped so the
+        /// Business history survives maps, caravans and colony abandonment with the other
+        /// authoritative economic state.
+        /// </summary>
+        private List<ProductionBucket> productionLedger = new List<ProductionBucket>();
+
+        public List<ProductionBucket> ProductionLedger => productionLedger;
+
+        /// <summary>
         /// When the first entry was recorded, or -1 before any. Read by the dashboard so a young
         /// colony's report says "12 days of history" rather than presenting a confident quarter.
         /// </summary>
@@ -936,19 +1017,30 @@ namespace Intercolony
             {
                 if (economySeed == 0)
                 {
-                    economySeed = Gen.HashCombineInt(world?.info?.Seed ?? 0, EconomySeedSalt);
-
-                    // 0 is the "unassigned" sentinel, so a hash that lands on it must move.
-                    if (economySeed == 0)
-                    {
-                        economySeed = EconomySeedSalt;
-                    }
+                    economySeed = DerivedEconomySeed();
 
                     IntercolonyLog.Message($"Derived economy seed {economySeed} from the world seed.");
                 }
 
                 return economySeed;
             }
+        }
+
+        /// <summary>
+        /// Returns the same seed as <see cref="EconomySeed"/> without assigning the lazy
+        /// persisted field. Read-only proposal previews use this so asking for a preview cannot
+        /// change the save merely because the economy seed had not been touched yet.
+        /// </summary>
+        internal int EconomySeedForReadOnly => economySeed != 0
+            ? economySeed
+            : DerivedEconomySeed();
+
+        private int DerivedEconomySeed()
+        {
+            int derived = Gen.HashCombineInt(world?.info?.Seed ?? 0, EconomySeedSalt);
+
+            // 0 is the "unassigned" sentinel, so a hash that lands on it must move.
+            return derived == 0 ? EconomySeedSalt : derived;
         }
 
         /// <summary>
@@ -979,6 +1071,28 @@ namespace Intercolony
             SettlementEconomicProfile profile = SettlementProfileGenerator.Generate(EconomySeed, settlement);
             profileCache[settlement.ID] = profile;
             return profile;
+        }
+
+        /// <summary>
+        /// Reads the same deterministic profile as <see cref="GetProfile"/> without populating
+        /// the cache or lazily assigning the persisted economy seed. This is intentionally
+        /// internal: service previews need a pure read path, while normal callers should keep the
+        /// cached <see cref="GetProfile"/> behavior.
+        /// </summary>
+        internal SettlementEconomicProfile GetProfileForReadOnly(Settlement settlement)
+        {
+            if (!SettlementProfileGenerator.IsEligible(settlement))
+            {
+                return null;
+            }
+
+            if (profileCache.TryGetValue(settlement.ID, out SettlementEconomicProfile cached) &&
+                cached.factionLoadId == (settlement.Faction?.loadID ?? -1))
+            {
+                return cached;
+            }
+
+            return SettlementProfileGenerator.Generate(EconomySeedForReadOnly, settlement);
         }
 
         /// <summary>Every eligible settlement's profile, in world-object order.</summary>
@@ -1155,6 +1269,8 @@ namespace Intercolony
             Scribe_Collections.Look(
                 ref supplierOfferConsumption, "supplierOfferConsumption", LookMode.Deep);
             Scribe_Collections.Look(ref requests, "requests", LookMode.Deep);
+            Scribe_Collections.Look(
+                ref pendingRfqResponses, "pendingRfqResponses", LookMode.Deep);
             Scribe_Collections.Look(ref purchaseOrders, "purchaseOrders", LookMode.Deep);
             Scribe_Collections.Look(ref reputations, "settlementReputations", LookMode.Value, LookMode.Deep);
             Scribe_Collections.Look(ref contracts, "contracts", LookMode.Deep);
@@ -1164,6 +1280,7 @@ namespace Intercolony
             Scribe_Collections.Look(ref postings, "postings", LookMode.Deep);
             Scribe_Collections.Look(ref laborDebts, "laborDebts", LookMode.Deep);
             Scribe_Collections.Look(ref ledger, "ledger", LookMode.Deep);
+            Scribe_Collections.Look(ref productionLedger, "productionLedger", LookMode.Deep);
             Scribe_Values.Look(ref ledgerStartTick, "ledgerStartTick", LedgerService.NoHistory);
             Scribe_Deep.Look(ref employerStanding, "employerStanding");
 
@@ -1395,6 +1512,38 @@ namespace Intercolony
                     }
                 }
 
+                if (pendingRfqResponses == null)
+                {
+                    pendingRfqResponses = new List<PendingRfqResponse>();
+                }
+                else
+                {
+                    int nullPendingResponses = pendingRfqResponses.RemoveAll(pending => pending == null);
+                    int brokenPendingResponses = 0;
+                    for (int i = pendingRfqResponses.Count - 1; i >= 0; i--)
+                    {
+                        PendingRfqResponse pending = pendingRfqResponses[i];
+                        PurchaseRequest request = FindRequest(pending.requestId);
+                        if (pending.IsValidAfterLoad && request != null && request.IsOpen &&
+                            !request.HasExpired(GenTicks.TicksGame) &&
+                            pending.quote.TryValidateForRequest(
+                                request.thingDef, request.IsAnimalOrder, out _))
+                        {
+                            continue;
+                        }
+
+                        pendingRfqResponses.RemoveAt(i);
+                        brokenPendingResponses++;
+                    }
+
+                    if (nullPendingResponses > 0 || brokenPendingResponses > 0)
+                    {
+                        IntercolonyLog.Warning(
+                            $"Dropped {nullPendingResponses} null and {brokenPendingResponses} " +
+                            "invalid pending RFQ response(s) while loading.");
+                    }
+                }
+
                 if (purchaseOrders == null)
                 {
                     purchaseOrders = new List<PurchaseOrder>();
@@ -1483,7 +1632,22 @@ namespace Intercolony
                 else
                 {
                     int nullEmployments = employments.RemoveAll(e => e == null);
-                    int brokenEmployments = employments.RemoveAll(e => !e.IsValidAfterLoad);
+                    int brokenEmployments = 0;
+                    for (int i = employments.Count - 1; i >= 0; i--)
+                    {
+                        EmploymentContract employment = employments[i];
+                        if (employment.IsValidAfterLoad)
+                        {
+                            continue;
+                        }
+
+                        // There is no pawn left against which to verify a returned Thing. Settle
+                        // before dropping the unrecoverable record, which retains the full bond and
+                        // tells the player instead of silently losing the charged deposit.
+                        EmploymentEquipmentService.SettleBond(employment);
+                        employments.RemoveAt(i);
+                        brokenEmployments++;
+                    }
                     if (nullEmployments > 0 || brokenEmployments > 0)
                     {
                         // An employment whose pawn did not resolve leaves a worker somewhere in
@@ -1501,6 +1665,16 @@ namespace Intercolony
                 else
                 {
                     ledger.RemoveAll(e => e == null);
+                }
+
+                if (productionLedger == null)
+                {
+                    productionLedger = new List<ProductionBucket>();
+                }
+                else
+                {
+                    productionLedger.RemoveAll(bucket =>
+                        bucket == null || bucket.thingDef == null || bucket.count <= 0);
                 }
 
                 if (postings == null)
@@ -1584,16 +1758,38 @@ namespace Intercolony
             // to be free (§84).
             if (GenTicks.IsTickInterval(DeadlineCheckIntervalTicks))
             {
+                // RFQ responses are already generated and frozen; this hourly beat only reveals
+                // the ones whose persisted arrival tick has passed. Keeping the queue beside the
+                // existing periodic work avoids a second scheduler and a per-tick scan.
+                if (pendingRfqResponses.Count > 0)
+                {
+                    RfqService.AdvancePendingResponses(this);
+                }
+
                 // §88's policy runs *before* the deadline and expiry checks, so a commitment killed
                 // by a war is reported as lost to the war rather than as the player's failure to
                 // deliver on time. The ordering is the policy: same hour, two very different
                 // letters, and only one of them is an accusation.
                 HostilityPolicy.Sweep(this);
 
+                // Record the day's normalized employment experience after hostility has had its
+                // chance to close a war-severed contract, but before ordinary expiry processing.
+                if (GenTicks.IsTickInterval(GenDate.TicksPerDay))
+                {
+                    EmploymentExperienceService.Sample(employments);
+                }
+
+                if (GenTicks.IsTickInterval(CommercialGoodwillIntervalTicks))
+                {
+                    CommercialGoodwillPressureService.Apply(this);
+                }
+
                 if (orders.Count > 0)
                 {
                     SalesOrderService.FailOverdue(orders);
                 }
+
+                ContractService.AdvanceAutoReady(this);
 
                 // Purchases become ready on their own schedule; checking hourly means the
                 // "ready to collect" letter lands near the moment it describes (§17).
@@ -1630,8 +1826,11 @@ namespace Intercolony
             }
         }
 
-        /// <summary>One in-game hour.</summary>
-        private const int DeadlineCheckIntervalTicks = 2500;
+        /// <summary>
+        /// One in-game hour, and the polling interval used when allowing pending RFQ responses to
+        /// arrive before their request expires.
+        /// </summary>
+        internal const int DeadlineCheckIntervalTicks = 2500;
 
         /// <summary>
         /// Runs the refresh immediately (DESIGN.md §95). Note this does not shift the
@@ -1677,6 +1876,7 @@ namespace Intercolony
             PruneProfileCache();
 
             LedgerService.Prune(this);
+            ProductionLedgerService.Prune(this);
             OrderHistoryService.Prune(this);
             CommercialTimelineService.Prune(this);
 
@@ -2571,6 +2771,30 @@ namespace Intercolony
                     "at zero because historical silver cannot be reconstructed honestly.");
             }
 
+            if (saveVersion < 57)
+            {
+                // 56 -> 57 added per-contract auto-renew and auto-ready flags. Both C# and
+                // Scribe defaults are false, so existing agreements and employments need no
+                // field initialisation.
+                IntercolonyLog.Message(
+                    "  schema 56 -> 57: per-contract auto-renew and auto-ready flags added; " +
+                    "existing agreements and employments keep them off.");
+            }
+
+            if (saveVersion < 58)
+            {
+                // 57 -> 58 added the completed-production ledger. Older saves contain no
+                // observation of what was actually completed, and stock or order totals cannot
+                // prove that history without inventing a past the player never measured.
+                if (productionLedger == null)
+                {
+                    productionLedger = new List<ProductionBucket>();
+                }
+
+                IntercolonyLog.Message(
+                    "  schema 57 -> 58: completed-production ledger added; no historical production was fabricated.");
+            }
+
             saveVersion = CurrentSaveVersion;
         }
 
@@ -2688,6 +2912,14 @@ namespace Intercolony
                     {
                         highest = quote.id;
                     }
+                }
+            }
+
+            foreach (PendingRfqResponse pending in pendingRfqResponses)
+            {
+                if (pending?.quote != null && pending.quote.id > highest)
+                {
+                    highest = pending.quote.id;
                 }
             }
 

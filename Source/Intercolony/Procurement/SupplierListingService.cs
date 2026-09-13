@@ -94,6 +94,45 @@ namespace Intercolony
             int quantity,
             out string failureReason)
         {
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            int availableSilver = PurchaseOrderService.CountColonySilver(paymentMap);
+            Settlement settlement = listing == null
+                ? null
+                : IntercolonyMarketAccess.FindSettlement(listing.settlementId);
+            return CanPurchase(
+                state, listing, quantity, availableSilver, settlement, out failureReason);
+        }
+
+        /// <summary>
+        /// Read-only purchase eligibility using a silver count captured by the caller. The market
+        /// read model uses this overload so the colony's storage is scanned once per row build.
+        /// </summary>
+        internal static bool CanPurchase(
+            IntercolonyWorldComponent state,
+            SupplierListing listing,
+            int quantity,
+            int availableSilver,
+            out string failureReason)
+        {
+            Settlement settlement = listing == null
+                ? null
+                : IntercolonyMarketAccess.FindSettlement(listing.settlementId);
+            return CanPurchase(
+                state, listing, quantity, availableSilver, settlement, out failureReason);
+        }
+
+        /// <summary>
+        /// Read-only purchase eligibility using both a captured silver count and an already-resolved
+        /// settlement. The latter keeps Supplier Market row construction free of repeated world scans.
+        /// </summary>
+        internal static bool CanPurchase(
+            IntercolonyWorldComponent state,
+            SupplierListing listing,
+            int quantity,
+            int availableSilver,
+            Settlement settlement,
+            out string failureReason)
+        {
             failureReason = null;
 
             if (state == null)
@@ -147,7 +186,6 @@ namespace Intercolony
                 return false;
             }
 
-            Settlement settlement = IntercolonyMarketAccess.FindSettlement(listing.settlementId);
             if (settlement == null)
             {
                 failureReason = "The supplying settlement no longer exists.";
@@ -162,7 +200,7 @@ namespace Intercolony
 
             Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
             return PurchaseOrderService.CanPayForPurchase(
-                paymentMap, listing.unitPrice, quantity, out failureReason);
+                paymentMap, listing.unitPrice, quantity, availableSilver, out failureReason);
         }
 
         /// <summary>
@@ -225,10 +263,11 @@ namespace Intercolony
                     FulfillmentMode fulfillment = delivers
                         ? FulfillmentMode.SellerDelivery
                         : FulfillmentMode.BuyerPickup;
-                    int leadTimeDays = RfqService.LeadTimeDays(distance, delivers, supply);
+                    LogisticsQuote logistics = LogisticsQuote.Create(
+                        distance, LogisticsQuote.MethodFor(delivers), supply);
                     float unitPrice = RfqService.SupplierUnitPrice(
-                        state, def, stuff, quality, profile, category.Value, supply, distance,
-                        delivers, quantityAvailable, out _);
+                        state, def, stuff, quality, profile, category.Value, supply, logistics,
+                        quantityAvailable, out _);
                     int lifespanDays = Rand.RangeInclusive(MinLifespanDays, MaxLifespanDays);
 
                     created.Add(new SupplierListing
@@ -241,7 +280,7 @@ namespace Intercolony
                         quantityAvailable = quantityAvailable,
                         unitPrice = unitPrice,
                         fulfillment = fulfillment,
-                        leadTimeDays = leadTimeDays,
+                        leadTimeDays = logistics.LeadTimeDays,
                         createdTick = GenTicks.TicksGame,
                         expiryTick = GenTicks.TicksGame + lifespanDays * GenDate.TicksPerDay,
                         refreshWindow = refreshWindow

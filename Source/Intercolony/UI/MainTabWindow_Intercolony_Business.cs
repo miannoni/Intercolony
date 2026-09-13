@@ -36,6 +36,18 @@ namespace Intercolony
         private float businessContentHeight = 400f;
 
         private const float LineHeight = 24f;
+        private const float CashFlowColumnGap = 8f;
+        private const string CashFlowHeadingTooltip =
+            "This table counts commitments already made: open sales orders, agreement cycles falling due, and scheduled payroll. " +
+            "It does not predict spot sales or opportunities you have not accepted.";
+        private const string CashFlowDayTooltip =
+            "Each bucket is a rolling 24-hour window from now, not a calendar day.";
+
+        public override void PostOpen()
+        {
+            base.PostOpen();
+            CashFlowForecast.Invalidate();
+        }
 
         private void DrawBusiness(Rect inRect, IntercolonyWorldComponent state)
         {
@@ -60,15 +72,177 @@ namespace Intercolony
             float y = 0f;
             y = DrawCashPosition(viewRect, y, state);
             y += 12f;
+            CashFlowReport cashFlow = CashFlowForecast.Current(state);
+            y = DrawCashFlowForecast(viewRect, y, cashFlow);
+            y += 12f;
             y = DrawBrandSummary(viewRect, y, state);
             y += 12f;
+            float productionStartY = y;
+            y = DrawProductionCommitments(viewRect, y, state);
+            if (y > productionStartY)
+            {
+                y += 12f;
+            }
+
             y = DrawPeriodReport(viewRect, y, state);
-            y += 12f;
-            y = DrawContractEstimates(viewRect, y, state);
 
             EndPageScrollView();
 
             businessContentHeight = y + 12f;
+        }
+
+        private float DrawCashFlowForecast(Rect inRect, float y, CashFlowReport report)
+        {
+            Text.Font = GameFont.Medium;
+            string heading = $"Cash flow — next {CashFlowForecast.WindowDays} days";
+            float headingWidth = Mathf.Max(1f, inRect.width - 12f);
+            float headingHeight = Text.CalcHeight(heading, headingWidth);
+            Rect headingRect = new Rect(0f, y, headingWidth, headingHeight);
+            Widgets.Label(headingRect, heading);
+            if (ShouldBuildTooltip(headingRect))
+            {
+                TooltipHandler.TipRegion(headingRect, CashFlowHeadingTooltip);
+            }
+
+            Text.Font = GameFont.Small;
+            y += headingHeight + 4f;
+
+            float tableWidth = Mathf.Max(1f, inRect.width - 12f);
+            int dayCount = report.days.Count;
+            int numberColumnCount = dayCount + 1;
+            float labelWidth = tableWidth * 0.3f;
+            float numberWidth = Mathf.Max(1f,
+                (tableWidth - labelWidth - numberColumnCount * CashFlowColumnGap) /
+                numberColumnCount);
+            float labelX = 6f;
+            float numberX = labelX + labelWidth + CashFlowColumnGap;
+
+            string totalHeader = $"Next {CashFlowForecast.WindowDays} days";
+            string[] dayHeaders = new string[dayCount];
+            float[] dayHeaderHeights = new float[dayCount];
+            float blankHeaderHeight = Text.CalcHeight(string.Empty, labelWidth);
+            float totalHeaderHeight = Text.CalcHeight(totalHeader, numberWidth);
+            float headerHeight = Mathf.Max(blankHeaderHeight, totalHeaderHeight);
+            for (int i = 0; i < dayCount; i++)
+            {
+                dayHeaders[i] = $"Day {report.days[i].dayIndex + 1}";
+                dayHeaderHeights[i] = Text.CalcHeight(dayHeaders[i], numberWidth);
+                headerHeight = Mathf.Max(headerHeight, dayHeaderHeights[i]);
+            }
+
+            for (int i = 0; i < dayCount; i++)
+            {
+                float dayX = numberX + i * (numberWidth + CashFlowColumnGap);
+                DrawMeasuredCashFlowLabel(
+                    new Rect(dayX, y, numberWidth, dayHeaderHeights[i]), dayHeaders[i],
+                    TextAnchor.UpperRight);
+
+                Rect dayHeaderRect = new Rect(dayX, y, numberWidth, headerHeight);
+                if (ShouldBuildTooltip(dayHeaderRect))
+                {
+                    TooltipHandler.TipRegion(dayHeaderRect, CashFlowDayTooltip);
+                }
+            }
+
+            float totalX = numberX + dayCount * (numberWidth + CashFlowColumnGap);
+            DrawMeasuredCashFlowLabel(
+                new Rect(totalX, y, numberWidth, totalHeaderHeight), totalHeader,
+                TextAnchor.UpperRight);
+            y += headerHeight + 2f;
+
+            List<int> revenue = new List<int>(numberColumnCount);
+            List<int> expenses = new List<int>(numberColumnCount);
+            List<int> net = new List<int>(numberColumnCount);
+            for (int i = 0; i < dayCount; i++)
+            {
+                CashFlowDay day = report.days[i];
+                revenue.Add(day.revenue);
+                expenses.Add(day.expenses);
+                net.Add(day.Net);
+            }
+
+            // The report owns these totals; the UI deliberately does not recompute a second summary.
+            revenue.Add(report.TotalRevenue);
+            expenses.Add(report.TotalExpenses);
+            net.Add(report.TotalNet);
+
+            y = DrawCashFlowRow(y, labelX, labelWidth, numberX, numberWidth,
+                "Expected revenue", revenue, colourNet: false);
+            y = DrawCashFlowRow(y, labelX, labelWidth, numberX, numberWidth,
+                "Expected expenses", expenses, colourNet: false);
+            y = DrawCashFlowRow(y, labelX, labelWidth, numberX, numberWidth,
+                "Net", net, colourNet: true);
+            return y;
+        }
+
+        private static float DrawCashFlowRow(
+            float y,
+            float labelX,
+            float labelWidth,
+            float numberX,
+            float numberWidth,
+            string rowLabel,
+            List<int> amounts,
+            bool colourNet)
+        {
+            float rowLabelHeight = Text.CalcHeight(rowLabel, labelWidth);
+            string[] amountLabels = new string[amounts.Count];
+            float[] amountHeights = new float[amounts.Count];
+            float rowHeight = rowLabelHeight;
+            for (int i = 0; i < amounts.Count; i++)
+            {
+                amountLabels[i] = amounts[i].ToString("N0");
+                amountHeights[i] = Text.CalcHeight(amountLabels[i], numberWidth);
+                rowHeight = Mathf.Max(rowHeight, amountHeights[i]);
+            }
+
+            DrawMeasuredCashFlowLabel(
+                new Rect(labelX, y, labelWidth, rowLabelHeight), rowLabel, TextAnchor.UpperLeft);
+            for (int i = 0; i < amountLabels.Length; i++)
+            {
+                float x = numberX + i * (numberWidth + CashFlowColumnGap);
+                Rect amountRect = new Rect(x, y, numberWidth, amountHeights[i]);
+                if (colourNet)
+                {
+                    DrawCashFlowNet(amountRect, amountLabels[i], amounts[i]);
+                }
+                else
+                {
+                    DrawMeasuredCashFlowLabel(amountRect, amountLabels[i], TextAnchor.UpperRight);
+                }
+            }
+
+            return y + rowHeight;
+        }
+
+        private static void DrawMeasuredCashFlowLabel(Rect rect, string text, TextAnchor anchor)
+        {
+            TextAnchor previousAnchor = Text.Anchor;
+            Text.Anchor = anchor;
+            try
+            {
+                Widgets.Label(rect, text);
+            }
+            finally
+            {
+                Text.Anchor = previousAnchor;
+            }
+        }
+
+        private static void DrawCashFlowNet(Rect rect, string text, int net)
+        {
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = net >= 0
+                    ? new Color(0.6f, 0.9f, 0.6f) // Match the existing positive money colour.
+                    : new Color(1f, 0.75f, 0.75f); // Match the existing negative contract-margin colour.
+                DrawMeasuredCashFlowLabel(rect, text, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
         }
 
         /// <summary>
@@ -103,9 +277,18 @@ namespace Intercolony
                 return y + LineHeight;
             }
 
-            Widgets.Label(new Rect(6f, y, inRect.width, LineHeight),
-                $"Wage bill: {daily} silver a day across the workforce");
-            y += LineHeight;
+            string wageBill = $"Wage bill: {daily:N0} silver/day charged across the workforce";
+            float wageBillWidth = Mathf.Max(1f, inRect.width - 6f);
+            float wageBillHeight = Text.CalcHeight(wageBill, wageBillWidth);
+            Rect wageBillRect = new Rect(6f, y, wageBillWidth, wageBillHeight);
+            TooltipHandler.TipRegion(
+                wageBillRect,
+                "This is the charged daily rate for each employee, calculated from the worker's " +
+                "ask and selected wage structure. Daily terms cost more than prepaid because the " +
+                "colony can stop paying any morning; the worker charges a premium for that " +
+                "flexibility.");
+            Widgets.Label(wageBillRect, wageBill);
+            y += wageBillHeight;
 
             // Coloured, because this is the line that should make a player act. §39's arrears
             // escalation is only playable if running dry is visible before it bites.
@@ -199,8 +382,85 @@ namespace Intercolony
                 GUI.color = positive
                     ? new Color(0.6f, 0.9f, 0.6f)
                     : new Color(1f, 0.75f, 0.75f);
-                Widgets.Label(new Rect(valueX, y, valueWidth, valueHeight), row.bandName);
+                Rect valueRect = new Rect(valueX, y, valueWidth, valueHeight);
+                Widgets.Label(valueRect, row.bandName);
                 GUI.color = Color.white;
+
+                if (ShouldBuildTooltip(valueRect) && !row.tooltip.NullOrEmpty())
+                {
+                    TooltipHandler.TipRegion(valueRect, row.tooltip);
+                }
+
+                y += rowHeight + 4f;
+            }
+
+            return y;
+        }
+
+        /// <summary>
+        /// Shows the operational comparison F07 asks for: the commitment derived from live seller
+        /// agreements beside actual completed products from the production ledger. The rationale
+        /// and the ledger's limits belong in the tooltip; the face of the page stays key/value rows.
+        /// </summary>
+        private float DrawProductionCommitments(
+            Rect inRect,
+            float y,
+            IntercolonyWorldComponent state)
+        {
+            List<BusinessReportService.ProductionCommitment> rows =
+                BusinessReportService.ActiveProductionCommitments(state);
+            if (rows.Count == 0)
+            {
+                return y;
+            }
+
+            Text.Font = GameFont.Medium;
+            string title = "Production commitments";
+            float titleWidth = Mathf.Max(1f, inRect.width - 12f);
+            float titleHeight = Text.CalcHeight(title, titleWidth);
+            Widgets.Label(new Rect(0f, y, titleWidth, titleHeight), title);
+            Text.Font = GameFont.Small;
+            y += titleHeight + 4f;
+
+            float contentWidth = Mathf.Max(1f, inRect.width - 40f);
+            float keyWidth = Mathf.Min(220f, contentWidth * 0.6f);
+            float valueWidth = Mathf.Max(1f, contentWidth - keyWidth - 12f);
+            float valueX = 20f + keyWidth + 12f;
+            string tooltip =
+                "Commitment sums active and suspended seller agreements from their quantity per " +
+                "cycle and cadence. Recent production counts completed products in the last " +
+                $"{ProductionLedgerService.WindowDays} days; it does not infer production from " +
+                "stock changes. No recorded production is shown in words because the ledger does " +
+                "not store zero-production observations.";
+
+            foreach (BusinessReportService.ProductionCommitment row in rows)
+            {
+                string key = row.thingDef.LabelCap.ToString();
+                string value = row.hasRecordedProduction
+                    ? $"Commitment: {row.committedPerDay:0.0}/day | " +
+                      $"Recent production: {row.completedPerDay:0.0}/day"
+                    : "Commitment: " + row.committedPerDay.ToString("0.0") + "/day | " +
+                      "Recent production: no production recorded in the last " +
+                      $"{ProductionLedgerService.WindowDays} days";
+
+                float keyHeight = Text.CalcHeight(key, keyWidth);
+                float valueHeight = Text.CalcHeight(value, valueWidth);
+                float rowHeight = Mathf.Max(keyHeight, valueHeight);
+
+                Widgets.Label(new Rect(20f, y, keyWidth, keyHeight), key);
+                GUI.color = !row.hasRecordedProduction
+                    ? new Color(1f, 1f, 1f, 0.6f)
+                    : row.completedPerDay + 0.0001f < row.committedPerDay
+                        ? new Color(1f, 0.75f, 0.75f)
+                        : new Color(0.6f, 0.9f, 0.6f);
+                Rect valueRect = new Rect(valueX, y, valueWidth, valueHeight);
+                Widgets.Label(valueRect, value);
+                GUI.color = Color.white;
+
+                if (ShouldBuildTooltip(valueRect))
+                {
+                    TooltipHandler.TipRegion(valueRect, tooltip);
+                }
 
                 y += rowHeight + 4f;
             }
@@ -291,95 +551,5 @@ namespace Intercolony
             return y + LineHeight + 4f;
         }
 
-        /// <summary>
-        /// §45's screen: each standing agreement, and whether it is worth having.
-        /// </summary>
-        private float DrawContractEstimates(Rect inRect, float y, IntercolonyWorldComponent state)
-        {
-            Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, 400f, 32f), "Standing agreements");
-            Text.Font = GameFont.Small;
-            y += 36f;
-
-            List<BusinessReportService.ContractEstimate> estimates =
-                BusinessReportService.ActiveEstimates(state);
-
-            if (estimates.Count == 0)
-            {
-                GUI.color = new Color(1f, 1f, 1f, 0.6f);
-                string emptyMessage = "No standing agreements. Build a trading record and settlements will propose them.";
-                float emptyMessageWidth = inRect.width - 12f;
-                float emptyMessageHeight = Text.CalcHeight(emptyMessage, emptyMessageWidth);
-                Widgets.Label(new Rect(6f, y, emptyMessageWidth, emptyMessageHeight), emptyMessage);
-                GUI.color = Color.white;
-                return y + emptyMessageHeight;
-            }
-
-            GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(6f, y, inRect.width, LineHeight),
-                "Per delivery cycle. Everything below the revenue line is an estimate.");
-            GUI.color = Color.white;
-            y += LineHeight + 4f;
-
-            foreach (BusinessReportService.ContractEstimate estimate in estimates)
-            {
-                y = DrawEstimate(new Rect(0f, y, inRect.width, 126f), estimate);
-            }
-
-            return y;
-        }
-
-        private float DrawEstimate(Rect rect, BusinessReportService.ContractEstimate estimate)
-        {
-            RecurringContract contract = estimate.contract;
-            float y = rect.y;
-
-            Widgets.Label(new Rect(6f, y, rect.width - 12f, LineHeight),
-                $"{contract.settlementName} — {contract.quantityPerCycle}x {contract.ItemLabel()} " +
-                $"every {contract.CadenceDays:F0} days" +
-                (contract.status == ContractStatus.Suspended ? "   (suspended by war)" : ""));
-            y += LineHeight;
-
-            y = EstimateLine(rect, y, "Revenue, payable", estimate.revenue);
-            y = EstimateLine(rect, y, "If you bought the goods instead", estimate.inputsIfBought);
-            y = EstimateLine(rect, y, "Wage bill over the cycle", estimate.payroll);
-            y = EstimateLine(rect, y, "Delivery premium earned, and hauled for", estimate.transport);
-
-            Widgets.DrawLineHorizontal(20f, y + 2f, 400f);
-            y += 8f;
-
-            Widgets.Label(new Rect(20f, y, 260f, LineHeight), "Estimated margin");
-
-            GUI.color = estimate.Margin >= 0 ? new Color(0.6f, 0.9f, 0.6f) : new Color(1f, 0.55f, 0.55f);
-            Text.Anchor = TextAnchor.UpperRight;
-            Widgets.Label(new Rect(280f, y, 140f, LineHeight), estimate.Margin.ToString("N0"));
-            Text.Anchor = TextAnchor.UpperLeft;
-            GUI.color = Color.white;
-
-            // The sentence that turns four numbers into a decision (§45).
-            GUI.color = new Color(1f, 1f, 1f, 0.6f);
-            Widgets.Label(new Rect(440f, y, rect.width - 450f, LineHeight),
-                estimate.Margin >= 0
-                    ? $"about {estimate.MarginPerDay:0} silver a day; making the goods rather than " +
-                      $"buying them is worth {estimate.MakingSaves:N0} a cycle"
-                    : "the wage bill alone outweighs this agreement");
-            GUI.color = Color.white;
-
-            return y + LineHeight + 12f;
-        }
-
-        private static float EstimateLine(Rect rect, float y, string label, int amount)
-        {
-            GUI.color = new Color(1f, 1f, 1f, 0.85f);
-            Widgets.Label(new Rect(20f, y, 400f, LineHeight), label);
-
-            GUI.color = amount >= 0 ? new Color(0.6f, 0.9f, 0.6f) : new Color(1f, 0.75f, 0.75f);
-            Text.Anchor = TextAnchor.UpperRight;
-            Widgets.Label(new Rect(420f, y, 140f, LineHeight), amount.ToString("N0"));
-            Text.Anchor = TextAnchor.UpperLeft;
-            GUI.color = Color.white;
-
-            return y + LineHeight;
-        }
     }
 }

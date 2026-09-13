@@ -22,6 +22,7 @@ namespace Intercolony
 
         private const float MarketMinRowHeight = 30f;
         private const float HeaderHeight = 26f;
+        private const float MarketRefreshIntervalSeconds = 0.5f;
 
         /// <summary>Column indices, matching <see cref="ColumnLabels"/>.</summary>
         private enum Column
@@ -47,6 +48,20 @@ namespace Intercolony
 
         private bool sortDescending;
 
+        private List<MarketOpportunity> marketRows;
+        private List<float> marketRowHeights;
+        private float marketContentHeight = -1f;
+        private float marketRowHeightsWidth = -1f;
+        private int marketRowsOpportunityCount = -1;
+        private int marketTotalAvailable;
+        private float marketRowsBuiltAtRealtime;
+        private float marketRowsMaxMarketDistance;
+        private int marketRowsMinValueFilter;
+        private IntercolonyProductCategory? marketRowsCategoryFilter;
+        private Column marketRowsSortColumn;
+        private bool marketRowsSortDescending;
+        private bool marketRowsHaveSort;
+
         // The selling tables and Labor's stacked views both need more room than 920x560 allowed.
         public override Vector2 RequestedTabSize => new Vector2(1040f, 620f);
 
@@ -64,8 +79,7 @@ namespace Intercolony
             FindBuyer,
 
             // Procurement mirrors selling one for one, so the two directions of the same
-            // business read the same way. Two of the four are placeholders on purpose: an
-            // empty seat that says "not yet" is more honest than a missing one.
+            // business read the same way.
             SupplierMarket,
             FindSeller,
             PurchaseOrders,
@@ -169,6 +183,16 @@ namespace Intercolony
         private Vector2 supplierMarketScroll;
         private SupplierMarketColumn supplierMarketSortColumn = SupplierMarketColumn.TotalPayment;
         private bool supplierMarketSortDescending = true;
+        private const float SupplierMarketRefreshIntervalSeconds = 0.5f;
+        private List<SupplierMarketRow> supplierMarketRows;
+        private List<float> supplierMarketRowHeights;
+        private float supplierMarketContentHeight = -1f;
+        private float supplierMarketRowHeightsWidth = -1f;
+        private int supplierMarketRowsListingCount = -1;
+        private float supplierMarketRowsBuiltAtRealtime;
+        private SupplierMarketColumn supplierMarketRowsSortColumn;
+        private bool supplierMarketRowsSortDescending;
+        private bool supplierMarketRowsHaveSort;
 
         private PurchaseOrdersColumn purchaseOrdersSortColumn = PurchaseOrdersColumn.Timing;
         private bool purchaseOrdersSortDescending;
@@ -203,7 +227,21 @@ namespace Intercolony
             // hidden as orders complete and reputation moves, so do not carry an old proposal
             // result into the next visit.
             contractProposalSettlementCache = null;
+            // Main-tab windows survive being closed, so stale choices would accumulate for
+            // contracts that no longer exist. F14 asks selling entries to begin collapsed: each
+            // visit to the tab is a beginning.
+            contractExpansionChoices.Clear();
+            procurementExpansionChoices.Clear();
             expandedRelationSettlementId = NoExpandedRelation;
+            ResetMarketCache();
+            ResetSupplierMarketCache();
+        }
+
+        public override void PostClose()
+        {
+            ResetMarketCache();
+            ResetSupplierMarketCache();
+            base.PostClose();
         }
 
         public override void DoWindowContents(Rect inRect)
@@ -308,9 +346,9 @@ namespace Intercolony
                 return;
             }
 
-            if (IsPlaceholderTab(tab))
+            if (tab == Tab.SupplyContracts)
             {
-                DrawPlaceholderPage(inRect, tab, state);
+                DrawProcurementContracts(inRect, state);
                 return;
             }
 
@@ -426,15 +464,6 @@ namespace Intercolony
             Tab.SupplyContracts,
         };
 
-        /// <summary>
-        /// Pages that exist as a seat at the table and nothing more. They are drawn disabled
-        /// with a tooltip saying so, because a tab that silently does nothing reads as broken.
-        /// </summary>
-        private static bool IsPlaceholderTab(Tab which)
-        {
-            return which == Tab.SupplyContracts;
-        }
-
         /// <summary>Tab caption, including a count badge where one is useful.</summary>
         private static string TabLabel(Tab which, IntercolonyWorldComponent state)
         {
@@ -479,10 +508,41 @@ namespace Intercolony
                     int purchases = OpenPurchaseCount(state);
                     return purchases > 0 ? $"Orders ({purchases})" : "Orders";
                 case Tab.SupplyContracts:
-                    return "Contracts";
+                    int procurementContracts = LiveProcurementContractCount(state);
+                    return procurementContracts > 0
+                        ? $"Contracts ({procurementContracts})"
+                        : "Contracts";
                 default:
                     return which.ToString();
             }
+        }
+
+        private static int LiveProcurementContractCount(IntercolonyWorldComponent state)
+        {
+            int live = 0;
+            List<ProcurementContract> contracts = state?.ProcurementContracts;
+            if (contracts == null)
+            {
+                return live;
+            }
+
+            foreach (ProcurementContract contract in contracts)
+            {
+                if (contract == null)
+                {
+                    continue;
+                }
+
+                if (contract.status == ProcurementContractStatus.Offered ||
+                    contract.status == ProcurementContractStatus.CounterpartyCountered ||
+                    contract.status == ProcurementContractStatus.Active ||
+                    contract.status == ProcurementContractStatus.Suspended)
+                {
+                    live++;
+                }
+            }
+
+            return live;
         }
 
         private static int OpenPurchaseCount(IntercolonyWorldComponent state)
@@ -607,18 +667,10 @@ namespace Intercolony
             {
                 Tab which = order[i];
                 Rect buttonRect = new Rect(x, rect.y, widths[i], rect.height);
-                bool placeholder = IsPlaceholderTab(which);
 
-                if (Widgets.ButtonText(
-                        buttonRect, labels[i], drawBackground: tab != which,
-                        active: !placeholder) && !placeholder)
+                if (Widgets.ButtonText(buttonRect, labels[i], drawBackground: tab != which))
                 {
                     SelectTab(which, state);
-                }
-
-                if (placeholder && ShouldBuildTooltip(buttonRect))
-                {
-                    TooltipHandler.TipRegion(buttonRect, "Under development.");
                 }
 
                 x += widths[i] + Gap;
@@ -676,14 +728,27 @@ namespace Intercolony
 
         private void SelectTab(Tab which, IntercolonyWorldComponent state)
         {
+            if (tab != which)
+            {
+                ResetMarketCache();
+                ResetSupplierMarketCache();
+            }
+
             tab = which;
+
+            if (which == Tab.Business)
+            {
+                // The main-tab window survives being closed; switching sub-tabs is the real
+                // lifecycle boundary for anything drawn on one page.
+                CashFlowForecast.Invalidate();
+            }
 
             if (GroupFor(which) == TabGroup.Selling)
             {
                 sellingTab = which;
             }
 
-            if (GroupFor(which) == TabGroup.Procurement && !IsPlaceholderTab(which))
+            if (GroupFor(which) == TabGroup.Procurement)
             {
                 procurementTab = which;
             }
@@ -713,21 +778,9 @@ namespace Intercolony
 
         private void DrawMarket(Rect inRect, IntercolonyWorldComponent state)
         {
-            int totalAvailable = 0;
-            List<MarketOpportunity> live = new List<MarketOpportunity>();
-            foreach (MarketOpportunity opportunity in state.Opportunities)
-            {
-                if (!opportunity.IsAvailable)
-                {
-                    continue;
-                }
-
-                totalAvailable++;
-                if (PassesFilters(opportunity, state.MaxMarketDistance))
-                {
-                    live.Add(opportunity);
-                }
-            }
+            float viewWidth = Mathf.Max(1f, inRect.width - 16f);
+            List<MarketOpportunity> live = GetMarketRows(state, viewWidth);
+            int totalAvailable = marketTotalAvailable;
 
             // inRect starts below the tab selector, so y must too.
             float y = inRect.y;
@@ -752,33 +805,124 @@ namespace Intercolony
                 return;
             }
 
-            Sort(live);
-
-            DrawHeaderRow(new Rect(0f, y, inRect.width - 16f, HeaderHeight));
+            DrawHeaderRow(new Rect(0f, y, viewWidth, HeaderHeight));
             y += HeaderHeight;
             Widgets.DrawLineHorizontal(0f, y, inRect.width);
             y += 2f;
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            float viewWidth = inRect.width - 16f;
-            float contentHeight = 0f;
-            foreach (MarketOpportunity opportunity in live)
-            {
-                contentHeight += MarketRowHeight(opportunity, viewWidth);
-            }
-
-            Rect viewRect = new Rect(0f, 0f, viewWidth, contentHeight);
+            Rect viewRect = new Rect(0f, 0f, viewWidth, marketContentHeight);
 
             BeginPageScrollView(outRect, ref scrollPosition, viewRect);
+            float visibleTop = scrollPosition.y;
+            float visibleBottom = visibleTop + outRect.height;
             float rowY = 0f;
             for (int i = 0; i < live.Count; i++)
             {
-                float rowHeight = MarketRowHeight(live[i], viewRect.width);
-                DrawRow(new Rect(0f, rowY, viewRect.width, rowHeight), live[i], i);
+                float rowHeight = marketRowHeights[i];
+                if (rowY + rowHeight >= visibleTop - rowHeight &&
+                    rowY <= visibleBottom + rowHeight)
+                {
+                    DrawRow(new Rect(0f, rowY, viewRect.width, rowHeight), live[i], i);
+                }
+
                 rowY += rowHeight;
             }
 
             EndPageScrollView();
+        }
+
+        private void ResetMarketCache()
+        {
+            marketRows = null;
+            marketRowHeights = null;
+            marketContentHeight = -1f;
+            marketRowHeightsWidth = -1f;
+            marketRowsOpportunityCount = -1;
+            marketTotalAvailable = 0;
+            marketRowsBuiltAtRealtime = 0f;
+            marketRowsHaveSort = false;
+        }
+
+        private List<MarketOpportunity> GetMarketRows(
+            IntercolonyWorldComponent state, float tableWidth)
+        {
+            List<MarketOpportunity> opportunities = state?.Opportunities;
+            int opportunityCount = opportunities?.Count ?? 0;
+            float maxMarketDistance = state == null
+                ? IntercolonyWorldComponent.NoDistanceLimit
+                : state.MaxMarketDistance;
+            float now = Time.realtimeSinceStartup;
+            bool rebuild = marketRows == null ||
+                           marketRowsOpportunityCount != opportunityCount ||
+                           marketRowsMaxMarketDistance != maxMarketDistance ||
+                           marketRowsMinValueFilter != minValueFilter ||
+                           marketRowsCategoryFilter != categoryFilter ||
+                           now - marketRowsBuiltAtRealtime > MarketRefreshIntervalSeconds;
+
+            if (rebuild)
+            {
+                marketRows = new List<MarketOpportunity>();
+                marketTotalAvailable = 0;
+                if (opportunities != null)
+                {
+                    foreach (MarketOpportunity opportunity in opportunities)
+                    {
+                        if (!opportunity.IsAvailable)
+                        {
+                            continue;
+                        }
+
+                        marketTotalAvailable++;
+                        if (PassesFilters(opportunity, maxMarketDistance))
+                        {
+                            marketRows.Add(opportunity);
+                        }
+                    }
+                }
+
+                marketRowHeights = null;
+                marketContentHeight = -1f;
+                marketRowHeightsWidth = -1f;
+                marketRowsOpportunityCount = opportunityCount;
+                marketRowsMaxMarketDistance = maxMarketDistance;
+                marketRowsMinValueFilter = minValueFilter;
+                marketRowsCategoryFilter = categoryFilter;
+                marketRowsBuiltAtRealtime = now;
+                marketRowsHaveSort = false;
+            }
+
+            if (!marketRowsHaveSort ||
+                marketRowsSortColumn != sortColumn ||
+                marketRowsSortDescending != sortDescending)
+            {
+                Sort(marketRows);
+                marketRowHeights = null;
+                marketContentHeight = -1f;
+                marketRowHeightsWidth = -1f;
+                marketRowsSortColumn = sortColumn;
+                marketRowsSortDescending = sortDescending;
+                marketRowsHaveSort = true;
+            }
+
+            if (marketRowHeights == null ||
+                marketRowHeights.Count != marketRows.Count ||
+                marketRowHeightsWidth != tableWidth ||
+                marketContentHeight < 0f)
+            {
+                marketRowHeights = new List<float>(marketRows.Count);
+                marketContentHeight = 0f;
+                for (int i = 0; i < marketRows.Count; i++)
+                {
+                    float rowHeight = MarketRowHeight(marketRows[i], tableWidth);
+                    marketRowHeights.Add(rowHeight);
+                    marketContentHeight += rowHeight;
+                }
+
+                marketRowHeightsWidth = tableWidth;
+            }
+
+            return marketRows;
         }
 
         /// <summary>
@@ -1150,7 +1294,8 @@ namespace Intercolony
             {
                 float cellWidth = tableWidth * ColumnWidths[i] - 4f;
                 height = Mathf.Max(height,
-                    Text.CalcHeight(MarketCellLabel(opportunity, i), cellWidth) + 8f);
+                    Text.CalcHeight(
+                        MarketCellLabel(opportunity, i), Mathf.Max(1f, cellWidth)) + 8f);
             }
 
             return height;
@@ -1371,6 +1516,7 @@ namespace Intercolony
                     SalesOrder order = SalesOrderService.Accept(state, opportunity, qty);
                     if (order != null)
                     {
+                        ResetMarketCache();
                         tab = Tab.Orders;
                     }
                 }));
@@ -2287,38 +2433,6 @@ namespace Intercolony
         private const float PurchaseOrderMinimumRowHeight = 42f;
 
         /// <summary>
-        /// Procurement (DESIGN.md §19, §55, §103). Requests with their quotes underneath, so
-        /// comparing suppliers is a matter of reading down a list rather than clicking through.
-        /// </summary>
-        /// <summary>
-        /// A page that exists so the shape of procurement matches the shape of selling, and
-        /// says outright that it is not built yet. Better than omitting the tab, which would
-        /// leave the two halves of the same business looking arbitrarily different.
-        /// </summary>
-        private void DrawPlaceholderPage(
-            Rect inRect, Tab which, IntercolonyWorldComponent state)
-        {
-            float y = inRect.y;
-
-            Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, inRect.width, 34f), TabLabel(which, state));
-            Text.Font = GameFont.Small;
-            y += 40f;
-
-            string body = which == Tab.SupplierMarket
-                ? "Under development.\n\nToday you ask settlements for what you need and they " +
-                  "answer. A supplier market would work the other way around: standing offers " +
-                  "you can browse and take, the way the selling Market already works."
-                : "Under development.\n\nA procurement contract would be a standing agreement " +
-                  "to buy — the mirror of the supply agreements you already offer, with a " +
-                  "settlement committing to deliver on a cadence rather than one order at a time.";
-
-            GUI.color = Color.gray;
-            Widgets.Label(new Rect(0f, y, Mathf.Min(inRect.width, 560f), inRect.height - y), body);
-            GUI.color = Color.white;
-        }
-
-        /// <summary>
         /// Purchases already placed. The procurement mirror of the Sales Orders page; request
         /// history is deliberately not rendered here because a request and its order are distinct.
         /// </summary>
@@ -2326,13 +2440,32 @@ namespace Intercolony
         {
             float y = inRect.y;
 
+            List<PurchaseOrdersRow> rows = PurchaseOrdersUiService.BuildRows(state);
+            int clearableCount = rows.Any(row => !row.isLive)
+                ? OrderHistoryService.CountClearablePurchaseOrderHistory(state)
+                : 0;
+
             Text.Font = GameFont.Medium;
             DrawMeasuredPurchaseOrderLabel(
-                new Rect(0f, y, inRect.width, 34f), "Purchase orders");
+                new Rect(0f, y, Mathf.Max(1f, inRect.width - 200f), 34f), "Purchase orders");
             Text.Font = GameFont.Small;
+
+            if (clearableCount > 0)
+            {
+                Rect clearRect = new Rect(inRect.width - 190f, y + 2f, 190f, 30f);
+                if (Widgets.ButtonText(clearRect, "Clear completed history"))
+                {
+                    string orderWord = clearableCount == 1 ? "order" : "orders";
+                    Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                        $"Remove {clearableCount} concluded {orderWord} from this list?\n\n" +
+                        "Live purchase orders and your trading record will be kept.",
+                        () => OrderHistoryService.ClearPurchaseOrderHistory(state),
+                        destructive: true));
+                }
+            }
+
             y += 40f;
 
-            List<PurchaseOrdersRow> rows = PurchaseOrdersUiService.BuildRows(state);
             string emptyState = PurchaseOrdersUiService.EmptyState(rows);
             if (rows.Count == 0)
             {
@@ -2386,7 +2519,8 @@ namespace Intercolony
             Text.Font = GameFont.Small;
             y += 40f;
 
-            List<SupplierMarketRow> rows = SupplierMarketUiService.BuildRows(state);
+            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
+            List<SupplierMarketRow> rows = GetSupplierMarketRows(state, tableWidth);
             if (rows.Count == 0)
             {
                 GUI.color = Color.gray;
@@ -2398,35 +2532,98 @@ namespace Intercolony
                 return;
             }
 
-            SupplierMarketUiService.SortRows(
-                rows, supplierMarketSortColumn, supplierMarketSortDescending);
-
-            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
             DrawSupplierMarketHeader(new Rect(0f, y, tableWidth, 28f));
             y += 28f;
             Widgets.DrawLineHorizontal(0f, y, inRect.width);
             y += 2f;
 
-            float contentHeight = 0f;
-            for (int i = 0; i < rows.Count; i++)
-            {
-                contentHeight += SupplierMarketRowHeight(rows[i], tableWidth);
-            }
-
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect viewRect = new Rect(0f, 0f, tableWidth, contentHeight);
+            Rect viewRect = new Rect(0f, 0f, tableWidth, supplierMarketContentHeight);
             BeginPageScrollView(outRect, ref supplierMarketScroll, viewRect);
 
+            float visibleTop = supplierMarketScroll.y;
+            float visibleBottom = visibleTop + outRect.height;
             float rowY = 0f;
             for (int i = 0; i < rows.Count; i++)
             {
-                float rowHeight = SupplierMarketRowHeight(rows[i], tableWidth);
-                DrawSupplierMarketRow(
-                    new Rect(0f, rowY, tableWidth, rowHeight), rows[i], i, state);
+                float rowHeight = supplierMarketRowHeights[i];
+                if (rowY + rowHeight >= visibleTop - rowHeight &&
+                    rowY <= visibleBottom + rowHeight)
+                {
+                    DrawSupplierMarketRow(
+                        new Rect(0f, rowY, tableWidth, rowHeight), rows[i], i, state);
+                }
+
                 rowY += rowHeight;
             }
 
             EndPageScrollView();
+        }
+
+        private void ResetSupplierMarketCache()
+        {
+            supplierMarketRows = null;
+            supplierMarketRowHeights = null;
+            supplierMarketContentHeight = -1f;
+            supplierMarketRowHeightsWidth = -1f;
+            supplierMarketRowsListingCount = -1;
+            supplierMarketRowsBuiltAtRealtime = 0f;
+            supplierMarketRowsHaveSort = false;
+        }
+
+        private List<SupplierMarketRow> GetSupplierMarketRows(
+            IntercolonyWorldComponent state, float tableWidth)
+        {
+            int listingCount = state?.SupplierListings?.Count ?? 0;
+            float now = Time.realtimeSinceStartup;
+            bool rebuild = supplierMarketRows == null ||
+                           supplierMarketRowsListingCount != listingCount ||
+                           now - supplierMarketRowsBuiltAtRealtime >
+                           SupplierMarketRefreshIntervalSeconds;
+
+            if (rebuild)
+            {
+                supplierMarketRows = SupplierMarketUiService.BuildRows(state);
+                supplierMarketRowHeights = null;
+                supplierMarketContentHeight = -1f;
+                supplierMarketRowHeightsWidth = -1f;
+                supplierMarketRowsListingCount = listingCount;
+                supplierMarketRowsBuiltAtRealtime = now;
+                supplierMarketRowsHaveSort = false;
+            }
+
+            if (!supplierMarketRowsHaveSort ||
+                supplierMarketRowsSortColumn != supplierMarketSortColumn ||
+                supplierMarketRowsSortDescending != supplierMarketSortDescending)
+            {
+                SupplierMarketUiService.SortRows(
+                    supplierMarketRows, supplierMarketSortColumn, supplierMarketSortDescending);
+                supplierMarketRowHeights = null;
+                supplierMarketContentHeight = -1f;
+                supplierMarketRowHeightsWidth = -1f;
+                supplierMarketRowsSortColumn = supplierMarketSortColumn;
+                supplierMarketRowsSortDescending = supplierMarketSortDescending;
+                supplierMarketRowsHaveSort = true;
+            }
+
+            if (supplierMarketRowHeights == null ||
+                supplierMarketRowHeights.Count != supplierMarketRows.Count ||
+                supplierMarketRowHeightsWidth != tableWidth ||
+                supplierMarketContentHeight < 0f)
+            {
+                supplierMarketRowHeights = new List<float>(supplierMarketRows.Count);
+                supplierMarketContentHeight = 0f;
+                for (int i = 0; i < supplierMarketRows.Count; i++)
+                {
+                    float rowHeight = SupplierMarketRowHeight(supplierMarketRows[i], tableWidth);
+                    supplierMarketRowHeights.Add(rowHeight);
+                    supplierMarketContentHeight += rowHeight;
+                }
+
+                supplierMarketRowHeightsWidth = tableWidth;
+            }
+
+            return supplierMarketRows;
         }
 
         private void DrawSupplierMarketHeader(Rect rect)
@@ -2483,15 +2680,19 @@ namespace Intercolony
             }
 
             Widgets.DrawHighlightIfMouseover(rect);
-            if (ShouldBuildTooltip(rect) && !row.tooltip.NullOrEmpty())
+            if (ShouldBuildTooltip(rect))
             {
-                TooltipHandler.TipRegion(rect, row.tooltip);
+                string tooltip = SupplierMarketUiService.BuildTooltip(state, row);
+                if (!tooltip.NullOrEmpty())
+                {
+                    TooltipHandler.TipRegion(rect, tooltip);
+                }
             }
 
             for (int i = 0; i < (int)SupplierMarketColumn.Reason + 1; i++)
             {
                 SupplierMarketColumn column = (SupplierMarketColumn)i;
-                DrawMeasuredSupplierLabel(
+                DrawSupplierLabel(
                     SupplierMarketCell(rect, column),
                     SupplierMarketUiService.CellLabel(row, column));
             }
@@ -2529,9 +2730,13 @@ namespace Intercolony
                     state, listing, quantity),
                 quantity =>
                 {
-                    if (!SupplierListingService.TryPurchase(
-                            state, listing, quantity, out _, out string failureReason) &&
-                        !failureReason.NullOrEmpty())
+                    bool purchased = SupplierListingService.TryPurchase(
+                        state, listing, quantity, out _, out string failureReason);
+                    if (purchased)
+                    {
+                        ResetSupplierMarketCache();
+                    }
+                    else if (!failureReason.NullOrEmpty())
                     {
                         // The purchase service owns this explanation. The UI does not compose a
                         // parallel reason that could drift from the transaction boundary.
@@ -2596,6 +2801,11 @@ namespace Intercolony
                 new Rect(rect.x, rect.y, rect.width, Mathf.Max(rect.height, measuredHeight)), value);
         }
 
+        private static void DrawSupplierLabel(Rect rect, string text)
+        {
+            Widgets.Label(rect, text ?? "");
+        }
+
         private void DrawFindSeller(Rect inRect, IntercolonyWorldComponent state)
         {
             float y = inRect.y;
@@ -2629,7 +2839,7 @@ namespace Intercolony
             float contentHeight = 0f;
             foreach (PurchaseRequest request in requests)
             {
-                contentHeight += RequestBlockHeight(request);
+                contentHeight += RequestBlockHeight(request, state, inRect.width - 16f);
             }
 
             if (requests.Count == 0)
@@ -2662,7 +2872,7 @@ namespace Intercolony
 
             foreach (PurchaseRequest request in requests)
             {
-                float height = RequestBlockHeight(request);
+                float height = RequestBlockHeight(request, state, viewRect.width);
                 DrawRequestBlock(new Rect(0f, rowY, viewRect.width, height), request, state);
                 rowY += height;
             }
@@ -2805,29 +3015,9 @@ namespace Intercolony
             if (concludedCount > 0)
             {
                 y += liveCount > 0 ? PurchaseOrderSectionGap : 0f;
-                const float buttonWidth = 190f;
-                int clearableCount =
-                    OrderHistoryService.CountClearablePurchaseOrderHistory(state);
-                float labelWidth = clearableCount > 0
-                    ? width - buttonWidth - 8f
-                    : width;
                 string header = $"Concluded orders ({concludedCount})";
                 DrawMeasuredPurchaseOrderLabel(
-                    new Rect(0f, y, labelWidth, PurchaseOrderSectionHeaderHeight), header);
-                if (clearableCount > 0)
-                {
-                    Rect clearRect = new Rect(
-                        width - buttonWidth, y + 2f, buttonWidth, 26f);
-                    if (Widgets.ButtonText(clearRect, "Clear completed history"))
-                    {
-                        string orderWord = clearableCount == 1 ? "order" : "orders";
-                        Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
-                            $"Remove {clearableCount} concluded {orderWord} from this list?\n\n" +
-                            "Live purchase orders and your trading record will be kept.",
-                            () => OrderHistoryService.ClearPurchaseOrderHistory(state),
-                            destructive: true));
-                    }
-                }
+                    new Rect(0f, y, width, PurchaseOrderSectionHeaderHeight), header);
 
                 y += PurchaseOrderSectionHeaderHeight;
                 int index = 0;
@@ -2974,8 +3164,571 @@ namespace Intercolony
                 cancelAction: () => { }));
         }
 
+        private Vector2 procurementContractsScroll;
         private Vector2 contractsScroll;
         private List<Settlement> contractProposalSettlementCache;
+        // An absent key means no player choice: use ContractStartsExpanded for this entry's
+        // current default. This is a dictionary, not a set of expanded or collapsed ids, because
+        // an explicit "closed" choice must stay distinct from an untouched entry whose default is
+        // currently closed; that default can change while the row remains on screen.
+        private readonly Dictionary<int, bool> contractExpansionChoices = new Dictionary<int, bool>();
+        private readonly Dictionary<int, bool> procurementExpansionChoices =
+            new Dictionary<int, bool>();
+
+        /// <summary>
+        /// Recurring procurement agreements. Offers and final supplier counters come first because
+        /// they are the decisions waiting on the player; live agreements follow, then history.
+        /// </summary>
+        private void DrawProcurementContracts(
+            Rect inRect, IntercolonyWorldComponent state)
+        {
+            float y = inRect.y;
+
+            Text.Font = GameFont.Medium;
+            Widgets.Label(
+                new Rect(0f, y, Mathf.Max(1f, inRect.width - 200f), 34f),
+                "Procurement agreements");
+            Text.Font = GameFont.Small;
+
+            Rect proposeRect = new Rect(inRect.width - 190f, y + 2f, 190f, 30f);
+            if (Widgets.ButtonText(proposeRect, "Propose procurement agreement"))
+            {
+                Find.WindowStack.Add(new Dialog_ProposeProcurementAgreement(state));
+            }
+
+            y += 40f;
+
+            List<ProcurementContract> contracts = new List<ProcurementContract>();
+            if (state.ProcurementContracts != null)
+            {
+                foreach (ProcurementContract contract in state.ProcurementContracts)
+                {
+                    if (contract != null)
+                    {
+                        contracts.Add(contract);
+                    }
+                }
+            }
+
+            if (contracts.Count == 0)
+            {
+                GUI.color = Color.gray;
+                string emptyMessage =
+                    "You have no standing purchase agreements.\n\n" +
+                    "Propose one to a settlement that can supply the goods.";
+                float emptyHeight = Text.CalcHeight(emptyMessage, Mathf.Max(1f, inRect.width));
+                Widgets.Label(
+                    new Rect(0f, y, inRect.width, emptyHeight), emptyMessage);
+                GUI.color = Color.white;
+                return;
+            }
+
+            contracts.Sort((a, b) =>
+            {
+                int rank = ProcurementContractRank(a).CompareTo(ProcurementContractRank(b));
+                return rank != 0 ? rank : b.id.CompareTo(a.id);
+            });
+
+            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
+            List<float> rowHeights = new List<float>(contracts.Count);
+            List<bool> rowExpansions = new List<bool>(contracts.Count);
+            float contentHeight = 0f;
+            foreach (ProcurementContract contract in contracts)
+            {
+                bool expanded = IsProcurementContractExpanded(contract);
+                rowExpansions.Add(expanded);
+                float rowHeight = ProcurementContractRowHeight(contract, tableWidth, expanded);
+                rowHeights.Add(rowHeight);
+                contentHeight += rowHeight;
+            }
+
+            Rect outRect = new Rect(0f, y, inRect.width, Mathf.Max(0f, inRect.yMax - y));
+            Rect viewRect = new Rect(0f, 0f, tableWidth, Mathf.Max(contentHeight, outRect.height));
+            BeginPageScrollView(outRect, ref procurementContractsScroll, viewRect);
+
+            float rowY = 0f;
+            for (int i = 0; i < contracts.Count; i++)
+            {
+                DrawProcurementContractRow(
+                    new Rect(0f, rowY, tableWidth, rowHeights[i]),
+                    contracts[i], i, state, rowExpansions[i]);
+                rowY += rowHeights[i];
+            }
+
+            EndPageScrollView();
+        }
+
+        private static int ProcurementContractRank(ProcurementContract contract)
+        {
+            if (contract == null)
+            {
+                return 3;
+            }
+
+            if (contract.status == ProcurementContractStatus.Offered ||
+                contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                return 0;
+            }
+
+            if (contract.status == ProcurementContractStatus.Active)
+            {
+                return 1;
+            }
+
+            if (contract.status == ProcurementContractStatus.Suspended)
+            {
+                return 2;
+            }
+
+            return 3;
+        }
+
+        private static string ProcurementContractIdentity(ProcurementContract contract)
+        {
+            return $"#{contract.id}  {contract.settlementName} — {contract.quantityPerCycle}x " +
+                   $"{contract.ItemLabel()} every {contract.cadenceDays}d";
+        }
+
+        private static string ProcurementContractIdentityWithExpansionMarker(
+            ProcurementContract contract, bool expanded)
+        {
+            return $"{(expanded ? "v" : ">")} {ProcurementContractIdentity(contract)}";
+        }
+
+        private static string ProcurementContractPaymentSummary(ProcurementContract contract)
+        {
+            int paymentPerCycle = ProcurementContractPaymentPerCycle(contract);
+            int totalPayment = IntercolonyPricing.TotalPayment(
+                paymentPerCycle, contract.totalCycles);
+            return $"{contract.totalCycles} cycles   {contract.unitPrice:0.##} silver/unit   " +
+                   $"{paymentPerCycle} silver per cycle   " +
+                   $"{totalPayment} total";
+        }
+
+        private static int ProcurementContractPaymentPerCycle(ProcurementContract contract)
+        {
+            return IntercolonyPricing.TotalPayment(
+                contract.unitPrice, contract.quantityPerCycle);
+        }
+
+        private static string ProcurementContractStatusText(ProcurementContract contract)
+        {
+            if (contract.IsPendingProposal)
+            {
+                return "awaiting the settlement's answer";
+            }
+
+            if (contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                return "supplier returned a final counter — answer required";
+            }
+
+            if (contract.status == ProcurementContractStatus.Active)
+            {
+                if (contract.activeOrderId != ProcurementContract.NoActiveOrderId)
+                {
+                    return "cycle in progress";
+                }
+
+                float daysUntilNextCycle =
+                    (contract.nextCycleTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;
+                return $"next cycle in {Mathf.Max(0f, daysUntilNextCycle):F1}d";
+            }
+
+            if (contract.status == ProcurementContractStatus.Suspended)
+            {
+                return "suspended by war — would resume if relations recovered";
+            }
+
+            string status = contract.status.ToString();
+            if (!string.IsNullOrEmpty(contract.outcomeNote))
+            {
+                status += $": {contract.outcomeNote}";
+            }
+
+            return status;
+        }
+
+        private static Color ProcurementContractStatusColour(ProcurementContract contract)
+        {
+            if (contract.IsPendingProposal ||
+                contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                return new Color(0.6f, 0.9f, 1f);
+            }
+
+            if (contract.status == ProcurementContractStatus.Suspended)
+            {
+                // Amber says this is a war pause, not a failed agreement.
+                return new Color(1f, 0.8f, 0.4f);
+            }
+
+            if (contract.status == ProcurementContractStatus.Completed)
+            {
+                return new Color(0.6f, 0.9f, 0.6f);
+            }
+
+            if (contract.status == ProcurementContractStatus.Active)
+            {
+                return Color.white;
+            }
+
+            return new Color(0.9f, 0.6f, 0.6f);
+        }
+
+        private static bool CanShowProcurementAutoReady(ProcurementContract contract)
+        {
+            return contract.status == ProcurementContractStatus.Active;
+        }
+
+        private static float ProcurementAutoReadyRowHeight(
+            ProcurementContract contract, float tableWidth)
+        {
+            if (!CanShowProcurementAutoReady(contract))
+            {
+                return 0f;
+            }
+
+            float contentWidth = Mathf.Max(1f, tableWidth - 220f);
+            return Mathf.Max(
+                24f,
+                Text.CalcHeight(
+                    ContractAutoReadyLabel, Mathf.Max(1f, contentWidth - 28f)));
+        }
+
+        private static float ProcurementContractRowHeight(
+            ProcurementContract contract, float rowWidth, bool expanded)
+        {
+            float contentWidth = Mathf.Max(1f, rowWidth - 220f);
+            string identity = ProcurementContractIdentityWithExpansionMarker(contract, expanded);
+            string payment = ProcurementContractPaymentSummary(contract);
+            string status =
+                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
+                ProcurementContractStatusText(contract);
+            float height = 4f;
+            height += Mathf.Max(Text.LineHeight, Text.CalcHeight(identity, contentWidth));
+            if (expanded)
+            {
+                height += Mathf.Max(Text.LineHeight, Text.CalcHeight(payment, contentWidth));
+            }
+
+            height += Mathf.Max(Text.LineHeight, Text.CalcHeight(status, contentWidth));
+            if (expanded)
+            {
+                height += ProcurementAutoReadyRowHeight(contract, rowWidth);
+            }
+
+            height += 4f;
+            return expanded ? Mathf.Max(74f, height) : height;
+        }
+
+        private static float DrawMeasuredProcurementLabel(
+            Rect rect, string text)
+        {
+            string value = text ?? "";
+            float measuredHeight = Mathf.Max(
+                Text.LineHeight, Text.CalcHeight(value, Mathf.Max(1f, rect.width)));
+            Widgets.Label(
+                new Rect(rect.x, rect.y, rect.width, measuredHeight), value);
+            return measuredHeight;
+        }
+
+        private void DrawProcurementContractRow(
+            Rect rect,
+            ProcurementContract contract,
+            int index,
+            IntercolonyWorldComponent state,
+            bool expanded)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            float contentWidth = Mathf.Max(1f, rect.width - 220f);
+            float lineY = rect.y + 4f;
+            string identity =
+                ProcurementContractIdentityWithExpansionMarker(contract, expanded);
+            Rect identityRect = new Rect(
+                rect.x + 6f, lineY, contentWidth,
+                Mathf.Max(Text.LineHeight, Text.CalcHeight(identity, contentWidth)));
+            lineY += DrawMeasuredProcurementLabel(
+                identityRect, identity);
+
+            if (Widgets.ButtonInvisible(identityRect))
+            {
+                SetProcurementContractExpanded(contract, !IsProcurementContractExpanded(contract));
+            }
+
+            if (expanded)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.7f);
+                lineY += DrawMeasuredProcurementLabel(
+                    new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                    ProcurementContractPaymentSummary(contract));
+                GUI.color = Color.white;
+            }
+
+            GUI.color = ProcurementContractStatusColour(contract);
+            string status =
+                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
+                ProcurementContractStatusText(contract);
+            lineY += DrawMeasuredProcurementLabel(
+                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight), status);
+            GUI.color = Color.white;
+
+            if (!expanded)
+            {
+                return;
+            }
+
+            float autoReadyRowHeight = ProcurementAutoReadyRowHeight(contract, rect.width);
+            if (autoReadyRowHeight > 0f)
+            {
+                Rect autoReadyRect = new Rect(
+                    rect.x + 6f, lineY, contentWidth, autoReadyRowHeight);
+                Widgets.CheckboxLabeled(
+                    autoReadyRect, ContractAutoReadyLabel, ref contract.autoReadyOrders);
+
+                if (ShouldBuildTooltip(autoReadyRect))
+                {
+                    TooltipHandler.TipRegion(
+                        autoReadyRect,
+                        "Cycles are paid automatically either way; this only changes what happens " +
+                        "when the colony cannot afford one.\n\n" +
+                        "When this is on, a cycle that cannot be paid for waits instead of " +
+                        "counting as a failed delivery. If the silver arrives within one cadence, " +
+                        "the cycle goes through by itself.\n\n" +
+                        "It only waits on money: a supplier that is gone or invalid terms still " +
+                        "fails the cycle straight away, and you get one letter either way.");
+                }
+
+                lineY += autoReadyRowHeight;
+            }
+
+            if (contract.status == ProcurementContractStatus.Offered &&
+                contract.IsPendingProposal)
+            {
+                Rect cancelRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(cancelRect, "Cancel"))
+                {
+                    ProcurementContractService.CancelProposal(state, contract);
+                }
+
+                if (ShouldBuildTooltip(cancelRect))
+                {
+                    TooltipHandler.TipRegion(
+                        cancelRect, "Withdraw this proposal before the supplier answers.");
+                }
+            }
+            else if (contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                Rect acceptRect = new Rect(rect.xMax - 200f, rect.y + 20f, 92f, 30f);
+                if (contract.CanAcceptFinalCounter && Widgets.ButtonText(acceptRect, "Accept"))
+                {
+                    OpenProcurementCounterConfirmation(state, contract);
+                }
+
+                Rect declineRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (contract.CanDeclineFinalCounter && Widgets.ButtonText(declineRect, "Decline"))
+                {
+                    ProcurementContractService.TryDeclineFinalCounter(state, contract);
+                }
+
+                if (ShouldBuildTooltip(declineRect))
+                {
+                    TooltipHandler.TipRegion(
+                        declineRect,
+                        "Declining is terminal; this final counter cannot be reopened.");
+                }
+            }
+            else if (contract.status == ProcurementContractStatus.Active ||
+                     contract.status == ProcurementContractStatus.Suspended)
+            {
+                bool suspended = contract.status == ProcurementContractStatus.Suspended;
+                Rect withdrawRect = new Rect(rect.xMax - 100f, rect.y + 20f, 92f, 30f);
+                if (Widgets.ButtonText(withdrawRect, "Withdraw"))
+                {
+                    Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                        $"Withdraw from the procurement agreement with {contract.settlementName}?\n\n" +
+                        (suspended
+                            ? "It is only suspended — it would resume on its own if relations " +
+                              "recovered. Withdrawing ends it for good."
+                            : "Withdrawing ends future deliveries and damages your standing with them."),
+                        () => ProcurementContractService.CancelContract(state, contract),
+                        destructive: true));
+                }
+            }
+        }
+
+        private static void OpenProcurementCounterConfirmation(
+            IntercolonyWorldComponent state, ProcurementContract contract)
+        {
+            if (state == null || contract == null ||
+                !contract.TryGetFinalCounterTerms(
+                    out ProcurementContractCounterTerms terms))
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(new ProcurementCounterConfirmationDialog(
+                terms,
+                () => ProcurementContractService.TryAcceptFinalCounter(state, contract)));
+        }
+
+        private sealed class ProcurementCounterConfirmationDialog : Window
+        {
+            private const float WindowWidth = 520f;
+            private const float WindowMargin = 18f;
+            private const float TitleHeight = 38f;
+            private const float ButtonHeight = 36f;
+            private const float BottomGap = 10f;
+            private const float TermLabelWidth = 150f;
+            private const float TermColumnGap = 8f;
+            private const float TermRowGap = 5f;
+            private const float ScrollbarWidth = 16f;
+
+            private readonly List<TermRow> rows;
+            private readonly Action onConfirm;
+            private Vector2 contentScroll;
+
+            public ProcurementCounterConfirmationDialog(
+                ProcurementContractCounterTerms terms, Action onConfirm)
+            {
+                int totalPayment = IntercolonyPricing.TotalPayment(
+                    terms.paymentPerCycle, terms.totalCycles);
+                rows = new List<TermRow>
+                {
+                    new TermRow("Quantity per cycle", terms.quantityPerCycle.ToString("N0")),
+                    new TermRow("Unit price", $"{terms.unitPrice:F2} silver"),
+                    new TermRow("Cadence", $"{terms.cadenceDays:N0} days"),
+                    new TermRow("Total cycles", terms.totalCycles.ToString("N0")),
+                    new TermRow(
+                        "Fulfilment",
+                        terms.fulfillment == FulfillmentMode.BuyerPickup
+                            ? "Buyer pickup"
+                            : "Supplier delivery"),
+                    new TermRow("Payment per cycle", $"{terms.paymentPerCycle:N0} silver"),
+                    new TermRow("Total", $"{totalPayment:N0} silver")
+                };
+                this.onConfirm = onConfirm;
+                doCloseX = true;
+                forcePause = true;
+                absorbInputAroundWindow = true;
+            }
+
+            public override Vector2 InitialSize
+            {
+                get
+                {
+                    Text.Font = GameFont.Small;
+                    float bodyWidth = WindowWidth - WindowMargin * 2f - ScrollbarWidth;
+                    float bodyHeight = MeasureRows(rows, Mathf.Max(1f, bodyWidth));
+                    float fixedHeight = WindowMargin * 2f + TitleHeight + BottomGap + ButtonHeight;
+                    float minimumHeight = fixedHeight + Text.LineHeight;
+                    float maximumHeight = Mathf.Max(minimumHeight, UI.screenHeight * 0.7f);
+                    return new Vector2(
+                        WindowWidth,
+                        Mathf.Min(Mathf.Max(minimumHeight, fixedHeight + bodyHeight), maximumHeight));
+                }
+            }
+
+            public override void DoWindowContents(Rect inRect)
+            {
+                Text.Font = GameFont.Medium;
+                Widgets.Label(
+                    new Rect(WindowMargin, WindowMargin, inRect.width - WindowMargin * 2f, TitleHeight),
+                    "Final procurement counter");
+                Text.Font = GameFont.Small;
+
+                float contentTop = WindowMargin + TitleHeight;
+                float contentBottom = inRect.height - WindowMargin - ButtonHeight - BottomGap;
+                Rect contentRect = new Rect(
+                    WindowMargin,
+                    contentTop,
+                    Mathf.Max(1f, inRect.width - WindowMargin * 2f),
+                    Mathf.Max(1f, contentBottom - contentTop));
+                float contentWidth = Mathf.Max(1f, contentRect.width - ScrollbarWidth);
+                float contentHeight = MeasureRows(rows, contentWidth);
+
+                if (contentHeight <= contentRect.height)
+                {
+                    DrawRows(contentRect.width, contentRect.y);
+                }
+                else
+                {
+                    Rect viewRect = new Rect(0f, 0f, contentWidth, contentHeight);
+                    Widgets.BeginScrollView(contentRect, ref contentScroll, viewRect);
+                    DrawRows(viewRect.width, 0f);
+                    Widgets.EndScrollView();
+                }
+
+                float buttonY = inRect.height - WindowMargin - ButtonHeight;
+                if (Widgets.ButtonText(
+                        new Rect(WindowMargin, buttonY, 170f, ButtonHeight), "Accept counter"))
+                {
+                    onConfirm?.Invoke();
+                    Close();
+                }
+
+                if (Widgets.ButtonText(
+                        new Rect(inRect.width - WindowMargin - 120f, buttonY, 120f, ButtonHeight),
+                        "Cancel"))
+                {
+                    Close();
+                }
+            }
+
+            private void DrawRows(float width, float startY)
+            {
+                float y = startY;
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    TermRow row = rows[i];
+                    float valueWidth = ValueWidth(width);
+                    float rowHeight = RowHeight(row, width);
+
+                    GUI.color = new Color(1f, 1f, 1f, 0.65f);
+                    Widgets.Label(
+                        new Rect(0f, y, TermLabelWidth, rowHeight), row.label);
+                    GUI.color = Color.white;
+                    Widgets.Label(
+                        new Rect(TermLabelWidth + TermColumnGap, y, valueWidth, rowHeight),
+                        row.value ?? "");
+                    y += rowHeight + TermRowGap;
+                }
+            }
+
+            private static float MeasureRows(List<TermRow> rows, float width)
+            {
+                float height = 0f;
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    height += RowHeight(rows[i], width);
+                    if (i < rows.Count - 1)
+                    {
+                        height += TermRowGap;
+                    }
+                }
+
+                return height;
+            }
+
+            private static float RowHeight(TermRow row, float width)
+            {
+                float valueHeight = Text.CalcHeight(row.value ?? "", ValueWidth(width));
+                float labelHeight = Text.CalcHeight(row.label ?? "", TermLabelWidth);
+                return Mathf.Max(valueHeight, labelHeight, Text.LineHeight);
+            }
+
+            private static float ValueWidth(float width)
+            {
+                return Mathf.Max(1f, width - TermLabelWidth - TermColumnGap);
+            }
+        }
 
         /// <summary>
         /// Recurring contracts (DESIGN.md §29, §107). Offers first, then live agreements, then
@@ -3054,15 +3807,48 @@ namespace Intercolony
                 return rank != 0 ? rank : b.id.CompareTo(a.id);
             });
 
-            Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, contracts.Count * 74f);
+            List<BusinessReportService.ContractEstimate> activeEstimates =
+                BusinessReportService.ActiveEstimates(state);
+            Dictionary<int, BusinessReportService.ContractEstimate> estimatesByContractId =
+                new Dictionary<int, BusinessReportService.ContractEstimate>();
+            foreach (BusinessReportService.ContractEstimate estimate in activeEstimates)
+            {
+                if (estimate != null && estimate.contract != null)
+                {
+                    estimatesByContractId[estimate.contract.id] = estimate;
+                }
+            }
+
+            float tableWidth = Mathf.Max(1f, inRect.width - 16f);
+            List<float> rowHeights = new List<float>(contracts.Count);
+            List<BusinessReportService.ContractEstimate> rowEstimates =
+                new List<BusinessReportService.ContractEstimate>(contracts.Count);
+            List<bool> rowExpansions = new List<bool>(contracts.Count);
+            float contentHeight = 0f;
+            foreach (RecurringContract contract in contracts)
+            {
+                BusinessReportService.ContractEstimate estimate;
+                estimatesByContractId.TryGetValue(contract.id, out estimate);
+                rowEstimates.Add(estimate);
+
+                bool expanded = IsContractExpanded(contract);
+                rowExpansions.Add(expanded);
+                float rowHeight = ContractRowHeight(contract, estimate, tableWidth, expanded);
+                rowHeights.Add(rowHeight);
+                contentHeight += rowHeight;
+            }
+
+            Rect outRect = new Rect(0f, y, inRect.width, Mathf.Max(0f, inRect.yMax - y));
+            Rect viewRect = new Rect(0f, 0f, tableWidth, Mathf.Max(contentHeight, outRect.height));
 
             BeginPageScrollView(outRect, ref contractsScroll, viewRect);
             float rowY = 0f;
             for (int i = 0; i < contracts.Count; i++)
             {
-                DrawContractRow(new Rect(0f, rowY, viewRect.width, 74f), contracts[i], i, state);
-                rowY += 74f;
+                DrawContractRow(
+                    new Rect(0f, rowY, tableWidth, rowHeights[i]),
+                    contracts[i], i, state, rowEstimates[i], rowExpansions[i]);
+                rowY += rowHeights[i];
             }
 
             EndPageScrollView();
@@ -3139,21 +3925,20 @@ namespace Intercolony
             return 3;
         }
 
-        private void DrawContractRow(
-            Rect rect, RecurringContract contract, int index, IntercolonyWorldComponent state)
+        private static string ContractIdentity(RecurringContract contract)
         {
-            if (index % 2 == 1)
-            {
-                Widgets.DrawLightHighlight(rect);
-            }
+            return $"#{contract.id}  {contract.settlementName} — {contract.quantityPerCycle}x " +
+                   $"{contract.ItemLabel()} every {contract.CadenceDays:F0}d";
+        }
 
-            Widgets.DrawHighlightIfMouseover(rect);
+        private static string ContractIdentityWithExpansionMarker(
+            RecurringContract contract, bool expanded)
+        {
+            return $"{(expanded ? "v" : ">")} {ContractIdentity(contract)}";
+        }
 
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width - 220f, 22f),
-                $"#{contract.id}  {contract.settlementName} — {contract.quantityPerCycle}x " +
-                $"{contract.ItemLabel()} every {contract.CadenceDays:F0}d");
-
-            GUI.color = new Color(1f, 1f, 1f, 0.7f);
+        private static string ContractPaymentSummary(RecurringContract contract)
+        {
             string paymentSummary =
                 $"{contract.totalCycles} deliveries   " +
                 $"{contract.DiscountedCyclePayment} silver each   " +
@@ -3165,62 +3950,785 @@ namespace Intercolony
                     $"{contract.DiscountFraction.ToStringPercent("F0")} waived";
             }
 
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 26f, rect.width - 220f, 22f),
-                paymentSummary);
-            GUI.color = Color.white;
+            return paymentSummary;
+        }
 
-            string status;
-            Color colour = Color.white;
+        /// <summary>
+        /// Starts a row open only when the player has a decision to make or the agreement is
+        /// warning that something is going wrong. A settlement offer needs an answer, a live
+        /// renewal needs a renew-or-let-it-end decision, a missed active cycle warns that one
+        /// more miss ends the agreement, and war suspension is an abnormal interruption.
+        /// A pending player proposal is not exceptional: the player already acted and is waiting
+        /// on the settlement, so there is nothing for them to decide. Terminal history stays
+        /// collapsed.
+        /// </summary>
+        internal static bool ContractStartsExpanded(RecurringContract contract)
+        {
+            if (contract == null || contract.IsPendingPlayerProposal)
+            {
+                return false;
+            }
+
+            if (contract.IsOffer)
+            {
+                return true;
+            }
+
+            if (contract.renewalOffered && contract.DaysUntilRenewalExpires > 0f)
+            {
+                return true;
+            }
+
+            if (contract.IsActive && contract.consecutiveFailures > 0)
+            {
+                return true;
+            }
+
+            return contract.status == ContractStatus.Suspended;
+        }
+
+        private bool IsContractExpanded(RecurringContract contract)
+        {
+            if (contract == null)
+            {
+                return false;
+            }
+
+            bool expanded;
+            return contractExpansionChoices.TryGetValue(contract.id, out expanded)
+                ? expanded
+                : ContractStartsExpanded(contract);
+        }
+
+        private void SetContractExpanded(RecurringContract contract, bool expanded)
+        {
+            if (contract == null)
+            {
+                return;
+            }
+
+            contractExpansionChoices[contract.id] = expanded;
+        }
+
+        /// <summary>
+        /// Starts a procurement row open only when the player has a decision to make or a live
+        /// abnormal state needs immediate attention. A supplier final counter needs an answer and
+        /// war suspension is an abnormal interruption. Procurement has no consecutive-miss signal,
+        /// so it cannot express the selling side's "one more miss ends it" warning; cumulative
+        /// failures are history rather than an alarm. That asymmetry is known and deliberate.
+        /// Proposals awaiting the supplier, routine activity, and terminal history stay collapsed.
+        /// Procurement agreements currently have no renewal decision path.
+        /// </summary>
+        internal static bool ProcurementContractStartsExpanded(ProcurementContract contract)
+        {
+            if (contract == null || contract.IsPendingProposal)
+            {
+                return false;
+            }
+
+            if (contract.status == ProcurementContractStatus.CounterpartyCountered)
+            {
+                return true;
+            }
+
+            return contract.status == ProcurementContractStatus.Suspended;
+        }
+
+        private bool IsProcurementContractExpanded(ProcurementContract contract)
+        {
+            if (contract == null)
+            {
+                return false;
+            }
+
+            bool expanded;
+            return procurementExpansionChoices.TryGetValue(contract.id, out expanded)
+                ? expanded
+                : ProcurementContractStartsExpanded(contract);
+        }
+
+        private void SetProcurementContractExpanded(
+            ProcurementContract contract, bool expanded)
+        {
+            if (contract == null)
+            {
+                return;
+            }
+
+            procurementExpansionChoices[contract.id] = expanded;
+        }
+
+        private static string ContractStatusText(RecurringContract contract)
+        {
             if (contract.IsPendingPlayerProposal)
             {
-                status = "awaiting the settlement's answer";
-                colour = new Color(0.6f, 0.9f, 1f);
+                return "awaiting the settlement's answer";
             }
-            else if (contract.IsOffer)
+
+            if (contract.IsOffer)
             {
-                status = $"offer expires in {contract.DaysUntilOfferExpires:F1}d";
-                colour = new Color(0.6f, 0.9f, 1f);
+                return $"offer expires in {contract.DaysUntilOfferExpires:F1}d";
             }
-            else if (contract.IsActive)
+
+            if (contract.IsActive)
             {
-                status = contract.activeOrderId != 0
+                string status = contract.activeOrderId != 0
                     ? $"delivery {contract.cyclesCompleted + contract.cyclesFailed + 1} in progress"
                     : $"next delivery in {contract.DaysUntilNextCycle:F1}d";
                 if (contract.consecutiveFailures > 0)
                 {
                     status += "  — one more miss ends it";
+                }
+
+                return status;
+            }
+
+            if (contract.renewalOffered)
+            {
+                return $"they would sign again — {contract.DaysUntilRenewalExpires:F1}d to answer";
+            }
+
+            if (contract.status == ContractStatus.Suspended)
+            {
+                return $"suspended by war with {contract.factionName} — " +
+                       $"{contract.CyclesRemaining} deliveries still to come";
+            }
+
+            string terminalStatus = contract.status.ToString();
+            if (!string.IsNullOrEmpty(contract.outcomeNote))
+            {
+                terminalStatus += $": {contract.outcomeNote}";
+            }
+
+            return terminalStatus;
+        }
+
+        private static string ContractDeliveryStatus(RecurringContract contract)
+        {
+            return $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — " +
+                   ContractStatusText(contract);
+        }
+
+        private static float ContractMeasuredHeight(string text, float width)
+        {
+            return Mathf.Max(Text.LineHeight, Text.CalcHeight(text ?? "", Mathf.Max(1f, width)));
+        }
+
+        private static float DrawMeasuredContractLabel(
+            Rect rect, string text, TextAnchor anchor)
+        {
+            string value = text ?? "";
+            float measuredHeight = ContractMeasuredHeight(value, rect.width);
+            TextAnchor previousAnchor = Text.Anchor;
+            Text.Anchor = anchor;
+            try
+            {
+                Widgets.Label(
+                    new Rect(rect.x, rect.y, rect.width, measuredHeight), value);
+            }
+            finally
+            {
+                Text.Anchor = previousAnchor;
+            }
+
+            return measuredHeight;
+        }
+
+        private static float ContractBaseRowHeight(
+            RecurringContract contract, float tableWidth, bool expanded)
+        {
+            float contentWidth = Mathf.Max(1f, tableWidth - 220f);
+            float height = 4f;
+            height += ContractMeasuredHeight(
+                ContractIdentityWithExpansionMarker(contract, expanded), contentWidth);
+            if (expanded)
+            {
+                height += ContractMeasuredHeight(ContractPaymentSummary(contract), contentWidth);
+            }
+
+            height += ContractMeasuredHeight(ContractDeliveryStatus(contract), contentWidth);
+            height += 4f;
+            return expanded ? Mathf.Max(74f, height) : height;
+        }
+
+        private static float ContractEstimateLabelWidth(
+            float tableWidth, out float contentWidth, out float numberWidth)
+        {
+            contentWidth = Mathf.Max(1f, tableWidth - 220f);
+            numberWidth = Mathf.Min(140f, contentWidth);
+            return Mathf.Max(1f, contentWidth - numberWidth - 8f);
+        }
+
+        private static float ContractEstimateLineHeight(
+            string label, int amount, float labelWidth, float numberWidth)
+        {
+            return Mathf.Max(
+                ContractMeasuredHeight(label, labelWidth),
+                ContractMeasuredHeight(amount.ToString("N0"), numberWidth));
+        }
+
+        private static string DirectInputsAmountLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            BusinessReportService.DirectInputEstimate directInputs = estimate?.directInputs;
+            if (directInputs == null ||
+                directInputs.status == BusinessReportService.DirectInputCostStatus.CannotBePriced)
+            {
+                return "unavailable";
+            }
+
+            if (directInputs.status == BusinessReportService.DirectInputCostStatus.NoKnownRecipe)
+            {
+                return "no known inputs";
+            }
+
+            if (!directInputs.hasDirectInputs)
+            {
+                return "no direct inputs";
+            }
+
+            return DirectInputsIfBoughtIsLessThanOneSilver(estimate)
+                ? "less than 1 silver"
+                : estimate.directInputsIfBought.ToString("N0");
+        }
+
+        private static bool DirectInputsIfBoughtIsLessThanOneSilver(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate.directInputsIfBought == 0;
+        }
+
+        private static float ContractDirectInputsLineHeight(
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberWidth)
+        {
+            return Mathf.Max(
+                ContractMeasuredHeight("Direct inputs if bought", labelWidth),
+                ContractMeasuredHeight(DirectInputsAmountLabel(estimate), numberWidth));
+        }
+
+        private static string DirectLaborAmountLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            BusinessReportService.DirectLaborEstimate directLabor = estimate?.directLabor;
+            if (directLabor == null ||
+                directLabor.status == BusinessReportService.DirectLaborCostStatus.Unavailable)
+            {
+                return "unavailable";
+            }
+
+            if (directLabor.status == BusinessReportService.DirectLaborCostStatus.NoEligibleEmployees)
+            {
+                return "no eligible employees";
+            }
+
+            if (directLabor.status == BusinessReportService.DirectLaborCostStatus.LessThanOneSilver)
+            {
+                return "less than 1 silver";
+            }
+
+            return estimate.directPayroll.ToString("N0");
+        }
+
+        private static float ContractDirectLaborLineHeight(
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberWidth)
+        {
+            return Mathf.Max(
+                ContractMeasuredHeight("Direct labor for this good", labelWidth),
+                ContractMeasuredHeight(DirectLaborAmountLabel(estimate), numberWidth));
+        }
+
+        private static string DirectInputTooltip(
+            BusinessReportService.DirectInputEstimate estimate)
+        {
+            string method =
+                "Direct inputs only: this prices the selected recipe's immediate ingredients and " +
+                "does not recursively decompose intermediate goods. Each ingredient uses the " +
+                "lowest-priced definition allowed by its filter; ties use ordinal defName. Prices " +
+                "use BaseValue multiplied by the supplier margin " +
+                $"({RfqService.SupplierMargin:0.##}), not a live supplier quote. The selected " +
+                "recipe is the non-surgery recipe with the smallest ordinal defName that produces " +
+                "this good.";
+
+            if (estimate == null ||
+                estimate.status == BusinessReportService.DirectInputCostStatus.CannotBePriced)
+            {
+                string reason = estimate?.reason ??
+                    "The direct input estimate is unavailable.";
+                return method + " " + reason + " This is not a zero cost.";
+            }
+
+            if (estimate.status == BusinessReportService.DirectInputCostStatus.NoKnownRecipe)
+            {
+                return method +
+                    " No non-surgery recipe in the loaded defs produces this good, so no known " +
+                    "inputs are reported; this is not a zero cost.";
+            }
+
+            string recipe = estimate.recipeDefName.NullOrEmpty()
+                ? "the selected recipe"
+                : $"recipe {estimate.recipeDefName}";
+            return method + " Using " + recipe + ".";
+        }
+
+        private static string DirectLaborTooltip(
+            BusinessReportService.DirectLaborEstimate estimate)
+        {
+            const string method =
+                "Direct labor is a relevant-workforce approximation, not measured time. " +
+                "The bill-completion seam reports who finished and what came out, but no elapsed " +
+                "time; using nominal recipe work or per-tick job instrumentation would either fake " +
+                "precision or violate the performance constraint. Eligibility uses the employee " +
+                "pawn's current work-skill record and work priority against each recipe's workSkill " +
+                "and skillRequirements, plus its requiredGiverWorkType or the matching bill-giver " +
+                "work type for recipeUsers.";
+
+            if (estimate == null ||
+                estimate.status == BusinessReportService.DirectLaborCostStatus.Unavailable)
+            {
+                return method + " The estimate is unavailable; this is not a zero cost.";
+            }
+
+            if (estimate.status == BusinessReportService.DirectLaborCostStatus.NoEligibleEmployees)
+            {
+                return method +
+                    " No active employee is eligible for this good, so colonists rather than " +
+                    "employees are making it; this is not an unknown zero.";
+            }
+
+            return method +
+                " Each eligible employee's charged daily wage is shared equally across the distinct " +
+                "current-agreement goods they could produce, then multiplied by this agreement's " +
+                "cycle length. " + estimate.eligibleEmployeeCount + " employee(s) contribute.";
+        }
+
+        private static string ContractEstimateInterpretation(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate.Margin >= 0
+                ? $"about {estimate.MarginPerDay:0} silver a day; making the goods rather than " +
+                  $"buying them is worth {estimate.MakingSaves:N0} a cycle"
+                : "direct labor and other estimated costs outweigh this agreement";
+        }
+
+        private static float ContractEstimateBlockHeight(
+            BusinessReportService.ContractEstimate estimate, float tableWidth)
+        {
+            float contentWidth;
+            float numberWidth;
+            float labelWidth = ContractEstimateLabelWidth(
+                tableWidth, out contentWidth, out numberWidth);
+            float height = 4f;
+            height += ContractEstimateLineHeight(
+                "Revenue, payable", estimate.revenue, labelWidth, numberWidth);
+            height += ContractEstimateLineHeight(
+                "If you bought the goods instead", estimate.inputsIfBought, labelWidth, numberWidth);
+            height += ContractDirectInputsLineHeight(estimate, labelWidth, numberWidth);
+            height += ContractEstimateLineHeight(
+                "Charged wage bill over the cycle", estimate.payroll, labelWidth, numberWidth);
+            height += ContractDirectLaborLineHeight(estimate, labelWidth, numberWidth);
+            height += ContractEstimateLineHeight(
+                "Delivery premium earned, and hauled for", estimate.transport,
+                labelWidth, numberWidth);
+
+            height += 8f;
+            height += ContractEstimateLineHeight(
+                "Estimated margin", estimate.Margin, labelWidth, numberWidth);
+            height += 4f;
+            height += ContractMeasuredHeight(
+                ContractEstimateInterpretation(estimate), contentWidth);
+            return height + 12f;
+        }
+
+        private const string ContractAutoReadyLabel = "Auto-ready orders";
+
+        private static bool CanShowContractAutoReady(RecurringContract contract)
+        {
+            return contract.IsActive &&
+                   contract.fulfillment == FulfillmentMode.BuyerPickup;
+        }
+
+        private static float ContractAutoReadyRowHeight(
+            RecurringContract contract, float tableWidth)
+        {
+            if (!CanShowContractAutoReady(contract))
+            {
+                return 0f;
+            }
+
+            float contentWidth = Mathf.Max(1f, tableWidth - 220f);
+            return Mathf.Max(
+                24f,
+                Text.CalcHeight(
+                    ContractAutoReadyLabel, Mathf.Max(1f, contentWidth - 28f)));
+        }
+
+        private static float ContractRowHeight(
+            RecurringContract contract,
+            BusinessReportService.ContractEstimate estimate,
+            float tableWidth,
+            bool expanded)
+        {
+            float height = ContractBaseRowHeight(contract, tableWidth, expanded);
+            if (!expanded)
+            {
+                return height;
+            }
+
+            if (estimate != null)
+            {
+                height += ContractEstimateBlockHeight(estimate, tableWidth);
+            }
+
+            height += ContractAutoReadyRowHeight(contract, tableWidth);
+            return height;
+        }
+
+        private static float DrawContractEstimateLine(
+            Rect rect,
+            float y,
+            string label,
+            int amount,
+            float labelWidth,
+            float numberX,
+            float numberWidth,
+            string tooltip = null)
+        {
+            string amountLabel = amount.ToString("N0");
+            float labelHeight = 0f;
+            float amountHeight = 0f;
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.85f);
+                labelHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
+                    label, TextAnchor.UpperLeft);
+
+                GUI.color = amount >= 0
+                    ? new Color(0.6f, 0.9f, 0.6f)
+                    : new Color(1f, 0.75f, 0.75f);
+                amountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
+                    amountLabel, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+
+            float rowHeight = Mathf.Max(labelHeight, amountHeight);
+            if (!tooltip.NullOrEmpty())
+            {
+                TooltipHandler.TipRegion(
+                    new Rect(rect.x + 6f, y, labelWidth + 8f + numberWidth, rowHeight),
+                    tooltip);
+            }
+
+            return rowHeight;
+        }
+
+        private static float DrawContractDirectInputsLine(
+            Rect rect,
+            float y,
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberX,
+            float numberWidth)
+        {
+            string amountLabel = DirectInputsAmountLabel(estimate);
+            float labelHeight = 0f;
+            float amountHeight = 0f;
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.85f);
+                labelHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
+                    "Direct inputs if bought", TextAnchor.UpperLeft);
+
+                GUI.color = estimate != null && estimate.directInputs != null &&
+                            estimate.directInputs.status ==
+                                BusinessReportService.DirectInputCostStatus.Resolved &&
+                            estimate.directInputs.hasDirectInputs
+                    ? new Color(1f, 0.75f, 0.75f)
+                    : new Color(1f, 1f, 1f, 0.6f);
+                amountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
+                    amountLabel, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+
+            Rect tooltipRect = new Rect(
+                rect.x + 6f, y, labelWidth + 8f + numberWidth,
+                Mathf.Max(labelHeight, amountHeight));
+            if (ShouldBuildTooltip(tooltipRect))
+            {
+                TooltipHandler.TipRegion(
+                    tooltipRect, DirectInputTooltip(estimate?.directInputs));
+            }
+
+            return Mathf.Max(labelHeight, amountHeight);
+        }
+
+        private static float DrawContractDirectLaborLine(
+            Rect rect,
+            float y,
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberX,
+            float numberWidth)
+        {
+            string amountLabel = DirectLaborAmountLabel(estimate);
+            float labelHeight = 0f;
+            float amountHeight = 0f;
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.85f);
+                labelHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
+                    "Direct labor for this good", TextAnchor.UpperLeft);
+
+                bool hasNumericCost = estimate != null && estimate.directLabor != null &&
+                                      (estimate.directLabor.status ==
+                                           BusinessReportService.DirectLaborCostStatus.Resolved ||
+                                       estimate.directLabor.status ==
+                                           BusinessReportService.DirectLaborCostStatus.LessThanOneSilver);
+                GUI.color = hasNumericCost && estimate.directPayroll < 0
+                    ? new Color(1f, 0.75f, 0.75f)
+                    : new Color(1f, 1f, 1f, 0.6f);
+                amountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
+                    amountLabel, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+
+            Rect tooltipRect = new Rect(
+                rect.x + 6f, y, labelWidth + 8f + numberWidth,
+                Mathf.Max(labelHeight, amountHeight));
+            if (ShouldBuildTooltip(tooltipRect))
+            {
+                TooltipHandler.TipRegion(
+                    tooltipRect, DirectLaborTooltip(estimate?.directLabor));
+            }
+
+            return Mathf.Max(labelHeight, amountHeight);
+        }
+
+        private static float DrawContractEstimateMargin(
+            Rect rect,
+            float y,
+            float labelWidth,
+            float numberX,
+            float numberWidth,
+            BusinessReportService.ContractEstimate estimate)
+        {
+            string amountLabel = estimate.Margin.ToString("N0");
+            float labelHeight = 0f;
+            float amountHeight = 0f;
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = Color.white;
+                labelHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
+                    "Estimated margin", TextAnchor.UpperLeft);
+
+                GUI.color = estimate.Margin >= 0
+                    ? new Color(0.6f, 0.9f, 0.6f)
+                    : new Color(1f, 0.55f, 0.55f);
+                amountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
+                    amountLabel, TextAnchor.UpperRight);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+
+            return Mathf.Max(labelHeight, amountHeight);
+        }
+
+        private static void DrawContractEstimate(
+            Rect rect, float y, BusinessReportService.ContractEstimate estimate)
+        {
+            float contentWidth;
+            float numberWidth;
+            float labelWidth = ContractEstimateLabelWidth(
+                rect.width, out contentWidth, out numberWidth);
+            float numberX = 6f + Mathf.Max(0f, contentWidth - numberWidth);
+            float lineY = y + 4f;
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "Revenue, payable", estimate.revenue,
+                labelWidth, numberX, numberWidth);
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "If you bought the goods instead", estimate.inputsIfBought,
+                labelWidth, numberX, numberWidth);
+            lineY += DrawContractDirectInputsLine(
+                rect, lineY, estimate, labelWidth, numberX, numberWidth);
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "Charged wage bill over the cycle", estimate.payroll,
+                labelWidth, numberX, numberWidth,
+                "This estimate uses each employee's charged daily rate: the worker's ask " +
+                "passed through that employee's selected wage structure, multiplied across the " +
+                "agreement cycle. Daily terms cost more than prepaid because the colony can stop " +
+                "paying any morning; the worker charges a premium for that flexibility.");
+            lineY += DrawContractDirectLaborLine(
+                rect, lineY, estimate, labelWidth, numberX, numberWidth);
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "Delivery premium earned, and hauled for", estimate.transport,
+                labelWidth, numberX, numberWidth);
+
+            Widgets.DrawLineHorizontal(rect.x + 6f, lineY + 2f, contentWidth);
+            lineY += 8f;
+
+            lineY += DrawContractEstimateMargin(
+                rect, lineY, labelWidth, numberX, numberWidth, estimate);
+            lineY += 4f;
+
+            // The sentence that turns four numbers into a decision (§45), below the number column.
+            Color previousColor = GUI.color;
+            try
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.6f);
+                lineY += DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                    ContractEstimateInterpretation(estimate), TextAnchor.UpperLeft);
+            }
+            finally
+            {
+                GUI.color = previousColor;
+            }
+        }
+
+        private void DrawContractRow(
+            Rect rect,
+            RecurringContract contract,
+            int index,
+            IntercolonyWorldComponent state,
+            BusinessReportService.ContractEstimate estimate,
+            bool expanded)
+        {
+            if (index % 2 == 1)
+            {
+                Widgets.DrawLightHighlight(rect);
+            }
+
+            Widgets.DrawHighlightIfMouseover(rect);
+
+            float contentWidth = Mathf.Max(1f, rect.width - 220f);
+            float lineY = rect.y + 4f;
+            string identity = ContractIdentityWithExpansionMarker(contract, expanded);
+            Rect identityRect = new Rect(
+                rect.x + 6f, lineY, contentWidth,
+                ContractMeasuredHeight(identity, contentWidth));
+            lineY += DrawMeasuredContractLabel(
+                identityRect, identity, TextAnchor.UpperLeft);
+
+            if (Widgets.ButtonInvisible(identityRect))
+            {
+                SetContractExpanded(contract, !IsContractExpanded(contract));
+            }
+
+            if (expanded)
+            {
+                GUI.color = new Color(1f, 1f, 1f, 0.7f);
+                lineY += DrawMeasuredContractLabel(
+                    new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                    ContractPaymentSummary(contract), TextAnchor.UpperLeft);
+                GUI.color = Color.white;
+            }
+
+            Color colour;
+            if (contract.IsPendingPlayerProposal)
+            {
+                colour = new Color(0.6f, 0.9f, 1f);
+            }
+            else if (contract.IsOffer)
+            {
+                colour = new Color(0.6f, 0.9f, 1f);
+            }
+            else if (contract.IsActive)
+            {
+                if (contract.consecutiveFailures > 0)
+                {
                     colour = Color.yellow;
+                }
+                else
+                {
+                    colour = Color.white;
                 }
             }
             else if (contract.renewalOffered)
             {
-                status = $"they would sign again — {contract.DaysUntilRenewalExpires:F1}d to answer";
                 colour = new Color(0.65f, 0.95f, 0.65f);
             }
             else if (contract.status == ContractStatus.Suspended)
             {
                 // Amber, not red. §88's suspension is not a failure and the colour has to say so —
                 // the agreement is intact and the remaining deliveries are still owed to the player.
-                status = $"suspended by war with {contract.factionName} — " +
-                         $"{contract.CyclesRemaining} deliveries still to come";
                 colour = new Color(1f, 0.8f, 0.4f);
             }
             else
             {
-                status = contract.status.ToString();
-                if (!string.IsNullOrEmpty(contract.outcomeNote))
-                {
-                    status += $": {contract.outcomeNote}";
-                }
                 colour = contract.status == ContractStatus.Completed
                     ? new Color(0.6f, 0.9f, 0.6f)
                     : new Color(0.9f, 0.6f, 0.6f);
             }
 
             GUI.color = colour;
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 48f, rect.width - 220f, 22f),
-                $"{contract.cyclesCompleted} delivered, {contract.cyclesFailed} missed — {status}");
+            lineY += DrawMeasuredContractLabel(
+                new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                ContractDeliveryStatus(contract),
+                TextAnchor.UpperLeft);
             GUI.color = Color.white;
+
+            if (!expanded)
+            {
+                return;
+            }
+
+            float baseRowHeight = ContractBaseRowHeight(contract, rect.width, expanded);
+            float contentY = rect.y + baseRowHeight;
+            if (estimate != null)
+            {
+                DrawContractEstimate(rect, contentY, estimate);
+                contentY += ContractEstimateBlockHeight(estimate, rect.width);
+            }
+
+            float autoReadyRowHeight = ContractAutoReadyRowHeight(contract, rect.width);
+            if (autoReadyRowHeight > 0f)
+            {
+                Rect autoReadyRect = new Rect(
+                    rect.x + 6f, contentY, contentWidth, autoReadyRowHeight);
+                Widgets.CheckboxLabeled(
+                    autoReadyRect, ContractAutoReadyLabel, ref contract.autoReadyOrders);
+
+                if (ShouldBuildTooltip(autoReadyRect))
+                {
+                    TooltipHandler.TipRegion(
+                        autoReadyRect,
+                        "Each delivery cycle raises an order. With this on, the order is " +
+                        "marked ready by itself as soon as the goods are actually in the colony.\n\n" +
+                        "It never marks an order ready without the stock, never redirects to a " +
+                        "different colony, and applies exactly the same checks as the Mark ready " +
+                        "button.\n\n" +
+                        "If marking ready fails, the order stays open and needs marking by hand, " +
+                        "and you get one letter saying why.");
+                }
+
+                contentY += autoReadyRowHeight;
+            }
 
             if (ShouldBuildTooltip(rect))
             {
@@ -3311,7 +4819,7 @@ namespace Intercolony
                 ContractService.MaxAcceptableQuantity(contract),
                 (qty, fulfillment) =>
                 {
-                    int cycleValue = Mathf.RoundToInt(negotiatedRate * qty);
+                    int cycleValue = IntercolonyPricing.TotalPayment(negotiatedRate, qty);
                     string logistics = fulfillment == FulfillmentMode.BuyerPickup
                         ? "They collect each delivery, so no caravan is needed — but the goods " +
                           "must be ready and marked so every cycle."
@@ -3334,7 +4842,7 @@ namespace Intercolony
                            $"{contract.totalCycles} times.\n\n" +
                            $"{negotiation}\n\n" +
                            $"Payment: {cycleValue} silver per delivery, " +
-                           $"{cycleValue * contract.totalCycles} in total\n" +
+                           $"{IntercolonyPricing.TotalPayment(cycleValue, contract.totalCycles)} in total\n" +
                            $"Rate: {negotiatedRate:F2} each — better than spot, because they are " +
                            "buying certainty\n\n" +
                            $"{sizing} That is roughly " +
@@ -3422,8 +4930,8 @@ namespace Intercolony
         private void DrawRelationRow(
             Rect rect, CommercialHistoryRelationRow row, int index, bool expanded)
         {
-            const float HeaderHeight = 58f;
-            Rect headerRect = new Rect(rect.x, rect.y, rect.width, HeaderHeight);
+            float headerHeight = RelationHeaderHeight(row, rect.width);
+            Rect headerRect = new Rect(rect.x, rect.y, rect.width, headerHeight);
             if (index % 2 == 1)
             {
                 Widgets.DrawLightHighlight(headerRect);
@@ -3437,16 +4945,20 @@ namespace Intercolony
 
             float nameWidth = rect.width * 0.34f;
             float scoreWidth = rect.width * 0.28f;
-            float factionWidth = rect.width - nameWidth - scoreWidth - 6f;
-            float nameHeight = Text.CalcHeight(row.settlementLabel, nameWidth - 6f);
+            float factionWidth = Mathf.Max(1f, rect.width - nameWidth - scoreWidth - 6f);
+            float nameTextWidth = Mathf.Max(1f, nameWidth - 6f);
+            float scoreTextWidth = Mathf.Max(1f, scoreWidth - 6f);
+            float nameHeight = Text.CalcHeight(row.settlementLabel, nameTextWidth);
             Widgets.Label(
-                new Rect(rect.x + 6f, rect.y + 4f, nameWidth - 6f, nameHeight),
+                new Rect(rect.x + 6f, rect.y + RelationHeaderTopPadding,
+                    nameTextWidth, nameHeight),
                 row.settlementLabel);
 
             GUI.color = row.hasReputation ? TierColour(row.tier) : Color.gray;
-            float scoreHeight = Text.CalcHeight(row.scoreLabel, scoreWidth - 6f);
+            float scoreHeight = Text.CalcHeight(row.scoreLabel, scoreTextWidth);
             Widgets.Label(
-                new Rect(rect.x + nameWidth, rect.y + 4f, scoreWidth - 6f, scoreHeight),
+                new Rect(rect.x + nameWidth, rect.y + RelationHeaderTopPadding,
+                    scoreTextWidth, scoreHeight),
                 row.scoreLabel);
             GUI.color = Color.white;
 
@@ -3455,17 +4967,49 @@ namespace Intercolony
             GUI.color = new Color(1f, 1f, 1f, 0.6f);
             float factionHeight = Text.CalcHeight(row.factionAndGoodwillLabel, factionWidth);
             Widgets.Label(
-                new Rect(rect.x + nameWidth + scoreWidth, rect.y + 4f, factionWidth, factionHeight),
+                new Rect(rect.x + nameWidth + scoreWidth, rect.y + RelationHeaderTopPadding,
+                    factionWidth, factionHeight),
                 row.factionAndGoodwillLabel);
             GUI.color = Color.white;
 
             GUI.color = new Color(1f, 1f, 1f, 0.65f);
-            float statsWidth = rect.width - 12f;
+            float statsWidth = Mathf.Max(1f, rect.width - 12f);
             float statsHeight = Text.CalcHeight(row.statsLabel, statsWidth);
             Widgets.Label(
-                new Rect(rect.x + 6f, rect.y + 28f, statsWidth, statsHeight),
+                new Rect(
+                    rect.x + 6f,
+                    rect.y + RelationHeaderTopPadding +
+                        RelationHeaderTopHeight(row, rect.width) + RelationHeaderSectionGap,
+                    statsWidth,
+                    statsHeight),
                 row.statsLabel);
             GUI.color = Color.white;
+
+            float pressureY = rect.y + RelationHeaderTopPadding +
+                              RelationHeaderTopHeight(row, rect.width) +
+                              RelationHeaderSectionGap + statsHeight +
+                              RelationHeaderSectionGap;
+            float pressureLabelWidth = RelationPressureLabelWidth(rect.width);
+            float pressureValueWidth = RelationPressureValueWidth(rect.width);
+            float pressureLabelHeight = Text.CalcHeight(
+                row.commercialPressureRow.label,
+                pressureLabelWidth);
+            float pressureValueHeight = RelationPressureValueHeight(
+                row.commercialPressureRow,
+                pressureValueWidth);
+
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(
+                new Rect(rect.x + 6f, pressureY, pressureLabelWidth, pressureLabelHeight),
+                row.commercialPressureRow.label);
+            GUI.color = Color.white;
+            Widgets.Label(
+                new Rect(
+                    rect.x + 6f + pressureLabelWidth + RelationPressureColumnGap,
+                    pressureY,
+                    pressureValueWidth,
+                    pressureValueHeight),
+                row.commercialPressureRow.value);
 
             if (ShouldBuildTooltip(headerRect))
             {
@@ -3482,15 +5026,98 @@ namespace Intercolony
             if (expanded)
             {
                 DrawRelationHistoryDetail(
-                    new Rect(rect.x, rect.y + HeaderHeight, rect.width, rect.height - HeaderHeight),
+                    new Rect(
+                        rect.x,
+                        rect.y + headerHeight,
+                        rect.width,
+                        rect.height - headerHeight),
                     row);
             }
+        }
+
+        private const float RelationHeaderTopPadding = 4f;
+        private const float RelationHeaderSectionGap = 3f;
+        private const float RelationHeaderBottomPadding = 6f;
+        private const float RelationPressureColumnGap = 12f;
+        private const float RelationPressureLabelMaxWidth = 170f;
+
+        private static float RelationHeaderHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            return RelationHeaderTopPadding +
+                   RelationHeaderTopHeight(row, width) +
+                   RelationHeaderSectionGap +
+                   RelationStatsHeight(row, width) +
+                   RelationHeaderSectionGap +
+                   RelationPressureHeight(row, width) +
+                   RelationHeaderBottomPadding;
+        }
+
+        private static float RelationHeaderTopHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            float nameWidth = width * 0.34f;
+            float scoreWidth = width * 0.28f;
+            float factionWidth = Mathf.Max(1f, width - nameWidth - scoreWidth - 6f);
+            return Mathf.Max(
+                Text.CalcHeight(row.settlementLabel, Mathf.Max(1f, nameWidth - 6f)),
+                Text.CalcHeight(row.scoreLabel, Mathf.Max(1f, scoreWidth - 6f)),
+                Text.CalcHeight(row.factionAndGoodwillLabel, factionWidth));
+        }
+
+        private static float RelationStatsHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            return Text.CalcHeight(row.statsLabel, Mathf.Max(1f, width - 12f));
+        }
+
+        private static float RelationPressureHeight(
+            CommercialHistoryRelationRow row, float width)
+        {
+            float labelHeight = Text.CalcHeight(
+                row.commercialPressureRow.label,
+                RelationPressureLabelWidth(width));
+            float valueHeight = RelationPressureValueHeight(
+                row.commercialPressureRow,
+                RelationPressureValueWidth(width));
+            return Mathf.Max(labelHeight, valueHeight);
+        }
+
+        private static float RelationPressureValueHeight(
+            CommercialHistorySummaryRow pressureRow, float width)
+        {
+            float height = Text.CalcHeight(pressureRow.value, width);
+            for (int i = 0; i < CommercialHistoryUiService.CommercialPressureValueHeightSamples.Length; i++)
+            {
+                height = Mathf.Max(
+                    height,
+                    Text.CalcHeight(
+                        CommercialHistoryUiService.CommercialPressureValueHeightSamples[i],
+                        width));
+            }
+
+            return height;
+        }
+
+        private static float RelationPressureLabelWidth(float width)
+        {
+            float contentWidth = Mathf.Max(1f, width - 12f);
+            return Mathf.Min(RelationPressureLabelMaxWidth, contentWidth * 0.36f);
+        }
+
+        private static float RelationPressureValueWidth(float width)
+        {
+            float contentWidth = Mathf.Max(1f, width - 12f);
+            return Mathf.Max(
+                1f,
+                contentWidth - RelationPressureLabelWidth(width) - RelationPressureColumnGap);
         }
 
         private static float RelationRowHeight(
             CommercialHistoryRelationRow row, float width, bool expanded)
         {
-            return 58f + (expanded ? RelationHistoryDetailHeight(row, width) : 0f);
+            return RelationHeaderHeight(row, width) +
+                   (expanded ? RelationHistoryDetailHeight(row, width) : 0f);
         }
 
         private static float RelationHistoryDetailHeight(
@@ -3503,6 +5130,15 @@ namespace Intercolony
 
             string summaryHeading = "Commercial history";
             y += Text.CalcHeight(summaryHeading, contentWidth) + 4f;
+
+            float pressureKeyHeight = Text.CalcHeight(
+                row.commercialPressureRow.label,
+                labelWidth);
+            float pressureValueHeight = RelationPressureValueHeight(
+                row.commercialPressureRow,
+                valueWidth);
+            y += Mathf.Max(pressureKeyHeight, pressureValueHeight) + 4f;
+
             for (int i = 0; i < row.summaryRows.Count; i++)
             {
                 CommercialHistorySummaryRow summary = row.summaryRows[i];
@@ -3511,6 +5147,9 @@ namespace Intercolony
                 y += Mathf.Max(keyHeight, valueHeight) + 4f;
             }
 
+            // The separator is drawn after the summary rows and consumes the same gap here that
+            // DrawRelationHistoryDetail consumes after drawing its line.
+            y += 4f;
             string timelineHeading = "Recent activity";
             y += Text.CalcHeight(timelineHeading, contentWidth) + 4f;
             if (row.timelineRows.Count == 0)
@@ -3543,6 +5182,24 @@ namespace Intercolony
             Widgets.Label(new Rect(rect.x + 6f, y, contentWidth, headingHeight), summaryHeading);
             y += headingHeight + 4f;
 
+            float pressureKeyHeight = Text.CalcHeight(
+                row.commercialPressureRow.label,
+                labelWidth);
+            float pressureValueHeight = RelationPressureValueHeight(
+                row.commercialPressureRow,
+                valueWidth);
+            float pressureRowHeight = Mathf.Max(pressureKeyHeight, pressureValueHeight);
+            Widgets.Label(
+                new Rect(rect.x + 6f, y, labelWidth, pressureKeyHeight),
+                row.commercialPressureRow.label);
+            Rect pressureValueRect = new Rect(valueX, y, valueWidth, pressureValueHeight);
+            Widgets.Label(pressureValueRect, row.commercialPressureRow.value);
+            if (!string.IsNullOrEmpty(row.commercialPressureRow.tooltip))
+            {
+                TooltipHandler.TipRegion(pressureValueRect, row.commercialPressureRow.tooltip);
+            }
+
+            y += pressureRowHeight + 4f;
             for (int i = 0; i < row.summaryRows.Count; i++)
             {
                 CommercialHistorySummaryRow summary = row.summaryRows[i];
@@ -3607,9 +5264,8 @@ namespace Intercolony
             }
         }
 
-        private const float RequestSummaryHeight = 46f;
+        private const float MinimumRequestSummaryHeight = 46f;
         private const float QuoteHeaderHeight = 24f;
-        private const float RequestHeaderHeight = RequestSummaryHeight + QuoteHeaderHeight;
         private const float QuoteRowHeight = 26f;
 
         private static readonly float[] QuoteColumnWidths =
@@ -3618,49 +5274,97 @@ namespace Intercolony
         private static readonly string[] QuoteColumnLabels =
             { "Supplier", "Offered", "Unit", "Total", "Lead", "Terms", "Dist", "" };
 
-        private static float RequestBlockHeight(PurchaseRequest request)
+        private static float RequestBlockHeight(
+            PurchaseRequest request,
+            IntercolonyWorldComponent state,
+            float blockWidth)
         {
+            float summaryHeight = RequestSummaryHeight(request, state, blockWidth);
             if (!request.IsOpen)
             {
-                return RequestSummaryHeight + 10f;
+                return summaryHeight + 10f;
             }
 
             int rows = Mathf.Max(1, request.quotes.Count);
-            return RequestHeaderHeight + rows * QuoteRowHeight + 10f;
+            return summaryHeight + QuoteHeaderHeight + rows * QuoteRowHeight + 10f;
         }
 
-        private void DrawRequestBlock(Rect rect, PurchaseRequest request, IntercolonyWorldComponent state)
+        private static float RequestSummaryHeight(
+            PurchaseRequest request,
+            IntercolonyWorldComponent state,
+            float blockWidth)
         {
-            Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, RequestSummaryHeight));
+            float labelWidth = Mathf.Max(1f, blockWidth - 200f);
+            float headerHeight = Text.CalcHeight(RequestHeader(request), labelWidth);
+            float subHeight = Text.CalcHeight(RequestSub(request, state), labelWidth);
+            return Mathf.Max(MinimumRequestSummaryHeight, 12f + headerHeight + subHeight);
+        }
 
+        private static string RequestHeader(PurchaseRequest request)
+        {
             string quantityLabel = request.quantityOrdered > 0 && request.IsOpen
                 ? $"{request.QuantityOutstanding}x {request.ItemLabel()} still wanted " +
                   $"({request.quantityOrdered} of {request.quantityRequested} ordered)"
                 : $"{request.quantityRequested}x {request.ItemLabel()}";
-            string header = $"#{request.id}  {quantityLabel}";
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 4f, rect.width - 200f, 22f), header);
+            return $"#{request.id}  {quantityLabel}";
+        }
 
-            string sub;
-            Color colour = Color.white;
-            if (request.IsOpen)
+        private static string RequestSub(
+            PurchaseRequest request,
+            IntercolonyWorldComponent state)
+        {
+            if (!request.IsOpen)
             {
-                sub = request.AnyQuotes
-                    ? $"{request.quotes.Count} quote(s) — offers stand for {request.DaysRemaining:F1}d — " +
-                      RequestFulfillmentLabel(request.fulfillmentPreference)
-                    : $"No supplier answered: {request.noResponseReason}";
-                if (!request.AnyQuotes)
-                {
-                    colour = new Color(0.9f, 0.7f, 0.5f);
-                }
+                return request.status.ToString();
             }
-            else
+
+            int pendingResponseCount = state?.PendingRfqResponseCountFor(request.id) ?? 0;
+            string available = request.AnyQuotes
+                ? $"{request.quotes.Count} quote(s) available — offers stand for " +
+                  $"{request.DaysRemaining:F1}d — {RequestFulfillmentLabel(request.fulfillmentPreference)}"
+                : pendingResponseCount > 0
+                    ? "No quotes available yet."
+                    : string.IsNullOrEmpty(request.noResponseReason)
+                        ? "No supplier quote is currently available."
+                        : $"No supplier answered: {request.noResponseReason}";
+
+            return pendingResponseCount > 0
+                ? available + $"\n{PendingResponsesText(pendingResponseCount)}"
+                : available;
+        }
+
+        private static string PendingResponsesText(int pendingResponseCount)
+        {
+            return pendingResponseCount == 1
+                ? "One supplier response is still coming."
+                : $"{pendingResponseCount} supplier responses are still coming.";
+        }
+
+        private void DrawRequestBlock(Rect rect, PurchaseRequest request, IntercolonyWorldComponent state)
+        {
+            float summaryHeight = RequestSummaryHeight(request, state, rect.width);
+            float labelWidth = Mathf.Max(1f, rect.width - 200f);
+            string header = RequestHeader(request);
+            string sub = RequestSub(request, state);
+            float headerHeight = Text.CalcHeight(header, labelWidth);
+            float subHeight = Text.CalcHeight(sub, labelWidth);
+            Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, summaryHeight));
+            Widgets.Label(
+                new Rect(rect.x + 6f, rect.y + 4f, labelWidth, headerHeight), header);
+
+            Color colour = Color.white;
+            if (request.IsOpen && !request.AnyQuotes)
             {
-                sub = request.status.ToString();
+                colour = new Color(0.9f, 0.7f, 0.5f);
+            }
+            else if (!request.IsOpen)
+            {
                 colour = new Color(0.7f, 0.7f, 0.7f);
             }
 
             GUI.color = colour;
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 24f, rect.width - 200f, 22f), sub);
+            Widgets.Label(
+                new Rect(rect.x + 6f, rect.y + 4f + headerHeight, labelWidth, subHeight), sub);
             GUI.color = Color.white;
 
             if (request.IsOpen)
@@ -3691,15 +5395,19 @@ namespace Intercolony
             }
 
             Rect quoteArea = new Rect(
-                rect.x + 16f, rect.y + RequestSummaryHeight, rect.width - 24f, QuoteHeaderHeight);
+                rect.x + 16f, rect.y + summaryHeight, rect.width - 24f, QuoteHeaderHeight);
             DrawQuoteHeader(quoteArea);
 
-            float rowY = rect.y + RequestHeaderHeight;
+            float rowY = rect.y + summaryHeight + QuoteHeaderHeight;
             if (request.quotes.Count == 0)
             {
+                string emptyLabel = "— nothing available —";
+                float emptyWidth = Mathf.Max(1f, rect.width - 40f);
                 GUI.color = new Color(1f, 1f, 1f, 0.45f);
-                Widgets.Label(new Rect(rect.x + 20f, rowY + 2f, rect.width - 40f, 22f),
-                    "— nothing available —");
+                Widgets.Label(
+                    new Rect(rect.x + 20f, rowY + 2f, emptyWidth,
+                        Text.CalcHeight(emptyLabel, emptyWidth)),
+                    emptyLabel);
                 GUI.color = Color.white;
                 return;
             }
@@ -3767,7 +5475,7 @@ namespace Intercolony
                         ? $"Quality: {quote.offeredQuality.Value.GetLabel()}\n"
                         : "") +
                     (quote.offeredStuff != null ? $"Material: {quote.offeredStuff.label}\n" : "") +
-                    $"{(quote.supplierDelivers ? "They deliver it" : "You collect it")}, " +
+                    $"{QuoteLogisticsLine(quote)}\n" +
                     $"ready in {quote.leadTimeDays} days\n\n" +
                     quote.priceExplanation);
             }
@@ -3861,6 +5569,113 @@ namespace Intercolony
             return quote.distanceTiles < 0f ? float.MaxValue : quote.distanceTiles;
         }
 
+        private static bool TryReadPriceFactor(
+            string explanation, string factorLabel, out float multiplier)
+        {
+            multiplier = 0f;
+            foreach (string line in (explanation ?? "").Split('\n'))
+            {
+                string trimmed = line.Trim();
+                if (!trimmed.StartsWith(factorLabel, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                int percentIndex = trimmed.IndexOf('%');
+                if (percentIndex <= factorLabel.Length)
+                {
+                    return false;
+                }
+
+                string percentText = trimmed.Substring(
+                    factorLabel.Length, percentIndex - factorLabel.Length).Trim();
+                if (!float.TryParse(percentText, out float percent) ||
+                    float.IsNaN(percent) || float.IsInfinity(percent))
+                {
+                    return false;
+                }
+
+                multiplier = 1f + percent / 100f;
+                return !float.IsNaN(multiplier) && !float.IsInfinity(multiplier);
+            }
+
+            return false;
+        }
+
+        private static bool MatchesExplainedFactor(float explained, float actual)
+        {
+            // IntercolonyPricing.Explain renders percentages to one decimal place. The exact
+            // multiplier comes from the quotation's persisted distance/method inputs below.
+            return Mathf.Abs(explained - actual) <= 0.0006f;
+        }
+
+        internal static bool TryGetLogisticsSilver(Quotation quote, out int logisticsSilver)
+        {
+            logisticsSilver = 0;
+            if (quote == null || quote.unitPrice <= 0f ||
+                float.IsNaN(quote.unitPrice) || float.IsInfinity(quote.unitPrice) ||
+                float.IsNaN(quote.distanceTiles) || float.IsInfinity(quote.distanceTiles))
+            {
+                return false;
+            }
+
+            float distanceMultiplier = 1f;
+            if (quote.distanceTiles >= 0f)
+            {
+                if (!TryReadPriceFactor(quote.priceExplanation, "Distance", out float explainedDistance))
+                {
+                    return false;
+                }
+
+                distanceMultiplier = LogisticsQuote.DistancePriceMultiplierFor(quote.distanceTiles);
+                if (!MatchesExplainedFactor(explainedDistance, distanceMultiplier))
+                {
+                    return false;
+                }
+            }
+
+            string transportLabel = quote.supplierDelivers
+                ? "Supplier delivery"
+                : "You collect";
+            if (!TryReadPriceFactor(
+                    quote.priceExplanation, transportLabel, out float explainedTransport))
+            {
+                return false;
+            }
+
+            float transportMultiplier = LogisticsQuote.TransportPriceMultiplierFor(
+                LogisticsQuote.MethodFor(quote.supplierDelivers));
+            if (!MatchesExplainedFactor(explainedTransport, transportMultiplier))
+            {
+                return false;
+            }
+
+            float logisticsMultiplier = distanceMultiplier * transportMultiplier;
+            if (logisticsMultiplier <= 0f ||
+                float.IsNaN(logisticsMultiplier) || float.IsInfinity(logisticsMultiplier))
+            {
+                return false;
+            }
+
+            float priceWithoutLogistics = quote.unitPrice / logisticsMultiplier;
+            float contribution = quote.unitPrice - priceWithoutLogistics;
+            if (float.IsNaN(contribution) || float.IsInfinity(contribution) || contribution < 0f)
+            {
+                return false;
+            }
+
+            logisticsSilver = Mathf.RoundToInt(contribution);
+            return true;
+        }
+
+        internal static string QuoteLogisticsLine(Quotation quote)
+        {
+            string method = quote.supplierDelivers ? "They deliver it" : "You collect it";
+            return TryGetLogisticsSilver(quote, out int logisticsSilver)
+                ? $"Logistics: +{logisticsSilver} silver per unit — {method}"
+                : $"Logistics: unavailable — {method}";
+        }
+
         private static string RequestFulfillmentLabel(
             ProcurementFulfillmentPreference preference)
         {
@@ -3903,7 +5718,7 @@ namespace Intercolony
                 maximum,
                 qty =>
                 {
-                    int cost = Mathf.RoundToInt(quote.unitPrice * qty);
+                    int cost = IntercolonyPricing.TotalPayment(quote.unitPrice, qty);
 
                     StringBuilder body = new StringBuilder();
                     body.AppendLine($"Buy {qty}x {request.thingDef?.LabelCap} from {quote.settlementName}.");
@@ -4124,23 +5939,7 @@ namespace Intercolony
             // Buyer pickup: the player declares the goods ready and the buyer travels (§25.2).
             if (order.CanMarkReady)
             {
-                // A recorded colony remains authoritative and may not be redirected if it is
-                // gone. Legacy cycle orders with no record can adopt the colony the player is
-                // acting from; the service persists that choice after validation succeeds.
-                Map map;
-                if (order.fulfillmentMap != null)
-                {
-                    map = Find.Maps?.Contains(order.fulfillmentMap) == true
-                        ? order.fulfillmentMap
-                        : null;
-                }
-                else
-                {
-                    Map currentMap = Find.CurrentMap;
-                    map = currentMap?.IsPlayerHome == true
-                        ? currentMap
-                        : Find.AnyPlayerHomeMap;
-                }
+                Map map = SalesOrderService.GetFulfillmentMapForReady(order);
                 OrderValidationResult validation = OrderValidator.ValidateColony(order, map);
                 bool enough = validation.Success;
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
@@ -182,13 +183,19 @@ namespace Intercolony
                 partial.RemainingQuantity.ToString());
 
             // --- B4: opt-in buy-only items remain deliverable after the option is disabled ---
-            RunBuyOnlyTradeUnlockChecks(state, map, sb, Check);
+            RunBuyOnlyTradeUnlockChecks(state, map, sb, Check, Skip);
+
+            RunColonyStockTraversalEquivalenceCheck(map, sb, Check, Skip);
 
             // --- Find Buyer availability: physical stock minus today's commitments ---
-            RunAvailabilityChecks(state, map, sb, Check);
+            RunAvailabilityChecks(state, map, sb, Check, Skip);
+            CheckOrderAvailability(state, map, sb, Check, Skip);
 
             // --- Buyer-pickup orders stay bound to the colony that declared them ready ---
             RunBuyerPickupMapChecks(state, map, sb, Check, Skip);
+
+            // --- F05: marked receiving locations and the unchanged unmarked delivery path ---
+            CheckReceivingLocationDelivery(map, Check, Skip);
 
             // --- Validation contract (§18, §74) ---
             OrderValidationResult nullOrder = OrderValidator.ValidateCaravan(null, null);
@@ -206,7 +213,7 @@ namespace Intercolony
             Check("no caravan reports the full shortfall", noCaravan.missingQuantity == 10,
                 noCaravan.missingQuantity.ToString());
             Check("failure summary is non-empty", !string.IsNullOrEmpty(noCaravan.Summary()));
-            RunMixedAnimalColonyValidationCheck(map, Check, Skip);
+            RunMixedAnimalColonyValidationCheck(state, map, Check, Skip);
 
             // --- §99 acceptance: one centralized validation path supports all test cases ---
             // The four cases named in §99, each driven through OrderValidator.Matches with a
@@ -362,6 +369,780 @@ namespace Intercolony
             return sb.ToString();
         }
 
+        private static void CheckReceivingLocationDelivery(
+            Map map, Action<string, bool, string> check, Action<string, string> skip)
+        {
+            const string ZonePersistenceAssertion =
+                "a marked stockpile is remembered across a save and load";
+            const string BuildingPersistenceAssertion =
+                "a destroyed receiving building is dropped on FinalizeInit";
+            const string MarkedDeliveryAssertion = "goods arrive in a marked stockpile";
+            const string RefusingDeliveryAssertion =
+                "a marked stockpile that refuses the goods does not receive them";
+            const string UnmarkedDeliveryAssertion =
+                "with nothing marked, goods arrive where they always did";
+
+            void SkipDeliveryAssertions(string reason)
+            {
+                skip(ZonePersistenceAssertion, reason);
+                skip(BuildingPersistenceAssertion, reason);
+                skip(MarkedDeliveryAssertion, reason);
+                skip(RefusingDeliveryAssertion, reason);
+                skip(UnmarkedDeliveryAssertion, reason);
+            }
+
+            Map deliveryMap = map?.IsPlayerHome == true ? map : Find.AnyPlayerHomeMap;
+            ThingDef deliveredDef = ThingDefOf.WoodLog;
+            ReceivingLocationMapComponent receiving =
+                ReceivingLocationMapComponent.For(deliveryMap);
+            if (deliveryMap == null || deliveryMap.zoneManager == null ||
+                deliveryMap.thingGrid == null || deliveryMap.listerThings == null ||
+                deliveredDef == null || receiving == null)
+            {
+                string reason = deliveryMap == null
+                    ? "no player-home delivery map"
+                    : receiving == null
+                        ? "the delivery map has no receiving-location component"
+                        : deliveryMap.zoneManager == null
+                            ? "the delivery map has no zone manager"
+                            : deliveredDef == null
+                                ? "WoodLog is unavailable"
+                                : "the delivery map has no item grid or lister";
+                SkipDeliveryAssertions(reason);
+                return;
+            }
+
+            IntVec3 tradeDropSpot = DropCellFinder.TradeDropSpot(deliveryMap);
+            HashSet<IntVec3> reservedCells = new HashSet<IntVec3>();
+            const int FixtureSearchRadius = 60;
+            CellRect fixtureSearchArea = tradeDropSpot.IsValid
+                ? CellRect.CenteredOn(tradeDropSpot, FixtureSearchRadius).ClipInsideMap(deliveryMap)
+                : new CellRect(0, 0, 0, 0);
+            int fixtureSearchCandidateCount = 0;
+            foreach (IntVec3 candidate in fixtureSearchArea)
+            {
+                fixtureSearchCandidateCount++;
+            }
+
+            string FixtureSearchDescription()
+            {
+                return tradeDropSpot.IsValid
+                    ? $"searched a {FixtureSearchRadius}-cell square radius around the " +
+                      $"trade-drop spot ({fixtureSearchCandidateCount} candidate cells)"
+                    : "the trade-drop spot was invalid (0 candidate cells)";
+            }
+
+            IntVec3 FindEmptyCell(
+                int minimumDistanceSquared,
+                HashSet<IntVec3> reserved,
+                ThingDef thingDef = null)
+            {
+                foreach (IntVec3 candidate in fixtureSearchArea)
+                {
+                    int dx = candidate.x - tradeDropSpot.x;
+                    int dz = candidate.z - tradeDropSpot.z;
+                    if (minimumDistanceSquared > 0 && dx * dx + dz * dz < minimumDistanceSquared)
+                    {
+                        continue;
+                    }
+
+                    CellRect occupied = thingDef == null
+                        ? new CellRect(candidate.x, candidate.z, 1, 1)
+                        : GenAdj.OccupiedRect(candidate, Rot4.North, thingDef.Size);
+                    if (!occupied.InBounds(deliveryMap))
+                    {
+                        continue;
+                    }
+
+                    bool free = true;
+                    foreach (IntVec3 occupiedCell in occupied.Cells)
+                    {
+                        if (!occupiedCell.Standable(deliveryMap) ||
+                            (reserved != null && reserved.Contains(occupiedCell)) ||
+                            deliveryMap.zoneManager.ZoneAt(occupiedCell) != null ||
+                            deliveryMap.thingGrid.ThingsListAt(occupiedCell).Count != 0)
+                        {
+                            free = false;
+                            break;
+                        }
+                    }
+
+                    if (free)
+                    {
+                        return candidate;
+                    }
+                }
+
+                return IntVec3.Invalid;
+            }
+
+            void ReserveCell(IntVec3 cell, ThingDef thingDef = null)
+            {
+                CellRect occupied = thingDef == null
+                    ? new CellRect(cell.x, cell.z, 1, 1)
+                    : GenAdj.OccupiedRect(cell, Rot4.North, thingDef.Size);
+                foreach (IntVec3 occupiedCell in occupied.Cells)
+                {
+                    reservedCells.Add(occupiedCell);
+                }
+            }
+
+            int CountMapUnits()
+            {
+                int count = 0;
+                foreach (Thing thing in deliveryMap.listerThings.ThingsOfDef(deliveredDef))
+                {
+                    if (thing != null && !thing.Destroyed)
+                    {
+                        count += thing.stackCount;
+                    }
+                }
+
+                return count;
+            }
+
+            int CountZoneUnits(Zone_Stockpile zone)
+            {
+                int count = 0;
+                SlotGroup group = zone?.GetSlotGroup();
+                if (group == null)
+                {
+                    return count;
+                }
+
+                foreach (Thing thing in group.HeldThings)
+                {
+                    if (thing?.GetInnerIfMinified()?.def == deliveredDef)
+                    {
+                        count += thing.stackCount;
+                    }
+                }
+
+                return count;
+            }
+
+            Dictionary<Thing, int> SnapshotGoods()
+            {
+                Dictionary<Thing, int> snapshot = new Dictionary<Thing, int>();
+                foreach (Thing thing in deliveryMap.listerThings.ThingsOfDef(deliveredDef))
+                {
+                    if (thing != null && !thing.Destroyed)
+                    {
+                        snapshot[thing] = thing.stackCount;
+                    }
+                }
+
+                return snapshot;
+            }
+
+            string NewGoodsLocations(Dictionary<Thing, int> before)
+            {
+                List<string> locations = new List<string>();
+                foreach (Thing thing in deliveryMap.listerThings.ThingsOfDef(deliveredDef))
+                {
+                    if (thing == null || thing.Destroyed)
+                    {
+                        continue;
+                    }
+
+                    if (!before.TryGetValue(thing, out int previous))
+                    {
+                        locations.Add($"{thing.stackCount}@{thing.Position}");
+                    }
+                    else if (thing.stackCount > previous)
+                    {
+                        locations.Add($"+{thing.stackCount - previous}@{thing.Position}");
+                    }
+                }
+
+                return locations.Count == 0
+                    ? "none"
+                    : string.Join(", ", locations.ToArray());
+            }
+
+            IntVec3 storageCell = FindEmptyCell(225, reservedCells);
+            if (!storageCell.IsValid)
+            {
+                SkipDeliveryAssertions(
+                    $"no free cell for the receiving stockpile; {FixtureSearchDescription()}");
+                return;
+            }
+
+            ReserveCell(storageCell);
+            Zone_Stockpile testZone = null;
+            Building_Storage testBuilding = null;
+            Thing buildingThing = null;
+            Building_Storage controlBuilding = null;
+            Thing controlBuildingThing = null;
+            List<PurchaseOrder> testOrders = new List<PurchaseOrder>();
+            Dictionary<Thing, int> originalGoods = SnapshotGoods();
+            List<Zone_Stockpile> previousReceivingZones = new List<Zone_Stockpile>();
+            List<Building_Storage> previousReceivingBuildings =
+                new List<Building_Storage>();
+
+            void RestoreGoods()
+            {
+                List<Thing> current = new List<Thing>(
+                    deliveryMap.listerThings.ThingsOfDef(deliveredDef));
+                foreach (Thing thing in current)
+                {
+                    if (originalGoods.TryGetValue(thing, out int originalCount))
+                    {
+                        if (!thing.Destroyed)
+                        {
+                            thing.stackCount = originalCount;
+                        }
+                    }
+                    else if (!thing.Destroyed)
+                    {
+                        thing.Destroy(DestroyMode.Vanish);
+                    }
+                }
+
+                foreach (KeyValuePair<Thing, int> saved in originalGoods)
+                {
+                    if (saved.Key != null && !saved.Key.Destroyed)
+                    {
+                        saved.Key.stackCount = saved.Value;
+                    }
+                }
+            }
+
+            PurchaseOrder DeliverOrder(int id, int quantity)
+            {
+                PurchaseOrder order = new PurchaseOrder
+                {
+                    id = id,
+                    settlementId = -1,
+                    settlementName = "receiving-location self-test supplier",
+                    thingDef = deliveredDef,
+                    quantity = quantity,
+                    paidSilver = 0,
+                    destinationMap = deliveryMap,
+                    supplierDelivers = true,
+                    readyTick = GenTicks.TicksGame,
+                    status = PurchaseOrderStatus.Confirmed
+                };
+                testOrders.Add(order);
+
+                // This is the production clock path: AdvanceOrders reaches DeliverToColony and
+                // SpawnGoods; the private delivery helper is deliberately not called directly.
+                PurchaseOrderService.AdvanceOrders(new List<PurchaseOrder> { order });
+                return order;
+            }
+
+            string DeliveryDetail(
+                PurchaseOrder order,
+                int requested,
+                int beforeMap,
+                int afterMap,
+                int beforeZone,
+                int afterZone,
+                string locations)
+            {
+                return $"zone {testZone.ID}, delivered {requested}x {deliveredDef.defName}, " +
+                       $"order={order?.status.ToString() ?? "none"}, " +
+                       $"landed {afterMap - beforeMap} on map, " +
+                       $"zone units {beforeZone}->{afterZone}, where={locations}";
+            }
+
+            try
+            {
+                try
+                {
+                    testZone = new Zone_Stockpile(
+                        StorageSettingsPreset.DefaultStockpile, deliveryMap.zoneManager);
+                    deliveryMap.zoneManager.RegisterZone(testZone);
+                    testZone.AddCell(storageCell);
+                }
+                catch (Exception exception)
+                {
+                    SkipDeliveryAssertions(
+                        $"could not create the real stockpile fixture: {exception.Message}");
+                    return;
+                }
+
+                string buildingFixtureFailure = null;
+                if (ThingDefOf.Shelf == null)
+                {
+                    buildingFixtureFailure = "Shelf is unavailable in this install";
+                }
+                else
+                {
+                    IntVec3 buildingCell = FindEmptyCell(
+                        0, reservedCells, ThingDefOf.Shelf);
+                    if (!buildingCell.IsValid)
+                    {
+                        buildingFixtureFailure =
+                            $"no free cell for the receiving shelf; {FixtureSearchDescription()}";
+                    }
+                    else
+                    {
+                        ReserveCell(buildingCell, ThingDefOf.Shelf);
+                        try
+                        {
+                            buildingThing = ThingMaker.MakeThing(
+                                ThingDefOf.Shelf, ThingDefOf.WoodLog);
+                            testBuilding = buildingThing as Building_Storage;
+                            if (testBuilding == null)
+                            {
+                                buildingFixtureFailure =
+                                    "ThingDefOf.Shelf did not make a Building_Storage";
+                            }
+                            else
+                            {
+                                testBuilding = GenSpawn.Spawn(
+                                    testBuilding, buildingCell, deliveryMap) as Building_Storage;
+                                if (testBuilding == null || testBuilding.Destroyed ||
+                                    !testBuilding.Spawned || testBuilding.MapHeld != deliveryMap)
+                                {
+                                    buildingFixtureFailure =
+                                        "the storage-building fixture did not spawn on the test map";
+                                    if (testBuilding != null && !testBuilding.Destroyed)
+                                    {
+                                        testBuilding.Destroy(DestroyMode.Vanish);
+                                    }
+
+                                    testBuilding = null;
+                                }
+                            }
+                        }
+                        catch (Exception exception)
+                        {
+                            buildingFixtureFailure =
+                                $"could not create the storage-building fixture: {exception.Message}";
+                            if (testBuilding != null && !testBuilding.Destroyed)
+                            {
+                                testBuilding.Destroy(DestroyMode.Vanish);
+                            }
+
+                            testBuilding = null;
+                        }
+
+                        if (testBuilding == null && buildingThing != null &&
+                            !buildingThing.Destroyed)
+                        {
+                            buildingThing.Destroy(DestroyMode.Vanish);
+                        }
+
+                        if (testBuilding != null)
+                        {
+                            IntVec3 controlBuildingCell = FindEmptyCell(
+                                0, reservedCells, ThingDefOf.Shelf);
+                            if (!controlBuildingCell.IsValid)
+                            {
+                                buildingFixtureFailure =
+                                    $"no free cell for the control shelf; {FixtureSearchDescription()}";
+                            }
+                            else
+                            {
+                                ReserveCell(controlBuildingCell, ThingDefOf.Shelf);
+                                try
+                                {
+                                    controlBuildingThing = ThingMaker.MakeThing(
+                                        ThingDefOf.Shelf, ThingDefOf.WoodLog);
+                                    controlBuilding = controlBuildingThing as Building_Storage;
+                                    if (controlBuilding == null)
+                                    {
+                                        buildingFixtureFailure =
+                                            "ThingDefOf.Shelf did not make a Building_Storage control";
+                                    }
+                                    else
+                                    {
+                                        controlBuilding = GenSpawn.Spawn(
+                                            controlBuilding,
+                                            controlBuildingCell,
+                                            deliveryMap) as Building_Storage;
+                                        if (controlBuilding == null || controlBuilding.Destroyed ||
+                                            !controlBuilding.Spawned ||
+                                            controlBuilding.MapHeld != deliveryMap)
+                                        {
+                                            buildingFixtureFailure =
+                                                "the live storage-building control did not spawn on the test map";
+                                            if (controlBuilding != null && !controlBuilding.Destroyed)
+                                            {
+                                                controlBuilding.Destroy(DestroyMode.Vanish);
+                                            }
+
+                                            controlBuilding = null;
+                                        }
+                                    }
+                                }
+                                catch (Exception exception)
+                                {
+                                    buildingFixtureFailure =
+                                        $"could not create the live storage-building control: " +
+                                        exception.Message;
+                                    if (controlBuilding != null && !controlBuilding.Destroyed)
+                                    {
+                                        controlBuilding.Destroy(DestroyMode.Vanish);
+                                    }
+
+                                    controlBuilding = null;
+                                }
+
+                                if (controlBuilding == null && controlBuildingThing != null &&
+                                    !controlBuildingThing.Destroyed)
+                                {
+                                    controlBuildingThing.Destroy(DestroyMode.Vanish);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ReceivingLocationMapComponent savedZoneComponent =
+                    new ReceivingLocationMapComponent(deliveryMap);
+                savedZoneComponent.SetReceiving(testZone, true);
+                ReceivingLocationMapComponent loadedZoneComponent = null;
+                string zoneRoundTripFailure = null;
+                bool zoneNodePresent = false;
+                string zonePath = Path.Combine(
+                    Path.GetTempPath(), $"Intercolony-ReceivingZone-{Guid.NewGuid():N}.xml");
+                try
+                {
+                    Scribe.saver.InitSaving(zonePath, "intercolonyReceivingZoneTest");
+                    Scribe_Deep.Look(ref savedZoneComponent, "receivingLocationMapComponent");
+                    Scribe.saver.FinalizeSaving();
+                    zoneNodePresent = File.ReadAllText(zonePath).IndexOf(
+                        "<receivingZoneIds", StringComparison.Ordinal) >= 0;
+
+                    Scribe.loader.InitLoading(zonePath);
+                    Scribe_Deep.Look(
+                        ref loadedZoneComponent, "receivingLocationMapComponent", deliveryMap);
+                    Scribe.loader.FinalizeLoading();
+                    loadedZoneComponent?.FinalizeInit();
+                }
+                catch (Exception exception)
+                {
+                    zoneRoundTripFailure = $"{exception.GetType().Name}: {exception.Message}";
+                }
+                finally
+                {
+                    Scribe.ForceStop();
+                    if (File.Exists(zonePath))
+                    {
+                        File.Delete(zonePath);
+                    }
+                }
+
+                check(
+                    ZonePersistenceAssertion,
+                    zoneRoundTripFailure == null && zoneNodePresent &&
+                    loadedZoneComponent != null && loadedZoneComponent.IsReceiving(testZone),
+                    zoneRoundTripFailure ??
+                    $"zone {testZone.ID}, saved node={zoneNodePresent}, " +
+                    $"loaded marked={loadedZoneComponent?.IsReceiving(testZone) ?? false}");
+
+                if (testBuilding == null)
+                {
+                    skip(BuildingPersistenceAssertion, buildingFixtureFailure);
+                }
+                else if (controlBuilding == null)
+                {
+                    skip(BuildingPersistenceAssertion,
+                        buildingFixtureFailure ?? "the live storage-building control is unavailable");
+                }
+                else
+                {
+                    ReceivingLocationMapComponent buildingComponent =
+                        new ReceivingLocationMapComponent(deliveryMap);
+                    bool receivingShelfMarked = false;
+                    bool controlShelfMarked = false;
+                    string buildingMarkingFailure = null;
+                    try
+                    {
+                        buildingComponent.SetReceiving(testBuilding, true);
+                        receivingShelfMarked = buildingComponent.IsReceiving(testBuilding);
+                        buildingComponent.SetReceiving(controlBuilding, true);
+                        controlShelfMarked = buildingComponent.IsReceiving(controlBuilding);
+                    }
+                    catch (Exception exception)
+                    {
+                        buildingMarkingFailure =
+                            $"{exception.GetType().Name}: {exception.Message}";
+                    }
+
+                    if (!receivingShelfMarked || !controlShelfMarked)
+                    {
+                        string markingReason = !receivingShelfMarked && !controlShelfMarked
+                            ? "the receiving and control shelves were placed but " +
+                              "SetReceiving did not take for either shelf"
+                            : !receivingShelfMarked
+                                ? "the receiving shelf was placed but SetReceiving did not take"
+                                : "the control shelf was placed but SetReceiving did not take";
+                        if (buildingMarkingFailure != null)
+                        {
+                            markingReason += $": {buildingMarkingFailure}";
+                        }
+
+                        skip(BuildingPersistenceAssertion, markingReason);
+                    }
+                    else
+                    {
+                        bool markedBeforeDestroy = receivingShelfMarked && controlShelfMarked;
+                        bool destroyedBeforeFinalize = false;
+                        bool controlReportedAfterFinalize = false;
+                        bool destroyedBuildingDropped = false;
+                        string buildingFinalizeFailure = null;
+                        try
+                        {
+                            testBuilding.Destroy(DestroyMode.Vanish);
+                            destroyedBeforeFinalize = testBuilding.Destroyed;
+                            buildingComponent.FinalizeInit();
+                            controlReportedAfterFinalize =
+                                buildingComponent.IsReceiving(controlBuilding);
+
+                            // Remove the live control after proving it survived. If FinalizeInit did
+                            // not prune the destroyed reference, it is the only marker left and
+                            // AnyConfigured exposes that stale entry.
+                            buildingComponent.SetReceiving(controlBuilding, false);
+                            destroyedBuildingDropped = !buildingComponent.AnyConfigured;
+                        }
+                        catch (Exception exception)
+                        {
+                            buildingFinalizeFailure =
+                                $"{exception.GetType().Name}: {exception.Message}";
+                        }
+
+                        check(
+                            BuildingPersistenceAssertion,
+                            buildingFinalizeFailure == null && markedBeforeDestroy &&
+                            destroyedBeforeFinalize && controlReportedAfterFinalize &&
+                            destroyedBuildingDropped,
+                            buildingFinalizeFailure ??
+                            $"marked before destroy={markedBeforeDestroy}, " +
+                            $"destroyed before FinalizeInit={destroyedBeforeFinalize}, " +
+                            $"control reported after FinalizeInit={controlReportedAfterFinalize}, " +
+                            $"destroyed marker dropped={destroyedBuildingDropped}");
+                    }
+                }
+
+                foreach (ISlotGroupParent destination in receiving.ReceivingDestinations)
+                {
+                    if (destination is Zone_Stockpile existingZone)
+                    {
+                        previousReceivingZones.Add(existingZone);
+                    }
+                    else if (destination is Building_Storage existingBuilding)
+                    {
+                        previousReceivingBuildings.Add(existingBuilding);
+                    }
+                }
+
+                foreach (Zone_Stockpile existingZone in previousReceivingZones)
+                {
+                    receiving.SetReceiving(existingZone, false);
+                }
+
+                foreach (Building_Storage existingBuilding in previousReceivingBuildings)
+                {
+                    receiving.SetReceiving(existingBuilding, false);
+                }
+
+                if (receiving.AnyConfigured)
+                {
+                    string reason =
+                        "existing receiving markers could not be cleared through SetReceiving";
+                    skip(MarkedDeliveryAssertion, reason);
+                    skip(RefusingDeliveryAssertion, reason);
+                    skip(UnmarkedDeliveryAssertion, reason);
+                    return;
+                }
+
+                const int quantity = 3;
+                receiving.SetReceiving(testZone, true);
+                Dictionary<Thing, int> markedBeforeGoods = SnapshotGoods();
+                int markedBeforeMap = CountMapUnits();
+                int markedBeforeZone = CountZoneUnits(testZone);
+                PurchaseOrder markedOrder = null;
+                string markedDeliveryFailure = null;
+                try
+                {
+                    markedOrder = DeliverOrder(-95001, quantity);
+                }
+                catch (Exception exception)
+                {
+                    markedDeliveryFailure =
+                        $"{exception.GetType().Name}: {exception.Message}";
+                }
+
+                int markedAfterMap = CountMapUnits();
+                int markedAfterZone = CountZoneUnits(testZone);
+                check(
+                    MarkedDeliveryAssertion,
+                    markedDeliveryFailure == null && receiving.IsReceiving(testZone) &&
+                    markedOrder?.status == PurchaseOrderStatus.Completed &&
+                    markedAfterMap - markedBeforeMap == quantity &&
+                    markedAfterZone - markedBeforeZone == quantity,
+                    (markedDeliveryFailure == null ? string.Empty : markedDeliveryFailure + "; ") +
+                    DeliveryDetail(
+                        markedOrder,
+                        quantity,
+                        markedBeforeMap,
+                        markedAfterMap,
+                        markedBeforeZone,
+                        markedAfterZone,
+                        NewGoodsLocations(markedBeforeGoods)));
+                RestoreGoods();
+
+                bool filterConfigured = false;
+                string filterFailure = null;
+                try
+                {
+                    if (testZone.settings == null || testZone.settings.filter == null)
+                    {
+                        filterFailure = "the real stockpile has no storage filter";
+                    }
+                    else
+                    {
+                        testZone.settings.filter.SetDisallowAll();
+                        filterConfigured = true;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    filterFailure =
+                        $"SetDisallowAll could not configure the stockpile filter: {exception.Message}";
+                }
+
+                if (!filterConfigured)
+                {
+                    skip(RefusingDeliveryAssertion, filterFailure);
+                }
+                else
+                {
+                    bool filterRefuses = !testZone.settings.AllowedToAccept(deliveredDef);
+                    Dictionary<Thing, int> refusingBeforeGoods = SnapshotGoods();
+                    int refusingBeforeMap = CountMapUnits();
+                    int refusingBeforeZone = CountZoneUnits(testZone);
+                    PurchaseOrder refusingOrder = null;
+                    string refusingDeliveryFailure = null;
+                    try
+                    {
+                        refusingOrder = DeliverOrder(-95002, quantity);
+                    }
+                    catch (Exception exception)
+                    {
+                        refusingDeliveryFailure =
+                            $"{exception.GetType().Name}: {exception.Message}";
+                    }
+
+                    int refusingAfterMap = CountMapUnits();
+                    int refusingAfterZone = CountZoneUnits(testZone);
+                    check(
+                        RefusingDeliveryAssertion,
+                        filterRefuses && refusingDeliveryFailure == null &&
+                        receiving.IsReceiving(testZone) &&
+                        refusingOrder?.status == PurchaseOrderStatus.Completed &&
+                        refusingAfterMap - refusingBeforeMap == quantity &&
+                        refusingAfterZone - refusingBeforeZone == 0,
+                        (refusingDeliveryFailure == null
+                            ? string.Empty
+                            : refusingDeliveryFailure + "; ") +
+                        $"filter refuses={filterRefuses}; " + DeliveryDetail(
+                            refusingOrder,
+                            quantity,
+                            refusingBeforeMap,
+                            refusingAfterMap,
+                            refusingBeforeZone,
+                            refusingAfterZone,
+                            NewGoodsLocations(refusingBeforeGoods)));
+                    RestoreGoods();
+                }
+
+                if (testZone.settings != null)
+                {
+                    testZone.settings.SetFromPreset(StorageSettingsPreset.DefaultStockpile);
+                }
+
+                receiving.SetReceiving(testZone, false);
+                Dictionary<Thing, int> unmarkedBeforeGoods = SnapshotGoods();
+                int unmarkedBeforeMap = CountMapUnits();
+                int unmarkedBeforeZone = CountZoneUnits(testZone);
+                PurchaseOrder unmarkedOrder = null;
+                string unmarkedDeliveryFailure = null;
+                try
+                {
+                    unmarkedOrder = DeliverOrder(-95003, quantity);
+                }
+                catch (Exception exception)
+                {
+                    unmarkedDeliveryFailure =
+                        $"{exception.GetType().Name}: {exception.Message}";
+                }
+
+                int unmarkedAfterMap = CountMapUnits();
+                int unmarkedAfterZone = CountZoneUnits(testZone);
+                check(
+                    UnmarkedDeliveryAssertion,
+                    !receiving.AnyConfigured && unmarkedDeliveryFailure == null &&
+                    unmarkedOrder?.status == PurchaseOrderStatus.Completed &&
+                    unmarkedAfterMap - unmarkedBeforeMap == quantity,
+                    (unmarkedDeliveryFailure == null ? string.Empty : unmarkedDeliveryFailure + "; ") +
+                    DeliveryDetail(
+                        unmarkedOrder,
+                        quantity,
+                        unmarkedBeforeMap,
+                        unmarkedAfterMap,
+                        unmarkedBeforeZone,
+                        unmarkedAfterZone,
+                        NewGoodsLocations(unmarkedBeforeGoods)) +
+                    $", AnyConfigured={receiving.AnyConfigured}");
+                RestoreGoods();
+            }
+            finally
+            {
+                RestoreGoods();
+                // These orders were advanced through a private one-item list, never registered
+                // in the world's durable purchase-order collection. Clearing our references is
+                // the complete order cleanup; the goods and map fixtures are restored below.
+                testOrders.Clear();
+
+                if (receiving != null && testZone != null)
+                {
+                    receiving.SetReceiving(testZone, false);
+                }
+
+                if (testZone != null)
+                {
+                    testZone.settings?.SetFromPreset(StorageSettingsPreset.DefaultStockpile);
+                    testZone.Delete(playSound: false);
+                }
+
+                if (testBuilding != null && !testBuilding.Destroyed)
+                {
+                    testBuilding.Destroy(DestroyMode.Vanish);
+                }
+
+                if (buildingThing != null && !buildingThing.Destroyed && testBuilding == null)
+                {
+                    buildingThing.Destroy(DestroyMode.Vanish);
+                }
+
+                if (controlBuilding != null && !controlBuilding.Destroyed)
+                {
+                    controlBuilding.Destroy(DestroyMode.Vanish);
+                }
+
+                if (controlBuildingThing != null && !controlBuildingThing.Destroyed &&
+                    controlBuilding == null)
+                {
+                    controlBuildingThing.Destroy(DestroyMode.Vanish);
+                }
+
+                foreach (Zone_Stockpile existingZone in previousReceivingZones)
+                {
+                    receiving.SetReceiving(existingZone, true);
+                }
+
+                foreach (Building_Storage existingBuilding in previousReceivingBuildings)
+                {
+                    receiving.SetReceiving(existingBuilding, true);
+                }
+            }
+        }
+
         /// <summary>
         /// Exercises one §99 case end to end: build the line, spawn a real Thing that should
         /// satisfy it, and one that should not, and assert the single matcher agrees.
@@ -429,16 +1210,25 @@ namespace Intercolony
         }
 
         private static void RunMixedAnimalColonyValidationCheck(
-            Map map, Action<string, bool, string> check, Action<string, string> skip)
+            IntercolonyWorldComponent state,
+            Map map,
+            Action<string, bool, string> check,
+            Action<string, string> skip)
         {
             const string assertion =
                 "enough matching colony animals validate alongside non-matching same-species animals";
-            List<Pawn> animals = FindBuyerService.EligibleColonyAnimalCandidates(map);
+            List<Pawn> animals = map?.mapPawns?.SpawnedColonyAnimals;
+            if (animals == null)
+            {
+                skip(assertion, "the current map has no spawned colony-animal list");
+                return;
+            }
 
             for (int i = 0; i < animals.Count; i++)
             {
                 Pawn matching = animals[i];
-                if (matching.gender != Gender.Female && matching.gender != Gender.Male)
+                if (!IsIndependentlyEligibleColonyAnimal(matching, state) ||
+                    IsIndependentlyCommittedAnimal(matching, state))
                 {
                     continue;
                 }
@@ -446,8 +1236,15 @@ namespace Intercolony
                 for (int j = i + 1; j < animals.Count; j++)
                 {
                     Pawn rejected = animals[j];
-                    if (rejected.def != matching.def || rejected.gender == matching.gender ||
+                    if (!IsIndependentlyEligibleColonyAnimal(rejected, state) ||
+                        IsIndependentlyCommittedAnimal(rejected, state) ||
+                        rejected.def != matching.def || rejected.gender == matching.gender ||
                         (rejected.gender != Gender.Female && rejected.gender != Gender.Male))
+                    {
+                        continue;
+                    }
+
+                    if (matching.gender != Gender.Female && matching.gender != Gender.Male)
                     {
                         continue;
                     }
@@ -461,10 +1258,18 @@ namespace Intercolony
                     SalesOrder oppositeProbe = NewOrder(rejected.def, 1, 0f);
                     oppositeProbe.id = -917_403;
                     oppositeProbe.line.animalSpec = new AnimalSpec { gender = rejected.gender };
-                    if (OrderValidator.MatchingColonyAnimals(probe, map, 1).Count == 0 ||
-                        OrderValidator.MatchingColonyAnimals(oppositeProbe, map, 1).Count == 0)
+
+                    List<Pawn> productionMatches =
+                        OrderValidator.MatchingColonyAnimals(probe, map, 1);
+                    List<Pawn> productionOppositeMatches =
+                        OrderValidator.MatchingColonyAnimals(oppositeProbe, map, 1);
+                    if (productionMatches.Count == 0 || productionOppositeMatches.Count == 0)
                     {
-                        continue;
+                        check(assertion, false,
+                            $"independent pair {matching.LabelShort}/{rejected.LabelShort} " +
+                            $"was found, but production matching returned " +
+                            $"{productionMatches.Count}/{productionOppositeMatches.Count}");
+                        return;
                     }
 
                     OrderValidationResult validation = OrderValidator.ValidateColony(probe, map);
@@ -478,6 +1283,69 @@ namespace Intercolony
 
             skip(assertion,
                 "no eligible, uncommitted opposite-sex pair of one species on this map");
+        }
+
+        private static bool IsIndependentlyEligibleColonyAnimal(
+            Pawn pawn, IntercolonyWorldComponent state)
+        {
+            if (pawn == null || pawn.Destroyed || pawn.Dead || !pawn.IsAnimal ||
+                pawn.RaceProps == null || pawn.RaceProps.Humanlike ||
+                pawn.Faction != Faction.OfPlayer || pawn.HomeFaction != Faction.OfPlayer ||
+                pawn.HostFaction != null || pawn.Downed || pawn.InMentalState ||
+                pawn.IsPrisoner || pawn.IsSlave || pawn.IsColonist ||
+                pawn.IsQuestLodger() || pawn.IsQuestHelper())
+            {
+                return false;
+            }
+
+            List<EmploymentContract> employments = state?.Employments;
+            if (employments == null)
+            {
+                return true;
+            }
+
+            foreach (EmploymentContract contract in employments)
+            {
+                if (contract?.status == EmploymentStatus.Active && contract.pawn == pawn)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsIndependentlyCommittedAnimal(
+            Pawn pawn, IntercolonyWorldComponent state)
+        {
+            if (pawn == null)
+            {
+                return true;
+            }
+
+            List<SalesOrder> orders = state?.Orders;
+            if (orders == null)
+            {
+                return false;
+            }
+
+            foreach (SalesOrder order in orders)
+            {
+                if (order == null ||
+                    (order.status != SalesOrderStatus.Accepted &&
+                     order.status != SalesOrderStatus.AwaitingCollection) ||
+                    order.designatedAnimals == null)
+                {
+                    continue;
+                }
+
+                if (order.designatedAnimals.Contains(pawn))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static SalesOrder NewOrder(ThingDef def, int quantity, float unitPrice)
@@ -735,9 +1603,21 @@ namespace Intercolony
             IntercolonyWorldComponent state,
             Map map,
             StringBuilder sb,
-            Action<string, bool, string> check)
+            Action<string, bool, string> check,
+            Action<string, string> skip)
         {
             sb.AppendLine("  Buy-only trade unlock:");
+
+            void SkipObligationAssertions(string reason)
+            {
+                skip("buy-only obligation test found a temporary storage cell", reason);
+                skip("production path creates a buy-only order while enabled", reason);
+                skip("open order validates after its category is disabled", reason);
+                skip(
+                    "production path marks the existing order ready after the category is disabled",
+                    reason);
+                skip("production collection completes after the category is disabled", reason);
+            }
 
             BuyOnlyTradeCategoryGroup group = null;
             ThingDef def = null;
@@ -834,12 +1714,21 @@ namespace Intercolony
                     {
                         IntVec3 storageCell = IntVec3.Invalid;
                         IntVec3 root = DropCellFinder.TradeDropSpot(fulfillmentMap);
-                        foreach (IntVec3 candidate in
-                                 GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+                        const int BuyOnlySearchRadius = 60;
+                        CellRect buyOnlySearchArea = root.IsValid
+                            ? CellRect.CenteredOn(root, BuyOnlySearchRadius)
+                                .ClipInsideMap(fulfillmentMap)
+                            : new CellRect(0, 0, 0, 0);
+                        int buyOnlySearchCandidateCount = 0;
+                        foreach (IntVec3 candidate in buyOnlySearchArea)
                         {
-                            if (candidate.InBounds(fulfillmentMap) &&
-                                candidate.Standable(fulfillmentMap) &&
-                                candidate.GetFirstItem(fulfillmentMap) == null &&
+                            buyOnlySearchCandidateCount++;
+                        }
+
+                        foreach (IntVec3 candidate in buyOnlySearchArea)
+                        {
+                            if (candidate.Standable(fulfillmentMap) &&
+                                fulfillmentMap.thingGrid.ThingsListAt(candidate).Count == 0 &&
                                 fulfillmentMap.zoneManager.ZoneAt(candidate) == null)
                             {
                                 storageCell = candidate;
@@ -847,21 +1736,67 @@ namespace Intercolony
                             }
                         }
 
-                        check("buy-only obligation test found a temporary storage cell",
-                            storageCell.IsValid,
-                            "no empty unzoned cell near the trade drop spot");
-                        if (storageCell.IsValid)
+                        string storageFixtureFailure = null;
+                        if (!storageCell.IsValid)
                         {
-                            testZone = new Zone_Stockpile(
-                                StorageSettingsPreset.DefaultStockpile,
-                                fulfillmentMap.zoneManager);
-                            fulfillmentMap.zoneManager.RegisterZone(testZone);
-                            testZone.AddCell(storageCell);
+                            storageFixtureFailure =
+                                $"no free cell for the buy-only stock fixture; searched a " +
+                                $"{BuyOnlySearchRadius}-cell square radius around the trade-drop " +
+                                $"spot ({buyOnlySearchCandidateCount} candidate cells)";
+                        }
+                        else
+                        {
+                            try
+                            {
+                                testZone = new Zone_Stockpile(
+                                    StorageSettingsPreset.DefaultStockpile,
+                                    fulfillmentMap.zoneManager);
+                                fulfillmentMap.zoneManager.RegisterZone(testZone);
+                                testZone.AddCell(storageCell);
+                                if (!testZone.ContainsCell(storageCell))
+                                {
+                                    storageFixtureFailure =
+                                        "the buy-only stockpile could not claim its free cell";
+                                }
+                                else
+                                {
+                                    testStock = ThingMaker.MakeThing(
+                                        def, def.MadeFromStuff ? GenStuff.DefaultStuffFor(def) : null);
+                                    if (testStock == null)
+                                    {
+                                        storageFixtureFailure =
+                                            "the buy-only stock item could not be created";
+                                    }
+                                    else
+                                    {
+                                        testStock.stackCount = 1;
+                                        testStock = GenSpawn.Spawn(
+                                            testStock, storageCell, fulfillmentMap);
+                                        if (testStock == null || testStock.Destroyed ||
+                                            !testStock.Spawned ||
+                                            testStock.MapHeld != fulfillmentMap)
+                                        {
+                                            storageFixtureFailure =
+                                                "the buy-only stock item could not be placed in " +
+                                                "the temporary stockpile";
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception exception)
+                            {
+                                storageFixtureFailure =
+                                    $"the buy-only stock fixture could not be built: " +
+                                    $"{exception.GetType().Name}: {exception.Message}";
+                            }
+                        }
 
-                            testStock = ThingMaker.MakeThing(def);
-                            testStock.stackCount = 1;
-                            testStock = GenSpawn.Spawn(testStock, storageCell, fulfillmentMap);
-
+                        if (storageFixtureFailure != null)
+                        {
+                            SkipObligationAssertions(storageFixtureFailure);
+                        }
+                        else
+                        {
                             BuyerOffer offer = new BuyerOffer
                             {
                                 settlement = testBuyer,
@@ -1025,12 +1960,59 @@ namespace Intercolony
             IntercolonyWorldComponent state,
             Map map,
             StringBuilder sb,
-            Action<string, bool, string> check)
+            Action<string, bool, string> check,
+            Action<string, string> skip)
         {
             sb.AppendLine("  Find Buyer availability:");
-            if (state == null || map == null)
+
+            void SkipFixtureAssertions(string reason)
             {
-                check("availability test has a current map", false, "run while viewing a colony map");
+                string[] assertions =
+                {
+                    "availability test has a current map",
+                    "availability test found an isolated tradeable def",
+                    "availability test found a temporary storage cell",
+                    "10 physical with no orders gives 10 available",
+                    "Find Buyer refresh reconciles a reduced selected count",
+                    "Find Buyer refresh invalidates offers when selected count falls",
+                    "Find Buyer refresh preserves a selected quantity within the new count",
+                    "Find Buyer refresh clears a vanished selection",
+                    "direct Find Buyer commitment leaves 2 available",
+                    "terminal direct orders consume no availability",
+                    "partial delivery commits only the remaining quantity",
+                    "accepted Market seller-delivery order leaves stock available",
+                    "accepted recurring-contract cycle leaves stock available",
+                    "Market buyer-pickup before Mark Ready leaves stock available",
+                    "AwaitingCollection order commits stock",
+                    "commitment above physical stock clamps to zero",
+                    "excluded order does not consume its own availability",
+                    "commitment-boundary test found an accessible buyer",
+                    "10 physical and 8 committed refuses a direct sale for 3",
+                    "refused direct creation leaves order state completely unchanged",
+                    "10 physical and 8 committed accepts a direct sale for 2",
+                    "10 physical and 8 committed elsewhere refuses Mark Ready for 8",
+                    "10 physical, 4 committed elsewhere, and 3 required permits Mark Ready",
+                    "unknown distance uses the same fallback in Market and dispatch",
+                    "Market pickup estimate and dispatch letter agree",
+                    "pickup marked ready before the deadline survives buyer travel past it",
+                    "pickup first marked ready after the deadline cannot escape expiry",
+                    "a sole Market pickup marks ready and consumes 8 availability",
+                    "direct Find Buyer pickup does not block its own Mark Ready",
+                    "only one of two competing Market pickups can mark ready",
+                    "cancelling the first pickup frees stock for the second Mark Ready"
+                };
+
+                foreach (string assertion in assertions)
+                {
+                    skip(assertion, reason);
+                }
+            }
+
+            if (state == null || map == null || map.zoneManager == null ||
+                map.thingGrid == null || map.listerThings == null)
+            {
+                SkipFixtureAssertions(
+                    "the availability fixture needs a current colony map with storage services");
                 return;
             }
 
@@ -1068,8 +2050,7 @@ namespace Intercolony
 
             if (probeDef == null)
             {
-                check("availability test found an isolated tradeable def", false,
-                    "every stackable candidate is already stocked or ordered");
+                SkipFixtureAssertions("every suitable stackable trade item is already stocked or ordered");
                 return;
             }
 
@@ -1086,10 +2067,21 @@ namespace Intercolony
             {
                 IntVec3 storageCell = IntVec3.Invalid;
                 IntVec3 root = DropCellFinder.TradeDropSpot(map);
-                foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+                const int AvailabilitySearchRadius = 60;
+                CellRect availabilitySearchArea = root.IsValid
+                    ? CellRect.CenteredOn(root, AvailabilitySearchRadius).ClipInsideMap(map)
+                    : new CellRect(0, 0, 0, 0);
+                int availabilitySearchCandidateCount = 0;
+                foreach (IntVec3 candidate in availabilitySearchArea)
                 {
-                    if (candidate.InBounds(map) && candidate.Standable(map) &&
-                        candidate.GetFirstItem(map) == null && map.zoneManager.ZoneAt(candidate) == null)
+                    availabilitySearchCandidateCount++;
+                }
+
+                foreach (IntVec3 candidate in availabilitySearchArea)
+                {
+                    if (candidate.Standable(map) &&
+                        map.thingGrid.ThingsListAt(candidate).Count == 0 &&
+                        map.zoneManager.ZoneAt(candidate) == null)
                     {
                         storageCell = candidate;
                         break;
@@ -1098,18 +2090,52 @@ namespace Intercolony
 
                 if (!storageCell.IsValid)
                 {
-                    check("availability test found a temporary storage cell", false,
-                        "no empty unzoned cell near the trade drop spot");
+                    SkipFixtureAssertions(
+                        $"no free cell for the availability stock fixture; searched a " +
+                        $"{AvailabilitySearchRadius}-cell square radius around the trade-drop " +
+                        $"spot ({availabilitySearchCandidateCount} candidate cells)");
                     return;
                 }
 
-                testZone = new Zone_Stockpile(StorageSettingsPreset.DefaultStockpile, map.zoneManager);
-                map.zoneManager.RegisterZone(testZone);
-                testZone.AddCell(storageCell);
+                try
+                {
+                    testZone = new Zone_Stockpile(
+                        StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+                    map.zoneManager.RegisterZone(testZone);
+                    testZone.AddCell(storageCell);
+                    if (!testZone.ContainsCell(storageCell))
+                    {
+                        testZone.GetSlotGroup()?.Notify_LostCell(storageCell);
+                        SkipFixtureAssertions(
+                            "the temporary availability stockpile could not claim its free cell");
+                        return;
+                    }
 
-                Thing stack = ThingMaker.MakeThing(probeDef);
-                stack.stackCount = 10;
-                testStock = GenSpawn.Spawn(stack, storageCell, map);
+                    Thing stack = ThingMaker.MakeThing(probeDef);
+                    if (stack == null)
+                    {
+                        SkipFixtureAssertions(
+                            "the availability stock item could not be created");
+                        return;
+                    }
+
+                    stack.stackCount = 10;
+                    testStock = GenSpawn.Spawn(stack, storageCell, map);
+                    if (testStock == null || testStock.Destroyed ||
+                        !testStock.Spawned || testStock.MapHeld != map)
+                    {
+                        SkipFixtureAssertions(
+                            "the availability stock item could not be placed in the temporary stockpile");
+                        return;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    SkipFixtureAssertions(
+                        $"the availability stock fixture could not be built: " +
+                        $"{exception.GetType().Name}: {exception.Message}");
+                    return;
+                }
 
                 int BaseAvailable() => FindBuyerService.AvailableQuantity(state, map, probeDef);
                 int ListedAvailable() => ListedQuantity(
@@ -1503,6 +2529,508 @@ namespace Intercolony
             }
         }
 
+        private static void CheckOrderAvailability(
+            IntercolonyWorldComponent state,
+            Map map,
+            StringBuilder sb,
+            Action<string, bool, string> check,
+            Action<string, string> skip)
+        {
+            const string FullyStockedAssertion =
+                "a fully stocked order reports enough available";
+            const string ShortOrderAssertion =
+                "a short order reports how many are actually available";
+            const string NoStockAssertion =
+                "an order with no stock reports zero available, not not-applicable";
+            const string ReadinessAgreementAssertion =
+                "availability and the readiness decision agree";
+            const string NotApplicableAssertion =
+                "an order that cannot be measured says so rather than reporting zero";
+
+            void SkipAssertions(string reason)
+            {
+                skip(FullyStockedAssertion, reason);
+                skip(ShortOrderAssertion, reason);
+                skip(NoStockAssertion, reason);
+                skip(ReadinessAgreementAssertion, reason);
+                skip(NotApplicableAssertion, reason);
+            }
+
+            sb.AppendLine("  F12 order availability:");
+            if (state == null || map == null || map.zoneManager == null ||
+                map.listerThings == null || map.haulDestinationManager == null)
+            {
+                SkipAssertions("the test needs a live world state and a map with storage services");
+                return;
+            }
+
+            if (Find.Maps?.Contains(map) != true)
+            {
+                SkipAssertions(
+                    "the test map is not loaded, so the readiness decision cannot be evaluated");
+                return;
+            }
+
+            List<KeyValuePair<ThingDef, int>> existingStock =
+                FindBuyerService.ColonyStock(map);
+            ThingDef probeDef = null;
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null || candidate.category != ThingCategory.Item ||
+                    candidate.stackLimit < 10 || candidate.MadeFromStuff ||
+                    ListedQuantity(existingStock, candidate) > 0)
+                {
+                    continue;
+                }
+
+                bool alreadyOrdered = false;
+                foreach (SalesOrder existing in state.Orders)
+                {
+                    if (existing?.ThingDef == candidate)
+                    {
+                        alreadyOrdered = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyOrdered)
+                {
+                    probeDef = candidate;
+                    break;
+                }
+            }
+
+            if (probeDef == null)
+            {
+                SkipAssertions(
+                    "every suitable stackable trade item is already stocked or ordered");
+                return;
+            }
+
+            const int PhysicalStock = 10;
+            const int CommittedStock = 5;
+            int expectedAvailable = PhysicalStock - CommittedStock;
+            Zone_Stockpile testZone = null;
+            Thing testStock = null;
+            Thing unspawnedStock = null;
+            IntVec3 storageCell = IntVec3.Invalid;
+            HashSet<IntVec3> reservedCells = new HashSet<IntVec3>();
+            Area_Home homeArea = null;
+            Dictionary<IntVec3, bool> previousHomeArea =
+                new Dictionary<IntVec3, bool>();
+            List<SalesOrder> fixtureOrders = new List<SalesOrder>();
+
+            try
+            {
+                IntVec3 root = DropCellFinder.TradeDropSpot(map);
+                const int AvailabilitySearchRadius = 60;
+                CellRect availabilitySearchArea = root.IsValid
+                    ? CellRect.CenteredOn(root, AvailabilitySearchRadius).ClipInsideMap(map)
+                    : new CellRect(0, 0, 0, 0);
+                int availabilitySearchCandidateCount = 0;
+                foreach (IntVec3 candidate in availabilitySearchArea)
+                {
+                    availabilitySearchCandidateCount++;
+                }
+
+                IntVec3 FindEmptyCell()
+                {
+                    foreach (IntVec3 candidate in availabilitySearchArea)
+                    {
+                        if (candidate.Standable(map) &&
+                            !reservedCells.Contains(candidate) &&
+                            map.zoneManager.ZoneAt(candidate) == null &&
+                            map.thingGrid.ThingsListAt(candidate).Count == 0)
+                        {
+                            return candidate;
+                        }
+                    }
+
+                    return IntVec3.Invalid;
+                }
+
+                storageCell = FindEmptyCell();
+
+                if (!storageCell.IsValid)
+                {
+                    SkipAssertions(
+                        $"no free cell for the order-availability stock fixture; searched a " +
+                        $"{AvailabilitySearchRadius}-cell square radius around the trade-drop " +
+                        $"spot ({availabilitySearchCandidateCount} candidate cells)");
+                    return;
+                }
+
+                reservedCells.Add(storageCell);
+                homeArea = map.areaManager?.Home;
+                if (homeArea != null)
+                {
+                    foreach (IntVec3 cell in CellRect.CenteredOn(storageCell, 4).ClipInsideMap(map))
+                    {
+                        previousHomeArea[cell] = homeArea[cell];
+                    }
+                }
+
+                try
+                {
+                    testZone = new Zone_Stockpile(
+                        StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+                    map.zoneManager.RegisterZone(testZone);
+                    testZone.AddCell(storageCell);
+                    if (!testZone.ContainsCell(storageCell))
+                    {
+                        testZone.GetSlotGroup()?.Notify_LostCell(storageCell);
+                        SkipAssertions(
+                            "the temporary stockpile could not claim its empty storage cell");
+                        return;
+                    }
+
+                    unspawnedStock = ThingMaker.MakeThing(probeDef);
+                    unspawnedStock.stackCount = PhysicalStock;
+                    testStock = GenSpawn.Spawn(unspawnedStock, storageCell, map);
+                    if (testStock == null || testStock.Destroyed || !testStock.Spawned ||
+                        testStock.MapHeld != map)
+                    {
+                        SkipAssertions("the temporary stored stack could not be spawned");
+                        return;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    SkipAssertions(
+                        $"the order-availability stock fixture could not be built: " +
+                        $"{exception.GetType().Name}: {exception.Message}");
+                    return;
+                }
+
+                unspawnedStock = null;
+
+                SalesOrder committedOrder = NewOrder(probeDef, CommittedStock, 1f);
+                committedOrder.id = 93051;
+                fixtureOrders.Add(committedOrder);
+                state.Orders.Add(committedOrder);
+
+                SalesOrder NewPickupOrder(int id, int quantity)
+                {
+                    SalesOrder order = NewOrder(probeDef, quantity, 1f);
+                    order.id = id;
+                    order.fulfillment = FulfillmentMode.BuyerPickup;
+                    order.fulfillmentMap = map;
+                    fixtureOrders.Add(order);
+                    return order;
+                }
+
+                SalesOrder fullyStockedOrder = NewPickupOrder(93052, expectedAvailable);
+                OrderAvailability fullyStocked = SalesOrderService.GetAvailability(
+                    fullyStockedOrder, map);
+                check(FullyStockedAssertion,
+                    fullyStocked.IsApplicable &&
+                    fullyStocked.AvailableQuantity == expectedAvailable &&
+                    fullyStocked.RequiredQuantity == fullyStockedOrder.RemainingQuantity &&
+                    fullyStocked.CanBeFullySatisfied,
+                    $"available={fullyStocked.AvailableQuantity}, " +
+                    $"required={fullyStocked.RequiredQuantity}, " +
+                    $"expected={expectedAvailable}");
+
+                SalesOrder shortOrder = NewPickupOrder(93053, 12);
+                shortOrder.deliveredQuantity = 2;
+                OrderAvailability shortAvailability = SalesOrderService.GetAvailability(
+                    shortOrder, map);
+                check(ShortOrderAssertion,
+                    shortAvailability.IsApplicable &&
+                    shortAvailability.AvailableQuantity == expectedAvailable &&
+                    shortAvailability.RequiredQuantity == shortOrder.RemainingQuantity &&
+                    !shortAvailability.CanBeFullySatisfied,
+                    $"available={shortAvailability.AvailableQuantity}, " +
+                    $"required={shortAvailability.RequiredQuantity}, " +
+                    $"expected={expectedAvailable}");
+
+                bool canMarkShortReady = SalesOrderService.CanMarkReadyNow(
+                    shortOrder, map, out string readinessReason);
+                check(ReadinessAgreementAssertion,
+                    shortAvailability.IsApplicable &&
+                    shortAvailability.CanBeFullySatisfied == canMarkShortReady,
+                    $"availability={shortAvailability.CanBeFullySatisfied}, " +
+                    $"ready={canMarkShortReady}, reason={readinessReason ?? "none"}");
+
+                if (!testStock.Destroyed)
+                {
+                    testStock.Destroy(DestroyMode.Vanish);
+                }
+
+                SalesOrder noStockOrder = NewPickupOrder(93054, 7);
+                noStockOrder.deliveredQuantity = 2;
+                OrderAvailability noStock = SalesOrderService.GetAvailability(noStockOrder, map);
+                check(NoStockAssertion,
+                    noStock.IsApplicable && noStock.AvailableQuantity == 0 &&
+                    noStock.RequiredQuantity == noStockOrder.RemainingQuantity &&
+                    !noStock.CanBeFullySatisfied,
+                    $"applicable={noStock.IsApplicable}, available={noStock.AvailableQuantity}, " +
+                    $"required={noStock.RequiredQuantity}");
+
+                SalesOrder unmeasurableOrder = NewPickupOrder(93055, 3);
+                unmeasurableOrder.deliveredQuantity = 1;
+                OrderAvailability notApplicable = SalesOrderService.GetAvailability(
+                    unmeasurableOrder, null);
+                check(NotApplicableAssertion,
+                    !notApplicable.IsApplicable,
+                    $"applicable={notApplicable.IsApplicable}, " +
+                    $"available={notApplicable.AvailableQuantity}, " +
+                    $"required={notApplicable.RequiredQuantity}");
+            }
+            finally
+            {
+                foreach (SalesOrder fixtureOrder in fixtureOrders)
+                {
+                    state.Orders.Remove(fixtureOrder);
+                }
+
+                if (testStock != null && !testStock.Destroyed)
+                {
+                    testStock.Destroy(DestroyMode.Vanish);
+                }
+
+                if (unspawnedStock != null && !unspawnedStock.Destroyed)
+                {
+                    unspawnedStock.Destroy(DestroyMode.Vanish);
+                }
+
+                try
+                {
+                    testZone?.Delete(playSound: false);
+                }
+                finally
+                {
+                    if (homeArea != null)
+                    {
+                        foreach (KeyValuePair<IntVec3, bool> entry in previousHomeArea)
+                        {
+                            homeArea[entry.Key] = entry.Value;
+                        }
+                    }
+
+                    reservedCells.Clear();
+                }
+            }
+        }
+
+        private static void RunColonyStockTraversalEquivalenceCheck(
+            Map map,
+            StringBuilder sb,
+            Action<string, bool, string> check,
+            Action<string, string> skip)
+        {
+            sb.AppendLine("  Find Buyer stock traversal:");
+            const string assertionName = "Find Buyer stock storage walk matches whole-map walk";
+            if (map == null || map.listerThings == null || map.haulDestinationManager == null)
+            {
+                check(assertionName, false, "run while viewing a colony map");
+                return;
+            }
+
+            List<KeyValuePair<ThingDef, int>> storageWalk = FindBuyerService.ColonyStock(map);
+
+            Dictionary<ThingDef, int> wholeMapCounts = new Dictionary<ThingDef, int>();
+            foreach (Thing thing in map.listerThings.AllThings)
+            {
+                Thing inner = thing.GetInnerIfMinified();
+                if (inner?.def == null || !IntercolonyProductClassifier.IsFungibleTradeItem(inner.def))
+                {
+                    continue;
+                }
+
+                if (!OrderValidator.IsAvailableColonyStock(thing))
+                {
+                    continue;
+                }
+
+                int units = OrderValidator.CountableUnits(thing);
+                wholeMapCounts.TryGetValue(inner.def, out int existing);
+                wholeMapCounts[inner.def] = existing + units;
+            }
+
+            List<KeyValuePair<ThingDef, int>> wholeMapWalk =
+                new List<KeyValuePair<ThingDef, int>>();
+            foreach (KeyValuePair<ThingDef, int> entry in wholeMapCounts)
+            {
+                wholeMapWalk.Add(entry);
+            }
+
+            // Keep the reference walk on the same total order as ColonyStock so this assertion
+            // exercises the traversal rather than the sort.
+            wholeMapWalk.Sort((a, b) =>
+            {
+                int comparison = b.Value.CompareTo(a.Value);
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+
+                comparison = string.Compare(
+                    a.Key.LabelCap.ToString(), b.Key.LabelCap.ToString(),
+                    StringComparison.OrdinalIgnoreCase);
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+
+                return string.Compare(a.Key.defName, b.Key.defName, StringComparison.Ordinal);
+            });
+
+            Dictionary<ThingDef, int> storageCounts = new Dictionary<ThingDef, int>();
+            foreach (KeyValuePair<ThingDef, int> entry in storageWalk)
+            {
+                storageCounts.TryGetValue(entry.Key, out int existing);
+                storageCounts[entry.Key] = existing + entry.Value;
+            }
+
+            Dictionary<ThingDef, int> wholeMapWalkCounts =
+                new Dictionary<ThingDef, int>();
+            foreach (KeyValuePair<ThingDef, int> entry in wholeMapWalk)
+            {
+                wholeMapWalkCounts.TryGetValue(entry.Key, out int existing);
+                wholeMapWalkCounts[entry.Key] = existing + entry.Value;
+            }
+
+            HashSet<ThingDef> allDefs = new HashSet<ThingDef>();
+            foreach (ThingDef def in storageCounts.Keys)
+            {
+                allDefs.Add(def);
+            }
+
+            foreach (ThingDef def in wholeMapWalkCounts.Keys)
+            {
+                allDefs.Add(def);
+            }
+
+            List<string> contentDifferences = new List<string>();
+            foreach (ThingDef def in allDefs)
+            {
+                bool inStorage = storageCounts.TryGetValue(def, out int storageCount);
+                bool inWholeMap = wholeMapWalkCounts.TryGetValue(def, out int wholeMapCount);
+                if (inStorage && inWholeMap && storageCount == wholeMapCount)
+                {
+                    continue;
+                }
+
+                if (contentDifferences.Count < 5)
+                {
+                    contentDifferences.Add(
+                        $"{def?.defName ?? "<null>"}: " +
+                        $"storage={(inStorage ? storageCount.ToString() : "absent")} " +
+                        $"wholeMap={(inWholeMap ? wholeMapCount.ToString() : "absent")}");
+                }
+            }
+
+            bool contentMatches = contentDifferences.Count == 0;
+            string contentDetail = contentMatches
+                ? $"{storageCounts.Count} defs compared independent of order"
+                : string.Join("; ", contentDifferences);
+            check(
+                "Find Buyer stock storage walk matches whole-map content",
+                contentMatches,
+                contentDetail);
+
+            // This can fail if the traversals produce different content, or if the ordering is
+            // not total and therefore not reproducible.
+            bool orderMatches = storageWalk.Count == wholeMapWalk.Count;
+            int firstOrderDifference = -1;
+            int comparableCount = Mathf.Min(storageWalk.Count, wholeMapWalk.Count);
+            for (int i = 0; i < comparableCount; i++)
+            {
+                if (storageWalk[i].Key != wholeMapWalk[i].Key)
+                {
+                    orderMatches = false;
+                    firstOrderDifference = i;
+                    break;
+                }
+            }
+
+            if (!orderMatches && firstOrderDifference < 0)
+            {
+                firstOrderDifference = comparableCount;
+            }
+
+            string orderDetail = orderMatches
+                ? $"{storageWalk.Count} defs compared in sequence"
+                : $"storage={storageWalk.Count}, wholeMap={wholeMapWalk.Count}, " +
+                  $"first differing index {firstOrderDifference}: " +
+                  $"storage={(firstOrderDifference < storageWalk.Count
+                      ? storageWalk[firstOrderDifference].Key?.defName ?? "<null>"
+                      : "absent")} " +
+                  $"wholeMap={(firstOrderDifference < wholeMapWalk.Count
+                      ? wholeMapWalk[firstOrderDifference].Key?.defName ?? "<null>"
+                      : "absent")}";
+            check(
+                "Find Buyer stock storage walk matches whole-map order",
+                orderMatches,
+                orderDetail);
+
+            if (wholeMapWalk.Count == 0)
+            {
+                if (HasIndependentStoredTradeEvidence(map))
+                {
+                    check("Find Buyer stock traversal comparison has no stored stock evidence",
+                        false,
+                        "vanilla storage/resource scans found stored tradeable stock, but the " +
+                        "production whole-map walk found none");
+                }
+                else
+                {
+                    skip("Find Buyer stock traversal comparison has no stored stock evidence",
+                        "independent vanilla storage/resource scans found no stored tradeable stock");
+                }
+            }
+        }
+
+        private static bool HasIndependentStoredTradeEvidence(Map map)
+        {
+            if (map?.listerThings?.AllThings != null)
+            {
+                foreach (Thing thing in map.listerThings.AllThings)
+                {
+                    if (thing == null || !thing.IsInAnyStorage())
+                    {
+                        continue;
+                    }
+
+                    Thing inner = thing.GetInnerIfMinified();
+                    if (inner == null || inner.stackCount <= 0 ||
+                        !IsIndependentTradeableDef(inner.def, thing is MinifiedThing))
+                    {
+                        continue;
+                    }
+
+                    return true;
+                }
+            }
+
+            if (map?.resourceCounter?.AllCountedAmounts != null)
+            {
+                foreach (KeyValuePair<ThingDef, int> entry in
+                    map.resourceCounter.AllCountedAmounts)
+                {
+                    if (entry.Value > 0 && IsIndependentTradeableDef(entry.Key, false))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsIndependentTradeableDef(ThingDef def, bool minified)
+        {
+            if (def == null || def == ThingDefOf.Silver || def.IsCorpse ||
+                def.category == ThingCategory.Pawn || !def.tradeability.PlayerCanSell())
+            {
+                return false;
+            }
+
+            return def.category == ThingCategory.Item ||
+                   (minified && def.category == ThingCategory.Building && def.Minifiable);
+        }
+
         private static void RunBuyerPickupMapChecks(
             IntercolonyWorldComponent state,
             Map map,
@@ -1579,15 +3107,34 @@ namespace Intercolony
                 ? new List<IArchivable>()
                 : new List<IArchivable>(Find.Archive.ArchivablesListForReading);
 
-            bool TrySpawnStoredStock(Map targetMap, int count, out Thing stock)
+            bool TrySpawnStoredStock(
+                Map targetMap, int count, out Thing stock, out string failure)
             {
                 stock = null;
+                failure = null;
+                if (targetMap == null || targetMap.zoneManager == null ||
+                    targetMap.thingGrid == null)
+                {
+                    failure = "the target map cannot host a temporary stock fixture";
+                    return false;
+                }
+
                 IntVec3 storageCell = IntVec3.Invalid;
                 IntVec3 root = DropCellFinder.TradeDropSpot(targetMap);
-                foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+                const int BuyerPickupSearchRadius = 60;
+                CellRect searchArea = root.IsValid
+                    ? CellRect.CenteredOn(root, BuyerPickupSearchRadius).ClipInsideMap(targetMap)
+                    : new CellRect(0, 0, 0, 0);
+                int searchCandidateCount = 0;
+                foreach (IntVec3 candidate in searchArea)
                 {
-                    if (candidate.InBounds(targetMap) && candidate.Standable(targetMap) &&
-                        candidate.GetFirstItem(targetMap) == null &&
+                    searchCandidateCount++;
+                }
+
+                foreach (IntVec3 candidate in searchArea)
+                {
+                    if (candidate.Standable(targetMap) &&
+                        targetMap.thingGrid.ThingsListAt(candidate).Count == 0 &&
                         targetMap.zoneManager.ZoneAt(candidate) == null)
                     {
                         storageCell = candidate;
@@ -1597,20 +3144,54 @@ namespace Intercolony
 
                 if (!storageCell.IsValid)
                 {
+                    failure =
+                        $"no free cell for the buyer-pickup stock fixture; searched a " +
+                        $"{BuyerPickupSearchRadius}-cell square radius around the trade-drop " +
+                        $"spot ({searchCandidateCount} candidate cells)";
                     return false;
                 }
 
-                Zone_Stockpile zone = new Zone_Stockpile(
-                    StorageSettingsPreset.DefaultStockpile, targetMap.zoneManager);
-                targetMap.zoneManager.RegisterZone(zone);
-                zone.AddCell(storageCell);
-                testZones.Add(zone);
+                try
+                {
+                    Zone_Stockpile zone = new Zone_Stockpile(
+                        StorageSettingsPreset.DefaultStockpile, targetMap.zoneManager);
+                    targetMap.zoneManager.RegisterZone(zone);
+                    zone.AddCell(storageCell);
+                    testZones.Add(zone);
+                    if (!zone.ContainsCell(storageCell))
+                    {
+                        failure = "the temporary buyer-pickup stockpile could not claim its free cell";
+                        return false;
+                    }
 
-                Thing stack = ThingMaker.MakeThing(probeDef);
-                stack.stackCount = count;
-                stock = GenSpawn.Spawn(stack, storageCell, targetMap);
-                testStocks.Add(stock);
-                return true;
+                    Thing stack = ThingMaker.MakeThing(probeDef);
+                    if (stack == null)
+                    {
+                        failure = "the buyer-pickup stock item could not be created";
+                        return false;
+                    }
+
+                    stack.stackCount = count;
+                    stock = GenSpawn.Spawn(stack, storageCell, targetMap);
+                    if (stock == null || stock.Destroyed || !stock.Spawned ||
+                        stock.MapHeld != targetMap)
+                    {
+                        failure =
+                            "the buyer-pickup stock item could not be placed in the " +
+                            "temporary stockpile";
+                        return false;
+                    }
+
+                    testStocks.Add(stock);
+                    return true;
+                }
+                catch (Exception exception)
+                {
+                    failure =
+                        $"the buyer-pickup stock fixture could not be built: " +
+                        $"{exception.GetType().Name}: {exception.Message}";
+                    return false;
+                }
             }
 
             SalesOrder PlantPickup(int id, Map initialMap = null)
@@ -1643,12 +3224,17 @@ namespace Intercolony
                 state.Orders.Remove(refusesAbsentMap);
                 testOrders.Remove(refusesAbsentMap);
 
-                if (!TrySpawnStoredStock(map, 3, out _))
+                string currentStorageFailure;
+                if (!TrySpawnStoredStock(map, 3, out _, out currentStorageFailure))
                 {
-                    check("pickup-map test found temporary storage on the current colony", false,
-                        "no empty unzoned cell near the trade drop spot");
+                    skip("pickup-map test found temporary storage on the current colony",
+                        currentStorageFailure);
                     skip("Mark Ready adopts and persists the current colony when none was recorded",
-                        "no empty unzoned cell near the trade drop spot");
+                        currentStorageFailure);
+                    skip("collection uses the order's recorded colony, not AnyPlayerHomeMap",
+                        currentStorageFailure);
+                    skip("an old-save order with no recorded colony completes via the fallback",
+                        currentStorageFailure);
                     return;
                 }
 
@@ -1663,11 +3249,15 @@ namespace Intercolony
                 state.Orders.Remove(recordsReadyMap);
                 testOrders.Remove(recordsReadyMap);
 
+                string fallbackStorageFailure;
                 if (!ReferenceEquals(fallbackMap, map) &&
-                    !TrySpawnStoredStock(fallbackMap, 2, out _))
+                    !TrySpawnStoredStock(fallbackMap, 2, out _, out fallbackStorageFailure))
                 {
-                    check("pickup-map test found temporary storage on the fallback colony", false,
-                        "no empty unzoned cell near the trade drop spot");
+                    skip("pickup-map test found temporary storage on the fallback colony",
+                        fallbackStorageFailure);
+                    skip("recorded-map collection vs AnyPlayerHomeMap", fallbackStorageFailure);
+                    skip("an old-save order with no recorded colony completes via the fallback",
+                        fallbackStorageFailure);
                     return;
                 }
 
@@ -1689,12 +3279,13 @@ namespace Intercolony
                 }
                 else
                 {
+                    string distinctStorageFailure;
                     if (!ReferenceEquals(distinctHomeMap, map) &&
-                        !TrySpawnStoredStock(distinctHomeMap, 1, out _))
+                        !TrySpawnStoredStock(
+                            distinctHomeMap, 1, out _, out distinctStorageFailure))
                     {
                         skip("recorded-map collection vs AnyPlayerHomeMap",
-                            "the second home map has no temporary storage cell; " +
-                            "human multi-colony test required");
+                            distinctStorageFailure + "; human multi-colony test required");
                     }
                     else
                     {

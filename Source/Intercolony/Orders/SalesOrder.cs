@@ -146,6 +146,9 @@ namespace Intercolony
         /// <summary>Set when the order ends, for the orders list and any later dispute handling.</summary>
         public string outcomeNote = "";
 
+        // Deliberately unsaved: this reminder resets on load.
+        public bool autoReadyFailureNotified;
+
         private DeliveredQualityResult actualDeliveredQuality =
             DeliveredQualityResult.NoEvidence;
 
@@ -240,6 +243,14 @@ namespace Intercolony
         }
 
         public bool BuyerEnRoute => status == SalesOrderStatus.AwaitingCollection;
+
+        /// <summary>
+        /// The tick the player expects to be paid for this order. A buyer-arrival tick below
+        /// zero is the explicit "not scheduled" sentinel and must never be read as a day; until
+        /// a collecting buyer has a non-negative arrival tick, the deadline is the honest fallback.
+        /// </summary>
+        public int ExpectedPaymentTick =>
+            BuyerEnRoute && buyerArrivalTick >= 0 ? buyerArrivalTick : deadlineTick;
 
         public float DaysUntilBuyerArrives =>
             buyerArrivalTick < 0 ? -1f : (buyerArrivalTick - GenTicks.TicksGame) / (float)GenDate.TicksPerDay;

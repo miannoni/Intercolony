@@ -1437,6 +1437,10 @@ namespace Intercolony
                     state, neutralOffers, product, category, upward: true);
                 int notoriousCrossingHeadroom = CountBrandInterestCrossings(
                     state, neutralOffers, product, category, upward: false);
+                int renownedUninterestedHeadroom = CountBrandInterestSurvivors(
+                    state, neutralOffers, product, category, upward: true);
+                int notoriousInterestedHeadroom = CountBrandInterestSurvivors(
+                    state, neutralOffers, product, category, upward: false);
 
                 state.ProductBrandRecords.Add(new ProductBrandRecord(
                     product, ProductBrandRecord.MaxScore, evidenceWeight: 1000f,
@@ -1492,16 +1496,40 @@ namespace Intercolony
                         $"sampled={sampledSettlements}");
                 }
 
-                r.Check(
-                    notoriousOffers.Count == sampledSettlements && notoriousInterested > 0,
-                    "a -100 brand still leaves some settlements interested",
-                    $"notorious={notoriousInterested} of {sampledSettlements}");
+                if (notoriousInterestedHeadroom == 0)
+                {
+                    r.Skip(
+                        "a -100 brand still leaves some settlements interested",
+                        $"sampled={sampledSettlements}, neutralInterested={neutralInterested}, " +
+                        $"threshold={FindBuyerService.InterestThreshold:0.###}, " +
+                        $"shiftDistance={ExpectedBrandInterestShiftDistance:0.###}; " +
+                        "downward interested headroom=0");
+                }
+                else
+                {
+                    r.Check(
+                        notoriousOffers.Count == sampledSettlements && notoriousInterested > 0,
+                        "a -100 brand still leaves some settlements interested",
+                        $"notorious={notoriousInterested} of {sampledSettlements}");
+                }
 
-                r.Check(
-                    renownedOffers.Count == sampledSettlements &&
-                    renownedInterested < renownedOffers.Count,
-                    "a +100 brand does not make every settlement interested",
-                    $"renowned={renownedInterested} of {renownedOffers.Count}");
+                if (renownedUninterestedHeadroom == 0)
+                {
+                    r.Skip(
+                        "a +100 brand does not make every settlement interested",
+                        $"sampled={sampledSettlements}, neutralInterested={neutralInterested}, " +
+                        $"threshold={FindBuyerService.InterestThreshold:0.###}, " +
+                        $"shiftDistance={ExpectedBrandInterestShiftDistance:0.###}; " +
+                        "upward uninterested headroom=0");
+                }
+                else
+                {
+                    r.Check(
+                        renownedOffers.Count == sampledSettlements &&
+                        renownedInterested < renownedOffers.Count,
+                        "a +100 brand does not make every settlement interested",
+                        $"renowned={renownedInterested} of {renownedOffers.Count}");
+                }
 
                 r.Check(
                     ReputationScoresUnchanged(savedReputationScores, state.Reputations),
@@ -1956,6 +1984,40 @@ namespace Intercolony
             }
 
             return crossings;
+        }
+
+        private static int CountBrandInterestSurvivors(
+            IntercolonyWorldComponent state,
+            List<BuyerOffer> offers,
+            ThingDef product,
+            IntercolonyProductCategory category,
+            bool upward)
+        {
+            // Count neutral offers with enough margin to remain on their relevant side of the
+            // interest gate after the expected shift. This is deliberately computed from the
+            // neutral sample, before either branded Find Buyer result exists.
+            int survivors = 0;
+            float threshold = FindBuyerService.InterestThreshold;
+            foreach (BuyerOffer offer in offers)
+            {
+                if (offer == null || offer.profile == null)
+                {
+                    continue;
+                }
+
+                float demand = EffectiveEconomyService.EffectiveDemand(
+                    state, offer.profile, product, category);
+                bool hasMargin = upward
+                    ? demand < threshold - ExpectedBrandInterestShiftDistance
+                    : offer.Interested &&
+                      demand >= threshold + ExpectedBrandInterestShiftDistance;
+                if (hasMargin)
+                {
+                    survivors++;
+                }
+            }
+
+            return survivors;
         }
 
         private static int CountInterestedOffers(List<BuyerOffer> offers)

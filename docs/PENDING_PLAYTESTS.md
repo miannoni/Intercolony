@@ -46,6 +46,677 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### Stage 8: F08 and F09 need a seasons-long diplomatic read
+
+Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. F08 and F09 are slow, quiet
+diplomatic systems whose character can only be judged by watching a game over seasons. The mechanics
+are verified and mutation-proven. Every number in this entry is a starting value for balance, not
+fixed by the source plan.
+
+**F08 - commerce slowly warms a faction.** A settlement at **Preferred** commercial standing, **80
+or above**, gives its faction **+1 base goodwill once a quadrum**. One faction gets one point however
+many of its settlements qualify. It stops at **base goodwill 60** and never applies to a faction at
+war. The **Relations** row says whether pressure is active and, when it is not, why: **below
+Preferred**, **at the ceiling**, **hostile**, or **goodwill currently restricted**.
+
+**F09 - how a worker was treated follows them home.** An employee's mood is sampled once a day for
+the life of the employment. When an ordinary employment ends, the average decides one goodwill change
+with the settlement that sent them: **+3** at or above **0.75**, **-3** at or below **0.35**, and
+nothing between. Fewer than **ten samples** produces nothing at all, so a short hire cannot move
+diplomacy. Endings that are already priced - death, a wage walkout, combat misuse, safe-passage
+denial, or a dismissal without notice - produce nothing extra. The departure letter carries one row
+when there is a result and stays silent when there is not.
+
+**Steps.** Run a long game with a faction whose settlement or settlements reach **Preferred** and
+**80 or above**, and watch whether **+1 a quadrum** is felt at all. Fifteen days per point is
+deliberately slow: judge whether a long game ever notices the change or whether it may as well not
+exist. Where more than one settlement qualifies, check that the faction gains one point rather than
+one per settlement. Watch the **Relations** row as pressure is active and as it stops; judge whether
+the four not-earning reasons are legible, especially **goodwill restricted**, which means a vanilla
+diplomatic situation is currently capping the faction.
+
+Judge whether the **60** ceiling reads as a sensible limit or an arbitrary wall. It is deliberately
+**15 points below the 75** at which vanilla would make the faction an ally: commerce must not be able
+to buy an alliance. Then follow ordinary employments through enough days to reach **ten samples** and
+end them normally. Compare a result from a high average, a low average and an average in between.
+Judge whether **+3** or **-3** is enough to change how you treat people or so small that it is
+decoration. It should complement employer reputation rather than replace it; the mod already moves
+**8**, **20** and **80** points for conduct. Judge whether ten days feels like the right minimum - a
+short contract earns nothing whatever the worker thought of you, which may read as fair or as a cheap-
+labour loophole.
+
+Finally, read the faction's goodwill and the departure letter together. Judge whether a player can tell
+why a faction warmed when F08 and F09 can both move goodwill quietly, while only F09 speaks in a
+departure letter. When a letter has a result, judge whether its row is noticed or lost in the rest of
+the letter about someone leaving.
+
+**Not built.** There is no decay on either reputation. Nothing in this mod ever fades; only vanilla
+goodwill drifts. F09 samples mood and nothing else - there is no separate memory of specific events
+beyond what employer reputation already tracks. F08 reads only the commercial score; sale-price
+generosity moves goodwill separately, and the two are deliberately not combined.
+
+### Seven player-facing fixes need a numbers-and-meaning read
+
+Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. Seven defect fixes in this batch change a
+number the player reads or is charged, so they need eyes in play. Every place a daily wage appears now
+shows both the worker's ask and the colony's charge under the chosen payment structure. A Daily term
+carries a **35% premium**: a **100/day** ask is a **135/day** charge. The tooltip explains why: paying
+day by day buys the freedom to stop any morning, and the worker charges for carrying that risk. The same
+fix also removes a real double charge: a directly hired Daily worker was quoted **135** and charged
+**182**; new hires are charged what they are quoted.
+
+Part periods are now billed at the same daily rate as full ones, so a worker who leaves mid-period is no
+longer settled at a different rate from the one paid during the week. An equipment bond now uses the
+gear's value with quality included: the old **1,062** bond for a masterwork parka was the price of a
+plain one, while a masterwork longsword was **2,651**. The profitability figure now costs a made good
+at its materials, not at the shelf price of buying the finished goods, so a recurring agreement's margin
+answers the intended question. Pausing a produce loop after its object has been designated for uninstall
+now leaves the produced object standing. Stop still lets a committed uninstall finish. Hiring travel is
+bounded to **one to twenty days**, so a close settlement no longer delivers a worker the same day.
+
+**Steps.** In a real colony, read several wage rows together, especially in the applicant list. Judge
+whether the ask and charge read as clarity or clutter, and whether the visible 35% premium now looks too
+expensive even though it was always charged. Hire a worker on Daily terms and compare what is quoted with
+what is charged. Then load an existing colony and watch its payroll; say whether any employee's daily
+cost looks wrong against what their card claims. This existing-save compatibility check is the one thing
+here with no assertion behind it, because no test can hold an old save.
+
+Let a worker leave partway through a period and read the final settlement. Judge whether it obviously
+uses the same fair daily rate as the period already paid. At hire, inspect a well-equipped mercenary's
+bond and judge whether quality makes it large enough to be a real decision, and whether it reads as a
+deposit rather than a fee. In **Business**, compare the two input rows beside each other and the
+resulting margin; judge whether the rows are legible and whether the margin matches a player's intuition
+about whether the recurring agreement is worth taking. On the same object, watch Pause and Stop back to
+back: after the object is designated for uninstall, pause the produce loop, then repeat with Stop. Judge
+whether Pause leaves the object standing while Stop lets the committed uninstall finish, or whether the
+two orders look inconsistent. Finally, hire from a close settlement and judge whether same-day hiring is
+missed.
+
+Assertions and mutation evidence cover the seven shipped fixes. Every one was found by an audit or by a
+mutation, not by the suite going red; four assertions passed throughout. Existing-save contracts
+deliberately keep whatever they already hold, because nothing in the save can distinguish the two old wage
+meanings. Stop's committed-uninstall rule is also deliberate.
+
+### F07 committed output needs an early-warning read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. For each good with an active
+production commitment, the **Business** view now shows the committed quantity per day beside what
+the colony actually completed per day over a five-day rolling window. The completed side is real
+observation: a Harmony postfix on vanilla's bill-completion records every finished product, so selling
+twenty chairs does not read as negative chair production. Where nothing has been recorded, the row
+says so in words rather than showing **0.0/day**.
+
+**Steps.** In a real colony with active production commitments, open **Business** and watch the
+committed and completed figures for several goods. Judge whether a shortfall is visible early enough
+to act on: F07's product intent is that **the player should see capacity shortfalls before a contract
+fails**, and only play can say whether five days of history warns in time or only confirms the failure
+afterwards. Judge whether five days is the right window at all.
+
+There is an open product question deliberately not decided in code. The committed figure counts
+**SUSPENDED** agreements, because every other figure in that view does. The argument against is real:
+a suspended agreement will not fail while suspended, so counting it shows a shortfall the player
+cannot act on. Ask which reading is better in play.
+
+### F19 direct-input cost needs a supply-chain read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. Beside the existing **If you bought
+the goods instead**, the view now shows a second figure: what the good's **DIRECT** ingredients would
+have cost to buy. It is priced from the mod's own market value times the supplier margin, so it is
+stable rather than a live supplier quote that changes between draws.
+
+There is **NO RECURSIVE DECOMPOSITION**. Steel for a chair is priced; the ore behind the steel is not,
+and the tooltip says so.
+
+**Steps.** In **Business**, inspect goods whose direct ingredients are themselves made from other
+goods, and compare the two **if you bought it** figures side by side. Judge whether the direct-input
+number is useful in a decision given that limit, or whether stopping at direct inputs makes it
+misleading for goods with deep supply chains. Read the tooltip and judge whether it actually conveys
+the limit, rather than letting the figure be read as full cost. Finally, judge whether the two figures
+side by side confuse rather than inform.
+
+### F20 relevant-workforce labour needs a fairness read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A good's labour cost now counts only
+employees who could actually have made it, so Cooking employees no longer inflate chair labour. When
+one employee could make several goods, their wage is shared between those goods rather than counted
+in full against each. Profitability now uses this narrower figure instead of the whole wage bill.
+
+This is F20's authorised **RELEVANT-WORKFORCE APPROXIMATION**, not its preferred measured-time model.
+The reason is specific: the only completion seam the mod has carries who finished a bill and what came
+out, and no time at all.
+
+**Steps.** In a real colony, compare profitability for goods that different employees can make. Judge
+the sharp question: the wage is split **EQUALLY** between the goods an employee could make, regardless
+of what they actually spent their time on. An employee who in practice only ever makes chairs still
+has half their wage charged to tables. Ask whether that reads as fair or as obviously wrong when
+looking at the colony's real numbers. Watch how often **no eligible employees** appears and whether it
+reads as useful — it means colonists rather than employees are making the good. Finally, judge whether
+the profitability figures look more believable than before, which is the whole point of the change.
+
+The save schema moved from **57 to 58** in this stage. The migration was verified by loading the real
+pre-58 save **Edithor Alliance**, saved at version 57, and it migrated in one step with no exceptions.
+This does **NOT** remove the need for the F15 save-compatibility check already listed in this file,
+because that check is about a different change.
+
+### F23 equipment bonds need an early-colony market read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. Weapons and apparel an employee
+arrives with are now borrowed capital. At hire, the player sees an **Equipment bond** row beside the
+signing fee or prepaid wages, a **Due at hire** total, and what is in storage; **Take on** is disabled
+when the total is unaffordable. The bond is the gear's replacement value plus 10%.
+
+When employment ends — by term, dismissal, walk-out, death, capture, war release, paid release or
+defection — the bond is refunded item by item for whatever the worker still carries, including each
+item's share of the premium. The player is told what came back and what was kept. Keeping the gear
+costs the bond and nothing else: there is no reputation penalty, because F23 treats it as the player
+effectively buying scarce gear through the labour market. Normal wear refunds in full; nothing reads
+an item's condition. Assertions and mutation evidence cover this shipped portion.
+
+**Steps.** In an early colony, hire an equipped worker and read the **Equipment bond**, **Due at
+hire**, storage and **Take on** state. The first question is the sharp one: hiring an equipped worker
+now costs roughly 70% more up front — one measured example was **918** in prepaid wages against a
+**641** bond. Judge whether that reads as a market price or a wall, especially whether an armed worker
+or security contractor becomes impossible to hire in the first several hours, quietly removing part
+of the mod. Follow a worker through an employment ending and read the settlement message. Judge
+whether keeping the gear reads as a legitimate purchase or an exploit the player feels guilty about —
+F23 intends the former. Judge whether the message makes clear what was kept and why without requiring
+the player to count silver. Finally, compare hires and judge whether the bond makes the player prefer
+poorly equipped workers just to avoid the deposit: that would be an unintended market distortion.
+
+F23's requested equipment market is not fully built. The player cannot request an equipment **TIER**.
+There is no availability gating by settlement wealth, tech or scarcity, so a poor settlement is not
+prevented from sending good gear. Stripping a valuable bionic or prosthetic from an employee has no
+special consequence beyond the ordinary bond. The last point is the gap F23 argues for most strongly
+and the largest gap. These unbuilt parts have no assertion or mutation evidence.
+
+### F24 emergency hiring needs an urgency read
+
+Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. The direct-hire screen now has an
+**Emergency dispatch** toggle. When it is on, the candidate list narrows to the nearest half of the
+market by travel time, the wage carries a **4x premium**, and arrival takes a third of the ordinary
+journey with a one-day floor — a worker whose ordinary journey is fifteen days arrives in five. The
+premium and shortened arrival are their own rows beside the signing fee, equipment bond, due-at-hire
+and in-storage figures, so the player can compare an ordinary hire with an emergency one before
+choosing. Assertions and mutation evidence cover this shipped portion.
+
+**Steps.** In a real emergency, open the direct-hire screen, compare ordinary and emergency candidates,
+and switch **Emergency dispatch** on and off. Judge whether **4x** reads as expensive-but-worth-it in
+a real emergency, or as trivial or absurd: F24 asks for a **VERY LARGE PREMIUM** but explicitly refuses
+to mandate a fixed 10x or 20x, so this is only a starting figure. Judge whether a third of the journey
+feels like an emergency at all; without transport pods, the fastest possible arrival is still days,
+while F24's ideal is **SOLDIERS NOW**. Judge whether **the nearest half** feels like a sensible
+narrowing or an arbitrary one, and whether the distance reason is legible when candidates disappear.
+Finally, judge whether the toggle is reachable at the moment it is needed: it sits on the ordinary hire
+screen, and an emergency is exactly when a player will not go looking for it.
+
+One earlier version used an absolute two-day reachability window and could never produce a single
+candidate, because the nearest settlement in a generated world is around ten days away. Assertions
+caught it before it left the branch. There is nothing to test; this is why the rule is now relative to
+the market.
+
+F24's requested **TRANSPORT-POD ARRIVAL** is not built. It is the thing F24 wants most and calls
+**EXCEPTIONAL AND VISCERAL**. It should be gated on a supplying settlement's logistics capability, but
+that capability model does not exist — F21 shipped part-built with no route model, no provisions and
+no settlement capability. Pods without it would be either always-on or arbitrary, which is worse than
+not having them. There is no queued or posting-side urgent request; the toggle only filters the
+immediate hire market. Equipment level is not part of this request; that is F23's unbuilt tier work.
+These unbuilt parts have no assertion or mutation evidence.
+
+### F25's buyer-side labour market needs a market read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. F25's labour market is now two-sided
+on the buyer's side. The posting dialog no longer asks for a wage: the player names the requirement —
+skill, minimum level, term, wage structure and combat clause — and the dialog reports what the market
+currently charges for it, for example **Going rate: 5 qualifying workers ask 30-52 silver per day**, or
+**Nobody reachable can do this work** when none qualify.
+
+Who applies is decided by the requirement alone. The posted wage no longer filters anybody; a worker
+applies if they meet the skill bar. A worker who qualifies for several postings takes the one that pays
+them most, which is real because the combat clause multiplies their wage. The waiting list is a
+deterministic seeded spread of everyone who qualified, not the strongest few. That is deliberate: with
+no wage lever, ranking by ability would hand the player the six strongest workers alive every refresh at
+the six highest asks, and F25 asks for a range to choose within. A hired applicant is paid their own ask,
+not the posted wage. Their ask, the signing fee or prepaid amount, and what their death would cost are
+all on their row.
+
+**Steps.** In play, open the posting dialog and set several requirements. Read the going-rate line and
+confirm it gives the market's current charge, or the nobody-reachable message when no one qualifies.
+Inspect the waiting list as a market: judge whether it offers a real spread of ability and price to
+choose between or feels random. Judge whether the going-rate line helps decide what to ask for or is
+only decoration. Judge whether six waiting applicants is still the right cap now that the wage no longer
+limits volume. Finally, judge whether losing the wage control feels like losing agency: the player has
+no direct lever on price, only on the requirement.
+
+### F25's two defects need confirmation after a green suite
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. Two defects were found during this
+stage; both were introduced and repaired within this branch. Nothing released was affected, and a
+self-test now covers each. Both were invisible to a green suite until someone looked, so they still
+need human confirmation.
+
+Postings created after the wage was removed were **silently deleted** on save and reload. The load-time
+validity check still demanded a positive wage. Fixed in `74e42fe`, asserted in `3125bd6`. **WORTH
+CONFIRMING BY HAND.** Create a posting, save, quit to the menu, reload, and check it is still there with
+its applicants.
+
+Creating a posting failed outright, with **Offer at least 1 silver a day** shown on a dialog that has
+no wage field. The service still rejected a wage below 1. Fixed in `fbb5290`. **WORTH CONFIRMING BY
+HAND.** Simply create a posting and see that it appears.
+
+### F21 logistics figure needs a supplier-choice read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A supplier quote's tooltip now
+discloses the distance charge in whole silver per unit beside how the goods come: **Logistics: +N
+silver per unit — They deliver it** or **Logistics: +N silver per unit — You collect it**. Arrival
+time remains in its existing column. The figure is derived by inverting the multipliers that produced
+the quoted price, using the factors stored on the quotation, so it reports the logistics cost
+actually charged rather than a second estimate. If those factors cannot support the derivation, the
+tooltip says **Logistics: unavailable** instead of guessing. Assertions and mutation evidence cover
+this shipped portion; they do not settle whether the line helps a player read and choose.
+
+**Steps.** In play, open supplier quotes and read the logistics line beside the rest of each tooltip.
+Judge whether it reads clearly, and whether the number is useful for choosing between suppliers —
+the reason for adding it. Watch for **Logistics: unavailable** in normal play; it should be rare, and
+a common result means a derivation case is missing. Finally, judge whether cost and method are better
+read together on one line or would be clearer separated.
+
+### F11 Request Goods replies need a pacing read
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. Request Goods replies no longer all
+appear at once. Quotes are still generated the moment the request is made, so no price changed; what
+changed is when the player learns them. A nearer settlement answers sooner. A request that is still
+waiting says **"3 supplier responses are still coming."** One letter arrives when the **LAST**
+outstanding reply lands, matching the existing letter for a job posting drawing applicants.
+
+**Steps.** Watch the replies arrive in a real world. The important question is the delay: the observed
+delays are **five to twenty days** — 28 tiles gave five days and 186 tiles gave twenty. Twenty days
+for a price quote is a long time in RimWorld. Ask whether that reads as a living market or as an
+unusable delay, and whether the player abandons distant suppliers simply because the answer takes too
+long. Then judge whether one letter at the end is enough notice or replies are easy to miss, and
+whether waiting for quotes is more interesting than having them instantly — the whole premise of the
+finding.
+
+A fixed defect is worth confirming by hand. Distant suppliers' replies were being **DELETED** before
+they could arrive because a request expired after six days while a far supplier needed seventeen. It
+is fixed and asserted. Ask a genuinely distant settlement for a quote and confirm that it eventually
+produces one.
+
+### F21's larger ask and F11 are deliberate stops
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. The larger F21 ask is not built.
+F21 calls for cost and time to reflect route difficulty, cargo and provisions, settlement capability,
+and a real choice of transport method. None of those exist in the mod: there is no route model, no
+provisions, no logistics capability, and no transport method beyond the delivery-or-pickup boolean.
+What shipped is the foundation — one place that answers cost, time and method, where five unrelated
+formulas used to — plus the logistics disclosure above. The built portion has assertions and mutation
+evidence; the larger model does not exist.
+
+F11 — Request Goods responses arriving progressively — was not started. RFQ responses are generated
+synchronously before the request is stored, so staggering them needs a persisted pending queue, the
+first save-schema bump of this batch, and a migration. That is an operator decision, not work to slip
+in.
+
+This entry records deliberate stops rather than requesting play. Nothing in the unbuilt work described
+here is player-visible.
+
+### F05 receiving locations need a warehouse-arrival and overflow check
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A stockpile zone or a storage
+building such as a shelf can now be marked **Receive deliveries**. When at least one destination is
+marked, an arriving supplier delivery goes to a marked destination that accepts the goods and has
+room. The storage's own filters decide what it accepts; there is no separate Intercolony filter. A
+delivery that fits nowhere marked falls back to the old behaviour near the trade drop spot, and a
+colony with nothing marked keeps that old behaviour. Assertions cover marker persistence, pruning
+deleted zones and destroyed shelves, and goods landing in a marked stockpile rather than one that
+refuses them.
+
+**Steps.** In a real colony, mark a stockpile and a shelf with **Receive deliveries** and confirm the
+toggle appears on both and reads clearly. Arrange a supplier delivery and watch the goods arrive in
+the warehouse the player marked, rather than beside the comms console. Fill a marked receiving
+destination so that only part of a delivery can fit, and judge whether the remainder overflows
+sensibly instead of disappearing. Finally, use a colony that marks nothing and confirm that delivery
+behaviour is unchanged from the old trade-drop path.
+
+### F12 availability count is a deliberate stopping point
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. The first F12 slice can report how
+many of an order's required goods are actually available, as a count rather than a yes/no answer.
+That count comes from the same calculation used by the readiness decision, so the two cannot
+disagree. It is the foundation for F12's rule that an order must not leave with a knowingly partial
+quantity. Assertions and mutation evidence cover this slice.
+
+Nothing else of F12 exists yet: there is no preconfigured caravan, pawn or animal selection,
+recurring caravan, or waiting behaviour, and the mod has no caravan formation of its own at all.
+This is a deliberate stop, not an oversight. The remaining work is a feature, not a finding-sized
+change. Nothing about F12 is player-visible yet, so this entry records where the work stopped rather
+than asking for a play-test of something that cannot be seen.
+
+### Partial supplier deliveries can complete short and still charge full price
+
+Added 2026-09-08 on branch `foreman/playtest-batch-2026-09-06`. A pre-existing defect in
+`PurchaseOrderService.DeliverToColony` refunds only when zero goods were placed. With any non-zero
+count, it completes the order with what was placed. A delivery that can fit only part of the order
+can therefore silently complete short while the player pays in full for goods that never arrived.
+This predates the branch and was not fixed. F05 makes it easier to reach because a marked receiving
+destination can fill up. Fixing it requires a design decision: hold the order, refund the difference,
+or overflow elsewhere. There are no assertions or mutation checks for this defect because it was not
+touched.
+
+**Steps.** Use a deliberately constrained colony with very little free storage and a small marked
+receiving destination. Arrange a large delivery and record the ordered quantity, the quantity that
+lands, and the silver paid. Confirm whether goods and silver are actually lost, then judge how bad
+the outcome is in practice. That evidence is needed before choosing whether the order should be held,
+the difference refunded, or the goods sent elsewhere.
+
+### The five-day cash flow table needs a human read
+
+Added 2026-08-29 on branch `1.0.1`. The new five-day cash flow table on the **Business** tab has
+passed its self-tests, but no person has looked at it in play. It sits between the **Where you stand**
+section above and the brand section below.
+
+**Steps.** Open **Business** at several window sizes and check that the section renders as a transposed
+table: **Day 1** through **Day 5** are columns followed by a **Next 5 days** column, while
+**Expected revenue**, **Expected expenses**, and **Net** are rows, without overlapping the **Where you stand**
+section above it or the brand section below it at any window size.
+Hover the heading and confirm its tooltip appears and says the table counts commitments already made —
+open sales orders, agreement cycles falling due and scheduled payroll — and does not predict spot sales.
+Hover a **Day 1..Day 5** column and confirm its tooltip explains that each column is a rolling 24-hour
+window from now rather than a calendar day, then judge whether that reading is clear and not confusing in play.
+
+Leave the **Business** tab, change something that moves money, return to the tab, and confirm that the
+numbers moved. Repeat this after selecting **Business** again to verify that the table refreshes every time
+the tab is selected, not only when the window is opened.
+
+With a real colony that has an active sales agreement and an employee, check that the numbers are
+recognisable: payroll lands on the payday rather than being spread across every day, and a known contract
+delivery shows the payment it will really pay. A sales order whose buyer is already collecting — shown as
+**En route — N.Nd** on the **Selling → Orders** screen — must appear in the revenue on the day the buyer
+arrives. Seven such orders worth 914, 1779, 480, 163, 536, 175 and 617 silver were invisible because the
+table booked them on their deadline instead; confirm that the revenue matches the orders the player can see
+arriving. Purchase orders deliberately contribute nothing because
+they are paid in full when the order is created, so an apparently missing purchase-order expense is
+correct behaviour and not a bug to report.
+
+Finally, decide whether five days is the right window and whether **Day 1..Day 5** is the right label.
+Those are calibration questions for the end-of-1.0 sitting, not defects.
+
+### Automatic ready needs a quiet-log check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. A long-term selling agreement
+with auto-ready enabled now readies a cycle without adding an **Order ready** letter. Missing goods
+still produce the failure warning, payment still produces the **Order collected** letter, and
+marking an order ready by hand from the **Contracts** tab still produces its letter. An automatic
+cycle's remaining trace is the `IntercolonyLog` line. The mod's `letterVolume` setting is a separate
+gate: at **Minimal**, even the missing-goods warning stays out of the letter stack.
+
+**Steps.** In a real colony, turn on auto-ready for a long-term selling agreement and let it run
+through several cycles. Confirm that an automatic cycle leaves no **Order ready** letter, while the
+`IntercolonyLog` still makes it possible to tell what happened. Let one cycle encounter missing
+goods and confirm the failure warning appears at a normal letter volume; let another reach payment
+and confirm **Order collected** appears. Mark a cycle ready by hand from **Contracts** and confirm
+that the manual action still writes its letter. Repeat the missing-goods case at **Minimal** and
+confirm that the warning is suppressed from the letter stack by that setting. Judge whether the
+quiet automatic cycles remain trackable without the player losing sight of them.
+
+### New agreements need a save-compatibility check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. Newly proposed selling and
+procurement agreements now begin with auto-ready on. This changes the default for new agreements,
+not the saved setting of agreements that already exist.
+
+**Steps.** Use a save made before this branch that contains existing selling and procurement
+agreements, including at least one whose auto-ready setting was switched off by hand. Load it and
+inspect every agreement in the relevant **Contracts** tabs. Confirm that old agreements keep their
+previous setting, especially that a deliberately disabled one stays off. Then propose one new
+selling agreement and one new procurement agreement and confirm that each starts with auto-ready
+on. Judge the result against the pre-branch save: loading it must not silently enable automation on
+anything the player already had.
+
+### Auto-renew wording needs a Labor-row fit check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. In the **Labor** tab, an employee
+row now ends with **auto-renew: on** or **auto-renew: off** when the worker is active, fixed term,
+and not serving notice. The setting is still changed from that worker's **...** menu; workers for
+whom the setting does not apply should not get the detail line.
+
+**Steps.** Open **Labor** with several workers and inspect active fixed-term rows that are not
+serving notice, then toggle auto-renew from **...** and confirm the ending text changes with it.
+Also inspect open-ended, inactive, and notice-serving workers and confirm the line is not offered
+where the setting does not apply. Use a colony with long settlement and faction names and a long
+status, and check the rows at more than one window size. Judge whether the detail line remains
+readable and inside its row without over-drawing the worker below. A deliberately extreme case has
+measured the line at about 1367 units against 720 available; `Widgets.Label` does not clip, so note
+any overflow explicitly. This remains a known unfixed risk for F16/F17 in stage 3, where these cards
+will be restructured.
+
+### Cancelling a Produce blueprint needs area-and-frame play
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. Cancelling the blueprint belonging
+to an active **Produce** loop now ends that loop instead of letting the poll put the blueprint back.
+Single-target cancellation and the loop-cell match are covered by assertions; the area and
+part-built cases still need a person to watch them.
+
+**Steps.** Start an active **Produce** loop and drag **Cancel** over an area containing its
+blueprint, rather than clicking only that one blueprint. Wait through the next poll and confirm the
+loop stays stopped and the blueprint does not return. Repeat while the loop's replacement is a
+part-built **Frame**, not a fresh **Blueprint**, and confirm cancellation also stops the loop. Then
+cancel an unrelated construction beside a loop cell and watch another poll cycle; judge that the
+unrelated cancellation leaves the Produce loop running.
+
+### Produce controls and area orders need distinct-action play
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. A Produce object with a running
+program now shows **Produce** as an on/off control, **Pause production**, and **Set target**;
+turning **Produce** off ends the program. **Architect > Orders** now has **Produce / resume**,
+**Pause production**, and **Stop production** commands for dragging over an area. Assertions cover
+the state transitions and the drag wiring, but no person has watched the controls or the mixed-area
+cases.
+
+**Steps.** Select a Produce object with a running program and use its three buttons, then judge
+whether they read as three different actions rather than three ways to stop. Open **Architect >
+Orders** and drag each of the three commands over an area containing a mixture of relevant and
+irrelevant cells; confirm that each command changes only the cells it should and highlights only
+those cells. Use **Pause production** on an object whose replacement is a part-built **Frame**,
+let the frame finish, and confirm it stays in place while production remains paused. Use **Stop
+production** on an object mid-uninstall and confirm that the uninstall finishes without starting
+another cycle.
+
+### Produce-until-target needs a colony read
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. **Set target** opens a slider from
+0 to 100, where 0 means no limit. While the colony has at least the target amount in stock, the
+program waits and resumes on its own when stock falls below it because the count is read again on
+each pass. The self-test covers that state machine; a person still needs to judge the control and
+whether it behaves usefully in a real colony.
+
+**Steps.** Open **Set target** and judge whether the slider reads well and can be landed on an exact
+number. Before opening the dialog, read the Produce description and confirm that it explains what
+the target number means. Set a target in a real colony and confirm that production actually stops
+when stock reaches it. Sell or consume some of that stock without touching the Produce control and
+confirm that production resumes by itself. Finally, judge whether 100 is a useful ceiling for play,
+or an arbitrary one that needs changing.
+
+### Architect Orders needs a presence check before area play
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. The three area commands for F03 are
+registered by an XML patch that appends them to the vanilla **Orders** category. The game loads
+patches from the **Patches** folder, but the self-test suite cannot confirm that the commands made it
+into the in-game menu, so this is a precondition for testing the area actions above.
+
+**Steps.** Before any F03 area test, open **Architect > Orders** and confirm that **Produce / resume**,
+**Pause production**, and **Stop production** are present with sensible labels. If they are absent,
+stop the area play-test and inspect the XML patch first; the drag behaviour cannot be judged until
+the commands are actually in the menu.
+
+### F14 contract rows need a collapse and attention check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. Both the **Selling** and
+**Procurement** contract lists now collapse each entry to its identity and status. The identity line
+carries a `>` or `v` marker and is itself the click target. An entry starts open only when it needs
+attention: on the selling side, a settlement's offer, a live renewal decision, an active agreement
+that has missed a delivery, or a war suspension; on the procurement side, a supplier's counteroffer
+or a war suspension. Everything else starts closed, including terminal history. The player's own
+open/close choices reset when the tab is reopened. Assertions and mutation evidence cover the shipped
+rules; what remains is whether the result works as a screen.
+
+**Steps.** On a colony with a long trading history, open both contract tabs and inspect collapsed rows
+before expanding them. Confirm that the identity and status still tell you which agreement is which,
+that the `>` and `v` markers are legible, and that clicking the identity line expands and closes the
+row without making the buttons inside the expanded row hard to reach. Exercise or load examples of
+the selling-side offer, live renewal decision, missed delivery and war suspension, and the
+procurement-side counteroffer and war suspension. Confirm that those entries open while ordinary
+entries and all terminal history start closed. Close and reopen each tab after changing several rows'
+states, then check whether the choices reset as described.
+
+Judge whether a collapsed row still identifies its agreement, whether the marker and click target
+feel right given the expanded row's buttons, whether the intended entries are open on a long history,
+and whether resetting the choices on tab reopen is welcome or annoying in play.
+
+### F16/F17 and F13 employee rows need a density check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. The employee detail line now carries
+only the daily wage, the term, the status and the auto-renew token. Settlement, faction, wage
+structure and paid silver moved to the row's tooltip. The measured worst case fell from about 1367
+units to about 620 against 720 available, so the overflow that could overdraw the row beneath should
+be gone. Assertions and mutation evidence cover the shipped change; a very long worker **NAME** still
+crowding the combat clause on the line above was left untouched and remains a known risk.
+
+**Steps.** Open **Labor** with active employees and inspect the shortened detail line, then hover the
+row and confirm that the settlement, faction, wage structure and paid silver are available in the
+tooltip. Use long settlement and faction names, long statuses and a very long worker **NAME** at
+more than one window width. Check the line against the row beneath and inspect the combat clause on
+the line above rather than treating the shorter detail line as proof that the whole card is safe.
+
+Judge whether the shorter row is easier to read or feels too sparse, whether anything moved to the
+tooltip is missed at a glance, and whether a very long worker **NAME** still crowds the untouched
+combat clause.
+
+### F18 procurement price labels need a reading check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. A procurement agreement row now
+reads cycles, silver per unit, silver per cycle, then the total. The old **silver each** wording is
+now **silver per cycle**, so the two figures cannot be confused. There are no assertions or mutation
+checks for this display string: it is built in the UI, so a reading is the only check there is.
+
+**Steps.** Open **Procurement → Contracts** with a procurement agreement that shows non-trivial
+cycles, per-unit and per-cycle amounts, and read the row at a narrow and a wide window width. Follow
+the figures through to the total rather than checking the labels in isolation.
+
+Judge whether the per-unit and per-cycle figures are unmistakable side by side, and whether the
+line remains comfortable to read at more than one window width.
+
+### F10 standing procurement agreements need an earned-unlock play check
+
+Added 2026-09-07 on branch `foreman/playtest-batch-2026-09-06`. A settlement now accepts a standing
+procurement agreement only when commercial reputation is at least 62 and at least two purchases
+from that settlement have completed. A refusal names whichever number is short. A new colony can no
+longer buy a standing agreement from a stranger; that is the intended change. Assertions and mutation
+evidence cover the threshold and refusal paths, but not whether earning the access feels reasonable.
+
+**Steps.** In a new-colony or otherwise unqualified state, try to buy a standing procurement
+agreement from a stranger and confirm that the refusal identifies the missing reputation, purchase
+count, or both. Continue playing until the thresholds are earned, then try again and confirm that a
+standing agreement is accepted. Judge the amount of play needed to get there rather than treating the
+refusal itself as the test.
+
+**Settlement-wide count.** Load an existing save with established suppliers and find a settlement
+from which the colony has completed at least two purchases. Propose a standing agreement for a
+product the colony has never bought from that settlement, while reputation is at least 62, and
+confirm that it qualifies immediately. The count is settlement-wide, not per product; this is a
+separate check that buying anything from a settlement can qualify a new product.
+
+Judge whether earning the agreement takes a reasonable amount of play rather than feeling like a
+wall, whether the refusal makes the next step obvious, and whether established suppliers in an
+existing save still behave correctly under the settlement-wide count.
+
+### Procurement Contracts has never been used by a human
+
+Added 2026-08-25 on branch `1.0.1`. In 1.0 this tab was an **Under development** placeholder,
+although `ProcurementContractService` was complete and self-tested; no player has proposed a
+standing purchase through the UI. It now lists procurement agreements, badges the tab with the live
+count, and offers **Propose procurement agreement**, **Cancel** on a pending proposal,
+**Accept/Decline** on a supplier's final counter, and **Withdraw** on a live or suspended agreement.
+
+**Steps.** On a real colony, check that the propose dialog lists settlements and items, wait for the
+supplier's delayed answer and read it on screen, then accept a final counter and verify the agreement
+uses the counter's terms rather than the original ones. Let cycles arrive and be paid, and check the
+row layout at **1.75x UI scale**. Agreements cannot be renewed; a term ending is expected behaviour,
+as recorded in `docs/BACKLOG.md`.
+
+### Supplier Market framerate fix needs to be felt, not measured
+
+Added 2026-08-25 on branch `1.0.1`. Opening **Procurement → Market** used to drop the framerate for
+as long as it stayed open. Rows and measured heights are now cached and rebuilt on entry, sort change,
+listing-count change, after a purchase, and every half second; self-tests exercise the read model but
+cannot observe framerate.
+
+**Steps.** On a mature colony with many supplier listings, open the tab and confirm the game runs
+normally. Sort a column and make a purchase, then confirm the table updates immediately rather than
+lagging up to half a second behind. This remains unproven until the fix is felt in play.
+
+### Selling Market framerate fix needs to be felt, not measured
+
+Added 2026-08-28 on branch `1.0.1`. Opening **Selling → Market** used to re-filter and re-sort the
+whole opportunity list every `OnGUI` pass, measure every row twice, and draw every row. Rows, heights
+and the summed height are now cached and only visible rows are drawn; self-tests exercise the read
+model but cannot observe framerate.
+
+**Steps.** On a mature colony with many offers, open the tab and confirm it runs normally. Change a
+filter, change the sort, and accept an offer; confirm the table updates immediately rather than
+lagging up to half a second behind. A stale cache is the specific risk, and this remains unproven
+until seen in play.
+
+### Supply agreement proposal dialog needs a readability pass
+
+Added 2026-08-28 on branch `1.0.1`. **Propose supply agreement** now has cadence in days, total
+deliveries, and a seller-side fulfilment choice. Self-tests cannot settle whether the three-column
+layout reads well at **1.75x UI scale**, whether the term-length clamp explains itself, or whether
+the labelled terms rows make the commitment legible before sending.
+
+**Steps.** At **1.75x**, send a proposal and inspect those controls and terms, then wait for the
+settlement's answer, accept it, and confirm the chosen fulfilment survives into the live agreement
+without being asked again at acceptance. This remains unproven until seen in play.
+
+### Procurement Orders history button needs a layout check
+
+Added 2026-08-28 on branch `1.0.1`. **Procurement → Orders** moved **Clear completed history** from
+the concluded-orders section header to the page heading row.
+
+**Steps.** At narrow window widths and **1.75x UI scale**, confirm it does not collide with the
+heading and disappears when there is nothing clearable. Compare **Selling → Orders**, where the
+equivalent button deliberately remains in its old position, and decide whether the difference is
+acceptable. This remains unproven until seen in play.
+
+### Proposal acceptance read-out needs campaign calibration
+
+Added 2026-08-28 on branch `1.0.1`. **Selling** and **Procurement** propose screens now show one of
+seven bands — **Hopeless**, **Very unlikely**, **Unlikely**, **Even odds**, **Likely**, **Very likely**,
+**Near certain** — computed from continuous proposal appeal. The band is shown by default; a new
+mod setting reveals the numeric appeal percentage on both screens. A test fixture spread them
+sensibly: `0.80x` the reference price read **Very unlikely**, the reference rate **Even odds**, `1.05x`
+**Likely**, and `1.20x` **Near certain**. Play must settle whether the bands feel right across real
+settlements with varying reputation and brand, whether the names scan instantly, and whether the
+percentage setting is discoverable. Continuous appeal changed real Selling acceptance odds because
+the delayed answer now rolls against it, so a satisfying success rate is a calibration question for
+play, not a self-test result.
+
+**Steps.** On a real campaign, propose from both screens across settlements with different reputation
+and brand. Read the band at a glance, find and toggle the percentage setting, and let delayed answers
+resolve. Judge whether the names and resulting success rate feel right. This remains unproven until
+seen in play.
+
+### Agreement terms layout needs a two-dialog scroll check
+
+Added 2026-08-28 on branch `1.0.1`. On both **Selling** and **Procurement** proposal dialogs, the
+terms rows used to render at the far left over the settlement list because their hardcoded x was only
+correct inside a scroll view; they now render under their own heading in the right column.
+
+**Steps.** At **1.75x UI scale**, open both propose screens and confirm the terms sit under the heading.
+Use long item labels and settlement names, and check that the rows do not collide with the controls
+above. Add enough rows to require the section's scrollbar and confirm it still behaves. That scrolling
+branch was deliberately left untouched and has not been seen since the change, so this remains
+unproven until seen in play.
+
 ### 1.0 calibration sitting — Stage 8 remaining play
 
 Stage 8A's full save/load matrix, Stage 8B's 42 → 56 migration matrix, and Stage 8C's seven-path
@@ -1388,6 +2059,110 @@ Still unexercised: anything assuming "player faction implies permanent colonist"
 work tab replacements, roster mods. A deliberate test wants one of those installed and an employee
 on the map, looking at whether the employee appears where a colonist would and whether the mod
 tries to assign them work.
+
+### The Produce, auto-renew and auto-ready batch has never been seen working by a human
+
+Added 2026-08-30. These four features shipped in this batch are visual, interactive, or about feel,
+so a self-test cannot settle them. None has been seen working by a human.
+
+**Produce toggle.** A **Produce** gizmo, using the vanilla Uninstall icon, appears on minifiable
+player buildings and on build blueprints and frames for them. Turning it on should uninstall the
+object, place an identical blueprint in the same cell with the same material and rotation, rebuild
+it, and repeat. This has never been seen working by a human.
+
+**Steps.** Check that the loop actually runs end to end in real time with colonists doing the work;
+that a batch multi-select shows **ONE** merged **Produce** button and enabling it starts all of them;
+that turning it off stops the next repetition without cancelling work under way; and that the
+accumulating minified furniture does not jam the cell permanently when there is nowhere to haul it.
+The last check is the likeliest real-play problem and no self-test can see it.
+
+**Auto-renew.** The per-worker **Auto-renew** toggle in the employee row's **...** menu, and the
+letter that arrives when a worker renews by itself, have never been seen working by a human.
+
+**Steps.** Check that the menu only offers what applies to that worker and that the letter reads
+correctly for a fixed-term contract.
+
+**Auto-ready orders, selling side.** The toggle on an active buyer-pickup agreement in **Selling →
+Contracts**, the cycle order readying itself when the goods are present, and the single **Agreement
+delivery needs attention** letter when they are not have never been seen working by a human.
+
+**Auto-ready orders, procurement side.** The toggle on an active agreement in **Procurement →
+Contracts**, a cycle waiting rather than failing when the colony is short of silver, and the
+**Procurement cycle waiting on silver** letter have never been seen working by a human.
+
+**UI check for the whole batch.** Confirm that the **Business** tab no longer lists individual
+agreements, and that the per-agreement margin estimate now appears on the **Selling → Contracts** row
+instead, with the row growing to fit it and not overlapping the row's buttons or the row beneath.
+
+### Runtime grave persistence and the external Lord warning need one clean real-play check
+
+Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. The suite and a Scribe round trip
+cover the new grave guard, but only real play can show that a dead employee remains visible in a grave
+after the game is actually saved, quit to menu and loaded again. Neither defect has been seen fixed in
+a real game yet.
+
+**Watch for the grave defect recurring.** Have an employee die on the colony's map, save, quit to
+menu, and reload. Check that the grave still shows its occupant and that the post-reload `Player.log`
+delta is clean — specifically, there must be no `JoyGiver_VisitGrave` `NullReferenceException`.
+
+**The existing save is already damaged.** This fix prevents new damage and cannot undo the old empty
+corpse. If the exception persists in that particular colony, compare the grave state before and after
+the round trip and the log delta: an already-empty grave or an exception attached to the old save is
+the old corruption, not a new failure. A new failure is a newly killed employee whose grave visibly
+has its occupant before save, then loses it after save → quit to menu → reload, with a new
+`JoyGiver_VisitGrave` exception in the post-reload delta.
+
+**The `Lord_140` warning may still appear.** It is not ours and is expected to be harmless: the stale
+Hospitality `CompGuest.lord` reference resolved to null and was written back as `<lord>null</lord>`.
+If it becomes something worse than that warning — such as a load failure or spreading corruption —
+it belongs to Hospitality.
+
+**Acceptance proof for the employment fix.** The runtime defect is **not to be marked play-verified
+until this exact sequence has been performed**. A green suite is not this proof:
+
+1. Hire a **NEW** employee under the current branch.
+2. The employee arrives.
+3. The employee dies on the map.
+4. Confirm that the corpse visibly contains that employee.
+5. Save.
+6. Quit to the main menu.
+7. Reload.
+8. Confirm that the corpse still contains the employee.
+9. Confirm that colonists can evaluate **VisitGrave** joy.
+10. Confirm that no **NEW** `JobGiver_VisitGrave` `NullReferenceException` appears in the post-load
+    `Player.log` delta.
+
+The last step is the distinction that matters: it separates new damage from old damage. An already
+empty corpse or an exception carried by the old save is not new damage.
+
+### Existing empty-corpse damage needs one repair run
+
+Run **Debug actions → Intercolony → Repair empty corpses (DESTRUCTIVE)** on the operator's
+**Playtest 1.0** save and confirm that the exception stops. The fallback backup is
+`scratchpad\playtest-evidence\E-Playtest-1.0-CAPTURED.rws`.
+
+### F13/F17 labor-card controls need one real-play check
+
+Added 2026-09-10 on branch `foreman/playtest-batch-2026-09-06`. The labor suite now checks the
+`autoRenew` save/load round trip, but it cannot prove what the player sees or reaches on a real
+employee card. F13 and F17 are **not to be marked play-verified until a person has done these
+checks**. A green suite is not a substitute.
+
+**Steps.** Use real employee cards and the contract states needed to expose each action.
+
+1. Confirm that both the **ON** and **OFF** Auto-renew states read at a glance on a real employee
+   card.
+2. Click the checkbox on the card itself, without opening `...`, and confirm that it toggles.
+3. Close and reopen the **Labor** tab and confirm that the card redraws the correct state.
+4. Open `...` and confirm that **Keep them**, **Not now**, **Renew**, **Let go**, **Cancel** and
+   **Dismiss** are all still reachable where applicable, and that each still does what it did before.
+
+**Pass.** All four checks work on a real card, with no action reachable only through a different
+control or silently changed by the new menu condition.
+
+**Failure.** Either state is hard to distinguish, the direct checkbox does not toggle, reopening
+the tab redraws the wrong state, or any named `...` action is missing or behaves differently. Keep
+F13 and F17 unverified until the failure is understood and the sequence passes.
 
 ---
 

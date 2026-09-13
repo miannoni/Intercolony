@@ -2327,3 +2327,546 @@ Known limitations:
 
 Manual test:
 - Testing reach was one machine, one load order, Biotech only, UI scale 1.75x.
+
+## 1.0.2 batch — reputation quality, cash flow, and the world-pawn investigation  (2026-08-29)
+
+Implemented:
+- **Reputation candidate quality on job postings** (commit `108b5af`): posting census now generates through the same draw-and-keep candidate quality bias the HIRE listing uses via `EmployerReputationService.CandidateQualityBias`. Measured on one fresh world: mean best skill 12.04 at an exploitative standing, 13.64 at mid, 15.20 at sought-after; census records 380 / 836 / 900; generation draws 760 / 836 / 1800, so a mid-range colony still draws once and pays nothing extra. Three mutations each reddened exactly their own assertion at 27/1/0.
+- **Five-day cash flow table on Business tab** (commit `7201c53`): added a five-day forward cash flow table for committed obligations (open sales orders, agreement cycles falling due, and scheduled payroll). Resolved two scope premises against the codebase: purchase orders are paid in full at creation (`PurchaseOrderService.TryTakeSilver`) and contribute nothing; payroll moves on paydays every `wageStructure.IntervalDays()`, not daily, so the table books it on the payday. Verified with eight assertions and seven mutations (six isolated their own assertion; the seventh, shortening the window, was caught by an earlier indexing fixture).
+- **World-pawn delta investigation and resolution** (commit `6a74a78`, harness work in `13ee1e5`): resolved the intermittent +1 world-pawn delta as NOT a leak. Named the extra pawn ("Verea Roiro", Tribal_HeavyArcher, faction The Gaalboir League, situation Free, not spawned) and attributed it to the payroll suite driving a real worker to walk out on the first run in a world. Measured across four fresh payroll runs: `WorldPawns.ForcefullyKeptPawns` remained 12 before and 12 after every time, with each pawn carrying `keptForever=False` (one run gained an identity at net delta zero due to GC collection while suites create). Added guards in the payroll suite asserting the departed worker is not in `ForcefullyKeptPawns` and that the pinned set did not grow, proven by mutation (40/2/0 when a departed worker is pinned in `EmploymentService.Release`).
+
+Not implemented:
+- Nothing was dropped from the queue.
+
+Known limitations:
+- The cash flow table has never been looked at by a person; its playtest is pending in `docs/PENDING_PLAYTESTS.md`.
+- The five-day window and the "Day 1..Day 5" labels are calibration questions deferred to the end-of-1.0 sitting.
+- The five-day assertion's day-count clause cannot be broken in isolation by mutation, which is recorded rather than hidden.
+
+Manual test:
+- Cash flow table inspection and verification is recorded as pending in `docs/PENDING_PLAYTESTS.md` ("The five-day cash flow table needs a human read").
+
+## Playtest batch — four features from the 2026-08-30 session  (2026-08-30)
+
+Implemented:
+- Continuous production. A "Produce" toggle gizmo, using vanilla's Uninstall icon, on
+  minifiable player buildings and on build blueprints and frames for them. While on, the
+  object is uninstalled, an identical blueprint is placed in the same cell with the same
+  material, style and rotation, rebuilt, and uninstalled again. State lives in a
+  `ProduceLoopMapComponent` keyed by cell, because `MinifyUtility.Uninstall` destroys the
+  Thing identity every iteration. The loop advances by polling the cell every 60 ticks,
+  not by hooking construction completion, so it is correct after a save/load, a cancelled
+  job or a manual deconstruct. Multi-select merges into one control via
+  `groupKeyIgnoreContent`.
+- Per-worker auto-renew, plus a "..." contract-actions menu on each employee row carrying
+  Renew, "Let them go at the end of the term", and the Auto-renew toggle. Auto-renew
+  answers an offer the worker actually makes; it never bypasses `WouldRenew`.
+- Auto-ready orders on supply agreements: an active buyer-pickup agreement readies its own
+  cycle order through the same `MarkReadyForPickup` path the button uses, preflighted by
+  `CanMarkReadyNow`, with one throttled letter on failure.
+- Auto-ready orders on procurement agreements: a cycle that cannot be paid for waits for
+  one cadence instead of counting as failed, with one throttled letter. Only affordability
+  is waited for.
+- The Business tab no longer lists individual agreements; the per-agreement margin
+  estimate moved onto the Selling -> Contracts row.
+- Save schema 56 -> 57, adding `EmploymentContract.autoRenew` and `autoReadyOrders` on
+  both contract kinds. The migration logs and advances only; false is both the C# and the
+  Scribe default.
+
+Not implemented:
+- Employment renegotiation. It does not exist in this codebase —
+  `PostAcceptanceRenegotiationService` handles `SalesOrder` only — and Matteo decided on
+  2026-08-30 to leave it off the "..." menu rather than build it now.
+- Auto-ready for seller-delivery supply agreements. Those need a hand-formed caravan and
+  cannot be automated; the toggle is deliberately not offered on such a row.
+
+Known limitations:
+- The Produce loop leaves minified furniture on the floor. If there is nowhere to haul it,
+  the cell can stay blocked and the loop stalls. No self-test can see this.
+- "only silver is waited for" is an open, unexplained intermittent self-test failure; see
+  docs/BACKLOG.md.
+
+Manual test:
+- Point at docs/PENDING_PLAYTESTS.md, which lists the five checks this batch added.
+
+Verification actually performed:
+- New `produce` suite: 11 assertions, 11 passed, log clean.
+- `long-term` suite grew to 46 assertions covering auto-renew, supply auto-ready and
+  procurement wait-for-silver; 46 passed, 0 skipped, log clean.
+- Mutation batteries: produce 11 mutations, 8 GOOD, 3 NOISY, 0 hollow; long-term 10
+  mutations, 7 GOOD, 3 NOISY, 0 hollow; procurement 6 mutations, 5 GOOD, 1 NOISY, 0
+  hollow. Every NOISY row is a downstream assertion that legitimately depends on the
+  mutated step.
+- Two assertions were found hollow by mutation and neither was papered over: the produce
+  occupancy guard turned out to be a performance early-out that `CanPlaceBlueprintAt`
+  already covers, so its assertion was renamed to the property it actually proves; and the
+  seller-delivery mutation was moved to `SalesOrder.CanMarkReady`, the gate that actually
+  does the work.
+- `dev.ps1 test all -Fresh`: nine consecutive fresh worlds, 1420-1422 passed, 0 failed,
+  15-16 skipped, log clean every time.
+
+## Playtest batch F01-F25 — stages 1-8  (2026-09-09)
+
+Implemented:
+- Twenty-three of the twenty-five findings, in eight stages:
+  - F01 F02 F13 F15 — quiet automation and vanilla-command correctness.
+  - F03 F04 — Produce became programmable: area-level Produce/Pause/Stop, indefinite and
+    produce-until-target loops.
+  - F14 F16 F17 F18 F10 — agreement and employee UX, and procurement as an earned gate.
+  - F05 — receiving locations. F12 part-built, see below.
+  - F21 part-built and F11 — market geography: one owner for cost and time, and RFQ replies that
+    arrive over days instead of instantly.
+  - F07 F19 F20 — the Business view answers whether production covers commitments, what materials
+    a made good really costs, and what labour costs.
+  - F25 F23 F24 — the buyer-side labour market, the equipment bond, and emergency dispatch.
+  - F08 F09 — commerce slowly warms a faction to a hard ceiling; how an employee was treated
+    follows them home once.
+- The batch also fixed seven defects found by audit and mutation rather than by the suite, and two
+  of them were live money defects in shipped 1.0: a directly hired worker on Daily terms was quoted
+  135 and charged 182 because the premium was applied twice, and an equipment bond valued a
+  masterwork item at a plain one's price while matching returns on quality.
+- Schema went 57 to 58, once, with a migration verified against a real pre-58 save. Everything
+  added since rides 58 as additive nodes with safe defaults. Five Harmony patches, unchanged in
+  count since the crafting-completion observer.
+- Branch `foreman/playtest-batch-2026-09-06` is NOT merged and NOT released.
+
+Not implemented:
+- **F22, the reverse labour market.** Reconnoitred, not started, about nine units. Its first unit
+  must be a custody proof: a bare custom world pawn is not recognised as borrowed by vanilla's
+  game-over check, so the last colonist leaving on a job could end the game incorrectly. Six
+  design questions in it are unanswered by the source plan.
+- **F06, optional apparel policies.** Reconnoitred, blocked. An employee already carries a real
+  vanilla apparel policy, but as a quest lodger vanilla vetoes them twice — the Assign column
+  shows "Unchangeable" and the apparel optimizer refuses to run — and both vetoes are inside
+  vanilla methods. It needs a sixth and seventh Harmony patch, and the allowance was declared
+  spent at five.
+- **F12's caravan half.** Only order availability exists. There is no caravan formation, pawn or
+  animal selection, recurrence or multi-map routing; the mod has no caravan dispatch of its own.
+- **F21's model half.** No route difficulty, no provisions, no settlement logistics capability,
+  no real transport-method choice.
+- **F23's tiers**, availability gating by settlement wealth or tech, and the consequence for
+  stripping body modifications.
+- **F24's drop pods**, which the finding wants most; they should be gated on the settlement
+  logistics capability F21 never built.
+
+Known limitations:
+- Neither reputation decays. Only vanilla goodwill drifts.
+- F20 uses the source plan's authorised relevant-workforce approximation, not measured time: the
+  crafting seam carries who finished a bill, not hours worked.
+- Contracts already in a save cannot be corrected for the wage defect. Nothing in the persisted
+  shape distinguishes the two old meanings of the field.
+- A pre-existing defect was found beside F05 and deliberately left: a partial delivery in
+  `PurchaseOrderService.DeliverToColony` completes the order short and the player pays in full.
+- A pre-existing release defect: `package.ps1` never included `Patches/`, so no release zip has
+  ever carried the Economy tab patch.
+
+Manual test:
+- The whole in-game suite on a fresh world reports **1536 passed, 0 failed, 17 skipped, exit 0**,
+  which also means no new exceptions in the log. Everything this batch built has assertions
+  with mutation evidence — each new assertion was verified by breaking the production code and
+  watching that assertion go red. What no suite can settle is recorded in
+  `docs/PENDING_PLAYTESTS.md`, which now carries entries for F11, F23, F24, F25, stage 6, the
+  seven-defect series and stage 8.
+
+## Playtest correction run — scope lock  (2026-09-09)
+
+Scope:
+- The new product plan, `docs/PLAYTEST_CORRECTION_PLAN.md`, is now authoritative for the behaviours it covers. `docs/PLAYTEST_BATCH_SOURCE_PLAN.md` remains authoritative for everything else.
+- This run advances ONLY F01, F07, F08, F09, F10, F11, F13 and F17.
+
+Frozen:
+- F12 is **FROZEN**. Stage C6 says:
+  > F12 — FROZEN.
+  > Existing order-availability work retained.
+  > Recurring/preprogrammed caravan design intentionally deferred.
+  > Do not dispatch further implementation without a newer product plan.
+  > No implementation unit should follow the documentation freeze.
+  No future run should treat F12 as an unfinished task to resume automatically.
+- F22 is **FROZEN**. Stage C7 says:
+  > F22 — FROZEN.
+  > Reverse/player-supplied labor market intentionally not part of the current release scope.
+  > Do not dispatch custody proof or any implementation unit without a newer product plan.
+  > Foreman should not stop the run later asking whether it may begin F22.
+  The existing recon may remain as historical technical information; no future run should treat F22 as an unfinished task to resume automatically.
+
+Left untouched pending newer product direction:
+- F04, F06, F16, F19, F20, F21, F23, F24 are left untouched pending newer product direction — not abandoned, not incomplete-by-accident.
+
+Regression-only:
+- F02, F03, F05, F14, F15, F18 and F25 are closed and regression-only.
+
+Baseline:
+- This run starts from branch `foreman/playtest-batch-2026-09-06` at `56180ea`.
+- Whole suite on a fresh world: **1536 passed, 0 failed, 17 skipped, exit 0**.
+
+Status:
+- The branch is not merged and not released.
+
+## Runtime defect triage — two defects from real play  (2026-09-09)
+
+Disposition:
+- **DEFECT B — ours, fixed.** A dead employee was being discarded from the world pawn pool by a
+  cleanup in `EmploymentService.End` whose comment said "a worker dismissed before arrival" but whose
+  predicate only tested unspawned-and-in-the-pool — which a dead pawn satisfies. Vanilla holds a dead
+  pawn **BY REFERENCE** inside its corpse, so the discard emptied the corpse: the save wrote the
+  reference as null and the load dropped it, leaving a grave holding a corpse with nothing in it.
+  Vanilla's `JoyGiver_VisitGrave` then threw a `NullReferenceException` on
+  `Corpse.InnerPawn.Faction` for every colonist looking for joy — the repeated exception the operator
+  saw.
+- Fixed at `68ad1ea` by making the predicate say what the comment meant: never discard a dead worker,
+  and only discard a contract that never recorded arrival. Asserted at `1bf7d30`, including through a
+  real Scribe save and load; restoring the old guard turns three assertions red.
+- This prevents new damage and cannot repair an existing save. The affected employee in the
+  operator's game was Sinni, and she can only be recovered from an earlier backup.
+
+- **DEFECT A — not ours, recorded and deliberately not patched.** The save warning
+  `Object with load ID Lord_140 is referenced (xml node name: lord) but is not deep-saved` comes from
+  a stale Lord reference held by **Hospitality's `CompGuest.lord`** field — its own serialized field,
+  which vanilla cannot clear when it removes a Lord because vanilla only knows about `Pawn.lord`. The
+  captured log names the holder outright: `curParent=Moth`, a departed `Town_Trader` in another
+  faction with no Intercolony contract, quest or record of any kind. Intercolony creates exit Lords
+  through vanilla's `QuestPart_Leave` and one directly during safe passage, but never stores or
+  persists a Lord reference.
+- The mitigating observation is that the save was rewritten by continued play and that field now
+  reads `<lord>null</lord>` — the stale reference resolved to null on load and was saved back as null,
+  so it is noise rather than spreading corruption.
+- Nothing was done about it because patching vanilla or clearing Lords defensively would hide another
+  mod's state bug rather than fix it, and the operator's instruction was explicit on that point.
+
+The two defects are independent — different pawns, factions, objects and causes.
+
+Manual test:
+- Neither defect is play-verified. Neither has been seen fixed in a real game yet.
+
+## Runtime defect gate — empty corpses and expected self-test failures  (2026-09-10)
+
+Implemented:
+- During real play the operator hit a repeating `NullReferenceException` from vanilla's
+  `JoyGiver_VisitGrave`, thrown every time any colonist looked for joy. `EmploymentService` had
+  discarded a dead employee's pawn from `WorldPawns` while vanilla still held that pawn by reference
+  inside a corpse, leaving a corpse with an empty inner container in a grave. `JoyGiver_VisitGrave`
+  reads `building_Grave.Corpse.InnerPawn.Faction`, and `InnerPawn` returns null for an empty container.
+- Fixed at `68ad1ea`: the discard is now refused unless the worker never arrived. The guard tests
+  `!worker.Dead` and `contract.arrivedTick == EmploymentContract.NotArrived` as well as the original
+  conditions. A worker who arrived and then died is vanilla's to own.
+- The same exception appeared again after the fix, but the re-saved `Playtest 1.0` contains **85
+  corpses, of which exactly one is empty** — `Corpse_Human849086`, still carrying `<innerList />`,
+  inside `Grave508055`. That corpse is Sinni, who died before the fix existed. No new empty corpse
+  has appeared since. The recurrence is old damage being read, not new damage being made, so
+  `68ad1ea` stands.
+- Repaired the damage already done at `c46e175` with the debug action **Debug actions → Intercolony →
+  Repair empty corpses (DESTRUCTIVE)**. It scans loaded maps for corpses with an empty container,
+  destroys those and only those, and prints one line per removal plus a total. It never runs
+  automatically. It does not touch the grave: a grave that loses its corpse is an ordinary empty
+  grave the player can reuse. It does not recreate the pawn, because the pawn does not exist and
+  inventing one would be worse than the defect. Destroying an empty corpse is something vanilla
+  already anticipates: `Corpse.Destroy` guards its pawn access behind `!Bugged`
+  (`reference/decompiled/Verse/Corpse.cs:244-248`) and `Bugged` is exactly the empty-container
+  condition (`:151`).
+- The self-test log isolation work at `fb3f97a` and `49be300` covers two deliberate provocations:
+  one persists a supplier listing whose `ThingDef` does not exist to prove the loader prunes it, and
+  the other builds a procurement contract at a zero unit price to prove invalid terms fail
+  immediately. Both provocations are correct and both assertions are unchanged. `ExpectedLogHandler`
+  now wraps the Unity log handler for the span of each operation, withholds exactly the expected
+  messages matched on full text, counts them so the test can assert they occurred, forwards
+  everything else, and is restored in a `finally`. Nothing globally suppresses Verse output and no
+  production loader was special-cased.
+
+Not implemented:
+- The separate Hospitality Lord warning from unit D remains not ours and deliberately unpatched;
+  see the preceding **Runtime defect triage — two defects from real play** entry.
+- The scope fence remains in force: **F12 and F22 are FROZEN**; **F04, F06, F16, F19, F20, F21,
+  F23 and F24 are DEFERRED**.
+
+Known limitations:
+- The `long-term` suite runs **62/0/0**, exit 0, log signal CLEAN, and the three synthetic
+  `Procurement contract … cycle 1 failed` lines no longer appear in `Player.log` at all. Mutating
+  `ExpectedLogHandler` so its expected-text match can never succeed turns the new assertion red for
+  the right reason — `expected=6; captured=0` — and the three suppressed lines reappear immediately.
+  The same mutation turns the `rfq` suite's `S4 expected missing-def diagnostic is observed without
+  hiding other errors` red with `expected count=0; unexpected error count=1`, and the
+  `Could not load reference to Verse.ThingDef named Intercolony_SupplierListing_SelfTest_MissingDef`
+  line comes back. So both are verified by mutation, not merely green.
+- The empty-corpse repair has not been run against the operator's save. It is theirs to run, on the
+  backup already captured.
+- `Log.Error` enqueues into the in-game message queue before it reaches Unity (`reference/decompiled/Verse/Log.cs:145`
+  then `:165`), so a withheld diagnostic still appears in the dev log window during a test run. Only
+  the `Player.log` signal is affected. Removing the queue entry would mean rebuilding a private
+  vanilla `Queue<LogMessage>` by reflection, which was judged more invasive than the problem.
+
+Manual test:
+- Not performed. The runtime defect remains unverified in real play; the exact hire, arrival, death,
+  save, quit-to-menu, reload, visible-corpse, VisitGrave-joy and no-new-post-load-exception sequence
+  is recorded in `docs/PENDING_PLAYTESTS.md`.
+
+## Playtest correction run — C6/C7 documentation freeze  (2026-09-10)
+
+Implemented:
+- Executed C6 and C7 by adding freeze markers directly beneath the F12 and F22 headings in
+  `docs/PLAYTEST_BATCH_SOURCE_PLAN.md`; the existing bodies remain the retained design record,
+  and F22's existing recon remains historical technical information.
+- The source-plan notices identify the prohibited implementation work, cross-reference sections 8
+  and 9 of `docs/PLAYTEST_CORRECTION_PLAN.md` and the scope-lock record, and state that no
+  implementation unit follows the documentation freeze.
+
+Not implemented:
+- No F12 or F22 implementation was performed; no code changed.
+
+Known limitations:
+- The existing scope-lock entry at `PROGRESS.md:2470-2490` was left untouched. It was not
+  sufficient by itself because a future Foreman run reads the source plan where the task is
+  described, so the freeze is now visible at the F12 and F22 headings as well.
+
+Manual test:
+- None; no code changed.
+
+## Playtest correction run — C8 closeout  (2026-09-10)
+
+Implemented:
+- Closed the eight findings authorised by the correction plan:
+  - **F01** (`1c5cc56`) — A routine contract cycle is now silent. `Contract delivery due`
+    became a log line, and one actionable letter now fires after auto-ready for orders that are
+    still merely Accepted.
+  - **F07** (`14ad416`) — Production rate now counts real completions. This is the sixth Harmony
+    patch, on `Frame.CompleteConstruction`, with its justification recorded; the bill observer
+    unwraps `MinifiedThing`, so a crafted minifiable good is not recorded under its wrapper.
+  - **F08, F09, F11** (`1ae4ef6`) — Nine settings for commercial goodwill pressure, employment
+    experience and RFQ pacing are all read live and clamped. F11's schedule was rebalanced so a
+    normal cohort commonly answers on day one and nothing is scheduled past day five.
+  - **F10** (`d20973e`, `46c77ad`) — No production change was needed. The read-only audit and the
+    four absence assertions are the record; the reason is set out below.
+  - **F13 and F17** (`61d3969`) — Auto-renew is a `CheckboxLabeled` on the employee card; the
+    occasional contract actions moved into `...`; `Pay {arrears}` deliberately stayed.
+  - **C6 and C7** (`aa413e3`) — F12 and F22 are frozen where a future run will read it.
+- Out of plan order, the two runtime defects triaged from real play and the defect gate reopened
+  and closed are recorded in the existing **Runtime defect triage — two defects from real play**
+  and **Runtime defect gate — empty corpses and expected self-test failures** entries
+  (`28acfd1`, `f1aa604`). They are cross-referenced here rather than restated.
+- Three findings from this run are worth keeping plainly:
+  - **The plan's premise for F10 was wrong.** It suspected that a progression gate had leaked onto
+    Find Seller and spot purchasing. A read-only audit found none: the reputation-and-history gate
+    lives only in `ProcurementContractService.TryValidateAgreementProgression`, and nothing on the
+    spot path calls it. Selling already behaved the way the plan wanted procurement to. F10 became
+    four assertions pinning an absence, and zero lines of production code.
+  - **Four separate pieces of evidence looked complete and were not, and every one was caught by
+    mutation or by a second run, never by reading.** A pinned jitter value in the F11 fixture was
+    simply wrong; the independent oracle exposed it, while `RfqService` was correct all along. An
+    F10.4 fixture read one live `CommercialReputation` twice through the same reference, so its own
+    first-purchase count reported 2. The four F10 assertions passed alone but **skipped in the
+    whole-suite run**, because earlier suites trade with every settlement and the never-traded
+    precondition no longer existed.
+  - **A deliberately provoked diagnostic was spending the signal reserved for real ones.** Two
+    self-tests induce failures on purpose; their output was indistinguishable from genuine defects
+    in `Player.log`, in a project that deliberately denies exit 0 to a run whose log gained
+    exceptions. `ExpectedLogHandler` now withholds exactly the expected messages, counts them so the
+    test can assert they happened, and forwards everything else.
+
+Not implemented:
+- **F12 and F22 are FROZEN**; **F04, F06, F16, F19, F20, F21, F23 and F24 are DEFERRED** pending
+  newer product direction. F02, F03, F05, F14, F15, F18 and F25 stayed regression-only, and none
+  of them broke.
+- The full employee-card redesign, which the plan forbade twice.
+
+Known limitations:
+- **F13 and F17 are NOT play-verified.** Whether the tick reads at a glance, whether the click
+  target works, whether reopening the tab redraws the right state, and whether every moved action is
+  still reachable from `...` are all things a person has to see. They are in
+  `docs/PENDING_PLAYTESTS.md`.
+- **The employment fix is NOT play-verified either.** The operator's own acceptance sequence —
+  hire, arrive, die, look in the grave, save, quit, reload, look again, and no new
+  `JobGiver_VisitGrave` exception in the post-load delta — has not been performed.
+- **The empty-corpse repair has never been run against the operator's save.** It is theirs to run.
+- `Log.Error` still reaches the in-game message queue before Unity, so a withheld diagnostic still
+  appears in the dev log window during a test run. Only the `Player.log` signal is affected.
+- The literal 22-pixel heights on the employee card's worker-name and combat-clause labels remain
+  real CLAUDE.md rule-7 debt, already recorded and deliberately not fixed here.
+
+Manual test:
+- Evidence: Whole suite on a fresh world: **1601 passed, 0 failed, 16 skipped, exit 0**, log signal CLEAN,
+  world-pawn delta 0. The baseline this run started from was 1536/0/17. The sixteen remaining
+  skips are the long-standing world-variance ones — no pregnant animal, no prisoner, no second
+  colony — and they skipped identically before this branch existed.
+- The three outstanding human proofs above are all recorded in `docs/PENDING_PLAYTESTS.md`. A
+  green suite does not substitute for any of them.
+
+## Runtime defect triage — infirmary bed scarcity and Hospitality Lord_165  (2026-09-10)
+
+Disposition:
+- **DEFECT ONE — not ours. Vanilla, under bed scarcity.** During real play in a mature colony, the
+  operator saw a red, repeating `Could not find good sleeping slot position for <employee>` dozens
+  of times. The named pawns were Intercolony armed employees. It fired only at the infirmary, after
+  a fight, when wounded employees needed treatment. The operator confirmed that both pawns already
+  had their own assigned beds, and that this had been happening for a long time rather than since
+  any recent change.
+- A medical bed clears its individual owners
+  (`reference/decompiled/RimWorld/Building_Bed.cs:110-121`, `:738-750`), so on a medical bed the
+  ownership tests in `GetBedSleepingSlotPosFor` are trivially satisfied and the error can only mean
+  **every slot was occupied and this pawn was not one of the occupants**
+  (`reference/decompiled/RimWorld/RestUtility.cs:360-383`).
+- **Vanilla does not exclude quest lodgers from medical-bed assignment.** The faction gate in
+  `IsValidBedFor` compares the traveller's `Faction` and `HostFaction` and never consults
+  `IsQuestLodger()` (`RestUtility.cs:185-190`). An active employee is player-faction with a null
+  `HostFaction`, so vanilla admits them to rescue and to bed-finding alike. **This killed the leading
+  hypothesis** — that a lodger was allowed into the rescue path and denied the bed-assignment path —
+  and it should not be proposed again.
+- **Intercolony has no bed selector.** Its only bed call in the whole mod is `UnclaimBed()` at
+  employment teardown (`Labor/EmploymentService.cs:1072-1085`), and its only lodger-related Harmony
+  patch is caravan-only (`Compatibility/HarmonyPatches.cs:99-150`).
+- **Common Sense is ruled out.** It patches `JobGiver_GetJoy.TryGiveJob` and
+  `WorkGiver_VisitSickPawn.JobOnThing`, nothing in the rest/bed/rescue chain, and it never suppresses
+  a vanilla null-return.
+- **Hospitality cannot cause it, and the reason is precise.** Its only relevant patch is a postfix
+  on `RestUtility.IsValidBedFor` that returns early when the result is already false
+  (`reference/mods/Hospitality-1.6/Hospitality/Patches/RestUtility_Patch.cs:10-31`). **It can only
+  narrow validity, never widen it**, so it cannot make a full bed pass a check it would otherwise
+  fail. It patches nothing else in the chain, and the save shows its `CompGuest.bed` and `.lord`
+  null for both named employees.
+- The mechanism is confirmed against the code. The bed passed `IsValidBedFor` with a free slot when
+  it was chosen, and was full by the time the pawn arrived to lie down.
+  `WorkGiver_RescueDowned.JobOnThing` re-looks-up the bed and builds the job **without null-checking
+  the result** (`reference/decompiled/RimWorld/WorkGiver_RescueDowned.cs:66-73`). The repetition is
+  explained too: the pawn holds a **queued** LayDown job, and `JobQueue.AnyCanBeginNow` re-evaluates
+  every queued job's `CanBeginNow` (`reference/decompiled/Verse.AI/JobQueue.cs:101-111`), which for
+  LayDown reaches `InBedOrRestSpotNow` and the failing slot lookup
+  (`reference/decompiled/RimWorld/JobDriver_LayDown.cs:41-44`). One stuck pawn therefore re-emits the
+  error on every check until the queue clears, which explains a repeat count in the dozens from a
+  single incident.
+- The confirming observation from the operator was **five medical beds, six casualties**. More
+  wounded than beds is exactly the condition that turns a rare race into a reliable one.
+- **Disposition: record it, do not patch around it.** This follows the standing rule set during the
+  unit-D triage: vanilla or another mod's invalid state is not to be hidden behind a defensive guard
+  in Intercolony. Nothing was changed.
+- As a product observation, not a defect, Intercolony makes it ordinary to field a dozen or more
+  armed employees, so a fight now produces more simultaneous casualties than a vanilla colony's
+  infirmary is usually built for. The mod did not break anything; it changed the scale at which an
+  existing vanilla limit is reached.
+
+- **DEFECT TWO — not ours — Hospitality's, and established for this instance rather than inherited
+  from the earlier `Lord_140` finding.** That earlier entry was instance-specific and did not
+  automatically cover a new id. The latest autosave holds twelve `<lord>Lord_165</lord>` references,
+  every holder a `Faction_13` pawn — Pact of Toberium, a siege group — all in Hospitality's
+  `CompGuest` layout. Intercolony has no `Lord`, `LordJob` or `lordManager` field and persists no Lord
+  reference (`Labor/EmploymentContract.cs:466-477`). Same disposition: recorded, not patched.
+- The earlier **Runtime defect triage — two defects from real play** and **Runtime defect gate — empty
+  corpses and expected self-test failures** entries remain the records for those earlier runtime
+  findings; they are cross-referenced here rather than restated.
+
+Implemented:
+- `reference/mods/` did not exist in this checkout even though `CLAUDE.md:34-38` describes it as the
+  home for third-party source used as a reference. Hospitality 1.6 and Common Sense 1.6 are now
+  decompiled into it with `ilspycmd`. The directory is gitignored, so nothing entered the repository,
+  but the next investigation of a mod interaction starts with the source already on disk instead of
+  guessing.
+
+Not implemented:
+- No code or runtime patch was made; both defects were recorded and deliberately left unpatched.
+- The scope fence remains in force: **F12 and F22 are FROZEN; F04, F06, F16, F19, F20, F21, F23 and
+  F24 are DEFERRED.**
+
+Known limitations:
+- The race was not observed under a debugger; it is inferred from the code paths plus the
+  five-beds-six-casualties observation. That inference is strong but it is an inference, and it is
+  labelled as one here.
+- No change was made, so there is nothing to regression-test.
+
+Manual test:
+- None — no code changed.
+
+### SUPERSEDE — installed Hospitality/Common Sense binary re-audit (2026-09-10)
+
+- **The sleeping-slot verdict is withdrawn. It is now: NOT DETERMINED — vanilla rescue/bed contention is plausible but NOT proven.**
+- **The specific reasoning error:** this entry asserted that Hospitality patches nothing else in the rescue/bed chain. The installed Hospitality 1.6 binary does: `reference/mods/Hospitality-1.6/Hospitality/Patches/WorkGiver_RescueDowned_Patch.cs:10-27` is a `ShouldSkip` postfix, and `:30-47` is a `HasJobOnThing` prefix. The earlier inventory therefore cannot be treated as established.
+- **Five beds, six casualties** is consistent with contention, but it is not causal proof and was wrongly treated as confirmation.
+- **Two pawns emitted the error, not one.** The sixth casualty having no bed explains at most one emission. Any accepted theory must account for both emissions; none does yet.
+- **What would close this:** captured runtime evidence connecting rescue/bed selection -> the specific target bed -> LayDown creation and enqueue -> that bed becoming unavailable -> the `GetBedSleepingSlotPosFor` error. Temporary instrumentation to capture exactly that is being built separately.
+- **The `Lord_165` verdict is NOT withdrawn.** It is separately evidenced from the save and still stands as Hospitality's.
+- The re-audit also found Hospitality patches on `RestUtility.IsValidBedFor`, `Building_Bed.ForPrisoners`/`GetGizmos`, `Pawn_Ownership.UnclaimBed`/`OwnedBed`, `Toils_LayDown.ApplyBedThoughts`, and the inherited base `JobDriver.DriverTick`; Common Sense patches `Pawn_JobTracker.StartJob`, `EndCurrentJob`, and `CleanupCurrentJob`. It found no direct patch to `WorkGiver_TakeToBed.FindBed`, `JobDriver_TakeToBed`, `JobDriver_LayDown`, `Toils_Bed`, `JobQueue`, `JobInBedUtility`, `CompAssignableToPawn_Bed`, or `JobDefOf.Rescue`.
+- Rescue-adjacent, but not direct patches to the listed target types, are Hospitality patches on `Pawn_GuestTracker.SetGuestStatus`, `Pawn_RelationsTracker.Notify_RescuedBy`, `Faction.Notify_MemberExitedMap`, `JobGiver_Work.PawnCanUseWorkGiver`, and `Pawn.VerifyReservations`; the exact employee state does not resolve all of their `IsGuest()` and runtime guards.
+
+## Runtime defect triage closure — bounded release-blocker gate  (2026-09-11)
+
+Disposition:
+- This closes the bounded triage requested by the operator. The rule was explicit: persistent
+  broken state, save/load corruption, stuck pawns, broken contracts or uncontrolled error spam
+  stops the release; anything self-recovering and isolated is recorded as non-blocking and not
+  chased further. All three items below are **NON-BLOCKING**.
+- The earlier Stage-F entry **Runtime defect triage — infirmary bed scarcity and Hospitality
+  Lord_165**, together with its **SUPERSEDE — installed Hospitality/Common Sense binary re-audit**
+  block, remains the investigation record for the bed and Lord findings. This entry records the
+  bounded closure disposition and the new runtime evidence rather than restating that analysis.
+- **The `Could not reserve` DoBill error — NON-BLOCKING, and Common Sense's path.** There were
+  exactly **two occurrences**, both from the same pawn and the same job (`Job_6461396`), on
+  `Thing_Steel` and `Thing_ComponentIndustrial`. There were **zero recurrences** in the 695 log
+  lines that followed. The pawn completed his employment lifecycle normally: contract end,
+  severed, safe passage complete. The stack names
+  `CommonSense.JobDriver_DoBill_MakeNewToils_CommonSensePatch` calling
+  `Pawn_CarryTracker.TryStartCarry` -> `ReservationUtility.Reserve`. It was self-recovering,
+  isolated and produced no spam. Recorded, not chased.
+- **The `Lord_* is referenced but is not deep-saved` warning — NON-BLOCKING, transient.** The
+  warning fires during a save, around the mass safe-passage event when a war emptied the payroll.
+  A new `Lord_166` appeared alongside the existing `Lord_165`. In the newest autosave, every Lord
+  id referenced anywhere in the file is also deep-saved: referenced `{165}`, deep-saved
+  `{165, 192, 198, 199, 205, 210}`, **dangling references: none**. `Lord_166` is absent entirely;
+  it existed transiently and was gone by the time the save settled.
+- That save reloads clean: no `Could not load reference`, `not deep-saved`, cross-reference error
+  or exception. Intercolony's world component loaded at **schema 58**. The warning is therefore a
+  transient report about an object mid-teardown at the moment of writing, not a persistent
+  dangling reference. Recorded as non-blocking.
+- Plainly: the earlier **"not ours" verdict on `Lord_165` was reopened and is NOT being re-asserted
+  here**. The appearance of a new `Lord_166` next to Intercolony's own
+  `HostilityPolicy.WalkOutFactionless`, which calls
+  `LordMaker.MakeNewLord(null, new LordJob_ExitMapBest(...))` at
+  `Source/Intercolony/Core/HostilityPolicy.cs:186-189`, means ownership is **not determined**.
+  Whoever creates these Lords, the saved state is consistent and reloads intact; that narrower
+  conclusion is sufficient for release.
+- **The infirmary sleeping-slot error — STILL NOT DETERMINED, and deliberately not pursued.**
+  Temporary instrumentation was built, gate-verified and armed. It never fired: zero
+  `Could not find good sleeping slot` errors and zero incident dumps in the reproduction session.
+  The reproduction attempt captured item 1 instead. A war then removed the two pawns involved from
+  the map under safe passage, so the original conditions no longer exist. Per the operator's
+  instruction, this is not pursued further unless the error naturally reappears. It remains
+  **NOT DETERMINED** and non-blocking: it is a vanilla log error that corrupts no state.
+
+Implemented:
+- The temporary instrumentation is gone. Both commits were reverted; the source tree is
+  byte-identical to its pre-instrumentation state — `git diff` between the pre-diagnostics commit
+  and HEAD shows **only `FOREMAN.md`**. No file named `BedDiagnostics` and no `BAD QUEUED LAYDOWN`
+  string remains anywhere under `Source/`.
+- A harness blind spot was found and retained as a release-gate rule. A clean `dev.ps1` log delta
+  does not prove startup was clean because the delta window opens after
+  `[StaticConstructorOnStartup]` has run. A diagnostic with an unresolvable Harmony target threw
+  inside `PatchAll`, aborted `Intercolony.HarmonyPatches`'s static constructor and silently
+  disabled all six production patches, while a full suite run reported **1601/0/16 with a clean
+  log signal**. Startup-log validation from process launch is now required in the release gate.
+- A second trap was found in the mutation-testing method itself: `Copy-Item` preserves the source
+  timestamp, so restoring a mutated file makes it look older than the DLL built from the mutation.
+  MSBuild then skips the rebuild and the next launch runs the mutated binary while every line says
+  "Build succeeded". Touch the file explicitly after restoring it.
+
+Not implemented:
+- No production fix was made for the transient Lord warning or the infirmary sleeping-slot error,
+  and no ownership verdict was supplied for either. The DoBill occurrence was recorded and not
+  chased under the bounded triage rule.
+- The scope fence remains in force: **F12 and F22 are FROZEN; F04, F06, F16, F19, F20, F21, F23
+  and F24 are DEFERRED.**
+
+Known limitations:
+- The infirmary error's ownership is unresolved, by decision rather than by omission.
+- `Lord_*` ownership is likewise unresolved; only the save-integrity question is answered.
+- The Lord integrity check covered the safe-passage case in one real save. It is one save, not a
+  proof over all schedules.
+
+Manual test:
+- The post-safe-passage autosave was loaded, its load log was inspected from process launch, and
+  Intercolony's world component was confirmed to load at **schema 58** with no cross-reference
+  errors.
+- Evidence: the whole suite on a **fresh** world after the revert returned **1601 passed, 0 failed,
+  16 skipped, exit 0**, log signal CLEAN, world-pawn delta 0. This is unchanged from the
+  pre-instrumentation baseline.
+- The same suite against the mature at-war save returned **1165/39/159**. This is **NOT evidence of
+  a regression**. Every failure is a world condition — no accessible trade partners and no labour
+  candidates in a colony at war with everyone: `0 opportunities from 12 settlements`, `0 settlements
+  evaluated`, `candidate pool is not empty (0 workers offered)`. The suite is built for a fresh
+  quicktest world and is not a valid integrity oracle on a mature save. The fresh-world run is the
+  apples-to-apples comparison, and it is green.
+

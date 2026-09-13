@@ -244,6 +244,18 @@ namespace Intercolony
         /// <summary>Number of completed renewal runs beyond the first agreement.</summary>
         public int renewals;
 
+        /// <summary>
+        /// When set, a cycle whose payment cannot be met waits and retries until its deadline
+        /// instead of being counted as a failed cycle immediately. New agreements default to
+        /// this automation; loaded agreements keep the setting saved by the player.
+        /// </summary>
+        public bool autoReadyOrders = true;
+
+        /// <summary>
+        /// Deliberately unsaved so the insufficient-silver reminder resets on load.
+        /// </summary>
+        public bool autoReadyWaitNotified;
+
         /// <summary>Why a terminal proposal did not become an active agreement.</summary>
         public string outcomeNote = "";
 
@@ -274,6 +286,14 @@ namespace Intercolony
         /// reopening an agreement.
         /// </summary>
         public bool CanDeclineFinalCounter => HasPendingCounterpartyCounter;
+
+        /// <summary>
+        /// Silver charged for one cycle by <see cref="PurchaseOrderService"/> when it creates the
+        /// paid order. Every display of this figure must use the same calculation rather than a
+        /// second copy; the counter-terms record above carries the same property for the terms
+        /// the player is still negotiating.
+        /// </summary>
+        public int paymentPerCycle => IntercolonyPricing.TotalPayment(unitPrice, quantityPerCycle);
 
         /// <summary>
         /// Returns the exact persisted counter terms for a later read model and acceptance path.
@@ -495,6 +515,7 @@ namespace Intercolony
             Scribe_Values.Look(ref renewalOffered, "renewalOffered", false);
             Scribe_Values.Look(ref renewalExpiryTick, "renewalExpiryTick", 0);
             Scribe_Values.Look(ref renewals, "renewals", 0);
+            Scribe_Values.Look(ref autoReadyOrders, "autoReadyOrders", false);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit && settlementName == null)

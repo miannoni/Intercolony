@@ -120,7 +120,8 @@ namespace Intercolony
 
         public override string ToString()
         {
-            return $"{Name} ({SkillSummary()}) — {dailyWage}/day, min {minTermDays}d, from {settlementName}";
+            return $"{Name} ({SkillSummary()}) — asks {dailyWage:N0}/day, " +
+                   $"min {minTermDays}d, from {settlementName}";
         }
     }
 }

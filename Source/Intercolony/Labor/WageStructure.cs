@@ -57,6 +57,47 @@ namespace Intercolony
                 : dailyWage;
         }
 
+        /// <summary>
+        /// The two daily figures the player needs to distinguish: what the worker asks and what
+        /// the selected payment structure charges the colony.
+        /// </summary>
+        public static string DailyWageDisclosure(WageStructure structure, int workerAsk)
+        {
+            if (workerAsk <= 0)
+            {
+                return "Worker ask: unavailable | Colony pays: unavailable";
+            }
+
+            return $"Worker asks: {workerAsk:N0} silver/day | " +
+                   $"Colony pays: {EffectiveDailyWage(structure, workerAsk):N0} silver/day";
+        }
+
+        /// <summary>Why the selected structure's charged rate differs, when it does.</summary>
+        public static string StructureTooltip(WageStructure structure)
+        {
+            switch (structure)
+            {
+                case WageStructure.Prepaid:
+                    return "Prepaid is the cheapest total because the colony takes the risk of " +
+                           "paying the whole term before the work is done. If the worker dies or " +
+                           "you change your mind, that silver is already spent.";
+                case WageStructure.Daily:
+                    return "Daily terms cost more than prepaid because paying day by day lets the " +
+                           "colony stop any morning with no further commitment. The worker charges " +
+                           "a premium for carrying that risk.";
+                default:
+                    return "Per-quadrum terms have no daily premium. They trade some flexibility " +
+                           "for a longer payment commitment than daily terms.";
+            }
+        }
+
+        /// <summary>Wage figures plus the structure rationale, for a wage row's tooltip.</summary>
+        public static string DailyWageTooltip(WageStructure structure, int workerAsk)
+        {
+            return DailyWageDisclosure(structure, workerAsk) + "\n\n" +
+                   StructureTooltip(structure);
+        }
+
         /// <summary>Days of wage taken as a signing fee, or zero when there is none.</summary>
         public static int SigningFeeDays(WageStructure structure)
         {
@@ -150,24 +191,28 @@ namespace Intercolony
         /// </summary>
         public static string Explain(WageStructure structure, int dailyWage, int termDays)
         {
+            if (dailyWage <= 0)
+            {
+                return "No wage quote is available.";
+            }
+
             int total = TotalCost(structure, dailyWage, termDays);
-            int gross = dailyWage * termDays;
 
             switch (structure)
             {
                 case WageStructure.Prepaid:
-                    return $"{total} silver now, all of it. " +
-                           $"The cheapest way to hire — but if they die " +
-                           "or you change your mind, the silver is spent.";
+                    return $"{DailyWageDisclosure(structure, dailyWage)}\n" +
+                           $"{total:N0} silver now, all of it.";
                 case WageStructure.Daily:
-                    return $"{SigningFee(structure, dailyWage)} silver to sign, then " +
-                           $"{EffectiveDailyWage(structure, dailyWage)} at the end of each day — " +
-                           $"{total} over the full term. The dearest way to hire, because you " +
-                           "can stop any morning and owe nothing more.";
+                    return $"{DailyWageDisclosure(structure, dailyWage)}\n" +
+                           $"{SigningFee(structure, dailyWage):N0} silver to sign, then colony pays " +
+                           $"{EffectiveDailyWage(structure, dailyWage):N0} silver at the end of each day — " +
+                           $"{total:N0} over the full term.";
                 default:
                     int period = PeriodCost(structure, dailyWage);
-                    return $"{SigningFee(structure, dailyWage)} silver to sign, then {period} " +
-                           $"every {GenDate.DaysPerQuadrum} days — {total} over the full term. " +
+                    return $"{DailyWageDisclosure(structure, dailyWage)}\n" +
+                           $"{SigningFee(structure, dailyWage):N0} silver to sign, then colony pays " +
+                           $"{period:N0} every {GenDate.DaysPerQuadrum} days — {total:N0} over the full term. " +
                            "A short term pays the remainder pro rata at the end.";
             }
         }

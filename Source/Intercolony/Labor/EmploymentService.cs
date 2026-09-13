@@ -36,15 +36,27 @@ namespace Intercolony
         /// how a call site ends up billing a different number than the dialog quoted. The compiler
         /// naming every site is the point.
         /// </param>
+        /// <param name="emergencyDispatch">
+        /// UI-only direct-hire mode. It filters the existing candidate pool, applies the shared
+        /// urgency wage multiplier, and changes the existing arrival tick; it is not persisted.
+        /// </param>
         public static EmploymentContract TryHire(
             IntercolonyWorldComponent state, LaborCandidate candidate, int termDays, Map paymentMap,
-            out string failReason, WageStructure structure, CombatClause clause)
+            out string failReason, WageStructure structure, CombatClause clause,
+            EmploymentHireCostQuote quotedHireCost = null, bool emergencyDispatch = false)
         {
             failReason = null;
 
             if (state == null || candidate?.pawn == null)
             {
                 failReason = "No candidate.";
+                return null;
+            }
+
+            if (emergencyDispatch && !LaborCandidateService.CanReachEmergency(candidate))
+            {
+                failReason = $"{candidate.Name} is not in the nearest half of the current " +
+                    "direct-hire market for emergency dispatch.";
                 return null;
             }
 
@@ -112,7 +124,7 @@ namespace Intercolony
 
             int baseWage = LaborCandidateService.DailyWage(
                 candidate.pawn, profile, candidate.distanceTiles, pricingTerm,
-                EmployerReputationService.ScoreFor(state), clause);
+                EmployerReputationService.ScoreFor(state), clause, emergencyDispatch);
 
             // Prepaid hands over the whole term; pay-as-you-go hands over a signing fee. A
             // periodic hire that demanded the full term up front would defeat the point of
@@ -120,22 +132,40 @@ namespace Intercolony
             // WageStructureUtility method takes.
             int upFront = WageStructureUtility.UpFrontCost(structure, baseWage, termDays);
 
-            // The contract records the rate actually agreed, premium included, because payroll
-            // reads dailyWage straight off it. A premium applied only at the quote would be
-            // shown at hiring and then never charged.
-            int dailyWage = WageStructureUtility.EffectiveDailyWage(structure, baseWage);
+            // The contract records the worker's ask. The charged rate is derived through
+            // ChargedDailyWage whenever payroll needs it, so the premium is not stored and
+            // cannot be applied twice.
+            int dailyWage = baseWage;
 
-            int available = PurchaseOrderService.CountColonySilver(paymentMap);
-            if (available < upFront)
+            // The dialog passes the same snapshot it displayed. Direct callers that have no UI
+            // quote get one here; either way the record and the bond come from one observation of
+            // this pawn at hire. Nothing in Intercolony changes a travelling worker's gear, so it
+            // is sound to keep this snapshot instead of reading the pawn again on arrival.
+            EmploymentHireCostQuote hireCostQuote = HireCostQuoteFor(
+                candidate.pawn, upFront, quotedHireCost, out failReason);
+            if (hireCostQuote == null)
             {
-                string payment = structure.IsPeriodic() ? "the signing fee" : "the prepaid wages";
-                failReason = $"Not enough silver in storage for {payment}: {available} of {upFront} needed.";
                 return null;
             }
 
-            if (upFront > 0 && !PurchaseOrderService.TryTakeSilver(paymentMap, upFront))
+            EmploymentEquipmentQuote equipmentQuote = hireCostQuote.equipment;
+            int equipmentBond = equipmentQuote.bond;
+            long hireCost = hireCostQuote.totalDue;
+
+            int available = PurchaseOrderService.CountColonySilver(paymentMap);
+            if (available < hireCost)
             {
-                failReason = "Could not collect the silver.";
+                string payment = structure.IsPeriodic() ? "the signing fee" : "the prepaid wages";
+                failReason =
+                    $"Not enough silver in storage for hire: {available} of {hireCost} needed " +
+                    $"({payment}: {upFront}; equipment bond: " +
+                    $"{EmploymentEquipmentService.BondLabel(equipmentBond)}).";
+                return null;
+            }
+
+            if (!EmploymentEquipmentService.TryTakeHireCost(
+                    paymentMap, hireCostQuote, out failReason))
+            {
                 return null;
             }
 
@@ -150,6 +180,7 @@ namespace Intercolony
             // string "no skills" into every completed record.
             string skills = candidate.SkillSummary();
 
+            int arrivalDays = LaborCandidateService.ArrivalDaysFor(candidate, emergencyDispatch);
             Pawn worker = candidate.Release();
             LaborCandidateService.Take(candidate);
 
@@ -169,9 +200,13 @@ namespace Intercolony
                 termDays = termDays,
                 combatClause = clause,
                 wageStructure = structure,
+                arrivedEquipment = equipmentQuote.equipment,
+                equipmentBond = equipmentBond,
                 paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
-                arrivalTick = GenTicks.TicksGame + candidate.travelDays * GenDate.TicksPerDay,
+                // Emergency mode changes only this existing arrival deadline. The mode itself is
+                // deliberately not retained as a new contract field or save-state concept.
+                arrivalTick = GenTicks.TicksGame + arrivalDays * GenDate.TicksPerDay,
                 status = EmploymentStatus.Travelling
             };
 
@@ -189,9 +224,10 @@ namespace Intercolony
 
             Messages.Message(
                 $"Hired {contract.workerName} from {contract.settlementName} as a {clause.Label()} — " +
-                $"{dailyWage} silver/day × {termDays} days, " +
+                $"Term: {termDays} days. " +
                 $"{WageStructureUtility.Explain(structure, dailyWage, termDays)} " +
-                $"Arrives in {candidate.travelDays} days.",
+                $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentBond)}. " +
+                $"Arrives in {arrivalDays} days.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             IntercolonyLog.Message($"Hired: {contract}");
@@ -210,7 +246,8 @@ namespace Intercolony
         /// </summary>
         public static EmploymentContract TryHireApplicant(
             IntercolonyWorldComponent state, JobApplicant applicant, JobPosting posting,
-            Map paymentMap, out string failReason)
+            Map paymentMap, out string failReason,
+            EmploymentHireCostQuote quotedHireCost = null)
         {
             failReason = null;
 
@@ -252,24 +289,42 @@ namespace Intercolony
                 return null;
             }
 
-            // The posted wage, not a computed one. This is the whole of §35.2's inversion: the
-            // player named the price and the worker accepted it.
-            int dailyWage = posting.wageOffered;
+            // The worker names the price in the application; the posted wage is only what got them
+            // to apply. F25 makes the applicant's own ask the contract rate.
+            int dailyWage = applicant.openMarketAsk;
             int upFront = WageStructureUtility.UpFrontCost(posting.wageStructure, dailyWage, posting.termDays);
 
+            // The posting row passes the same snapshot it displayed. If this method is called
+            // directly, make the quote now from the applicant's real pawn. Travel does not mutate
+            // worker gear in this mod, so recording it at hire is the same observation that prices
+            // and charges the bond; arrival must not read or charge it again.
+            EmploymentHireCostQuote hireCostQuote = HireCostQuoteFor(
+                applicant.pawn, upFront, quotedHireCost, out failReason);
+            if (hireCostQuote == null)
+            {
+                return null;
+            }
+
+            EmploymentEquipmentQuote equipmentQuote = hireCostQuote.equipment;
+            int equipmentBond = equipmentQuote.bond;
+            long hireCost = hireCostQuote.totalDue;
+
             int available = PurchaseOrderService.CountColonySilver(paymentMap);
-            if (available < upFront)
+            if (available < hireCost)
             {
                 string payment = posting.wageStructure.IsPeriodic()
                     ? "the signing fee"
                     : "the prepaid wages";
-                failReason = $"Not enough silver in storage for {payment}: {available} of {upFront} needed.";
+                failReason =
+                    $"Not enough silver in storage for hire: {available} of {hireCost} needed " +
+                    $"({payment}: {upFront}; equipment bond: " +
+                    $"{EmploymentEquipmentService.BondLabel(equipmentBond)}).";
                 return null;
             }
 
-            if (upFront > 0 && !PurchaseOrderService.TryTakeSilver(paymentMap, upFront))
+            if (!EmploymentEquipmentService.TryTakeHireCost(
+                    paymentMap, hireCostQuote, out failReason))
             {
-                failReason = "Could not collect the silver.";
                 return null;
             }
 
@@ -298,6 +353,8 @@ namespace Intercolony
                 termDays = posting.termDays,
                 combatClause = posting.combatClause,
                 wageStructure = posting.wageStructure,
+                arrivedEquipment = equipmentQuote.equipment,
+                equipmentBond = equipmentBond,
                 paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
                 arrivalTick = GenTicks.TicksGame + applicant.travelDays * GenDate.TicksPerDay,
@@ -315,7 +372,9 @@ namespace Intercolony
 
             Messages.Message(
                 $"Hired {contract.workerName} from {contract.settlementName} as a {posting.combatClause.Label()} " +
-                $"at your posted {dailyWage} silver/day × {posting.termDays} days. " +
+                $"for {posting.termDays} days — " +
+                $"{WageStructureUtility.DailyWageDisclosure(posting.wageStructure, dailyWage)}. " +
+                $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentBond)}. " +
                 $"Arrives in {applicant.travelDays} days.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
@@ -408,6 +467,7 @@ namespace Intercolony
                 // Renewal is offered before expiry, not at it (§115): a worker who would stay says
                 // so while there is still time to answer.
                 RenewalService.Advance(contract);
+                RenewalService.AdvanceAutoRenew(contract);
 
                 // §44's larger sibling: a worker who has been here long enough, and been treated
                 // well enough, asks to stay for good rather than just for another term.
@@ -538,6 +598,10 @@ namespace Intercolony
             PayrollService.SettleOnEnd(contract, EmploymentStatus.Severed, state?.LaborDebts, state);
             CompensationService.ClaimOnEnd(state, contract);
 
+            // The worker is about to be made factionless and sent through vanilla departure
+            // cleanup, which drops carried gear. Match the bond before that happens.
+            EmploymentEquipmentService.SettleBond(contract);
+
             contract.status = EmploymentStatus.Severed;
             contract.outcomeNote =
                 $"{contract.factionName} went to war; {contract.workerName} was released";
@@ -616,7 +680,10 @@ namespace Intercolony
             Pawn worker = contract.pawn;
             if (worker == null)
             {
-                // Already finished, or the pawn did not survive a load. Nothing left to do.
+                // A save can contain a severed departure created before the settlement half was
+                // present. The pawn is no longer inspectable, so the bond is retained rather than
+                // silently discarded; current departures already settled it in BeginSafePassage.
+                EmploymentEquipmentService.SettleBond(contract);
                 contract.safePassage = false;
                 return;
             }
@@ -715,6 +782,11 @@ namespace Intercolony
             Pawn worker = contract.pawn;
             Quest quest = contract.quest;
 
+            // The employment ended, and its bond was settled, in BeginSafePassage. This method
+            // normally only closes the already-Severed departure after the pawn is clear. Keep the
+            // call here as an idempotent fallback for a save made between those two operations.
+            EmploymentEquipmentService.SettleBond(contract);
+
             contract.outcomeNote = note ?? contract.outcomeNote;
             contract.safePassage = false;
             contract.safePassageEndTick = -1;
@@ -799,6 +871,9 @@ namespace Intercolony
                 return;
             }
 
+            // Equipment was observed, recorded and charged at hire. Nothing in Intercolony changes
+            // a travelling worker's gear, so arrival only receives the pawn and never re-quotes or
+            // charges the bond.
             try
             {
                 if (!RCellFinder.TryFindRandomPawnEntryCell(out IntVec3 cell, map,
@@ -856,7 +931,9 @@ namespace Intercolony
                     $"{contract.workerName} of {contract.factionName} has arrived from {contract.settlementName} " +
                     $"to work for {contract.termDays} days.\n\n" +
                     $"Skills: {contract.workerSkills}\n" +
-                    $"Wage: {contract.dailyWage} silver/day, {contract.paidSilver} silver paid in advance.\n" +
+                    $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}\n" +
+                    $"{contract.paidSilver} silver paid in advance.\n" +
+                    $"Equipment: {contract.EquipmentBondLabel}.\n" +
                     $"Terms: {contract.combatClause.LabelCap()}. {contract.combatClause.Explain()}\n\n" +
                     "They can be assigned work and given a bed like a colonist, but they are not one: " +
                     "they belong to their own faction and will leave when the term ends.\n\n" +
@@ -881,7 +958,13 @@ namespace Intercolony
         /// drops anything carried, and puts them under a <c>LordJob_ExitMapBest</c>. Doing it by
         /// hand would mean reimplementing <c>LeaveQuestPartUtility</c> less well.
         /// </summary>
-        public static void End(EmploymentContract contract, EmploymentStatus status, string note)
+        /// <param name="noticeSkipped">
+        /// True only for an open-ended dismissal that skipped its required notice. That goodwill
+        /// consequence is already recorded by RenewalService, so F09 must not add another one.
+        /// This is call context, not persisted contract state.
+        /// </param>
+        public static void End(EmploymentContract contract, EmploymentStatus status, string note,
+            bool noticeSkipped = false)
         {
             if (contract == null || !contract.IsOpen)
             {
@@ -893,6 +976,11 @@ namespace Intercolony
 
             Quest quest = contract.quest;
             Pawn worker = contract.pawn;
+
+            // Settle before QuestPart_Leave cleanup drops anything the worker is carrying. The
+            // same call applies to completion, dismissal, death, capture, walk-out and failure;
+            // the reason the employment ended does not change the bond rule.
+            EmploymentEquipmentService.SettleBond(contract);
 
             // Pay for the days actually worked since the last payday before anything else — the
             // pawn's references are cleared below, and the arrears calculation needs them.
@@ -1003,20 +1091,31 @@ namespace Intercolony
                 worker.kindDef = contract.originalKind;
             }
 
-            // A worker dismissed before arrival was never spawned and is only alive because
-            // TryHire pinned them in the world pawn pool. Unpin and discard, or every cancelled
-            // hire leaves a pawn the GC has been told never to collect.
-            if (status != EmploymentStatus.Captured && worker != null && !worker.Spawned &&
+            // Discard only a live worker whose contract never recorded arrival: TryHire pinned the
+            // unspawned generated pawn in the world pawn pool, so an ended pre-arrival contract
+            // must unpin it or leak a pawn the GC was told never to collect. Never discard a dead
+            // worker here: a corpse may still reference it, and destroying it would empty that
+            // corpse's reference.
+            if (status != EmploymentStatus.Captured && worker != null && !worker.Dead &&
+                contract.arrivedTick == EmploymentContract.NotArrived && !worker.Spawned &&
                 Find.WorldPawns.Contains(worker))
             {
                 Find.WorldPawns.RemoveAndDiscardPawnViaGC(worker);
             }
 
+            // Evaluate before the letter so the one nonzero F09 result can be disclosed without
+            // making the letter depend on the history note that ResolveGoodwill appends below.
+            EmploymentGoodwillEvaluation goodwillEvaluation =
+                EmploymentExperienceService.EvaluateGoodwill(contract, status, noticeSkipped);
+
             // A letter, not a message. Arrival sends one, so departure must too — and a
             // transient corner toast is the wrong weight for "the worker you were relying on is
             // gone": it vanishes, leaves nothing in the history, and is easy to miss entirely
             // while the camera is elsewhere.
-            SendDepartureLetter(contract, status, worker);
+            SendDepartureLetter(contract, status, worker, goodwillEvaluation.GoodwillDelta);
+
+            // Keep the history note and reputation mutation in their original post-letter order.
+            EmploymentExperienceService.ResolveGoodwill(contract, goodwillEvaluation);
 
             // A closed record must not hold live references: the pawn walks off the map and may
             // be garbage-collected out of the world, and a dangling Scribe_References target
@@ -1028,11 +1127,33 @@ namespace Intercolony
             IntercolonyLog.Message($"Ended: {contract} — {note}");
         }
 
-        private static void SendDepartureLetter(EmploymentContract contract, EmploymentStatus status, Pawn worker)
+        private static EmploymentHireCostQuote HireCostQuoteFor(
+            Pawn worker, int upfrontWages, EmploymentHireCostQuote quotedHireCost,
+            out string failureReason)
+        {
+            failureReason = null;
+            if (quotedHireCost == null)
+            {
+                return EmploymentEquipmentService.QuoteHireCost(
+                    upfrontWages, EmploymentEquipmentService.Quote(worker));
+            }
+
+            if (quotedHireCost.equipment == null ||
+                quotedHireCost.equipment.sourcePawn != worker ||
+                quotedHireCost.upfrontWages != upfrontWages)
+            {
+                failureReason = "The hire quote changed. Reopen the hiring screen.";
+                return null;
+            }
+
+            return quotedHireCost;
+        }
+
+        private static void SendDepartureLetter(
+            EmploymentContract contract, EmploymentStatus status, Pawn worker, int goodwillDelta)
         {
             // Severance sends its own letter from HostilityPolicy, which can say what a generic
             // departure letter cannot: which faction went to war, and what happened to the money.
-            // A second letter here would just repeat it worse.
             if (status == EmploymentStatus.Severed)
             {
                 return;
@@ -1071,8 +1192,15 @@ namespace Intercolony
             string body = $"{contract.outcomeNote}.\n\n" +
                           $"{contract.workerName} of {contract.factionName} " +
                           $"({contract.workerSkills}) is returning to {contract.settlementName}.\n" +
-                          $"Term: {contract.termDays} days at {contract.dailyWage} silver/day, " +
+                          $"Term: {contract.termDays} days — " +
+                          $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}, " +
                           $"{contract.paidSilver} silver paid in advance.";
+
+            string goodwillRow = GoodwillDisclosure(goodwillDelta);
+            if (!string.IsNullOrEmpty(goodwillRow))
+            {
+                body += "\n" + goodwillRow;
+            }
 
             IntercolonyLetterImportance importance =
                 status == EmploymentStatus.Completed
@@ -1080,9 +1208,6 @@ namespace Intercolony
                     : status == EmploymentStatus.Dismissed
                         ? IntercolonyLetterImportance.Important
                         : IntercolonyLetterImportance.Always;
-
-            // Deliberately says nothing about refunds. Nothing else in RimWorld or Intercolony
-            // refunds anything, so raising the subject is what would make a player expect one.
 
             // A worker who left the map has no target to look at; one still walking out does.
             if (worker != null && worker.Spawned)
@@ -1093,6 +1218,21 @@ namespace Intercolony
             {
                 IntercolonyLetters.Send(importance, label, body, def);
             }
+        }
+
+        private static string GoodwillDisclosure(int goodwillDelta)
+        {
+            if (goodwillDelta > 0)
+            {
+                return $"Settlement view: better treatment (+{goodwillDelta} goodwill)";
+            }
+
+            if (goodwillDelta < 0)
+            {
+                return $"Settlement view: worse treatment ({goodwillDelta} goodwill)";
+            }
+
+            return null;
         }
 
         /// <summary>Whether any employee is currently working. Cheap enough to call from a patch.</summary>

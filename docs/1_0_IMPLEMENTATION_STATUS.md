@@ -3,12 +3,12 @@
 The continuity mechanism between sessions. Read `docs/INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md`
 first; this file says where in that program we actually are.
 
-Current stage:      Stage 8 — 1.0 integration, balance and release gate (shipped 2026-08-24)
-Current slice:      1.0 release complete; the §8.3–§8.7 play sitting remains outstanding
-Last completed:     1.0 release (`e7053b6`, 2026-08-24)
-Current save schema: 56
-Current mod version: 1.0.0
-Branch:             `main` — `1.0` merged with `--no-ff` as `e7053b6`
+Current stage:      The 1.0.2 queue is closed; a playtest-driven batch of four features from Matteo's 2026-08-30 session is complete.
+Current slice:      none open. Remaining work on this batch is the play sitting recorded in docs/PENDING_PLAYTESTS.md.
+Last completed:     `fc1a0b6` — the flake and the four unseen features go into the written record.
+Current save schema: 57 (was 56)
+Current mod version: 1.0.1, released 2026-08-25 as `a0606db`
+Branch:             `1.0.1` — thirteen commits further ahead of `main` than it was.
 
 ## Stage status
 

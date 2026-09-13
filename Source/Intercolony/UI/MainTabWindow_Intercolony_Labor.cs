@@ -25,7 +25,7 @@ namespace Intercolony
         private Vector2 employeeScroll;
         private Vector2 candidateScroll;
 
-        private const float EmployeeRowHeight = 52f;
+        private const float EmployeeRowMinimumHeight = 52f;
         private const float CandidateRowHeight = 32f;
 
         /// <summary>
@@ -66,6 +66,9 @@ namespace Intercolony
         private LaborPage laborPage = LaborPage.Hire;
         private Vector2 postingScroll;
         private readonly float[] candidateColumnWidths = new float[6];
+        // UI-only mode for the transient direct-hire listing. It is deliberately not world state:
+        // emergency dispatch is not a queued request and has no save obligation.
+        private bool emergencyDispatch;
 
         private const float LaborTabRowHeight = 30f;
 
@@ -169,20 +172,57 @@ namespace Intercolony
             List<LaborCandidate> pool = new List<LaborCandidate>(LaborCandidateService.Refresh(state));
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, 400f, 34f), "Workers for hire");
+            string hireTitle = emergencyDispatch ? "Emergency workers for hire" : "Workers for hire";
+            float hireTitleHeight = Text.CalcHeight(hireTitle, 400f);
+            Widgets.Label(new Rect(0f, y, 400f, hireTitleHeight), hireTitle);
             Text.Font = GameFont.Small;
 
             DrawEmployerStanding(new Rect(360f, y + 4f, inRect.width - 360f, 28f), state);
-            y += 38f;
+            y += Mathf.Max(38f, hireTitleHeight + 4f);
+
+            const float emergencyToggleWidth = 260f;
+            float emergencyToggleHeight = Mathf.Max(
+                24f, Text.CalcHeight("Emergency dispatch", emergencyToggleWidth - 24f));
+            Rect emergencyToggleRect = new Rect(
+                0f, y, emergencyToggleWidth, emergencyToggleHeight);
+            bool wasEmergencyDispatch = emergencyDispatch;
+            Widgets.CheckboxLabeled(emergencyToggleRect, "Emergency dispatch", ref emergencyDispatch);
+            TooltipHandler.TipRegion(
+                emergencyToggleRect,
+                "Show only the nearest half of the existing worker market by ordinary travel time. " +
+                "Emergency dispatch compresses the listed travel estimate to about one third, " +
+                "with a one-day minimum, and buys that speed with a large wage premium; it does " +
+                "not create workers, guarantee fulfilment, queue a request, or select a drop pod.");
+            if (emergencyDispatch != wasEmergencyDispatch)
+            {
+                SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
+            y += emergencyToggleHeight + 4f;
+
+            if (emergencyDispatch)
+            {
+                pool.RemoveAll(candidate => !LaborCandidateService.CanReachEmergency(candidate));
+            }
 
             if (pool.Count == 0)
             {
                 GUI.color = Color.gray;
-                string emptyMessage = "No workers on offer.\n\n" +
-                                      "Settlements you can reach are not releasing labor at the moment. The listing " +
-                                      "changes with the market — check back after the next refresh, or post a job and " +
-                                      "let people come to you.";
-                Widgets.Label(new Rect(6f, y, inRect.width - 12f, Text.CalcHeight(emptyMessage, inRect.width - 12f)), emptyMessage);
+                // The nearest-half rule guarantees an emergency candidate whenever the ordinary
+                // listing contains one; this established empty state therefore remains for an
+                // empty ordinary market.
+                string emptyMessage = emergencyDispatch
+                    ? "No workers are currently on offer.\n\n" +
+                      "Emergency dispatch filters the existing direct-hire market; it does not " +
+                      "create workers or queue an urgent request. There is therefore nothing to " +
+                      "dispatch until the market refreshes. Check back then, or post a job and " +
+                      "let people come to you."
+                    : "No workers on offer.\n\n" +
+                      "Settlements you can reach are not releasing labor at the moment. The listing " +
+                      "changes with the market — check back after the next refresh, or post a job and " +
+                      "let people come to you.";
+                float emptyMessageHeight = Text.CalcHeight(emptyMessage, inRect.width - 12f);
+                Widgets.Label(new Rect(6f, y, inRect.width - 12f, emptyMessageHeight), emptyMessage);
                 GUI.color = Color.white;
                 return;
             }
@@ -232,8 +272,9 @@ namespace Intercolony
             Widgets.Label(new Rect(0f, y, 400f, 34f), "On the payroll");
             Text.Font = GameFont.Small;
 
-            DrawPayrollSummary(new Rect(400f, y + 6f, inRect.width - 400f, 24f), live);
-            y += 38f;
+            float payrollSummaryHeight = DrawPayrollSummary(
+                new Rect(400f, y + 6f, inRect.width - 400f, 24f), live);
+            y += Mathf.Max(38f, payrollSummaryHeight + 6f);
 
             // Height is content-driven up to a cap, so one employee does not leave a huge empty
             // panel and eight do not push the listing off screen.
@@ -250,17 +291,19 @@ namespace Intercolony
             {
                 // The page is the employees' now, so the list gets the room rather than a quarter
                 // of it — the four-row cap existed because two other sections were below it.
-                float employeeBlock = Mathf.Min(live.Count * EmployeeRowHeight, inRect.height - 140f);
+                float employeeContentHeight = EmployeeRowsHeight(live, inRect.width - 16f);
+                float employeeBlock = Mathf.Min(employeeContentHeight, inRect.height - 140f);
 
                 Rect outRect = new Rect(0f, y, inRect.width, employeeBlock);
-                Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, live.Count * EmployeeRowHeight);
+                Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, employeeContentHeight);
                 BeginPageScrollView(outRect, ref employeeScroll, viewRect);
 
                 float rowY = 0f;
                 for (int i = 0; i < live.Count; i++)
                 {
-                    DrawEmployeeRow(new Rect(0f, rowY, viewRect.width, EmployeeRowHeight), live[i], i);
-                    rowY += EmployeeRowHeight;
+                    float rowHeight = EmployeeRowHeight(viewRect.width, live[i]);
+                    DrawEmployeeRow(new Rect(0f, rowY, viewRect.width, rowHeight), live[i], i);
+                    rowY += rowHeight;
                 }
 
                 EndPageScrollView();
@@ -288,10 +331,10 @@ namespace Intercolony
             if (Widgets.ButtonText(new Rect(inRect.width - 160f, y + 2f, 150f, 30f), "New posting"))
             {
                 Find.WindowStack.Add(new Dialog_CreateJobPosting(state,
-                    (skill, minLevel, termDays, wage, structure, clause) =>
+                    (skill, minLevel, termDays, structure, clause) =>
                     {
                         if (JobPostingService.TryPost(state, skill, minLevel, termDays,
-                                wage, structure, clause, out string failReason) == null)
+                                structure, clause, out string failReason) == null)
                         {
                             Messages.Message(failReason ?? "Could not post.",
                                 MessageTypeDefOf.RejectInput, historical: false);
@@ -327,13 +370,14 @@ namespace Intercolony
             }
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
+            float viewWidth = Mathf.Max(1f, inRect.width - 16f);
             float height = 0f;
             foreach (JobPosting posting in live)
             {
-                height += PostingBlockHeight(posting);
+                height += PostingBlockHeight(posting, viewWidth);
             }
 
-            Rect viewRect = new Rect(0f, 0f, inRect.width - 16f, height);
+            Rect viewRect = new Rect(0f, 0f, viewWidth, height);
             System.Action pendingAction = null;
             BeginPageScrollView(outRect, ref postingScroll, viewRect);
 
@@ -342,7 +386,7 @@ namespace Intercolony
                 float rowY = 0f;
                 for (int i = 0; i < live.Count; i++)
                 {
-                    float blockHeight = PostingBlockHeight(live[i]);
+                    float blockHeight = PostingBlockHeight(live[i], viewRect.width);
                     DrawPostingBlock(new Rect(0f, rowY, viewRect.width, blockHeight), live[i],
                         state, i, ref pendingAction);
                     rowY += blockHeight;
@@ -359,11 +403,108 @@ namespace Intercolony
         }
 
         private const float PostingHeaderHeight = 54f;
-        private const float ApplicantRowHeight = 66f;
+        private const float ApplicantRowMinimumHeight = 66f;
+        private const float ApplicantRowTopPadding = 2f;
+        private const float ApplicantRowBottomPadding = 2f;
+        private const float ApplicantActionWidth = 100f;
+        private const float ApplicantTextInset = 24f;
+        private const float ApplicantTextWidthPadding = 48f;
 
-        private static float PostingBlockHeight(JobPosting posting)
+        private static float ApplicantTextWidth(float rowWidth)
         {
-            return PostingHeaderHeight + posting.Applicants.Count * ApplicantRowHeight + 8f;
+            return Mathf.Max(1f,
+                rowWidth - ApplicantActionWidth * 2f - ApplicantTextWidthPadding);
+        }
+
+        private static float ApplicantLabelHeight(string text, float width)
+        {
+            return Mathf.Max(Text.LineHeight, Text.CalcHeight(text ?? "", Mathf.Max(1f, width)));
+        }
+
+        private static string ApplicantTitleLine(JobApplicant applicant)
+        {
+            return $"{applicant.Name}  —  {applicant.SkillSummary(4)}";
+        }
+
+        private static string ApplicantValueLine(JobPosting posting, JobApplicant applicant)
+        {
+            return $"{applicant.settlementName} ({applicant.factionName}), {applicant.travelDays}d away — " +
+                   WageStructureUtility.DailyWageDisclosure(
+                       posting.wageStructure, applicant.openMarketAsk);
+        }
+
+        private static string ApplicantPaymentLine(JobPosting posting, int upFront)
+        {
+            return posting.wageStructure.IsPeriodic()
+                ? $"Signing fee: {upFront:N0} silver"
+                : $"Prepaid wages: {upFront:N0} silver";
+        }
+
+        private static string ApplicantStorageLine(int available)
+        {
+            return $"In storage: {available:N0} silver";
+        }
+
+        private static string ApplicantEquipmentBondLine(EmploymentEquipmentQuote equipmentQuote)
+        {
+            return $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentQuote.bond)}.";
+        }
+
+        private static string ApplicantHireCostLine(long totalDue)
+        {
+            return $"Due at hire: {totalDue:N0} silver.";
+        }
+
+        private static string ApplicantDeathCompensationLine(
+            JobPosting posting, JobApplicant applicant)
+        {
+            int deathCompensationDays = posting.combatClause.DeathCompensationDays();
+            if (deathCompensationDays <= 0)
+            {
+                return null;
+            }
+
+            return $"Death compensation: {applicant.openMarketAsk * deathCompensationDays} silver.";
+        }
+
+        private static float ApplicantRowHeight(
+            float rowWidth, JobPosting posting, JobApplicant applicant)
+        {
+            float textWidth = ApplicantTextWidth(rowWidth);
+            int upFront = WageStructureUtility.UpFrontCost(
+                posting.wageStructure, applicant.openMarketAsk, posting.termDays);
+            EmploymentEquipmentQuote equipmentQuote = EmploymentEquipmentService.Quote(applicant.pawn);
+            EmploymentHireCostQuote hireCostQuote = EmploymentEquipmentService.QuoteHireCost(
+                upFront, equipmentQuote);
+            int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
+
+            float height = ApplicantRowTopPadding + ApplicantRowBottomPadding;
+            height += ApplicantLabelHeight(ApplicantTitleLine(applicant), textWidth);
+            height += ApplicantLabelHeight(ApplicantValueLine(posting, applicant), textWidth);
+            height += ApplicantLabelHeight(
+                ApplicantPaymentLine(posting, hireCostQuote.upfrontWages), textWidth);
+            height += ApplicantLabelHeight(ApplicantStorageLine(available), textWidth);
+            height += ApplicantLabelHeight(ApplicantEquipmentBondLine(hireCostQuote.equipment), textWidth);
+            height += ApplicantLabelHeight(ApplicantHireCostLine(hireCostQuote.totalDue), textWidth);
+
+            string deathCompensation = ApplicantDeathCompensationLine(posting, applicant);
+            if (deathCompensation != null)
+            {
+                height += ApplicantLabelHeight(deathCompensation, textWidth);
+            }
+
+            return Mathf.Max(ApplicantRowMinimumHeight, height);
+        }
+
+        private static float PostingBlockHeight(JobPosting posting, float width)
+        {
+            float height = PostingHeaderHeight + 8f;
+            for (int i = 0; i < posting.Applicants.Count; i++)
+            {
+                height += ApplicantRowHeight(width, posting, posting.Applicants[i]);
+            }
+
+            return height;
         }
 
         private void DrawPostingBlock(
@@ -406,9 +547,11 @@ namespace Intercolony
             float y = rect.y + PostingHeaderHeight;
             for (int i = posting.Applicants.Count - 1; i >= 0; i--)
             {
-                DrawApplicantRow(new Rect(rect.x, y, rect.width, ApplicantRowHeight),
-                    posting, posting.Applicants[i], state, ref pendingAction);
-                y += ApplicantRowHeight;
+                JobApplicant applicant = posting.Applicants[i];
+                float rowHeight = ApplicantRowHeight(rect.width, posting, applicant);
+                DrawApplicantRow(new Rect(rect.x, y, rect.width, rowHeight),
+                    posting, applicant, state, ref pendingAction);
+                y += rowHeight;
             }
         }
 
@@ -418,52 +561,100 @@ namespace Intercolony
         {
             Widgets.DrawHighlightIfMouseover(rect);
 
-            float actionWidth = 100f;
-            float textWidth = rect.width - actionWidth * 2f - 48f;
+            float textWidth = ApplicantTextWidth(rect.width);
+            float lineY = rect.y + ApplicantRowTopPadding;
 
-            Widgets.Label(new Rect(rect.x + 24f, rect.y + 2f, textWidth, 22f),
-                $"{applicant.Name}  —  {applicant.SkillSummary(4)}");
+            string title = ApplicantTitleLine(applicant);
+            float titleHeight = ApplicantLabelHeight(title, textWidth);
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, titleHeight), title);
+            lineY += titleHeight;
 
-            // The bargain is the useful number: they accepted your wage, but what were they worth?
-            int bargain = applicant.Bargain(posting.wageOffered);
-            string value = bargain > 0
-                ? $"asks {applicant.openMarketAsk}/day on the open market — you are paying " +
-                  $"{bargain} over"
-                : $"asks {applicant.openMarketAsk}/day on the open market — your offer matches";
+            // The worker's ask is the contract rate; the posted wage is only the filter that got
+            // this applicant to apply.
+            string value = ApplicantValueLine(posting, applicant);
+            float valueHeight = ApplicantLabelHeight(value, textWidth);
 
             GUI.color = new Color(1f, 1f, 1f, 0.65f);
-            Widgets.Label(new Rect(rect.x + 24f, rect.y + 22f, textWidth, 22f),
-                $"{applicant.settlementName} ({applicant.factionName}), {applicant.travelDays}d away — " +
-                value);
+            Rect valueRect = new Rect(rect.x + ApplicantTextInset, lineY, textWidth, valueHeight);
+            TooltipHandler.TipRegion(
+                valueRect,
+                WageStructureUtility.DailyWageTooltip(posting.wageStructure, applicant.openMarketAsk));
+            Widgets.Label(valueRect, value);
             GUI.color = Color.white;
+            lineY += valueHeight;
 
             int upFront = WageStructureUtility.UpFrontCost(
-                posting.wageStructure, posting.wageOffered, posting.termDays);
+                posting.wageStructure, applicant.openMarketAsk, posting.termDays);
+            EmploymentEquipmentQuote equipmentQuote = EmploymentEquipmentService.Quote(applicant.pawn);
+            EmploymentHireCostQuote hireCostQuote = EmploymentEquipmentService.QuoteHireCost(
+                upFront, equipmentQuote);
+            long totalDue = hireCostQuote.totalDue;
             int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
-            bool affordable = available >= upFront;
+            bool affordable = totalDue <= int.MaxValue && available >= totalDue;
+            string payment = ApplicantPaymentLine(posting, hireCostQuote.upfrontWages);
+            float paymentHeight = ApplicantLabelHeight(payment, textWidth);
 
             GUI.color = affordable ? new Color(1f, 1f, 1f, 0.65f) : new Color(1f, 0.6f, 0.6f);
-            Widgets.Label(new Rect(rect.x + 24f, rect.y + 42f, textWidth, 22f),
-                posting.wageStructure.IsPeriodic()
-                    ? $"Signing fee: {upFront} silver.  In storage: {available}."
-                    : $"Prepaid wages: {upFront} silver.  In storage: {available}.");
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, paymentHeight), payment);
             GUI.color = Color.white;
+            lineY += paymentHeight;
 
-            Rect hireRect = new Rect(rect.xMax - actionWidth * 2f - 14f, rect.y + 18f, actionWidth, 30f);
+            string storage = ApplicantStorageLine(available);
+            float storageHeight = ApplicantLabelHeight(storage, textWidth);
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, storageHeight), storage);
+            GUI.color = Color.white;
+            lineY += storageHeight;
+
+            string bond = ApplicantEquipmentBondLine(hireCostQuote.equipment);
+            float bondHeight = ApplicantLabelHeight(bond, textWidth);
+            Rect bondRect = new Rect(rect.x + ApplicantTextInset, lineY, textWidth, bondHeight);
+            TooltipHandler.TipRegion(bondRect, EmploymentEquipmentService.BondTooltip);
+            Widgets.DrawHighlightIfMouseover(bondRect);
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(bondRect, bond);
+            GUI.color = Color.white;
+            lineY += bondHeight;
+
+            string hireCost = ApplicantHireCostLine(totalDue);
+            float hireCostHeight = ApplicantLabelHeight(hireCost, textWidth);
+            GUI.color = affordable ? new Color(1f, 1f, 1f, 0.65f) : new Color(1f, 0.6f, 0.6f);
+            Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, hireCostHeight),
+                hireCost);
+            GUI.color = Color.white;
+            lineY += hireCostHeight;
+
+            string deathCompensation = ApplicantDeathCompensationLine(posting, applicant);
+            if (deathCompensation != null)
+            {
+                float deathCompensationHeight = ApplicantLabelHeight(deathCompensation, textWidth);
+                GUI.color = new Color(1f, 1f, 1f, 0.65f);
+                Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth,
+                    deathCompensationHeight), deathCompensation);
+                GUI.color = Color.white;
+            }
+
+            float actionY = rect.y + (rect.height - 30f) / 2f;
+            Rect hireRect = new Rect(
+                rect.xMax - ApplicantActionWidth * 2f - 14f, actionY, ApplicantActionWidth, 30f);
+            bool guiEnabled = GUI.enabled;
+            GUI.enabled = guiEnabled && affordable;
             if (Widgets.ButtonText(hireRect, "Take on"))
             {
                 pendingAction = () =>
                 {
                     if (JobPostingService.TryAccept(state, posting, applicant, Find.CurrentMap,
-                            out string failReason) == null)
+                            out string failReason, hireCostQuote) == null)
                     {
                         Messages.Message(failReason ?? "Could not hire.",
                             MessageTypeDefOf.RejectInput, historical: false);
                     }
                 };
             }
+            GUI.enabled = guiEnabled;
 
-            Rect rejectRect = new Rect(rect.xMax - actionWidth - 4f, rect.y + 18f, actionWidth, 30f);
+            Rect rejectRect = new Rect(
+                rect.xMax - ApplicantActionWidth - 4f, actionY, ApplicantActionWidth, 30f);
             if (Widgets.ButtonText(rejectRect, "Turn away"))
             {
                 pendingAction = () => JobPostingService.Reject(posting, applicant);
@@ -477,9 +668,8 @@ namespace Intercolony
                 $"Posted {posting.DaysPosted:0.#} days ago, " +
                 $"{posting.ExpiryLabel}.\n" +
                 $"{posting.hired} hired so far.\n\n" +
-                $"Each worker taken on: {posting.TotalCommitment} silver over the full term.\n" +
-                $"Compensation if one of them dies: " +
-                $"{posting.wageOffered * posting.combatClause.DeathCompensationDays()} silver each.";
+                "The posted wage is only an application filter because each applicant's own ask sets " +
+                "their contract rate, with the signing fee or prepaid amount shown on their row.";
 
             if (posting.Applicants.Count == 0 && posting.emptyCycles > 0)
             {
@@ -649,11 +839,11 @@ namespace Intercolony
             return y + 6f;
         }
 
-        private static void DrawPayrollSummary(Rect rect, List<EmploymentContract> live)
+        private static float DrawPayrollSummary(Rect rect, List<EmploymentContract> live)
         {
             if (live.Count == 0)
             {
-                return;
+                return 0f;
             }
 
             int daily = 0;
@@ -661,7 +851,8 @@ namespace Intercolony
             int arrears = 0;
             foreach (EmploymentContract contract in live)
             {
-                daily += contract.dailyWage;
+                daily += WageStructureUtility.EffectiveDailyWage(
+                    contract.wageStructure, contract.dailyWage);
                 paid += contract.paidSilver;
                 arrears += contract.arrearsSilver;
             }
@@ -673,16 +864,53 @@ namespace Intercolony
             // point is that running out of silver has to be visible before it bites.
             GUI.color = arrears > 0 ? new Color(1f, 0.55f, 0.55f) : new Color(1f, 1f, 1f, 0.75f);
 
-            string text = $"{live.Count} hired   {daily} silver/day combined   {paid} paid so far";
+            string text = $"{live.Count} hired   {daily:N0} charged/day combined   " +
+                          $"{paid:N0} paid so far";
             if (arrears > 0)
             {
-                text += $"   —   {arrears} IN ARREARS";
+                text += $"   —   {arrears:N0} IN ARREARS";
             }
 
-            Widgets.Label(rect, text);
+            float textHeight = Text.CalcHeight(text, rect.width);
+            Rect textRect = new Rect(rect.x, rect.y, rect.width, textHeight);
+            TooltipHandler.TipRegion(
+                textRect,
+                "Charged/day uses each worker's ask passed through their selected wage structure. " +
+                "Daily terms cost more than prepaid because the colony can stop paying any morning; " +
+                "the worker charges a premium for that flexibility.");
+            Widgets.Label(textRect, text);
 
             GUI.color = Color.white;
             Text.Anchor = TextAnchor.UpperLeft;
+            return textHeight;
+        }
+
+        private static float EmployeeRowsHeight(
+            List<EmploymentContract> live, float rowWidth)
+        {
+            float height = 0f;
+            foreach (EmploymentContract contract in live)
+            {
+                height += EmployeeRowHeight(rowWidth, contract);
+            }
+
+            return height;
+        }
+
+        private static float EmployeeRowHeight(float rowWidth, EmploymentContract contract)
+        {
+            EmployeeRowLayout layout = EmployeeRowLayout.For(
+                new Rect(0f, 0f, rowWidth, EmployeeRowMinimumHeight));
+            float detailHeight = Text.CalcHeight(EmployeeDetailLine(contract), layout.textWidth);
+            return Mathf.Max(EmployeeRowMinimumHeight, 25f + detailHeight + 3f);
+        }
+
+        private static string EmployeeDetailLine(EmploymentContract contract)
+        {
+            string detail = WageStructureUtility.DailyWageDisclosure(
+                contract.wageStructure, contract.dailyWage) +
+                            $" — {contract.TermLabel} — {contract.StatusLine()}";
+            return detail;
         }
 
         /// <summary>
@@ -705,9 +933,13 @@ namespace Intercolony
         private struct EmployeeRowLayout
         {
             public const float ActionWidth = 110f;
+            public const float MenuWidth = 28f;
 
             /// <summary>Width available for labels *and* the click-to-jump region.</summary>
             public float textWidth;
+
+            /// <summary>Where the contract-actions menu button goes.</summary>
+            public Rect contractActions;
 
             /// <summary>Where a second-from-right button goes, when the row draws two.</summary>
             public Rect leftAction;
@@ -717,16 +949,18 @@ namespace Intercolony
 
             public static EmployeeRowLayout For(Rect rect)
             {
+                Rect leftAction = new Rect(rect.xMax - ActionWidth * 2f - 8f, rect.y + 11f, ActionWidth, 30f);
                 EmployeeRowLayout layout = new EmployeeRowLayout
                 {
+                    contractActions = new Rect(leftAction.x - MenuWidth - 6f, rect.y + 11f, MenuWidth, 30f),
                     rightAction = new Rect(rect.xMax - ActionWidth - 4f, rect.y + 11f, ActionWidth, 30f),
-                    leftAction = new Rect(rect.xMax - ActionWidth * 2f - 8f, rect.y + 11f, ActionWidth, 30f)
+                    leftAction = leftAction
                 };
 
                 // Always reserved for two, even on rows that draw one. A row that reserved space
                 // conditionally would put the click region back under a button the moment a new
-                // state added a second one.
-                layout.textWidth = layout.leftAction.x - rect.x - 6f;
+                // state added a second one. The menu button is reserved on every row for the same reason.
+                layout.textWidth = layout.contractActions.x - rect.x - 6f;
                 return layout;
             }
         }
@@ -742,6 +976,8 @@ namespace Intercolony
 
             EmployeeRowLayout layout = EmployeeRowLayout.For(rect);
             float textWidth = layout.textWidth;
+            bool canAutoRenew = contract.status == EmploymentStatus.Active &&
+                                !contract.IsOpenEnded && !contract.ServingNotice;
 
             Widgets.Label(new Rect(rect.x + 6f, rect.y + 3f, textWidth, 22f),
                 $"{contract.workerName}  —  {contract.workerSkills}");
@@ -761,10 +997,9 @@ namespace Intercolony
             GUI.color = Color.white;
 
             GUI.color = StatusColour(contract);
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, 22f),
-                $"{contract.settlementName} ({contract.factionName})   " +
-                $"{contract.dailyWage}/day × {contract.TermLabel} {contract.wageStructure.Label()}, " +
-                $"{contract.paidSilver} paid   — {contract.StatusLine()}");
+            string detail = EmployeeDetailLine(contract);
+
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, textWidth, Text.CalcHeight(detail, textWidth)), detail);
             GUI.color = Color.white;
 
             if (ShouldBuildTooltip(rect))
@@ -779,6 +1014,65 @@ namespace Intercolony
                 Widgets.ButtonInvisible(new Rect(rect.x, rect.y, textWidth, rect.height)))
             {
                 CameraJumper.TryJumpAndSelect(contract.pawn);
+            }
+
+            bool hasLiveRenewalOffer = RenewalService.HasLiveOffer(contract);
+            bool hasLiveTransitionOffer = TransitionService.HasLiveOffer(contract);
+            List<FloatMenuOption> options = new List<FloatMenuOption>();
+
+            // An offer to stay for good outranks everything, including renewal: it is the rarest
+            // thing this tab ever shows and it is a decision the player has earned (§44).
+            if (hasLiveTransitionOffer)
+            {
+                options.Add(new FloatMenuOption(
+                    "Keep them", () => OpenTransitionDialog(contract)));
+                options.Add(new FloatMenuOption(
+                    "Not now", () => TransitionService.Decline(contract)));
+            }
+
+            // A live renewal offer outranks the dismiss option: it expires on its own, and it is
+            // the thing the player is being asked about (§115).
+            if (hasLiveRenewalOffer)
+            {
+                int renewalWage = RenewalService.RenewalWage(contract);
+                FloatMenuOption renewalOption = new FloatMenuOption(
+                    $"Renew — {WageStructureUtility.DailyWageDisclosure(
+                        contract.wageStructure, renewalWage)}",
+                    () =>
+                    {
+                        if (!RenewalService.Accept(contract, out string failReason))
+                        {
+                            Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                        }
+                    });
+                renewalOption.tooltip = WageStructureUtility.DailyWageTooltip(
+                    contract.wageStructure, renewalWage);
+                options.Add(renewalOption);
+
+                options.Add(new FloatMenuOption(
+                    "Let them go at the end of the term",
+                    () => RenewalService.Decline(contract)));
+            }
+
+            if (!hasLiveTransitionOffer && !hasLiveRenewalOffer &&
+                contract.status != EmploymentStatus.Severed)
+            {
+                options.Add(new FloatMenuOption(
+                    contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss",
+                    () => ConfirmDismiss(contract)));
+            }
+
+            if (ShouldBuildTooltip(layout.contractActions))
+            {
+                TooltipHandler.TipRegion(
+                    layout.contractActions,
+                    "Contract actions for this worker.");
+            }
+
+            if (Widgets.ButtonText(layout.contractActions, "...",
+                    active: options.Count > 0))
+            {
+                Find.WindowStack.Add(new FloatMenu(options));
             }
 
             // Paying what is owed takes priority over dismissing: it is the action that fixes
@@ -807,51 +1101,16 @@ namespace Intercolony
                 return;
             }
 
-            // An offer to stay for good outranks everything, including renewal: it is the rarest
-            // thing this tab ever shows and it is a decision the player has earned (§44).
-            if (TransitionService.HasLiveOffer(contract))
+            if (canAutoRenew)
             {
-                Rect settleRect = layout.leftAction;
-                if (Widgets.ButtonText(settleRect, "Keep them"))
+                Widgets.CheckboxLabeled(layout.rightAction, "Auto-renew", ref contract.autoRenew);
+                if (ShouldBuildTooltip(layout.rightAction))
                 {
-                    OpenTransitionDialog(contract);
+                    TooltipHandler.TipRegion(
+                        layout.rightAction,
+                        "Automatically accept eligible renewal offers. " +
+                        "It cannot make a worker stay who does not want to.");
                 }
-
-                Rect laterRect = layout.rightAction;
-                if (Widgets.ButtonText(laterRect, "Not now"))
-                {
-                    TransitionService.Decline(contract);
-                }
-
-                return;
-            }
-
-            // A live renewal offer outranks the dismiss button: it expires on its own, and it is
-            // the thing the player is being asked about (§115).
-            if (RenewalService.HasLiveOffer(contract))
-            {
-                Rect renewRect = layout.leftAction;
-                if (Widgets.ButtonText(renewRect, $"Renew {contract.renewalWage}"))
-                {
-                    if (!RenewalService.Accept(contract, out string failReason))
-                    {
-                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
-                    }
-                }
-
-                Rect declineRect = layout.rightAction;
-                if (Widgets.ButtonText(declineRect, "Let go"))
-                {
-                    RenewalService.Decline(contract);
-                }
-
-                return;
-            }
-
-            Rect endRect = layout.rightAction;
-            if (Widgets.ButtonText(endRect, contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss"))
-            {
-                ConfirmDismiss(contract);
             }
         }
 
@@ -883,8 +1142,12 @@ namespace Intercolony
                 $"{contract.workerName} of {contract.factionName}\n" +
                 $"Home settlement: {contract.settlementName}\n" +
                 $"Skills at hire: {contract.workerSkills}\n\n" +
-                $"Term: {contract.TermLabel} at {contract.dailyWage} silver/day\n" +
+                $"Term: {contract.TermLabel}\n" +
+                $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}\n" +
+                $"Wage structure: {contract.wageStructure.Label()}\n" +
+                $"{WageStructureUtility.StructureTooltip(contract.wageStructure)}\n" +
                 $"Paid in advance: {contract.paidSilver} silver\n\n" +
+                $"Equipment bond: {contract.EquipmentBondLabel}\n\n" +
 
                 // §42 and §43 in the tooltip, together, because they are one decision: what you may
                 // ask of them, and what it costs if it goes wrong.
@@ -1114,7 +1377,7 @@ namespace Intercolony
             {
                 case WorkerColumn.Worker: return "Worker";
                 case WorkerColumn.Skills: return "Best skills";
-                case WorkerColumn.Wage: return "Silver/day";
+                case WorkerColumn.Wage: return "Ask/day";
                 case WorkerColumn.MinTerm: return "Min term";
                 case WorkerColumn.Travel: return "Arrives in";
                 default: return "From";
@@ -1214,7 +1477,7 @@ namespace Intercolony
             Cell((int)WorkerColumn.Skills, candidate.SkillSummary());
             // "from" because the listed rate is the civilian rate (§42's cheapest clause) and the
             // hiring dialog can only price it upwards. A bare number here would read as the price.
-            Cell((int)WorkerColumn.Wage, $"from {candidate.dailyWage}");
+            Cell((int)WorkerColumn.Wage, $"ask {candidate.dailyWage:N0}");
             Cell((int)WorkerColumn.MinTerm, $"{candidate.minTermDays}d");
             Cell((int)WorkerColumn.Travel, $"{candidate.travelDays}d");
             Cell((int)WorkerColumn.Source, candidate.settlementName);
@@ -1228,7 +1491,7 @@ namespace Intercolony
             Rect hireRect = new Rect(rect.xMax - 86f, rect.y + 2f, 80f, 28f);
             if (Widgets.ButtonText(hireRect, "Hire"))
             {
-                OpenHireDialog(state, candidate);
+                OpenHireDialog(state, candidate, emergencyDispatch);
             }
         }
 
@@ -1255,11 +1518,11 @@ namespace Intercolony
                 text += "\n";
             }
 
-            text += $"Asks {candidate.dailyWage} silver/day for their {candidate.minTermDays}-day minimum " +
+            text += $"Asks {candidate.dailyWage:N0} silver/day for their {candidate.minTermDays}-day minimum " +
                     "as a civilian.\n" +
                     "Longer terms cost less per day. Agreeing to fight costs more:\n" +
-                    $"  armed employee {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Armed.WageFactor())}/day, " +
-                    $"security contractor {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Security.WageFactor())}/day.\n" +
+                    $"  armed employee asks {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Armed.WageFactor()):N0}/day, " +
+                    $"security contractor asks {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Security.WageFactor()):N0}/day.\n" +
                     $"Takes {candidate.travelDays} days to reach the colony.";
 
             return text;
@@ -1269,18 +1532,20 @@ namespace Intercolony
         /// The hiring commitment. Term length lives here rather than in the tab, matching every
         /// other commitment in the mod: read the terms, choose the size, commit.
         /// </summary>
-        private void OpenHireDialog(IntercolonyWorldComponent state, LaborCandidate candidate)
+        private void OpenHireDialog(
+            IntercolonyWorldComponent state, LaborCandidate candidate, bool emergencyDispatch)
         {
             Map map = Find.CurrentMap;
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(candidate.settlementId);
             SettlementEconomicProfile profile = settlement == null ? null : state.GetProfile(settlement);
 
             Find.WindowStack.Add(new Dialog_HireWorker(
-                candidate, profile, map, MaxTermDays,
-                (termDays, structure, clause) =>
+                candidate, profile, map, MaxTermDays, emergencyDispatch,
+                (termDays, structure, clause, hireCostQuote) =>
                 {
                     EmploymentContract contract = EmploymentService.TryHire(
-                        state, candidate, termDays, map, out string failReason, structure, clause);
+                        state, candidate, termDays, map, out string failReason, structure, clause,
+                        hireCostQuote, emergencyDispatch);
 
                     if (contract == null)
                     {

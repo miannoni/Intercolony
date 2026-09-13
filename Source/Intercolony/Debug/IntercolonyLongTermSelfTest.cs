@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 using RimWorld;
 using RimWorld.Planet;
@@ -30,6 +32,7 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -49,6 +52,51 @@ namespace Intercolony
             {
                 sb.AppendLine($"        {line}");
             }
+
+            public void Skip(string label, string detail)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {label} — {detail}");
+            }
+        }
+
+        private sealed class ProcurementContractDiagnosticSnapshot
+        {
+            public ProcurementContract contract;
+            public ProcurementContractStatus status;
+            public float unitPrice;
+            public int quantityPerCycle;
+            public int cyclesCompleted;
+            public int cyclesFailed;
+            public int totalCycles;
+            public int activeOrderId;
+            public int nextCycleTick;
+            public int nextCycleTickOffset;
+            public bool autoReadyWaitNotified;
+            public string outcomeNote;
+        }
+
+        private sealed class ProcurementDiagnosticSnapshot
+        {
+            public ProcurementContractDiagnosticSnapshot target;
+            public int silverCount;
+            public bool canPayForPurchase;
+            public string paymentReason;
+            public int contractCount;
+            public int activeContractCount;
+            public readonly List<ProcurementContractDiagnosticSnapshot> contracts =
+                new List<ProcurementContractDiagnosticSnapshot>();
+        }
+
+        private sealed class FactionGoodwillSnapshot
+        {
+            public Faction faction;
+            public FactionRelation factionRelation;
+            public FactionRelation playerRelation;
+            public FactionRelationKind factionRelationKind;
+            public int factionBaseGoodwill;
+            public FactionRelationKind playerRelationKind;
+            public int playerBaseGoodwill;
         }
 
         public static string Run(IntercolonyWorldComponent state, Map map)
@@ -73,7 +121,11 @@ namespace Intercolony
                 CheckSeveranceShape(r);
                 CheckOpenEndedContract(r);
                 CheckNoticeRules(r);
+                CheckF09EmploymentGoodwill(r, state);
                 CheckRenewalGating(r, state);
+                CheckAutoRenewal(r, state);
+                CheckSupplyAutoReady(r, state, map);
+                CheckProcurementWaitForSilver(r, state, map);
                 CheckNothingLapsesSilently(r);
             }
             catch (System.Exception ex)
@@ -216,10 +268,12 @@ namespace Intercolony
 
         private static void CheckNoticeRules(Results r)
         {
+            const int veteranDailyAsk = 40;
+            const int dailyPremiumPercent = 35;
             EmploymentContract fresh = Synthetic(CombatClause.Civilian, 40, 5);
             fresh.termDays = 0;
 
-            EmploymentContract veteran = Synthetic(CombatClause.Civilian, 40, 180);
+            EmploymentContract veteran = Synthetic(CombatClause.Civilian, veteranDailyAsk, 180);
             veteran.termDays = 0;
 
             int freshNotice = RenewalService.NoticeDays(fresh);
@@ -233,7 +287,9 @@ namespace Intercolony
                 "even a brand-new open-ended worker is owed some notice",
                 $"{freshNotice} days");
 
-            r.Check(RenewalService.PayInLieu(veteran) == veteranNotice * veteran.dailyWage,
+            // Independent oracle: Daily terms bill 40 * 135 / 100 = 54 per notice day.
+            r.Check(RenewalService.PayInLieu(veteran) ==
+                    veteranNotice * (veteranDailyAsk * (100 + dailyPremiumPercent) / 100),
                 "paying in lieu costs exactly the notice it replaces (§36.4)",
                 $"{RenewalService.PayInLieu(veteran)} silver");
 
@@ -241,6 +297,631 @@ namespace Intercolony
             EmploymentContract fixedTerm = Synthetic(CombatClause.Civilian, 40, 100);
             r.Check(RenewalService.NoticeDays(fixedTerm) == 0,
                 "a fixed-term contract owes no notice — the end date was the notice");
+        }
+
+        private static void CheckF09EmploymentGoodwill(
+            Results r, IntercolonyWorldComponent state)
+        {
+            Faction playerFaction = Faction.OfPlayer;
+            Faction originFaction = FindF09OriginFaction(playerFaction);
+            TickManager tickManager = Find.TickManager;
+            if (state?.Employments == null || playerFaction == null || originFaction == null ||
+                tickManager == null)
+            {
+                SkipF09EmploymentGoodwillAssertions(
+                    r, "no real origin faction with a bilateral, changeable goodwill relation " +
+                    "and live tick manager was available");
+                return;
+            }
+
+            List<FactionGoodwillSnapshot> savedGoodwill =
+                SnapshotFactionGoodwill(playerFaction);
+            List<EmploymentContract> savedEmployments =
+                new List<EmploymentContract>(state.Employments);
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+            EmployerReputation savedStanding = state.EmployerStanding?.Snapshot();
+            int savedTick = tickManager.TicksGame;
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            int savedMinimumEmploymentDaysForGoodwill =
+                settings.minimumEmploymentDaysForGoodwill;
+            float savedPositiveExperienceThreshold = settings.positiveExperienceThreshold;
+            float savedNegativeExperienceThreshold = settings.negativeExperienceThreshold;
+            int savedEmploymentGoodwillImpact = settings.employmentGoodwillImpact;
+
+            try
+            {
+                int fixtureGoodwill = originFaction.NaturalGoodwill;
+                if (fixtureGoodwill + 7 > 100 || fixtureGoodwill - 7 < -100 ||
+                    !SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill))
+                {
+                    SkipF09EmploymentGoodwillAssertions(
+                        r, "the real faction's vanilla goodwill situation could not hold the " +
+                        "neutral fixture without an effective cap");
+                    return;
+                }
+
+                // Keep the already-shipped checks deterministic even if the player entered the
+                // self-test with custom F09 settings. The cases below deliberately replace these
+                // literals with non-default values and restore the live settings in finally.
+                settings.minimumEmploymentDaysForGoodwill = 10;
+                settings.positiveExperienceThreshold = 0.75f;
+                settings.negativeExperienceThreshold = 0.35f;
+                settings.employmentGoodwillImpact = 3;
+
+                EmploymentContract happy = F09Contract(
+                    originFaction, -93001, 7.5f, 10);
+                state.AddEmployment(happy);
+                int happyBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    happy, EmploymentStatus.Completed, "F09 happy completion self-test");
+                int happyAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    happyAfter == happyBefore + 3,
+                    "F09 happy long employment adds exactly 3 vanilla goodwill",
+                    $"base goodwill {happyBefore}->{happyAfter}; samples 10; average 0.75");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract miserable = F09Contract(
+                    originFaction, -93002, 3.5f, 10);
+                state.AddEmployment(miserable);
+                int miserableBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    miserable, EmploymentStatus.Completed, "F09 miserable completion self-test");
+                int miserableAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    miserableAfter == miserableBefore - 3,
+                    "F09 miserable long employment subtracts exactly 3 vanilla goodwill",
+                    $"base goodwill {miserableBefore}->{miserableAfter}; samples 10; average 0.35");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract middling = F09Contract(
+                    originFaction, -93003, 5f, 10);
+                state.AddEmployment(middling);
+                int middlingBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    middling, EmploymentStatus.Completed, "F09 middling completion self-test");
+                int middlingAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    middlingAfter == middlingBefore,
+                    "F09 middling long employment leaves vanilla goodwill unchanged",
+                    $"base goodwill {middlingBefore}->{middlingAfter}; samples 10; average 0.50");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract shortEmployment = F09Contract(
+                    originFaction, -93004, 9f, 9);
+                state.AddEmployment(shortEmployment);
+                int shortBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    shortEmployment, EmploymentStatus.Completed, "F09 short completion self-test");
+                int shortAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    shortAfter == shortBefore,
+                    "F09 short employment leaves vanilla goodwill unchanged despite perfect mood",
+                    $"base goodwill {shortBefore}->{shortAfter}; samples 9; average 1.00");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract quit = F09Contract(
+                    originFaction, -93005, 7.5f, 10);
+                state.AddEmployment(quit);
+                int beforePricedEnding = originFaction.BaseGoodwillWith(playerFaction);
+                EmployerReputationService.NoteWalkOut(state, quit);
+                int beforeF09 = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    quit, EmploymentStatus.Quit, "F09 already-priced quit self-test");
+                int afterQuit = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    afterQuit == beforeF09,
+                    "F09 adds no goodwill change to an already-priced quit",
+                    $"pre-priced ending {beforePricedEnding}->{beforeF09}; End {beforeF09}->{afterQuit}; " +
+                    "the other penalty is deliberately not sized here");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract minimumEligible = F09Contract(
+                    originFaction, -93006, 3.5f, 5);
+                state.AddEmployment(minimumEligible);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.70f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int minimumEligibleBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    minimumEligible, EmploymentStatus.Completed,
+                    "F09 minimum-day lower-bound self-test");
+                int minimumEligibleAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    minimumEligibleAfter == minimumEligibleBefore + 7,
+                    "F09 non-default minimum 5 days lets 5 samples qualify for +7 goodwill",
+                    $"minimum=5; samples=5; total=3.5; average=0.70; " +
+                    $"base goodwill {minimumEligibleBefore}->{minimumEligibleAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract minimumRejected = F09Contract(
+                    originFaction, -93007, 3.5f, 5);
+                state.AddEmployment(minimumRejected);
+                settings.minimumEmploymentDaysForGoodwill = 6;
+                settings.positiveExperienceThreshold = 0.70f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int minimumRejectedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    minimumRejected, EmploymentStatus.Completed,
+                    "F09 minimum-day upper-bound self-test");
+                int minimumRejectedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    minimumRejectedAfter == minimumRejectedBefore &&
+                    minimumRejected.outcomeNote.Contains(
+                        "only 5 mood samples were recorded, and 6 are required."),
+                    "F09 non-default minimum 6 days rejects the same 5 samples",
+                    $"minimum=6; samples=5; total=3.5; average=0.70; " +
+                    $"base goodwill {minimumRejectedBefore}->{minimumRejectedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract positiveQualified = F09Contract(
+                    originFaction, -93008, 4f, 5);
+                state.AddEmployment(positiveQualified);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.70f;
+                settings.negativeExperienceThreshold = 0.25f;
+                settings.employmentGoodwillImpact = 7;
+                int positiveQualifiedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    positiveQualified, EmploymentStatus.Completed,
+                    "F09 positive-threshold lower-bound self-test");
+                int positiveQualifiedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    positiveQualifiedAfter == positiveQualifiedBefore + 7,
+                    "F09 non-default positive threshold 0.70 qualifies a 0.80 average",
+                    $"positive=0.70; negative=0.25; samples=5; total=4; average=0.80; " +
+                    $"base goodwill {positiveQualifiedBefore}->{positiveQualifiedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract positiveRejected = F09Contract(
+                    originFaction, -93009, 4f, 5);
+                state.AddEmployment(positiveRejected);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.85f;
+                settings.negativeExperienceThreshold = 0.25f;
+                settings.employmentGoodwillImpact = 7;
+                int positiveRejectedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    positiveRejected, EmploymentStatus.Completed,
+                    "F09 positive-threshold upper-bound self-test");
+                int positiveRejectedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    positiveRejectedAfter == positiveRejectedBefore &&
+                    positiveRejected.outcomeNote.Contains(
+                        "F09: average mood 0.80; no goodwill change."),
+                    "F09 non-default positive threshold 0.85 rejects the same 0.80 average",
+                    $"positive=0.85; negative=0.25; samples=5; total=4; average=0.80; " +
+                    $"base goodwill {positiveRejectedBefore}->{positiveRejectedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract negativeQualified = F09Contract(
+                    originFaction, -93010, 1.5f, 5);
+                state.AddEmployment(negativeQualified);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.40f;
+                settings.employmentGoodwillImpact = 7;
+                int negativeQualifiedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    negativeQualified, EmploymentStatus.Completed,
+                    "F09 negative-threshold lower-bound self-test");
+                int negativeQualifiedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    negativeQualifiedAfter == negativeQualifiedBefore - 7,
+                    "F09 non-default negative threshold 0.40 qualifies a 0.30 average",
+                    $"positive=0.80; negative=0.40; samples=5; total=1.5; average=0.30; " +
+                    $"base goodwill {negativeQualifiedBefore}->{negativeQualifiedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract negativeRejected = F09Contract(
+                    originFaction, -93011, 1.5f, 5);
+                state.AddEmployment(negativeRejected);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.25f;
+                settings.employmentGoodwillImpact = 7;
+                int negativeRejectedBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    negativeRejected, EmploymentStatus.Completed,
+                    "F09 negative-threshold upper-bound self-test");
+                int negativeRejectedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    negativeRejectedAfter == negativeRejectedBefore &&
+                    negativeRejected.outcomeNote.Contains(
+                        "F09: average mood 0.30; no goodwill change."),
+                    "F09 non-default negative threshold 0.25 rejects the same 0.30 average",
+                    $"positive=0.80; negative=0.25; samples=5; total=1.5; average=0.30; " +
+                    $"base goodwill {negativeRejectedBefore}->{negativeRejectedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract largerPositiveImpact = F09Contract(
+                    originFaction, -93012, 4.5f, 5);
+                state.AddEmployment(largerPositiveImpact);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int largerPositiveImpactBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    largerPositiveImpact, EmploymentStatus.Completed,
+                    "F09 positive impact magnitude self-test");
+                int largerPositiveImpactAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    largerPositiveImpactAfter == largerPositiveImpactBefore + 7,
+                    "F09 non-default impact 7 applies exactly +7 goodwill",
+                    $"impact=7; positive=0.80; negative=0.20; samples=5; total=4.5; " +
+                    $"average=0.90; base goodwill {largerPositiveImpactBefore}->" +
+                    $"{largerPositiveImpactAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract largerNegativeImpact = F09Contract(
+                    originFaction, -93013, 0.5f, 5);
+                state.AddEmployment(largerNegativeImpact);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int largerNegativeImpactBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    largerNegativeImpact, EmploymentStatus.Completed,
+                    "F09 negative impact magnitude self-test");
+                int largerNegativeImpactAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    largerNegativeImpactAfter == largerNegativeImpactBefore - 7,
+                    "F09 non-default impact 7 applies exactly -7 goodwill",
+                    $"impact=7; positive=0.80; negative=0.20; samples=5; total=0.5; " +
+                    $"average=0.10; base goodwill {largerNegativeImpactBefore}->" +
+                    $"{largerNegativeImpactAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract neutralBand = F09Contract(
+                    originFaction, -93014, 2.5f, 5);
+                state.AddEmployment(neutralBand);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 7;
+                int neutralBandBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    neutralBand, EmploymentStatus.Completed,
+                    "F09 neutral-band decision self-test");
+                int neutralBandAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    neutralBandAfter == neutralBandBefore &&
+                    neutralBand.outcomeNote.Contains(
+                        "F09: average mood 0.50; no goodwill change."),
+                    "F09 non-default neutral band makes zero goodwill a decision, not a failure",
+                    $"positive=0.80; negative=0.20; samples=5; total=2.5; average=0.50; " +
+                    $"neutral-band decision; base goodwill {neutralBandBefore}->{neutralBandAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract breached = F09Contract(
+                    originFaction, -93015, 1f, 1);
+                breached.clauseBreaches = 1;
+                state.AddEmployment(breached);
+                settings.minimumEmploymentDaysForGoodwill = 1;
+                settings.positiveExperienceThreshold = 0.50f;
+                settings.negativeExperienceThreshold = 0.05f;
+                settings.employmentGoodwillImpact = 7;
+                int breachedBeforePricing = originFaction.BaseGoodwillWith(playerFaction);
+                EmployerReputationService.NoteCombatMisuse(state, breached);
+                int breachedBeforeF09 = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    breached, EmploymentStatus.Completed, "F09 breach-guard self-test");
+                int breachedAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    breachedAfter == breachedBeforeF09 &&
+                    breached.outcomeNote.Contains("combat misuse was already priced."),
+                    "F09 breach guard overrides generous settings",
+                    $"clauseBreaches=1; minimum=1; positive=0.50; negative=0.05; " +
+                    $"impact=7; pre-priced goodwill {breachedBeforePricing}->{breachedBeforeF09}; " +
+                    $"F09 goodwill {breachedBeforeF09}->{breachedAfter}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract skippedNotice = F09Contract(
+                    originFaction, -93016, 1f, 1);
+                state.AddEmployment(skippedNotice);
+                settings.minimumEmploymentDaysForGoodwill = 1;
+                settings.positiveExperienceThreshold = 0.50f;
+                settings.negativeExperienceThreshold = 0.05f;
+                settings.employmentGoodwillImpact = 7;
+                int skippedNoticeBeforePricing = originFaction.BaseGoodwillWith(playerFaction);
+                EmployerReputationService.NoteNoticeSkipped(state, skippedNotice);
+                int skippedNoticeBeforeF09 = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    skippedNotice, EmploymentStatus.Dismissed,
+                    "F09 skipped-notice guard self-test", noticeSkipped: true);
+                int skippedNoticeAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    skippedNoticeAfter == skippedNoticeBeforeF09 &&
+                    skippedNotice.outcomeNote.Contains(
+                        "the skipped notice was already priced."),
+                    "F09 skipped-notice guard overrides generous settings",
+                    $"pre-priced goodwill {skippedNoticeBeforePricing}->" +
+                    $"{skippedNoticeBeforeF09}; F09 goodwill {skippedNoticeBeforeF09}->" +
+                    $"{skippedNoticeAfter}; minimum=1; positive=0.50; negative=0.05; impact=7");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract zeroImpact = F09Contract(
+                    originFaction, -93017, 4f, 5);
+                state.AddEmployment(zeroImpact);
+                settings.minimumEmploymentDaysForGoodwill = 5;
+                settings.positiveExperienceThreshold = 0.80f;
+                settings.negativeExperienceThreshold = 0.20f;
+                settings.employmentGoodwillImpact = 0;
+                int zeroImpactBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    zeroImpact, EmploymentStatus.Completed, "F09 zero-impact self-test");
+                int zeroImpactAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    zeroImpactAfter == zeroImpactBefore &&
+                    zeroImpact.outcomeNote.Contains(
+                        "F09: average mood 0.80; no goodwill change."),
+                    "F09 impact 0 disables goodwill without losing the resolution",
+                    $"impact=0; minimum=5; positive=0.80; negative=0.20; " +
+                    $"samples=5; total=4; average=0.80; base goodwill {zeroImpactBefore}->" +
+                    $"{zeroImpactAfter}");
+                r.Check(
+                    zeroImpact.moodSampleCount == 5 &&
+                    Mathf.Abs(zeroImpact.moodSampleTotal - 4f) < 0.0001f,
+                    "F09 impact 0 preserves the recorded sample count and total",
+                    $"impact=0; samples {zeroImpact.moodSampleCount}; " +
+                    $"total {zeroImpact.moodSampleTotal:0.##}");
+
+                SetF09GoodwillFixture(originFaction, playerFaction, fixtureGoodwill);
+                EmploymentContract neverSampled = F09Contract(
+                    originFaction, -93018, 7.5f, 0);
+                state.AddEmployment(neverSampled);
+                settings.minimumEmploymentDaysForGoodwill = 1;
+                settings.positiveExperienceThreshold = 0.50f;
+                settings.negativeExperienceThreshold = 0.05f;
+                settings.employmentGoodwillImpact = 7;
+                int neverSampledBefore = originFaction.BaseGoodwillWith(playerFaction);
+                EmploymentService.End(
+                    neverSampled, EmploymentStatus.Completed,
+                    "F09 never-sampled completion self-test");
+                int neverSampledAfter = originFaction.BaseGoodwillWith(playerFaction);
+                r.Check(
+                    neverSampledAfter == neverSampledBefore,
+                    "F09 never-sampled contract changes no goodwill",
+                    $"samples=0; total=7.5; generous settings; " +
+                    $"base goodwill {neverSampledBefore}->{neverSampledAfter}");
+                r.Check(
+                    neverSampled.outcomeNote.Contains("no mood samples were recorded"),
+                    "F09 never-sampled note says no mood samples were recorded",
+                    $"outcome={neverSampled.outcomeNote}");
+                r.Check(
+                    neverSampled.moodSampleCount == 0 &&
+                    Mathf.Abs(neverSampled.moodSampleTotal - 7.5f) < 0.0001f &&
+                    !neverSampled.outcomeNote.Contains("average mood") &&
+                    !neverSampled.outcomeNote.Contains("7.5"),
+                    "F09 never-sampled contract is not averaged or formatted as a quantity",
+                    $"samples={neverSampled.moodSampleCount}; total={neverSampled.moodSampleTotal:0.##}; " +
+                    $"outcome={neverSampled.outcomeNote}");
+            }
+            finally
+            {
+                settings.minimumEmploymentDaysForGoodwill = savedMinimumEmploymentDaysForGoodwill;
+                settings.positiveExperienceThreshold = savedPositiveExperienceThreshold;
+                settings.negativeExperienceThreshold = savedNegativeExperienceThreshold;
+                settings.employmentGoodwillImpact = savedEmploymentGoodwillImpact;
+                tickManager.DebugSetTicksGame(savedTick);
+                RestoreFactionGoodwill(savedGoodwill);
+                RestoreList(state.Employments, savedEmployments);
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+                state.EmployerStanding?.RestoreFrom(savedStanding);
+
+                r.Info(
+                    $"F09 fixture restored {savedGoodwill.Count} faction/player goodwill " +
+                    $"relations, {savedEmployments.Count} employment records, employer standing, " +
+                    $"tick {savedTick}, and all four employment-goodwill settings " +
+                    $"({savedMinimumEmploymentDaysForGoodwill}d/" +
+                    $"{savedPositiveExperienceThreshold:0.##}/" +
+                    $"{savedNegativeExperienceThreshold:0.##}/" +
+                    $"{savedEmploymentGoodwillImpact}); generated departure letters were removed.");
+            }
+        }
+
+        private static Faction FindF09OriginFaction(Faction playerFaction)
+        {
+            if (playerFaction == null || Find.FactionManager == null ||
+                Find.WorldObjects?.Settlements == null)
+            {
+                return null;
+            }
+
+            List<Faction> factions = Find.FactionManager.AllFactionsListForReading;
+            foreach (Settlement settlement in Find.WorldObjects.Settlements)
+            {
+                Faction faction = settlement?.Faction;
+                if (faction == null || faction == playerFaction || !factions.Contains(faction) ||
+                    !faction.HasGoodwill || faction.Hidden || faction.defeated ||
+                    faction.def == null || faction.def.permanentEnemy ||
+                    HostilityPolicy.IsAtWar(faction))
+                {
+                    continue;
+                }
+
+                FactionRelation factionRelation = faction.RelationWith(
+                    playerFaction, allowNull: true);
+                FactionRelation playerRelation = playerFaction.RelationWith(
+                    faction, allowNull: true);
+                if (factionRelation == null || factionRelation.other == null ||
+                    playerRelation == null || playerRelation.other == null ||
+                    !faction.CanChangeGoodwillFor(playerFaction, 7) ||
+                    !faction.CanChangeGoodwillFor(playerFaction, -7))
+                {
+                    continue;
+                }
+
+                return faction;
+            }
+
+            return null;
+        }
+
+        private static List<FactionGoodwillSnapshot> SnapshotFactionGoodwill(
+            Faction playerFaction)
+        {
+            List<FactionGoodwillSnapshot> snapshots =
+                new List<FactionGoodwillSnapshot>();
+            if (playerFaction == null || Find.FactionManager == null)
+            {
+                return snapshots;
+            }
+
+            foreach (Faction faction in Find.FactionManager.AllFactionsListForReading)
+            {
+                if (faction == null || faction == playerFaction)
+                {
+                    continue;
+                }
+
+                FactionRelation factionRelation = faction.RelationWith(
+                    playerFaction, allowNull: true);
+                FactionRelation playerRelation = playerFaction.RelationWith(
+                    faction, allowNull: true);
+                if (factionRelation == null || playerRelation == null)
+                {
+                    continue;
+                }
+
+                snapshots.Add(new FactionGoodwillSnapshot
+                {
+                    faction = faction,
+                    factionRelation = factionRelation,
+                    playerRelation = playerRelation,
+                    factionRelationKind = factionRelation.kind,
+                    factionBaseGoodwill = factionRelation.baseGoodwill,
+                    playerRelationKind = playerRelation.kind,
+                    playerBaseGoodwill = playerRelation.baseGoodwill
+                });
+            }
+
+            return snapshots;
+        }
+
+        private static void RestoreFactionGoodwill(
+            List<FactionGoodwillSnapshot> snapshots)
+        {
+            if (snapshots == null)
+            {
+                return;
+            }
+
+            foreach (FactionGoodwillSnapshot snapshot in snapshots)
+            {
+                if (snapshot?.faction == null || snapshot.factionRelation == null ||
+                    snapshot.playerRelation == null)
+                {
+                    continue;
+                }
+
+                snapshot.factionRelation.kind = snapshot.factionRelationKind;
+                snapshot.factionRelation.baseGoodwill = snapshot.factionBaseGoodwill;
+                snapshot.playerRelation.kind = snapshot.playerRelationKind;
+                snapshot.playerRelation.baseGoodwill = snapshot.playerBaseGoodwill;
+            }
+        }
+
+        private static void RestoreList<T>(List<T> target, List<T> saved)
+        {
+            target.Clear();
+            target.AddRange(saved);
+        }
+
+        private static bool SetF09GoodwillFixture(
+            Faction originFaction, Faction playerFaction, int baseGoodwill)
+        {
+            FactionRelation factionRelation = originFaction?.RelationWith(
+                playerFaction, allowNull: true);
+            FactionRelation playerRelation = playerFaction?.RelationWith(
+                originFaction, allowNull: true);
+            if (factionRelation == null || factionRelation.other == null ||
+                playerRelation == null || playerRelation.other == null)
+            {
+                return false;
+            }
+
+            factionRelation.kind = FactionRelationKind.Neutral;
+            factionRelation.baseGoodwill = baseGoodwill;
+            playerRelation.kind = FactionRelationKind.Neutral;
+            playerRelation.baseGoodwill = baseGoodwill;
+
+            return originFaction.GoodwillWith(playerFaction) == baseGoodwill &&
+                   playerFaction.GoodwillWith(originFaction) == baseGoodwill;
+        }
+
+        private static EmploymentContract F09Contract(
+            Faction originFaction, int id, float moodSampleTotal, int moodSampleCount)
+        {
+            return new EmploymentContract
+            {
+                id = id,
+                settlementId = id,
+                settlementName = "F09 self-test settlement",
+                factionName = originFaction?.Name ?? "F09 self-test faction",
+                employerFaction = originFaction,
+                workerName = "F09 probe",
+                workerSkills = "none",
+                dailyWage = 1,
+                termDays = 30,
+                wageStructure = WageStructure.Prepaid,
+                moodSampleTotal = moodSampleTotal,
+                moodSampleCount = moodSampleCount,
+                status = EmploymentStatus.Active
+            };
+        }
+
+        private static void SkipF09EmploymentGoodwillAssertions(
+            Results r, string reason)
+        {
+            r.Skip(
+                "F09 happy long employment adds exactly 3 vanilla goodwill", reason);
+            r.Skip(
+                "F09 miserable long employment subtracts exactly 3 vanilla goodwill", reason);
+            r.Skip(
+                "F09 middling long employment leaves vanilla goodwill unchanged", reason);
+            r.Skip(
+                "F09 short employment leaves vanilla goodwill unchanged despite perfect mood", reason);
+            r.Skip(
+                "F09 adds no goodwill change to an already-priced quit", reason);
+            r.Skip(
+                "F09 non-default minimum 5 days lets 5 samples qualify for +7 goodwill", reason);
+            r.Skip(
+                "F09 non-default minimum 6 days rejects the same 5 samples", reason);
+            r.Skip(
+                "F09 non-default positive threshold 0.70 qualifies a 0.80 average", reason);
+            r.Skip(
+                "F09 non-default positive threshold 0.85 rejects the same 0.80 average", reason);
+            r.Skip(
+                "F09 non-default negative threshold 0.40 qualifies a 0.30 average", reason);
+            r.Skip(
+                "F09 non-default negative threshold 0.25 rejects the same 0.30 average", reason);
+            r.Skip(
+                "F09 non-default impact 7 applies exactly +7 goodwill", reason);
+            r.Skip(
+                "F09 non-default impact 7 applies exactly -7 goodwill", reason);
+            r.Skip(
+                "F09 non-default neutral band makes zero goodwill a decision, not a failure",
+                reason);
+            r.Skip(
+                "F09 breach guard overrides generous settings", reason);
+            r.Skip(
+                "F09 skipped-notice guard overrides generous settings", reason);
+            r.Skip(
+                "F09 impact 0 disables goodwill without losing the resolution", reason);
+            r.Skip(
+                "F09 impact 0 preserves the recorded sample count and total", reason);
+            r.Skip(
+                "F09 never-sampled contract changes no goodwill", reason);
+            r.Skip(
+                "F09 never-sampled note says no mood samples were recorded", reason);
+            r.Skip(
+                "F09 never-sampled contract is not averaged or formatted as a quantity", reason);
         }
 
         // --- §115 renewal ------------------------------------------------------------------
@@ -306,6 +987,1795 @@ namespace Intercolony
                 "the offer is re-armed for next term rather than left standing");
             r.Check(!RenewalService.Accept(good, out _),
                 "a renewal cannot be accepted twice");
+        }
+
+        private static void CheckAutoRenewal(Results r, IntercolonyWorldComponent state)
+        {
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+
+            try
+            {
+                EmploymentContract good = Synthetic(CombatClause.Civilian, 40, 30);
+                good.autoRenew = true;
+                bool wouldRenew = RenewalService.WouldRenew(
+                    state, good, out string goodWhy);
+                int oldEndTick = good.endTick;
+                int oldWage = good.dailyWage;
+
+                RenewalService.Advance(good);
+                RenewalService.AdvanceAutoRenew(good);
+
+                r.Check(
+                    wouldRenew && good.renewals == 1 && !good.renewalOffered,
+                    "auto-renew accepts a live offer",
+                    $"eligible={wouldRenew}, renewals={good.renewals}, " +
+                    $"offer={good.renewalOffered}, reason={Trim(goodWhy)}");
+                r.Check(
+                    good.endTick > oldEndTick && good.dailyWage > oldWage,
+                    "the renewed term restarts and the wage rises",
+                    $"end {oldEndTick}->{good.endTick}, wage {oldWage}->{good.dailyWage}");
+
+                EmploymentContract off = Synthetic(CombatClause.Civilian, 40, 30);
+                off.autoRenew = false;
+                RenewalService.Advance(off);
+                RenewalService.AdvanceAutoRenew(off);
+                r.Check(
+                    RenewalService.HasLiveOffer(off) && off.renewals == 0,
+                    "auto-renew off leaves the offer standing",
+                    $"liveOffer={RenewalService.HasLiveOffer(off)}, renewals={off.renewals}");
+
+                EmploymentContract refused = Synthetic(CombatClause.Civilian, 40, 30);
+                refused.arrearsSilver = 200;
+                refused.autoRenew = true;
+                RenewalService.Advance(refused);
+                RenewalService.AdvanceAutoRenew(refused);
+                r.Check(
+                    refused.renewals == 0 && refused.renewalDeclinedByWorker,
+                    "auto-renew cannot overrule a worker who refuses",
+                    $"renewals={refused.renewals}, declinedByWorker={refused.renewalDeclinedByWorker}");
+
+                EmploymentContract open = Synthetic(CombatClause.Civilian, 40, 30);
+                open.termDays = 0;
+                open.endTick = -1;
+                open.autoRenew = true;
+                RenewalService.Advance(open);
+                RenewalService.AdvanceAutoRenew(open);
+                r.Check(
+                    open.renewals == 0 && !open.renewalOffered,
+                    "auto-renew does not touch an open-ended contract",
+                    $"renewals={open.renewals}, offer={open.renewalOffered}");
+            }
+            finally
+            {
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+            }
+        }
+
+        private static void CheckSupplyAutoReady(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const string ReadyAssertion = "auto-ready marks a ready cycle order ready";
+            const string AutoReadyOffAssertion = "auto-ready off leaves the order alone";
+            const string MissingGoodsAssertion = "auto-ready refuses when the goods are not there";
+            const string FailureThrottleAssertion = "the failure letter is sent once, not every pass";
+            const string SellerDeliveryAssertion =
+                "a seller-delivery cycle order is never auto-readied";
+            const string AutomaticReadyLetterAssertion = "an automatic ready sends no letter";
+            const string AutomaticFailureLetterAssertion = "a failed automatic ready still warns";
+            const string ManualReadyLetterAssertion = "a manual ready still announces";
+            const string ReadyLetterLabel = "Order ready";
+            const string FailureLetterLabel = "Agreement delivery needs attention";
+
+            Map fulfillmentMap = map?.IsPlayerHome == true ? map : Find.AnyPlayerHomeMap;
+            ThingDef probeDef = FindAutoReadyProbeDef(state, fulfillmentMap);
+            List<RecurringContract> testContracts = new List<RecurringContract>();
+            List<SalesOrder> testOrders = new List<SalesOrder>();
+            List<Zone_Stockpile> testZones = new List<Zone_Stockpile>();
+            List<Thing> testThings = new List<Thing>();
+            List<RecurringContract> existingAutoReady = new List<RecurringContract>();
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            bool canObserveLetters = Find.LetterStack != null && settings != null;
+
+            if (!canObserveLetters)
+            {
+                string letterObservationSkipReason = Find.LetterStack == null
+                    ? "the letter stack is unavailable"
+                    : "Intercolony settings are unavailable";
+                r.Skip(AutomaticReadyLetterAssertion, letterObservationSkipReason);
+                r.Skip(AutomaticFailureLetterAssertion, letterObservationSkipReason);
+                r.Skip(ManualReadyLetterAssertion, letterObservationSkipReason);
+            }
+
+            foreach (RecurringContract existing in state.Contracts)
+            {
+                if (existing != null && existing.autoReadyOrders)
+                {
+                    existingAutoReady.Add(existing);
+                    existing.autoReadyOrders = false;
+                }
+            }
+
+            IntercolonyLetterVolume savedLetterVolume = default(IntercolonyLetterVolume);
+            if (canObserveLetters)
+            {
+                savedLetterVolume = settings.letterVolume;
+                settings.letterVolume = IntercolonyLetterVolume.Everything;
+            }
+
+            try
+            {
+                if (probeDef == null || fulfillmentMap == null)
+                {
+                    string missingFixture = fulfillmentMap == null
+                        ? "no player-home fulfillment map"
+                        : "no isolated valid tradable item definition";
+                    r.Skip(ReadyAssertion, missingFixture);
+                    r.Skip(AutoReadyOffAssertion, missingFixture);
+                    r.Skip(MissingGoodsAssertion, missingFixture);
+                    r.Skip(FailureThrottleAssertion, missingFixture);
+                    r.Skip(SellerDeliveryAssertion, missingFixture);
+                    if (canObserveLetters)
+                    {
+                        r.Skip(AutomaticReadyLetterAssertion, missingFixture);
+                        r.Skip(AutomaticFailureLetterAssertion, missingFixture);
+                        r.Skip(ManualReadyLetterAssertion, missingFixture);
+                    }
+                    return;
+                }
+
+                string stockFailure = null;
+                bool storedStock = TrySpawnStoredStock(
+                    fulfillmentMap, probeDef, testZones, testThings, out stockFailure);
+
+                if (!storedStock)
+                {
+                    r.Skip(
+                        ReadyAssertion,
+                        stockFailure ?? "no isolated tradable item and player-home map");
+                    r.Skip(
+                        AutoReadyOffAssertion,
+                        "the shared real-stock fixture could not be placed");
+                    if (canObserveLetters)
+                    {
+                        r.Skip(
+                            AutomaticReadyLetterAssertion,
+                            stockFailure ?? "the shared real-stock fixture could not be placed");
+                        r.Skip(
+                            ManualReadyLetterAssertion,
+                            "the shared real-stock fixture could not be placed");
+                    }
+                }
+                else
+                {
+                    RecurringContract readyContract = AddAutoReadyFixture(
+                        state, fulfillmentMap, probeDef, autoReadyOrders: true,
+                        FulfillmentMode.BuyerPickup, -89101, -89102,
+                        testContracts, testOrders, out SalesOrder readyOrder);
+                    List<Letter> automaticReadyBefore = SnapshotLetters();
+                    int readied = ContractService.AdvanceAutoReady(state);
+                    if (canObserveLetters)
+                    {
+                        List<Letter> automaticReadyNewLetters =
+                            NewLettersSince(automaticReadyBefore);
+                        r.Check(
+                            readied == 1 &&
+                            readyOrder.status == SalesOrderStatus.AwaitingCollection &&
+                            !HasLetterLabel(automaticReadyNewLetters, ReadyLetterLabel),
+                            AutomaticReadyLetterAssertion,
+                            $"readied={readied}, status={readyOrder.status}, " +
+                            $"new labels={LetterLabels(automaticReadyNewLetters)}, " +
+                            $"volume={settings.letterVolume}");
+                    }
+                    r.Check(
+                        readied == 1 && readyOrder.status == SalesOrderStatus.AwaitingCollection,
+                        ReadyAssertion,
+                        $"readied={readied}, status={readyOrder.status}");
+                    state.Contracts.Remove(readyContract);
+                    state.Orders.Remove(readyOrder);
+
+                    if (canObserveLetters)
+                    {
+                        RecurringContract manualContract = AddAutoReadyFixture(
+                            state, fulfillmentMap, probeDef, autoReadyOrders: false,
+                            FulfillmentMode.BuyerPickup, -89111, -89112,
+                            testContracts, testOrders, out SalesOrder manualOrder);
+                        List<Letter> manualReadyBefore = SnapshotLetters();
+                        bool manualReadied = SalesOrderService.MarkReadyForPickup(
+                            manualOrder, fulfillmentMap);
+                        List<Letter> manualReadyNewLetters =
+                            NewLettersSince(manualReadyBefore);
+                        r.Check(
+                            manualReadied &&
+                            manualOrder.status == SalesOrderStatus.AwaitingCollection &&
+                            HasLetterLabel(manualReadyNewLetters, ReadyLetterLabel),
+                            ManualReadyLetterAssertion,
+                            $"readied={manualReadied}, status={manualOrder.status}, " +
+                            $"new labels={LetterLabels(manualReadyNewLetters)}, " +
+                            $"volume={settings.letterVolume}");
+                        state.Contracts.Remove(manualContract);
+                        state.Orders.Remove(manualOrder);
+                    }
+
+                    RecurringContract offContract = AddAutoReadyFixture(
+                        state, fulfillmentMap, probeDef, autoReadyOrders: false,
+                        FulfillmentMode.BuyerPickup, -89103, -89104,
+                        testContracts, testOrders, out SalesOrder offOrder);
+                    int readiedWithAutoReadyOff = ContractService.AdvanceAutoReady(state);
+                    r.Check(
+                        readiedWithAutoReadyOff == 0 && offOrder.status == SalesOrderStatus.Accepted,
+                        AutoReadyOffAssertion,
+                        $"readied={readiedWithAutoReadyOff}, status={offOrder.status}");
+                    state.Contracts.Remove(offContract);
+                    state.Orders.Remove(offOrder);
+                }
+
+                DestroyTestThings(testThings);
+
+                RecurringContract absentContract = AddAutoReadyFixture(
+                    state, fulfillmentMap, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.BuyerPickup, -89105, -89106,
+                    testContracts, testOrders, out SalesOrder absentOrder);
+                List<Letter> automaticFailureBefore = SnapshotLetters();
+                int absentReadied = ContractService.AdvanceAutoReady(state);
+                if (canObserveLetters)
+                {
+                    List<Letter> automaticFailureNewLetters =
+                        NewLettersSince(automaticFailureBefore);
+                    r.Check(
+                        absentReadied == 0 &&
+                        HasLetterLabel(automaticFailureNewLetters, FailureLetterLabel),
+                        AutomaticFailureLetterAssertion,
+                        $"readied={absentReadied}, status={absentOrder.status}, " +
+                        $"new labels={LetterLabels(automaticFailureNewLetters)}, " +
+                        $"volume={settings.letterVolume}");
+                }
+                r.Check(
+                    absentReadied == 0 && absentOrder.status == SalesOrderStatus.Accepted &&
+                    absentOrder.IsOpen && absentOrder.autoReadyFailureNotified,
+                    MissingGoodsAssertion,
+                    $"readied={absentReadied}, status={absentOrder.status}, " +
+                    $"open={absentOrder.IsOpen}, notified={absentOrder.autoReadyFailureNotified}");
+                state.Contracts.Remove(absentContract);
+                state.Orders.Remove(absentOrder);
+
+                RecurringContract throttledContract = AddAutoReadyFixture(
+                    state, fulfillmentMap, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.BuyerPickup, -89107, -89108,
+                    testContracts, testOrders, out SalesOrder throttledOrder);
+                int firstFailurePass = ContractService.AdvanceAutoReady(state);
+                bool notifiedAfterFirstPass = throttledOrder.autoReadyFailureNotified;
+                int secondFailurePass = ContractService.AdvanceAutoReady(state);
+                bool notifiedAfterSecondPass = throttledOrder.autoReadyFailureNotified;
+                r.Check(
+                    firstFailurePass == 0 && secondFailurePass == 0 &&
+                    notifiedAfterFirstPass && notifiedAfterSecondPass,
+                    FailureThrottleAssertion,
+                    $"passes={firstFailurePass}/{secondFailurePass}, " +
+                    $"notified={notifiedAfterFirstPass}/{notifiedAfterSecondPass}");
+                state.Contracts.Remove(throttledContract);
+                state.Orders.Remove(throttledOrder);
+
+                RecurringContract sellerDeliveryContract = AddAutoReadyFixture(
+                    state, fulfillmentMap, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.SellerDelivery, -89109, -89110,
+                    testContracts, testOrders, out SalesOrder sellerDeliveryOrder);
+                int sellerDeliveryReadied = ContractService.AdvanceAutoReady(state);
+                r.Check(
+                    sellerDeliveryReadied == 0 &&
+                    sellerDeliveryOrder.status == SalesOrderStatus.Accepted &&
+                    !sellerDeliveryOrder.CanMarkReady,
+                    SellerDeliveryAssertion,
+                    $"readied={sellerDeliveryReadied}, status={sellerDeliveryOrder.status}, " +
+                    $"canMarkReady={sellerDeliveryOrder.CanMarkReady}");
+                state.Contracts.Remove(sellerDeliveryContract);
+                state.Orders.Remove(sellerDeliveryOrder);
+
+                // The fixtures above start with an order that already exists. Keep them for the
+                // order-level auto-ready checks, but cover the defect's actual entry point too:
+                // a real contract whose next cycle is due and is advanced through the public path.
+                CheckDueCycleThroughAdvanceContracts(r, state, fulfillmentMap, probeDef);
+            }
+            finally
+            {
+                if (canObserveLetters)
+                {
+                    settings.letterVolume = savedLetterVolume;
+                }
+
+                foreach (RecurringContract contract in testContracts)
+                {
+                    state.Contracts.Remove(contract);
+                }
+
+                foreach (SalesOrder order in testOrders)
+                {
+                    state.Orders.Remove(order);
+                }
+
+                DestroyTestThings(testThings);
+                foreach (Zone_Stockpile zone in testZones)
+                {
+                    zone?.Delete(playSound: false);
+                }
+
+                foreach (RecurringContract existing in existingAutoReady)
+                {
+                    existing.autoReadyOrders = true;
+                }
+
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+            }
+        }
+
+        private static void CheckDueCycleThroughAdvanceContracts(
+            Results r, IntercolonyWorldComponent state, Map fulfillmentMap, ThingDef probeDef)
+        {
+            const string DueFulfillableNoLetterAssertion =
+                "a due fully fulfillable cycle sends no player letter";
+            const string DueAutoReadyNoLetterAssertion =
+                "a due cycle whose auto-ready succeeds sends no player letter";
+            const string DueMissingGoodsAssertion =
+                "a due cycle with insufficient goods sends one actionable warning";
+            const string DueStateAssertion =
+                "a successful due cycle keeps its order linked and schedules the next cycle";
+            const string DueWarningThrottleAssertion =
+                "repeated due-cycle advances do not duplicate an unresolved warning";
+            const string DueAutoReadyOffAssertion =
+                "a due cycle with auto-ready off sends one actionable warning";
+            const string DueSellerDeliveryAssertion =
+                "a seller-delivery due cycle sends one actionable warning";
+            const string FailureLetterLabel = "Agreement delivery needs attention";
+
+            void SkipAll(string reason)
+            {
+                r.Skip(DueFulfillableNoLetterAssertion, reason);
+                r.Skip(DueAutoReadyNoLetterAssertion, reason);
+                r.Skip(DueMissingGoodsAssertion, reason);
+                r.Skip(DueStateAssertion, reason);
+                r.Skip(DueWarningThrottleAssertion, reason);
+                r.Skip(DueAutoReadyOffAssertion, reason);
+                r.Skip(DueSellerDeliveryAssertion, reason);
+            }
+
+            TickManager tickManager = Find.TickManager;
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            if (Find.LetterStack == null || settings == null)
+            {
+                SkipAll(Find.LetterStack == null
+                    ? "the letter stack is unavailable"
+                    : "Intercolony settings are unavailable");
+                return;
+            }
+
+            Settlement settlement = FindDueCycleSettlement();
+            if (tickManager == null || settlement == null || fulfillmentMap == null ||
+                probeDef == null)
+            {
+                SkipAll(
+                    tickManager == null
+                        ? "the tick manager is unavailable"
+                        : settlement == null
+                            ? "no accessible settlement was available for RaiseCycleOrder"
+                            : fulfillmentMap == null
+                                ? "no player-home fulfillment map"
+                                : "no isolated valid tradable item definition");
+                return;
+            }
+
+            List<RecurringContract> savedContracts =
+                new List<RecurringContract>(state.Contracts);
+            List<SalesOrder> savedOrders = new List<SalesOrder>(state.Orders);
+            List<Zone_Stockpile> testZones = new List<Zone_Stockpile>();
+            List<Thing> testThings = new List<Thing>();
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+            int savedTick = tickManager.TicksGame;
+            IntercolonyLetterVolume savedLetterVolume = settings.letterVolume;
+
+            try
+            {
+                settings.letterVolume = IntercolonyLetterVolume.Everything;
+
+                // Isolate AdvanceContracts from real obligations. The public path walks every
+                // contract in the component, so leaving the player's list in place would make
+                // this assertion depend on unrelated due work in the current save.
+                state.Contracts.Clear();
+                state.Orders.Clear();
+
+                string stockFailure = null;
+                bool storedStock = TrySpawnStoredStock(
+                    fulfillmentMap, probeDef, testZones, testThings, out stockFailure);
+                int dueTick = tickManager.TicksGame;
+
+                if (!storedStock)
+                {
+                    r.Skip(
+                        DueFulfillableNoLetterAssertion,
+                        stockFailure ?? "the shared real-stock fixture could not be placed");
+                    r.Skip(
+                        DueAutoReadyNoLetterAssertion,
+                        stockFailure ?? "the shared real-stock fixture could not be placed");
+                    r.Skip(
+                        DueStateAssertion,
+                        stockFailure ?? "the shared real-stock fixture could not be placed");
+                }
+                else
+                {
+                    // One fixture honestly proves both plan cases: the due cycle is fully
+                    // fulfillable, and its configured buyer-pickup flow auto-readies it.
+                    RecurringContract success = AddDueCycleFixture(
+                        state, settlement, probeDef, autoReadyOrders: true,
+                        FulfillmentMode.BuyerPickup, -89301, dueTick);
+                    List<Letter> successBefore = SnapshotLetters();
+                    ContractService.AdvanceContracts(state);
+                    List<Letter> successNewLetters = NewLettersSince(successBefore);
+                    SalesOrder successOrder = state.FindOrder(success.activeOrderId);
+
+                    r.Check(
+                        successNewLetters.Count == 0,
+                        DueFulfillableNoLetterAssertion,
+                        $"new letters={LetterLabels(successNewLetters)}");
+                    r.Check(
+                        successOrder != null &&
+                        successOrder.status == SalesOrderStatus.AwaitingCollection &&
+                        successNewLetters.Count == 0,
+                        DueAutoReadyNoLetterAssertion,
+                        $"order={successOrder?.status.ToString() ?? "missing"}, " +
+                        $"new letters={LetterLabels(successNewLetters)}");
+
+                    // A due cycle is not complete yet, so its durable evidence is the retained
+                    // order row and the contract's live linkage/schedule, not a completion record.
+                    bool orderRetained = successOrder != null &&
+                                         state.Orders.Contains(successOrder) &&
+                                         state.FindOrder(success.activeOrderId) == successOrder;
+                    bool orderLinked = successOrder != null &&
+                                       successOrder.contractId == success.id &&
+                                       success.activeOrderId == successOrder.id;
+                    bool nextCycleScheduled = success.nextCycleTick ==
+                                              dueTick + success.cadenceTicks;
+                    r.Check(
+                        orderRetained && orderLinked && nextCycleScheduled,
+                        DueStateAssertion,
+                        $"retained={orderRetained}, linked={orderLinked}, " +
+                        $"next={success.nextCycleTick}, expected={dueTick + success.cadenceTicks}");
+                }
+
+                // Keep the one stored matching unit: physical line validation must pass before
+                // CanMarkReadyNow can reach its free-quantity shortage branch. Occupy that unit
+                // with a separate open pickup commitment so the cycle is short only on goods
+                // still free to promise, not on the line-validation summary.
+                state.Contracts.Clear();
+                state.Orders.Clear();
+
+                // Auto-ready on + missing goods exercises its existing specific warning and its
+                // per-order throttle. The second pass is one tick later, while the order remains
+                // Accepted and unresolved.
+                int missingGoodsDueTick = tickManager.TicksGame;
+                RecurringContract missingGoods = AddDueCycleFixture(
+                    state, settlement, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.BuyerPickup, -89302, missingGoodsDueTick);
+                state.AddOrder(new SalesOrder
+                {
+                    id = -89305,
+                    contractId = -89305,
+                    settlementId = settlement.ID,
+                    settlementName = "Due-cycle stock commitment",
+                    factionName = settlement.Faction?.Name ?? "",
+                    line = new OrderLine(probeDef, 1),
+                    unitPrice = 1f,
+                    acceptedTick = missingGoodsDueTick,
+                    deadlineTick = missingGoodsDueTick + GenDate.TicksPerDay,
+                    fulfillment = FulfillmentMode.BuyerPickup,
+                    fulfillmentMap = fulfillmentMap,
+                    buyerArrivalTick = missingGoodsDueTick + 1,
+                    status = SalesOrderStatus.AwaitingCollection
+                });
+                List<Letter> missingBefore = SnapshotLetters();
+                ContractService.AdvanceContracts(state);
+                List<Letter> missingFirstLetters = NewLettersSince(missingBefore);
+                SalesOrder missingOrder = state.FindOrder(missingGoods.activeOrderId);
+                SalesOrderService.CanMarkReadyNow(
+                    missingOrder,
+                    SalesOrderService.GetFulfillmentMapForReady(missingOrder),
+                    out string missingReason);
+                bool missingWarningIsActionable =
+                    missingFirstLetters.Count == 1 &&
+                    CountLetterLabel(missingFirstLetters, FailureLetterLabel) == 1 &&
+                    HasActionableLetter(
+                        missingFirstLetters,
+                        FailureLetterLabel,
+                        "order #",
+                        "could not be marked ready automatically",
+                        "still needs",
+                        "Selling -> Orders");
+                r.Check(
+                    missingWarningIsActionable,
+                    DueMissingGoodsAssertion,
+                    $"new letters={LetterLabels(missingFirstLetters)}, " +
+                    $"reason={missingReason ?? "none"}, " +
+                    $"order={missingOrder?.status.ToString() ?? "missing"}");
+
+                tickManager.DebugSetTicksGame(missingGoodsDueTick + 1);
+                List<Letter> repeatedBefore = SnapshotLetters();
+                ContractService.AdvanceContracts(state);
+                List<Letter> repeatedLetters = NewLettersSince(repeatedBefore);
+                r.Check(
+                    missingFirstLetters.Count == 1 && repeatedLetters.Count == 0 &&
+                    CountLetterLabel(missingFirstLetters, FailureLetterLabel) == 1 &&
+                    missingOrder != null && missingOrder.status == SalesOrderStatus.Accepted,
+                    DueWarningThrottleAssertion,
+                    $"first={LetterLabels(missingFirstLetters)}, " +
+                    $"repeated={LetterLabels(repeatedLetters)}, " +
+                    $"status={missingOrder?.status.ToString() ?? "missing"}");
+
+                state.Contracts.Clear();
+                state.Orders.Clear();
+                tickManager.DebugSetTicksGame(savedTick);
+
+                RecurringContract autoReadyOff = AddDueCycleFixture(
+                    state, settlement, probeDef, autoReadyOrders: false,
+                    FulfillmentMode.BuyerPickup, -89304, savedTick);
+                List<Letter> autoReadyOffBefore = SnapshotLetters();
+                ContractService.AdvanceContracts(state);
+                List<Letter> autoReadyOffNewLetters = NewLettersSince(autoReadyOffBefore);
+                SalesOrder autoReadyOffOrder = state.FindOrder(autoReadyOff.activeOrderId);
+                r.Check(
+                    autoReadyOffNewLetters.Count == 1 &&
+                    CountLetterLabel(autoReadyOffNewLetters, FailureLetterLabel) == 1 &&
+                    HasActionableLetter(
+                        autoReadyOffNewLetters,
+                        FailureLetterLabel,
+                        "order #",
+                        "Auto-ready is off",
+                        "mark the order ready by hand") &&
+                    autoReadyOffOrder != null &&
+                    autoReadyOffOrder.status == SalesOrderStatus.Accepted,
+                    DueAutoReadyOffAssertion,
+                    $"new letters={LetterLabels(autoReadyOffNewLetters)}, " +
+                    $"order={autoReadyOffOrder?.status.ToString() ?? "missing"}");
+
+                state.Contracts.Clear();
+                state.Orders.Clear();
+                tickManager.DebugSetTicksGame(savedTick);
+
+                RecurringContract sellerDelivery = AddDueCycleFixture(
+                    state, settlement, probeDef, autoReadyOrders: true,
+                    FulfillmentMode.SellerDelivery, -89303, savedTick);
+                List<Letter> sellerBefore = SnapshotLetters();
+                ContractService.AdvanceContracts(state);
+                List<Letter> sellerNewLetters = NewLettersSince(sellerBefore);
+                SalesOrder sellerOrder = state.FindOrder(sellerDelivery.activeOrderId);
+                bool sellerWarningIsActionable =
+                    sellerNewLetters.Count == 1 &&
+                    CountLetterLabel(sellerNewLetters, FailureLetterLabel) == 1 &&
+                    HasActionableLetter(
+                        sellerNewLetters,
+                        FailureLetterLabel,
+                        "order #",
+                        "seller-delivery",
+                        "arrange the delivery by hand");
+                r.Check(
+                    sellerWarningIsActionable && sellerOrder != null &&
+                    sellerOrder.status == SalesOrderStatus.Accepted &&
+                    !sellerOrder.CanMarkReady,
+                    DueSellerDeliveryAssertion,
+                    $"new letters={LetterLabels(sellerNewLetters)}, " +
+                    $"order={sellerOrder?.status.ToString() ?? "missing"}, " +
+                    $"canMarkReady={sellerOrder?.CanMarkReady.ToString() ?? "missing"}");
+            }
+            finally
+            {
+                tickManager.DebugSetTicksGame(savedTick);
+                settings.letterVolume = savedLetterVolume;
+
+                state.Contracts.Clear();
+                state.Contracts.AddRange(savedContracts);
+                state.Orders.Clear();
+                state.Orders.AddRange(savedOrders);
+
+                DestroyTestThings(testThings);
+                foreach (Zone_Stockpile zone in testZones)
+                {
+                    zone?.Delete(playSound: false);
+                }
+
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+                r.Info(
+                    $"due-cycle contracts/orders restored ({savedContracts.Count}/{savedOrders.Count}), " +
+                    $"tick {savedTick} restored, and generated letters removed.");
+            }
+        }
+
+        private static void CheckProcurementWaitForSilver(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const string FundableAssertion = "a fundable procurement cycle creates its order";
+            const string WaitAssertion = "an unaffordable cycle waits instead of failing";
+            const string ToggleOffAssertion =
+                "with the toggle off an unaffordable cycle still fails immediately";
+            const string DeadlineAssertion = "waiting ends when the grace window closes";
+            const string NoticeAssertion = "the wait notice is sent once, not every refresh";
+            const string SilverOnlyAssertion = "only silver is waited for";
+
+            void SkipAll(string reason)
+            {
+                r.Skip(FundableAssertion, reason);
+                r.Skip(WaitAssertion, reason);
+                r.Skip(ToggleOffAssertion, reason);
+                r.Skip(DeadlineAssertion, reason);
+                r.Skip(NoticeAssertion, reason);
+                r.Skip(SilverOnlyAssertion, reason);
+            }
+
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            List<ProcurementContract> savedContracts = state?.ProcurementContracts == null
+                ? null
+                : new List<ProcurementContract>(state.ProcurementContracts);
+            List<PurchaseOrder> savedOrders = state?.PurchaseOrders == null
+                ? null
+                : new List<PurchaseOrder>(state.PurchaseOrders);
+            List<LedgerEntry> savedLedger = state?.Ledger == null
+                ? null
+                : new List<LedgerEntry>(state.Ledger);
+            int savedLedgerStartTick = state?.LedgerStartTick ?? LedgerService.NoHistory;
+
+            System.Reflection.FieldInfo consumptionField = typeof(IntercolonyWorldComponent)
+                .GetField(
+                    "supplierOfferConsumption",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+            System.Reflection.FieldInfo profileCacheField = typeof(IntercolonyWorldComponent)
+                .GetField(
+                    "profileCache",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+            System.Reflection.FieldInfo economySeedField = typeof(IntercolonyWorldComponent)
+                .GetField(
+                    "economySeed",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic);
+            List<SupplierOfferConsumption> liveConsumption = consumptionField?.GetValue(state)
+                as List<SupplierOfferConsumption>;
+            Dictionary<int, SettlementEconomicProfile> liveProfileCache = profileCacheField?
+                .GetValue(state) as Dictionary<int, SettlementEconomicProfile>;
+            List<SupplierOfferConsumption> savedConsumption = liveConsumption == null
+                ? null
+                : new List<SupplierOfferConsumption>(liveConsumption);
+            Dictionary<int, SettlementEconomicProfile> savedProfileCache = liveProfileCache == null
+                ? null
+                : new Dictionary<int, SettlementEconomicProfile>(liveProfileCache);
+            int savedEconomySeed = economySeedField == null
+                ? 0
+                : (int)economySeedField.GetValue(state);
+            int savedSilver = paymentMap == null || ThingDefOf.Silver == null
+                ? 0
+                : PurchaseOrderService.CountColonySilver(paymentMap);
+            List<IntVec3> savedSilverCells = new List<IntVec3>();
+            if (paymentMap != null && ThingDefOf.Silver != null)
+            {
+                foreach (Thing silver in paymentMap.listerThings.ThingsOfDef(ThingDefOf.Silver))
+                {
+                    if (silver != null && !silver.Destroyed && silver.IsInAnyStorage())
+                    {
+                        savedSilverCells.Add(silver.Position);
+                    }
+                }
+            }
+
+            List<Zone_Stockpile> silverZones = new List<Zone_Stockpile>();
+            List<Letter> existingLetters = SnapshotLetters();
+            List<IArchivable> existingArchivables = SnapshotArchivables();
+            ExpectedLogHandler diagnosticHandler = null;
+
+            try
+            {
+                if (paymentMap == null || ThingDefOf.Silver == null)
+                {
+                    SkipAll("no player-home payment map or silver definition");
+                    return;
+                }
+
+                if (savedContracts == null || savedOrders == null || savedLedger == null ||
+                    liveConsumption == null || liveProfileCache == null ||
+                    consumptionField == null || profileCacheField == null ||
+                    economySeedField == null)
+                {
+                    SkipAll("the live fields needed for complete procurement cleanup are inaccessible");
+                    return;
+                }
+
+                if (savedSilver == int.MaxValue)
+                {
+                    SkipAll("stored silver count cannot be increased by one for the wait fixture");
+                    return;
+                }
+
+                int fundableSilverTarget = savedSilver > 0 ? savedSilver : 1;
+                if (!TrySetStoredSilver(
+                        paymentMap, fundableSilverTarget, savedSilverCells, silverZones,
+                        out string silverFailure) ||
+                    PurchaseOrderService.CountColonySilver(paymentMap) != fundableSilverTarget)
+                {
+                    SkipAll(
+                        silverFailure ??
+                        "the payment map did not reach the stored-silver fixture amount");
+                    return;
+                }
+
+                Settlement supplier = null;
+                ThingDef product = null;
+                List<Settlement> settlements = Find.WorldObjects?.Settlements;
+                List<ThingDef> tradableDefs = IntercolonyProductClassifier.TradableDefs;
+                if (settlements != null && tradableDefs != null)
+                {
+                    foreach (Settlement candidateSettlement in settlements)
+                    {
+                        if (candidateSettlement == null ||
+                            !IntercolonyMarketAccess.IsAccessible(candidateSettlement))
+                        {
+                            continue;
+                        }
+
+                        SettlementEconomicProfile profile =
+                            state.GetProfileForReadOnly(candidateSettlement);
+                        if (profile == null)
+                        {
+                            continue;
+                        }
+
+                        foreach (ThingDef candidateDef in tradableDefs)
+                        {
+                            if (candidateDef == null || candidateDef == ThingDefOf.Silver ||
+                                candidateDef.category != ThingCategory.Item ||
+                                candidateDef.stackLimit < 1 || candidateDef.MadeFromStuff ||
+                                (candidateDef.techLevel != TechLevel.Undefined &&
+                                 candidateDef.techLevel > profile.techTier))
+                            {
+                                continue;
+                            }
+
+                            if (!IntercolonyProductClassifier.TryGetTradableCategory(
+                                    candidateDef, out IntercolonyProductCategory category))
+                            {
+                                continue;
+                            }
+
+                            float effectiveSupply = EffectiveEconomyService.EffectiveSupply(
+                                state, profile, category);
+                            if (!RfqService.CanTechnicallySupply(candidateDef, profile) ||
+                                effectiveSupply <= 0f ||
+                                RfqService.SupplierOfferQuantity(
+                                    candidateDef, null, profile, effectiveSupply) < 1)
+                            {
+                                continue;
+                            }
+
+                            supplier = candidateSettlement;
+                            product = candidateDef;
+                            break;
+                        }
+
+                        if (supplier != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                if (supplier == null || product == null)
+                {
+                    SkipAll("no accessible supplier has positive current capacity for a tradable item");
+                    return;
+                }
+
+                state.ProcurementContracts.Clear();
+                state.PurchaseOrders.Clear();
+                state.Ledger.Clear();
+                liveConsumption.Clear();
+
+                ProcurementContract AddFixture(
+                    int id, bool autoReadyOrders, int quantity, float unitPrice, int nextCycleTick)
+                {
+                    ProcurementContract contract = new ProcurementContract
+                    {
+                        id = id,
+                        settlementId = supplier.ID,
+                        settlementName = supplier.Label ?? "Procurement self-test supplier",
+                        thingDef = product,
+                        quantityPerCycle = quantity,
+                        unitPrice = unitPrice,
+                        cadenceDays = 1,
+                        totalCycles = 2,
+                        status = ProcurementContractStatus.Active,
+                        activeOrderId = ProcurementContract.NoActiveOrderId,
+                        nextCycleTick = nextCycleTick,
+                        autoReadyOrders = autoReadyOrders
+                    };
+                    state.AddProcurementContract(contract);
+                    return contract;
+                }
+
+                int now = GenTicks.TicksGame;
+                ProcurementContract fundable = AddFixture(
+                    -89201, autoReadyOrders: true, quantity: 1, unitPrice: 1f, nextCycleTick: now);
+                int fundableFailuresBefore = fundable.cyclesFailed;
+                ProcurementDiagnosticSnapshot fundableBefore = CaptureProcurementDiagnostics(
+                    state, paymentMap, fundable);
+                ProcurementContractService.AdvanceCycles(state);
+                ProcurementDiagnosticSnapshot fundableAfter = CaptureProcurementDiagnostics(
+                    state, paymentMap, fundable);
+                bool fundableOrderCreated =
+                    fundable.activeOrderId != ProcurementContract.NoActiveOrderId;
+                bool fundableFailuresUnchanged = fundable.cyclesFailed == fundableFailuresBefore;
+                bool fundablePassed = fundableOrderCreated && fundableFailuresUnchanged;
+                r.Check(
+                    fundablePassed,
+                    FundableAssertion,
+                    fundablePassed
+                        ? $"orderCreated={fundableOrderCreated}, " +
+                          $"failuresUnchanged={fundableFailuresUnchanged}"
+                        : $"orderCreated={fundableOrderCreated}, " +
+                          $"failuresUnchanged={fundableFailuresUnchanged}, " +
+                          BuildProcurementDiagnosticDetail(
+                              "fundable", fundableBefore, fundableAfter));
+                state.ProcurementContracts.Remove(fundable);
+
+                int silverBeforeWait = PurchaseOrderService.CountColonySilver(paymentMap);
+                if (silverBeforeWait == int.MaxValue)
+                {
+                    r.Skip(
+                        WaitAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    r.Skip(
+                        ToggleOffAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    r.Skip(
+                        DeadlineAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    r.Skip(
+                        NoticeAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    r.Skip(
+                        SilverOnlyAssertion,
+                        "stored silver count cannot be increased by one for the wait price");
+                    return;
+                }
+
+                int waitingPrice = silverBeforeWait + 1;
+                int waitingTotal = IntercolonyPricing.TotalPayment(waitingPrice, 1);
+                string supplierName = supplier.Label ?? "Procurement self-test supplier";
+                string insufficientSilverReason =
+                    $"Not enough silver in storage: {silverBeforeWait} of {waitingTotal} needed.";
+                const string invalidPriceReason = "The supplier's published price is invalid.";
+                List<string> expectedDiagnostics = new List<string>
+                {
+                    PrefixIntercolonyLog(
+                        $"Procurement contract -89203 cycle 1 failed: {insufficientSilverReason}"),
+                    PrefixIntercolonyLog(
+                        $"Procurement contract -89204 cycle 1 failed: {insufficientSilverReason}"),
+                    PrefixIntercolonyLog(
+                        $"Procurement contract -89206 cycle 1 failed: {invalidPriceReason}"),
+                    PrefixProcurementFailureLetterLog(supplierName, insufficientSilverReason),
+                    PrefixProcurementFailureLetterLog(supplierName, insufficientSilverReason),
+                    PrefixProcurementFailureLetterLog(supplierName, invalidPriceReason)
+                };
+                diagnosticHandler = new ExpectedLogHandler(
+                    LogType.Log, Debug.unityLogger.logHandler, expectedDiagnostics);
+                Debug.unityLogger.logHandler = diagnosticHandler;
+                ProcurementContract waiting = AddFixture(
+                    -89202, autoReadyOrders: true, quantity: 1,
+                    unitPrice: waitingPrice, nextCycleTick: now);
+                int waitingFailuresBefore = waiting.cyclesFailed;
+                int waitingDueTick = waiting.nextCycleTick;
+                ProcurementContractService.AdvanceCycles(state);
+                bool waitingFailuresUnchanged = waiting.cyclesFailed == waitingFailuresBefore;
+                bool waitingHasNoOrder =
+                    waiting.activeOrderId == ProcurementContract.NoActiveOrderId;
+                bool waitingDueUnchanged = waiting.nextCycleTick == waitingDueTick;
+                r.Check(
+                    waitingFailuresUnchanged && waitingHasNoOrder && waitingDueUnchanged,
+                    WaitAssertion,
+                    $"failuresUnchanged={waitingFailuresUnchanged}, " +
+                    $"noOrder={waitingHasNoOrder}, dueUnchanged={waitingDueUnchanged}");
+                state.ProcurementContracts.Remove(waiting);
+
+                ProcurementContract toggleOff = AddFixture(
+                    -89203, autoReadyOrders: false, quantity: 1,
+                    unitPrice: waitingPrice, nextCycleTick: now);
+                int toggleOffFailuresBefore = toggleOff.cyclesFailed;
+                int toggleOffDueTick = toggleOff.nextCycleTick;
+                ProcurementContractService.AdvanceCycles(state);
+                bool toggleOffFailed = toggleOff.cyclesFailed > toggleOffFailuresBefore;
+                bool toggleOffAdvancedOneCadence = toggleOff.nextCycleTick ==
+                    toggleOffDueTick + toggleOff.cadenceDays * GenDate.TicksPerDay;
+                r.Check(
+                    toggleOffFailed && toggleOffAdvancedOneCadence,
+                    ToggleOffAssertion,
+                    $"failuresIncreased={toggleOffFailed}, " +
+                    $"advancedOneCadence={toggleOffAdvancedOneCadence}");
+                state.ProcurementContracts.Remove(toggleOff);
+
+                ProcurementContract deadline = AddFixture(
+                    -89204, autoReadyOrders: true, quantity: 1,
+                    unitPrice: waitingPrice,
+                    nextCycleTick: now - GenDate.TicksPerDay);
+                int deadlineFailuresBefore = deadline.cyclesFailed;
+                int deadlineDueTick = deadline.nextCycleTick;
+                ProcurementContractService.AdvanceCycles(state);
+                bool deadlineFailed = deadline.cyclesFailed > deadlineFailuresBefore;
+                bool deadlineAdvancedOneCadence = deadline.nextCycleTick ==
+                    deadlineDueTick + deadline.cadenceDays * GenDate.TicksPerDay;
+                r.Check(
+                    deadlineFailed && deadlineAdvancedOneCadence,
+                    DeadlineAssertion,
+                    $"failuresIncreased={deadlineFailed}, " +
+                    $"advancedOneCadence={deadlineAdvancedOneCadence}");
+                state.ProcurementContracts.Remove(deadline);
+
+                ProcurementContract notice = AddFixture(
+                    -89205, autoReadyOrders: true, quantity: 1,
+                    unitPrice: waitingPrice, nextCycleTick: now);
+                int noticeFailuresBefore = notice.cyclesFailed;
+                int noticeDueTick = notice.nextCycleTick;
+                ProcurementContractService.AdvanceCycles(state);
+                bool notifiedAfterFirstPass = notice.autoReadyWaitNotified;
+                ProcurementContractService.AdvanceCycles(state);
+                bool notifiedAfterSecondPass = notice.autoReadyWaitNotified;
+                bool noticeStillWaiting = notice.cyclesFailed == noticeFailuresBefore &&
+                    notice.activeOrderId == ProcurementContract.NoActiveOrderId &&
+                    notice.nextCycleTick == noticeDueTick;
+                r.Check(
+                    notifiedAfterFirstPass && notifiedAfterSecondPass && noticeStillWaiting,
+                    NoticeAssertion,
+                    $"notified={notifiedAfterFirstPass}/{notifiedAfterSecondPass}, " +
+                    $"stillWaiting={noticeStillWaiting}");
+                state.ProcurementContracts.Remove(notice);
+
+                bool invalidSilverReady = PurchaseOrderService.CountColonySilver(paymentMap) > 0;
+                string invalidSilverFailure = null;
+                if (!invalidSilverReady)
+                {
+                    invalidSilverReady = TrySetStoredSilver(
+                        paymentMap, 1, savedSilverCells, silverZones, out invalidSilverFailure);
+                    invalidSilverReady = invalidSilverReady &&
+                        PurchaseOrderService.CountColonySilver(paymentMap) > 0;
+                }
+
+                if (!invalidSilverReady)
+                {
+                    r.Skip(
+                        SilverOnlyAssertion,
+                        invalidSilverFailure ??
+                        "the payment map could not reach at least one stored silver");
+                }
+                else
+                {
+                    ProcurementContract invalidTerms = AddFixture(
+                        -89206, autoReadyOrders: true, quantity: 1,
+                        unitPrice: 0f, nextCycleTick: now);
+                    int invalidFailuresBefore = invalidTerms.cyclesFailed;
+                    int invalidDueTick = invalidTerms.nextCycleTick;
+                    ProcurementDiagnosticSnapshot invalidBefore = CaptureProcurementDiagnostics(
+                        state, paymentMap, invalidTerms);
+                    ProcurementContractService.AdvanceCycles(state);
+                    ProcurementDiagnosticSnapshot invalidAfter = CaptureProcurementDiagnostics(
+                        state, paymentMap, invalidTerms);
+                    bool invalidFailed = invalidTerms.cyclesFailed > invalidFailuresBefore;
+                    bool invalidAdvancedOneCadence = invalidTerms.nextCycleTick ==
+                        invalidDueTick + invalidTerms.cadenceDays * GenDate.TicksPerDay;
+                    bool invalidPassed = invalidFailed && invalidAdvancedOneCadence;
+                    r.Check(
+                        invalidPassed,
+                        SilverOnlyAssertion,
+                        invalidPassed
+                            ? $"failuresIncreased={invalidFailed}, " +
+                              $"advancedOneCadence={invalidAdvancedOneCadence}"
+                            : $"failuresIncreased={invalidFailed}, " +
+                              $"advancedOneCadence={invalidAdvancedOneCadence}, " +
+                              BuildProcurementDiagnosticDetail(
+                                  "invalidTerms", invalidBefore, invalidAfter));
+                    state.ProcurementContracts.Remove(invalidTerms);
+                }
+
+                r.Check(
+                    diagnosticHandler.ExpectedCount == expectedDiagnostics.Count &&
+                    diagnosticHandler.UnexpectedErrorCount == 0,
+                    "expected procurement failure diagnostics stay scoped to the self-test",
+                    $"expected={expectedDiagnostics.Count}; captured={diagnosticHandler.ExpectedCount}; " +
+                    $"unexpected errors={diagnosticHandler.UnexpectedErrorCount}; " +
+                    $"first unexpected={diagnosticHandler.FirstUnexpectedError ?? "none"}");
+            }
+            finally
+            {
+                try
+                {
+                    if (diagnosticHandler != null)
+                    {
+                        Debug.unityLogger.logHandler = diagnosticHandler.Previous;
+                    }
+                }
+                finally
+                {
+                    if (paymentMap != null && ThingDefOf.Silver != null &&
+                        !TrySetStoredSilver(
+                            paymentMap, savedSilver, savedSilverCells, silverZones,
+                            out string restoreFailure))
+                    {
+                        r.Info($"stored silver restoration failed: {restoreFailure}");
+                    }
+                }
+
+                DeleteTestZones(silverZones);
+
+                if (paymentMap != null && ThingDefOf.Silver != null &&
+                    PurchaseOrderService.CountColonySilver(paymentMap) != savedSilver)
+                {
+                    r.Info("stored silver restoration did not reach the saved count.");
+                }
+
+                if (state?.ProcurementContracts != null && savedContracts != null)
+                {
+                    state.ProcurementContracts.Clear();
+                    state.ProcurementContracts.AddRange(savedContracts);
+                }
+
+                if (state?.PurchaseOrders != null && savedOrders != null)
+                {
+                    state.PurchaseOrders.Clear();
+                    state.PurchaseOrders.AddRange(savedOrders);
+                }
+
+                if (state?.Ledger != null && savedLedger != null)
+                {
+                    state.Ledger.Clear();
+                    state.Ledger.AddRange(savedLedger);
+                    state.LedgerStartTick = savedLedgerStartTick;
+                }
+
+                if (liveConsumption != null && savedConsumption != null)
+                {
+                    liveConsumption.Clear();
+                    liveConsumption.AddRange(savedConsumption);
+                }
+
+                if (liveProfileCache != null && savedProfileCache != null)
+                {
+                    liveProfileCache.Clear();
+                    foreach (KeyValuePair<int, SettlementEconomicProfile> entry in savedProfileCache)
+                    {
+                        liveProfileCache[entry.Key] = entry.Value;
+                    }
+                }
+
+                if (economySeedField != null)
+                {
+                    economySeedField.SetValue(state, savedEconomySeed);
+                }
+
+                RemoveGeneratedLetters(existingLetters, existingArchivables);
+                r.Info("procurement wait fixtures, orders, letters, and stored silver restored.");
+            }
+        }
+
+        private static string PrefixIntercolonyLog(string text)
+        {
+            string normalized = string.IsNullOrEmpty(text)
+                ? string.Empty
+                : text.Replace("\r\n", "\n").TrimEnd('\n');
+            string[] lines = normalized.Split('\n');
+            StringBuilder prefixed = new StringBuilder(normalized.Length + lines.Length * 15);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i > 0)
+                {
+                    prefixed.Append('\n');
+                }
+
+                prefixed.Append("[Intercolony] ").Append(lines[i]);
+            }
+
+            return prefixed.ToString();
+        }
+
+        private static string PrefixProcurementFailureLetterLog(
+            string supplierName, string failureReason)
+        {
+            return PrefixIntercolonyLog(
+                "Letter shown (Always): Procurement cycle failed\n" +
+                $"Cycle 1 of 2 for {supplierName} could not be fulfilled.\n\n" +
+                $"{failureReason}\n\n" +
+                "This cycle is counted as failed; the agreement remains active and its next " +
+                "cycle is still scheduled.");
+        }
+
+        private static ProcurementDiagnosticSnapshot CaptureProcurementDiagnostics(
+            IntercolonyWorldComponent state, Map paymentMap, ProcurementContract target)
+        {
+            int now = GenTicks.TicksGame;
+            bool canPayForPurchase = PurchaseOrderService.CanPayForPurchase(
+                paymentMap,
+                target.unitPrice,
+                target.quantityPerCycle,
+                out string paymentReason);
+            ProcurementDiagnosticSnapshot snapshot = new ProcurementDiagnosticSnapshot
+            {
+                target = CaptureProcurementContractSnapshot(target, now),
+                silverCount = paymentMap == null
+                    ? 0
+                    : PurchaseOrderService.CountColonySilver(paymentMap),
+                canPayForPurchase = canPayForPurchase,
+                paymentReason = paymentReason,
+                contractCount = state?.ProcurementContracts?.Count ?? 0
+            };
+
+            if (state?.ProcurementContracts != null)
+            {
+                foreach (ProcurementContract contract in state.ProcurementContracts)
+                {
+                    if (contract == null)
+                    {
+                        continue;
+                    }
+
+                    if (contract.status == ProcurementContractStatus.Active)
+                    {
+                        snapshot.activeContractCount++;
+                    }
+
+                    snapshot.contracts.Add(CaptureProcurementContractSnapshot(contract, now));
+                }
+            }
+
+            return snapshot;
+        }
+
+        private static ProcurementContractDiagnosticSnapshot CaptureProcurementContractSnapshot(
+            ProcurementContract contract, int now)
+        {
+            return new ProcurementContractDiagnosticSnapshot
+            {
+                contract = contract,
+                status = contract.status,
+                unitPrice = contract.unitPrice,
+                quantityPerCycle = contract.quantityPerCycle,
+                cyclesCompleted = contract.cyclesCompleted,
+                cyclesFailed = contract.cyclesFailed,
+                totalCycles = contract.totalCycles,
+                activeOrderId = contract.activeOrderId,
+                nextCycleTick = contract.nextCycleTick,
+                nextCycleTickOffset = contract.nextCycleTick - now,
+                autoReadyWaitNotified = contract.autoReadyWaitNotified,
+                outcomeNote = contract.outcomeNote
+            };
+        }
+
+        private static string BuildProcurementDiagnosticDetail(
+            string targetName,
+            ProcurementDiagnosticSnapshot before,
+            ProcurementDiagnosticSnapshot after)
+        {
+            bool otherContractChanged = false;
+            int firstOtherChangedId = 0;
+            foreach (ProcurementContractDiagnosticSnapshot afterContract in after.contracts)
+            {
+                if (afterContract.contract == before.target.contract)
+                {
+                    continue;
+                }
+
+                ProcurementContractDiagnosticSnapshot beforeContract =
+                    FindProcurementContractSnapshot(before.contracts, afterContract.contract);
+                if (beforeContract != null &&
+                    (beforeContract.cyclesFailed != afterContract.cyclesFailed ||
+                     beforeContract.nextCycleTick != afterContract.nextCycleTick))
+                {
+                    otherContractChanged = true;
+                    firstOtherChangedId = afterContract.contract.id;
+                    break;
+                }
+            }
+
+            string firstOtherChangedIdText = otherContractChanged
+                ? firstOtherChangedId.ToString(CultureInfo.InvariantCulture)
+                : "none";
+            return BuildProcurementDiagnosticPhase("before", targetName, before) + ", " +
+                   BuildProcurementDiagnosticPhase("after", targetName, after) + ", " +
+                   $"otherContractChanged={otherContractChanged}, " +
+                   $"firstOtherChangedId={firstOtherChangedIdText}";
+        }
+
+        private static ProcurementContractDiagnosticSnapshot FindProcurementContractSnapshot(
+            List<ProcurementContractDiagnosticSnapshot> snapshots,
+            ProcurementContract contract)
+        {
+            foreach (ProcurementContractDiagnosticSnapshot snapshot in snapshots)
+            {
+                if (snapshot.contract == contract)
+                {
+                    return snapshot;
+                }
+            }
+
+            return null;
+        }
+
+        private static string BuildProcurementDiagnosticPhase(
+            string phase, string targetName, ProcurementDiagnosticSnapshot snapshot)
+        {
+            ProcurementContractDiagnosticSnapshot target = snapshot.target;
+            return
+                $"{phase}.{targetName}.status={target.status}, " +
+                $"{phase}.{targetName}.unitPrice={FormatDiagnosticFloat(target.unitPrice)}, " +
+                $"{phase}.{targetName}.quantityPerCycle={target.quantityPerCycle}, " +
+                $"{phase}.{targetName}.cyclesCompleted={target.cyclesCompleted}, " +
+                $"{phase}.{targetName}.cyclesFailed={target.cyclesFailed}, " +
+                $"{phase}.{targetName}.totalCycles={target.totalCycles}, " +
+                $"{phase}.{targetName}.activeOrderId={target.activeOrderId}, " +
+                $"{phase}.{targetName}.nextCycleTickOffset={target.nextCycleTickOffset}, " +
+                $"{phase}.{targetName}.autoReadyWaitNotified={target.autoReadyWaitNotified}, " +
+                $"{phase}.{targetName}.outcomeNote={DiagnosticText(target.outcomeNote)}, " +
+                $"{phase}.silverCount={snapshot.silverCount}, " +
+                $"{phase}.canPayForPurchase={snapshot.canPayForPurchase}, " +
+                $"{phase}.paymentReason={DiagnosticText(snapshot.paymentReason)}, " +
+                $"{phase}.procurementContractCount={snapshot.contractCount}, " +
+                $"{phase}.activeProcurementContractCount={snapshot.activeContractCount}";
+        }
+
+        private static string FormatDiagnosticFloat(float value)
+        {
+            return value.ToString("R", CultureInfo.InvariantCulture);
+        }
+
+        private static string DiagnosticText(string value)
+        {
+            return value == null
+                ? "<null>"
+                : value.Replace("\r", "\\r")
+                       .Replace("\n", "\\n")
+                       .Replace(",", ";")
+                       .Replace("=", ":");
+        }
+
+        private static bool TrySetStoredSilver(
+            Map map, int target, List<IntVec3> preferredCells,
+            List<Zone_Stockpile> testZones, out string failure)
+        {
+            failure = null;
+            if (map == null || ThingDefOf.Silver == null || target < 0 ||
+                preferredCells == null || testZones == null)
+            {
+                failure = "the payment map or stored-silver fixture inputs were unavailable";
+                return false;
+            }
+
+            int current = PurchaseOrderService.CountColonySilver(map);
+            if (current > target)
+            {
+                int amountToRemove = current - target;
+                if (!PurchaseOrderService.TryTakeSilver(map, amountToRemove))
+                {
+                    failure = "the real silver-removal helper could not reduce stored silver";
+                    return false;
+                }
+
+                current = PurchaseOrderService.CountColonySilver(map);
+            }
+
+            int missing = target - current;
+            while (missing > 0)
+            {
+                IntVec3 storageCell = FindSilverStorageCell(map, preferredCells);
+                if (!storageCell.IsValid)
+                {
+                    storageCell = FindEmptySilverStorageCell(map);
+                    if (!storageCell.IsValid)
+                    {
+                        failure = "no valid storage cell was available for spawned silver";
+                        return false;
+                    }
+
+                    Zone_Stockpile zone = new Zone_Stockpile(
+                        StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+                    map.zoneManager.RegisterZone(zone);
+                    testZones.Add(zone);
+                    zone.AddCell(storageCell);
+                }
+
+                int before = PurchaseOrderService.CountColonySilver(map);
+                int amount = missing > ThingDefOf.Silver.stackLimit
+                    ? ThingDefOf.Silver.stackLimit
+                    : missing;
+                Thing silver = null;
+                try
+                {
+                    silver = ThingMaker.MakeThing(ThingDefOf.Silver);
+                    silver.stackCount = amount;
+                    Thing spawned = GenSpawn.Spawn(silver, storageCell, map);
+                    if (spawned == null || spawned.Destroyed || !spawned.IsInAnyStorage())
+                    {
+                        if (silver != null && !silver.Destroyed)
+                        {
+                            silver.Destroy(DestroyMode.Vanish);
+                        }
+
+                        failure =
+                            "spawned silver was not genuinely available in colony storage";
+                        return false;
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    if (silver != null && !silver.Destroyed)
+                    {
+                        silver.Destroy(DestroyMode.Vanish);
+                    }
+
+                    failure = $"could not create stored silver: {ex.Message}";
+                    return false;
+                }
+
+                int added = PurchaseOrderService.CountColonySilver(map) - before;
+                if (added <= 0)
+                {
+                    failure = "stored silver did not increase after a real spawn";
+                    return false;
+                }
+
+                missing -= added;
+            }
+
+            if (PurchaseOrderService.CountColonySilver(map) != target)
+            {
+                failure = "the payment map did not reach the requested stored-silver count";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static IntVec3 FindSilverStorageCell(
+            Map map, List<IntVec3> preferredCells)
+        {
+            foreach (IntVec3 cell in preferredCells)
+            {
+                if (IsUsableSilverStorageCell(map, cell))
+                {
+                    return cell;
+                }
+            }
+
+            return IntVec3.Invalid;
+        }
+
+        private static IntVec3 FindEmptySilverStorageCell(Map map)
+        {
+            if (map?.zoneManager == null)
+            {
+                return IntVec3.Invalid;
+            }
+
+            IntVec3 root = DropCellFinder.TradeDropSpot(map);
+            foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+            {
+                if (candidate.InBounds(map) && candidate.Standable(map) &&
+                    candidate.GetFirstItem(map) == null &&
+                    map.zoneManager.ZoneAt(candidate) == null)
+                {
+                    return candidate;
+                }
+            }
+
+            return IntVec3.Invalid;
+        }
+
+        private static bool IsUsableSilverStorageCell(Map map, IntVec3 cell)
+        {
+            if (map?.zoneManager == null || !cell.InBounds(map) || !cell.Standable(map))
+            {
+                return false;
+            }
+
+            Thing probe = ThingMaker.MakeThing(ThingDefOf.Silver);
+            if (probe == null)
+            {
+                return false;
+            }
+
+            return StoreUtility.IsGoodStoreCell(
+                cell, map, probe, null, Faction.OfPlayer);
+        }
+
+        private static void DeleteTestZones(List<Zone_Stockpile> testZones)
+        {
+            if (testZones == null)
+            {
+                return;
+            }
+
+            foreach (Zone_Stockpile zone in testZones)
+            {
+                if (zone != null)
+                {
+                    zone.Delete(playSound: false);
+                }
+            }
+        }
+
+        private static ThingDef FindAutoReadyProbeDef(
+            IntercolonyWorldComponent state, Map fulfillmentMap)
+        {
+            if (state == null || fulfillmentMap == null || Find.Maps == null)
+            {
+                return null;
+            }
+
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null || candidate.category != ThingCategory.Item ||
+                    candidate.stackLimit < 1 || candidate.MadeFromStuff)
+                {
+                    continue;
+                }
+
+                bool alreadyStocked = false;
+                foreach (Map loadedMap in Find.Maps)
+                {
+                    foreach (KeyValuePair<ThingDef, int> entry in
+                             FindBuyerService.ColonyStock(loadedMap))
+                    {
+                        if (entry.Key == candidate && entry.Value > 0)
+                        {
+                            alreadyStocked = true;
+                            break;
+                        }
+                    }
+
+                    if (alreadyStocked)
+                    {
+                        break;
+                    }
+                }
+
+                if (alreadyStocked)
+                {
+                    continue;
+                }
+
+                bool alreadyOrdered = false;
+                foreach (SalesOrder existing in state.Orders)
+                {
+                    if (existing?.ThingDef == candidate)
+                    {
+                        alreadyOrdered = true;
+                        break;
+                    }
+                }
+
+                if (!alreadyOrdered)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TrySpawnStoredStock(
+            Map map, ThingDef def, List<Zone_Stockpile> testZones,
+            List<Thing> testThings, out string failure)
+        {
+            failure = null;
+            if (map == null || def == null || map.zoneManager == null)
+            {
+                failure = "no player-home map, isolated tradable item, or zone manager";
+                return false;
+            }
+
+            IntVec3 storageCell = IntVec3.Invalid;
+            IntVec3 root = DropCellFinder.TradeDropSpot(map);
+            foreach (IntVec3 candidate in GenRadial.RadialCellsAround(root, 12f, useCenter: true))
+            {
+                if (candidate.InBounds(map) && candidate.Standable(map) &&
+                    candidate.GetFirstItem(map) == null && map.zoneManager.ZoneAt(candidate) == null)
+                {
+                    storageCell = candidate;
+                    break;
+                }
+            }
+
+            if (!storageCell.IsValid)
+            {
+                failure = "no empty unzoned cell near the trade drop spot";
+                return false;
+            }
+
+            Zone_Stockpile zone = new Zone_Stockpile(
+                StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+            map.zoneManager.RegisterZone(zone);
+            testZones.Add(zone);
+            zone.AddCell(storageCell);
+
+            try
+            {
+                Thing stack = ThingMaker.MakeThing(def);
+                stack.stackCount = 1;
+                testThings.Add(stack);
+                Thing spawned = GenSpawn.Spawn(stack, storageCell, map);
+                if (spawned != null && spawned != stack)
+                {
+                    testThings.Add(spawned);
+                }
+
+                if (spawned == null || spawned.Destroyed ||
+                    !OrderValidator.IsAvailableColonyStock(spawned))
+                {
+                    failure = "the spawned item was not genuinely available in colony storage";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (System.Exception ex)
+            {
+                failure = $"could not create stored test stock: {ex.Message}";
+                return false;
+            }
+        }
+
+        private static RecurringContract AddAutoReadyFixture(
+            IntercolonyWorldComponent state, Map fulfillmentMap, ThingDef def,
+            bool autoReadyOrders, FulfillmentMode fulfillment, int contractId, int orderId,
+            List<RecurringContract> testContracts, List<SalesOrder> testOrders,
+            out SalesOrder order)
+        {
+            RecurringContract contract = new RecurringContract
+            {
+                id = contractId,
+                settlementId = -1,
+                settlementName = "Auto-ready self-test buyer",
+                factionName = "Auto-ready self-test faction",
+                thingDef = def,
+                quantityPerCycle = 1,
+                cadenceTicks = GenDate.TicksPerDay,
+                totalCycles = 1,
+                unitPrice = 1f,
+                fulfillment = fulfillment,
+                status = ContractStatus.Active,
+                nextCycleTick = GenTicks.TicksGame + GenDate.TicksPerDay,
+                autoReadyOrders = autoReadyOrders
+            };
+
+            order = new SalesOrder
+            {
+                id = orderId,
+                contractId = contractId,
+                settlementId = -1,
+                settlementName = "Auto-ready self-test buyer",
+                factionName = "Auto-ready self-test faction",
+                line = new OrderLine(def, 1),
+                unitPrice = 1f,
+                acceptedTick = GenTicks.TicksGame,
+                deadlineTick = GenTicks.TicksGame + 10 * GenDate.TicksPerDay,
+                fulfillment = fulfillment,
+                fulfillmentMap = fulfillmentMap,
+                status = SalesOrderStatus.Accepted
+            };
+
+            contract.activeOrderId = order.id;
+            state.AddContract(contract);
+            state.AddOrder(order);
+            testContracts.Add(contract);
+            testOrders.Add(order);
+            return contract;
+        }
+
+        private static RecurringContract AddDueCycleFixture(
+            IntercolonyWorldComponent state, Settlement settlement, ThingDef def,
+            bool autoReadyOrders, FulfillmentMode fulfillment, int contractId, int dueTick)
+        {
+            RecurringContract contract = new RecurringContract
+            {
+                id = contractId,
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "Due-cycle self-test buyer",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = def,
+                quantityPerCycle = 1,
+                cadenceTicks = GenDate.TicksPerDay,
+                totalCycles = 2,
+                unitPrice = 1f,
+                fulfillment = fulfillment,
+                status = ContractStatus.Active,
+                nextCycleTick = dueTick,
+                autoReadyOrders = autoReadyOrders
+            };
+
+            state.AddContract(contract);
+            return contract;
+        }
+
+        private static Settlement FindDueCycleSettlement()
+        {
+            if (Find.WorldObjects?.Settlements == null)
+            {
+                return null;
+            }
+
+            foreach (Settlement settlement in Find.WorldObjects.Settlements)
+            {
+                if (settlement != null && IntercolonyMarketAccess.IsAccessible(settlement))
+                {
+                    return settlement;
+                }
+            }
+
+            return null;
+        }
+
+        private static List<Letter> SnapshotLetters()
+        {
+            return Find.LetterStack == null
+                ? new List<Letter>()
+                : new List<Letter>(Find.LetterStack.LettersListForReading);
+        }
+
+        private static List<Letter> NewLettersSince(List<Letter> before)
+        {
+            List<Letter> newLetters = new List<Letter>();
+            if (Find.LetterStack == null)
+            {
+                return newLetters;
+            }
+
+            foreach (Letter letter in Find.LetterStack.LettersListForReading)
+            {
+                if (!before.Contains(letter))
+                {
+                    newLetters.Add(letter);
+                }
+            }
+
+            return newLetters;
+        }
+
+        private static bool HasLetterLabel(List<Letter> letters, string label)
+        {
+            foreach (Letter letter in letters)
+            {
+                if (letter != null && letter.Label == label)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static int CountLetterLabel(List<Letter> letters, string label)
+        {
+            int count = 0;
+            if (letters == null)
+            {
+                return count;
+            }
+
+            foreach (Letter letter in letters)
+            {
+                if (letter != null && letter.Label == label)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static bool HasActionableLetter(
+            List<Letter> letters, string label, params string[] requiredFragments)
+        {
+            if (letters == null || requiredFragments == null)
+            {
+                return false;
+            }
+
+            foreach (Letter letter in letters)
+            {
+                if (letter == null || letter.Label != label || !(letter is ChoiceLetter choiceLetter))
+                {
+                    continue;
+                }
+
+                string text = choiceLetter.Text.ToString();
+                bool containsEveryFragment = true;
+                foreach (string fragment in requiredFragments)
+                {
+                    if (fragment == null ||
+                        text.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        containsEveryFragment = false;
+                        break;
+                    }
+                }
+
+                if (containsEveryFragment)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string LetterLabels(List<Letter> letters)
+        {
+            if (letters == null || letters.Count == 0)
+            {
+                return "none";
+            }
+
+            StringBuilder labels = new StringBuilder();
+            foreach (Letter letter in letters)
+            {
+                if (labels.Length > 0)
+                {
+                    labels.Append(", ");
+                }
+
+                labels.Append(letter?.Label ?? "<null>");
+            }
+
+            return labels.ToString();
+        }
+
+        private static List<IArchivable> SnapshotArchivables()
+        {
+            return Find.Archive == null
+                ? new List<IArchivable>()
+                : new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+        }
+
+        private static void RemoveGeneratedLetters(
+            List<Letter> existingLetters, List<IArchivable> existingArchivables)
+        {
+            if (Find.LetterStack != null)
+            {
+                List<Letter> currentLetters =
+                    new List<Letter>(Find.LetterStack.LettersListForReading);
+                foreach (Letter letter in currentLetters)
+                {
+                    if (!existingLetters.Contains(letter))
+                    {
+                        Find.LetterStack.RemoveLetter(letter);
+                    }
+                }
+            }
+
+            if (Find.Archive != null)
+            {
+                List<IArchivable> currentArchivables =
+                    new List<IArchivable>(Find.Archive.ArchivablesListForReading);
+                foreach (IArchivable archivable in currentArchivables)
+                {
+                    if (!existingArchivables.Contains(archivable) && archivable is Letter)
+                    {
+                        Find.Archive.Remove(archivable);
+                    }
+                }
+            }
+        }
+
+        private static void DestroyTestThings(List<Thing> testThings)
+        {
+            foreach (Thing thing in testThings)
+            {
+                if (thing != null && !thing.Destroyed)
+                {
+                    thing.Destroy(DestroyMode.Vanish);
+                }
+            }
         }
 
         // --- §115's second acceptance criterion --------------------------------------------
@@ -394,7 +2864,9 @@ namespace Intercolony
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine(
+                $"  {r.passed} passed, {r.failed} failed" +
+                (r.skipped == 0 ? "." : $", {r.skipped} skipped."));
             return r.sb.ToString();
         }
     }

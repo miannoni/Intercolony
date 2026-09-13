@@ -24,10 +24,11 @@ namespace Intercolony
     /// <summary>
     /// A worker who answered a posting (DESIGN.md §35.2).
     ///
-    /// **Deliberately has no asking wage, and that absence is the whole inversion.** A
+    /// **Carries the worker's asking wage, and that quote is the whole inversion.** A
     /// <see cref="LaborCandidate"/> quotes a price and the player decides whether to pay it; an
-    /// applicant has already accepted the price the player named. §35.2 is the market seen from the
-    /// other side, and the two types differ in exactly that one field.
+    /// applicant is a requirement-qualified worker whose own ask is saved with the application.
+    /// §35.2 is the market seen from the other side, and the two types differ in whether the worker
+    /// has answered a standing requirement.
     ///
     /// Unlike a candidate, an applicant **is** persisted, because a posting is a standing order that
     /// spans refreshes and saves. That means the pawn has to be pinned in <c>WorldPawns</c> as
@@ -51,9 +52,9 @@ namespace Intercolony
         public int requiredSkillLevel;
 
         /// <summary>
-        /// What this worker would have charged on the open market. Kept for the player's benefit
-        /// only — they are being paid the posted wage, not this — because "asks 34, you offered 38"
-        /// is the single most useful thing to know when choosing between applicants.
+        /// What this worker asks on the open market for this posting's terms. It is shown to the
+        /// player and becomes the contract rate if hired; the saved posted wage neither gates the
+        /// application nor replaces this quote.
         /// </summary>
         public int openMarketAsk;
 
@@ -63,9 +64,6 @@ namespace Intercolony
         public string Name => pawn?.LabelShortCap ?? "?";
 
         public float DaysWaiting => (GenTicks.TicksGame - appliedTick) / (float)GenDate.TicksPerDay;
-
-        /// <summary>How much cheaper than their market rate this hire is. Negative never happens — they would not have applied.</summary>
-        public int Bargain(int wageOffered) => wageOffered - openMarketAsk;
 
         public string SkillSummary(int count = 3)
         {
@@ -190,7 +188,11 @@ namespace Intercolony
 
         public int termDays;
 
-        /// <summary>Silver per day the colony is offering. The whole point: the player sets this.</summary>
+        /// <summary>
+        /// Legacy wage field retained for postings created before F25. Nothing sets it on new
+        /// postings; it remains persisted for save compatibility, but matching, ranking and
+        /// hiring no longer read it.
+        /// </summary>
         public int wageOffered;
 
         public WageStructure wageStructure = WageStructure.Daily;
@@ -242,18 +244,14 @@ namespace Intercolony
 
         public float DaysPosted => (GenTicks.TicksGame - postedTick) / (float)GenDate.TicksPerDay;
 
-        /// <summary>What each worker taken on from this posting costs over the full term.</summary>
-        public int TotalCommitment =>
-            WageStructureUtility.TotalCost(wageStructure, wageOffered, termDays);
-
         public string SkillLabel =>
             skill == null ? "any work" : $"{skill.skillLabel.CapitalizeFirst()} {minSkillLevel}+";
 
         /// <summary>§35.2's headline, one line.</summary>
         public string Headline()
         {
-            return $"{SkillLabel} — open, {termDays}d, {wageOffered} silver/day " +
-                   $"{wageStructure.Label()}, {combatClause.Label()}";
+            return $"{SkillLabel} — open, {termDays}d, {wageStructure.Label()}, " +
+                   $"{combatClause.Label()}";
         }
 
         public string StatusLine()
@@ -374,7 +372,10 @@ namespace Intercolony
             }
         }
 
-        public bool IsValidAfterLoad => termDays > 0 && wageOffered > 0;
+        // A zero wage is NORMAL for a posting made after F25 and must never again be treated as
+        // corruption. A positive term is the only posting value required to re-enter matching
+        // after a load.
+        public bool IsValidAfterLoad => termDays > 0;
 
         public override string ToString()
         {

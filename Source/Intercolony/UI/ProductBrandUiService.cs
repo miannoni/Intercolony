@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using Verse;
 
@@ -40,12 +41,22 @@ namespace Intercolony
         {
             internal readonly IntercolonyProductCategory category;
             internal readonly string bandName;
+            internal readonly string tooltip;
 
             internal BrandSummaryRow(
                 IntercolonyProductCategory category, string bandName)
+                : this(category, bandName, null)
+            {
+            }
+
+            internal BrandSummaryRow(
+                IntercolonyProductCategory category,
+                string bandName,
+                string tooltip)
             {
                 this.category = category;
                 this.bandName = bandName;
+                this.tooltip = tooltip;
             }
         }
 
@@ -88,6 +99,10 @@ namespace Intercolony
                 new Dictionary<IntercolonyProductCategory, float>();
             Dictionary<IntercolonyProductCategory, float> negative =
                 new Dictionary<IntercolonyProductCategory, float>();
+            Dictionary<IntercolonyProductCategory, ThingDef> positiveProducts =
+                new Dictionary<IntercolonyProductCategory, ThingDef>();
+            Dictionary<IntercolonyProductCategory, ThingDef> negativeProducts =
+                new Dictionary<IntercolonyProductCategory, ThingDef>();
 
             for (int i = 0; i < records.Count; i++)
             {
@@ -126,6 +141,7 @@ namespace Intercolony
                         record.directScore > existing)
                     {
                         positive[category.Value] = record.directScore;
+                        positiveProducts[category.Value] = record.thingDef;
                     }
                 }
                 else if (record.directScore <= ProductBrandService.QuestionableThreshold)
@@ -134,6 +150,7 @@ namespace Intercolony
                         record.directScore < existing)
                     {
                         negative[category.Value] = record.directScore;
+                        negativeProducts[category.Value] = record.thingDef;
                     }
                 }
             }
@@ -142,16 +159,20 @@ namespace Intercolony
             {
                 if (positive.TryGetValue(category, out float positiveScore))
                 {
+                    ThingDef product = positiveProducts[category];
                     summary.knownFor.Add(new BrandSummaryRow(
                         category,
-                        ProductBrandService.BandNameFor(positiveScore)));
+                        ProductBrandService.BandNameFor(positiveScore),
+                        BuildBrandTooltip(state, product)));
                 }
 
                 if (negative.TryGetValue(category, out float negativeScore))
                 {
+                    ThingDef product = negativeProducts[category];
                     summary.weakReputation.Add(new BrandSummaryRow(
                         category,
-                        ProductBrandService.BandNameFor(negativeScore)));
+                        ProductBrandService.BandNameFor(negativeScore),
+                        BuildBrandTooltip(state, product)));
                 }
             }
 
@@ -169,35 +190,194 @@ namespace Intercolony
             EffectiveBrandService.EffectiveBrandDetails details =
                 EffectiveBrandService.GetEffectiveBrandDetails(state, product);
             string attribution;
-            string tooltip;
 
             if (details.mostlyInherited && details.inheritedFrom != null)
             {
                 string sourceLabel = DisplayLabel(details.inheritedFrom);
                 attribution = $"Mostly inherited from your {sourceLabel} reputation.";
-                tooltip = ProductSimilarityService.Explain(details.inheritedFrom, product);
             }
             else if (details.hasDirectRecord && details.inheritedFrom != null)
             {
                 attribution = "Direct evidence is doing most of the work.";
-                tooltip = ProductSimilarityService.Explain(details.inheritedFrom, product);
             }
             else if (details.hasDirectRecord)
             {
                 attribution = "Based on direct delivered-quality evidence.";
-                tooltip = "This value is based on delivered-quality evidence for this exact good.";
             }
             else
             {
                 attribution = "No delivered-quality evidence yet.";
-                tooltip = "No direct or related delivered-quality evidence contributes to this good.";
             }
 
             return new SpecificGoodDetails(
                 details.effectiveBrand,
                 StrengthLabel(details.effectiveBrand),
                 attribution,
-                tooltip);
+                BuildBrandTooltip(state, product));
+        }
+
+        /// <summary>
+        /// One player-facing explanation for every product-brand band. The current multiplier is
+        /// deliberately read from IntercolonyPricing so this text and the amount charged use the
+        /// same calculation rather than two copies of the brand interpolation.
+        /// </summary>
+        internal static string BuildBrandTooltip(
+            IntercolonyWorldComponent state, ThingDef product)
+        {
+            EffectiveBrandService.EffectiveBrandDetails details =
+                EffectiveBrandService.GetEffectiveBrandDetails(state, product);
+            PriceFactor currentPrice = IntercolonyPricing.BrandFactorFor(details.effectiveBrand);
+            PriceFactor bestPrice = IntercolonyPricing.BrandFactorFor(ProductBrandRecord.MaxScore);
+            PriceFactor worstPrice = IntercolonyPricing.BrandFactorFor(ProductBrandRecord.MinScore);
+
+            int currentPosition = BrandLadderIndex(
+                ProductBrandService.BandNameFor(details.effectiveBrand));
+            string productLabel = DisplayLabel(product);
+            string productFamily = ProductFamilyLabel(product);
+            StringBuilder tooltip = new StringBuilder();
+
+            tooltip.AppendLine(CurrentBandPositionLine(currentPosition));
+            tooltip.AppendLine();
+            for (int i = 0; i < BrandLadder.Length; i++)
+            {
+                if (i > 0)
+                {
+                    tooltip.Append(" · ");
+                }
+
+                if (i == currentPosition)
+                {
+                    tooltip.Append('[').Append(BrandLadder[i]).Append(']');
+                }
+                else
+                {
+                    tooltip.Append(BrandLadder[i]);
+                }
+            }
+
+            tooltip.AppendLine();
+            tooltip.AppendLine();
+            tooltip.AppendLine(
+                $"Buyers pay {MultiplierLabel(currentPrice.multiplier)} for your " +
+                $"{productLabel} because of this standing.");
+            tooltip.AppendLine(
+                $"The best record reaches {MultiplierLabel(bestPrice.multiplier)}; the worst " +
+                $"falls to {MultiplierLabel(worstPrice.multiplier)}.");
+            tooltip.AppendLine();
+            tooltip.AppendLine(
+                $"It moves with the quality of what you actually deliver in {productFamily}.");
+            tooltip.Append(
+                "It affects price only - it does not change how often settlements ask for this " +
+                "product.");
+
+            AppendInheritanceLine(tooltip, details, productLabel);
+            return tooltip.ToString();
+        }
+
+        private static readonly string[] BrandLadder =
+        {
+            ProductBrandService.NotoriousBandLabel,
+            ProductBrandService.PoorReputationBandLabel,
+            ProductBrandService.QuestionableBandLabel,
+            "no reputation",
+            ProductBrandService.EstablishedBandLabel,
+            ProductBrandService.RespectedBandLabel,
+            ProductBrandService.RenownedBandLabel
+        };
+
+        private static int BrandLadderIndex(string bandName)
+        {
+            if (string.IsNullOrEmpty(bandName))
+            {
+                return 3;
+            }
+
+            for (int i = 0; i < BrandLadder.Length; i++)
+            {
+                if (BrandLadder[i] == bandName)
+                {
+                    return i;
+                }
+            }
+
+            return 3;
+        }
+
+        private static string CurrentBandPositionLine(int position)
+        {
+            if (position == 3)
+            {
+                return "No reputation yet.";
+            }
+
+            string bandName = BrandLadder[position];
+            if (position > 3)
+            {
+                int positiveLevel = position - 3;
+                return $"{bandName} - the {Ordinal(positiveLevel)} of three positive levels.";
+            }
+
+            int negativeLevel = 3 - position;
+            return $"{bandName} - the {Ordinal(negativeLevel)} of three negative levels.";
+        }
+
+        private static string Ordinal(int value)
+        {
+            switch (value)
+            {
+                case 1: return "first";
+                case 2: return "second";
+                case 3: return "third";
+                default: return value.ToString();
+            }
+        }
+
+        private static string MultiplierLabel(float multiplier)
+        {
+            return $"{multiplier:F2}x";
+        }
+
+        private static string ProductFamilyLabel(ThingDef product)
+        {
+            if (product == null)
+            {
+                return "relevant";
+            }
+
+            try
+            {
+                IntercolonyProductCategory? category =
+                    IntercolonyProductClassifier.Classify(product);
+                return category.HasValue ? category.Value.Label() : "relevant";
+            }
+            catch (Exception)
+            {
+                return "relevant";
+            }
+        }
+
+        private static void AppendInheritanceLine(
+            StringBuilder tooltip,
+            EffectiveBrandService.EffectiveBrandDetails details,
+            string productLabel)
+        {
+            if (details.inheritedFrom == null || !details.mostlyInherited)
+            {
+                return;
+            }
+
+            string sourceLabel = DisplayLabel(details.inheritedFrom);
+            tooltip.AppendLine();
+            if (!details.hasDirectRecord)
+            {
+                tooltip.Append(
+                    $"This standing is inherited from your {sourceLabel} reputation.");
+                return;
+            }
+
+            tooltip.Append(
+                $"This standing is mostly inherited from your {sourceLabel} reputation; " +
+                $"your direct {productLabel} record also contributes.");
         }
 
         private static string StrengthLabel(float effectiveBrand)

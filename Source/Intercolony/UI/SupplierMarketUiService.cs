@@ -36,7 +36,7 @@ namespace Intercolony
         internal readonly string fulfillmentLabel;
         internal readonly int leadTimeDays;
         internal readonly string reasonLabel;
-        internal readonly string tooltip;
+        internal readonly Settlement settlement;
         internal readonly bool canBuy;
         internal readonly string purchaseFailureReason;
 
@@ -51,7 +51,7 @@ namespace Intercolony
             string fulfillmentLabel,
             int leadTimeDays,
             string reasonLabel,
-            string tooltip,
+            Settlement settlement,
             bool canBuy,
             string purchaseFailureReason)
         {
@@ -65,7 +65,7 @@ namespace Intercolony
             this.fulfillmentLabel = fulfillmentLabel;
             this.leadTimeDays = leadTimeDays;
             this.reasonLabel = reasonLabel;
-            this.tooltip = tooltip;
+            this.settlement = settlement;
             this.canBuy = canBuy;
             this.purchaseFailureReason = purchaseFailureReason;
         }
@@ -98,6 +98,22 @@ namespace Intercolony
                 return rows;
             }
 
+            Dictionary<int, Settlement> settlementsById = new Dictionary<int, Settlement>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements != null)
+            {
+                for (int i = 0; i < settlements.Count; i++)
+                {
+                    Settlement settlement = settlements[i];
+                    if (settlement != null)
+                    {
+                        settlementsById[settlement.ID] = settlement;
+                    }
+                }
+            }
+
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            int availableSilver = PurchaseOrderService.CountColonySilver(paymentMap);
             foreach (SupplierListing listing in state.SupplierListings)
             {
                 if (listing == null || !listing.IsAvailable)
@@ -105,13 +121,14 @@ namespace Intercolony
                     continue;
                 }
 
-                Settlement settlement = IntercolonyMarketAccess.FindSettlement(listing.settlementId);
-                if (settlement == null || !IntercolonyMarketAccess.IsAccessible(settlement))
+                if (!settlementsById.TryGetValue(listing.settlementId, out Settlement settlement) ||
+                    !IntercolonyMarketAccess.IsAccessible(settlement))
                 {
                     continue;
                 }
 
-                rows.Add(BuildRow(state, listing, listing.quantityAvailable));
+                rows.Add(BuildRow(
+                    state, listing, listing.quantityAvailable, settlement, availableSilver));
             }
 
             return rows;
@@ -122,12 +139,24 @@ namespace Intercolony
             SupplierListing listing,
             int selectedQuantity)
         {
-            int available = Mathf.Max(0, listing?.quantityAvailable ?? 0);
-            int chosen = Mathf.Clamp(selectedQuantity, available > 0 ? 1 : 0, available);
-            string itemLabel = ItemLabel(listing);
             Settlement settlement = listing == null
                 ? null
                 : IntercolonyMarketAccess.FindSettlement(listing.settlementId);
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            int availableSilver = PurchaseOrderService.CountColonySilver(paymentMap);
+            return BuildRow(state, listing, selectedQuantity, settlement, availableSilver);
+        }
+
+        private static SupplierMarketRow BuildRow(
+            IntercolonyWorldComponent state,
+            SupplierListing listing,
+            int selectedQuantity,
+            Settlement settlement,
+            int availableSilver)
+        {
+            int available = Mathf.Max(0, listing?.quantityAvailable ?? 0);
+            int chosen = Mathf.Clamp(selectedQuantity, available > 0 ? 1 : 0, available);
+            string itemLabel = ItemLabel(listing);
             string supplierLabel = settlement == null
                 ? "Unknown supplier"
                 : settlement.Label.ToString();
@@ -138,7 +167,7 @@ namespace Intercolony
                 : "Delivery";
             string reasonLabel = SupplyReason(state, listing, settlement);
             bool canBuy = SupplierListingService.CanPurchase(
-                state, listing, 1, out string purchaseFailureReason);
+                state, listing, 1, availableSilver, settlement, out string purchaseFailureReason);
 
             return new SupplierMarketRow(
                 listing,
@@ -151,7 +180,7 @@ namespace Intercolony
                 fulfillmentLabel,
                 listing?.leadTimeDays ?? 0,
                 reasonLabel,
-                BuildTooltip(state, listing, settlement, itemLabel, supplierLabel, reasonLabel),
+                settlement,
                 canBuy,
                 purchaseFailureReason);
         }
@@ -353,7 +382,7 @@ namespace Intercolony
             }
 
             float condition = EffectiveEconomyService.SupplyCondition(
-                state, profile, category.Value);
+                state, profile, category.Value, settlement);
             if (condition < SettlementMarketState.Neutral)
             {
                 return EffectiveEconomyService.ShortageLabel;
@@ -367,29 +396,26 @@ namespace Intercolony
             return "Stable local supply";
         }
 
-        private static string BuildTooltip(
+        internal static string BuildTooltip(
             IntercolonyWorldComponent state,
-            SupplierListing listing,
-            Settlement settlement,
-            string itemLabel,
-            string supplierLabel,
-            string reasonLabel)
+            SupplierMarketRow row)
         {
+            SupplierListing listing = row.listing;
             if (listing == null)
             {
                 return "The supplier listing is no longer available.";
             }
 
             string categoryDetail = "";
-            if (state != null && settlement != null && listing.thingDef != null)
+            if (state != null && row.settlement != null && listing.thingDef != null)
             {
                 IntercolonyProductCategory? category =
                     IntercolonyProductClassifier.Classify(listing.thingDef);
-                SettlementEconomicProfile profile = state.GetProfile(settlement);
+                SettlementEconomicProfile profile = state.GetProfile(row.settlement);
                 if (category.HasValue && profile != null)
                 {
                     List<PriceFactor> factors = EffectiveEconomyService.ExplainSupply(
-                        state, profile, category.Value);
+                        state, profile, category.Value, row.settlement);
                     List<string> details = new List<string>();
                     foreach (PriceFactor factor in factors)
                     {
@@ -408,11 +434,11 @@ namespace Intercolony
                 }
             }
 
-            return $"{itemLabel} from {supplierLabel}\n" +
+            return $"{row.itemLabel} from {row.supplierLabel}\n" +
                    $"{listing.quantityAvailable} available at {listing.unitPrice:F2} silver each\n" +
                    $"{(listing.fulfillment == FulfillmentMode.BuyerPickup ? "Pickup" : "Delivery")}, " +
                    $"lead time {listing.leadTimeDays} days\n" +
-                   $"{reasonLabel}{categoryDetail}";
+                   $"{row.reasonLabel}{categoryDetail}";
         }
     }
 }

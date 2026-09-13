@@ -1,5 +1,7 @@
 ﻿using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -56,11 +58,13 @@ namespace Intercolony
                 return Summarize(r);
             }
 
+            int savedSilver = PurchaseOrderService.CountColonySilver(map);
             IntercolonyLaborSelfTestSupport.ResetLedger();
 
             try
             {
                 CheckWageStructureMaths(r);
+                CheckPartialEndSettlement(r, state, map);
                 CheckEscalation(r, state, map);
             }
             catch (System.Exception ex)
@@ -78,6 +82,14 @@ namespace Intercolony
                     r.Info($"returned {returned} silver the test had consumed.");
                 }
 
+                int restored =
+                    IntercolonyLaborSelfTestSupport.RestoreStorageSilver(map, savedSilver);
+                if (restored > 0)
+                {
+                    r.Info($"returned {restored} silver to restore the payroll fixture.");
+                }
+
+                IntercolonyLaborSelfTestSupport.ResetLedger();
                 LaborCandidateService.Clear();
             }
 
@@ -145,12 +157,109 @@ namespace Intercolony
                 "prepaid is not on a schedule and daily is");
         }
 
+        private static void CheckPartialEndSettlement(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const int dailyAsk = 40;
+            const int dailyPremiumPercent = 35;
+            const int workedDays = 1;
+            const int fixtureSilver = 1000;
+            int now = GenTicks.TicksGame;
+            EmploymentContract contract = new EmploymentContract
+            {
+                settlementName = "Payroll self-test",
+                workerName = "partial-period probe",
+                status = EmploymentStatus.Active,
+                wageStructure = WageStructure.Daily,
+                dailyWage = dailyAsk,
+                destinationMap = map,
+                arrivalTick = now - 2 * GenDate.TicksPerDay,
+                nextPaymentTick = now - GenDate.TicksPerDay / 2,
+                endTick = now,
+                termDays = 3,
+                termLapsedNotified = true
+            };
+            string dailyDisclosure = WageStructureUtility.DailyWageDisclosure(
+                contract.wageStructure, contract.dailyWage);
+            int displayedAsk;
+            int displayedDailyWage;
+            bool dailyDisclosureParsed = TryParseDailyWageDisclosure(
+                dailyDisclosure, out displayedAsk, out displayedDailyWage);
+            int expected = dailyAsk * (100 + dailyPremiumPercent) / 100 * workedDays;
+
+            try
+            {
+                state.AddEmployment(contract);
+                IntercolonyLaborSelfTestSupport.EnsureSilver(map, fixtureSilver);
+                int before = PurchaseOrderService.CountColonySilver(map);
+
+                PayrollService.SettleOnEnd(
+                    contract, EmploymentStatus.Dismissed, state.LaborDebts, state);
+
+                int after = PurchaseOrderService.CountColonySilver(map);
+                int observedDeduction = before - after;
+                r.Check(
+                    observedDeduction == expected,
+                    "the daily premium is unchanged and partial settlement uses the charged rate, not the stored ask",
+                    $"observed={observedDeduction} silver, expected={expected} " +
+                    $"({dailyAsk}*{100 + dailyPremiumPercent}/100*{workedDays})");
+                r.Check(
+                    dailyDisclosureParsed && displayedAsk == dailyAsk &&
+                    observedDeduction == displayedDailyWage &&
+                    contract.arrearsSilver == 0,
+                    "the displayed daily colony-paid wage is the silver payroll actually deducts",
+                    $"displayed={displayedDailyWage} silver/day, observed={observedDeduction} silver, " +
+                    $"storage={before}->{after}, disclosure=\"{dailyDisclosure}\"");
+
+                string quadrumDisclosure = WageStructureUtility.DailyWageDisclosure(
+                    WageStructure.Quadrum, dailyAsk);
+                int quadrumAsk;
+                int quadrumCharge;
+                bool quadrumDisclosureParsed = TryParseDailyWageDisclosure(
+                    quadrumDisclosure, out quadrumAsk, out quadrumCharge);
+                r.Check(
+                    quadrumDisclosureParsed && quadrumAsk == dailyAsk &&
+                    quadrumAsk == quadrumCharge,
+                    "a quadrum contract shows the ask and colony-paid daily wage as the same number",
+                    $"ask={quadrumAsk} silver/day, charge={quadrumCharge} silver/day, " +
+                    $"disclosure=\"{quadrumDisclosure}\"");
+            }
+            finally
+            {
+                state.Employments.Remove(contract);
+            }
+        }
+
+        private static bool TryParseDailyWageDisclosure(
+            string disclosure, out int workerAsk, out int colonyPays)
+        {
+            workerAsk = -1;
+            colonyPays = -1;
+            Match match = Regex.Match(
+                disclosure ?? string.Empty,
+                @"\AWorker asks: (?<ask>[^|]+) silver/day \| Colony pays: " +
+                @"(?<charge>[^|]+) silver/day\z",
+                RegexOptions.CultureInvariant);
+
+            return match.Success &&
+                   int.TryParse(match.Groups["ask"].Value, NumberStyles.Number,
+                       CultureInfo.CurrentCulture, out workerAsk) &&
+                   int.TryParse(match.Groups["charge"].Value, NumberStyles.Number,
+                       CultureInfo.CurrentCulture, out colonyPays);
+        }
+
         /// <summary>
         /// §39's escalation, driven for real: hire on a daily wage, pay one period properly, then
         /// strip the colony of silver and miss periods until the worker walks out.
         /// </summary>
         private static void CheckEscalation(Results r, IntercolonyWorldComponent state, Map map)
         {
+            int? forcefullyKeptBefore = null;
+            if (Find.WorldPawns != null)
+            {
+                forcefullyKeptBefore = Find.WorldPawns.ForcefullyKeptPawns.Count;
+            }
+
             List<LaborCandidate> pool = LaborCandidateService.Refresh(state, force: true);
             r.Check(pool.Count > 0, "candidate pool is not empty", $"{pool.Count} workers offered");
             if (pool.Count == 0)
@@ -161,21 +270,24 @@ namespace Intercolony
             LaborCandidate candidate = pool[0];
             int term = Mathf.Max(candidate.minTermDays, 20);
 
-            // The pool's quoted daily wage is not quite the wage TryHire will use: hiring prices
-            // the chosen term again with the settlement, distance, reputation and combat clause.
-            // Keep that money calculation in EmploymentService rather than duplicating it here,
-            // and fund four times the quote's up-front cost as a deliberately generous margin.
-            // Over-funding is harmless because this test strips every silver stack before it starts
-            // missing payroll; the extra balance therefore cannot soften the escalation under test.
-            int quotedUpFront = WageStructureUtility.UpFrontCost(
-                WageStructure.Daily, candidate.dailyWage, term);
-            IntercolonyLaborSelfTestSupport.EnsureSilver(map, quotedUpFront * 4);
+            EmploymentHireCostQuote hireQuote =
+                IntercolonyLaborSelfTestSupport.QuoteHireCost(
+                    state, candidate, term, WageStructure.Daily, CombatClause.Civilian,
+                    out string quoteFailReason);
+            if (hireQuote == null)
+            {
+                r.Check(false, "daily hire cost could be quoted", quoteFailReason);
+                return;
+            }
+
+            IntercolonyLaborSelfTestSupport.EnsureSilver(
+                map, IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote));
 
             // Daily wage, so one pay period is one day and the escalation can be driven without
             // simulating a quadrum.
             EmploymentContract contract = EmploymentService.TryHire(
                 state, candidate, term, map, out string failReason, WageStructure.Daily,
-                CombatClause.Civilian);
+                CombatClause.Civilian, hireQuote);
 
             r.Check(contract != null, "hired on a daily wage", failReason ?? "");
             if (contract == null)
@@ -183,29 +295,29 @@ namespace Intercolony
                 return;
             }
 
+            Pawn worker = contract.pawn;
+
             // A periodic hire takes the signing fee up front and nothing else — not the term.
             // This asserted `paidSilver == 0`, which stopped being true when daily and per-quadrum
             // hires gained a five-day signing fee: WageStructure.UpFrontCost returns SigningFee
             // for every non-prepaid structure, and 0.9.2 shipped a fix specifically to *disclose*
             // that fee, so the charge is deliberate and the assertion was stale. The distinction
             // still worth guarding is that a periodic hire is not charged for the whole term.
-            // Multiply the days out here rather than calling SigningFee, because SigningFee takes
-            // the *base* wage and applies the daily premium itself (WageStructure.cs:82), while
-            // contract.dailyWage has already had that premium applied (EmploymentService.cs:126,
-            // 168). Passing one into the other charges the premium twice: on a base of 60 that is
-            // 60 -> 81 -> 109, so the test demanded 545 where the hire correctly took 405.
+            // Keep this oracle independent of SigningFee: the contract stores the worker's ask,
+            // while Daily terms charge 135% of that ask and take five charged days at hire. On
+            // the fixture's usual base of 60, that is 60 * 135 / 100 * 5 = 405 silver.
             //
             // This assertion had never actually executed. The hire above it always failed for want
             // of silver, and the method returns early when it does, so the arithmetic was written
             // when the signing fee was introduced and then never run until the funding fix landed.
-            int expectedSigningFee =
-                contract.dailyWage * WageStructureUtility.SigningFeeDays(WageStructure.Daily);
+            int expectedChargedDailyWage = Mathf.RoundToInt(contract.dailyWage * 135f / 100f);
+            int expectedSigningFee = expectedChargedDailyWage * 5;
             r.Check(contract.paidSilver == expectedSigningFee,
                 "a periodic hire pays the signing fee up front and no more (§37)",
                 $"{contract.paidSilver} silver, expected {expectedSigningFee}");
+            int expectedFullTermCost = expectedChargedDailyWage * term + expectedSigningFee;
             r.Check(
-                contract.paidSilver <
-                WageStructureUtility.TotalCost(WageStructure.Daily, contract.dailyWage, term),
+                contract.paidSilver < expectedFullTermCost,
                 "and is not charged for the whole term");
             r.Check(contract.nextPaymentTick < 0,
                 "the pay clock does not start until the worker arrives");
@@ -345,6 +457,47 @@ namespace Intercolony
                 $"{debtsBefore} -> {state.LaborDebts.Count}");
             r.Check(contract.pawn == null,
                 "the closed record still holds no live references");
+
+            int? forcefullyKeptAfter = null;
+            if (Find.WorldPawns != null)
+            {
+                forcefullyKeptAfter = Find.WorldPawns.ForcefullyKeptPawns.Count;
+            }
+
+            if (worker == null)
+            {
+                r.Info("worker kept-forever assertion skipped: the hired worker is null.");
+            }
+            else if (Find.WorldPawns == null)
+            {
+                r.Info("worker kept-forever assertion skipped: Find.WorldPawns is null.");
+            }
+            else
+            {
+                // This fails if EmploymentService.TryHire pins a hired worker with
+                // PawnDiscardDecideMode.KeepForever (EmploymentService.cs:187) so they survive
+                // the journey; arrival unpins by going through WorldPawns.RemovePawn before spawning
+                // (EmploymentService.cs:810), and WorldPawns.RemovePawn drops the pawn from
+                // pawnsForcefullyKeptAsWorldPawns at reference/decompiled/RimWorld.Planet/WorldPawns.cs:257).
+                // If either half changes, every hire leaves a pawn the GC has been told never to
+                // collect, and this assertion is what says so.
+                r.Check(!Find.WorldPawns.ForcefullyKeptPawns.Contains(worker),
+                    "the worker who walked out is not kept forever");
+            }
+
+            if (!forcefullyKeptBefore.HasValue || !forcefullyKeptAfter.HasValue)
+            {
+                r.Info("forcefully kept world-pawn count assertion skipped: Find.WorldPawns was null during the check.");
+            }
+            else
+            {
+                // This fails on any path in the employment lifecycle that pins and forgets. It
+                // deliberately checks "did not grow", rather than "is unchanged", because a
+                // legitimate unpin elsewhere in the same window is not a fault.
+                r.Check(forcefullyKeptAfter.Value <= forcefullyKeptBefore.Value,
+                    "forcefully kept world pawns did not grow across the check",
+                    $"{forcefullyKeptBefore.Value} -> {forcefullyKeptAfter.Value}");
+            }
 
             if (state.LaborDebts.Count > debtsBefore)
             {

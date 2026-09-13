@@ -18,6 +18,29 @@ namespace Intercolony
         private const float BaseDailyWage = 8f;
 
         /// <summary>
+        /// F24 explicitly does not require a fixed 10x or 20x multiplier. This 4x urgency
+        /// multiplier is a deliberately large starting figure for balancing, applied inside the
+        /// shared wage calculation rather than as a second labour-value model.
+        /// </summary>
+        public const float EmergencyDispatchWageMultiplier = 4f;
+
+        /// <summary>
+        /// Emergency dispatch keeps the nearest half of the existing direct-hire market, ranked
+        /// by the ordinary travel estimate. This is a deliberately narrow starting balance figure:
+        /// it preserves scarcity without making eligibility depend on a world-specific day count.
+        /// </summary>
+        public const float EmergencyMarketFraction = 0.5f;
+
+        /// <summary>
+        /// Emergency direct hires compress the candidate's ordinary travel estimate to roughly one
+        /// third. This is a deliberately urgent starting balance figure; the one-day floor keeps
+        /// the existing arrival-tick contract in whole days. Drop-pod arrival is deliberately
+        /// absent: F21 has no settlement logistics capability model to gate it on, and equipment
+        /// tier remains F23's unbuilt request work.
+        /// </summary>
+        public const float EmergencyArrivalFraction = 1f / 3f;
+
+        /// <summary>
         /// What a labor cost of 100% means, relative to the rate this mod shipped with. The
         /// original figures made hiring cheap enough that it was never weighed against doing
         /// the work yourself, and doubling them did not fix it.
@@ -31,6 +54,12 @@ namespace Intercolony
 
         /// <summary>Workers offered per settlement, when that settlement is drawn.</summary>
         private const int CandidatesPerSettlement = 2;
+
+        // Ordinary labor travel stays between one and twenty days: a worker who arrives the same
+        // day makes the hire decision meaningless, and one who takes half a year is not a hire
+        // anyone would make.
+        private const int MinLaborTravelDays = 1;
+        private const int MaxLaborTravelDays = 20;
 
         /// <summary>
         /// Longest term a worker will sign for (§36.2). Lives here rather than in the hiring window
@@ -76,6 +105,12 @@ namespace Intercolony
         /// nothing for it.
         /// </summary>
         private static List<LaborProspect> census = new List<LaborProspect>();
+
+        /// <summary>
+        /// Test-visible instrumentation: one int counting synthetic prospect draws, so the
+        /// ordinary colony's no-extra-cost path is checkable rather than asserted in prose.
+        /// </summary>
+        internal static int CensusProspectDraws { get; private set; }
 
         /// <summary>Which refresh <see cref="census"/> belongs to; -1 when it has not been built.</summary>
         private static int censusRefreshCount = -1;
@@ -275,14 +310,17 @@ namespace Intercolony
             }
 
             census.Clear();
+            CensusProspectDraws = 0;
             censusRefreshCount = state.RefreshCount;
 
             float standing = EmployerReputationService.ScoreFor(state);
 
-            // Reputation gates reach as well as advertising (§39 step 9). A colony nobody wants to
-            // work for does not get to bypass that by posting a notice.
+            // Reputation reaches quality as well as reach (§39 step 9). A colony nobody wants to
+            // work for does not get to bypass that by posting a notice, while a mid-range standing
+            // still draws each prospect once so the common case is unchanged.
             float availability = EmployerReputationService.AvailabilityFactor(standing);
             int perSettlement = Mathf.Max(1, Mathf.RoundToInt(ProspectsPerSettlement * availability));
+            int qualityBias = EmployerReputationService.CandidateQualityBias(standing);
 
             List<Settlement> sources = EligibleSources(state);
             if (sources.Count == 0)
@@ -317,11 +355,12 @@ namespace Intercolony
                     }
 
                     float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
-                    int travel = TravelDays(distance);
+                    int travel = LogisticsQuote.TravelDaysFor(distance);
 
                     for (int i = 0; i < perSettlement && census.Count < MaxCensus; i++)
                     {
-                        census.Add(GenerateProspect(settlement, profile, distance, travel, skills, skillCount));
+                        census.Add(GenerateProspectBiased(
+                            settlement, profile, distance, travel, skills, skillCount, qualityBias));
                     }
                 }
             }
@@ -348,6 +387,8 @@ namespace Intercolony
             Settlement settlement, SettlementEconomicProfile profile, float distance, int travel,
             List<SkillDef> skills, int skillCount)
         {
+            CensusProspectDraws++;
+
             int[] levels = new int[skillCount];
             Passion[] passions = new Passion[skillCount];
 
@@ -424,6 +465,38 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Draws a census prospect, and at the extremes of employer reputation draws twice and
+        /// keeps the better or worse record. In the middle it draws once, so the ordinary case
+        /// costs nothing extra — synthetic records are cheap, but the common path should still
+        /// consume the same random sequence.
+        /// </summary>
+        private static LaborProspect GenerateProspectBiased(
+            Settlement settlement, SettlementEconomicProfile profile, float distance, int travel,
+            List<SkillDef> skills, int skillCount, int bias)
+        {
+            LaborProspect first = GenerateProspect(settlement, profile, distance, travel, skills, skillCount);
+            if (bias == 0 || first == null)
+            {
+                return first;
+            }
+
+            LaborProspect second = GenerateProspect(settlement, profile, distance, travel, skills, skillCount);
+            if (second == null)
+            {
+                return first;
+            }
+
+            int firstBest = BestSkillLevel(first);
+            int secondBest = BestSkillLevel(second);
+
+            bool keepSecond = bias > 0 ? secondBest > firstBest : secondBest < firstBest;
+
+            // Census prospects are synthetic records, not pawns, so the discarded draw owns
+            // nothing that needs Discard().
+            return keepSecond ? second : first;
+        }
+
+        /// <summary>
         /// The census-record twin of <see cref="PricedSkillValue(Pawn)"/>. Same rule, same top-N,
         /// same passion weighting — the two must not drift or the advertised band stops matching
         /// the workers who arrive.
@@ -481,10 +554,11 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Resets only the derived census so cold-cache profiling does not discard the advertised
-        /// pawn pool. Rebuilding produces the same records for the current refresh.
+        /// Resets only the derived census without discarding the advertised pawn pool. The
+        /// performance profile and the job-posting self-test use it to rebuild the census for the
+        /// current refresh.
         /// </summary>
-        internal static void InvalidateCensusForPerformanceProfile()
+        internal static void InvalidateCensus()
         {
             // Clear retains capacity and would understate the first population of a 900-record
             // census. The empty-list construction remains outside the timed region.
@@ -589,6 +663,25 @@ namespace Intercolony
             return best;
         }
 
+        private static int BestSkillLevel(LaborProspect prospect)
+        {
+            if (prospect?.skillLevels == null || prospect.skillLevels.Length == 0)
+            {
+                return 0;
+            }
+
+            int best = 0;
+            foreach (int level in prospect.skillLevels)
+            {
+                if (level >= 0 && level > best)
+                {
+                    best = level;
+                }
+            }
+
+            return best;
+        }
+
         private static LaborCandidate Generate(
             Settlement settlement, SettlementEconomicProfile profile, float standing)
         {
@@ -638,7 +731,12 @@ namespace Intercolony
                 factionName = faction.Name ?? "",
                 faction = faction,
                 distanceTiles = distance,
-                travelDays = TravelDays(distance),
+                travelDays = distance < 0f
+                    ? LogisticsQuote.TravelDaysFor(distance)
+                    : Mathf.Clamp(
+                        LogisticsQuote.TravelDaysFor(distance),
+                        MinLaborTravelDays,
+                        MaxLaborTravelDays),
                 minTermDays = minTerm,
 
                 // The listed rate is the civilian rate — the cheapest terms available, and the
@@ -648,12 +746,105 @@ namespace Intercolony
             };
         }
 
-        /// <summary>Days a hired worker spends travelling to the colony.</summary>
+        /// <summary>
+        /// Days a hired worker spends travelling to the colony. Kept as the labor-facing entry
+        /// point, but the distance conversion belongs to <see cref="LogisticsQuote.TravelDaysFor"/>
+        /// so labor and procurement cannot drift apart.
+        /// </summary>
         public static int TravelDays(float distance)
         {
-            // Same rate the procurement lead time uses (RfqService.LeadTimeDays), so a worker
-            // and a crate from the same settlement take comparable time to arrive.
-            return distance < 0f ? 3 : Mathf.Clamp(Mathf.RoundToInt(distance / 12f), 1, 20);
+            return LogisticsQuote.TravelDaysFor(distance);
+        }
+
+        /// <summary>
+        /// Whether an already-listed worker belongs to F24's urgent slice of the current market.
+        /// The slice is the nearest fraction of the transient direct-hire pool by the existing
+        /// ordinary travel estimate. It does not synthesize a replacement, preserve a request,
+        /// select a transport pod, or add an equipment requirement.
+        /// </summary>
+        public static bool CanReachEmergency(LaborCandidate candidate)
+        {
+            if (!IsEmergencyCandidate(candidate) || pool == null || pool.Count == 0)
+            {
+                return false;
+            }
+
+            int candidateIndex = pool.IndexOf(candidate);
+            if (candidateIndex < 0)
+            {
+                return false;
+            }
+
+            int available = EmergencyCandidateCount();
+            if (available == 0)
+            {
+                return false;
+            }
+
+            int rank = 0;
+            for (int i = 0; i < pool.Count; i++)
+            {
+                LaborCandidate offered = pool[i];
+                if (!IsEmergencyCandidate(offered) || ReferenceEquals(offered, candidate))
+                {
+                    continue;
+                }
+
+                int travelComparison = offered.travelDays.CompareTo(candidate.travelDays);
+                bool comesFirst = travelComparison < 0;
+                if (travelComparison == 0)
+                {
+                    int distanceComparison = offered.distanceTiles.CompareTo(candidate.distanceTiles);
+                    comesFirst = distanceComparison < 0 ||
+                        (distanceComparison == 0 && i < candidateIndex);
+                }
+
+                if (comesFirst)
+                {
+                    rank++;
+                }
+            }
+
+            return rank < available;
+        }
+
+        private static bool IsEmergencyCandidate(LaborCandidate candidate)
+        {
+            return candidate != null && candidate.pawn != null && candidate.travelDays >= 0;
+        }
+
+        private static int EmergencyCandidateCount()
+        {
+            int candidateCount = 0;
+            foreach (LaborCandidate candidate in pool)
+            {
+                if (IsEmergencyCandidate(candidate))
+                {
+                    candidateCount++;
+                }
+            }
+
+            return candidateCount == 0
+                ? 0
+                : Mathf.Max(1, Mathf.CeilToInt(candidateCount * EmergencyMarketFraction));
+        }
+
+        /// <summary>
+        /// Arrival days for the existing employment arrival tick. Emergency dispatch compresses
+        /// ordinary travel to the starting urgency fraction and rounds up to a whole day, with a
+        /// one-day floor.
+        /// </summary>
+        public static int ArrivalDaysFor(LaborCandidate candidate, bool emergencyDispatch)
+        {
+            if (candidate == null)
+            {
+                return 0;
+            }
+
+            return emergencyDispatch
+                ? Mathf.Max(1, Mathf.CeilToInt(
+                    Mathf.Max(0, candidate.travelDays) * EmergencyArrivalFraction))
+                : candidate.travelDays;
         }
 
         /// <summary>
@@ -674,10 +865,10 @@ namespace Intercolony
         /// </param>
         public static int DailyWage(
             Pawn pawn, SettlementEconomicProfile profile, float distance, int termDays,
-            float employerStanding, CombatClause clause)
+            float employerStanding, CombatClause clause, bool emergencyDispatch = false)
         {
             return DailyWageFor(PricedSkillValue(pawn), profile, distance, termDays,
-                employerStanding, clause);
+                employerStanding, clause, emergencyDispatch);
         }
 
         /// <summary>
@@ -733,7 +924,7 @@ namespace Intercolony
         /// </summary>
         public static int DailyWageFor(
             float skillValue, SettlementEconomicProfile profile, float distance, int termDays,
-            float employerStanding, CombatClause clause)
+            float employerStanding, CombatClause clause, bool emergencyDispatch = false)
         {
             float wage = BaseDailyWage + skillValue * SilverPerSkillLevel;
 
@@ -764,6 +955,13 @@ namespace Intercolony
             // only ever affects wages being quoted now: an employment already agreed keeps the
             // wage it was signed at, exactly as economy difficulty leaves agreed prices alone.
             wage *= LaborBaselineMultiplier * IntercolonyMod.Settings.laborCostMultiplier;
+
+            if (emergencyDispatch)
+            {
+                // F24 buys priority and speed, not a guaranteed pawn. Keep urgency in this one
+                // formula so the displayed quote and the charged hire use the same calculation.
+                wage *= EmergencyDispatchWageMultiplier;
+            }
 
             return Mathf.Max(1, Mathf.RoundToInt(wage));
         }

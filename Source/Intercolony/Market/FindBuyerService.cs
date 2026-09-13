@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -631,6 +632,83 @@ namespace Intercolony
             return null;
         }
 
+        // Keep tied rows fixed: List.Sort is unstable, and a periodic refresh can otherwise
+        // move rows under the player.
+        private static int CompareStockRows(
+            KeyValuePair<ThingDef, int> a,
+            KeyValuePair<ThingDef, int> b)
+        {
+            int comparison = b.Value.CompareTo(a.Value);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            comparison = string.Compare(
+                a.Key.LabelCap.ToString(), b.Key.LabelCap.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            return string.Compare(a.Key.defName, b.Key.defName, StringComparison.Ordinal);
+        }
+
+        // Keep tied animal groups fixed: List.Sort is unstable, and a periodic refresh can otherwise
+        // move rows under the player.
+        private static int CompareAnimalStockGroups(AnimalStockGroup a, AnimalStockGroup b)
+        {
+            int comparison = b.quantity.CompareTo(a.quantity);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            comparison = string.Compare(
+                a.race.LabelCap.ToString(), b.race.LabelCap.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            comparison = string.Compare(
+                a.spec.gender.ToString(), b.spec.gender.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            comparison = string.Compare(
+                a.spec.lifeStage?.LabelCap.ToString() ?? "",
+                b.spec.lifeStage?.LabelCap.ToString() ?? "",
+                StringComparison.OrdinalIgnoreCase);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            comparison = string.Compare(
+                a.spec.lifeStage?.defName ?? "", b.spec.lifeStage?.defName ?? "",
+                StringComparison.Ordinal);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            comparison = string.Compare(
+                a.spec.pregnant.ToString(), b.spec.pregnant.ToString(),
+                StringComparison.OrdinalIgnoreCase);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
+            return string.Compare(a.race.defName, b.race.defName, StringComparison.Ordinal);
+        }
+
         /// <summary>
         /// Colony stock worth offering, as def -> count. Counts only what is in storage:
         /// loose items scattered across the map are not a surplus the player is choosing to
@@ -645,22 +723,38 @@ namespace Intercolony
             }
 
             Dictionary<ThingDef, int> counts = new Dictionary<ThingDef, int>();
-            foreach (Thing thing in map.listerThings.AllThings)
+            HashSet<Thing> seenThings = new HashSet<Thing>();
+            List<SlotGroup> groups = map.haulDestinationManager.AllGroupsListForReading;
+            for (int groupIndex = 0; groupIndex < groups.Count; groupIndex++)
             {
-                Thing inner = thing.GetInnerIfMinified();
-                if (inner?.def == null || !IntercolonyProductClassifier.IsFungibleTradeItem(inner.def))
+                SlotGroup group = groups[groupIndex];
+                if (group == null)
                 {
                     continue;
                 }
 
-                if (!OrderValidator.IsAvailableColonyStock(thing))
+                foreach (Thing thing in group.HeldThings)
                 {
-                    continue;
-                }
+                    if (!seenThings.Add(thing))
+                    {
+                        continue;
+                    }
 
-                int units = OrderValidator.CountableUnits(thing);
-                counts.TryGetValue(inner.def, out int existing);
-                counts[inner.def] = existing + units;
+                    Thing inner = thing.GetInnerIfMinified();
+                    if (inner?.def == null || !IntercolonyProductClassifier.IsFungibleTradeItem(inner.def))
+                    {
+                        continue;
+                    }
+
+                    if (!OrderValidator.IsAvailableColonyStock(thing))
+                    {
+                        continue;
+                    }
+
+                    int units = OrderValidator.CountableUnits(thing);
+                    counts.TryGetValue(inner.def, out int existing);
+                    counts[inner.def] = existing + units;
+                }
             }
 
             foreach (KeyValuePair<ThingDef, int> entry in counts)
@@ -668,7 +762,7 @@ namespace Intercolony
                 result.Add(entry);
             }
 
-            result.Sort((a, b) => b.Value.CompareTo(a.Value));
+            result.Sort(CompareStockRows);
             return result;
         }
 
@@ -690,7 +784,7 @@ namespace Intercolony
                 }
             }
 
-            result.Sort((a, b) => b.Value.CompareTo(a.Value));
+            result.Sort(CompareStockRows);
             return result;
         }
 
@@ -760,7 +854,7 @@ namespace Intercolony
                 group.quantity++;
             }
 
-            result.Sort((a, b) => b.quantity.CompareTo(a.quantity));
+            result.Sort(CompareAnimalStockGroups);
             return result;
         }
 
@@ -787,7 +881,7 @@ namespace Intercolony
                 }
             }
 
-            result.Sort((a, b) => b.quantity.CompareTo(a.quantity));
+            result.Sort(CompareAnimalStockGroups);
             return result;
         }
 

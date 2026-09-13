@@ -51,6 +51,7 @@ namespace Intercolony
         internal readonly bool hasReputation;
         internal readonly string scoreLabel;
         internal readonly string statsLabel;
+        internal readonly CommercialHistorySummaryRow commercialPressureRow;
         internal readonly string rowTooltip;
         internal readonly List<CommercialHistorySummaryRow> summaryRows;
         internal readonly List<CommercialHistoryTimelineRow> timelineRows;
@@ -67,6 +68,7 @@ namespace Intercolony
             bool hasReputation,
             string scoreLabel,
             string statsLabel,
+            CommercialHistorySummaryRow commercialPressureRow,
             string rowTooltip,
             List<CommercialHistorySummaryRow> summaryRows,
             List<CommercialHistoryTimelineRow> timelineRows,
@@ -82,6 +84,7 @@ namespace Intercolony
             this.hasReputation = hasReputation;
             this.scoreLabel = scoreLabel;
             this.statsLabel = statsLabel;
+            this.commercialPressureRow = commercialPressureRow;
             this.rowTooltip = rowTooltip;
             this.summaryRows = summaryRows;
             this.timelineRows = timelineRows;
@@ -95,6 +98,25 @@ namespace Intercolony
     /// </summary>
     internal static class CommercialHistoryUiService
     {
+        /// <summary>
+        /// Legal pressure values used by the Relations layout reservation. The visible value is
+        /// still measured separately; these samples keep changing a live setting from changing
+        /// the row's height when a different legal value wraps at the same width.
+        /// </summary>
+        internal static readonly string[] CommercialPressureValueHeightSamples =
+        {
+            CommercialPressureEarningValue(
+                IntercolonySettings.MaxCommercialGoodwillPerInterval,
+                IntercolonySettings.MaxCommercialGoodwillIntervalDays,
+                IntercolonySettings.MaxCommercialGoodwillCeiling),
+            CommercialPressureAtCeilingValue(IntercolonySettings.MaxCommercialGoodwillCeiling),
+            CommercialPressureBelowThresholdValue(
+                IntercolonySettings.MaxCommercialReputationRequired),
+            "Not earning; hostile faction",
+            "Not earning; goodwill restricted",
+            "Positive pressure disabled"
+        };
+
         /// <summary>
         /// A detail view requests a screenful. The page scrolls the expanded rows, while the
         /// bounded request prevents one settlement from expanding into the full 1,000-record cap.
@@ -215,6 +237,10 @@ namespace Intercolony
             Settlement settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
             CommercialHistorySummary summary =
                 CommercialHistoryService.BuildSummary(state, settlementId);
+            CommercialGoodwillPressureEvaluation commercialPressure =
+                CommercialGoodwillPressureService.EvaluateStatus(state, settlementId);
+            CommercialHistorySummaryRow commercialPressureRow =
+                BuildCommercialPressureRow(commercialPressure);
 
             string settlementLabel = settlement?.Label.ToString();
             if (string.IsNullOrEmpty(settlementLabel))
@@ -268,7 +294,10 @@ namespace Intercolony
             }
 
             string emptyTimelineLabel = EmptyTimelineLabel(summary);
-            string rowTooltip = BuildRowTooltip(reputation, settlementId);
+            string rowTooltip = BuildRowTooltip(
+                reputation,
+                settlementId,
+                commercialPressureRow.tooltip);
             return new CommercialHistoryRelationRow(
                 settlementId,
                 settlementLabel,
@@ -280,6 +309,7 @@ namespace Intercolony
                 hasReputation,
                 scoreLabel,
                 statsLabel,
+                commercialPressureRow,
                 rowTooltip,
                 summaryRows,
                 timelineRows,
@@ -336,6 +366,130 @@ namespace Intercolony
                     ? "Known silver recorded by durable commercial aggregates; it may be incomplete."
                     : "The retained data cannot support a trade-value total for this settlement."));
             return rows;
+        }
+
+        private static CommercialHistorySummaryRow BuildCommercialPressureRow(
+            CommercialGoodwillPressureEvaluation evaluation)
+        {
+            string value = evaluation.Status != CommercialGoodwillPressureStatus.Unavailable &&
+                           evaluation.IsPositivePressureDisabled
+                ? "Positive pressure disabled"
+                : CommercialPressureValue(evaluation);
+
+            return new CommercialHistorySummaryRow(
+                "Goodwill pressure",
+                value,
+                CommercialPressureTooltip(evaluation));
+        }
+
+        private static string CommercialPressureValue(
+            CommercialGoodwillPressureEvaluation evaluation)
+        {
+            switch (evaluation.Status)
+            {
+                case CommercialGoodwillPressureStatus.Earning:
+                    return CommercialPressureEarningValue(
+                        evaluation.Delta,
+                        evaluation.IntervalDays,
+                        evaluation.GoodwillCeiling);
+                case CommercialGoodwillPressureStatus.AtCeiling:
+                    return CommercialPressureAtCeilingValue(evaluation.GoodwillCeiling);
+                case CommercialGoodwillPressureStatus.BelowThreshold:
+                    return CommercialPressureBelowThresholdValue(
+                        evaluation.RequiredReputationScore);
+                case CommercialGoodwillPressureStatus.Hostile:
+                    return "Not earning; hostile faction";
+                case CommercialGoodwillPressureStatus.GoodwillRestricted:
+                    return "Not earning; goodwill restricted";
+                default:
+                    return "Unavailable";
+            }
+        }
+
+        private static string CommercialPressureEarningValue(
+            int delta, int intervalDays, int goodwillCeiling)
+        {
+            return $"{FormatSignedDelta(delta)} {FormatInterval(intervalDays)}; " +
+                   $"base ceiling {goodwillCeiling}";
+        }
+
+        private static string CommercialPressureAtCeilingValue(int goodwillCeiling)
+        {
+            return $"Not earning; base ceiling {goodwillCeiling} reached";
+        }
+
+        private static string CommercialPressureBelowThresholdValue(int requiredScore)
+        {
+            return $"Not earning; requires score {requiredScore}+";
+        }
+
+        private static string FormatInterval(int intervalDays)
+        {
+            return intervalDays == 1
+                ? "every 1 day"
+                : $"every {intervalDays} days";
+        }
+
+        private static string FormatSignedDelta(int delta)
+        {
+            return delta > 0 ? $"+{delta}" : delta.ToString();
+        }
+
+        private static string CommercialPressureTooltip(
+            CommercialGoodwillPressureEvaluation evaluation)
+        {
+            if (evaluation.IsPositivePressureDisabled)
+            {
+                return evaluation.Status == CommercialGoodwillPressureStatus.Unavailable
+                    ? "Commercial goodwill pressure is unavailable for this settlement, so no " +
+                      "pressure is applied."
+                    : "Positive commercial goodwill pressure is disabled in the settings. " +
+                      "The scheduled check adds no goodwill, while commercial reputation and its " +
+                      "other effects continue to work.";
+            }
+
+            string configuredDelta = FormatSignedDelta(evaluation.ConfiguredDelta);
+            string interval = FormatInterval(evaluation.IntervalDays);
+            string threshold =
+                $"a commercial reputation score of {evaluation.RequiredReputationScore} or higher";
+            int ceiling = evaluation.GoodwillCeiling;
+
+            switch (evaluation.Status)
+            {
+                case CommercialGoodwillPressureStatus.Earning:
+                    return "This settlement meets " + threshold + ". This application adds " +
+                           $"{FormatSignedDelta(evaluation.Delta)} base goodwill {interval} for " +
+                           "the faction. Several qualifying settlements still produce one " +
+                           $"faction-wide result. The base goodwill ceiling is {ceiling}, so " +
+                           "commercial pressure never creates an alliance.";
+                case CommercialGoodwillPressureStatus.AtCeiling:
+                    return "This settlement meets " + threshold + ", but the faction's base " +
+                           $"goodwill has reached the configured ceiling of {ceiling}. No pressure " +
+                           $"is added until it falls below that ceiling. If it qualifies again, the " +
+                           $"setting applies {configuredDelta} base goodwill {interval}; commercial " +
+                           "pressure never creates an alliance.";
+                case CommercialGoodwillPressureStatus.BelowThreshold:
+                    return "This settlement needs " + threshold + " before its faction can receive " +
+                           $"commercial goodwill pressure. Once it qualifies, the setting applies " +
+                           $"{configuredDelta} base goodwill {interval}, up to a base goodwill ceiling " +
+                           $"of {ceiling}; commercial pressure never creates an alliance.";
+                case CommercialGoodwillPressureStatus.Hostile:
+                    return "This settlement meets " + threshold + ", but commercial pressure never " +
+                           "applies to a hostile faction. If the faction is no longer hostile, the " +
+                           $"setting applies {configuredDelta} base goodwill {interval}, up to a " +
+                           $"base goodwill ceiling of {ceiling}; commercial pressure never creates an " +
+                           "alliance.";
+                case CommercialGoodwillPressureStatus.GoodwillRestricted:
+                    return "This settlement meets " + threshold + ", but a goodwill situation " +
+                           "currently suppresses the faction's effective goodwill. No pressure is " +
+                           "added while that restriction is active. Once it clears, the setting " +
+                           $"applies {configuredDelta} base goodwill {interval}, up to a base " +
+                           $"goodwill ceiling of {ceiling}; commercial pressure never creates an " +
+                           "alliance.";
+                default:
+                    return "Commercial goodwill pressure is unavailable for this settlement, so " +
+                           "no pressure is applied.";
+            }
         }
 
         private static CommercialHistoryTimelineRow BuildTimelineRow(
@@ -468,11 +622,16 @@ namespace Intercolony
             return result;
         }
 
-        private static string BuildRowTooltip(CommercialReputation reputation, int settlementId)
+        private static string BuildRowTooltip(
+            CommercialReputation reputation,
+            int settlementId,
+            string commercialPressureTooltip)
         {
             if (reputation == null)
             {
-                return "This settlement has retained commercial evidence, but no persisted reputation record. Expand the row for the supported history.";
+                return "This settlement has retained commercial evidence, but no persisted " +
+                       "reputation record. Expand the row for the supported history.\n\n" +
+                       commercialPressureTooltip;
             }
 
             string economy = SettlementEconomyDisplay.SettlementEconomicSummary(settlementId);
@@ -482,7 +641,8 @@ namespace Intercolony
                    "A better record means larger orders, more frequent offers, slightly better " +
                    "prices and more generous deadlines.\n\n" +
                    "This is separate from faction goodwill, and it is held by this settlement " +
-                   "rather than its faction: another town of the same faction forms its own view.";
+                   "rather than its faction: another town of the same faction forms its own view." +
+                   "\n\n" + commercialPressureTooltip;
         }
 
         private static string HistoricalSettlementName(

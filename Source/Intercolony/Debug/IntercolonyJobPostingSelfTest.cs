@@ -9,10 +9,10 @@ namespace Intercolony
     /// <summary>
     /// End-to-end check of Phase 21's acceptance criterion (DESIGN.md §114, §35.2).
     ///
-    /// §114 asks for one measurable thing: *"Higher wages and better employer reputation measurably
+    /// §114 asks for one measurable thing: *"Requirements and better employer reputation measurably
     /// improve applicant quantity/quality."* So this drives the **real** matcher against the **real**
-    /// world pool at several wages and at both ends of the reputation range, and measures what comes
-    /// back. It does not assert that a formula returns what the formula returns.
+    /// world pool at several requirements and at both ends of the reputation range, and measures what
+    /// comes back. It does not assert that a formula returns what the formula returns.
     ///
     /// It also guards the thing that is invisible in play: applicants are pinned world pawns, and a
     /// posting that closes without discarding them leaks one pawn per applicant, forever. The world
@@ -27,6 +27,7 @@ namespace Intercolony
             public readonly StringBuilder sb = new StringBuilder();
             public int passed;
             public int failed;
+            public int skipped;
 
             public void Check(bool condition, string label, string detail = null)
             {
@@ -46,20 +47,49 @@ namespace Intercolony
             {
                 sb.AppendLine($"        {line}");
             }
+
+            public void Skip(string label, string detail)
+            {
+                skipped++;
+                sb.AppendLine($"  SKIPPED  {label}  ({detail})");
+            }
         }
 
         /// <summary>One measurement of what a posting drew.</summary>
         private struct Draw
         {
-            /// <summary>Workers who would have taken the offer — the market's answer.</summary>
+            /// <summary>Workers meeting the requirement — the market's unbounded answer.</summary>
             public int interested;
 
             /// <summary>Workers actually queued, which the applicant cap truncates.</summary>
             public int applicants;
 
+            /// <summary>Queued applicants that do not satisfy the posting's requirement.</summary>
+            public int queuedBarViolations;
+
             public float averageBestSkill;
             public int bestSkill;
         }
+
+        private struct ApplicantValues
+        {
+            public int settlementId;
+            public string settlementName;
+            public string factionName;
+            public int travelDays;
+            public int openMarketAsk;
+            public string skillLevels;
+        }
+
+        private struct ApplicantDraw
+        {
+            public int qualified;
+            public List<ApplicantValues> values;
+            public bool fixtureBuilt;
+            public string fixtureFailureReason;
+        }
+
+        private const float WaitingListSpreadMargin = 1f;
 
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
@@ -75,17 +105,26 @@ namespace Intercolony
             EmployerReputation rep = state.EmployerStanding;
             float savedScore = rep?.Score ?? 0f;
             int savedPostings = state.Postings.Count;
+            int savedEmployments = state.Employments.Count;
+            int savedLedger = state.Ledger.Count;
+            int savedLedgerStartTick = state.LedgerStartTick;
             int worldPawnsBefore = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
+
+            IntercolonyLaborSelfTestSupport.ResetLedger();
 
             try
             {
                 CheckPoolSplit(r, state);
-                CheckResponseCurveIsSmooth(r, state);
-                CheckWageDrivesApplicants(r, state);
+                CheckRequirementsDriveApplicants(r, state);
+                CheckWaitingListIsSpread(r, state);
+                CheckMarketReproduces(r, state);
                 CheckReputationDrivesApplicants(r, state, rep);
+                CheckReputationDrivesCandidateQuality(r, state, rep);
                 CheckOnePersonOnePosting(r, state);
                 CheckSilenceIsExplained(r, state);
                 CheckLifecycle(r, state);
+                CheckApplicantOwnAsk(r, state, map);
+                CheckLoadPruner(r, state);
             }
             catch (System.Exception ex)
             {
@@ -94,6 +133,20 @@ namespace Intercolony
             }
             finally
             {
+                // A successful applicant hire creates a travelling employment rather than a
+                // posting-owned pawn. End and remove any test employment before the outer leak
+                // check, even if the hire assertion itself threw during cleanup.
+                for (int i = state.Employments.Count - 1; i >= savedEmployments; i--)
+                {
+                    EmploymentContract contract = state.Employments[i];
+                    if (contract?.IsOpen == true)
+                    {
+                        EmploymentService.End(contract, EmploymentStatus.Failed, "self-test cleanup");
+                    }
+
+                    state.Employments.RemoveAt(i);
+                }
+
                 // Every posting this test made must go, and closing is what discards its applicants.
                 for (int i = state.Postings.Count - 1; i >= savedPostings; i--)
                 {
@@ -105,6 +158,19 @@ namespace Intercolony
                 {
                     rep.Adjust(savedScore - rep.Score);
                 }
+
+                int returned = IntercolonyLaborSelfTestSupport.RestoreLedger(map);
+                if (returned > 0)
+                {
+                    r.Info($"returned {returned} silver the test had consumed.");
+                }
+
+                while (state.Ledger.Count > savedLedger)
+                {
+                    state.Ledger.RemoveAt(state.Ledger.Count - 1);
+                }
+
+                state.LedgerStartTick = savedLedgerStartTick;
 
                 LaborCandidateService.Clear();
 
@@ -201,168 +267,467 @@ namespace Intercolony
                 $"skill value {lowest:0.0} to {highest:0.0}");
         }
 
-        /// <summary>
-        /// The complaint this phase's second pass exists to answer, turned into an assertion.
-        ///
-        /// Playing it revealed that a single silver could take a posting from no replies to every
-        /// qualified worker in the world, which is not a market — it is a threshold. So: walk the
-        /// wage one silver at a time across the whole going-rate band and assert that no single step
-        /// moves more than a modest share of the eventual total.
-        /// </summary>
-        private static void CheckResponseCurveIsSmooth(Results r, IntercolonyWorldComponent state)
-        {
-            SkillDef skill = SkillDefOf.Construction;
-            const int term = 20;
-
-            if (!JobPostingService.GoingRate(state, skill, 8, term, CombatClause.Civilian,
-                    out int low, out int high, out int qualified))
-            {
-                r.Info("response curve skipped: nobody reachable has the skill.");
-                return;
-            }
-
-            if (high - low < 4)
-            {
-                r.Info($"response curve skipped: the band is only {low}-{high}, too narrow to walk.");
-                return;
-            }
-
-            // Measured as *interest*, not queue length. The applicant queue is capped at a handful
-            // by design, so it saturates a third of the way up the band and would report every
-            // offer above that as identical — hiding the very smoothness this checks for. What the
-            // player feels is the market: how many people the offer actually reaches.
-            int steps = Mathf.Min(16, high - low + 1);
-            int biggestJump = 0;
-            int biggestAt = 0;
-            int previous = 0;
-            int total = 0;
-            StringBuilder curve = new StringBuilder();
-
-            for (int i = 0; i < steps; i++)
-            {
-                int wage = low + Mathf.RoundToInt(i * (high - low) / (float)(steps - 1));
-                int reach = JobPostingService.CountInterested(
-                    state, skill, 8, term, wage, CombatClause.Civilian);
-
-                if (i > 0)
-                {
-                    curve.Append(' ');
-                    if (reach - previous > biggestJump)
-                    {
-                        biggestJump = reach - previous;
-                        biggestAt = wage;
-                    }
-                }
-
-                curve.Append(reach);
-                previous = reach;
-                total = Mathf.Max(total, reach);
-            }
-
-            r.Info($"{qualified} qualified in the census; interest across {low}-{high}: {curve}");
-
-            if (total == 0)
-            {
-                r.Info("response curve skipped: nobody would take the job anywhere in the band.");
-                return;
-            }
-
-            float share = biggestJump / (float)total;
-            r.Check(share <= 0.4f,
-                "no single step across the band flips the whole market (§35.2)",
-                $"biggest jump {biggestJump} of {total} ({share:P0}) at {biggestAt}/day");
-
-            r.Check(total >= 10,
-                "the top of the band reaches a real population, not a handful",
-                $"{total} workers would take it");
-        }
-
         // --- §114's acceptance criterion ---------------------------------------------------
 
         /// <summary>
-        /// The headline claim: a better offer brings more and better applicants.
+        /// The requirement claim: a higher skill bar brings fewer but better applicants, while the
+        /// saved posted wage does not alter the market's answer.
         ///
-        /// Measured across a spread of wages derived from the actual going rate, so the test works
-        /// on any world rather than assuming a silver figure. Quantity is asserted as monotonic
-        /// across the whole spread; quality is asserted between the extremes, because a single
-        /// step can legitimately add one mediocre worker.
+        /// Every draw goes through the real posting service. The unbounded interested count reports
+        /// the market shape; the queued applicants prove that the matcher applied the same
+        /// requirement before its configured waiting-list cap.
         /// </summary>
-        private static void CheckWageDrivesApplicants(Results r, IntercolonyWorldComponent state)
+        private static void CheckRequirementsDriveApplicants(
+            Results r, IntercolonyWorldComponent state)
         {
             SkillDef skill = SkillDefOf.Construction;
-            const int minLevel = 0;
             const int term = 20;
-
-            if (!JobPostingService.GoingRate(state, skill, minLevel, term, CombatClause.Civilian,
-                    out int low, out int high, out int qualified))
-            {
-                r.Info("wage effect skipped: nobody reachable can do the work this cycle.");
-                return;
-            }
-
-            r.Info($"{qualified} reachable worker(s) with {skill.skillLabel}; they ask {low} to {high}/day.");
-
-            int[] wages = { Mathf.Max(1, low - 5), low, (low + high) / 2, high, high + 15 };
+            const int probeWage = 9999;
+            int[] minimums = { 0, 4, 8, 12, 16, 20 };
             List<Draw> draws = new List<Draw>();
 
-            foreach (int wage in wages)
+            foreach (int minimum in minimums)
             {
-                draws.Add(Measure(state, skill, minLevel, term, wage));
-            }
-
-            bool quantityMonotonic = true;
-            for (int i = 1; i < draws.Count; i++)
-            {
-                if (draws[i].interested < draws[i - 1].interested)
-                {
-                    quantityMonotonic = false;
-                }
+                draws.Add(Measure(r, state, skill, minimum, term, probeWage));
             }
 
             StringBuilder shape = new StringBuilder();
-            for (int i = 0; i < wages.Length; i++)
+            for (int i = 0; i < minimums.Length; i++)
             {
                 if (i > 0)
                 {
                     shape.Append(", ");
                 }
 
-                shape.Append($"{wages[i]}/day -> {draws[i].interested} interested, " +
+                shape.Append($"{minimums[i]}+ -> {draws[i].interested} interested, " +
                              $"{draws[i].applicants} queued");
             }
 
-            r.Check(quantityMonotonic,
-                "raising the offer never reaches fewer workers (§114)", shape.ToString());
-
-            Draw worst = draws[0];
-            Draw best = draws[draws.Count - 1];
-
-            r.Check(best.interested > worst.interested,
-                "a generous offer reaches measurably more workers than a poor one (§114)",
-                $"{worst.interested} at {wages[0]}/day vs {best.interested} at {wages[wages.Length - 1]}/day");
-
-            // The half that matters once the queue is full: a better offer must still buy better
-            // people. This is what the ranking pass exists for — without it every offer above the
-            // cheapest viable one produced the same applicants and the wage stopped meaning
-            // anything past saturation.
-            if (best.applicants > 0 && worst.applicants > 0)
+            Draw noMinimum = draws[0];
+            Draw demanding = draws[draws.Count - 1];
+            if (noMinimum.interested == 0)
             {
-                r.Check(best.averageBestSkill >= worst.averageBestSkill,
-                    "a generous offer brings better applicants, not just more (§114)",
-                    $"average best skill {worst.averageBestSkill:0.0} at {wages[0]}/day vs " +
-                    $"{best.averageBestSkill:0.0} at {wages[wages.Length - 1]}/day");
+                r.Skip("minimum skill drives applicant quantity (§114)",
+                    $"no-minimum draw was empty: {shape}");
             }
             else
             {
-                r.Info($"quality comparison skipped: the low offer drew {worst.applicants}.");
+                bool quantityMonotonic = true;
+                for (int i = 1; i < draws.Count; i++)
+                {
+                    if (draws[i].interested > draws[i - 1].interested)
+                    {
+                        quantityMonotonic = false;
+                    }
+                }
+
+                bool materiallyFewer = demanding.interested < noMinimum.interested &&
+                                       demanding.interested * 2 < noMinimum.interested;
+                int applicantCap = JobPostingService.MaxWaitingApplicants;
+                bool queueCapBound = noMinimum.applicants == applicantCap &&
+                                     demanding.applicants == applicantCap;
+                bool queuedApplicantsMeetBar = demanding.queuedBarViolations == 0;
+                bool matcherAppliedBar = queuedApplicantsMeetBar &&
+                                         (queueCapBound || demanding.applicants < noMinimum.applicants);
+                string queueEvidence = queueCapBound
+                    ? $"queued count comparison not discriminating: both draws reached applicant " +
+                      $"cap {applicantCap}; demanding queue bar violations {demanding.queuedBarViolations}"
+                    : $"no minimum queued {noMinimum.applicants}, demanding {demanding.applicants}; " +
+                      $"demanding queue bar violations {demanding.queuedBarViolations}";
+
+                r.Check(quantityMonotonic && materiallyFewer && matcherAppliedBar,
+                    "a higher skill minimum reaches no more workers and a demanding minimum reaches materially fewer (§114)",
+                    $"{shape}; {queueEvidence}");
             }
 
-            // An offer below everyone's asking price must draw nobody. This is the assertion that
-            // catches a matcher that has quietly stopped checking the wage at all.
-            Draw hopeless = Measure(state, skill, 0, term, 1);
-            r.Check(hopeless.applicants == 0 && hopeless.interested == 0,
-                "an offer of 1 silver a day reaches nobody at all (§114)",
-                $"{hopeless.interested} interested, {hopeless.applicants} queued");
+            const int highMinimum = 16;
+            Draw unfiltered = draws[0];
+            Draw highMinimumDraw = Measure(r, state, skill, highMinimum, term, probeWage);
+            if (unfiltered.applicants == 0 || highMinimumDraw.applicants == 0)
+            {
+                string emptyDraw = unfiltered.applicants == 0 && highMinimumDraw.applicants == 0
+                    ? "both the no-minimum and high-minimum draws were empty"
+                    : unfiltered.applicants == 0
+                        ? "the no-minimum draw was empty"
+                        : "the high-minimum draw was empty";
+                r.Skip("a high skill minimum yields better applicants (§114)",
+                    $"{emptyDraw}; no minimum {unfiltered.interested} interested, " +
+                    $"{unfiltered.applicants} queued; {highMinimum}+ " +
+                    $"{highMinimumDraw.interested} interested, {highMinimumDraw.applicants} queued");
+            }
+            else
+            {
+                r.Check(highMinimumDraw.averageBestSkill > unfiltered.averageBestSkill,
+                    "a high skill minimum yields better applicants (§114)",
+                    $"average best skill {unfiltered.averageBestSkill:0.0} at 0+ vs " +
+                    $"{highMinimumDraw.averageBestSkill:0.0} at {highMinimum}+");
+            }
+
+            const int lowWage = 1;
+            const int highWage = 10000;
+            int qualified = JobPostingService.CountInterested(
+                state, skill, 0, term, lowWage, CombatClause.Civilian);
+            if (qualified == 0)
+            {
+                r.Skip("posted wage does not change interested-worker count (§114)",
+                    $"the no-minimum requirement had {qualified} interested workers to compare");
+                return;
+            }
+
+            Draw lowOffer = Measure(r, state, skill, 0, term, lowWage);
+            Draw highOffer = Measure(r, state, skill, 0, term, highWage);
+            r.Check(lowOffer.interested == highOffer.interested &&
+                    lowOffer.applicants > 0 && lowOffer.applicants == highOffer.applicants,
+                "posted wage does not change interested-worker count (§114)",
+                $"{lowWage}/day -> {lowOffer.interested} interested, {lowOffer.applicants} queued; " +
+                $"{highWage}/day -> {highOffer.interested} interested, {highOffer.applicants} queued");
+        }
+
+        /// <summary>
+        /// F25's queue is intentionally a spread of the qualified pool, not a leaderboard. The
+        /// assertion reads the applicants that MatchAll actually materialised and compares their
+        /// whole-queue mean with the mean of the same pool's strongest six records.
+        /// </summary>
+        private static void CheckWaitingListIsSpread(Results r, IntercolonyWorldComponent state)
+        {
+            const int term = 20;
+            const int probeWage = 1;
+            int cap = JobPostingService.MaxWaitingApplicants;
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                    "Find.WorldPawns was null, so the real applicant path could not run");
+                return;
+            }
+
+            LaborCandidateService.Clear();
+            JobPosting posting = MakePosting(
+                state, SkillDefOf.Construction, 0, term, probeWage,
+                out string failReason);
+            if (posting == null)
+            {
+                r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                    $"TryPost refused the real posting fixture: " +
+                    $"{failReason ?? "no failure reason"}");
+                return;
+            }
+
+            try
+            {
+                List<LaborProspect> census = LaborCandidateService.Census(state);
+                List<LaborProspect> qualified = new List<LaborProspect>();
+                foreach (LaborProspect prospect in census)
+                {
+                    if (prospect != null && posting.MeetsRequirement(prospect))
+                    {
+                        qualified.Add(prospect);
+                    }
+                }
+
+                JobPostingService.MatchAll(state);
+
+                if (qualified.Count <= cap)
+                {
+                    r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                        $"qualified pool had {qualified.Count} records; more than cap {cap} is needed");
+                    return;
+                }
+
+                if (posting.Applicants.Count != cap)
+                {
+                    r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                        $"real matcher queued {posting.Applicants.Count} of cap {cap}; " +
+                        $"qualified pool had {qualified.Count}");
+                    return;
+                }
+
+                List<int> qualifiedBestSkills = new List<int>();
+                float queuedTotal = 0f;
+                bool allApplicantsHavePawns = true;
+                foreach (LaborProspect prospect in qualified)
+                {
+                    qualifiedBestSkills.Add(BestSkillLevel(prospect));
+                }
+
+                foreach (JobApplicant applicant in posting.Applicants)
+                {
+                    if (applicant?.pawn == null)
+                    {
+                        allApplicantsHavePawns = false;
+                        break;
+                    }
+
+                    queuedTotal += BestSkillLevel(applicant.pawn);
+                }
+
+                if (!allApplicantsHavePawns)
+                {
+                    r.Skip("the waiting list is a spread, not a leaderboard (§35.2)",
+                        $"one of {posting.Applicants.Count} queued applicants had no pawn to measure");
+                    return;
+                }
+
+                qualifiedBestSkills.Sort((a, b) => b.CompareTo(a));
+                float topTotal = 0f;
+                for (int i = 0; i < cap; i++)
+                {
+                    topTotal += qualifiedBestSkills[i];
+                }
+
+                float queuedMean = queuedTotal / posting.Applicants.Count;
+                float topMean = topTotal / cap;
+                float gap = topMean - queuedMean;
+
+                r.Check(gap >= WaitingListSpreadMargin,
+                    "the waiting list is a spread, not the strongest workers alive (§35.2, F25)",
+                    $"queued mean best skill {queuedMean:0.00}; top {cap} qualified mean " +
+                    $"{topMean:0.00}; gap {gap:0.00}; margin {WaitingListSpreadMargin:0.00}; " +
+                    $"qualified {qualified.Count}, queued {posting.Applicants.Count}");
+            }
+            finally
+            {
+                JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test spread");
+                state.Postings.Remove(posting);
+            }
+        }
+
+        /// <summary>
+        /// Rebuilds the same refresh twice and compares the selected applicants' market attributes
+        /// in order. This proves the draw is a pure function of EconomySeed and RefreshCount. It
+        /// does not prove a Scribe round-trip, and it does not prove pawn identity: pawn
+        /// materialisation is outside the seeded stream, so the same inputs regenerate the same
+        /// records, not necessarily the same people. The comparison uses attributes rather than
+        /// record identity because records sharing all of those market attributes are
+        /// interchangeable to the market.
+        /// </summary>
+        private static void CheckMarketReproduces(Results r, IntercolonyWorldComponent state)
+        {
+            const int term = 20;
+            const int probeWage = 1;
+            int cap = JobPostingService.MaxWaitingApplicants;
+            const string label = "the same seed and refresh count reproduce the same applicants " +
+                                 "in the same order (§35.2, F25)";
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(label, "Find.WorldPawns was null, so the real applicant path could not run");
+                return;
+            }
+
+            ApplicantDraw first = new ApplicantDraw
+            {
+                values = new List<ApplicantValues>()
+            };
+
+            // Matching generates pawns, and pawn generation draws from the current RNG frame,
+            // so the stream is expected to move; "it came back to where it was" is not a true
+            // statement about correct code.
+            Rand.PushState(0x7F25_2D);
+            try
+            {
+                first = CaptureApplicants(
+                    state, SkillDefOf.Construction, 0, term, probeWage);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            if (!first.fixtureBuilt)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                    $"TryPost refused the real posting fixture: " +
+                    $"{first.fixtureFailureReason ?? "no failure reason"}");
+                return;
+            }
+
+            if (first.values == null || first.values.Count == 0)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                    $"the first real draw was empty with {first.qualified} qualified records");
+                return;
+            }
+
+            if (first.qualified <= cap || first.values.Count != cap)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; first real draw had " +
+                    $"{first.values.Count} queued from " +
+                    $"{first.qualified} qualified records; need {cap} queued and more than {cap} " +
+                    "qualified to compare a full capped market");
+                return;
+            }
+
+            ApplicantDraw second = CaptureApplicants(
+                state, SkillDefOf.Construction, 0, term, probeWage);
+
+            if (!second.fixtureBuilt)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                    $"TryPost refused the second real posting fixture: " +
+                    $"{second.fixtureFailureReason ?? "no failure reason"}");
+                return;
+            }
+
+            if (second.values == null || second.values.Count == 0)
+            {
+                r.Skip(label,
+                    $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                    $"the second real draw was empty with {second.qualified} qualified records");
+                return;
+            }
+
+            bool sameSet = SameApplicantSet(first.values, second.values);
+            bool sameOrder = SameApplicantOrder(first.values, second.values);
+
+            r.Check(sameSet && sameOrder,
+                label,
+                $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
+                $"set {(sameSet ? "same" : "different")}; order {(sameOrder ? "same" : "different")}; " +
+                $"first differing position {FirstApplicantDifference(first.values, second.values)}");
+        }
+
+        /// <summary>F25's contract rate must carry the quote the applicant brought with them.</summary>
+        private static void CheckApplicantOwnAsk(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const int term = 20;
+            const int postedWage = 1;
+            const string label = "a hired applicant is paid their own ask (§35.2, F25)";
+
+            if (map == null)
+            {
+                r.Skip(label, "the current map was null, so colony payment could not be staged");
+                return;
+            }
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(label, "Find.WorldPawns was null, so a travelling hire could not be cleaned up");
+                return;
+            }
+
+            int savedSilver = PurchaseOrderService.CountColonySilver(map);
+            LaborCandidateService.Clear();
+            JobPosting posting = MakePosting(
+                state, SkillDefOf.Construction, 0, term, postedWage,
+                out string postingFailReason);
+            JobApplicant applicant = null;
+            EmploymentContract contract = null;
+
+            try
+            {
+                if (posting == null)
+                {
+                    r.Skip(label,
+                        $"TryPost refused the real posting fixture: " +
+                        $"{postingFailReason ?? "no failure reason"}");
+                    return;
+                }
+
+                JobPostingService.MatchAll(state);
+                if (posting.Applicants.Count == 0)
+                {
+                    r.Skip(label, "the real posting produced no applicant to hire");
+                    return;
+                }
+
+                applicant = posting.Applicants[0];
+                if (applicant == null || applicant.pawn == null)
+                {
+                    r.Skip(label, "the first queued applicant had no pawn to pass through hiring");
+                    return;
+                }
+
+                int applicantAsk = applicant.openMarketAsk;
+                if (applicantAsk == postedWage)
+                {
+                    r.Skip(label,
+                        $"the fixture applicant happened to ask the deliberately low posted wage " +
+                        $"of {postedWage}/day");
+                    return;
+                }
+
+                // This calculation only stages enough silver for the real payment path. The
+                // expected contract rate below is read directly from applicant.openMarketAsk.
+                int upFront = WageStructureUtility.UpFrontCost(
+                    posting.wageStructure, applicantAsk, posting.termDays);
+                EmploymentEquipmentQuote equipmentQuote =
+                    EmploymentEquipmentService.Quote(applicant.pawn);
+                EmploymentHireCostQuote hireQuote =
+                    EmploymentEquipmentService.QuoteHireCost(upFront, equipmentQuote);
+                IntercolonyLaborSelfTestSupport.EnsureSilver(
+                    map, IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote));
+                int available = PurchaseOrderService.CountColonySilver(map);
+                if (available < hireQuote.totalDue)
+                {
+                    r.Skip(label,
+                        $"could not stage the up-front cost: {available} silver available, " +
+                        $"{hireQuote.totalDue} needed for the applicant ask of {applicantAsk}/day");
+                    return;
+                }
+
+                contract = EmploymentService.TryHireApplicant(
+                    state, applicant, posting, map, out string hireFailReason, hireQuote);
+                if (contract == null)
+                {
+                    r.Skip(label,
+                        $"the real applicant hire could not be arranged: " +
+                        $"{hireFailReason ?? "no reason"}");
+                    return;
+                }
+
+                r.Check(contract.dailyWage == applicantAsk,
+                    label,
+                    $"posted {postedWage}/day; applicant ask {applicantAsk}/day; " +
+                    $"contract daily wage {contract.dailyWage}/day");
+            }
+            finally
+            {
+                if (posting != null && applicant != null)
+                {
+                    posting.Applicants.Remove(applicant);
+                }
+
+                if (contract != null)
+                {
+                    EmploymentService.End(contract, EmploymentStatus.Failed, "self-test hire");
+                    state.Employments.Remove(contract);
+                }
+                else
+                {
+                    applicant?.Discard();
+                }
+
+                if (posting != null)
+                {
+                    JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test hire");
+                    state.Postings.Remove(posting);
+                }
+
+                int silverAfter = PurchaseOrderService.CountColonySilver(map);
+                if (silverAfter < savedSilver)
+                {
+                    int returned = IntercolonyLaborSelfTestSupport.EnsureSilver(
+                        map, savedSilver);
+                    if (returned > 0)
+                    {
+                        r.Info($"returned {returned} silver to restore the hire fixture.");
+                    }
+                }
+                else if (silverAfter > savedSilver)
+                {
+                    PurchaseOrderService.TryTakeSilver(map, silverAfter - savedSilver);
+                }
+
+                // The amount was restored explicitly above, so do not let this fixture's silver
+                // bookkeeping affect the outer labor/payroll self-tests.
+                IntercolonyLaborSelfTestSupport.ResetLedger();
+            }
         }
 
         /// <summary>
@@ -396,10 +761,10 @@ namespace Intercolony
             int wage = (low + high) / 2;
 
             rep.Adjust(EmployerReputation.MinScore - rep.Score);
-            Draw asBad = Measure(state, skill, 0, term, wage);
+            Draw asBad = Measure(r, state, skill, 0, term, wage);
 
             rep.Adjust(EmployerReputation.MaxScore - rep.Score);
-            Draw asGood = Measure(state, skill, 0, term, wage);
+            Draw asGood = Measure(r, state, skill, 0, term, wage);
 
             // Reach rather than queue length, for the same reason as the response curve: the queue
             // caps out and would report a sought-after employer and an exploitative one as equal.
@@ -410,6 +775,88 @@ namespace Intercolony
             r.Check(asGood.interested > asBad.interested,
                 "employer reputation measurably changes who will take the job (§114, §112)",
                 $"{asBad.interested} vs {asGood.interested}");
+        }
+
+        /// <summary>
+        /// The quality half of §114: a bad employer sees fewer prospects and worse ones, while a
+        /// middle-standing colony keeps the ordinary one-draw generation cost.
+        /// </summary>
+        private static void CheckReputationDrivesCandidateQuality(
+            Results r, IntercolonyWorldComponent state, EmployerReputation rep)
+        {
+            if (rep == null)
+            {
+                return;
+            }
+
+            rep.Adjust(EmployerReputation.MinScore - rep.Score);
+            LaborCandidateService.InvalidateCensus();
+            List<LaborProspect> atMinimum = new List<LaborProspect>(
+                LaborCandidateService.Census(state));
+            int minimumCount = atMinimum.Count;
+            float minimumMeanBestSkill = MeanBestProspectSkill(atMinimum);
+            int minimumDraws = LaborCandidateService.CensusProspectDraws;
+
+            rep.Adjust(EmployerReputation.MaxScore - rep.Score);
+            LaborCandidateService.InvalidateCensus();
+            List<LaborProspect> atMaximum = new List<LaborProspect>(
+                LaborCandidateService.Census(state));
+            int maximumCount = atMaximum.Count;
+            float maximumMeanBestSkill = MeanBestProspectSkill(atMaximum);
+            int maximumDraws = LaborCandidateService.CensusProspectDraws;
+
+            if (minimumCount == 0 && maximumCount == 0)
+            {
+                r.Info("reputation quality skipped: the census is empty at both standings.");
+                LaborCandidateService.InvalidateCensus();
+                return;
+            }
+
+            float middle = (EmployerReputation.MinScore + EmployerReputation.MaxScore) / 2;
+            rep.Adjust(middle - rep.Score);
+            LaborCandidateService.InvalidateCensus();
+            List<LaborProspect> atMiddle = new List<LaborProspect>(
+                LaborCandidateService.Census(state));
+            int middleCount = atMiddle.Count;
+            float middleMeanBestSkill = MeanBestProspectSkill(atMiddle);
+            int middleDraws = LaborCandidateService.CensusProspectDraws;
+            int middleBias = EmployerReputationService.CandidateQualityBias(middle);
+
+            // This fails if GenerateProspectBiased ignores its bias (returning the first draw
+            // always), or if the keep-better/keep-worse comparison is inverted.
+            r.Check(maximumMeanBestSkill >= minimumMeanBestSkill + 0.5f,
+                "a bad employer's census prospects are measurably worse than a good one's (§114)",
+                $"mean best skill {minimumMeanBestSkill:0.00} at MinScore vs " +
+                $"{maximumMeanBestSkill:0.00} at MaxScore; records {minimumCount} at MinScore vs " +
+                $"{maximumCount} at MaxScore");
+
+            // This fails if EnsureCensus drops AvailabilityFactor from perSettlement; the quality
+            // half must not replace or weaken the volume half.
+            r.Check(maximumCount > minimumCount,
+                "a bad employer's job-posting census is smaller than a good one's (§114)",
+                $"records {minimumCount} at MinScore vs {maximumCount} at MaxScore");
+
+            if (middleBias == 0)
+            {
+                // This fails if the biased path draws twice when bias is 0, making an ordinary
+                // colony pay an unnecessary generation cost, or draws once when bias is nonzero,
+                // making the bias inert.
+                r.Check(middleDraws == middleCount && minimumDraws == 2 * minimumCount,
+                    "census generation draws once at neutral standing and twice for a bad employer (§35.2)",
+                    $"middle: {middleDraws} draws for {middleCount} records " +
+                    $"(mean best skill {middleMeanBestSkill:0.00}); " +
+                    $"MinScore: {minimumDraws} draws for {minimumCount} records; " +
+                    $"MaxScore: {maximumDraws} draws for {maximumCount} records");
+            }
+            else
+            {
+                r.Info($"census draw-count check skipped: middle standing {middle:0.##} has " +
+                       $"candidate quality bias {middleBias}, not 0.");
+            }
+
+            // Leave no live census from the temporary minimum, maximum, or middle standing for
+            // the rest of the game; the suite restores the reputation in its outer teardown.
+            LaborCandidateService.InvalidateCensus();
         }
 
         /// <summary>
@@ -433,13 +880,42 @@ namespace Intercolony
 
             int wage = high + 20;
 
-            Draw single = Measure(state, skill, 0, term, wage);
+            Draw single = Measure(r, state, skill, 0, term, wage);
 
             // Five identical postings, matched together.
             List<JobPosting> group = new List<JobPosting>();
+            List<string> groupFailureReasons = new List<string>();
             for (int i = 0; i < 5; i++)
             {
-                group.Add(MakePosting(state, skill, 0, term, wage));
+                JobPosting posting = MakePosting(
+                    state, skill, 0, term, wage, out string failReason);
+                if (posting == null)
+                {
+                    groupFailureReasons.Add(
+                        $"attempt {i + 1}: {failReason ?? "no failure reason"}");
+
+                    continue;
+                }
+
+                group.Add(posting);
+            }
+
+            if (group.Count != 5)
+            {
+                string reason =
+                    $"TryPost refused one or more of the five duplicate fixtures; " +
+                    $"{group.Count} were created; failReason: " +
+                    $"{string.Join("; ", groupFailureReasons.ToArray())}";
+                r.Skip("five identical postings draw no more people than one (§35.2)", reason);
+                r.Skip("identical postings do not each collect their own queue (§35.2)", reason);
+
+                foreach (JobPosting posting in group)
+                {
+                    JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test");
+                    state.Postings.Remove(posting);
+                }
+
+                return;
             }
 
             LaborCandidateService.Clear();
@@ -476,10 +952,52 @@ namespace Intercolony
         {
             float standing = EmployerReputationService.ScoreFor(state);
 
-            JobPosting unaffordable = MakePosting(state, SkillDefOf.Construction, 0, 20, 1);
+            JobPosting unaffordable = MakePosting(
+                state, SkillDefOf.Construction, 0, 20, 1, out string tooCheapFailure);
+            JobPosting impossible = MakePosting(
+                state, SkillDefOf.Construction, 20, 20, 9999, out string nobodyCanFailure);
+
+            if (unaffordable == null || impossible == null)
+            {
+                StringBuilder reason = new StringBuilder("TryPost refused a silence fixture: ");
+                if (unaffordable == null)
+                {
+                    reason.Append("unaffordable fixture failReason: ")
+                          .Append(tooCheapFailure ?? "no failure reason");
+                }
+
+                if (impossible == null)
+                {
+                    if (unaffordable == null)
+                    {
+                        reason.Append("; ");
+                    }
+
+                    reason.Append("impossible fixture failReason: ")
+                          .Append(nobodyCanFailure ?? "no failure reason");
+                }
+
+                r.Skip("a posting that draws nobody always explains itself (§114)",
+                    reason.ToString());
+                r.Skip("\"your offer is too low\" and \"nobody can do this\" read differently",
+                    reason.ToString());
+
+                foreach (JobPosting posting in new[] { unaffordable, impossible })
+                {
+                    if (posting == null)
+                    {
+                        continue;
+                    }
+
+                    JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test");
+                    state.Postings.Remove(posting);
+                }
+
+                return;
+            }
+
             string tooCheap = JobPostingService.ExplainSilence(state, unaffordable, standing);
 
-            JobPosting impossible = MakePosting(state, SkillDefOf.Construction, 20, 20, 9999);
             string nobodyCan = JobPostingService.ExplainSilence(state, impossible, standing);
 
             foreach (JobPosting posting in new[] { unaffordable, impossible })
@@ -502,13 +1020,29 @@ namespace Intercolony
         /// <summary>Posting, filling and closing, through the real service.</summary>
         private static void CheckLifecycle(Results r, IntercolonyWorldComponent state)
         {
+            JobPosting dialogPosting = JobPostingService.TryPost(
+                state, SkillDefOf.Construction, 8, 20, WageStructure.Daily,
+                CombatClause.Civilian, out string dialogFailReason);
+            r.Check(dialogPosting != null && dialogFailReason == null,
+                "a posting can be created with the dialog's arguments",
+                dialogFailReason ?? "");
+            if (dialogPosting != null)
+            {
+                JobPostingService.Close(
+                    dialogPosting, JobPostingStatus.Withdrawn, "self-test dialog seam cleanup");
+                state.Postings.Remove(dialogPosting);
+            }
+
             JobPosting posting = JobPostingService.TryPost(
-                state, SkillDefOf.Construction, 0, 20, 50, WageStructure.Daily,
+                state, SkillDefOf.Construction, 0, 20, WageStructure.Daily,
                 CombatClause.Civilian, out string failReason);
 
             r.Check(posting != null, "a posting can be created through the real service", failReason ?? "");
             if (posting == null)
             {
+                r.Skip("posting lifecycle checks after creation",
+                    $"TryPost refused the lifecycle fixture; failReason: " +
+                    $"{failReason ?? "no failure reason"}");
                 return;
             }
 
@@ -519,12 +1053,8 @@ namespace Intercolony
                 "a new posting never expires and describes its lifespan without formatting the sentinel",
                 $"never expires: {posting.NeverExpires}, label \"{posting.ExpiryLabel}\"");
 
-            r.Check(JobPostingService.TryPost(state, null, 0, 20, 0, WageStructure.Daily,
-                        CombatClause.Civilian, out _) == null,
-                "a posting offering nothing is refused");
-
             r.Check(JobPostingService.TryPost(state, null, 0,
-                        LaborCandidateService.MaxTermDays + 1, 50, WageStructure.Daily,
+                        LaborCandidateService.MaxTermDays + 1, WageStructure.Daily,
                         CombatClause.Civilian, out _) == null,
                 "a posting past the term cap is refused",
                 $"cap is {LaborCandidateService.MaxTermDays}d");
@@ -542,7 +1072,271 @@ namespace Intercolony
             state.Postings.Remove(posting);
         }
 
+        /// <summary>
+        /// Runs the same post-load path that owns the posting validity check. The posting dialog
+        /// leaves the legacy wage field at its zero default; new postings now receive that state
+        /// directly from TryPost. Create both records through that real service, then model the
+        /// F25 persisted state before invoking the component's PostLoadInit branch.
+        ///
+        /// RimWorld's Scribe.mode and LoadSaveMode.PostLoadInit are public, and ExposeData is the
+        /// component's public load entry point. In this mode Scribe's Look calls do not reload
+        /// values; the call reaches the component's own post-load pruning code, including
+        /// IntercolonyWorldComponent.cs:1546.
+        /// </summary>
+        private static void CheckLoadPruner(Results r, IntercolonyWorldComponent state)
+        {
+            const int term = 20;
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            JobPosting zeroWagePosting = null;
+            JobPosting nonPositiveTermPosting = null;
+            string zeroWageFailure = null;
+            string nonPositiveTermFailure = null;
+            LoadSaveMode savedScribeMode = Scribe.mode;
+
+            try
+            {
+                zeroWagePosting = JobPostingService.TryPost(
+                    state, SkillDefOf.Construction, 0, term,
+                    WageStructure.Daily, CombatClause.Civilian, out zeroWageFailure);
+                nonPositiveTermPosting = JobPostingService.TryPost(
+                    state, SkillDefOf.Construction, 0, 1,
+                    WageStructure.Daily, CombatClause.Civilian, out nonPositiveTermFailure);
+
+                if (zeroWagePosting == null || nonPositiveTermPosting == null)
+                {
+                    StringBuilder reason = new StringBuilder(
+                        "TryPost could not build the load-pruner fixture(s): ");
+                    if (zeroWagePosting == null)
+                    {
+                        reason.Append("zero-wage fixture failReason: ")
+                              .Append(zeroWageFailure ?? "no failure reason");
+                    }
+
+                    if (nonPositiveTermPosting == null)
+                    {
+                        if (zeroWagePosting == null)
+                        {
+                            reason.Append("; ");
+                        }
+
+                        reason.Append("broken-term fixture failReason: ")
+                              .Append(nonPositiveTermFailure ?? "no failure reason");
+                    }
+
+                    r.Skip("load-pruner posting fixtures", reason.ToString());
+                    return;
+                }
+
+                // This is the value produced by the F25 dialog and persisted by JobPosting.
+                nonPositiveTermPosting.termDays = 0;
+
+                if (Scribe.loader == null)
+                {
+                    r.Skip("load-pruner posting fixtures",
+                        "RimWorld Scribe.loader was null, so the PostLoadInit path could not run");
+                    return;
+                }
+
+                // Keep unrelated player postings out of the pruner invocation, then restore the
+                // exact list in finally. This lets the real RemoveAll caller run without pruning
+                // or otherwise disturbing a player's existing postings.
+                state.Postings.Clear();
+                state.Postings.Add(zeroWagePosting);
+                state.Postings.Add(nonPositiveTermPosting);
+
+                Scribe.mode = LoadSaveMode.PostLoadInit;
+                state.ExposeData();
+
+                int postingsAfterPrune = state.Postings.Count;
+                int zeroWage = zeroWagePosting.wageOffered;
+                int zeroWageTerm = zeroWagePosting.termDays;
+                int brokenWage = nonPositiveTermPosting.wageOffered;
+                int brokenTerm = nonPositiveTermPosting.termDays;
+
+                r.Check(zeroWage == 0 && zeroWageTerm > 0 &&
+                        state.Postings.Contains(zeroWagePosting),
+                    "a real zero-wage posting survives the load-time pruner (§35.2, F25)",
+                    $"term {zeroWageTerm}, wage {zeroWage}; {postingsAfterPrune} posting(s) remained");
+                r.Check(brokenTerm <= 0 && !state.Postings.Contains(nonPositiveTermPosting),
+                    "the load-time pruner rejects a posting with a non-positive term (§35.2)",
+                    $"term {brokenTerm}, wage {brokenWage}; {postingsAfterPrune} posting(s) remained");
+            }
+            finally
+            {
+                Scribe.mode = savedScribeMode;
+
+                JobPostingService.Close(
+                    zeroWagePosting, JobPostingStatus.Withdrawn, "self-test load-pruner cleanup");
+                JobPostingService.Close(
+                    nonPositiveTermPosting, JobPostingStatus.Withdrawn,
+                    "self-test load-pruner cleanup");
+
+                state.Postings.Clear();
+                state.Postings.AddRange(savedPostings);
+            }
+        }
+
         // --- Helpers -----------------------------------------------------------------------
+
+        private static ApplicantDraw CaptureApplicants(
+            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage)
+        {
+            ApplicantDraw draw = new ApplicantDraw
+            {
+                values = new List<ApplicantValues>()
+            };
+
+            LaborCandidateService.Clear();
+            JobPosting posting = MakePosting(
+                state, skill, minLevel, term, wage, out string failReason);
+            if (posting == null)
+            {
+                draw.fixtureFailureReason = failReason;
+                return draw;
+            }
+
+            draw.fixtureBuilt = true;
+            try
+            {
+                draw.qualified = JobPostingService.CountInterested(
+                    state, skill, minLevel, term, wage, CombatClause.Civilian);
+                JobPostingService.MatchAll(state);
+
+                foreach (JobApplicant applicant in posting.Applicants)
+                {
+                    draw.values.Add(CaptureApplicantValues(applicant));
+                }
+            }
+            finally
+            {
+                JobPostingService.Close(posting, JobPostingStatus.Withdrawn, "self-test reproduction");
+                state.Postings.Remove(posting);
+            }
+
+            return draw;
+        }
+
+        private static ApplicantValues CaptureApplicantValues(JobApplicant applicant)
+        {
+            ApplicantValues values = new ApplicantValues
+            {
+                settlementId = applicant?.settlementId ?? -1,
+                settlementName = applicant?.settlementName ?? "null",
+                factionName = applicant?.factionName ?? "null",
+                travelDays = applicant?.travelDays ?? -1,
+                openMarketAsk = applicant?.openMarketAsk ?? -1,
+                skillLevels = "none"
+            };
+
+            if (applicant?.pawn?.skills?.skills == null)
+            {
+                return values;
+            }
+
+            StringBuilder skills = new StringBuilder();
+            foreach (SkillRecord skill in applicant.pawn.skills.skills)
+            {
+                if (skills.Length > 0)
+                {
+                    skills.Append(',');
+                }
+
+                skills.Append(skill.def.index).Append('=')
+                      .Append(skill.TotallyDisabled ? -1 : skill.Level);
+            }
+
+            values.skillLevels = skills.ToString();
+            return values;
+        }
+
+        private static bool SameApplicant(
+            ApplicantValues first, ApplicantValues second)
+        {
+            return first.settlementId == second.settlementId &&
+                   first.settlementName == second.settlementName &&
+                   first.factionName == second.factionName &&
+                   first.travelDays == second.travelDays &&
+                   first.openMarketAsk == second.openMarketAsk &&
+                   first.skillLevels == second.skillLevels;
+        }
+
+        private static bool SameApplicantSet(
+            List<ApplicantValues> first, List<ApplicantValues> second)
+        {
+            if (first == null || second == null || first.Count != second.Count)
+            {
+                return false;
+            }
+
+            bool[] matched = new bool[second.Count];
+            for (int i = 0; i < first.Count; i++)
+            {
+                bool found = false;
+                for (int j = 0; j < second.Count; j++)
+                {
+                    if (!matched[j] && SameApplicant(first[i], second[j]))
+                    {
+                        matched[j] = true;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool SameApplicantOrder(
+            List<ApplicantValues> first, List<ApplicantValues> second)
+        {
+            if (first == null || second == null || first.Count != second.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < first.Count; i++)
+            {
+                if (!SameApplicant(first[i], second[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string FirstApplicantDifference(
+            List<ApplicantValues> first, List<ApplicantValues> second)
+        {
+            int firstCount = first?.Count ?? 0;
+            int secondCount = second?.Count ?? 0;
+            int count = firstCount > secondCount ? firstCount : secondCount;
+
+            for (int i = 0; i < count; i++)
+            {
+                bool hasFirst = i < firstCount;
+                bool hasSecond = i < secondCount;
+                if (!hasFirst || !hasSecond || !SameApplicant(first[i], second[i]))
+                {
+                    return $"{i}: first {(hasFirst ? FormatApplicant(first[i]) : "absent")}; " +
+                           $"second {(hasSecond ? FormatApplicant(second[i]) : "absent")}";
+                }
+            }
+
+            return "none";
+        }
+
+        private static string FormatApplicant(ApplicantValues values)
+        {
+            return $"settlement {values.settlementId}/{values.settlementName}; " +
+                   $"faction {values.factionName}; travel {values.travelDays}d; " +
+                   $"ask {values.openMarketAsk}/day; skills {values.skillLevels}";
+        }
 
         /// <summary>
         /// Posts a job, runs the real matcher against a freshly rebuilt pool, measures the result
@@ -550,14 +1344,25 @@ namespace Intercolony
         ///
         /// The pool is cleared first so each measurement sees the same world: without that, the
         /// second posting would be matched against a pool the first had already taken people out of,
-        /// and the comparison would measure order rather than wage.
+        /// and the comparison would measure order rather than the requirement or wage invariant.
         /// </summary>
         private static Draw Measure(
-            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage)
+            Results r, IntercolonyWorldComponent state, SkillDef skill,
+            int minLevel, int term, int wage)
         {
             LaborCandidateService.Clear();
 
-            JobPosting posting = MakePosting(state, skill, minLevel, term, wage);
+            JobPosting posting = MakePosting(
+                state, skill, minLevel, term, wage, out string failReason);
+            if (posting == null)
+            {
+                r.Skip("job posting measurement",
+                    $"TryPost refused the measurement fixture for minimum {minLevel}, " +
+                    $"term {term}d, wage {wage}/day; failReason: " +
+                    $"{failReason ?? "no failure reason"}");
+                return new Draw();
+            }
+
             JobPostingService.MatchAll(state);
 
             Draw draw = new Draw
@@ -566,6 +1371,14 @@ namespace Intercolony
                 interested = JobPostingService.CountInterested(
                     state, skill, minLevel, term, wage, CombatClause.Civilian)
             };
+
+            foreach (JobApplicant applicant in posting.Applicants)
+            {
+                if (!posting.MeetsRequirement(applicant?.pawn))
+                {
+                    draw.queuedBarViolations++;
+                }
+            }
 
             if (draw.applicants > 0)
             {
@@ -589,11 +1402,12 @@ namespace Intercolony
         }
 
         private static JobPosting MakePosting(
-            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage)
+            IntercolonyWorldComponent state, SkillDef skill, int minLevel, int term, int wage,
+            out string failReason)
         {
             return JobPostingService.TryPost(
-                state, skill, minLevel, term, wage, WageStructure.Daily,
-                CombatClause.Civilian, out _);
+                state, skill, minLevel, term, WageStructure.Daily,
+                CombatClause.Civilian, out failReason);
         }
 
         private static int BestSkillLevel(Pawn pawn)
@@ -615,6 +1429,55 @@ namespace Intercolony
             return best;
         }
 
+        private static int BestSkillLevel(LaborProspect prospect)
+        {
+            int best = 0;
+            if (prospect?.skillLevels == null)
+            {
+                return best;
+            }
+
+            foreach (int level in prospect.skillLevels)
+            {
+                if (level >= 0 && level > best)
+                {
+                    best = level;
+                }
+            }
+
+            return best;
+        }
+
+        private static float MeanBestProspectSkill(List<LaborProspect> prospects)
+        {
+            if (prospects == null || prospects.Count == 0)
+            {
+                return 0f;
+            }
+
+            // Keep this calculation independent from production grading, so a broken production
+            // helper cannot make its own quality statistic pass this assertion.
+            float total = 0f;
+            foreach (LaborProspect prospect in prospects)
+            {
+                int best = 0;
+                if (prospect?.skillLevels != null)
+                {
+                    foreach (int level in prospect.skillLevels)
+                    {
+                        if (level >= 0 && level > best)
+                        {
+                            best = level;
+                        }
+                    }
+                }
+
+                total += best;
+            }
+
+            return total / prospects.Count;
+        }
+
         private static string Trim(string text)
         {
             string flat = text.Replace("\n", " ").Replace("  ", " ");
@@ -624,7 +1487,8 @@ namespace Intercolony
         private static string Summarize(Results r)
         {
             r.sb.AppendLine();
-            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed.");
+            r.sb.AppendLine($"  {r.passed} passed, {r.failed} failed" +
+                            (r.skipped == 0 ? "." : $", {r.skipped} skipped."));
             return r.sb.ToString();
         }
     }

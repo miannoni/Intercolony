@@ -25,6 +25,25 @@ namespace Intercolony
     {
         private const int SupplyProbeSettlementId = 971_102;
         private const int PurchaseFixtureSilver = 4;
+        // With the decompiled Rand/HashCombineInt path, this seed and the fixture quote IDs
+        // produce jitter [0, 0, 0, 1, 2] for q101, q107, q108, q104, q105 respectively.
+        private const int F11FixtureEconomySeed = 0xF11000;
+        private const int F11FixtureRequestId = 51_100;
+        private const string F10NoHistoryQuoteAssertion =
+            "F10.1 a supplier with no reputation record can quote through RFQ";
+        private const string F10NoHistoryPurchaseAssertion =
+            "F10.2 a no-history spot purchase creates reputation only on completion";
+        private const string F10NoHistoryAgreementAssertion =
+            "F10.3 no-history supplier is refused a standing procurement agreement";
+        private const string F10TwoPurchasesAssertion =
+            "F10.4 two completed purchases alone do not unlock a standing agreement";
+
+        private static bool IsLegacyAppealBucket(float appeal)
+        {
+            return Mathf.Approximately(appeal, 0f) ||
+                   Mathf.Approximately(appeal, 0.5f) ||
+                   Mathf.Approximately(appeal, 1f);
+        }
 
         public static string Run(IntercolonyWorldComponent state)
         {
@@ -88,8 +107,11 @@ namespace Intercolony
 
             List<PurchaseRequest> created = new List<PurchaseRequest>();
 
+            CheckF11DeterministicResponseTiming(Check, Skip, state, tradable);
             CheckEffectiveSupplyForRfq(Check, state);
             CheckRfqResponseCountUsesEffectiveSupply(Check, Skip, state);
+            CheckLogisticsQuoteOwnership(Check, Skip, state);
+            CheckLogisticsDisclosure(Check, Skip, state);
 
             // Supplier stock belongs to its refresh window, not to any one RFQ. Exercise the
             // state mechanism without touching the live world's ledger or requests.
@@ -174,6 +196,7 @@ namespace Intercolony
                 }
 
                 created.Add(request);
+                AdvanceRfqResponsesForSelfTest(state, request, Skip);
                 totalRequests++;
 
                 if (!request.AnyQuotes)
@@ -246,6 +269,7 @@ namespace Intercolony
                 if (scarceRequest != null)
                 {
                     created.Add(scarceRequest);
+                    AdvanceRfqResponsesForSelfTest(state, scarceRequest, Skip);
                     sb.AppendLine($"  (scarce probe: {scarce.label} [{scarce.techLevel}] -> " +
                                   $"{scarceRequest.quotes.Count} quote(s))");
 
@@ -308,6 +332,7 @@ namespace Intercolony
                 if (delivery != null)
                 {
                     created.Add(delivery);
+                    AdvanceRfqResponsesForSelfTest(state, delivery, Skip);
                     foreach (Quotation quote in delivery.quotes)
                     {
                         forcedDeliveryQuotes++;
@@ -326,6 +351,7 @@ namespace Intercolony
                 if (pickup != null)
                 {
                     created.Add(pickup);
+                    AdvanceRfqResponsesForSelfTest(state, pickup, Skip);
                     foreach (Quotation quote in pickup.quotes)
                     {
                         forcedPickupQuotes++;
@@ -380,6 +406,7 @@ namespace Intercolony
             if (probe != null)
             {
                 created.Add(probe);
+                AdvanceRfqResponsesForSelfTest(state, probe, Skip);
                 Check("new request is open", probe.IsOpen);
                 Check("expire succeeds once", probe.TryExpire());
                 Check("expired request is closed", !probe.IsOpen);
@@ -405,6 +432,7 @@ namespace Intercolony
                     if (moddedRequest != null)
                     {
                         created.Add(moddedRequest);
+                        AdvanceRfqResponsesForSelfTest(state, moddedRequest, Skip);
                     }
                 }
                 catch (System.Exception ex)
@@ -445,6 +473,1109 @@ namespace Intercolony
                 DefDatabase<ThingDef>.GetNamedSilentFail("ElectricStove"), ThingDefOf.Steel, null, 1);
 
             return Summarize();
+        }
+
+        private static void CheckF11DeterministicResponseTiming(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state,
+            List<ThingDef> tradable)
+        {
+            const string A0 = "F11.0 pinned jitter follows the literal timing formula";
+            const string A1 = "F11.1 a normal multi-supplier request reveals a day-one reply";
+            const string A2 = "F11.2 a multi-supplier request spreads replies over time";
+            const string A3 = "F11.3 a supplier with the higher distance floor answers later";
+            const string A4 = "F11.4 the best-ranked offer has a one-day timing bias";
+            const string A5 = "F11.5 the cheapest quote is not always the last response";
+            const string A6 = "F11.6 no response is scheduled past day five";
+            const string A7 = "F11.7 response speed changes the same cohort measurably";
+            const string A8 = "F11.8 Scribe preserves exact pending arrival ticks";
+            const string A9 = "F11.9 quote terms stay frozen at different reveal times";
+            const string A10 = "F11.10 a reply exactly at the day-five cap is revealed";
+
+            if (state == null || state.Requests == null || state.PendingRfqResponses == null ||
+                Find.TickManager == null || Find.LetterStack == null || Find.Archive == null ||
+                tradable == null || tradable.Count == 0)
+            {
+                SkipF11ResponseAssertions(
+                    skip, "the live RFQ state, tick manager, letter stack, archive, or a tradable " +
+                    "fixture was unavailable");
+                return;
+            }
+
+            FieldInfo economySeedField = typeof(IntercolonyWorldComponent).GetField(
+                "economySeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo currentTimeSpeedField = typeof(TickManager).GetField(
+                "curTimeSpeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo queueResponses = typeof(RfqService).GetMethod(
+                "QueueResponses", BindingFlags.Static | BindingFlags.NonPublic);
+            ThingDef fixtureDef = ThingDefOf.Steel ?? tradable[0];
+            if (economySeedField == null || currentTimeSpeedField == null ||
+                queueResponses == null || fixtureDef == null)
+            {
+                SkipF11ResponseAssertions(
+                    skip, "the private state seed/time-speed field, RFQ queue seam, or fixture " +
+                    "definition was unavailable");
+                return;
+            }
+
+            List<PurchaseRequest> savedRequests = new List<PurchaseRequest>(state.Requests);
+            List<PendingRfqResponse> savedPendingResponses =
+                new List<PendingRfqResponse>(state.PendingRfqResponses);
+            int savedEconomySeed = (int)economySeedField.GetValue(state);
+            TickManager tickManager = Find.TickManager;
+            int savedTick = tickManager.TicksGame;
+            TimeSpeed savedTimeSpeed = (TimeSpeed)currentTimeSpeedField.GetValue(tickManager);
+            TimeSpeed savedPrePauseTimeSpeed = tickManager.prePauseTimeSpeed;
+            float savedResponseSpeed = IntercolonyMod.Settings.rfqResponseSpeed;
+            LetterStack letterStack = Find.LetterStack;
+            Archive archive = Find.Archive;
+            List<Letter> savedLetters = new List<Letter>(letterStack.LettersListForReading);
+            List<IArchivable> savedArchivables =
+                new List<IArchivable>(archive.ArchivablesListForReading);
+
+            try
+            {
+                // The live component is used for the primary fixture so the assertions exercise
+                // the same request and pending-response collections as a player save. Every list,
+                // the deterministic seed, the clock, and the global setting are restored below.
+                state.Requests.Clear();
+                state.PendingRfqResponses.Clear();
+                economySeedField.SetValue(state, F11FixtureEconomySeed);
+                int createdTick = savedTick;
+                tickManager.DebugSetTicksGame(createdTick);
+                IntercolonyMod.Settings.rfqResponseSpeed = 1f;
+
+                F11CohortFixture cohort = BuildF11Cohort(fixtureDef, createdTick, multiQuote: true);
+                List<F11QuoteTerms> frozenTerms = CaptureF11Terms(cohort);
+                if (!QueueF11Responses(queueResponses, state, cohort, out string queueFailure))
+                {
+                    FailF11ResponseAssertions(
+                        check, queueFailure ?? "the deterministic cohort could not be queued");
+                    return;
+                }
+
+                string formulaFailure;
+                bool formulaMatches = F11ScheduleMatches(
+                    cohort, 1f, out formulaFailure);
+                check(
+                    A0,
+                    formulaMatches,
+                    F11ScheduleDetails(cohort, 1f) +
+                    $"; mismatch={formulaFailure ?? "none"}; " +
+                    "jitter is pinned by economySeed, request id, quote id, and 0xF11A");
+
+                // Use the real WorldComponent Scribe path before revealing any member of the
+                // cohort. Loading while the request is still at its creation tick keeps the
+                // six-day request open, so PostLoadInit can validate every pending entry rather
+                // than pruning an intentionally late one or seeing a duplicate revealed quote.
+                IntercolonyWorldComponent roundTripSource =
+                    NewF11DetachedState(economySeedField);
+                roundTripSource.Requests.Add(cohort.request);
+                roundTripSource.PendingRfqResponses.AddRange(cohort.pending);
+                F11RoundTripResult roundTrip = RoundTripF11State(
+                    roundTripSource, "rfq-response-timing");
+                string roundTripDetail;
+                check(
+                    A8,
+                    F11RoundTripMatches(
+                        roundTrip?.loaded, cohort, frozenTerms, out roundTripDetail),
+                    roundTripDetail ??
+                    $"failure={roundTrip?.failure ?? "none"}; " +
+                    F11ScheduleDetails(cohort, 1f));
+
+                F11QuoteFixture early = FindF11QuoteFixture(cohort, 107);
+                F11QuoteFixture best = FindF11QuoteFixture(cohort, 101);
+                F11QuoteFixture farther = FindF11QuoteFixture(cohort, 105);
+                F11QuoteFixture lateNonCap = FindF11QuoteFixture(cohort, 104);
+                PendingRfqResponse earlyPending = FindF11Pending(
+                    cohort.pending, early?.quote?.id ?? -1);
+                PendingRfqResponse fartherPending = FindF11Pending(
+                    cohort.pending, farther?.quote?.id ?? -1);
+                int expectedEarlyDay = early == null
+                    ? -1
+                    : ExpectedF11ArrivalDays(early, 1f);
+                int initialQuoteCount = cohort.request.quotes.Count;
+                int pendingBeforeDayOne = state.PendingRfqResponses.Count;
+
+                tickManager.DebugSetTicksGame(
+                    cohort.request.createdTick + expectedEarlyDay * GenDate.TicksPerDay);
+                int revealedOnDayOne = RfqService.AdvancePendingResponses(state);
+                Quotation arrivedEarly = FindF11Quote(
+                    cohort.request, early?.quote?.id ?? -1);
+                check(
+                    A1,
+                    expectedEarlyDay == 1 &&
+                    initialQuoteCount == 0 &&
+                    earlyPending != null &&
+                    earlyPending.arrivalTick ==
+                        cohort.request.createdTick + GenDate.TicksPerDay &&
+                    revealedOnDayOne > 0 &&
+                    arrivedEarly != null &&
+                    state.PendingRfqResponses.Count < pendingBeforeDayOne,
+                    F11ScheduleDetails(cohort, 1f) +
+                    $"; initialQuotes={initialQuoteCount}; revealedOnDayOne={revealedOnDayOne}; " +
+                    $"visibleEarly={(arrivedEarly == null ? "no" : "yes")}");
+
+                HashSet<int> actualArrivalDays = new HashSet<int>();
+                bool allScheduledDaysValid = true;
+                foreach (PendingRfqResponse pending in cohort.pending)
+                {
+                    if (pending == null)
+                    {
+                        allScheduledDaysValid = false;
+                        continue;
+                    }
+
+                    int arrivalDays = F11ArrivalDays(cohort.request, pending);
+                    actualArrivalDays.Add(arrivalDays);
+                    allScheduledDaysValid &= arrivalDays >= 1;
+                }
+
+                check(
+                    A2,
+                    allScheduledDaysValid && actualArrivalDays.Count > 1,
+                    F11ScheduleDetails(cohort, 1f) +
+                    $"; distinctArrivalDays={actualArrivalDays.Count}");
+
+                int nearerDistanceFloor = early == null
+                    ? -1
+                    : F11DistanceFloorDays(early.quote.distanceTiles);
+                int fartherDistanceFloor = farther == null
+                    ? -1
+                    : F11DistanceFloorDays(farther.quote.distanceTiles);
+                int nearerArrivalDay = earlyPending == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, earlyPending);
+                int fartherArrivalDay = fartherPending == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, fartherPending);
+                check(
+                    A3,
+                    nearerDistanceFloor >= 0 &&
+                    fartherDistanceFloor > nearerDistanceFloor &&
+                    nearerArrivalDay < fartherArrivalDay,
+                    $"near={early?.quote?.distanceTiles ?? -1f:F0} tiles/floor " +
+                    $"{nearerDistanceFloor}d/arrival {nearerArrivalDay}d; " +
+                    $"far={farther?.quote?.distanceTiles ?? -1f:F0} tiles/floor " +
+                    $"{fartherDistanceFloor}d/arrival {fartherArrivalDay}d");
+
+                // The singleton uses the same request and quote IDs as the multi-quote fixture,
+                // so its seeded jitter is identical. Only the cohort rank changes, isolating the
+                // one-day attractiveness bias without asking the scheduler for an oracle value.
+                IntercolonyWorldComponent singletonState = NewF11DetachedState(economySeedField);
+                F11CohortFixture singleton = BuildF11Cohort(
+                    fixtureDef, createdTick, multiQuote: false);
+                IntercolonyMod.Settings.rfqResponseSpeed = 1f;
+                bool singletonQueued = QueueF11Responses(
+                    queueResponses, singletonState, singleton, out string singletonFailure);
+                PendingRfqResponse singletonBestPending = FindF11Pending(
+                    singleton.pending, singleton.quotes[0].quote.id);
+                int multiBestDay = best == null || FindF11Pending(
+                    cohort.pending, best.quote.id) == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, FindF11Pending(cohort.pending, best.quote.id));
+                int singletonBestDay = singletonBestPending == null
+                    ? -1
+                    : F11ArrivalDays(singleton.request, singletonBestPending);
+                int multiBestRaw = best == null ? -1 : ExpectedF11RawDays(best);
+                int singletonBestRaw = singleton.quotes[0] == null
+                    ? -1
+                    : ExpectedF11RawDays(singleton.quotes[0]);
+                check(
+                    A4,
+                    singletonQueued &&
+                    singletonFailure == null &&
+                    best != null &&
+                    singleton.quotes.Count == 1 &&
+                    best.jitter == singleton.quotes[0].jitter &&
+                    multiBestRaw == singletonBestRaw + 1 &&
+                    multiBestDay == singletonBestDay + 1,
+                    $"multiRaw={multiBestRaw}; singletonRaw={singletonBestRaw}; " +
+                    $"multiArrival={multiBestDay}d; singletonArrival={singletonBestDay}d; " +
+                    $"samePinnedJitter={(best == null ? "unknown" : best.jitter.ToString())}; " +
+                    $"singletonFailure={singletonFailure ?? "none"}");
+
+                F11QuoteFixture cheapest = FindCheapestF11Quote(cohort);
+                int cheapestArrivalDay = cheapest == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, FindF11Pending(
+                        cohort.pending, cheapest.quote.id));
+                int latestArrivalDay = -1;
+                int latestQuoteId = -1;
+                foreach (PendingRfqResponse pending in cohort.pending)
+                {
+                    if (pending == null)
+                    {
+                        continue;
+                    }
+
+                    int arrivalDay = F11ArrivalDays(cohort.request, pending);
+                    if (arrivalDay > latestArrivalDay)
+                    {
+                        latestArrivalDay = arrivalDay;
+                        latestQuoteId = pending.quote?.id ?? -1;
+                    }
+                }
+
+                check(
+                    A5,
+                    cheapest != null &&
+                    best != null &&
+                    cheapest.quote.id == best.quote.id &&
+                    cheapestArrivalDay >= 0 &&
+                    cheapestArrivalDay < latestArrivalDay,
+                    $"cheapest=q{cheapest?.quote?.id.ToString() ?? "missing"} " +
+                    $"at {cheapestArrivalDay}d; last=q{latestQuoteId} at {latestArrivalDay}d; " +
+                    F11ScheduleDetails(cohort, 1f));
+
+                int capRawDays = farther == null ? -1 : ExpectedF11RawDays(farther);
+                int capArrivalDay = fartherPending == null
+                    ? -1
+                    : F11ArrivalDays(cohort.request, fartherPending);
+                bool allAtMostFiveDays = true;
+                foreach (PendingRfqResponse pending in cohort.pending)
+                {
+                    allAtMostFiveDays &= pending != null &&
+                        F11ArrivalDays(cohort.request, pending) <= 5;
+                }
+
+                check(
+                    A6,
+                    allAtMostFiveDays &&
+                    capRawDays > 5 &&
+                    capArrivalDay == 5,
+                    F11ScheduleDetails(cohort, 1f) +
+                    $"; farSupplier=q{farther?.quote?.id.ToString() ?? "missing"}; " +
+                    $"unclampedRaw={capRawDays}d; scheduled={capArrivalDay}d; " +
+                    "the cap is expected to turn the far supplier's unclamped 8d into 5d");
+
+                IntercolonyMod.Settings.rfqResponseSpeed = 0.5f;
+                IntercolonyWorldComponent slowState = NewF11DetachedState(economySeedField);
+                F11CohortFixture slow = BuildF11Cohort(
+                    fixtureDef, createdTick, multiQuote: true);
+                bool slowQueued = QueueF11Responses(
+                    queueResponses, slowState, slow, out string slowFailure);
+
+                IntercolonyMod.Settings.rfqResponseSpeed = 2.0f;
+                IntercolonyWorldComponent fastState = NewF11DetachedState(economySeedField);
+                F11CohortFixture fast = BuildF11Cohort(
+                    fixtureDef, createdTick, multiQuote: true);
+                bool fastQueued = QueueF11Responses(
+                    queueResponses, fastState, fast, out string fastFailure);
+                bool slowMatches = F11ScheduleMatches(
+                    slow, 0.5f, out string slowMismatch);
+                bool fastMatches = F11ScheduleMatches(
+                    fast, 2.0f, out string fastMismatch);
+                int slowTotalDays = F11TotalArrivalDays(slow);
+                int fastTotalDays = F11TotalArrivalDays(fast);
+                int differentTimingCount = F11DifferentArrivalCount(slow, fast);
+                check(
+                    A7,
+                    slowQueued &&
+                    fastQueued &&
+                    slowFailure == null &&
+                    fastFailure == null &&
+                    slowMatches &&
+                    fastMatches &&
+                    F11SameCohortShape(slow, fast) &&
+                    slowTotalDays > fastTotalDays &&
+                    differentTimingCount > 0,
+                    $"slow={F11ScheduleDetails(slow, 0.5f)}; " +
+                    $"fast={F11ScheduleDetails(fast, 2.0f)}; " +
+                    $"slowTotal={slowTotalDays}d; fastTotal={fastTotalDays}d; " +
+                    $"differentQuotes={differentTimingCount}; " +
+                    $"mismatch={slowMismatch ?? fastMismatch ?? "none"}");
+
+                // Existing RFQs have already frozen their arrivals. Return the setting to the
+                // fixture's default before using the live primary request again; no scheduler
+                // call below is allowed to recalculate any of its pending ticks.
+                IntercolonyMod.Settings.rfqResponseSpeed = 1f;
+                int delayedRevealTick = cohort.request.createdTick +
+                    ExpectedF11ArrivalDays(lateNonCap, 1f) * GenDate.TicksPerDay;
+                tickManager.DebugSetTicksGame(delayedRevealTick);
+                RfqService.AdvancePendingResponses(state);
+                Quotation arrivedLate = FindF11Quote(
+                    cohort.request, lateNonCap?.quote?.id ?? -1);
+
+                F11QuoteTerms earlyTerms = early == null
+                    ? null
+                    : FindF11Terms(frozenTerms, early.quote.id);
+                F11QuoteTerms lateTerms = lateNonCap == null
+                    ? null
+                    : FindF11Terms(frozenTerms, lateNonCap.quote.id);
+                bool earlyTermsFrozen = earlyTerms != null &&
+                    arrivedEarly != null && earlyTerms.Matches(arrivedEarly);
+                bool lateTermsFrozen = lateTerms != null &&
+                    arrivedLate != null && lateTerms.Matches(arrivedLate);
+                bool acceptedPricesRemainFrozen = early != null &&
+                    lateNonCap != null &&
+                    arrivedEarly != null &&
+                    arrivedLate != null &&
+                    earlyTerms != null &&
+                    lateTerms != null &&
+                    arrivedEarly.TotalPrice == earlyTerms.TotalPrice &&
+                    arrivedLate.TotalPrice == lateTerms.TotalPrice;
+                check(
+                    A9,
+                    earlyTermsFrozen &&
+                    lateTermsFrozen &&
+                    acceptedPricesRemainFrozen &&
+                    arrivedEarly != arrivedLate,
+                    $"early=q{early?.quote?.id.ToString() ?? "missing"} " +
+                    $"price={(arrivedEarly == null ? "missing" : arrivedEarly.TotalPrice.ToString())}; " +
+                    $"late=q{lateNonCap?.quote?.id.ToString() ?? "missing"} " +
+                    $"price={(arrivedLate == null ? "missing" : arrivedLate.TotalPrice.ToString())}; " +
+                    $"earlyTerms={earlyTermsFrozen}; lateTerms={lateTermsFrozen}; " +
+                    $"pricesFrozen={acceptedPricesRemainFrozen}");
+
+                int capRevealTick = cohort.request.createdTick + 5 * GenDate.TicksPerDay;
+                tickManager.DebugSetTicksGame(capRevealTick);
+                int revealedAtCap = RfqService.AdvancePendingResponses(state);
+                Quotation arrivedAtCap = FindF11Quote(
+                    cohort.request, farther?.quote?.id ?? -1);
+                PendingRfqResponse capPending = FindF11Pending(
+                    cohort.pending, farther?.quote?.id ?? -1);
+                check(
+                    A10,
+                    capPending != null &&
+                    capPending.arrivalTick == capRevealTick &&
+                    cohort.request.expiryTick ==
+                        cohort.request.createdTick + 6 * GenDate.TicksPerDay &&
+                    !cohort.request.HasExpired(capRevealTick) &&
+                    revealedAtCap > 0 &&
+                    arrivedAtCap != null &&
+                    !state.PendingRfqResponses.Contains(capPending),
+                    $"far=q{farther?.quote?.id.ToString() ?? "missing"}; " +
+                    $"unclampedRaw={capRawDays}d; scheduledTick={capPending?.arrivalTick ?? -1}; " +
+                    $"capTick={capRevealTick}; expiryTick={cohort.request.expiryTick}; " +
+                    $"revealedAtCap={revealedAtCap}; visible={(arrivedAtCap == null ? "no" : "yes")}");
+            }
+            finally
+            {
+                // These are global or player-save state. Restore them even when a fixture or the
+                // real Scribe path throws, so a failed diagnostic cannot alter later assertions
+                // or the player's game.
+                state.Requests.Clear();
+                state.Requests.AddRange(savedRequests);
+                state.PendingRfqResponses.Clear();
+                state.PendingRfqResponses.AddRange(savedPendingResponses);
+                economySeedField.SetValue(state, savedEconomySeed);
+                tickManager.DebugSetTicksGame(savedTick);
+                currentTimeSpeedField.SetValue(tickManager, savedTimeSpeed);
+                tickManager.prePauseTimeSpeed = savedPrePauseTimeSpeed;
+                IntercolonyMod.Settings.rfqResponseSpeed = savedResponseSpeed;
+
+                // The real final-response path also posts a vanilla letter and archives it.
+                // Restore both list contents exactly; this also reverses any archive culling
+                // that could have happened while the synthetic letter was added.
+                letterStack.LettersListForReading.Clear();
+                letterStack.LettersListForReading.AddRange(savedLetters);
+                archive.ArchivablesListForReading.Clear();
+                archive.ArchivablesListForReading.AddRange(savedArchivables);
+            }
+        }
+
+        private static void SkipF11ResponseAssertions(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip("F11.0 pinned jitter follows the literal timing formula", reason);
+            skip("F11.1 a normal multi-supplier request reveals a day-one reply", reason);
+            skip("F11.2 a multi-supplier request spreads replies over time", reason);
+            skip("F11.3 a supplier with the higher distance floor answers later", reason);
+            skip("F11.4 the best-ranked offer has a one-day timing bias", reason);
+            skip("F11.5 the cheapest quote is not always the last response", reason);
+            skip("F11.6 no response is scheduled past day five", reason);
+            skip("F11.7 response speed changes the same cohort measurably", reason);
+            skip("F11.8 Scribe preserves exact pending arrival ticks", reason);
+            skip("F11.9 quote terms stay frozen at different reveal times", reason);
+            skip("F11.10 a reply exactly at the day-five cap is revealed", reason);
+        }
+
+        private static void FailF11ResponseAssertions(
+            Action<string, bool, string> check,
+            string detail)
+        {
+            check("F11.0 pinned jitter follows the literal timing formula", false, detail);
+            check("F11.1 a normal multi-supplier request reveals a day-one reply", false, detail);
+            check("F11.2 a multi-supplier request spreads replies over time", false, detail);
+            check("F11.3 a supplier with the higher distance floor answers later", false, detail);
+            check("F11.4 the best-ranked offer has a one-day timing bias", false, detail);
+            check("F11.5 the cheapest quote is not always the last response", false, detail);
+            check("F11.6 no response is scheduled past day five", false, detail);
+            check("F11.7 response speed changes the same cohort measurably", false, detail);
+            check("F11.8 Scribe preserves exact pending arrival ticks", false, detail);
+            check("F11.9 quote terms stay frozen at different reveal times", false, detail);
+            check("F11.10 a reply exactly at the day-five cap is revealed", false, detail);
+        }
+
+        private sealed class F11CohortFixture
+        {
+            public PurchaseRequest request;
+            public List<F11QuoteFixture> quotes = new List<F11QuoteFixture>();
+            public List<PendingRfqResponse> pending = new List<PendingRfqResponse>();
+        }
+
+        private sealed class F11QuoteFixture
+        {
+            public Quotation quote;
+            public int jitter;
+            public bool bestRanked;
+        }
+
+        private sealed class F11QuoteTerms
+        {
+            public int id;
+            public int settlementId;
+            public string settlementName;
+            public string factionName;
+            public int refreshWindow;
+            public int quantityOffered;
+            public float unitPrice;
+            public int leadTimeDays;
+            public bool supplierDelivers;
+            public QualityCategory? offeredQuality;
+            public ThingDef offeredStuff;
+            public float distanceTiles;
+            public string priceExplanation;
+
+            public int TotalPrice => Mathf.RoundToInt(unitPrice * quantityOffered);
+
+            public static F11QuoteTerms Capture(Quotation quote)
+            {
+                return new F11QuoteTerms
+                {
+                    id = quote.id,
+                    settlementId = quote.settlementId,
+                    settlementName = quote.settlementName,
+                    factionName = quote.factionName,
+                    refreshWindow = quote.refreshWindow,
+                    quantityOffered = quote.quantityOffered,
+                    unitPrice = quote.unitPrice,
+                    leadTimeDays = quote.leadTimeDays,
+                    supplierDelivers = quote.supplierDelivers,
+                    offeredQuality = quote.offeredQuality,
+                    offeredStuff = quote.offeredStuff,
+                    distanceTiles = quote.distanceTiles,
+                    priceExplanation = quote.priceExplanation
+                };
+            }
+
+            public bool Matches(Quotation quote)
+            {
+                return quote != null &&
+                       id == quote.id &&
+                       settlementId == quote.settlementId &&
+                       settlementName == quote.settlementName &&
+                       factionName == quote.factionName &&
+                       refreshWindow == quote.refreshWindow &&
+                       quantityOffered == quote.quantityOffered &&
+                       unitPrice == quote.unitPrice &&
+                       leadTimeDays == quote.leadTimeDays &&
+                       supplierDelivers == quote.supplierDelivers &&
+                       offeredQuality == quote.offeredQuality &&
+                       offeredStuff == quote.offeredStuff &&
+                       distanceTiles == quote.distanceTiles &&
+                       priceExplanation == quote.priceExplanation &&
+                       TotalPrice == quote.TotalPrice;
+            }
+        }
+
+        private sealed class F11RoundTripResult
+        {
+            public IntercolonyWorldComponent loaded;
+            public string failure;
+        }
+
+        private static F11CohortFixture BuildF11Cohort(
+            ThingDef fixtureDef,
+            int createdTick,
+            bool multiQuote)
+        {
+            F11CohortFixture fixture = new F11CohortFixture
+            {
+                request = new PurchaseRequest
+                {
+                    id = F11FixtureRequestId,
+                    thingDef = fixtureDef,
+                    quantityRequested = 10,
+                    desiredDays = 15,
+                    createdTick = createdTick,
+                    // The production request lifetime is six days. Keeping this literal in the
+                    // fixture makes the cap/reveal boundary independently auditable.
+                    expiryTick = createdTick + 6 * GenDate.TicksPerDay,
+                    status = PurchaseRequestStatus.Open,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.Either,
+                    quotes = new List<Quotation>()
+                }
+            };
+
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Cheapest and first in the request's already-ranked cohort: the scheduler's
+                // one-day attractiveness bias applies here.
+                quote = NewF11Quotation(101, 24f, 8f),
+                jitter = 1, // Observed seeded roll for this exact economy-seed/request-id/quote-id/discriminator combination.
+                bestRanked = multiQuote
+            });
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Same near floor, with jitter 0: this is the guaranteed day-one response.
+                quote = NewF11Quotation(107, 24f, 9f),
+                jitter = 0,
+                bestRanked = false
+            });
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Distance floor 2 and jitter 0: gives the cohort a middle day.
+                quote = NewF11Quotation(108, 96f, 10f),
+                jitter = 0,
+                bestRanked = false
+            });
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Distance floor 3 and jitter 1: a late but uncapped response for the terms test.
+                quote = NewF11Quotation(104, 144f, 11f),
+                jitter = 1,
+                bestRanked = false
+            });
+            fixture.quotes.Add(new F11QuoteFixture
+            {
+                // Distance floor 6 and jitter 2: raw 8 days at 1.0x, so this fixture must hit
+                // the five-day cap. It is deliberately not the cheapest quote.
+                quote = NewF11Quotation(105, 288f, 12f),
+                jitter = 2,
+                bestRanked = false
+            });
+
+            if (!multiQuote)
+            {
+                F11QuoteFixture singletonBest = fixture.quotes[0];
+                singletonBest.bestRanked = false;
+                fixture.quotes = new List<F11QuoteFixture> { singletonBest };
+            }
+
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                fixture.request.quotes.Add(quoteFixture.quote);
+            }
+
+            return fixture;
+        }
+
+        private static Quotation NewF11Quotation(int id, float distanceTiles, float unitPrice)
+        {
+            return new Quotation
+            {
+                id = id,
+                settlementId = 70_000 + id,
+                settlementName = $"F11 Supplier {id}",
+                factionName = "F11 Fixture Faction",
+                refreshWindow = 1,
+                quantityOffered = 10,
+                unitPrice = unitPrice,
+                leadTimeDays = 1,
+                supplierDelivers = false,
+                distanceTiles = distanceTiles,
+                priceExplanation = "F11 deterministic quote fixture"
+            };
+        }
+
+        private static List<F11QuoteTerms> CaptureF11Terms(F11CohortFixture fixture)
+        {
+            List<F11QuoteTerms> result = new List<F11QuoteTerms>();
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                result.Add(F11QuoteTerms.Capture(quoteFixture.quote));
+            }
+
+            return result;
+        }
+
+        private static IntercolonyWorldComponent NewF11DetachedState(FieldInfo economySeedField)
+        {
+            IntercolonyWorldComponent state = new IntercolonyWorldComponent(null);
+            economySeedField.SetValue(state, F11FixtureEconomySeed);
+            return state;
+        }
+
+        private static bool QueueF11Responses(
+            MethodInfo queueResponses,
+            IntercolonyWorldComponent state,
+            F11CohortFixture fixture,
+            out string failure)
+        {
+            failure = null;
+            fixture.pending.Clear();
+            state.AddRequest(fixture.request);
+            try
+            {
+                object result = queueResponses.Invoke(
+                    null, new object[] { state, fixture.request });
+                int queuedCount = result is int ? (int)result : -1;
+                foreach (PendingRfqResponse pending in state.PendingRfqResponses)
+                {
+                    if (pending != null && pending.requestId == fixture.request.id)
+                    {
+                        fixture.pending.Add(pending);
+                    }
+                }
+
+                if (queuedCount != fixture.quotes.Count ||
+                    fixture.pending.Count != fixture.quotes.Count ||
+                    fixture.request.quotes.Count != 0)
+                {
+                    failure =
+                        $"queue returned {queuedCount}, pending={fixture.pending.Count}, " +
+                        $"requestQuotes={fixture.request.quotes.Count}, expected={fixture.quotes.Count}";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (TargetInvocationException ex)
+            {
+                Exception cause = ex.InnerException ?? ex;
+                failure = cause.GetType().Name + ": " + cause.Message;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                failure = ex.GetType().Name + ": " + ex.Message;
+                return false;
+            }
+        }
+
+        private static bool F11ScheduleMatches(
+            F11CohortFixture fixture,
+            float responseSpeed,
+            out string mismatch)
+        {
+            mismatch = null;
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                PendingRfqResponse pending = FindF11Pending(
+                    fixture.pending, quoteFixture.quote.id);
+                int expectedRaw = ExpectedF11RawDays(quoteFixture);
+                int expectedArrival = ExpectedF11ArrivalDays(quoteFixture, responseSpeed);
+                int actualArrival = pending == null
+                    ? -1
+                    : F11ArrivalDays(fixture.request, pending);
+                if (pending == null || actualArrival != expectedArrival)
+                {
+                    mismatch =
+                        $"q{quoteFixture.quote.id}: raw={expectedRaw}; expected={expectedArrival}d; " +
+                        $"actual={actualArrival}d";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static int ExpectedF11RawDays(F11QuoteFixture quoteFixture)
+        {
+            Quotation quote = quoteFixture?.quote;
+            if (quote == null)
+            {
+                return -1;
+            }
+
+            // This is the independent oracle. Keep the product literals here rather than
+            // reading private scheduler constants or asking the scheduler for its answer.
+            int preparationDays = Mathf.Clamp(
+                Mathf.CeilToInt(Mathf.Max(1, quote.leadTimeDays) / 2f), 1, 2);
+            int distanceDays = quote.distanceTiles < 0f
+                ? 3
+                : Mathf.Max(1, Mathf.CeilToInt(quote.distanceTiles / 48f));
+            int baseDays = Mathf.Max(preparationDays, distanceDays);
+            int biasDays = quoteFixture.bestRanked ? 1 : 0;
+            return baseDays + biasDays + quoteFixture.jitter;
+        }
+
+        private static int ExpectedF11ArrivalDays(
+            F11QuoteFixture quoteFixture,
+            float responseSpeed)
+        {
+            int rawDays = ExpectedF11RawDays(quoteFixture);
+            return rawDays < 0
+                ? -1
+                : Mathf.Clamp(Mathf.CeilToInt(rawDays / responseSpeed), 1, 5);
+        }
+
+        private static int F11DistanceFloorDays(float distanceTiles)
+        {
+            return distanceTiles < 0f
+                ? 3
+                : Mathf.Max(1, Mathf.CeilToInt(distanceTiles / 48f));
+        }
+
+        private static int F11ArrivalDays(
+            PurchaseRequest request,
+            PendingRfqResponse pending)
+        {
+            if (request == null || pending == null)
+            {
+                return -1;
+            }
+
+            return (pending.arrivalTick - request.createdTick) / GenDate.TicksPerDay;
+        }
+
+        private static string F11ScheduleDetails(
+            F11CohortFixture fixture,
+            float responseSpeed)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append($"speed={responseSpeed:0.0}x");
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                PendingRfqResponse pending = FindF11Pending(
+                    fixture.pending, quoteFixture.quote.id);
+                int actual = F11ArrivalDays(fixture.request, pending);
+                sb.Append(
+                    $"; q{quoteFixture.quote.id} {quoteFixture.quote.distanceTiles:F0}t " +
+                    $"${quoteFixture.quote.TotalPrice} jitter={quoteFixture.jitter} " +
+                    $"raw={ExpectedF11RawDays(quoteFixture)}d " +
+                    $"expected={ExpectedF11ArrivalDays(quoteFixture, responseSpeed)}d " +
+                    $"actual={actual}d");
+            }
+
+            return sb.ToString();
+        }
+
+        private static F11QuoteFixture FindF11QuoteFixture(
+            F11CohortFixture fixture,
+            int quoteId)
+        {
+            if (fixture == null)
+            {
+                return null;
+            }
+
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                if (quoteFixture?.quote != null && quoteFixture.quote.id == quoteId)
+                {
+                    return quoteFixture;
+                }
+            }
+
+            return null;
+        }
+
+        private static PendingRfqResponse FindF11Pending(
+            List<PendingRfqResponse> pendingResponses,
+            int quoteId)
+        {
+            if (pendingResponses == null)
+            {
+                return null;
+            }
+
+            foreach (PendingRfqResponse pending in pendingResponses)
+            {
+                if (pending?.quote != null && pending.quote.id == quoteId)
+                {
+                    return pending;
+                }
+            }
+
+            return null;
+        }
+
+        private static Quotation FindF11Quote(PurchaseRequest request, int quoteId)
+        {
+            if (request?.quotes == null)
+            {
+                return null;
+            }
+
+            foreach (Quotation quote in request.quotes)
+            {
+                if (quote != null && quote.id == quoteId)
+                {
+                    return quote;
+                }
+            }
+
+            return null;
+        }
+
+        private static F11QuoteFixture FindCheapestF11Quote(F11CohortFixture fixture)
+        {
+            F11QuoteFixture cheapest = null;
+            foreach (F11QuoteFixture quoteFixture in fixture.quotes)
+            {
+                if (quoteFixture?.quote == null ||
+                    cheapest?.quote == null ||
+                    quoteFixture.quote.TotalPrice < cheapest.quote.TotalPrice)
+                {
+                    cheapest = quoteFixture;
+                }
+            }
+
+            return cheapest;
+        }
+
+        private static int F11TotalArrivalDays(F11CohortFixture fixture)
+        {
+            int total = 0;
+            foreach (PendingRfqResponse pending in fixture.pending)
+            {
+                total += F11ArrivalDays(fixture.request, pending);
+            }
+
+            return total;
+        }
+
+        private static int F11DifferentArrivalCount(
+            F11CohortFixture left,
+            F11CohortFixture right)
+        {
+            int different = 0;
+            foreach (F11QuoteFixture quoteFixture in left.quotes)
+            {
+                PendingRfqResponse leftPending = FindF11Pending(
+                    left.pending, quoteFixture.quote.id);
+                PendingRfqResponse rightPending = FindF11Pending(
+                    right.pending, quoteFixture.quote.id);
+                if (leftPending == null || rightPending == null ||
+                    F11ArrivalDays(left.request, leftPending) !=
+                    F11ArrivalDays(right.request, rightPending))
+                {
+                    different++;
+                }
+            }
+
+            return different;
+        }
+
+        private static bool F11SameCohortShape(
+            F11CohortFixture left,
+            F11CohortFixture right)
+        {
+            if (left == null || right == null || left.request.id != right.request.id ||
+                left.quotes.Count != right.quotes.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < left.quotes.Count; i++)
+            {
+                Quotation a = left.quotes[i].quote;
+                Quotation b = right.quotes[i].quote;
+                if (a.id != b.id ||
+                    a.settlementId != b.settlementId ||
+                    a.quantityOffered != b.quantityOffered ||
+                    !Mathf.Approximately(a.unitPrice, b.unitPrice) ||
+                    a.leadTimeDays != b.leadTimeDays ||
+                    !Mathf.Approximately(a.distanceTiles, b.distanceTiles) ||
+                    left.quotes[i].jitter != right.quotes[i].jitter)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static F11QuoteTerms FindF11Terms(
+            List<F11QuoteTerms> terms,
+            int quoteId)
+        {
+            if (terms == null)
+            {
+                return null;
+            }
+
+            foreach (F11QuoteTerms term in terms)
+            {
+                if (term != null && term.id == quoteId)
+                {
+                    return term;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool F11RoundTripMatches(
+            IntercolonyWorldComponent loaded,
+            F11CohortFixture source,
+            List<F11QuoteTerms> frozenTerms,
+            out string detail)
+        {
+            detail = $"loaded={(loaded == null ? "null" : "state")}";
+            if (loaded == null || loaded.Requests == null || loaded.Requests.Count != 1 ||
+                loaded.PendingRfqResponses == null ||
+                loaded.PendingRfqResponses.Count != source.pending.Count)
+            {
+                return false;
+            }
+
+            PurchaseRequest loadedRequest = loaded.Requests[0];
+            if (loadedRequest == null || loadedRequest.id != source.request.id ||
+                loadedRequest.createdTick != source.request.createdTick ||
+                loadedRequest.expiryTick != source.request.expiryTick ||
+                loadedRequest.quotes == null || loadedRequest.quotes.Count != 0)
+            {
+                detail += "; request shape changed";
+                return false;
+            }
+
+            foreach (F11QuoteFixture quoteFixture in source.quotes)
+            {
+                PendingRfqResponse expected = FindF11Pending(
+                    source.pending, quoteFixture.quote.id);
+                PendingRfqResponse actual = FindF11Pending(
+                    loaded.PendingRfqResponses, quoteFixture.quote.id);
+                F11QuoteTerms terms = FindF11Terms(frozenTerms, quoteFixture.quote.id);
+                if (expected == null || actual == null || terms == null ||
+                    actual.requestId != expected.requestId ||
+                    actual.arrivalTick != expected.arrivalTick ||
+                    !terms.Matches(actual.quote))
+                {
+                    detail += $"; q{quoteFixture.quote.id} did not survive exactly";
+                    return false;
+                }
+            }
+
+            detail += $"; request={loadedRequest.id}; pending={loaded.PendingRfqResponses.Count}; " +
+                      "arrival ticks and frozen quote terms match";
+            return true;
+        }
+
+        private static F11RoundTripResult RoundTripF11State(
+            IntercolonyWorldComponent source,
+            string label)
+        {
+            IntercolonyWorldComponent savedState = source;
+            IntercolonyWorldComponent loadedState = null;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-{label}-{Guid.NewGuid():N}.xml");
+            try
+            {
+                Scribe.saver.InitSaving(path, label);
+                Scribe_Deep.Look(ref savedState, "state");
+                Scribe.saver.FinalizeSaving();
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedState, "state", (object)null);
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = ex.GetType().Name + ": " + ex.Message;
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch
+                {
+                    // Preserve the Scribe failure if a temp file cannot be removed.
+                }
+            }
+
+            return new F11RoundTripResult
+            {
+                loaded = loadedState,
+                failure = failure
+            };
+        }
+
+        private static void AdvanceRfqResponsesForSelfTest(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request,
+            Action<string, string> skip)
+        {
+            if (state == null || request == null)
+            {
+                skip("RFQ response arrival fixture", "world state or request was unavailable");
+                return;
+            }
+
+            if (state.PendingRfqResponses == null)
+            {
+                skip("RFQ response arrival fixture", "pending response queue was unavailable");
+                return;
+            }
+
+            int now = GenTicks.TicksGame;
+            int latestArrivalTick = now;
+            bool hasPendingResponse = false;
+            foreach (PendingRfqResponse pending in state.PendingRfqResponses)
+            {
+                if (pending == null || pending.requestId != request.id)
+                {
+                    continue;
+                }
+
+                hasPendingResponse = true;
+                latestArrivalTick = Mathf.Max(latestArrivalTick, pending.arrivalTick);
+            }
+
+            if (!hasPendingResponse)
+            {
+                return;
+            }
+
+            if (Find.TickManager == null)
+            {
+                skip("RFQ response arrival fixture", "RimWorld tick manager was unavailable");
+                return;
+            }
+
+            TickManager tickManager = Find.TickManager;
+            int savedTick = tickManager.TicksGame;
+            int cursorTick = savedTick;
+            try
+            {
+                // Advance the global queue in arrival order. A direct jump to this request's
+                // latest response can pass another request's expiry and make the real advance
+                // path discard that request before its own fixture call gets a turn.
+                while (true)
+                {
+                    int nextArrivalTick = int.MaxValue;
+                    foreach (PendingRfqResponse pending in state.PendingRfqResponses)
+                    {
+                        if (pending == null || pending.arrivalTick > latestArrivalTick)
+                        {
+                            continue;
+                        }
+
+                        nextArrivalTick = Mathf.Min(nextArrivalTick, pending.arrivalTick);
+                    }
+
+                    if (nextArrivalTick == int.MaxValue)
+                    {
+                        break;
+                    }
+
+                    cursorTick = Mathf.Max(cursorTick, nextArrivalTick);
+                    tickManager.DebugSetTicksGame(cursorTick);
+                    int pendingCountBeforeAdvance = state.PendingRfqResponses.Count;
+                    RfqService.AdvancePendingResponses(state);
+                    if (state.PendingRfqResponses.Count >= pendingCountBeforeAdvance)
+                    {
+                        skip("RFQ response arrival fixture",
+                            $"advance made no queue progress at tick {cursorTick}");
+                        break;
+                    }
+                }
+            }
+            finally
+            {
+                tickManager.DebugSetTicksGame(savedTick);
+            }
         }
 
         private static void CheckSupplierListings(
@@ -2764,6 +3895,65 @@ namespace Intercolony
             return result;
         }
 
+        private static List<CommercialHistoryEntry> CloneCommercialHistory(
+            List<CommercialHistoryEntry> source)
+        {
+            List<CommercialHistoryEntry> result = new List<CommercialHistoryEntry>();
+            if (source == null)
+            {
+                return result;
+            }
+
+            foreach (CommercialHistoryEntry entry in source)
+            {
+                result.Add(entry == null
+                    ? null
+                    : new CommercialHistoryEntry
+                    {
+                        settlementId = entry.settlementId,
+                        thingDef = entry.thingDef,
+                        completedSaleCount = entry.completedSaleCount,
+                        totalQuantitySupplied = entry.totalQuantitySupplied,
+                        totalTradeValue = entry.totalTradeValue
+                    });
+            }
+
+            return result;
+        }
+
+        private static List<SettlementMarketState> CloneMarketStates(
+            List<SettlementMarketState> source)
+        {
+            List<SettlementMarketState> result = new List<SettlementMarketState>();
+            if (source == null)
+            {
+                return result;
+            }
+
+            foreach (SettlementMarketState state in source)
+            {
+                if (state == null)
+                {
+                    result.Add(null);
+                    continue;
+                }
+
+                result.Add(new SettlementMarketState
+                {
+                    settlementId = state.settlementId,
+                    demandPressure = state.demandPressure == null
+                        ? null
+                        : (float[])state.demandPressure.Clone(),
+                    supplyPressure = state.supplyPressure == null
+                        ? null
+                        : (float[])state.supplyPressure.Clone(),
+                    lastAdvancedRefresh = state.lastAdvancedRefresh
+                });
+            }
+
+            return result;
+        }
+
         private static void CheckSupplierListingSentinel(
             Action<string, bool, string> check)
         {
@@ -2881,6 +4071,9 @@ namespace Intercolony
                     "Steel definition is unavailable in this install");
                 skip("S4 unresolvable listing is pruned",
                     "Steel definition is unavailable in this install");
+                skip(
+                    "S4 expected missing-def diagnostic is observed without hiding other errors",
+                    "Steel definition is unavailable in this install");
                 return;
             }
 
@@ -2917,9 +4110,21 @@ namespace Intercolony
             string failure = null;
             string path = Path.Combine(
                 Path.GetTempPath(), $"Intercolony-SupplierListing-S4-{Guid.NewGuid():N}.xml");
+            string expectedDiagnostic =
+                "Could not load reference to " + typeof(ThingDef) + " named " + missingDefName;
+            ExpectedLogHandler diagnosticHandler = null;
 
             try
             {
+                if (canExerciseUnresolvable)
+                {
+                    diagnosticHandler = new ExpectedLogHandler(
+                        LogType.Error,
+                        Debug.unityLogger.logHandler,
+                        new[] { expectedDiagnostic });
+                    Debug.unityLogger.logHandler = diagnosticHandler;
+                }
+
                 Scribe.saver.InitSaving(path, "supplierListingWorldTest");
                 Scribe_Deep.Look(ref savedState, "state");
                 Scribe.saver.FinalizeSaving();
@@ -2934,10 +4139,20 @@ namespace Intercolony
             }
             finally
             {
-                Scribe.ForceStop();
-                if (File.Exists(path))
+                try
                 {
-                    File.Delete(path);
+                    if (diagnosticHandler != null)
+                    {
+                        Debug.unityLogger.logHandler = diagnosticHandler.Previous;
+                    }
+                }
+                finally
+                {
+                    Scribe.ForceStop();
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
                 }
             }
 
@@ -2954,6 +4169,13 @@ namespace Intercolony
             if (canExerciseUnresolvable)
             {
                 check(
+                    "S4 expected missing-def diagnostic is observed without hiding other errors",
+                    diagnosticHandler != null && diagnosticHandler.ExpectedCount > 0 &&
+                    diagnosticHandler.UnexpectedErrorCount == 0,
+                    $"expected count={diagnosticHandler?.ExpectedCount ?? 0}; " +
+                    $"unexpected error count={diagnosticHandler?.UnexpectedErrorCount ?? 0}; " +
+                    $"first unexpected={diagnosticHandler?.FirstUnexpectedError ?? "none"}");
+                check(
                     "S4 unresolvable listing is pruned",
                     failure == null && !ContainsListingId(loadedListings, missingId),
                     $"count {savedListings.Count}->{loadedListings?.Count ?? -1}; " +
@@ -2962,6 +4184,9 @@ namespace Intercolony
             }
             else
             {
+                skip(
+                    "S4 expected missing-def diagnostic is observed without hiding other errors",
+                    $"def name {missingDefName} already resolves in this install");
                 skip("S4 unresolvable listing is pruned",
                     $"def name {missingDefName} already resolves in this install");
             }
@@ -3124,6 +4349,8 @@ namespace Intercolony
 
             try
             {
+                CheckProcurementAgreementProgression(check);
+                CheckF10NoHistoryProcurementPath(check, skip, state);
                 CheckProcurementContractSentinels(check);
                 CheckProcurementContractStatuses(check);
                 CheckProcurementContractValidity(check, skip);
@@ -3175,6 +4402,844 @@ namespace Intercolony
                     nextIdField.SetValue(state, savedNextId);
                 }
             }
+        }
+
+        private static void CheckF10NoHistoryProcurementPath(
+            Action<string, bool, string> check,
+            Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            const float expectedStartingScore = 50f;
+            const float expectedAgreementReputation = 62f;
+            const int expectedCompletedPurchases = 2;
+            const float expectedPurchaseDelta = 2f;
+            const int contractQuantityPerCycle = 10;
+            const int contractCadenceDays = 1;
+            const int contractTotalCycles = 2;
+
+            TickManager tickManager = Find.TickManager;
+            LetterStack letterStack = Find.LetterStack;
+            Archive archive = Find.Archive;
+            FieldInfo consumptionField = state == null
+                ? null
+                : typeof(IntercolonyWorldComponent).GetField(
+                    "supplierOfferConsumption", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo economySeedField = state == null
+                ? null
+                : typeof(IntercolonyWorldComponent).GetField(
+                    "economySeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo nextIdField = state == null
+                ? null
+                : typeof(IntercolonyWorldComponent).GetField(
+                    "nextId", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            if (state == null || state.Requests == null || state.PendingRfqResponses == null ||
+                state.PurchaseOrders == null || state.ProcurementContracts == null ||
+                state.Reputations == null || state.CommercialHistory == null ||
+                state.CommercialTimeline == null || state.MarketStates == null ||
+                state.Ledger == null || tickManager == null || letterStack == null ||
+                archive == null || Find.WorldObjects == null || ThingDefOf.Silver == null ||
+                consumptionField == null || economySeedField == null || nextIdField == null)
+            {
+                SkipF10NoHistoryProcurementAssertions(
+                    skip, "the live F10 state, world, tick, letter/archive, or restoration seam " +
+                    "was unavailable");
+                return;
+            }
+
+            List<SupplierOfferConsumption> liveConsumption =
+                consumptionField.GetValue(state) as List<SupplierOfferConsumption>;
+            if (liveConsumption == null)
+            {
+                SkipF10NoHistoryProcurementAssertions(
+                    skip, "the live supplier-consumption list was unavailable for restoration");
+                return;
+            }
+
+            Map paymentMap = Find.CurrentMap ?? Find.AnyPlayerHomeMap;
+            List<PurchaseRequest> savedRequests = new List<PurchaseRequest>(state.Requests);
+            List<PendingRfqResponse> savedPendingResponses =
+                new List<PendingRfqResponse>(state.PendingRfqResponses);
+            List<PurchaseOrder> savedOrders = new List<PurchaseOrder>(state.PurchaseOrders);
+            List<ProcurementContract> savedContracts =
+                new List<ProcurementContract>(state.ProcurementContracts);
+            Dictionary<int, CommercialReputation> savedReputations =
+                new Dictionary<int, CommercialReputation>(state.Reputations);
+            List<CommercialHistoryEntry> savedCommercialHistory =
+                new List<CommercialHistoryEntry>(state.CommercialHistory);
+            List<CommercialHistoryEntry> savedCommercialHistoryValues =
+                CloneCommercialHistory(state.CommercialHistory);
+            List<CommercialEventRecord> savedCommercialTimeline =
+                new List<CommercialEventRecord>(state.CommercialTimeline);
+            int savedCommercialTimelineStartTick = state.CommercialTimelineStartTick;
+            List<SettlementMarketState> savedMarketStates =
+                new List<SettlementMarketState>(state.MarketStates);
+            List<SettlementMarketState> savedMarketStateValues =
+                CloneMarketStates(state.MarketStates);
+            List<LedgerEntry> savedLedger = new List<LedgerEntry>(state.Ledger);
+            int savedLedgerStartTick = state.LedgerStartTick;
+            List<SupplierOfferConsumption> savedConsumption = CloneConsumptions(liveConsumption);
+            int savedEconomySeed = (int)economySeedField.GetValue(state);
+            int savedNextId = (int)nextIdField.GetValue(state);
+            int savedTick = tickManager.TicksGame;
+            List<Letter> savedLetters = new List<Letter>(letterStack.LettersListForReading);
+            List<IArchivable> savedArchivables =
+                new List<IArchivable>(archive.ArchivablesListForReading);
+            Dictionary<Thing, int> savedSilver = SnapshotStoredSilver(paymentMap);
+            Thing fixtureSilver = null;
+            Zone_Stockpile fixtureSilverZone = null;
+            Settlement fixtureSettlement = null;
+            bool fixtureReputationSnapshotTaken = false;
+            bool fixtureHadReputation = false;
+            CommercialReputation savedFixtureReputation = null;
+
+            void RestoreFixtureState(bool restoreFixtureReputation = false)
+            {
+                state.Requests.Clear();
+                state.Requests.AddRange(savedRequests);
+                state.PendingRfqResponses.Clear();
+                state.PendingRfqResponses.AddRange(savedPendingResponses);
+                state.PurchaseOrders.Clear();
+                state.PurchaseOrders.AddRange(savedOrders);
+                state.ProcurementContracts.Clear();
+                state.ProcurementContracts.AddRange(savedContracts);
+
+                state.Reputations.Clear();
+                foreach (KeyValuePair<int, CommercialReputation> entry in savedReputations)
+                {
+                    state.Reputations[entry.Key] = entry.Value;
+                }
+
+                if (fixtureReputationSnapshotTaken && fixtureSettlement != null)
+                {
+                    state.Reputations.Remove(fixtureSettlement.ID);
+                    if (restoreFixtureReputation && fixtureHadReputation)
+                    {
+                        state.Reputations[fixtureSettlement.ID] = savedFixtureReputation;
+                    }
+                }
+
+                for (int i = 0; i < savedCommercialHistory.Count; i++)
+                {
+                    CommercialHistoryEntry original = savedCommercialHistory[i];
+                    CommercialHistoryEntry snapshot = savedCommercialHistoryValues[i];
+                    if (original == null || snapshot == null)
+                    {
+                        continue;
+                    }
+
+                    original.settlementId = snapshot.settlementId;
+                    original.thingDef = snapshot.thingDef;
+                    original.completedSaleCount = snapshot.completedSaleCount;
+                    original.totalQuantitySupplied = snapshot.totalQuantitySupplied;
+                    original.totalTradeValue = snapshot.totalTradeValue;
+                }
+
+                state.CommercialHistory.Clear();
+                state.CommercialHistory.AddRange(savedCommercialHistory);
+                state.CommercialTimeline.Clear();
+                state.CommercialTimeline.AddRange(savedCommercialTimeline);
+                state.CommercialTimelineStartTick = savedCommercialTimelineStartTick;
+
+                for (int i = 0; i < savedMarketStates.Count; i++)
+                {
+                    SettlementMarketState original = savedMarketStates[i];
+                    SettlementMarketState snapshot = savedMarketStateValues[i];
+                    if (original == null || snapshot == null)
+                    {
+                        continue;
+                    }
+
+                    original.settlementId = snapshot.settlementId;
+                    original.lastAdvancedRefresh = snapshot.lastAdvancedRefresh;
+                    original.demandPressure = snapshot.demandPressure == null
+                        ? null
+                        : (float[])snapshot.demandPressure.Clone();
+                    original.supplyPressure = snapshot.supplyPressure == null
+                        ? null
+                        : (float[])snapshot.supplyPressure.Clone();
+                }
+
+                state.MarketStates.Clear();
+                state.MarketStates.AddRange(savedMarketStates);
+                state.RefreshMarketStateIndex();
+                state.Ledger.Clear();
+                state.Ledger.AddRange(savedLedger);
+                state.LedgerStartTick = savedLedgerStartTick;
+
+                liveConsumption.Clear();
+                liveConsumption.AddRange(savedConsumption);
+                economySeedField.SetValue(state, savedEconomySeed);
+                nextIdField.SetValue(state, savedNextId);
+                RestoreStoredSilver(paymentMap, savedSilver);
+
+                if (fixtureSilver != null && !fixtureSilver.Destroyed)
+                {
+                    fixtureSilver.Destroy(DestroyMode.Vanish);
+                }
+
+                fixtureSilverZone?.Delete(playSound: false);
+                fixtureSilver = null;
+                fixtureSilverZone = null;
+                tickManager.DebugSetTicksGame(savedTick);
+
+                letterStack.LettersListForReading.Clear();
+                letterStack.LettersListForReading.AddRange(savedLetters);
+                archive.ArchivablesListForReading.Clear();
+                archive.ArchivablesListForReading.AddRange(savedArchivables);
+            }
+
+            void PrepareFixtureReputation(Settlement selectedSettlement)
+            {
+                fixtureSettlement = selectedSettlement;
+                fixtureHadReputation = state.Reputations.TryGetValue(
+                    selectedSettlement.ID, out savedFixtureReputation);
+                fixtureReputationSnapshotTaken = true;
+                state.Reputations.Remove(selectedSettlement.ID);
+            }
+
+            bool EnsureFixtureSilver(int requiredSilver, out string reason)
+            {
+                reason = null;
+                if (requiredSilver <= 0)
+                {
+                    return true;
+                }
+
+                foreach (Thing silver in savedSilver.Keys)
+                {
+                    if (silver == null || silver.Destroyed || silver.stackCount >= requiredSilver)
+                    {
+                        continue;
+                    }
+
+                    int neededForReserve = requiredSilver - silver.stackCount;
+                    if (silver.stackCount + neededForReserve <= ThingDefOf.Silver.stackLimit)
+                    {
+                        silver.stackCount += neededForReserve;
+                    }
+                }
+
+                int availableSilver = PurchaseOrderService.CountColonySilver(paymentMap);
+                if (availableSilver >= requiredSilver)
+                {
+                    return true;
+                }
+
+                int neededSilver = requiredSilver - availableSilver;
+                if (neededSilver <= ThingDefOf.Silver.stackLimit &&
+                    TryCreateStoredSilver(
+                        paymentMap, neededSilver, out fixtureSilver, out fixtureSilverZone) &&
+                    PurchaseOrderService.CountColonySilver(paymentMap) >= requiredSilver)
+                {
+                    return true;
+                }
+
+                reason =
+                    $"stored silver was {PurchaseOrderService.CountColonySilver(paymentMap)}, " +
+                    $"needed {requiredSilver}, and the fixture could not create enough temporary " +
+                    "stored silver";
+                return false;
+            }
+
+            bool SavedSilverStacksSurvivePayment(int paymentAmount)
+            {
+                foreach (Thing silver in savedSilver.Keys)
+                {
+                    if (silver != null && !silver.Destroyed && silver.stackCount <= paymentAmount)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            try
+            {
+                state.Requests.Clear();
+                state.PendingRfqResponses.Clear();
+                state.PurchaseOrders.Clear();
+                state.ProcurementContracts.Clear();
+
+                if (!TryFindNoHistoryRfqFixture(
+                        state, PrepareFixtureReputation,
+                        out PurchaseRequest request, out Settlement settlement,
+                        out Quotation quote, out ThingDef product, out string fixtureReason))
+                {
+                    SkipF10NoHistoryProcurementAssertions(skip, fixtureReason);
+                    return;
+                }
+
+                bool noRecordBeforeQuote = IsNoReputationRecord(state, settlement);
+                float defaultScore = ReputationService.ScoreFor(state, settlement);
+                bool noRecordAfterQuote = IsNoReputationRecord(state, settlement);
+                check(
+                    F10NoHistoryQuoteAssertion,
+                    noRecordBeforeQuote &&
+                    noRecordAfterQuote &&
+                    Mathf.Approximately(defaultScore, expectedStartingScore) &&
+                    quote != null && quote.settlementId == settlement.ID &&
+                    quote.quantityOffered > 0 && request.AnyQuotes,
+                    $"settlement={settlement.ID}; product={product?.defName ?? "null"}; " +
+                    $"recordBefore={(noRecordBeforeQuote ? "absent" : "present")}; " +
+                    $"recordAfter={(noRecordAfterQuote ? "absent" : "present")}; " +
+                    $"dictionaryKey={state.Reputations.ContainsKey(settlement.ID)}; " +
+                    $"ScoreFor={defaultScore:F2}; quote=" +
+                    $"{(quote == null ? "none" : $"{quote.quantityOffered}x @ {quote.unitPrice:F2}")}; " +
+                    $"request={request.id}");
+
+                RestoreFixtureState();
+
+                if (quote == null)
+                {
+                    skip(
+                        F10NoHistoryPurchaseAssertion,
+                        "the selected reachable no-history settlement produced no RFQ quote");
+                }
+                else if (paymentMap == null || ThingDefOf.Silver == null)
+                {
+                    skip(
+                        F10NoHistoryPurchaseAssertion,
+                        "a player payment map or the vanilla silver definition was unavailable");
+                }
+                else if (!ReferenceEquals(IntercolonyWorldComponent.Current, state))
+                {
+                    skip(
+                        F10NoHistoryPurchaseAssertion,
+                        "PurchaseOrderService.Complete resolves a different or missing live world " +
+                        "component");
+                }
+                else
+                {
+                    state.Requests.Add(request);
+                    request.status = PurchaseRequestStatus.Open;
+                    request.quantityOrdered = 0;
+                    request.quotes.Clear();
+                    request.quotes.Add(quote);
+                    int spotQuantity = 1;
+                    int spotCost = IntercolonyPricing.TotalPayment(quote.unitPrice, spotQuantity);
+                    if (!EnsureFixtureSilver(spotCost + 1, out string silverReason))
+                    {
+                        skip(F10NoHistoryPurchaseAssertion, silverReason);
+                    }
+                    else if (!SavedSilverStacksSurvivePayment(spotCost))
+                    {
+                        skip(
+                            F10NoHistoryPurchaseAssertion,
+                            "the fixture could not leave every original stored-silver stack alive " +
+                            "after payment");
+                    }
+                    else
+                    {
+                        bool noRecordBeforePurchase = IsNoReputationRecord(state, settlement);
+                        PurchaseOrder order = PurchaseOrderService.AcceptQuote(
+                            state, request, quote, paymentMap, spotQuantity);
+                        bool noRecordAfterAcceptance = order != null &&
+                            IsNoReputationRecord(state, settlement);
+                        if (order != null)
+                        {
+                            PurchaseOrderService.Complete(
+                                order, "F10 no-history spot purchase fixture");
+                        }
+
+                        CommercialReputation afterCompletion =
+                            state.FindReputation(settlement.ID);
+                        check(
+                            F10NoHistoryPurchaseAssertion,
+                            noRecordBeforePurchase && order != null &&
+                            noRecordAfterAcceptance &&
+                            order.status == PurchaseOrderStatus.Completed &&
+                            afterCompletion != null &&
+                            afterCompletion.purchasesCompleted == 1 &&
+                            Mathf.Approximately(
+                                afterCompletion.Score,
+                                expectedStartingScore + expectedPurchaseDelta),
+                            $"settlement={settlement.ID}; before=" +
+                            $"{(noRecordBeforePurchase ? "absent" : "present")}; " +
+                            $"afterAccept={(noRecordAfterAcceptance ? "absent" : "present")}; " +
+                            $"order={(order == null ? "null" : order.id.ToString())}; " +
+                            $"status={order?.status.ToString() ?? "null"}; after=" +
+                            $"{(afterCompletion == null ? "absent" : "present")}; " +
+                            $"score={afterCompletion?.Score.ToString("F2") ?? "null"}; " +
+                            $"expectedFirstScore={expectedStartingScore + expectedPurchaseDelta:F2}; " +
+                            $"completed={afterCompletion?.purchasesCompleted.ToString() ?? "null"}");
+                    }
+                }
+
+                RestoreFixtureState();
+                state.ProcurementContracts.Clear();
+                bool noRecordBeforeAgreement = IsNoReputationRecord(state, settlement);
+                float agreementDefaultScore = ReputationService.ScoreFor(state, settlement);
+                bool noRecordAfterAgreementDefault = IsNoReputationRecord(state, settlement);
+                int agreementCompletedPurchases =
+                    state.FindReputation(settlement.ID)?.purchasesCompleted ?? 0;
+                ProcurementContractProposalResult noHistoryProposal =
+                    ProcurementContractService.ProposeContract(
+                        state, settlement, product, contractQuantityPerCycle,
+                        contractCadenceDays, contractTotalCycles, null,
+                        FulfillmentMode.SellerDelivery);
+                check(
+                    F10NoHistoryAgreementAssertion,
+                    noRecordBeforeAgreement &&
+                    noRecordAfterAgreementDefault &&
+                    Mathf.Approximately(agreementDefaultScore, expectedStartingScore) &&
+                    agreementCompletedPurchases == 0 &&
+                    !noHistoryProposal.Success &&
+                    noHistoryProposal.Failure ==
+                        ProcurementContractProposalFailure.ReputationTooLow &&
+                    NamesProgressionReputationRequirement(
+                        noHistoryProposal.Reason, expectedAgreementReputation),
+                    $"settlement={settlement.ID}; recordBefore=" +
+                    $"{(noRecordBeforeAgreement ? "absent" : "present")}; " +
+                    $"recordAfterScoreFor=" +
+                    $"{(noRecordAfterAgreementDefault ? "absent" : "present")}; " +
+                    $"dictionaryKey={state.Reputations.ContainsKey(settlement.ID)}; " +
+                    $"ScoreFor={agreementDefaultScore:F2}; " +
+                    $"completedPurchases={agreementCompletedPurchases}; " +
+                    $"success={noHistoryProposal.Success}; failure={noHistoryProposal.Failure}; " +
+                    $"reason={noHistoryProposal.Reason ?? "none"}");
+
+                RestoreFixtureState();
+                if (!ReferenceEquals(IntercolonyWorldComponent.Current, state))
+                {
+                    skip(
+                        F10TwoPurchasesAssertion,
+                        "PurchaseOrderService.Complete resolves a different or missing live world " +
+                        "component");
+                }
+                else
+                {
+                    state.ProcurementContracts.Clear();
+                    bool noRecordBeforeTwoPurchases = IsNoReputationRecord(state, settlement);
+                    PurchaseOrder firstHistoryPurchase = MakeF10HistoryPurchase(
+                        state, settlement, product);
+                    state.PurchaseOrders.Add(firstHistoryPurchase);
+                    PurchaseOrderService.Complete(
+                        firstHistoryPurchase, "F10 first completed purchase fixture");
+                    CommercialReputation afterFirstPurchase =
+                        state.FindReputation(settlement.ID);
+                    float firstPurchaseScore = afterFirstPurchase?.Score ?? -1f;
+                    // Capture before the second completion mutates the same live reputation object.
+                    int firstPurchaseCompleted =
+                        afterFirstPurchase?.purchasesCompleted ?? -1;
+
+                    PurchaseOrder secondHistoryPurchase = MakeF10HistoryPurchase(
+                        state, settlement, product);
+                    state.PurchaseOrders.Add(secondHistoryPurchase);
+                    PurchaseOrderService.Complete(
+                        secondHistoryPurchase, "F10 second completed purchase fixture");
+                    CommercialReputation afterTwoPurchases =
+                        state.FindReputation(settlement.ID);
+                    float nominalTwoPurchaseScore = expectedStartingScore +
+                        expectedPurchaseDelta * expectedCompletedPurchases;
+                    ProcurementContractProposalResult twoPurchaseProposal =
+                        ProcurementContractService.ProposeContract(
+                            state, settlement, product, contractQuantityPerCycle,
+                            contractCadenceDays, contractTotalCycles, null,
+                            FulfillmentMode.SellerDelivery);
+                    check(
+                        F10TwoPurchasesAssertion,
+                        noRecordBeforeTwoPurchases &&
+                        firstHistoryPurchase.status == PurchaseOrderStatus.Completed &&
+                        secondHistoryPurchase.status == PurchaseOrderStatus.Completed &&
+                        afterFirstPurchase != null &&
+                        firstPurchaseCompleted == 1 &&
+                        Mathf.Approximately(
+                            firstPurchaseScore,
+                            expectedStartingScore + expectedPurchaseDelta) &&
+                        afterTwoPurchases != null &&
+                        afterTwoPurchases.purchasesCompleted == expectedCompletedPurchases &&
+                        afterTwoPurchases.Score > firstPurchaseScore &&
+                        afterTwoPurchases.Score < expectedAgreementReputation &&
+                        Mathf.Abs(afterTwoPurchases.Score - nominalTwoPurchaseScore) <=
+                            expectedPurchaseDelta * 0.05f &&
+                        !twoPurchaseProposal.Success &&
+                        twoPurchaseProposal.Failure ==
+                            ProcurementContractProposalFailure.ReputationTooLow &&
+                        NamesProgressionReputationRequirement(
+                            twoPurchaseProposal.Reason, expectedAgreementReputation),
+                        $"settlement={settlement.ID}; before=" +
+                        $"{(noRecordBeforeTwoPurchases ? "absent" : "present")}; " +
+                        $"firstScore={firstPurchaseScore:F2}; firstCompleted=" +
+                        $"{firstPurchaseCompleted}; " +
+                        $"secondScore={afterTwoPurchases?.Score.ToString("F2") ?? "null"}; " +
+                        $"completed={afterTwoPurchases?.purchasesCompleted.ToString() ?? "null"}; " +
+                        $"nominalScore={nominalTwoPurchaseScore:F2}; " +
+                        $"success={twoPurchaseProposal.Success}; " +
+                        $"failure={twoPurchaseProposal.Failure}; " +
+                        $"reason={twoPurchaseProposal.Reason ?? "none"}");
+                }
+            }
+            finally
+            {
+                RestoreFixtureState(restoreFixtureReputation: true);
+            }
+        }
+
+        private static void SkipF10NoHistoryProcurementAssertions(
+            Action<string, string> skip,
+            string reason)
+        {
+            skip(F10NoHistoryQuoteAssertion, reason);
+            skip(F10NoHistoryPurchaseAssertion, reason);
+            skip(F10NoHistoryAgreementAssertion, reason);
+            skip(F10TwoPurchasesAssertion, reason);
+        }
+
+        private static bool IsNoReputationRecord(
+            IntercolonyWorldComponent state,
+            Settlement settlement)
+        {
+            return state != null && settlement != null && state.Reputations != null &&
+                   !state.Reputations.ContainsKey(settlement.ID) &&
+                   state.FindReputation(settlement.ID) == null;
+        }
+
+        private static bool NamesProgressionReputationRequirement(
+            string reason,
+            float expectedAgreementReputation)
+        {
+            return !string.IsNullOrEmpty(reason) &&
+                   reason.IndexOf("Commercial reputation", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   reason.Contains(expectedAgreementReputation.ToString("0"));
+        }
+
+        private static bool TryFindNoHistoryRfqFixture(
+            IntercolonyWorldComponent state,
+            Action<Settlement> prepareSettlement,
+            out PurchaseRequest request,
+            out Settlement settlement,
+            out Quotation quote,
+            out ThingDef product,
+            out string reason)
+        {
+            request = null;
+            settlement = null;
+            quote = null;
+            product = null;
+            reason = null;
+
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements == null)
+            {
+                reason = "the world supplied no settlements to inspect for an accessible RFQ fixture";
+                return false;
+            }
+
+            HashSet<int> usableSettlementIds = new HashSet<int>();
+            foreach (Settlement candidate in settlements)
+            {
+                if (candidate != null &&
+                    IntercolonyMarketAccess.IsAccessible(candidate) &&
+                    state.GetProfileForReadOnly(candidate) != null)
+                {
+                    usableSettlementIds.Add(candidate.ID);
+                }
+            }
+
+            if (usableSettlementIds.Count == 0)
+            {
+                reason =
+                    "no accessible settlement with a readable economic profile was available " +
+                    "for the no-history RFQ fixture";
+                return false;
+            }
+
+            List<ThingDef> tradable = IntercolonyProductClassifier.TradableDefs;
+            if (tradable == null || tradable.Count == 0)
+            {
+                reason = "no tradable definition was available for the no-history RFQ fixture";
+                return false;
+            }
+
+            Settlement selectedSettlement = null;
+            ThingDef selectedProduct = null;
+            Settlement fallbackSettlement = null;
+            ThingDef fallbackProduct = null;
+            foreach (ThingDef candidateDef in tradable)
+            {
+                if (candidateDef == null)
+                {
+                    continue;
+                }
+
+                state.Requests.Clear();
+                state.PendingRfqResponses.Clear();
+                PurchaseRequest candidateRequest = RfqService.CreateRequest(
+                    state, candidateDef, null, 1, 15);
+                if (candidateRequest == null)
+                {
+                    continue;
+                }
+
+                string advanceFailure = null;
+                AdvanceRfqResponsesForSelfTest(
+                    state, candidateRequest,
+                    (name, detail) => advanceFailure = detail);
+                if (advanceFailure != null)
+                {
+                    reason = "the real RFQ response path could not be advanced: " + advanceFailure;
+                    return false;
+                }
+
+                foreach (Quotation candidateQuote in candidateRequest.quotes)
+                {
+                    Settlement candidateSettlement = candidateQuote == null
+                        ? null
+                        : IntercolonyMarketAccess.FindSettlement(candidateQuote.settlementId);
+                    if (candidateQuote != null && candidateSettlement != null &&
+                        candidateQuote.quantityOffered > 0 &&
+                        usableSettlementIds.Contains(candidateSettlement.ID) &&
+                        IntercolonyMarketAccess.IsAccessible(candidateSettlement) &&
+                        state.GetProfileForReadOnly(candidateSettlement) != null)
+                    {
+                        selectedSettlement = candidateSettlement;
+                        selectedProduct = candidateDef;
+                        break;
+                    }
+                }
+
+                if (selectedSettlement != null)
+                {
+                    break;
+                }
+
+                if (fallbackSettlement == null)
+                {
+                    foreach (Settlement candidateSettlement in settlements)
+                    {
+                        if (candidateSettlement == null ||
+                            !usableSettlementIds.Contains(candidateSettlement.ID))
+                        {
+                            continue;
+                        }
+
+                        SettlementEconomicProfile candidateProfile =
+                            state.GetProfileForReadOnly(candidateSettlement);
+                        if (candidateProfile == null ||
+                            !F10CanTechnicallySupply(
+                                candidateDef, candidateSettlement, candidateProfile))
+                        {
+                            continue;
+                        }
+
+                        fallbackSettlement = candidateSettlement;
+                        fallbackProduct = candidateDef;
+                        break;
+                    }
+                }
+
+                state.Requests.Clear();
+                state.PendingRfqResponses.Clear();
+            }
+
+            if (selectedSettlement == null && fallbackSettlement != null && fallbackProduct != null)
+            {
+                selectedSettlement = fallbackSettlement;
+                selectedProduct = fallbackProduct;
+                reason =
+                    "no quotation arrived from the selected reachable settlement; " +
+                    "the RFQ assertion will fail rather than hide a progression gate";
+            }
+            else if (selectedSettlement == null)
+            {
+                reason =
+                    "the real RFQ path found no accessible settlement technically able to " +
+                    "supply any tradable definition";
+                return false;
+            }
+
+            if (prepareSettlement == null)
+            {
+                reason = "the no-history RFQ fixture had no reputation-preparation path";
+                return false;
+            }
+
+            // Preserve the existing quote-first selection, then make the chosen supplier genuinely
+            // no-history before running the request that supplies the assertion's quote.
+            prepareSettlement(selectedSettlement);
+            state.Requests.Clear();
+            state.PendingRfqResponses.Clear();
+            PurchaseRequest preparedRequest = RfqService.CreateRequest(
+                state, selectedProduct, null, 1, 15);
+            if (preparedRequest == null)
+            {
+                reason = "the selected accessible settlement could not create its RFQ request";
+                return false;
+            }
+
+            string preparedAdvanceFailure = null;
+            AdvanceRfqResponsesForSelfTest(
+                state, preparedRequest,
+                (name, detail) => preparedAdvanceFailure = detail);
+            if (preparedAdvanceFailure != null)
+            {
+                reason =
+                    "the real RFQ response path could not be advanced: " + preparedAdvanceFailure;
+                return false;
+            }
+
+            request = preparedRequest;
+            settlement = selectedSettlement;
+            product = selectedProduct;
+            foreach (Quotation preparedQuote in preparedRequest.quotes)
+            {
+                if (preparedQuote != null && preparedQuote.quantityOffered > 0 &&
+                    preparedQuote.settlementId == selectedSettlement.ID)
+                {
+                    quote = preparedQuote;
+                    return true;
+                }
+            }
+
+            reason =
+                "no quotation arrived from the selected reachable settlement after its " +
+                "reputation record was removed; the RFQ assertion will fail rather than hide " +
+                "a progression gate";
+            return true;
+        }
+
+        private static bool F10CanTechnicallySupply(
+            ThingDef product,
+            Settlement settlement,
+            SettlementEconomicProfile profile)
+        {
+            Rand.PushState(Gen.HashCombineInt(
+                product.shortHash, settlement.ID, 0xF10, 0x6C));
+            try
+            {
+                return RfqService.CanTechnicallySupply(product, profile);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+        }
+
+        private static PurchaseOrder MakeF10HistoryPurchase(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product)
+        {
+            int now = GenTicks.TicksGame;
+            return new PurchaseOrder
+            {
+                id = state.NextId(),
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "F10 fixture settlement",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = product,
+                quantity = 1,
+                unitPrice = 1f,
+                paidSilver = 1,
+                supplierDelivers = true,
+                orderedTick = now,
+                readyTick = now,
+                pickupExpiryTick = now + 10 * GenDate.TicksPerDay,
+                status = PurchaseOrderStatus.Confirmed
+            };
+        }
+
+        private static void CheckProcurementAgreementProgression(
+            Action<string, bool, string> check)
+        {
+            bool strangerAllowed = ProcurementContractService.TryValidateAgreementProgression(
+                0f, 0, out ProcurementContractProposalFailure strangerFailure,
+                out string strangerReason);
+            check(
+                "a stranger cannot open a standing purchase agreement",
+                !strangerAllowed &&
+                strangerFailure == ProcurementContractProposalFailure.ReputationTooLow,
+                $"reputation=0; completedPurchases=0; returned={strangerAllowed}; " +
+                $"failure={strangerFailure}; reason=\"{strangerReason}\"");
+
+            bool reputationOnlyAllowed =
+                ProcurementContractService.TryValidateAgreementProgression(
+                    ProcurementContractService.MinimumReputation, 0,
+                    out ProcurementContractProposalFailure reputationOnlyFailure,
+                    out string reputationOnlyReason);
+            check(
+                "reputation alone does not earn a standing purchase agreement",
+                !reputationOnlyAllowed &&
+                reputationOnlyFailure == ProcurementContractProposalFailure.InsufficientTradeHistory,
+                $"reputation={ProcurementContractService.MinimumReputation}; " +
+                $"completedPurchases=0; returned={reputationOnlyAllowed}; " +
+                $"failure={reputationOnlyFailure}; reason=\"{reputationOnlyReason}\"");
+
+            bool purchasesOnlyAllowed =
+                ProcurementContractService.TryValidateAgreementProgression(
+                    0f, ProcurementContractService.MinimumCompletedPurchasesForAgreement,
+                    out ProcurementContractProposalFailure purchasesOnlyFailure,
+                    out string purchasesOnlyReason);
+            check(
+                "purchases alone do not earn a standing purchase agreement",
+                !purchasesOnlyAllowed &&
+                purchasesOnlyFailure == ProcurementContractProposalFailure.ReputationTooLow,
+                $"reputation=0; completedPurchases=" +
+                $"{ProcurementContractService.MinimumCompletedPurchasesForAgreement}; " +
+                $"returned={purchasesOnlyAllowed}; failure={purchasesOnlyFailure}; " +
+                $"reason=\"{purchasesOnlyReason}\"");
+
+            bool bothAllowed = ProcurementContractService.TryValidateAgreementProgression(
+                ProcurementContractService.MinimumReputation,
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement,
+                out ProcurementContractProposalFailure bothFailure,
+                out string bothReason);
+            check(
+                "meeting both earns a standing purchase agreement",
+                bothAllowed && bothFailure == ProcurementContractProposalFailure.None,
+                $"reputation={ProcurementContractService.MinimumReputation}; " +
+                $"completedPurchases={ProcurementContractService.MinimumCompletedPurchasesForAgreement}; " +
+                $"returned={bothAllowed}; failure={bothFailure}; reason=\"{bothReason}\"");
+
+            bool atThresholds = ProcurementContractService.TryValidateAgreementProgression(
+                ProcurementContractService.MinimumReputation,
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement,
+                out ProcurementContractProposalFailure atThresholdsFailure,
+                out string atThresholdsReason);
+            float oneBelowReputation = ProcurementContractService.MinimumReputation - 1f;
+            bool belowReputation = ProcurementContractService.TryValidateAgreementProgression(
+                oneBelowReputation,
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement,
+                out ProcurementContractProposalFailure belowReputationFailure,
+                out string belowReputationReason);
+            int oneBelowPurchases =
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement - 1;
+            bool belowPurchases = ProcurementContractService.TryValidateAgreementProgression(
+                ProcurementContractService.MinimumReputation,
+                oneBelowPurchases,
+                out ProcurementContractProposalFailure belowPurchasesFailure,
+                out string belowPurchasesReason);
+            bool bothBelow = ProcurementContractService.TryValidateAgreementProgression(
+                oneBelowReputation,
+                oneBelowPurchases,
+                out ProcurementContractProposalFailure bothBelowFailure,
+                out string bothBelowReason);
+            check(
+                "the gate sits exactly on its thresholds",
+                atThresholds && atThresholdsFailure == ProcurementContractProposalFailure.None &&
+                !belowReputation &&
+                belowReputationFailure == ProcurementContractProposalFailure.ReputationTooLow &&
+                !belowPurchases &&
+                belowPurchasesFailure ==
+                    ProcurementContractProposalFailure.InsufficientTradeHistory &&
+                !bothBelow &&
+                bothBelowFailure == ProcurementContractProposalFailure.ReputationTooLow,
+                $"at reputation={ProcurementContractService.MinimumReputation}, " +
+                $"completedPurchases={ProcurementContractService.MinimumCompletedPurchasesForAgreement}, " +
+                $"returned={atThresholds}, failure={atThresholdsFailure}, " +
+                $"reason=\"{atThresholdsReason}\"; " +
+                $"below reputation={oneBelowReputation}, " +
+                $"completedPurchases={ProcurementContractService.MinimumCompletedPurchasesForAgreement}, " +
+                $"returned={belowReputation}, failure={belowReputationFailure}, " +
+                $"reason=\"{belowReputationReason}\"; " +
+                $"reputation={ProcurementContractService.MinimumReputation}, " +
+                $"below completedPurchases={oneBelowPurchases}, returned={belowPurchases}, " +
+                $"failure={belowPurchasesFailure}, reason=\"{belowPurchasesReason}\"; " +
+                $"below reputation={oneBelowReputation}, " +
+                $"below completedPurchases={oneBelowPurchases}, returned={bothBelow}, " +
+                $"failure={bothBelowFailure}, reason=\"{bothBelowReason}\"");
         }
 
         private static void CheckProcurementContractSentinels(
@@ -3633,6 +5698,7 @@ namespace Intercolony
                 return;
             }
 
+            EstablishEarnedProcurementRelationship(state, settlement);
             CheckProcurementProposalPending(check, state, settlement, product);
             CheckProcurementProposalAnswersOnce(check, state, settlement, product);
             CheckProcurementProposalSaveLoad(check, state, settlement, product, profile);
@@ -3643,6 +5709,7 @@ namespace Intercolony
                 check, skip, state, settlement, product, otherProduct);
             CheckProcurementProposalAcceptance(check, skip, state, product);
             CheckProcurementProposalPriceDirection(check, state, settlement, product);
+            CheckProcurementContractPreview(check, state, settlement, product);
         }
 
         private static void SkipProcurementProposalPath(
@@ -3657,6 +5724,235 @@ namespace Intercolony
             skip("E6 procurement proposal duplicate scope is supplier and product", reason);
             skip("E7 accepted procurement proposal schedules without prepayment", reason);
             skip("E8 supplier price appeal increases with purchase price", reason);
+            skip("E9 procurement preview price matches sent proposal", reason);
+            skip("E10 procurement preview refuses out-of-range quantity with proposal", reason);
+            skip("E11 procurement preview refuses an existing settlement-item agreement", reason);
+            skip("E12 procurement preview total payment uses shared pricing", reason);
+            skip("E13 procurement acceptance preview matches the proposal band", reason);
+            skip("E14 procurement acceptance preview leaves state untouched", reason);
+            skip("E15 procurement acceptance preview refuses an out-of-range package", reason);
+            skip("E16 procurement proposal appeal remains continuous", reason);
+        }
+
+        private static void CheckProcurementContractPreview(
+            Action<string, bool, string> check,
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef product)
+        {
+            EstablishEarnedProcurementRelationship(state, settlement);
+            const int quantity = 10;
+            const int cadenceDays = 1;
+            const int totalCycles = 2;
+            state.ProcurementContracts.Clear();
+            ProcurementContractTerms preview =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
+            int nextIdBeforeAcceptancePreviews = state.PeekNextId();
+            int contractCountBeforeAcceptancePreviews = state.ProcurementContracts.Count;
+            IntercolonyNegotiationAcceptancePreview acceptancePreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            // Keep both probes near the reference rate so this exercises the responsive part
+            // of the appeal curve rather than two prices that both clamp at its ceiling.
+            float continuousPrice = preview == null
+                ? -1f
+                : preview.referenceUnitPrice * 0.95f;
+            float slightlyDifferentPrice = preview == null
+                ? -1f
+                : preview.referenceUnitPrice * 0.96f;
+            IntercolonyNegotiationAcceptancePreview continuousFirstPreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: continuousPrice,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            IntercolonyNegotiationAcceptancePreview continuousSecondPreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: slightlyDifferentPrice,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            IntercolonyNegotiationAcceptancePreview repeatedAcceptancePreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            IntercolonyNegotiationAcceptancePreview thirdAcceptancePreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, quantity, cadenceDays,
+                    totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+
+            // This fails if a procurement preview consumes an ID, records a contract, or mutates
+            // the contract collection while it is only answering a read-only question.
+            check(
+                "E14 procurement acceptance preview leaves state untouched",
+                acceptancePreview != null && repeatedAcceptancePreview != null &&
+                thirdAcceptancePreview != null &&
+                state.PeekNextId() == nextIdBeforeAcceptancePreviews &&
+                state.ProcurementContracts.Count == contractCountBeforeAcceptancePreviews,
+                $"next id {nextIdBeforeAcceptancePreviews}->{state.PeekNextId()}; " +
+                $"contracts {contractCountBeforeAcceptancePreviews}->" +
+                $"{state.ProcurementContracts.Count}");
+
+            ProcurementContractProposalResult proposal =
+                ProcurementContractService.ProposeContract(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
+
+            // This fails if preview and proposal calculate the seeded supplier price differently.
+            check(
+                "E9 procurement preview price matches sent proposal",
+                preview != null && proposal.Success && proposal.Contract != null &&
+                proposal.Contract.unitPrice == preview.unitPrice,
+                $"preview unit={preview?.unitPrice.ToString("R") ?? "null"}; " +
+                $"proposal unit={proposal.Contract?.unitPrice.ToString("R") ?? "null"}; " +
+                $"preview reference={preview?.referenceUnitPrice.ToString("R") ?? "null"}; " +
+                $"reason={proposal.Reason ?? "none"}");
+
+            // This fails if a Refused preview reaches Likely or stronger, an Accepted preview
+            // falls at Unlikely or weaker, or the previewed score or factor count differs from
+            // the proposal evaluation.
+            check(
+                "E13 procurement acceptance preview matches the proposal band",
+                acceptancePreview != null && proposal.Success &&
+                proposal.Evaluation != null &&
+                (proposal.Evaluation.Decision !=
+                     IntercolonyNegotiationDecision.Refused ||
+                 (int)acceptancePreview.Band <
+                     (int)IntercolonyNegotiationAcceptanceBand.Likely) &&
+                (proposal.Evaluation.Decision !=
+                     IntercolonyNegotiationDecision.Accepted ||
+                 (int)acceptancePreview.Band >
+                     (int)IntercolonyNegotiationAcceptanceBand.Unlikely) &&
+                acceptancePreview.Score == proposal.Evaluation.AcceptanceScore &&
+                acceptancePreview.Factors.Count == proposal.Evaluation.Factors.Count &&
+                acceptancePreview.AcceptanceChance == null &&
+                proposal.Contract != null &&
+                Mathf.Abs(
+                    acceptancePreview.ProposalAppeal - proposal.Contract.proposalAppeal) <=
+                    0.000001f,
+                $"preview band={acceptancePreview?.Band.ToString() ?? "null"}; " +
+                $"proposal decision={proposal.Evaluation?.Decision.ToString() ?? "null"}; " +
+                $"preview score={acceptancePreview?.Score.ToString("R") ?? "null"}; " +
+                $"proposal score={proposal.Evaluation?.AcceptanceScore.ToString("R") ?? "null"}; " +
+                $"preview factors={acceptancePreview?.Factors.Count.ToString() ?? "null"}; " +
+                $"proposal factors={proposal.Evaluation?.Factors.Count.ToString() ?? "null"}; " +
+                $"preview appeal={acceptancePreview?.ProposalAppeal.ToString("R") ?? "null"}; " +
+                $"stored appeal={proposal.Contract?.proposalAppeal.ToString("R") ?? "null"}; " +
+                $"preview chance={(acceptancePreview?.AcceptanceChance.HasValue == true
+                    ? acceptancePreview.AcceptanceChance.Value.ToString("R") : "null")}");
+
+            // This must fail if anyone reintroduces a bucketed appeal: two near-reference
+            // packages that differ only by a slight price change must retain different appeal
+            // values, and neither value may be one of the old 0, 0.5, or 1 buckets.
+            check(
+                "E16 procurement proposal appeal remains continuous",
+                preview != null &&
+                continuousFirstPreview != null && continuousSecondPreview != null &&
+                Mathf.Abs(slightlyDifferentPrice - continuousPrice) > 0f &&
+                Mathf.Abs(
+                    continuousFirstPreview.ProposalAppeal -
+                    continuousSecondPreview.ProposalAppeal) > 0.000001f &&
+                !IsLegacyAppealBucket(continuousFirstPreview.ProposalAppeal) &&
+                !IsLegacyAppealBucket(continuousSecondPreview.ProposalAppeal),
+                $"prices={continuousPrice:R}/{slightlyDifferentPrice:R}; " +
+                $"appeals={continuousFirstPreview?.ProposalAppeal.ToString("R") ?? "null"}/" +
+                $"{continuousSecondPreview?.ProposalAppeal.ToString("R") ?? "null"}");
+
+            state.ProcurementContracts.Clear();
+            const int outOfRangeQuantity = 0;
+            IntercolonyNegotiationAcceptancePreview outOfRangeAcceptancePreview =
+                ProcurementContractService.PreviewAcceptance(
+                    state, settlement, product, null, null, outOfRangeQuantity,
+                    cadenceDays, totalCycles, agreedUnitPrice: null,
+                    fulfillment: FulfillmentMode.SellerDelivery);
+            ProcurementContractTerms outOfRangePreview =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, outOfRangeQuantity,
+                    cadenceDays, totalCycles);
+            ProcurementContractProposalResult outOfRangeProposal =
+                ProcurementContractService.ProposeContract(
+                    state, settlement, product, null, null, outOfRangeQuantity,
+                    cadenceDays, totalCycles);
+
+            // This fails if preview accepts a quantity that ProposeContract rejects at its bounds.
+            check(
+                "E10 procurement preview refuses out-of-range quantity with proposal",
+                outOfRangePreview == null && outOfRangeAcceptancePreview == null &&
+                !outOfRangeProposal.Success &&
+                outOfRangeProposal.Contract == null &&
+                outOfRangeProposal.Failure == ProcurementContractProposalFailure.QuantityOutOfRange,
+                $"quantity={outOfRangeQuantity}; preview=" +
+                $"{(outOfRangePreview == null ? "null" : "terms")}; " +
+                $"proposal success={outOfRangeProposal.Success}; " +
+                $"failure={outOfRangeProposal.Failure}; " +
+                $"reason={outOfRangeProposal.Reason ?? "none"}");
+
+            // This fails if the acceptance preview returns a band for a package that violates a
+            // service bound, instead of returning null like the terms preview.
+            check(
+                "E15 procurement acceptance preview refuses an out-of-range package",
+                outOfRangeAcceptancePreview == null,
+                $"preview={(outOfRangeAcceptancePreview == null
+                    ? "null" : outOfRangeAcceptancePreview.Band.ToString())}");
+
+            state.ProcurementContracts.Clear();
+            ProcurementContractProposalResult existingProposal =
+                ProposeProcurementFixture(state, settlement, product);
+            ProcurementContractTerms existingPreview =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
+            ProcurementContractProposalResult duplicateProposal =
+                ProcurementContractService.ProposeContract(
+                    state, settlement, product, null, null, quantity, cadenceDays, totalCycles);
+
+            // This fails if preview omits the same settlement-and-item duplicate guard as proposal.
+            check(
+                "E11 procurement preview refuses an existing settlement-item agreement",
+                existingProposal.Success && existingProposal.Contract != null &&
+                existingPreview == null && !duplicateProposal.Success &&
+                duplicateProposal.Contract == null &&
+                duplicateProposal.Failure == ProcurementContractProposalFailure.ExistingContract,
+                $"existing success={existingProposal.Success}; preview=" +
+                $"{(existingPreview == null ? "null" : "terms")}; " +
+                $"duplicate success={duplicateProposal.Success}; " +
+                $"failure={duplicateProposal.Failure}; " +
+                $"reason={duplicateProposal.Reason ?? "none"}");
+
+            state.ProcurementContracts.Clear();
+            const float paymentFixtureUnitPrice = 0.02f;
+            const int paymentFixtureQuantity = 76;
+            const int paymentFixtureCadenceDays = 5;
+            const int paymentFixtureCycles = 5;
+            ProcurementContractTerms paymentTerms =
+                ProcurementContractService.PreviewContractTerms(
+                    state, settlement, product, null, null, paymentFixtureQuantity,
+                    paymentFixtureCadenceDays, paymentFixtureCycles,
+                    paymentFixtureUnitPrice);
+            int expectedPaymentPerCycle = IntercolonyPricing.TotalPayment(
+                paymentFixtureUnitPrice, paymentFixtureQuantity);
+            int expectedTotalPayment = IntercolonyPricing.TotalPayment(
+                expectedPaymentPerCycle, paymentFixtureCycles);
+
+            // This fails if payment truncates instead of rounding, or multiplies the unit price across all cycles instead of using the rounded per-cycle payment.
+            check(
+                "E12 procurement preview total payment uses shared pricing",
+                paymentTerms != null && paymentTerms.totalCycles == paymentFixtureCycles &&
+                paymentTerms.unitPrice == paymentFixtureUnitPrice &&
+                paymentTerms.paymentPerCycle == expectedPaymentPerCycle &&
+                paymentTerms.totalPayment == expectedTotalPayment &&
+                paymentTerms.totalPayment == IntercolonyPricing.TotalPayment(
+                    paymentTerms.paymentPerCycle, paymentFixtureCycles),
+                $"fixture unit={paymentFixtureUnitPrice:R}; " +
+                $"preview unit={paymentTerms?.unitPrice.ToString("R") ?? "null"}; " +
+                $"quantity={paymentFixtureQuantity}; cycles={paymentFixtureCycles}; " +
+                $"perCycle={paymentTerms?.paymentPerCycle.ToString() ?? "null"}; " +
+                $"total={paymentTerms?.totalPayment.ToString() ?? "null"}; " +
+                $"expected perCycle={expectedPaymentPerCycle}; " +
+                $"expected total={expectedTotalPayment}");
+
+            state.ProcurementContracts.Clear();
         }
 
         private static void CheckProcurementNegotiation(
@@ -3802,6 +6098,7 @@ namespace Intercolony
                             harmony.Patch(
                                 evaluatorMethod,
                                 postfix: new HarmonyLib.HarmonyMethod(evaluatorPostfix));
+                            EstablishEarnedProcurementRelationship(state, exchangeSettlement);
                             exchangeProposal = ProcurementContractService.ProposeContract(
                                 state,
                                 exchangeSettlement,
@@ -3924,6 +6221,7 @@ namespace Intercolony
                 return false;
             }
 
+            EstablishEarnedProcurementRelationship(state, settlement);
             float[] priceMultipliers =
             {
                 0.50f, 0.55f, 0.60f, 0.65f, 0.70f, 0.75f, 0.80f, 0.85f,
@@ -4498,6 +6796,7 @@ namespace Intercolony
             int totalCycles = 2,
             float? agreedUnitPrice = null)
         {
+            EstablishEarnedProcurementRelationship(state, settlement);
             return ProcurementContractService.ProposeContract(
                 state, settlement, product, quantity, cadenceDays, totalCycles,
                 agreedUnitPrice, FulfillmentMode.SellerDelivery);
@@ -4534,6 +6833,12 @@ namespace Intercolony
                 $"current tick={currentTick}; due tick={contract?.decisionDueTick.ToString() ?? "null"}; " +
                 $"status={(contract == null ? "null" : contract.status.ToString())}; " +
                 $"active={(!noActiveContract)}; reason={result.Reason ?? "none"}");
+            check(
+                "a new procurement agreement starts with auto-ready on",
+                result.Success && contract != null && contract.autoReadyOrders,
+                $"autoReadyOrders={(contract == null ? "null" : contract.autoReadyOrders.ToString())}; " +
+                "construction path=ProposeProcurementFixture -> " +
+                "ProcurementContractService.ProposeContract");
             state.ProcurementContracts.Clear();
         }
 
@@ -4664,7 +6969,8 @@ namespace Intercolony
 
             IntercolonyNegotiationDecision decision =
                 (IntercolonyNegotiationDecision)capturedDecision;
-            ProcurementContractStatus expectedStatus;
+            ProcurementContractStatus expectedStatus = ProcurementContractStatus.Cancelled;
+            bool recognizedDecision = true;
             switch (decision)
             {
                 case IntercolonyNegotiationDecision.Accepted:
@@ -4677,16 +6983,16 @@ namespace Intercolony
                     expectedStatus = ProcurementContractStatus.CounterpartyCountered;
                     break;
                 default:
-                    throw new InvalidOperationException(
-                        $"Unhandled procurement proposal decision: {decision}");
+                    recognizedDecision = false;
+                    break;
             }
             check(
                 "E3 persisted procurement decision survives save/load",
-                failure == null && result.Success && original != null &&
+                recognizedDecision && failure == null && result.Success && original != null &&
                 loaded != null && loaded.proposalDecision == capturedDecision &&
                 answer != null && answer.Applied && answer.Decision == decision &&
                 loaded.status == expectedStatus,
-                $"captured decision={decision}; loaded decision=" +
+                $"captured decision={decision}; recognized={recognizedDecision}; loaded decision=" +
                 $"{(loaded == null ? "null" : ((IntercolonyNegotiationDecision)loaded.proposalDecision).ToString())}; " +
                 $"loaded status={(loaded == null ? "null" : loaded.status.ToString())}; " +
                 $"expected status={expectedStatus}; answer={answer?.Decision.ToString() ?? "null"}; " +
@@ -4916,7 +7222,8 @@ namespace Intercolony
                     {
                         // A favourable relationship makes the reachability probe independent of
                         // whatever reputation the live world happened to give this settlement.
-                        SetProcurementReputation(state, candidateProfile);
+                        EstablishEarnedProcurementRelationship(
+                            state, candidateSettlement);
                         reputationPinnedCandidates++;
                         ProcurementContractProposalResult candidateResult =
                             ProposeProcurementFixture(
@@ -5414,6 +7721,8 @@ namespace Intercolony
                 int g4OldNextTick = GenTicks.TicksGame;
                 int g4FailedBefore = acceptedContract.cyclesFailed;
                 acceptedContract.nextCycleTick = g4OldNextTick;
+                // G4 tests the non-automated failure path; automated agreements wait for silver instead.
+                acceptedContract.autoReadyOrders = false;
                 ProcurementContractService.AdvanceCycles(state);
                 int g4NewNextTick = acceptedContract.nextCycleTick;
                 check(
@@ -8515,15 +10824,18 @@ namespace Intercolony
             return "[" + string.Join(",", details.ToArray()) + "]";
         }
 
-        private static void SetProcurementReputation(
+        private static void EstablishEarnedProcurementRelationship(
             IntercolonyWorldComponent state,
-            SettlementEconomicProfile profile)
+            Settlement settlement)
         {
             CommercialReputation reputation = new CommercialReputation(
-                profile.settlementId, profile.settlementName, profile.factionName);
+                settlement.ID, settlement.Label ?? "unnamed", settlement.Faction?.Name ?? "");
             reputation.Adjust(
-                CommercialReputation.MaxScore - CommercialReputation.StartingScore);
-            state.Reputations[profile.settlementId] = reputation;
+                ProcurementContractService.MinimumReputation -
+                CommercialReputation.StartingScore);
+            reputation.purchasesCompleted =
+                ProcurementContractService.MinimumCompletedPurchasesForAgreement;
+            state.Reputations[settlement.ID] = reputation;
         }
 
         private static void CheckProcurementProposalPriceDirection(
@@ -9011,6 +11323,575 @@ namespace Intercolony
             }
 
             return total;
+        }
+
+        private static void CheckLogisticsDisclosure(
+            System.Action<string, bool, string> check,
+            System.Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            const string PriceAssertion =
+                "the disclosed logistics cost matches the price it came from";
+            const string DistanceAssertion =
+                "a farther supplier discloses a larger logistics cost";
+            const string UnavailableAssertion =
+                "a quotation without usable factors discloses nothing rather than guessing";
+            const string MethodAssertion =
+                "the disclosed line names the method that was recorded";
+            const float PriceRoundingTolerance = 0.51f;
+
+            string FactorExplanation(
+                float distanceMultiplier,
+                float transportMultiplier,
+                bool supplierDelivers)
+            {
+                string methodLabel = supplierDelivers ? "Supplier delivery" : "You collect";
+                return $"Distance {(distanceMultiplier - 1f) * 100f:F1}%\n" +
+                       $"{methodLabel} {(transportMultiplier - 1f) * 100f:F1}%";
+            }
+
+            string FormatDisclosure(
+                Quotation quote,
+                int logisticsSilver,
+                bool distanceFactorUsable,
+                bool transportFactorUsable,
+                string line)
+            {
+                float distanceMultiplier = LogisticsQuote.DistancePriceMultiplierFor(
+                    quote.distanceTiles);
+                float transportMultiplier = LogisticsQuote.TransportPriceMultiplierFor(
+                    LogisticsQuote.MethodFor(quote.supplierDelivers));
+                string recordedMethod = LogisticsQuote.MethodFor(quote.supplierDelivers).ToString();
+                string distanceText = distanceFactorUsable
+                    ? distanceMultiplier.ToString("F4")
+                    : $"{distanceMultiplier:F4} (not usable)";
+                string transportText = transportFactorUsable
+                    ? transportMultiplier.ToString("F4")
+                    : $"{transportMultiplier:F4} (not usable)";
+                return $"unitPrice={quote.unitPrice:F4}, distance={quote.distanceTiles:F2}, " +
+                       $"distanceMultiplier={distanceText}, " +
+                       $"transportMultiplier={transportText}, " +
+                       $"disclosedSilver={logisticsSilver}, recordedMethod={recordedMethod}, " +
+                       $"line=\"{line}\"";
+            }
+
+            Quotation deliveryQuotation = null;
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null ||
+                    !IntercolonyProductClassifier.TryGetTradableCategory(
+                        candidate, out IntercolonyProductCategory category))
+                {
+                    continue;
+                }
+
+                PurchaseRequest request = new PurchaseRequest
+                {
+                    thingDef = candidate,
+                    quantityRequested = 20,
+                    desiredDays = 15,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.SupplierDelivers,
+                    stuffDef = null,
+                    minQuality = null
+                };
+                RfqService.GenerateResponses(state, request);
+
+                foreach (Quotation quote in request.quotes)
+                {
+                    if (quote != null && quote.supplierDelivers)
+                    {
+                        deliveryQuotation = quote;
+                        break;
+                    }
+                }
+
+                if (deliveryQuotation != null)
+                {
+                    break;
+                }
+            }
+
+            if (deliveryQuotation == null)
+            {
+                skip(PriceAssertion,
+                    "no supplier-delivery quotation could be obtained from the RFQ path");
+            }
+            else
+            {
+                bool hasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                    deliveryQuotation, out int logisticsSilver);
+                float distanceMultiplier = LogisticsQuote.DistancePriceMultiplierFor(
+                    deliveryQuotation.distanceTiles);
+                float transportMultiplier = LogisticsQuote.TransportPriceMultiplierFor(
+                    LogisticsQuote.MethodFor(deliveryQuotation.supplierDelivers));
+                float logisticsMultiplier = distanceMultiplier * transportMultiplier;
+                float priceWithoutLogistics = deliveryQuotation.unitPrice / logisticsMultiplier;
+                float priceAfterDisclosure = deliveryQuotation.unitPrice - logisticsSilver;
+                string line = MainTabWindow_Intercolony.QuoteLogisticsLine(deliveryQuotation);
+                bool priceMatches = hasDisclosure && logisticsMultiplier > 0f &&
+                    !float.IsNaN(logisticsMultiplier) && !float.IsInfinity(logisticsMultiplier) &&
+                    Mathf.Abs(priceAfterDisclosure - priceWithoutLogistics) <=
+                        PriceRoundingTolerance;
+                check(
+                    PriceAssertion,
+                    priceMatches,
+                    FormatDisclosure(
+                        deliveryQuotation,
+                        logisticsSilver,
+                        hasDisclosure,
+                        hasDisclosure,
+                        line) +
+                    $"; priceWithoutLogistics={priceWithoutLogistics:F4}, " +
+                    $"priceAfterDisclosure={priceAfterDisclosure:F4}, " +
+                    $"tolerance={PriceRoundingTolerance:F2}");
+            }
+
+            const float ProbeUnitPrice = 100f;
+            const float NearDistance = 0f;
+            const float FartherDistance = 100f;
+            float nearDistanceMultiplier = LogisticsQuote.DistancePriceMultiplierFor(NearDistance);
+            float fartherDistanceMultiplier =
+                LogisticsQuote.DistancePriceMultiplierFor(FartherDistance);
+            float deliveryTransportMultiplier = LogisticsQuote.TransportPriceMultiplierFor(
+                LogisticsTransportMethod.SupplierDelivery);
+            Quotation nearQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = NearDistance,
+                supplierDelivers = true,
+                priceExplanation = FactorExplanation(
+                    nearDistanceMultiplier, deliveryTransportMultiplier, supplierDelivers: true)
+            };
+            Quotation fartherQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = FartherDistance,
+                supplierDelivers = true,
+                priceExplanation = FactorExplanation(
+                    fartherDistanceMultiplier, deliveryTransportMultiplier, supplierDelivers: true)
+            };
+            bool nearHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                nearQuotation, out int nearLogisticsSilver);
+            bool fartherHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                fartherQuotation, out int fartherLogisticsSilver);
+            string nearLine = MainTabWindow_Intercolony.QuoteLogisticsLine(nearQuotation);
+            string fartherLine = MainTabWindow_Intercolony.QuoteLogisticsLine(fartherQuotation);
+            check(
+                DistanceAssertion,
+                nearHasDisclosure && fartherHasDisclosure &&
+                fartherLogisticsSilver > nearLogisticsSilver,
+                "near " + FormatDisclosure(
+                    nearQuotation,
+                    nearLogisticsSilver,
+                    nearHasDisclosure,
+                    nearHasDisclosure,
+                    nearLine) +
+                "; farther " + FormatDisclosure(
+                    fartherQuotation,
+                    fartherLogisticsSilver,
+                    fartherHasDisclosure,
+                    fartherHasDisclosure,
+                    fartherLine));
+
+            Quotation underivableQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = 32f,
+                supplierDelivers = true,
+                // The transport factor is present, but omitting Distance makes the stored terms
+                // insufficient to recover the multiplier that produced unitPrice.
+                priceExplanation = "Supplier delivery +12.0%"
+            };
+            bool underivableHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                underivableQuotation, out int underivableLogisticsSilver);
+            string underivableLine = MainTabWindow_Intercolony.QuoteLogisticsLine(
+                underivableQuotation);
+            check(
+                UnavailableAssertion,
+                !underivableHasDisclosure && underivableLine.Contains("Logistics: unavailable"),
+                FormatDisclosure(
+                    underivableQuotation,
+                    underivableLogisticsSilver,
+                    distanceFactorUsable: false,
+                    transportFactorUsable: true,
+                    underivableLine) +
+                $"; TryGetLogisticsSilver={underivableHasDisclosure}");
+
+            Quotation deliveryMethodQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = NearDistance,
+                supplierDelivers = true,
+                priceExplanation = FactorExplanation(
+                    nearDistanceMultiplier, deliveryTransportMultiplier, supplierDelivers: true)
+            };
+            Quotation pickupMethodQuotation = new Quotation
+            {
+                unitPrice = ProbeUnitPrice,
+                distanceTiles = NearDistance,
+                supplierDelivers = false,
+                priceExplanation = FactorExplanation(
+                    nearDistanceMultiplier,
+                    LogisticsQuote.TransportPriceMultiplierFor(LogisticsTransportMethod.ColonyPickup),
+                    supplierDelivers: false)
+            };
+            bool deliveryMethodHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                deliveryMethodQuotation, out int deliveryMethodSilver);
+            bool pickupMethodHasDisclosure = MainTabWindow_Intercolony.TryGetLogisticsSilver(
+                pickupMethodQuotation, out int pickupMethodSilver);
+            string deliveryMethodLine = MainTabWindow_Intercolony.QuoteLogisticsLine(
+                deliveryMethodQuotation);
+            string pickupMethodLine = MainTabWindow_Intercolony.QuoteLogisticsLine(
+                pickupMethodQuotation);
+            bool methodMatchesRecordedField =
+                deliveryMethodLine.Contains("They deliver it") &&
+                !deliveryMethodLine.Contains("You collect it") &&
+                pickupMethodLine.Contains("You collect it") &&
+                !pickupMethodLine.Contains("They deliver it");
+            check(
+                MethodAssertion,
+                methodMatchesRecordedField,
+                "delivery " + FormatDisclosure(
+                    deliveryMethodQuotation,
+                    deliveryMethodSilver,
+                    deliveryMethodHasDisclosure,
+                    deliveryMethodHasDisclosure,
+                    deliveryMethodLine) +
+                "; pickup " + FormatDisclosure(
+                    pickupMethodQuotation,
+                    pickupMethodSilver,
+                    pickupMethodHasDisclosure,
+                    pickupMethodHasDisclosure,
+                    pickupMethodLine));
+        }
+
+        private static void CheckLogisticsQuoteOwnership(
+            System.Action<string, bool, string> check,
+            System.Action<string, string> skip,
+            IntercolonyWorldComponent state)
+        {
+            const string LeadAssertion =
+                "a supplier-delivery quote's lead time comes from the shared owner";
+            const string PriceAssertion =
+                "a supplier-delivery quote's price multiplier comes from the shared owner";
+            const string DirectionAssertion =
+                "distance changes a delivery quote in the direction it should";
+            const string MethodAssertion =
+                "a pickup quote reports pickup, and a delivery quote reports delivery";
+
+            float ReportedMultiplier(
+                string explanation,
+                string factorLabel,
+                out bool found)
+            {
+                found = false;
+                foreach (string line in (explanation ?? "").Split('\n'))
+                {
+                    string trimmed = line.Trim();
+                    if (!trimmed.StartsWith(factorLabel, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    int percentIndex = trimmed.IndexOf('%');
+                    if (percentIndex <= factorLabel.Length)
+                    {
+                        return float.NaN;
+                    }
+
+                    string percentText = trimmed.Substring(
+                        factorLabel.Length, percentIndex - factorLabel.Length).Trim();
+                    if (!float.TryParse(percentText, out float percent))
+                    {
+                        return float.NaN;
+                    }
+
+                    found = true;
+                    return 1f + percent / 100f;
+                }
+
+                return float.NaN;
+            }
+
+            string FormatTerms(
+                float distance,
+                LogisticsTransportMethod method,
+                int lead,
+                float multiplier,
+                float? unitPrice = null)
+            {
+                string terms =
+                    $"distance={distance:F2}, " +
+                    $"method={method}, " +
+                    $"lead={lead}, " +
+                    $"multiplier={multiplier:F4}";
+                if (unitPrice.HasValue)
+                {
+                    terms += $", unitPrice={unitPrice.Value:F4}";
+                }
+
+                return "{" + terms + "}";
+            }
+
+            Quotation deliveryQuotation = null;
+            Quotation pickupQuotation = null;
+            IntercolonyProductCategory probeCategory = IntercolonyProductCategory.Commodities;
+            ThingDef probeDef = null;
+            Settlement probeSettlement = null;
+
+            foreach (ThingDef candidate in IntercolonyProductClassifier.TradableDefs)
+            {
+                if (candidate == null ||
+                    !IntercolonyProductClassifier.TryGetTradableCategory(
+                        candidate, out IntercolonyProductCategory category))
+                {
+                    continue;
+                }
+
+                PurchaseRequest candidateDelivery = new PurchaseRequest
+                {
+                    thingDef = candidate,
+                    quantityRequested = 20,
+                    desiredDays = 15,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.SupplierDelivers,
+                    stuffDef = null,
+                    minQuality = null
+                };
+                PurchaseRequest candidatePickup = new PurchaseRequest
+                {
+                    thingDef = candidate,
+                    quantityRequested = 20,
+                    desiredDays = 15,
+                    fulfillmentPreference = ProcurementFulfillmentPreference.PlayerPickup,
+                    stuffDef = null,
+                    minQuality = null
+                };
+
+                // GenerateResponses is the real RFQ path. It pushes the same seed used by live
+                // requests and pops it again, so probing here does not perturb the caller's RNG.
+                RfqService.GenerateResponses(state, candidateDelivery);
+                RfqService.GenerateResponses(state, candidatePickup);
+
+                foreach (Quotation candidateDeliveryQuotation in candidateDelivery.quotes)
+                {
+                    if (candidateDeliveryQuotation == null)
+                    {
+                        continue;
+                    }
+
+                    Quotation matchingPickup = null;
+                    foreach (Quotation candidatePickupQuotation in candidatePickup.quotes)
+                    {
+                        if (candidatePickupQuotation != null &&
+                            candidatePickupQuotation.settlementId ==
+                                candidateDeliveryQuotation.settlementId)
+                        {
+                            matchingPickup = candidatePickupQuotation;
+                            break;
+                        }
+                    }
+
+                    Settlement settlement = IntercolonyMarketAccess.FindSettlement(
+                        candidateDeliveryQuotation.settlementId);
+                    if (matchingPickup == null || settlement == null ||
+                        state.GetProfile(settlement) == null)
+                    {
+                        continue;
+                    }
+
+                    deliveryQuotation = candidateDeliveryQuotation;
+                    pickupQuotation = matchingPickup;
+                    probeCategory = category;
+                    probeDef = candidate;
+                    probeSettlement = settlement;
+                    break;
+                }
+
+                if (deliveryQuotation != null)
+                {
+                    break;
+                }
+            }
+
+            if (deliveryQuotation == null || pickupQuotation == null || probeSettlement == null)
+            {
+                string reason =
+                    "no paired deterministic supplier-delivery and pickup RFQ quotations " +
+                    "could be obtained from the loaded settlements";
+                skip(LeadAssertion, reason);
+                skip(PriceAssertion, reason);
+                skip(DirectionAssertion, reason);
+                skip(MethodAssertion, reason);
+                return;
+            }
+
+            SettlementEconomicProfile profile = state.GetProfile(probeSettlement);
+            float supply = EffectiveEconomyService.EffectiveSupply(
+                state, profile, probeCategory);
+            LogisticsTransportMethod deliveryMethod =
+                LogisticsQuote.MethodFor(deliveryQuotation.supplierDelivers);
+            LogisticsTransportMethod pickupMethod =
+                LogisticsQuote.MethodFor(pickupQuotation.supplierDelivers);
+            LogisticsQuote deliveryOwner = LogisticsQuote.Create(
+                deliveryQuotation.distanceTiles,
+                deliveryMethod,
+                supply);
+
+            // Quotation persists the human-readable factors rather than a separate multiplier.
+            // Reconstruct the RFQ-side logistics multiplier from its Distance and Supplier
+            // delivery rows. Those rows are rounded to one decimal percent, so the comparison
+            // allows the corresponding half-point-in-the-last-place error. The independent
+            // unit-price comparison below also catches an RFQ-side multiplier change if the
+            // explanation were left stale.
+            bool hasDistanceFactor;
+            float rfqDistanceMultiplier;
+            if (deliveryQuotation.distanceTiles < 0f)
+            {
+                rfqDistanceMultiplier = 1f;
+                hasDistanceFactor = true;
+            }
+            else
+            {
+                rfqDistanceMultiplier = ReportedMultiplier(
+                    deliveryQuotation.priceExplanation, "Distance", out hasDistanceFactor);
+            }
+
+            float rfqTransportMultiplier = ReportedMultiplier(
+                deliveryQuotation.priceExplanation,
+                "Supplier delivery",
+                out bool hasTransportFactor);
+            float rfqNegotiationMultiplier = ReportedMultiplier(
+                deliveryQuotation.priceExplanation,
+                "Negotiation",
+                out bool hasNegotiationFactor);
+            float rfqPriceMultiplier = rfqDistanceMultiplier * rfqTransportMultiplier;
+            float expectedRfqPrice = float.NaN;
+            if (hasNegotiationFactor)
+            {
+                expectedRfqPrice = IntercolonyPricing.SupplierUnitPrice(
+                    state,
+                    probeDef,
+                    deliveryQuotation.offeredStuff,
+                    deliveryQuotation.offeredQuality,
+                    profile,
+                    probeCategory,
+                    supply,
+                    deliveryOwner,
+                    20,
+                    rfqNegotiationMultiplier,
+                    out _);
+            }
+            string rfqTerms = FormatTerms(
+                deliveryQuotation.distanceTiles,
+                deliveryMethod,
+                deliveryQuotation.leadTimeDays,
+                rfqPriceMultiplier,
+                deliveryQuotation.unitPrice);
+            string ownerTerms = FormatTerms(
+                deliveryOwner.DistanceTiles,
+                deliveryOwner.TransportMethod,
+                deliveryOwner.LeadTimeDays,
+                deliveryOwner.PriceMultiplier,
+                expectedRfqPrice);
+
+            check(
+                LeadAssertion,
+                deliveryQuotation.leadTimeDays == deliveryOwner.LeadTimeDays,
+                "RFQ " + rfqTerms + "; Create " + ownerTerms);
+            check(
+                PriceAssertion,
+                hasDistanceFactor && hasTransportFactor &&
+                hasNegotiationFactor &&
+                Mathf.Abs(rfqPriceMultiplier - deliveryOwner.PriceMultiplier) <= 0.001f &&
+                !float.IsNaN(expectedRfqPrice) &&
+                Mathf.Abs(deliveryQuotation.unitPrice - expectedRfqPrice) <=
+                    Mathf.Max(0.01f, Mathf.Abs(expectedRfqPrice) * 0.001f),
+                "RFQ " + rfqTerms + "; Create " + ownerTerms);
+
+            LogisticsQuote nearestDelivery = LogisticsQuote.Create(
+                0f, LogisticsTransportMethod.SupplierDelivery, supply);
+            LogisticsQuote fartherDelivery = nearestDelivery;
+            int fartherDistance = 0;
+            bool foundFartherDelivery = false;
+            for (int distance = 1; distance <= 1000; distance++)
+            {
+                LogisticsQuote candidate = LogisticsQuote.Create(
+                    distance, LogisticsTransportMethod.SupplierDelivery, supply);
+                fartherDelivery = candidate;
+                fartherDistance = distance;
+                if (candidate.PriceMultiplier > nearestDelivery.PriceMultiplier &&
+                    candidate.LeadTimeDays > nearestDelivery.LeadTimeDays)
+                {
+                    foundFartherDelivery = true;
+                    break;
+                }
+            }
+
+            int capDistance = -1;
+            LogisticsQuote cappedDelivery = nearestDelivery;
+            LogisticsQuote afterCapDelivery = nearestDelivery;
+            float previousMultiplier = nearestDelivery.PriceMultiplier;
+            for (int distance = 1; distance <= 1000; distance++)
+            {
+                LogisticsQuote candidate = LogisticsQuote.Create(
+                    distance, LogisticsTransportMethod.SupplierDelivery, supply);
+                if (Mathf.Approximately(candidate.PriceMultiplier, previousMultiplier))
+                {
+                    capDistance = distance - 1;
+                    cappedDelivery = LogisticsQuote.Create(
+                        capDistance, LogisticsTransportMethod.SupplierDelivery, supply);
+                    afterCapDelivery = candidate;
+                    break;
+                }
+
+                previousMultiplier = candidate.PriceMultiplier;
+            }
+
+            bool directionAndCapHold =
+                foundFartherDelivery &&
+                fartherDelivery.PriceMultiplier > nearestDelivery.PriceMultiplier &&
+                fartherDelivery.LeadTimeDays > nearestDelivery.LeadTimeDays &&
+                capDistance > 0 &&
+                cappedDelivery.PriceMultiplier >
+                    LogisticsQuote.Create(
+                        capDistance - 1,
+                        LogisticsTransportMethod.SupplierDelivery,
+                        supply).PriceMultiplier &&
+                Mathf.Approximately(
+                    cappedDelivery.PriceMultiplier, afterCapDelivery.PriceMultiplier);
+            check(
+                DirectionAssertion,
+                directionAndCapHold,
+                "near " + FormatTerms(
+                    nearestDelivery.DistanceTiles,
+                    nearestDelivery.TransportMethod,
+                    nearestDelivery.LeadTimeDays,
+                    nearestDelivery.PriceMultiplier) +
+                "; far " + FormatTerms(
+                    fartherDistance,
+                    fartherDelivery.TransportMethod,
+                    fartherDelivery.LeadTimeDays,
+                    fartherDelivery.PriceMultiplier) +
+                $"; price cap first binds at {capDistance} tiles " +
+                $"({cappedDelivery.PriceMultiplier:F4} -> {afterCapDelivery.PriceMultiplier:F4})");
+
+            float pickupPriceMultiplier =
+                LogisticsQuote.DistancePriceMultiplierFor(pickupQuotation.distanceTiles) *
+                LogisticsQuote.TransportPriceMultiplierFor(LogisticsTransportMethod.ColonyPickup);
+            check(
+                MethodAssertion,
+                deliveryMethod == LogisticsTransportMethod.SupplierDelivery &&
+                pickupMethod == LogisticsTransportMethod.ColonyPickup,
+                "delivery " + FormatTerms(
+                    deliveryQuotation.distanceTiles,
+                    deliveryMethod,
+                    deliveryQuotation.leadTimeDays,
+                    rfqPriceMultiplier) +
+                "; pickup " + FormatTerms(
+                    pickupQuotation.distanceTiles,
+                    pickupMethod,
+                    pickupQuotation.leadTimeDays,
+                    pickupPriceMultiplier));
         }
 
         /// <summary>

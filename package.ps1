@@ -39,6 +39,9 @@ $OutputRoot  = Join-Path $Repo "dist"
 $PackageName = "Intercolony-$Version"
 $PackageDir  = Join-Path $OutputRoot $PackageName
 $ZipPath     = Join-Path $OutputRoot "$PackageName.zip"
+$Assembly    = Join-Path $Repo "Assemblies\Intercolony.dll"
+$SourceRoot  = Join-Path $Repo "Source\Intercolony"
+$SourceHashFile = Join-Path $Repo "Assemblies\Intercolony.dll.sources.sha256"
 
 # Keep this list deliberately small. New repository folders do not become release
 # content until somebody explicitly decides that RimWorld needs them at runtime.
@@ -78,6 +81,11 @@ function Copy-ReleaseDirectory($source, $destination, $relativePath) {
         if ($childRelative -ieq "About\PublishedFileId.txt") {
             continue
         }
+        # The source manifest is local build provenance, not runtime mod content. Verify it
+        # before packaging, but do not copy it into the release artifact.
+        if ($childRelative -ieq "Assemblies\Intercolony.dll.sources.sha256") {
+            continue
+        }
 
         $target = Join-Path $destination $item.Name
         if ($item.PSIsContainer) {
@@ -112,6 +120,91 @@ function Assert-PackagePath($relativePath, $shouldExist) {
         $expectation = if ($shouldExist) { "contain" } else { "exclude" }
         throw "Package verification failed: expected output to $expectation '$relativePath'."
     }
+}
+
+function Get-CompiledSources {
+    # Match the SDK project's implicit Compile items; generated obj/bin files are not source
+    # inputs and should not make a good release DLL look stale.
+    return @(Get-ChildItem -LiteralPath $SourceRoot -Filter "*.cs" -File -Recurse |
+        Where-Object { $_.FullName -notmatch '\\(obj|bin)\\' })
+}
+
+function Get-SourceSetHash($sources) {
+    # Hash a canonical manifest of relative paths and per-file contents. The paths make the
+    # file set part of the hash, while deliberately excluding absolute paths and timestamps.
+    $manifest = New-Object System.Text.StringBuilder
+    $orderedSources = @($sources | Sort-Object @{ Expression = {
+        $_.FullName.Substring($SourceRoot.Length).TrimStart('\').Replace('\', '/')
+    }; Ascending = $true })
+    foreach ($source in $orderedSources) {
+        $relativePath = $source.FullName.Substring($SourceRoot.Length).TrimStart('\').Replace('\', '/')
+        $fileHash = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        [void]$manifest.Append($relativePath.Length)
+        [void]$manifest.Append(":")
+        [void]$manifest.Append($relativePath)
+        [void]$manifest.Append(":")
+        [void]$manifest.Append($fileHash)
+        [void]$manifest.Append("`n")
+    }
+
+    $sha = New-Object System.Security.Cryptography.SHA256Managed
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($manifest.ToString())
+        $digest = $sha.ComputeHash($bytes)
+    } finally {
+        $sha.Dispose()
+    }
+    return ([BitConverter]::ToString($digest)).Replace("-", "").ToLowerInvariant()
+}
+
+function Read-RecordedSourceHash($path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+    try {
+        $value = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::ASCII).Trim()
+    } catch {
+        return $null
+    }
+    if ($value -notmatch '^[0-9a-fA-F]{64}$') {
+        return $null
+    }
+    return $value.ToLowerInvariant()
+}
+
+function Assert-AssemblyCurrent($assemblyPath) {
+    if (-not (Test-Path -LiteralPath $SourceRoot -PathType Container)) {
+        throw "Package verification failed: compiled source root is missing at '$SourceRoot'."
+    }
+    if (-not (Test-Path -LiteralPath $assemblyPath -PathType Leaf)) {
+        throw "Package verification failed: compiled binary is missing at '$assemblyPath'."
+    }
+
+    $sources = @(Get-CompiledSources)
+    if ($sources.Count -eq 0) {
+        throw "Package verification failed: no compiled C# sources found under '$SourceRoot'."
+    }
+
+    $currentSourceHash = Get-SourceSetHash $sources
+    $recordedSourceHash = Read-RecordedSourceHash $SourceHashFile
+    if ($null -eq $recordedSourceHash) {
+        throw "Package verification failed: source hash sidecar is missing or unreadable at '$SourceHashFile'."
+    }
+    if ($currentSourceHash -ne $recordedSourceHash) {
+        throw ("Package verification failed: compiled-source hash mismatch. Sidecar recorded " +
+               "{0}, but the current source set hashes to {1}. Rebuild before packaging." -f
+               $recordedSourceHash, $currentSourceHash)
+    }
+
+    $newestSource = $sources | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    $binary = Get-Item -LiteralPath $assemblyPath
+    if ($binary.LastWriteTimeUtc -lt $newestSource.LastWriteTimeUtc) {
+        throw ("Package verification failed: stale binary '$assemblyPath' is older than the " +
+               "newest compiled source '$($newestSource.FullName)'. Rebuild before packaging. " +
+               ("Binary {0:o}; source {1:o}." -f $binary.LastWriteTimeUtc, $newestSource.LastWriteTimeUtc))
+    }
+
+    Write-Host ("Release binary current: {0} is at least as new as {1}; compiled-source hash verified." -f $binary.Name, $newestSource.Name) -ForegroundColor Green
 }
 
 <#
@@ -160,6 +253,11 @@ function Assert-NoDevBridge($assemblyPath) {
 }
 
 # ------------------------------------------------------------------ build ----
+
+# package.ps1 deliberately does not compile. Without this check it can copy a DLL left by an
+# earlier build, including after a mutation test restored a source file with Copy-Item and made
+# its timestamp look older than the mutated assembly.
+Assert-AssemblyCurrent $Assembly
 
 if (Test-Path -LiteralPath $OutputRoot) {
     Assert-OrdinaryItem (Get-Item -LiteralPath $OutputRoot -Force)

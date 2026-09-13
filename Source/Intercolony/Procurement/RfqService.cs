@@ -7,7 +7,7 @@ using Verse;
 namespace Intercolony
 {
     /// <summary>
-    /// Creates purchase requests and generates supplier responses
+    /// Creates purchase requests, generates supplier responses, and reveals them progressively
     /// (DESIGN.md §19 RFQs, §20 scarcity model, Phase 10 §103).
     ///
     /// §20 calls this "the core anti-vending-machine design", and that is the whole point:
@@ -20,8 +20,27 @@ namespace Intercolony
     /// </summary>
     public static class RfqService
     {
-        /// <summary>How long a request and its quotes stand before lapsing.</summary>
+        /// <summary>
+        /// Base lifespan for a request. The response schedule is capped below this boundary so a
+        /// reply at the maximum arrival day still has time to be revealed.
+        /// </summary>
         public const int RequestLifespanDays = 6;
+
+        /// <summary>Hard maximum delay from request creation to a scheduled response.</summary>
+        private const int MaxResponseDelayDays = 5;
+
+        /// <summary>
+        /// RFQ information propagates faster than the physical delivery lead time. Keeping this
+        /// response-specific scale in RfqService leaves LogisticsQuote's shared travel estimate
+        /// untouched while retaining a meaningful distance gradient.
+        /// </summary>
+        private const float ResponseDistanceTilesPerDay = 48f;
+
+        /// <summary>Compresses the existing quotation lead-time signal into a short reply setup.</summary>
+        private const int MaxResponsePreparationDays = 2;
+
+        /// <summary>Small tendency for the existing best-ranked offer to arrive later.</summary>
+        private const int AttractiveQuoteBiasDays = 1;
 
         /// <summary>Baseline chance a plausible supplier bothers to answer at all.</summary>
         private const float BaseResponseChance = 0.55f;
@@ -89,14 +108,21 @@ namespace Intercolony
             };
 
             GenerateResponses(state, request);
+            int generatedResponseCount = request.quotes.Count;
             state.AddRequest(request);
+            int pendingResponseCount = QueueResponses(state, request);
+            if (pendingResponseCount > 0)
+            {
+                request.noResponseReason = PendingResponsesText(pendingResponseCount);
+            }
 
-            if (request.AnyQuotes)
+            if (generatedResponseCount > 0)
             {
                 IntercolonyLog.Message(
-                    $"Request {request.id}: {quantity}x {def.label} — {request.quotes.Count} quote(s).");
+                    $"Request {request.id}: {quantity}x {def.label} — " +
+                    $"{pendingResponseCount} response(s) pending.");
                 Messages.Message(
-                    $"{request.quotes.Count} supplier(s) answered your request for {quantity}x {def.label}.",
+                    $"Request for {quantity}x {def.label} sent. Supplier replies are still coming.",
                     MessageTypeDefOf.NeutralEvent, historical: false);
             }
             else
@@ -205,6 +231,227 @@ namespace Intercolony
             }
         }
 
+        /// <summary>
+        /// Moves the quotations generated for a live request into the world-owned arrival queue.
+        /// The quotation objects are not regenerated or copied, so their prices and promised
+        /// properties remain exactly the values rolled at request creation. The request deadline
+        /// remains the existing six-day lifespan; the response schedule is capped at five days, so
+        /// no old distance-based extension is needed.
+        /// </summary>
+        private static int QueueResponses(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request)
+        {
+            if (state == null || request == null || request.quotes == null ||
+                request.quotes.Count == 0 || state.PendingRfqResponses == null)
+            {
+                return 0;
+            }
+
+            int queued = 0;
+            foreach (Quotation quote in request.quotes)
+            {
+                if (quote == null)
+                {
+                    continue;
+                }
+
+                int arrivalTick = request.createdTick +
+                                  ResponseDelayDays(state, request, quote) * GenDate.TicksPerDay;
+                state.PendingRfqResponses.Add(new PendingRfqResponse
+                {
+                    requestId = request.id,
+                    quote = quote,
+                    arrivalTick = arrivalTick
+                });
+                queued++;
+            }
+
+            request.quotes.Clear();
+            return queued;
+        }
+
+        /// <summary>
+        /// Reveals due quotations from the persisted queue and reports a request once its final
+        /// pending response has arrived. This is called by the existing coarse world tick, not by
+        /// a new scheduler. A request that was withdrawn, ordered, expired, or otherwise disappeared
+        /// cannot receive a late answer.
+        /// </summary>
+        internal static int AdvancePendingResponses(IntercolonyWorldComponent state)
+        {
+            if (state == null || state.PendingRfqResponses == null ||
+                state.PendingRfqResponses.Count == 0)
+            {
+                return 0;
+            }
+
+            int now = GenTicks.TicksGame;
+            int revealed = 0;
+            Dictionary<int, int> arrivedByRequest = new Dictionary<int, int>();
+            for (int i = state.PendingRfqResponses.Count - 1; i >= 0; i--)
+            {
+                PendingRfqResponse pending = state.PendingRfqResponses[i];
+                if (pending == null || pending.quote == null)
+                {
+                    state.PendingRfqResponses.RemoveAt(i);
+                    continue;
+                }
+
+                PurchaseRequest request = state.FindRequest(pending.requestId);
+                if (request == null || !request.IsOpen || request.HasExpired(now))
+                {
+                    state.PendingRfqResponses.RemoveAt(i);
+                    continue;
+                }
+
+                if (pending.arrivalTick > now)
+                {
+                    continue;
+                }
+
+                state.PendingRfqResponses.RemoveAt(i);
+                arrivedByRequest.TryGetValue(pending.requestId, out int arrivedForRequest);
+                arrivedByRequest[pending.requestId] = arrivedForRequest + 1;
+                if (pending.quote.quantityOffered <= 0)
+                {
+                    continue;
+                }
+
+                request.quotes.Add(pending.quote);
+                request.quotes.Sort(CompareQuotes);
+                revealed++;
+            }
+
+            foreach (KeyValuePair<int, int> arrival in arrivedByRequest)
+            {
+                if (arrival.Value <= 0 ||
+                    state.PendingRfqResponseCountFor(arrival.Key) > 0)
+                {
+                    continue;
+                }
+
+                PurchaseRequest request = state.FindRequest(arrival.Key);
+                if (request == null || !request.IsOpen || request.quotes == null ||
+                    request.quotes.Count == 0)
+                {
+                    continue;
+                }
+
+                SendResponsesArrivedLetter(request);
+            }
+
+            return revealed;
+        }
+
+        private static string PendingResponsesText(int pendingResponseCount)
+        {
+            if (pendingResponseCount <= 0)
+            {
+                return "";
+            }
+
+            return pendingResponseCount == 1
+                ? "One supplier response is still coming."
+                : $"{pendingResponseCount} supplier responses are still coming.";
+        }
+
+        /// <summary>
+        /// Reports the actionable replies once the request's final pending response has arrived.
+        /// The posting precedent reports the batch, not each individual applicant, so a request
+        /// with several suppliers produces one letter rather than one per arrival.
+        /// </summary>
+        private static void SendResponsesArrivedLetter(PurchaseRequest request)
+        {
+            int responseCount = request?.quotes?.Count ?? 0;
+            if (responseCount <= 0)
+            {
+                return;
+            }
+
+            string responseLabel = responseCount == 1
+                ? "1 supplier reply"
+                : $"{responseCount} supplier replies";
+            string responseText = responseCount == 1
+                ? "a supplier reply"
+                : $"{responseCount} supplier replies";
+            string reviewTarget = responseCount == 1 ? "it" : "them";
+
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Always,
+                responseLabel,
+                $"Your request — {request.quantityRequested}x {request.ItemLabel()} — drew " +
+                $"{responseText}.\n\n" +
+                $"Review {reviewTarget} in the Procurement tab under Find seller.",
+                LetterDefOf.PositiveEvent);
+        }
+
+        /// <summary>
+        /// Rebalances the response pace without changing the quotation's promised logistics.
+        /// Distance is deliberately compressed for the information-reply window, while the
+        /// existing lead time contributes a short preparation signal. The best-ranked quote in
+        /// the already-sorted sibling cohort gets only a one-day tendency to arrive later; the
+        /// independent 0..2 day jitter keeps that tendency from becoming an ordering rule.
+        /// </summary>
+        private static int ResponseDelayDays(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request,
+            Quotation quote)
+        {
+            if (quote == null)
+            {
+                return 1;
+            }
+
+            int preparationDays = Mathf.Clamp(
+                Mathf.CeilToInt(Mathf.Max(1, quote.leadTimeDays) / 2f),
+                1,
+                MaxResponsePreparationDays);
+            int distanceDays = ResponseDistanceDays(quote.distanceTiles);
+            int delayDays = Mathf.Max(preparationDays, distanceDays);
+            if (request?.quotes != null && request.quotes.Count > 1 &&
+                request.quotes.IndexOf(quote) == 0)
+            {
+                delayDays += AttractiveQuoteBiasDays;
+            }
+
+            // Keep this draw independent from GenerateResponses. The quote's random rolls have
+            // already finished, and the pushed state means scheduling does not perturb game RNG.
+            Rand.PushState(Gen.HashCombineInt(
+                state?.EconomySeed ?? 0,
+                request?.id ?? 0,
+                quote.id,
+                0xF11A));
+            try
+            {
+                delayDays += Rand.RangeInclusive(0, 2);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            float responseSpeed = Mathf.Clamp(
+                IntercolonyMod.Settings.rfqResponseSpeed,
+                IntercolonySettings.MinRfqResponseSpeed,
+                IntercolonySettings.MaxRfqResponseSpeed);
+            int speedAdjustedDelay = Mathf.CeilToInt(delayDays / responseSpeed);
+            return Mathf.Clamp(speedAdjustedDelay, 1, MaxResponseDelayDays);
+        }
+
+        /// <summary>
+        /// Converts distance for the response-information window. Unknown distance remains the
+        /// established three-day answer; it is never treated as a measured zero or a short route.
+        /// </summary>
+        private static int ResponseDistanceDays(float distanceTiles)
+        {
+            if (distanceTiles < 0f)
+            {
+                return 3;
+            }
+
+            return Mathf.Max(1, Mathf.CeilToInt(distanceTiles / ResponseDistanceTilesPerDay));
+        }
+
         private static int CompareQuotes(Quotation a, Quotation b)
         {
             // Complete quotes outrank partial ones — a partial answer is worth less than a
@@ -290,9 +537,20 @@ namespace Intercolony
                                 ProcurementFulfillmentPreference.SupplierDelivers ||
                             (request.fulfillmentPreference == ProcurementFulfillmentPreference.Either &&
                              Rand.Value < DeliveryChance(profile, distance));
-            float unitPrice = QuotedUnitPrice(state, request, offeredStuff, offeredQuality, profile,
-                category, supply, distance, delivers, out string explanation);
-            int leadTime = LeadTimeDays(distance, delivers, supply);
+            LogisticsTransportMethod transportMethod = LogisticsQuote.MethodFor(delivers);
+            float negotiationMultiplier = IntercolonyPricing.RollSupplierNegotiationMultiplier();
+            LogisticsQuote logistics = LogisticsQuote.Create(distance, transportMethod, supply);
+            float unitPrice = QuotedUnitPriceWithLogistics(
+                state,
+                request,
+                offeredStuff,
+                offeredQuality,
+                profile,
+                category,
+                supply,
+                logistics,
+                negotiationMultiplier,
+                out string explanation);
 
             return new Quotation
             {
@@ -304,7 +562,7 @@ namespace Intercolony
                 factionName = settlement.Faction?.Name ?? "",
                 quantityOffered = offered,
                 unitPrice = unitPrice,
-                leadTimeDays = leadTime,
+                leadTimeDays = logistics.LeadTimeDays,
                 supplierDelivers = delivers,
                 distanceTiles = distance,
                 priceExplanation = explanation
@@ -518,6 +776,31 @@ namespace Intercolony
                 quantity, out explanation);
         }
 
+        public static float SupplierUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef def,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            LogisticsQuote logistics,
+            int quantity,
+            out string explanation)
+        {
+            return IntercolonyPricing.SupplierUnitPrice(
+                state,
+                def,
+                stuff,
+                quality,
+                profile,
+                category,
+                supply,
+                logistics,
+                quantity,
+                out explanation);
+        }
+
         private static float QuotedUnitPrice(
             IntercolonyWorldComponent state,
             PurchaseRequest request,
@@ -561,7 +844,7 @@ namespace Intercolony
 
             if (distance >= 0f)
             {
-                float haul = 1f + Mathf.Min(distance, 150f) * 0.0012f;
+                float haul = LogisticsQuote.DistancePriceMultiplierFor(distance);
                 factors.Add(new PriceFactor("Distance", haul));
             }
 
@@ -572,6 +855,75 @@ namespace Intercolony
             factors.Add(new PriceFactor("Negotiation", Rand.Range(0.94f, 1.1f)));
 
             factors.Add(ProcurementLogisticsFactor(delivers));
+            factors.Add(IntercolonyPricing.BuyingEconomyDifficultyFactor());
+
+            float price = baseValue;
+            foreach (PriceFactor factor in factors)
+            {
+                price *= factor.multiplier;
+            }
+
+            price = Mathf.Max(0.01f, price);
+            explanation = IntercolonyPricing.Explain(
+                request.thingDef, null, request.animalSpec, request.quantityRequested, price, factors);
+            return price;
+        }
+
+        private static float QuotedUnitPriceWithLogistics(
+            IntercolonyWorldComponent state,
+            PurchaseRequest request,
+            ThingDef stuff,
+            QualityCategory? quality,
+            SettlementEconomicProfile profile,
+            IntercolonyProductCategory category,
+            float supply,
+            LogisticsQuote logistics,
+            float negotiationMultiplier,
+            out string explanation)
+        {
+            if (!request.IsAnimalOrder)
+            {
+                return IntercolonyPricing.SupplierUnitPrice(
+                    state,
+                    request.thingDef,
+                    stuff,
+                    quality,
+                    profile,
+                    category,
+                    supply,
+                    logistics,
+                    request.quantityRequested,
+                    negotiationMultiplier,
+                    out explanation);
+            }
+
+            List<PriceFactor> factors = new List<PriceFactor>();
+            float baseValue = IntercolonyPricing.BaseValue(
+                request.thingDef, null, request.animalSpec);
+
+            factors.Add(new PriceFactor("Supplier margin", SupplierMargin));
+
+            float scarcity = Mathf.Clamp(1.6f - supply * 0.5f, 0.9f, 1.6f);
+            float supplyCondition =
+                EffectiveEconomyService.SupplyCondition(state, profile, category);
+            string scarcityLabel = Mathf.Approximately(
+                    supplyCondition, SettlementMarketState.Neutral)
+                ? "Local scarcity"
+                : supplyCondition < SettlementMarketState.Neutral
+                    ? "Local scarcity (shortage)"
+                    : "Local scarcity (surplus)";
+            factors.Add(new PriceFactor(scarcityLabel, scarcity));
+
+            if (logistics.DistanceTiles >= 0f)
+            {
+                factors.Add(new PriceFactor(
+                    "Distance", logistics.DistancePriceMultiplier));
+            }
+
+            float wealth = profile.wealthTier >= IntercolonyWealthTier.Comfortable ? 1.08f : 0.96f;
+            factors.Add(new PriceFactor("Supplier standing", wealth));
+            factors.Add(new PriceFactor("Negotiation", negotiationMultiplier));
+            factors.Add(IntercolonyPricing.SupplierLogisticsFactor(logistics));
             factors.Add(IntercolonyPricing.BuyingEconomyDifficultyFactor());
 
             float price = baseValue;
@@ -609,15 +961,8 @@ namespace Intercolony
 
         internal static int LeadTimeDays(float distance, bool delivers, float supply)
         {
-            // Pickup is "ready in N days"; delivery adds travel on top.
-            int prep = Mathf.RoundToInt(Mathf.Lerp(5f, 1f, Mathf.Clamp01(supply / 2f)));
-            if (!delivers)
-            {
-                return Mathf.Max(1, prep + Rand.RangeInclusive(0, 2));
-            }
-
-            int travel = distance < 0f ? 3 : Mathf.RoundToInt(distance / 12f);
-            return Mathf.Max(1, prep + travel);
+            return LogisticsQuote.Create(
+                distance, LogisticsQuote.MethodFor(delivers), supply).LeadTimeDays;
         }
 
         /// <summary>Lapses requests past their expiry. Called from the coarse refresh.</summary>

@@ -380,6 +380,8 @@ namespace Intercolony
                     return TestsRunAll();
                 case "state.summary":
                     return StateSummary();
+                case "world_pawns.list":
+                    return WorldPawnList();
                 case "world_pawns.count":
                     return WorldPawnCount();
                 case "postings.count":
@@ -512,6 +514,134 @@ namespace Intercolony
             return new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 ["summary"] = state.DebugStateSummary()
+            };
+        }
+
+        /// <summary>
+        /// Lists the same world-pawn collection as WorldPawnCount, because a changed total proves a
+        /// leak but does not identify the pawn that needs investigation.
+        ///
+        /// Each record is isolated so one damaged pawn cannot hide the rest of the snapshot. Null
+        /// entries are counted separately because they explain why the record count can be lower
+        /// than the source collection count.
+        /// </summary>
+        private static object WorldPawnList()
+        {
+            if (Find.World == null)
+            {
+                throw new InvalidOperationException("no world loaded - load a colony first");
+            }
+
+            // The client cross-checks this list against world_pawns.count, so both commands must
+            // read the same accessor rather than reconstructing a list from another collection.
+            RimWorld.Planet.WorldPawns worldPawns = Find.WorldPawns;
+            List<Pawn> pawns = worldPawns?.AllPawnsAliveOrDead;
+
+            // This is the distinction that matters for the leak: the world-pawn GC may collect an
+            // ordinary pawn, but not one the mod pinned with PawnDiscardDecideMode.KeepForever and
+            // never unpinned. Read the set once so every record and the total describe one snapshot.
+            HashSet<Pawn> forcefullyKeptPawns = null;
+            int keptForeverCount = 0;
+            try
+            {
+                forcefullyKeptPawns = worldPawns?.ForcefullyKeptPawns;
+                keptForeverCount = forcefullyKeptPawns?.Count ?? 0;
+            }
+            catch (Exception)
+            {
+                // A missing or unreadable pin set is diagnostic uncertainty, not a reason for the
+                // list verb to fail. The record-level fallback below is false as well.
+                forcefullyKeptPawns = null;
+                keptForeverCount = 0;
+            }
+
+            List<object> records = new List<object>();
+            int nulls = 0;
+            if (pawns != null)
+            {
+                foreach (Pawn pawn in pawns)
+                {
+                    if (pawn == null)
+                    {
+                        // A null source entry is not a pawn record, but its count explains an
+                        // otherwise confusing difference between count and the returned list.
+                        nulls++;
+                        continue;
+                    }
+
+                    bool keptForever = false;
+                    try
+                    {
+                        keptForever = forcefullyKeptPawns?.Contains(pawn) ?? false;
+                    }
+                    catch (Exception)
+                    {
+                        // A throwing membership test makes the whole pin snapshot untrustworthy.
+                        // Reset records already visited too, so false and zero remain consistent.
+                        forcefullyKeptPawns = null;
+                        keptForeverCount = 0;
+                        foreach (Dictionary<string, object> record in records)
+                        {
+                            record["keptForever"] = false;
+                        }
+                    }
+
+                    try
+                    {
+                        records.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["id"] = pawn.thingIDNumber,
+                            ["label"] = pawn.Name?.ToStringFull
+                                ?? pawn.LabelShortCap
+                                ?? pawn.KindLabel
+                                ?? "-",
+                            ["kind"] = pawn.kindDef?.defName ?? "-",
+                            ["race"] = pawn.def?.defName ?? "-",
+                            ["faction"] = pawn.Faction?.Name ?? "-",
+                            ["situation"] = worldPawns.GetSituation(pawn).ToString(),
+                            ["dead"] = pawn.Dead,
+                            ["spawned"] = pawn.Spawned,
+                            ["humanlike"] = pawn.RaceProps?.Humanlike ?? false,
+                            ["keptForever"] = keptForever
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        // A damaged pawn must remain visible as damaged; dropping it would make
+                        // the very leak this command is meant to name disappear from the report.
+                        int id = -1;
+                        try
+                        {
+                            id = pawn.thingIDNumber;
+                        }
+                        catch (Exception)
+                        {
+                            // The fallback id is deliberately best effort for a malformed pawn.
+                        }
+
+                        records.Add(new Dictionary<string, object>(StringComparer.Ordinal)
+                        {
+                            ["id"] = id,
+                            ["label"] = $"(unreadable: {ex.GetType().Name})",
+                            ["kind"] = "-",
+                            ["race"] = "-",
+                            ["faction"] = "-",
+                            ["situation"] = "-",
+                            ["dead"] = false,
+                            ["spawned"] = false,
+                            ["humanlike"] = false,
+                            ["keptForever"] = false
+                        });
+                    }
+                }
+            }
+
+            return new Dictionary<string, object>(StringComparer.Ordinal)
+            {
+                ["count"] = pawns?.Count ?? 0,
+                ["nulls"] = nulls,
+                ["keptForeverCount"] = keptForeverCount,
+                ["pawns"] = records
             };
         }
 

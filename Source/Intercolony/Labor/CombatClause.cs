@@ -144,7 +144,8 @@ namespace Intercolony
             {
                 case CombatClause.Armed:
                     return "Will fight to defend this colony. Drafting them here is within the terms; " +
-                           "taking them off the map to attack someone is not.";
+                           "taking them off the map to attack someone is not. Compensation if they die is less than a civilian's " +
+                           "but more than a security contractor's — they were hired to defend this colony.";
                 case CombatClause.Security:
                     return "Hired to fight, anywhere, with no restrictions. Compensation if they die " +
                            "is a fraction of a civilian's — the risk is already in the wage.";
@@ -159,7 +160,7 @@ namespace Intercolony
         /// </summary>
         public static string Summary(this CombatClause clause, int dailyWage)
         {
-            return $"{clause.LabelCap()} — {dailyWage} silver/day, " +
+            return $"{clause.LabelCap()} — worker asks {dailyWage:N0} silver/day, " +
                    $"{dailyWage * clause.DeathCompensationDays()} silver if they die";
         }
 

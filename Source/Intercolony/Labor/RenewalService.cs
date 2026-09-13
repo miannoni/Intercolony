@@ -94,11 +94,37 @@ namespace Intercolony
                 $"{contract.workerName} would like to stay",
                 $"{contract.workerName}'s {contract.termDays}-day term ends in " +
                 $"{Mathf.Max(0f, contract.DaysRemaining):0.#} days, and they have asked to stay on.\n\n" +
-                $"They will sign another {contract.termDays} days at {contract.renewalWage} silver a day " +
-                $"— they are on {contract.dailyWage} now.\n\n" +
+                $"They will sign another {contract.termDays} days at " +
+                $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.renewalWage)} " +
+                $"— they are on {WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)} now.\n\n" +
                 "Answer in the Labor tab under Employees. If you do nothing they go home when the " +
                 "term ends.",
                 LetterDefOf.PositiveEvent, contract.pawn);
+        }
+
+        public static bool AdvanceAutoRenew(EmploymentContract contract)
+        {
+            if (contract == null || !contract.autoRenew || !HasLiveOffer(contract))
+            {
+                return false;
+            }
+
+            bool renewed = Accept(contract, out string failReason);
+            if (!renewed)
+            {
+                return false;
+            }
+
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Important,
+                $"{contract.workerName} renewed automatically",
+                $"{contract.workerName} renewed automatically at " +
+                $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)} " +
+                $"for another {contract.TermLabel} term.\n\n" +
+                "Auto-renew is on for this worker and can be turned off in the Labor tab.",
+                LetterDefOf.PositiveEvent, contract.pawn);
+
+            return renewed;
         }
 
         /// <summary>
@@ -198,7 +224,7 @@ namespace Intercolony
 
             Messages.Message(
                 $"{contract.workerName} has signed on for another {contract.termDays} days at " +
-                $"{newWage} silver a day.",
+                $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, newWage)}.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             IntercolonyLog.Message($"Renewed: {contract}");
@@ -258,7 +284,7 @@ namespace Intercolony
         /// <summary>Silver to end it today instead of working the notice out.</summary>
         public static int PayInLieu(EmploymentContract contract)
         {
-            return NoticeDays(contract) * (contract?.dailyWage ?? 0);
+            return NoticeDays(contract) * (contract?.ChargedDailyWage ?? 0);
         }
 
         /// <summary>
@@ -349,7 +375,8 @@ namespace Intercolony
             EmployerReputationService.NoteNoticeSkipped(IntercolonyWorldComponent.Current, contract);
 
             EmploymentService.End(contract, EmploymentStatus.Dismissed,
-                $"{contract.workerName} was dismissed without the {NoticeDays(contract)} days' notice owed");
+                $"{contract.workerName} was dismissed without the {NoticeDays(contract)} days' notice owed",
+                noticeSkipped: true);
         }
     }
 }

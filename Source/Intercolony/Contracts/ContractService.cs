@@ -19,18 +19,26 @@ namespace Intercolony
         InvalidItem,
         InsufficientTradeHistory,
         QuantityOutOfRange,
-        UnitPriceOutOfRange
+        UnitPriceOutOfRange,
+        CadenceOutOfRange,
+        TotalCyclesOutOfRange,
+        TermTooLong,
+        InvalidFulfillment
     }
 
     /// <summary>The result of attempting to send a player-proposed recurring contract.</summary>
     public sealed class ContractProposalResult
     {
         private ContractProposalResult(
-            RecurringContract contract, ContractProposalFailure failure, string reason)
+            RecurringContract contract,
+            ContractProposalFailure failure,
+            string reason,
+            IntercolonyNegotiationResult evaluation)
         {
             Contract = contract;
             Failure = failure;
             Reason = reason;
+            Evaluation = evaluation;
         }
 
         public bool Success => Contract != null && Failure == ContractProposalFailure.None;
@@ -41,15 +49,20 @@ namespace Intercolony
 
         public string Reason { get; }
 
-        internal static ContractProposalResult Sent(RecurringContract contract)
+        /// <summary>The evaluator result captured when the proposal was sent.</summary>
+        public IntercolonyNegotiationResult Evaluation { get; }
+
+        internal static ContractProposalResult Sent(
+            RecurringContract contract, IntercolonyNegotiationResult evaluation = null)
         {
-            return new ContractProposalResult(contract, ContractProposalFailure.None, null);
+            return new ContractProposalResult(
+                contract, ContractProposalFailure.None, null, evaluation);
         }
 
         internal static ContractProposalResult Refused(
             ContractProposalFailure failure, string reason)
         {
-            return new ContractProposalResult(null, failure, reason);
+            return new ContractProposalResult(null, failure, reason, null);
         }
     }
 
@@ -114,6 +127,17 @@ namespace Intercolony
     /// </summary>
     public static class ContractService
     {
+        /// <summary>
+        /// Pure inputs prepared for either evaluation or contract construction. Keeping the
+        /// negotiation proposal beside the exact terms selected by the service makes preview and
+        /// send paths share one proposal shape.
+        /// </summary>
+        private sealed class PreparedContractProposal
+        {
+            public ContractTerms terms;
+            public IntercolonyNegotiationProposal negotiationProposal;
+        }
+
         /// <summary>Minimum reputation before a settlement will propose a standing agreement.</summary>
         public const float MinimumReputation = 62f;
 
@@ -139,10 +163,6 @@ namespace Intercolony
         /// </summary>
         public const int MinimumQuantityPerCycle = 10;
         public const int MaximumQuantityPerCycle = 4000;
-
-        private const float ProposalPriceAppealWeight = 0.60f;
-        private const float ProposalQuantityAppealWeight = 0.25f;
-        private const float ProposalReputationAppealWeight = 0.15f;
 
         /// <summary>
         /// Even the weakest proposal has a small chance, and even the strongest can be refused.
@@ -277,9 +297,9 @@ namespace Intercolony
             Rand.PushState(seed);
             try
             {
-                // Contracts are for things a colony can produce repeatedly, so stick to
-                // stackable goods; a standing order for one masterwork chair a quadrum is not
-                // the strategic commitment §29 is describing.
+                // Contracts are for goods the shared classifier can trade and whose completed
+                // supply history proves repeatability. Minifiable furniture is a valid recurring
+                // good even though its ThingDef is a Building with stackLimit 1.
                 List<KeyValuePair<ThingDef, int>> candidates =
                     new List<KeyValuePair<ThingDef, int>>();
                 if (completedOrders != null)
@@ -356,125 +376,98 @@ namespace Intercolony
             int quantityPerCycle,
             float? agreedUnitPrice = null)
         {
-            if (state == null)
+            if (!TryPrepareLegacyProposal(
+                    state, settlement, thingDef, quantityPerCycle, agreedUnitPrice,
+                    out PreparedContractProposal prepared,
+                    out ContractProposalFailure failure,
+                    out string reason,
+                    cacheProfile: true))
             {
-                return ContractProposalResult.Refused(
-                    ContractProposalFailure.InvalidState, "No Intercolony world state is available.");
+                return ContractProposalResult.Refused(failure, reason);
             }
 
-            if (!TryGetEligibleCounterparty(
-                    state,
-                    settlement,
-                    out SettlementEconomicProfile profile,
-                    out ContractProposalFailure counterpartyFailure,
-                    out string counterpartyReason))
+            IntercolonyNegotiationResult evaluation =
+                IntercolonyNegotiationEvaluator.Evaluate(prepared.negotiationProposal);
+            float appeal = DelayAppeal(evaluation);
+            RecurringContract contract = BuildExplicitContract(
+                state, settlement, thingDef, quantityPerCycle, prepared.terms,
+                FulfillmentMode.SellerDelivery);
+            contract.proposalAppeal = appeal;
+            contract.decisionDueTick =
+                GenTicks.TicksGame + ProposalDecisionDelayTicks(appeal);
+
+            state.AddContract(contract);
+            IntercolonyLog.Message(
+                $"Player proposal {contract.id} sent and awaiting a response: " +
+                $"{contract.quantityPerCycle}x {contract.thingDef.label} every " +
+                $"{contract.CadenceDays:F0}d x{contract.totalCycles} for {contract.settlementName}.");
+            return ContractProposalResult.Sent(contract, evaluation);
+        }
+
+        /// <summary>
+        /// Sends player-chosen standing-agreement terms to a settlement. The settlement's answer
+        /// remains pending after every commercial gate and term bound has been satisfied.
+        /// </summary>
+        public static ContractProposalResult ProposeContract(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            float? agreedUnitPrice = null,
+            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+        {
+            if (!TryPrepareExplicitProposal(
+                    state, settlement, thingDef, quantityPerCycle, cadenceDays, totalCycles,
+                    agreedUnitPrice, fulfillment,
+                    out PreparedContractProposal prepared,
+                    out ContractProposalFailure failure,
+                    out string reason,
+                    cacheProfile: true))
             {
-                return ContractProposalResult.Refused(
-                    counterpartyFailure, counterpartyReason);
+                return ContractProposalResult.Refused(failure, reason);
             }
 
-            if (!TryGetEligibleItemCategory(
-                    thingDef, out IntercolonyProductCategory category, out string itemReason))
-            {
-                return ContractProposalResult.Refused(
-                    ContractProposalFailure.InvalidItem, itemReason);
-            }
+            IntercolonyNegotiationResult evaluation =
+                IntercolonyNegotiationEvaluator.Evaluate(prepared.negotiationProposal);
+            float appeal = DelayAppeal(evaluation);
 
-            Dictionary<int, Dictionary<ThingDef, int>> completedOrders =
-                BuildCompletedOrderCounts(state);
-            completedOrders.TryGetValue(
-                settlement.ID, out Dictionary<ThingDef, int> settlementHistory);
-            int completedSales = 0;
-            settlementHistory?.TryGetValue(thingDef, out completedSales);
-            if (completedSales < MinimumCompletedOrdersForAgreement)
-            {
-                return ContractProposalResult.Refused(
-                    ContractProposalFailure.InsufficientTradeHistory,
-                    $"Only {completedSales} completed sale(s) of {thingDef.label} to that settlement; " +
-                    $"{MinimumCompletedOrdersForAgreement} are required.");
-            }
-
-            if (quantityPerCycle < MinimumQuantityPerCycle ||
-                quantityPerCycle > MaximumQuantityPerCycle)
-            {
-                return ContractProposalResult.Refused(
-                    ContractProposalFailure.QuantityOutOfRange,
-                    $"Quantity per cycle must be between {MinimumQuantityPerCycle} and " +
-                    $"{MaximumQuantityPerCycle}.");
-            }
-
-            ContractTerms terms = CalculateContractTerms(
-                state, settlement, profile, thingDef, category, quantityPerCycle,
-                agreedUnitPrice);
-            float chosenUnitPrice = agreedUnitPrice ?? terms.referenceUnitPrice;
-            if (!terms.IsUnitPriceInRange(chosenUnitPrice))
-            {
-                return ContractProposalResult.Refused(
-                    ContractProposalFailure.UnitPriceOutOfRange,
-                    $"Agreed unit price must be between {terms.minimumUnitPrice:F2} and " +
-                    $"{terms.maximumUnitPrice:F2} (twice the current spot price of " +
-                    $"{terms.referenceUnitPrice:F2}).");
-            }
-
-            int seed = Gen.HashCombineInt(
-                state.EconomySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
-            RecurringContract contract;
-            Rand.PushState(seed);
-            try
-            {
-                contract = BuildContract(
-                    state, settlement, profile, thingDef, category, quantityPerCycle,
-                    chosenUnitPrice);
-            }
-            finally
-            {
-                Rand.PopState();
-            }
-
-            float appeal = CalculateProposalAppeal(
-                state, settlement, profile, thingDef, category, quantityPerCycle,
-                chosenUnitPrice, terms.referenceUnitPrice);
+            RecurringContract contract = BuildExplicitContract(
+                state, settlement, thingDef, quantityPerCycle, prepared.terms, fulfillment);
             contract.proposalAppeal = appeal;
             contract.decisionDueTick = GenTicks.TicksGame + ProposalDecisionDelayTicks(appeal);
 
             state.AddContract(contract);
             IntercolonyLog.Message(
                 $"Player proposal {contract.id} sent and awaiting a response: " +
-                $"{contract.quantityPerCycle}x " +
-                $"{contract.thingDef.label} every {contract.CadenceDays:F0}d x{contract.totalCycles} " +
-                $"for {contract.settlementName}.");
-            return ContractProposalResult.Sent(contract);
+                $"{contract.quantityPerCycle}x {contract.thingDef.label} every " +
+                $"{contract.CadenceDays:F0}d x{contract.totalCycles} for {contract.settlementName}.");
+            return ContractProposalResult.Sent(contract, evaluation);
         }
 
-        private static float CalculateProposalAppeal(
-            IntercolonyWorldComponent state,
-            Settlement settlement,
-            SettlementEconomicProfile profile,
-            ThingDef thingDef,
-            IntercolonyProductCategory category,
-            int quantityPerCycle,
-            float unitPrice,
-            float referenceUnitPrice)
+        private static float DelayAppeal(IntercolonyNegotiationResult evaluation)
         {
-            float priceAppeal = referenceUnitPrice > 0f
-                ? Mathf.Clamp01(1f - unitPrice / (2f * referenceUnitPrice))
-                : unitPrice <= 0f ? 1f : 0f;
+            if (evaluation == null)
+            {
+                return 0f;
+            }
 
-            int appetite = FindBuyerService.MaximumAppetite(
-                state, thingDef, null, profile, category);
-            float quantityAppeal = quantityPerCycle > 0
-                ? Mathf.Clamp01(appetite / (float)quantityPerCycle)
-                : 0f;
+            return IntercolonyNegotiationEvaluator.AppealForScore(
+                evaluation.AcceptanceScore);
+        }
 
-            float reputationAppeal = Mathf.InverseLerp(
-                MinimumReputation,
-                CommercialReputation.MaxScore,
-                ReputationService.ScoreFor(state, settlement));
-
-            return Mathf.Clamp01(
-                priceAppeal * ProposalPriceAppealWeight +
-                quantityAppeal * ProposalQuantityAppealWeight +
-                reputationAppeal * ProposalReputationAppealWeight);
+        /// <summary>
+        /// Maps the stored selling-side appeal to the same fraction used by the answer roll.
+        /// Keeping this in one place lets a preview expose the actual chance without inventing a
+        /// second probability formula.
+        /// </summary>
+        internal static float AcceptanceChanceForAppeal(float appeal)
+        {
+            return Mathf.Lerp(
+                MinimumProposalAcceptanceChance,
+                MaximumProposalAcceptanceChance,
+                Mathf.Clamp01(appeal));
         }
 
         /// <summary>
@@ -502,12 +495,198 @@ namespace Intercolony
             int quantityPerCycle,
             float? agreedUnitPrice = null)
         {
-            if (state == null ||
-                !TryValidateEligibleCounterparty(state, settlement, out _, out _) ||
-                !TryGetEligibleItemCategory(
-                    thingDef, out IntercolonyProductCategory category, out _))
+            return TryPrepareLegacyProposal(
+                    state, settlement, thingDef, quantityPerCycle, agreedUnitPrice,
+                    out PreparedContractProposal prepared,
+                    out _, out _,
+                    cacheProfile: false)
+                ? prepared.terms
+                : null;
+        }
+
+        /// <summary>
+        /// Previews the likely result of the legacy player-proposal overload without constructing
+        /// or recording a contract. It follows the same seeded term selection and proposal
+        /// construction as the real overload.
+        /// </summary>
+        public static IntercolonyNegotiationAcceptancePreview PreviewAcceptance(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle,
+            float? agreedUnitPrice = null)
+        {
+            if (!TryPrepareLegacyProposal(
+                    state, settlement, thingDef, quantityPerCycle, agreedUnitPrice,
+                    out PreparedContractProposal prepared,
+                    out _, out _,
+                    cacheProfile: false))
             {
                 return null;
+            }
+
+            IntercolonyNegotiationResult evaluation =
+                IntercolonyNegotiationEvaluator.Evaluate(prepared.negotiationProposal);
+            float appeal = DelayAppeal(evaluation);
+            return new IntercolonyNegotiationAcceptancePreview(
+                evaluation, appeal, AcceptanceChanceForAppeal(appeal));
+        }
+
+        /// <summary>
+        /// Computes the fixed player-chosen terms an eligible proposal would carry without
+        /// constructing or recording a contract. Returns null when it could not be sent.
+        /// </summary>
+        public static ContractTerms PreviewContractTerms(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            float? agreedUnitPrice = null,
+            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+        {
+            return TryPrepareExplicitProposal(
+                    state, settlement, thingDef, quantityPerCycle, cadenceDays, totalCycles,
+                    agreedUnitPrice, fulfillment,
+                    out PreparedContractProposal prepared,
+                    out _, out _,
+                    cacheProfile: false)
+                ? prepared.terms
+                : null;
+        }
+
+        /// <summary>
+        /// Previews the likely result of a player-chosen selling proposal without constructing or
+        /// recording a contract. The negotiation proposal is built by the same pure preparation
+        /// path used immediately before the real proposal is evaluated.
+        /// </summary>
+        public static IntercolonyNegotiationAcceptancePreview PreviewAcceptance(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            float? agreedUnitPrice = null,
+            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+        {
+            if (!TryPrepareExplicitProposal(
+                    state, settlement, thingDef, quantityPerCycle, cadenceDays, totalCycles,
+                    agreedUnitPrice, fulfillment,
+                    out PreparedContractProposal prepared,
+                    out _, out _,
+                    cacheProfile: false))
+            {
+                return null;
+            }
+
+            IntercolonyNegotiationResult evaluation =
+                IntercolonyNegotiationEvaluator.Evaluate(prepared.negotiationProposal);
+            float appeal = DelayAppeal(evaluation);
+            return new IntercolonyNegotiationAcceptancePreview(
+                evaluation, appeal, AcceptanceChanceForAppeal(appeal));
+        }
+
+        private static bool TryPrepareLegacyProposal(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle,
+            float? agreedUnitPrice,
+            out PreparedContractProposal prepared,
+            out ContractProposalFailure failure,
+            out string reason,
+            bool cacheProfile)
+        {
+            prepared = null;
+            if (!TryPrepareLegacyInputs(
+                    state, settlement, thingDef, quantityPerCycle, agreedUnitPrice,
+                    out SettlementEconomicProfile profile,
+                    out IntercolonyProductCategory category,
+                    out _,
+                    out float chosenUnitPrice,
+                    out failure,
+                    out reason,
+                    cacheProfile))
+            {
+                return false;
+            }
+
+            // Preserve the legacy second calculation that selected the 3-to-6 delivery count
+            // before the overload gained player-chosen term inputs.
+            int economySeed = cacheProfile
+                ? state.EconomySeed
+                : state.EconomySeedForReadOnly;
+            int seed = Gen.HashCombineInt(
+                economySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
+            ContractTerms legacyBuildTerms;
+            Rand.PushState(seed);
+            try
+            {
+                legacyBuildTerms = CalculateContractTerms(
+                    state, settlement, profile, thingDef, category, quantityPerCycle,
+                    chosenUnitPrice,
+                    cacheProfile ? (int?)null : state.EconomySeedForReadOnly);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            if (!TryPrepareExplicitProposal(
+                    state, settlement, thingDef, quantityPerCycle,
+                    GenDate.TicksPerQuadrum / GenDate.TicksPerDay,
+                    legacyBuildTerms.deliveryCount,
+                    chosenUnitPrice,
+                    FulfillmentMode.SellerDelivery,
+                    out prepared,
+                    out failure,
+                    out reason,
+                    cacheProfile))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TryPrepareLegacyInputs(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle,
+            float? agreedUnitPrice,
+            out SettlementEconomicProfile profile,
+            out IntercolonyProductCategory category,
+            out ContractTerms terms,
+            out float chosenUnitPrice,
+            out ContractProposalFailure failure,
+            out string reason,
+            bool cacheProfile)
+        {
+            profile = null;
+            category = default(IntercolonyProductCategory);
+            terms = null;
+            chosenUnitPrice = 0f;
+            if (state == null)
+            {
+                failure = ContractProposalFailure.InvalidState;
+                reason = "No Intercolony world state is available.";
+                return false;
+            }
+
+            if (!TryGetEligibleCounterparty(
+                    state, settlement, out profile, out failure, out reason,
+                    cacheProfile: cacheProfile))
+            {
+                return false;
+            }
+
+            if (!TryGetEligibleItemCategory(
+                    thingDef, out category, out reason))
+            {
+                failure = ContractProposalFailure.InvalidItem;
+                return false;
             }
 
             Dictionary<int, Dictionary<ThingDef, int>> completedOrders =
@@ -516,22 +695,151 @@ namespace Intercolony
                 settlement.ID, out Dictionary<ThingDef, int> settlementHistory);
             int completedSales = 0;
             settlementHistory?.TryGetValue(thingDef, out completedSales);
-            if (completedSales < MinimumCompletedOrdersForAgreement ||
-                quantityPerCycle < MinimumQuantityPerCycle ||
+            if (completedSales < MinimumCompletedOrdersForAgreement)
+            {
+                failure = ContractProposalFailure.InsufficientTradeHistory;
+                reason =
+                    $"Only {completedSales} completed sale(s) of {thingDef.label} to that settlement; " +
+                    $"{MinimumCompletedOrdersForAgreement} are required.";
+                return false;
+            }
+
+            if (quantityPerCycle < MinimumQuantityPerCycle ||
                 quantityPerCycle > MaximumQuantityPerCycle)
             {
-                return null;
+                failure = ContractProposalFailure.QuantityOutOfRange;
+                reason =
+                    $"Quantity per cycle must be between {MinimumQuantityPerCycle} and " +
+                    $"{MaximumQuantityPerCycle}.";
+                return false;
             }
 
-            SettlementEconomicProfile profile = state.GetProfile(settlement);
-            if (profile == null)
-            {
-                return null;
-            }
-
-            return CalculateContractTerms(
+            terms = CalculateContractTerms(
                 state, settlement, profile, thingDef, category, quantityPerCycle,
-                agreedUnitPrice);
+                agreedUnitPrice,
+                cacheProfile ? (int?)null : state.EconomySeedForReadOnly);
+            chosenUnitPrice = agreedUnitPrice ?? terms.referenceUnitPrice;
+            if (!terms.IsUnitPriceInRange(chosenUnitPrice))
+            {
+                failure = ContractProposalFailure.UnitPriceOutOfRange;
+                reason =
+                    $"Agreed unit price must be between {terms.minimumUnitPrice:F2} and " +
+                    $"{terms.maximumUnitPrice:F2} (twice the current spot price of " +
+                    $"{terms.referenceUnitPrice:F2}).";
+                return false;
+            }
+
+            failure = ContractProposalFailure.None;
+            reason = null;
+            return true;
+        }
+
+        private static bool TryPrepareExplicitProposal(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            float? agreedUnitPrice,
+            FulfillmentMode fulfillment,
+            out PreparedContractProposal prepared,
+            out ContractProposalFailure failure,
+            out string reason,
+            bool cacheProfile)
+        {
+            prepared = null;
+            if (state == null)
+            {
+                failure = ContractProposalFailure.InvalidState;
+                reason = "No Intercolony world state is available.";
+                return false;
+            }
+
+            if (!TryGetEligibleCounterparty(
+                    state, settlement, out SettlementEconomicProfile profile,
+                    out failure, out reason,
+                    cacheProfile: cacheProfile))
+            {
+                return false;
+            }
+
+            if (!TryGetEligibleItemCategory(
+                    thingDef, out IntercolonyProductCategory category, out reason))
+            {
+                failure = ContractProposalFailure.InvalidItem;
+                return false;
+            }
+
+            Dictionary<int, Dictionary<ThingDef, int>> completedOrders =
+                BuildCompletedOrderCounts(state);
+            completedOrders.TryGetValue(
+                settlement.ID, out Dictionary<ThingDef, int> settlementHistory);
+            int completedSales = 0;
+            settlementHistory?.TryGetValue(thingDef, out completedSales);
+            if (completedSales < MinimumCompletedOrdersForAgreement)
+            {
+                failure = ContractProposalFailure.InsufficientTradeHistory;
+                reason =
+                    $"Only {completedSales} completed sale(s) of {thingDef.label} to that settlement; " +
+                    $"{MinimumCompletedOrdersForAgreement} are required.";
+                return false;
+            }
+
+            if (quantityPerCycle < MinimumQuantityPerCycle ||
+                quantityPerCycle > MaximumQuantityPerCycle)
+            {
+                failure = ContractProposalFailure.QuantityOutOfRange;
+                reason =
+                    $"Quantity per cycle must be between {MinimumQuantityPerCycle} and " +
+                    $"{MaximumQuantityPerCycle}.";
+                return false;
+            }
+
+            if (!TryValidateExplicitTerms(
+                    cadenceDays, totalCycles, fulfillment, out failure, out reason))
+            {
+                return false;
+            }
+
+            ContractTerms terms = CalculateExplicitContractTerms(
+                state, settlement, profile, thingDef, category, quantityPerCycle,
+                cadenceDays, totalCycles, agreedUnitPrice);
+            float chosenUnitPrice = agreedUnitPrice ?? terms.referenceUnitPrice;
+            if (!terms.IsUnitPriceInRange(chosenUnitPrice))
+            {
+                failure = ContractProposalFailure.UnitPriceOutOfRange;
+                reason =
+                    $"Agreed unit price must be between {terms.minimumUnitPrice:F2} and " +
+                    $"{terms.maximumUnitPrice:F2} (twice the current spot price of " +
+                    $"{terms.referenceUnitPrice:F2}).";
+                return false;
+            }
+
+            prepared = new PreparedContractProposal
+            {
+                terms = terms,
+                negotiationProposal = new IntercolonyNegotiationProposal
+                {
+                    state = state,
+                    profile = profile,
+                    thingDef = thingDef,
+                    category = category,
+                    direction = IntercolonyNegotiationDirection.Sale,
+                    originalTerms = new IntercolonyNegotiationTerms(
+                        quantityPerCycle,
+                        terms.referenceUnitPrice,
+                        GenDate.TicksPerQuadrum / GenDate.TicksPerDay,
+                        FulfillmentMode.SellerDelivery),
+                    proposedTerms = new IntercolonyNegotiationTerms(
+                        quantityPerCycle, chosenUnitPrice, cadenceDays, fulfillment),
+                    fulfillmentModeChangeAllowed = true,
+                    counterAllowed = true
+                }
+            };
+            failure = ContractProposalFailure.None;
+            reason = null;
+            return true;
         }
 
         private static bool TryGetEligibleCounterparty(
@@ -539,7 +847,8 @@ namespace Intercolony
             Settlement settlement,
             out SettlementEconomicProfile profile,
             out ContractProposalFailure failure,
-            out string reason)
+            out string reason,
+            bool cacheProfile = true)
         {
             profile = null;
             if (!TryValidateEligibleCounterparty(state, settlement, out failure, out reason))
@@ -547,7 +856,9 @@ namespace Intercolony
                 return false;
             }
 
-            profile = state.GetProfile(settlement);
+            profile = cacheProfile
+                ? state.GetProfile(settlement)
+                : state.GetProfileForReadOnly(settlement);
             if (profile == null)
             {
                 failure = ContractProposalFailure.MissingEconomicProfile;
@@ -625,17 +936,9 @@ namespace Intercolony
                 return false;
             }
 
-            if (def.stackLimit <= 1)
-            {
-                reason = $"{def.label} is not stackable.";
-                return false;
-            }
-
-            if (def.category != ThingCategory.Item)
-            {
-                reason = $"{def.label} is not a physical item.";
-                return false;
-            }
+            // Do not add stack/category gates here. Contracts were the only surface refusing
+            // minifiable goods, contradicting both the shared classifier and the mod's own
+            // promise of recurring furniture sales.
 
             IntercolonyProductCategory? classified = IntercolonyProductClassifier.Classify(def);
             if (!classified.HasValue)
@@ -647,6 +950,79 @@ namespace Intercolony
             category = classified.Value;
             reason = null;
             return true;
+        }
+
+        private static bool TryValidateExplicitTerms(
+            int cadenceDays,
+            int totalCycles,
+            FulfillmentMode fulfillment,
+            out ContractProposalFailure failure,
+            out string reason)
+        {
+            if (cadenceDays < ProcurementContractService.MinimumCadenceDays ||
+                cadenceDays > ProcurementContractService.MaximumCadenceDays)
+            {
+                failure = ContractProposalFailure.CadenceOutOfRange;
+                reason = $"Cadence must be between {ProcurementContractService.MinimumCadenceDays} " +
+                         $"and {ProcurementContractService.MaximumCadenceDays} days.";
+                return false;
+            }
+
+            if (totalCycles < ProcurementContractService.MinimumTotalCycles ||
+                totalCycles > ProcurementContractService.MaximumTotalCycles)
+            {
+                failure = ContractProposalFailure.TotalCyclesOutOfRange;
+                reason = $"Total cycles must be between {ProcurementContractService.MinimumTotalCycles} " +
+                         $"and {ProcurementContractService.MaximumTotalCycles}.";
+                return false;
+            }
+
+            if ((long)cadenceDays * totalCycles > ProcurementContractService.MaximumTermDays)
+            {
+                failure = ContractProposalFailure.TermTooLong;
+                reason = "Cadence multiplied by total cycles must not exceed " +
+                         $"{ProcurementContractService.MaximumTermDays} days.";
+                return false;
+            }
+
+            if (fulfillment != FulfillmentMode.SellerDelivery &&
+                fulfillment != FulfillmentMode.BuyerPickup)
+            {
+                failure = ContractProposalFailure.InvalidFulfillment;
+                reason = "Fulfillment must be supplier delivery or buyer pickup.";
+                return false;
+            }
+
+            failure = ContractProposalFailure.None;
+            reason = null;
+            return true;
+        }
+
+        private static RecurringContract BuildExplicitContract(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef thingDef,
+            int quantityPerCycle,
+            ContractTerms terms,
+            FulfillmentMode fulfillment)
+        {
+            return new RecurringContract
+            {
+                id = state.NextId(),
+                settlementId = settlement.ID,
+                settlementName = settlement.Label ?? "unnamed",
+                factionName = settlement.Faction?.Name ?? "",
+                thingDef = thingDef,
+                quantityPerCycle = quantityPerCycle,
+                cadenceTicks = terms.cadenceTicks,
+                totalCycles = terms.deliveryCount,
+                fulfillment = fulfillment,
+                unitPrice = terms.unitPrice,
+                referenceUnitPrice = terms.referenceUnitPrice,
+                DiscountFraction = 0f,
+                status = ContractStatus.Offered,
+                offerExpiryTick = GenTicks.TicksGame + OfferLifespanDays * GenDate.TicksPerDay
+            };
         }
 
         private static RecurringContract BuildContract(
@@ -690,7 +1066,8 @@ namespace Intercolony
             ThingDef thingDef,
             IntercolonyProductCategory category,
             int quantityPerCycle,
-            float? agreedUnitPrice = null)
+            float? agreedUnitPrice = null,
+            int? economySeedOverride = null)
         {
             float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
             float spot = IntercolonyPricing.UnitPrice(
@@ -700,7 +1077,8 @@ namespace Intercolony
             // These inputs are durable across a reload, while the salt isolates this roll from
             // other economy-seed streams using the same settlement and item identifiers.
             int seed = Gen.HashCombineInt(
-                state.EconomySeed, settlement.ID, thingDef.shortHash, quantityPerCycle);
+                economySeedOverride ?? state.EconomySeed,
+                settlement.ID, thingDef.shortHash, quantityPerCycle);
             seed = Gen.HashCombineInt(seed, unitPrice.GetHashCode());
             seed = Gen.HashCombineInt(seed, ContractTermsSeedSalt);
 
@@ -724,6 +1102,40 @@ namespace Intercolony
                 GenDate.TicksPerQuadrum,
                 paymentPerDelivery,
                 deliveryCount,
+                totalPayment);
+        }
+
+        /// <summary>
+        /// Deterministic fixed terms for player-chosen cadence and duration. This intentionally
+        /// performs no term roll, so preview and proposal consume the exact same calculation.
+        /// </summary>
+        private static ContractTerms CalculateExplicitContractTerms(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            SettlementEconomicProfile profile,
+            ThingDef thingDef,
+            IntercolonyProductCategory category,
+            int quantityPerCycle,
+            int cadenceDays,
+            int totalCycles,
+            float? agreedUnitPrice)
+        {
+            float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+            float spot = IntercolonyPricing.UnitPrice(
+                state, thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
+            // A player proposal with no explicit rate keeps the existing sell-side default:
+            // the current spot price. The settlement-generated path above remains on its
+            // premium calculation and is deliberately not routed through this helper.
+            float unitPrice = agreedUnitPrice ?? spot;
+            int paymentPerDelivery = Mathf.RoundToInt(unitPrice * quantityPerCycle);
+            int totalPayment = paymentPerDelivery * totalCycles;
+
+            return new ContractTerms(
+                unitPrice,
+                spot,
+                cadenceDays * GenDate.TicksPerDay,
+                paymentPerDelivery,
+                totalCycles,
                 totalPayment);
         }
 
@@ -787,6 +1199,8 @@ namespace Intercolony
         public static void AdvanceContracts(IntercolonyWorldComponent state)
         {
             int now = GenTicks.TicksGame;
+            // Keep this local so already-open Accepted orders are not re-announced on later beats.
+            List<SalesOrder> cycleOrdersRaisedThisPass = new List<SalesOrder>();
 
             foreach (RecurringContract contract in state.Contracts)
             {
@@ -854,18 +1268,125 @@ namespace Intercolony
                 if (now >= contract.nextCycleTick)
                 {
                     RaiseCycleOrder(state, contract);
+                    if (contract.activeOrderId != 0)
+                    {
+                        SalesOrder cycleOrder = state.FindOrder(contract.activeOrderId);
+                        if (cycleOrder != null)
+                        {
+                            cycleOrdersRaisedThisPass.Add(cycleOrder);
+                        }
+                    }
                 }
             }
+
+            AdvanceAutoReady(state);
+            NotifyCycleOrdersRequiringAttention(cycleOrdersRaisedThisPass);
+        }
+
+        public static int AdvanceAutoReady(IntercolonyWorldComponent state)
+        {
+            int readied = 0;
+
+            foreach (RecurringContract contract in state.Contracts)
+            {
+                if (!contract.IsActive || !contract.autoReadyOrders ||
+                    contract.activeOrderId == 0)
+                {
+                    continue;
+                }
+
+                SalesOrder order = state.FindOrder(contract.activeOrderId);
+                // Early-out only: the load-bearing gate is SalesOrder.CanMarkReady,
+                // which is what makes seller-delivery unreachable. CanMarkReadyNow
+                // re-checks it, so removing this line is not behaviourally observable.
+                // A mutation test established this.
+                if (order == null || !order.CanMarkReady)
+                {
+                    continue;
+                }
+
+                Map map = SalesOrderService.GetFulfillmentMapForReady(order);
+                if (!SalesOrderService.CanMarkReadyNow(
+                        order, map, out string reason))
+                {
+                    if (!string.IsNullOrWhiteSpace(reason) &&
+                        !order.autoReadyFailureNotified)
+                    {
+                        IntercolonyLetters.Send(
+                            IntercolonyLetterImportance.Important,
+                            "Agreement delivery needs attention",
+                            AutoReadyFailureLetterText(order, reason),
+                            LetterDefOf.NeutralEvent);
+                        order.autoReadyFailureNotified = true;
+                    }
+
+                    continue;
+                }
+
+                if (SalesOrderService.MarkReadyForPickup(order, map, announce: false))
+                {
+                    readied++;
+                }
+            }
+
+            return readied;
+        }
+
+        private static string AutoReadyFailureLetterText(SalesOrder order, string reason)
+        {
+            string itemLabel = order.line?.ShortLabel() ?? "<missing item>";
+            return $"{order.settlementName}'s order #{order.id} for " +
+                   $"{order.RemainingQuantity:N0}x {itemLabel} could not be marked ready automatically.\n\n" +
+                   $"{reason}\n\n" +
+                   "The order is still open and can be marked ready by hand in Selling -> Orders.";
+        }
+
+        private static void NotifyCycleOrdersRequiringAttention(
+            List<SalesOrder> cycleOrdersRaisedThisPass)
+        {
+            foreach (SalesOrder order in cycleOrdersRaisedThisPass)
+            {
+                if (order == null || order.status != SalesOrderStatus.Accepted ||
+                    order.autoReadyFailureNotified)
+                {
+                    continue;
+                }
+
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Important,
+                    "Agreement delivery needs attention",
+                    CycleOrderAttentionLetterText(order),
+                    LetterDefOf.NeutralEvent);
+            }
+        }
+
+        private static string CycleOrderAttentionLetterText(SalesOrder order)
+        {
+            string itemLabel = order.line?.ShortLabel() ?? "<missing item>";
+            string remaining = order.RemainingQuantity > 0
+                ? $"{order.RemainingQuantity:N0}x {itemLabel}"
+                : itemLabel;
+
+            if (order.fulfillment == FulfillmentMode.SellerDelivery)
+            {
+                return $"{order.settlementName}'s order #{order.id} for {remaining} " +
+                       "needs delivery attention.\n\n" +
+                       "This seller-delivery order is not handled by Auto-ready.\n\n" +
+                       "Review the order in Selling -> Orders and arrange the delivery by hand.";
+            }
+
+            return $"{order.settlementName}'s order #{order.id} for {remaining} " +
+                   "needs delivery attention.\n\n" +
+                   "Auto-ready is off for this agreement, so the delivery is waiting to be " +
+                   "marked ready by hand.\n\n" +
+                   "Mark the order ready by hand in Selling -> Orders.";
         }
 
         /// <summary>Lets a settlement answer a player proposal once its deliberation ends.</summary>
         internal static void ResolvePlayerProposal(
             IntercolonyWorldComponent state, RecurringContract contract)
         {
-            float acceptanceChance = Mathf.Lerp(
-                MinimumProposalAcceptanceChance,
-                MaximumProposalAcceptanceChance,
-                Mathf.Clamp01(contract.proposalAppeal));
+            float acceptanceChance = AcceptanceChanceForAppeal(contract.proposalAppeal);
 
             bool accepted;
             Rand.PushState(Gen.HashCombineInt(
@@ -1230,16 +1751,10 @@ namespace Intercolony
             contract.activeOrderId = order.id;
             contract.nextCycleTick = GenTicks.TicksGame + contract.cadenceTicks;
 
-            IntercolonyLetters.Send(
-                IntercolonyLetterImportance.Always,
-                "Contract delivery due",
-                $"Delivery {contract.cyclesCompleted + contract.cyclesFailed + 1} of " +
-                $"{contract.totalCycles} for {contract.settlementName}:\n\n" +
-                $"{contract.quantityPerCycle}x {contract.ItemLabel()} within " +
-                $"{contract.CadenceDays:F0} days, for " +
-                $"{contract.DiscountedCyclePayment} silver." +
-                DiscountDisplaySentence(contract),
-                LetterDefOf.NeutralEvent);
+            IntercolonyLog.Message(
+                $"Contract {contract.id} opened cycle order #{order.id} for " +
+                $"{contract.settlementName}: {contract.quantityPerCycle}x " +
+                $"{contract.ItemLabel()} due within {contract.CadenceDays:F0} days.");
         }
 
         private static string DiscountDisplayLine(RecurringContract contract)

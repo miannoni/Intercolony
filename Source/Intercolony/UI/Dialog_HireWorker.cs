@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
@@ -23,12 +24,18 @@ namespace Intercolony
     {
         private const float OptionsHeaderHeight = 26f;
         private const float OptionsSectionGap = 6f;
+        private const float CostLabelWidth = 150f;
+        private const float CostColumnGap = 8f;
+        private const float CostRowGap = 4f;
+        private const float CostTooltipWidth = 18f;
 
         private readonly LaborCandidate candidate;
         private readonly SettlementEconomicProfile profile;
         private readonly Map map;
-        private readonly Action<int, WageStructure, CombatClause> onConfirm;
+        private readonly Action<int, WageStructure, CombatClause, EmploymentHireCostQuote> onConfirm;
         private readonly int maxTermDays;
+        private readonly EmploymentEquipmentQuote equipmentQuote;
+        private readonly bool emergencyDispatch;
 
         private int termDays;
         private string termBuffer;
@@ -51,13 +58,16 @@ namespace Intercolony
 
         public Dialog_HireWorker(
             LaborCandidate candidate, SettlementEconomicProfile profile, Map map, int maxTermDays,
-            Action<int, WageStructure, CombatClause> onConfirm)
+            bool emergencyDispatch,
+            Action<int, WageStructure, CombatClause, EmploymentHireCostQuote> onConfirm)
         {
             this.candidate = candidate;
             this.profile = profile;
             this.map = map;
             this.maxTermDays = Mathf.Max(candidate.minTermDays, maxTermDays);
+            this.emergencyDispatch = emergencyDispatch;
             this.onConfirm = onConfirm;
+            equipmentQuote = EmploymentEquipmentService.Quote(candidate.pawn);
 
             // Open at the minimum term: the cheapest commitment, so spending more is a choice the
             // player makes rather than a default they have to notice and undo.
@@ -83,16 +93,29 @@ namespace Intercolony
 
         private int DailyWage => WageFor(clause);
 
-        private int WageFor(CombatClause option) => LaborCandidateService.DailyWage(
-            candidate.pawn, profile, candidate.distanceTiles, termDays, EmployerStanding, option);
+        private int WageFor(CombatClause option)
+        {
+            return WageFor(option, emergencyDispatch);
+        }
+
+        private int WageFor(CombatClause option, bool emergencyMode)
+        {
+            return LaborCandidateService.DailyWage(
+                candidate.pawn, profile, candidate.distanceTiles,
+                openEnded ? maxTermDays : termDays, EmployerStanding, option, emergencyMode);
+        }
 
         public override void DoWindowContents(Rect inRect)
         {
             float y = 0f;
 
             Text.Font = GameFont.Medium;
-            Widgets.Label(new Rect(0f, y, inRect.width, 32f), $"Hire {candidate.Name}");
-            y += 36f;
+            string title = emergencyDispatch
+                ? $"Emergency hire — {candidate.Name}"
+                : $"Hire {candidate.Name}";
+            float titleHeight = Text.CalcHeight(title, inRect.width);
+            Widgets.Label(new Rect(0f, y, inRect.width, titleHeight), title);
+            y += titleHeight + 4f;
             Text.Font = GameFont.Small;
 
             string candidateSummary =
@@ -103,8 +126,6 @@ namespace Intercolony
             Widgets.Label(new Rect(0f, y, inRect.width, candidateSummaryHeight), candidateSummary);
             GUI.color = Color.white;
             y += candidateSummaryHeight + 4f;
-
-            int wage = DailyWage;
 
             // --- Term ---
             Widgets.Label(new Rect(0f, y, 60f, 28f), "Days:");
@@ -159,22 +180,36 @@ namespace Intercolony
             }
             y += openEndedHeight + 2f;
 
-            string wageSummary = openEnded
-                ? $"{wage} silver/day, open-ended \u2014 they stay until one of you ends it."
-                : $"{wage} silver/day for {termDays} days.";
+            // Nothing can be prepaid when there is no end date. Correct the transient selection
+            // before drawing any wage disclosure so the summary and the selected option agree.
+            if (openEnded && structure == WageStructure.Prepaid)
+            {
+                structure = WageStructure.Quadrum;
+            }
+
+            int wage = DailyWage;
+
+            string wageSummary = WageStructureUtility.DailyWageDisclosure(structure, wage) + "\n" +
+                                 (openEnded
+                                     ? "Open-ended — they stay until one of you ends it."
+                                     : $"Term: {termDays} days.");
             float wageSummaryHeight = Text.CalcHeight(wageSummary, inRect.width);
-            Widgets.Label(new Rect(0f, y, inRect.width, wageSummaryHeight), wageSummary);
+            Rect wageSummaryRect = new Rect(0f, y, inRect.width, wageSummaryHeight);
+            TooltipHandler.TipRegion(
+                wageSummaryRect, WageStructureUtility.DailyWageTooltip(structure, wage));
+            Widgets.Label(wageSummaryRect, wageSummary);
             y += wageSummaryHeight + 2f;
 
             if (termDays > candidate.minTermDays)
             {
                 int atMinimum = LaborCandidateService.DailyWage(
                     candidate.pawn, profile, candidate.distanceTiles, candidate.minTermDays,
-                    EmployerStanding, clause);
+                    EmployerStanding, clause, emergencyDispatch);
                 if (wage < atMinimum)
                 {
                     string longerTerm =
-                        $"Longer term: {wage}/day instead of {atMinimum}/day at their minimum.";
+                        $"Longer term worker ask: {wage:N0}/day instead of " +
+                        $"{atMinimum:N0}/day at their minimum.";
                     float longerTermHeight = Text.CalcHeight(longerTerm, inRect.width);
                     GUI.color = new Color(0.6f, 0.9f, 0.6f);
                     Widgets.Label(new Rect(0f, y, inRect.width, longerTermHeight), longerTerm);
@@ -183,20 +218,20 @@ namespace Intercolony
                 }
             }
 
-            // --- Commit ---
-            if (openEnded && structure == WageStructure.Prepaid)
-            {
-                // Nothing to prepay when there is no agreed end. Silently corrected rather than
-                // disabled, so the player is not left staring at a greyed-out row wondering why.
-                structure = WageStructure.Quadrum;
-            }
-
             int upFront = WageStructureUtility.UpFrontCost(structure, wage, termDays);
+            EmploymentHireCostQuote hireCostQuote = EmploymentEquipmentService.QuoteHireCost(
+                upFront, equipmentQuote);
+            long totalDue = hireCostQuote.totalDue;
             int available = PurchaseOrderService.CountColonySilver(map);
-            bool affordable = available >= upFront;
+            bool affordable = totalDue <= int.MaxValue && available >= totalDue;
+            int ordinaryWage = emergencyDispatch ? WageFor(clause, false) : wage;
+            List<TermRow> costRows = BuildCostRows(
+                structure, hireCostQuote, available, candidate, emergencyDispatch,
+                ordinaryWage, wage);
+            float costHeight = CostRowsHeight(costRows, inRect.width);
 
             float bottom = inRect.height - 40f;
-            float optionsBottom = bottom - 34f;
+            float optionsBottom = bottom - costHeight - 6f;
             Rect optionsRect = new Rect(0f, y, inRect.width, Mathf.Max(1f, optionsBottom - y));
             float optionsWidth = optionsRect.width - 16f;
             float optionsHeight = OptionsHeight(optionsWidth, wage);
@@ -225,24 +260,151 @@ namespace Intercolony
             DrawStructureOption(optionsWidth, optionY, WageStructure.Daily, wage);
             Widgets.EndScrollView();
 
-            GUI.color = affordable ? new Color(1f, 1f, 1f, 0.7f) : new Color(1f, 0.6f, 0.6f);
-            Widgets.Label(new Rect(0f, bottom - 26f, inRect.width, 24f),
-                structure.IsPeriodic()
-                    ? (upFront > 0
-                        ? $"Signing fee: {upFront} silver.  In storage: {available}."
-                        : $"No signing fee.  In storage: {available}.")
-                    : $"Prepaid wages: {upFront} silver.  In storage: {available}.");
-            GUI.color = Color.white;
+            DrawCostRows(costRows, inRect.width, bottom - costHeight, affordable);
 
+            bool guiEnabled = GUI.enabled;
+            GUI.enabled = guiEnabled && affordable;
             if (Widgets.ButtonText(new Rect(0f, bottom, 170f, 36f), "Hire"))
             {
-                onConfirm?.Invoke(openEnded ? 0 : termDays, structure, clause);
+                onConfirm?.Invoke(openEnded ? 0 : termDays, structure, clause, hireCostQuote);
                 Close();
             }
+            GUI.enabled = guiEnabled;
 
             if (Widgets.ButtonText(new Rect(inRect.width - 130f, bottom, 120f, 36f), "Cancel"))
             {
                 Close();
+            }
+        }
+
+        private static List<TermRow> BuildCostRows(
+            WageStructure structure, EmploymentHireCostQuote hireCostQuote, int available,
+            LaborCandidate candidate, bool emergencyDispatch, int ordinaryWage, int wage)
+        {
+            List<TermRow> rows = new List<TermRow>
+            {
+                new TermRow(
+                    structure.IsPeriodic() ? "Signing fee" : "Prepaid wages",
+                    $"{hireCostQuote.upfrontWages:N0} silver"),
+                new TermRow(
+                    "Equipment bond",
+                    EmploymentEquipmentService.BondLabel(hireCostQuote.equipment.bond),
+                    EmploymentEquipmentService.BondTooltip)
+            };
+
+            if (emergencyDispatch)
+            {
+                int premium = Mathf.Max(0, wage - ordinaryWage);
+                int arrivalDays = LaborCandidateService.ArrivalDaysFor(candidate, true);
+                rows.Add(new TermRow(
+                    "Emergency premium",
+                    $"+{premium:N0} ask silver/day " +
+                    $"({LaborCandidateService.EmergencyDispatchWageMultiplier:0.#}x wage)",
+                    EmergencyPremiumTooltip(ordinaryWage, wage)));
+                rows.Add(new TermRow(
+                    "Arrival",
+                    $"{ArrivalLabel(arrivalDays)} (ordinary: {ArrivalLabel(candidate.travelDays)})",
+                    EmergencyArrivalTooltip(candidate, arrivalDays)));
+            }
+
+            rows.Add(new TermRow("Due at hire", $"{hireCostQuote.totalDue:N0} silver"));
+            rows.Add(new TermRow("In storage", $"{available:N0} silver"));
+            return rows;
+        }
+
+        private static string EmergencyPremiumTooltip(int ordinaryWage, int emergencyWage)
+        {
+            return $"Emergency dispatch applies a {LaborCandidateService.EmergencyDispatchWageMultiplier:0.#}x " +
+                   $"urgency multiplier in the shared wage calculation ({ordinaryWage:N0} ordinary to " +
+                   $"{emergencyWage:N0} ask silver/day). It pays for priority and mobilisation; it does " +
+                   "not guarantee that a worker exists or can fulfil the request.";
+        }
+
+        private static string EmergencyArrivalTooltip(LaborCandidate candidate, int arrivalDays)
+        {
+            return $"This worker is in the nearest half of the current direct-hire market by ordinary " +
+                   $"travel time ({candidate.travelDays} days). Emergency dispatch uses the existing " +
+                   $"employment arrival time and compresses that trip to {ArrivalLabel(arrivalDays)} " +
+                   "with a one-day minimum. Drop-pod arrival is not offered because F21 has no " +
+                   "settlement logistics capability model to gate it on.";
+        }
+
+        private static string ArrivalLabel(int days)
+        {
+            return days <= 0
+                ? "Same day"
+                : $"Within {days} {(days == 1 ? "day" : "days")}";
+        }
+
+        private static float CostRowsHeight(List<TermRow> rows, float width)
+        {
+            float height = 0f;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                height += CostRowHeight(rows[i], width);
+                if (i < rows.Count - 1)
+                {
+                    height += CostRowGap;
+                }
+            }
+
+            return height;
+        }
+
+        private static float CostRowHeight(TermRow row, float width)
+        {
+            return Mathf.Max(
+                Text.CalcHeight(row.label ?? "", CostLabelWidth),
+                Text.CalcHeight(row.value ?? "", CostValueWidth(row, width)));
+        }
+
+        private static float CostValueWidth(TermRow row, float width)
+        {
+            float valueWidth = row.label.NullOrEmpty()
+                ? width
+                : width - CostLabelWidth - CostColumnGap;
+            return Mathf.Max(1f, valueWidth - CostTooltipWidth);
+        }
+
+        private static void DrawCostRows(
+            List<TermRow> rows, float width, float startY, bool affordable)
+        {
+            float y = startY;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                TermRow row = rows[i];
+                float rowHeight = CostRowHeight(row, width);
+                Rect rowRect = new Rect(0f, y, width, rowHeight);
+                float valueX = 0f;
+
+                if (!row.label.NullOrEmpty())
+                {
+                    GUI.color = new Color(1f, 1f, 1f, 0.65f);
+                    Widgets.Label(new Rect(0f, y, CostLabelWidth, rowHeight), row.label);
+                    GUI.color = Color.white;
+                    valueX = CostLabelWidth + CostColumnGap;
+                }
+
+                GUI.color = affordable
+                    ? Color.white
+                    : new Color(1f, 0.6f, 0.6f);
+                Widgets.Label(new Rect(valueX, y, CostValueWidth(row, width), rowHeight),
+                    row.value ?? "");
+                GUI.color = Color.white;
+
+                if (!row.tooltip.NullOrEmpty())
+                {
+                    TooltipHandler.TipRegion(rowRect, row.tooltip);
+                    Widgets.DrawHighlightIfMouseover(rowRect);
+                    GUI.color = new Color(0.6f, 0.85f, 1f, 0.65f);
+                    Text.Anchor = TextAnchor.UpperCenter;
+                    Widgets.Label(new Rect(width - CostTooltipWidth, y,
+                        CostTooltipWidth, rowHeight), "?");
+                    Text.Anchor = TextAnchor.UpperLeft;
+                    GUI.color = Color.white;
+                }
+
+                y += rowHeight + CostRowGap;
             }
         }
 
@@ -270,7 +432,8 @@ namespace Intercolony
             string title = StructureTitle(option, wage);
             return LaborOptionRows.Draw(width, y, title,
                 WageStructureUtility.Explain(option, wage, termDays), structure == option,
-                () => structure = option);
+                () => structure = option,
+                WageStructureUtility.DailyWageTooltip(option, wage));
         }
 
         private float OptionsHeight(float width, int wage)

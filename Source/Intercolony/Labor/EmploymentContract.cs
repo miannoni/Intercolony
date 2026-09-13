@@ -152,6 +152,28 @@ namespace Intercolony
         /// <summary>Silver actually handed over so far — the whole term for prepaid, accumulating for periodic.</summary>
         public int paidSilver;
 
+        // --- Equipment bond (F23) ------------------------------------------------------------
+
+        /// <summary>
+        /// Weapons and apparel observed from the worker at hire. The field/node keeps the original
+        /// arrivedEquipment name for the additive schema-58 record: nothing in Intercolony changes
+        /// a travelling worker's gear, so the hire-time observation is also what arrives. This is
+        /// the durable record of borrowed capital, not inventory or body modifications. Settlement
+        /// compares this snapshot with the weapons and apparel the worker still carries when the
+        /// employment ends.
+        /// </summary>
+        public List<EmploymentEquipmentRecord> arrivedEquipment =
+            new List<EmploymentEquipmentRecord>();
+
+        /// <summary>
+        /// Refundable deposit charged for <see cref="arrivedEquipment"/>. It is separate from
+        /// wages, <see cref="paidSilver"/>, and every wage-cost calculation.
+        /// </summary>
+        public int equipmentBond;
+
+        /// <summary>Prevents a terminal path from settling the same deposit twice.</summary>
+        public bool equipmentBondSettled;
+
         // --- Payment structure (§37, §38, §39) ---
 
         public WageStructure wageStructure = WageStructure.Prepaid;
@@ -226,6 +248,12 @@ namespace Intercolony
         /// <summary>How many terms this worker has signed on for beyond the first.</summary>
         public int renewals;
 
+        /// <summary>
+        /// When set, a renewal offer the worker actually makes is accepted without the player
+        /// clicking Renew. It does not bypass eligibility — the worker still has to offer.
+        /// </summary>
+        public bool autoRenew;
+
         // --- Attachment (§44, §116) ---------------------------------------------------------
 
         /// <summary>A live offer to stay permanently is waiting on the player.</summary>
@@ -239,6 +267,17 @@ namespace Intercolony
 
         /// <summary>Set on arrival: the term runs from the first day of work, not from hiring.</summary>
         public int endTick = -1;
+
+        /// <summary>
+        /// Running total of normalized daily mood samples recorded during this employment.
+        /// </summary>
+        public float moodSampleTotal;
+
+        /// <summary>
+        /// Number of normalized daily mood samples recorded. Zero means "never sampled", not a
+        /// genuine average of zero.
+        /// </summary>
+        public int moodSampleCount;
 
         public EmploymentStatus status = EmploymentStatus.Travelling;
         public string outcomeNote = "";
@@ -321,8 +360,21 @@ namespace Intercolony
             ? PeriodPayment
             : WageStructureUtility.TotalCost(wageStructure, dailyWage, termDays);
 
+        /// <summary>
+        /// The per-day rate the colony is billed. <see cref="dailyWage"/> is the worker's ask;
+        /// every payroll path must use this property rather than multiplying the stored field.
+        /// </summary>
+        public int ChargedDailyWage =>
+            WageStructureUtility.EffectiveDailyWage(wageStructure, dailyWage);
+
         /// <summary>Amount a single pay period costs. Zero for prepaid.</summary>
-        public int PeriodPayment => WageStructureUtility.PeriodCost(wageStructure, dailyWage);
+        public int PeriodPayment => ChargedDailyWage * wageStructure.IntervalDays();
+
+        /// <summary>
+        /// Player-facing wording for the deposit. A none-value is described in words rather than
+        /// formatted as a zero.
+        /// </summary>
+        public string EquipmentBondLabel => EmploymentEquipmentService.BondLabel(equipmentBond);
 
         /// <summary>
         /// Whether the worker is severed and still on their way out. Not <see cref="IsOpen"/>:
@@ -430,6 +482,9 @@ namespace Intercolony
             Scribe_Values.Look(ref dailyWage, "dailyWage", 0);
             Scribe_Values.Look(ref termDays, "termDays", 0);
             Scribe_Values.Look(ref paidSilver, "paidSilver", 0);
+            Scribe_Collections.Look(ref arrivedEquipment, "arrivedEquipment", LookMode.Deep);
+            Scribe_Values.Look(ref equipmentBond, "equipmentBond", 0);
+            Scribe_Values.Look(ref equipmentBondSettled, "equipmentBondSettled", false);
 
             // Pre-Phase-20 saves have no clause node. Civilian is the right default for them:
             // it is what every existing contract was priced as, so an old save does not
@@ -459,10 +514,13 @@ namespace Intercolony
             Scribe_Values.Look(ref renewalDeclinedByPlayer, "renewalDeclinedByPlayer", false);
             Scribe_Values.Look(ref renewalWage, "renewalWage", 0);
             Scribe_Values.Look(ref renewals, "renewals", 0);
+            Scribe_Values.Look(ref autoRenew, "autoRenew", false);
             Scribe_Values.Look(ref transitionOffered, "transitionOffered", false);
             Scribe_Values.Look(ref transitionOfferedTick, "transitionOfferedTick", -1);
             Scribe_Values.Look(ref transitionResolved, "transitionResolved", false);
             Scribe_Values.Look(ref endTick, "endTick", -1);
+            Scribe_Values.Look(ref moodSampleTotal, "moodSampleTotal", 0f);
+            Scribe_Values.Look(ref moodSampleCount, "moodSampleCount", 0);
 
             Scribe_Values.Look(ref status, "status", EmploymentStatus.Travelling);
             Scribe_Values.Look(ref outcomeNote, "outcomeNote", "");
@@ -477,6 +535,13 @@ namespace Intercolony
                 {
                     // A missing dictionary node loads as null, not empty.
                     heldPriorities = new Dictionary<WorkTypeDef, int>();
+                }
+
+                // The arrived-equipment node is additive on schema 58. Older saves therefore
+                // correctly load with no recorded gear and no deposit.
+                if (arrivedEquipment == null)
+                {
+                    arrivedEquipment = new List<EmploymentEquipmentRecord>();
                 }
 
                 // A pre-Phase-20 save has refusingWork but no reason. Everything that could set
@@ -585,8 +650,9 @@ namespace Intercolony
             // Shows the commitment and the structure, not just paidSilver. It used to read
             // "(22/day x 20d = 0)" for a periodic hire, which looks like a zero-value contract
             // rather than one where nothing has been paid yet.
-            string money = $"{dailyWage}/day × {TermLabel} {wageStructure.Label()}, " +
-                           $"{TotalCommitment} total, {paidSilver} paid";
+            string money = $"{WageStructureUtility.DailyWageDisclosure(wageStructure, dailyWage)}, " +
+                           $"{TermLabel} {wageStructure.Label()}, {TotalCommitment} total, " +
+                           $"{paidSilver} paid";
             if (arrearsSilver > 0)
             {
                 money += $", {arrearsSilver} owed";
@@ -595,6 +661,11 @@ namespace Intercolony
             if (compensationPaid > 0)
             {
                 money += $", {compensationPaid} compensation";
+            }
+
+            if (equipmentBond > 0)
+            {
+                money += $", {EquipmentBondLabel}";
             }
 
             string clause = combatClause.Label();

@@ -10,7 +10,7 @@ namespace Intercolony
     public static class LaborOptionRows
     {
         public static float Draw(float width, float y, string title, string explanation, bool selected,
-            Action choose)
+            Action choose, string tooltip = null)
         {
             float textWidth = width - 40f;
             float titleHeight = Text.CalcHeight(title, textWidth);
@@ -39,6 +39,11 @@ namespace Intercolony
             {
                 choose();
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
+            }
+
+            if (!tooltip.NullOrEmpty())
+            {
+                TooltipHandler.TipRegion(row, tooltip);
             }
 
             return y + rowHeight;

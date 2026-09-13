@@ -49,6 +49,13 @@ namespace Intercolony
                 sb.AppendLine($"  SKIPPED  {name} — {reason}");
             }
 
+            bool IsLegacyAppealBucket(float appeal)
+            {
+                return Mathf.Approximately(appeal, 0f) ||
+                       Mathf.Approximately(appeal, 0.5f) ||
+                       Mathf.Approximately(appeal, 1f);
+            }
+
             string Summarize()
             {
                 if (skippedAssertions.Count == 0)
@@ -70,6 +77,10 @@ namespace Intercolony
             }
 
             sb.AppendLine("Recurring contract self-test");
+
+            CheckAutoReadySerialization(Check);
+            CheckContractStartsExpanded(Check);
+            CheckProcurementContractStartsExpanded(Check);
 
             List<RecurringContract> created = new List<RecurringContract>();
             List<SalesOrder> createdOrders = new List<SalesOrder>();
@@ -102,6 +113,8 @@ namespace Intercolony
             List<SalesOrder> savedStateOrders = new List<SalesOrder>(state.Orders);
             List<CommercialHistoryEntry> savedCommercialHistory =
                 new List<CommercialHistoryEntry>(state.CommercialHistory);
+            List<ProductBrandRecord> savedProductBrandRecords =
+                new List<ProductBrandRecord>(state.ProductBrandRecords);
             bool hadSubjectReputation = state.Reputations.TryGetValue(
                 subject.ID, out CommercialReputation savedSubjectReputation);
             state.Contracts.Clear();
@@ -521,6 +534,449 @@ namespace Intercolony
                                       $"@ {real.unitPrice:F2} vs spot {spot:F2}, " +
                                       $"{real.CycleValue} silver per cycle)");
                     }
+
+                    // Player proposals require the same reputation gate as settlement offers;
+                    // the fixture's completed history supplies the other commercial prerequisite.
+                    CommercialReputation proposalReputation = new CommercialReputation(
+                        subject.ID, subject.Label ?? "unnamed", subject.Faction?.Name ?? "");
+                    proposalReputation.Adjust(20f);
+                    state.Reputations[subject.ID] = proposalReputation;
+                    state.Contracts.Clear();
+
+                    ThingDef minifiableFurniture = ThingDefOf.DiningChair;
+                    bool furnitureFixtureValid = minifiableFurniture != null &&
+                        DefDatabase<ThingDef>.GetNamedSilentFail(minifiableFurniture.defName) ==
+                        minifiableFurniture &&
+                        minifiableFurniture.stackLimit == 1 &&
+                        minifiableFurniture.category == ThingCategory.Building &&
+                        minifiableFurniture.Minifiable &&
+                        IntercolonyTradeBlacklist.ExclusionReason(minifiableFurniture) == null &&
+                        IntercolonyProductClassifier.IsFungibleTradeItem(minifiableFurniture) &&
+                        IntercolonyProductClassifier.Classify(minifiableFurniture).HasValue;
+                    // This fails if RimWorld's furniture fixture is missing or if the shared
+                    // classifier stops recognizing a stack-one minifiable building as tradable.
+                    Check("dining chair is a valid minifiable furniture fixture",
+                        furnitureFixtureValid,
+                        $"def={minifiableFurniture?.defName ?? "<missing>"}; " +
+                        $"category={minifiableFurniture?.category.ToString() ?? "<missing>"}; " +
+                        $"stack={minifiableFurniture?.stackLimit.ToString() ?? "<missing>"}; " +
+                        $"minifiable={minifiableFurniture?.Minifiable.ToString() ?? "<missing>"}; " +
+                        $"fungible={IntercolonyProductClassifier.IsFungibleTradeItem(
+                            minifiableFurniture)}");
+
+                    if (furnitureFixtureValid)
+                    {
+                        ClearHistory();
+                        for (int i = 0;
+                             i < ContractService.MinimumCompletedOrdersForAgreement;
+                             i++)
+                        {
+                            PlantHistoryOrder(
+                                subject.ID, minifiableFurniture, SalesOrderStatus.Completed);
+                        }
+
+                        ContractProposalResult furnitureProposal =
+                            ContractService.ProposeContract(
+                                state,
+                                subject,
+                                minifiableFurniture,
+                                ContractService.MinimumQuantityPerCycle,
+                                ProcurementContractService.MinimumCadenceDays,
+                                ProcurementContractService.MinimumTotalCycles,
+                                agreedUnitPrice: null,
+                                fulfillment: FulfillmentMode.SellerDelivery);
+                        // This fails if either removed contract-only gate still rejects a
+                        // stackLimit-1 ThingDef or a ThingCategory.Building, or if the agreement
+                        // grows an unrequested quality/material specification.
+                        Check("stack-one minifiable furniture reaches a plain selling agreement",
+                            furnitureProposal.Success && furnitureProposal.Contract != null &&
+                            furnitureProposal.Contract.thingDef == minifiableFurniture &&
+                            furnitureProposal.Contract.minQuality == null &&
+                            furnitureProposal.Contract.stuffDef == null,
+                            $"success={furnitureProposal.Success}; " +
+                            $"failure={furnitureProposal.Failure}; " +
+                            $"reason={furnitureProposal.Reason ?? "none"}; " +
+                            $"item={furnitureProposal.Contract?.thingDef?.defName ?? "<none>"}");
+
+                        state.Contracts.Clear();
+                        temporarilyBlacklistedDef = minifiableFurniture;
+                        IntercolonyTradeBlacklist.AddRuntimeExclusion(
+                            minifiableFurniture, "contract eligibility self-test");
+                        ContractProposalResult blacklistedFurnitureProposal =
+                            ContractService.ProposeContract(
+                                state,
+                                subject,
+                                minifiableFurniture,
+                                ContractService.MinimumQuantityPerCycle,
+                                ProcurementContractService.MinimumCadenceDays,
+                                ProcurementContractService.MinimumTotalCycles,
+                                agreedUnitPrice: null,
+                                fulfillment: FulfillmentMode.SellerDelivery);
+                        // This fails if widening eligibility bypasses the existing blacklist
+                        // check and lets an otherwise eligible minifiable building through.
+                        Check("blacklisted minifiable furniture remains refused",
+                            !blacklistedFurnitureProposal.Success &&
+                            blacklistedFurnitureProposal.Failure ==
+                                ContractProposalFailure.InvalidItem,
+                            $"success={blacklistedFurnitureProposal.Success}; " +
+                            $"failure={blacklistedFurnitureProposal.Failure}; " +
+                            $"reason={blacklistedFurnitureProposal.Reason ?? "none"}");
+                        IntercolonyTradeBlacklist.RemoveRuntimeExclusion(minifiableFurniture);
+                        temporarilyBlacklistedDef = null;
+                    }
+
+                    state.Contracts.Clear();
+                    ClearHistory();
+                    for (int i = 0;
+                         i < ContractService.MinimumCompletedOrdersForAgreement;
+                         i++)
+                    {
+                        PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                    }
+
+                    List<ProductBrandRecord> savedBrandRecordsForPricing =
+                        new List<ProductBrandRecord>(state.ProductBrandRecords);
+                    state.ProductBrandRecords.Clear();
+                    try
+                    {
+                        IntercolonyProductCategory brandCategory =
+                            IntercolonyProductClassifier.Classify(meat) ??
+                            IntercolonyProductCategory.Commodities;
+                        float brandDistance = MarketOpportunityGenerator.DistanceToPlayer(subject);
+                        ContractTerms noEvidenceTerms = ContractService.PreviewContractTerms(
+                            state,
+                            subject,
+                            meat,
+                            ContractService.MinimumQuantityPerCycle,
+                            agreedUnitPrice: null);
+                        float noEvidencePrice = IntercolonyPricing.UnitPrice(
+                            state,
+                            meat,
+                            null,
+                            ContractService.MinimumQuantityPerCycle,
+                            profile,
+                            brandCategory,
+                            brandDistance,
+                            null,
+                            out _);
+
+                        state.ProductBrandRecords.Add(new ProductBrandRecord(
+                            meat,
+                            ProductBrandRecord.MaxScore,
+                            EffectiveBrandService.DirectEvidenceConfidenceScale,
+                            ContractService.MinimumQuantityPerCycle));
+                        ContractTerms evidenceTerms = ContractService.PreviewContractTerms(
+                            state,
+                            subject,
+                            meat,
+                            ContractService.MinimumQuantityPerCycle,
+                            agreedUnitPrice: null);
+                        float evidencePrice = IntercolonyPricing.UnitPrice(
+                            state,
+                            meat,
+                            null,
+                            ContractService.MinimumQuantityPerCycle,
+                            profile,
+                            brandCategory,
+                            brandDistance,
+                            null,
+                            out _);
+                        float effectiveBrand = EffectiveBrandService.GetEffectiveBrand(state, meat);
+
+                        // This fails if a contract reference price stops using the pricing
+                        // service, omits its brand factor, or applies that factor a second time.
+                        Check("contract reference price carries product brand evidence",
+                            noEvidenceTerms != null && evidenceTerms != null &&
+                            Mathf.Approximately(
+                                noEvidenceTerms.referenceUnitPrice, noEvidencePrice) &&
+                            Mathf.Approximately(
+                                evidenceTerms.referenceUnitPrice, evidencePrice) &&
+                            !Mathf.Approximately(
+                                noEvidenceTerms.referenceUnitPrice,
+                                evidenceTerms.referenceUnitPrice) &&
+                            !Mathf.Approximately(effectiveBrand, ProductBrandRecord.Neutral),
+                            $"no evidence={noEvidenceTerms?.referenceUnitPrice.ToString("R") ??
+                                "null"}/{noEvidencePrice:R}; " +
+                            $"with evidence={evidenceTerms?.referenceUnitPrice.ToString("R") ??
+                                "null"}/{evidencePrice:R}; " +
+                            $"effective brand={effectiveBrand:R}");
+                    }
+                    finally
+                    {
+                        state.ProductBrandRecords.Clear();
+                        state.ProductBrandRecords.AddRange(savedBrandRecordsForPricing);
+                    }
+
+                    const int namedQuantity = 100;
+                    const int namedCadenceDays = 7;
+                    const int namedTotalCycles = 4;
+                    const FulfillmentMode namedFulfillment = FulfillmentMode.BuyerPickup;
+                    ContractProposalResult namedProposal = ContractService.ProposeContract(
+                        state, subject, meat, namedQuantity, namedCadenceDays, namedTotalCycles,
+                        agreedUnitPrice: null, fulfillment: namedFulfillment);
+
+                    // This fails if any player-chosen cadence, cycle count or fulfillment mode is
+                    // dropped, defaulted or overwritten before the contract is created.
+                    Check("player-chosen selling terms reach the contract",
+                        namedProposal.Success && namedProposal.Contract != null &&
+                        namedProposal.Contract.cadenceTicks ==
+                        namedCadenceDays * GenDate.TicksPerDay &&
+                        namedProposal.Contract.totalCycles == namedTotalCycles &&
+                        namedProposal.Contract.fulfillment == namedFulfillment &&
+                        namedProposal.Evaluation != null &&
+                        namedProposal.Evaluation.ProposedTerms != null &&
+                        namedProposal.Evaluation.ProposedTerms.deadlineDays == namedCadenceDays &&
+                        namedProposal.Evaluation.ProposedTerms.fulfillment == namedFulfillment,
+                        $"success={namedProposal.Success}; failure={namedProposal.Failure}; " +
+                        $"cadence={namedProposal.Contract?.CadenceDays:F0}; " +
+                        $"cycles={namedProposal.Contract?.totalCycles}; " +
+                        $"fulfillment={namedProposal.Contract?.fulfillment}");
+                    Check(
+                        "a new selling agreement starts with auto-ready on",
+                        namedProposal.Success && namedProposal.Contract != null &&
+                        namedProposal.Contract.autoReadyOrders,
+                        $"autoReadyOrders={(namedProposal.Contract == null
+                            ? "null" : namedProposal.Contract.autoReadyOrders.ToString())}; " +
+                        "construction path=ContractService.ProposeContract -> " +
+                        "BuildExplicitContract");
+
+                    ContractProposalResult ProposeTermFixture(
+                        int cadenceDays, int totalCycles,
+                        FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+                    {
+                        state.Contracts.Clear();
+                        return ContractService.ProposeContract(
+                            state, subject, meat, namedQuantity, cadenceDays, totalCycles,
+                            agreedUnitPrice: null, fulfillment: fulfillment);
+                    }
+
+                    ContractProposalResult cadenceBelow = ProposeTermFixture(
+                        ProcurementContractService.MinimumCadenceDays - 1, 1);
+                    // This fails if a cadence below the procurement lower bound is accepted or
+                    // reports anything other than the procurement refusal reason.
+                    Check("selling cadence below minimum is refused",
+                        !cadenceBelow.Success &&
+                        cadenceBelow.Failure == ContractProposalFailure.CadenceOutOfRange &&
+                        cadenceBelow.Reason ==
+                        $"Cadence must be between {ProcurementContractService.MinimumCadenceDays} and " +
+                        $"{ProcurementContractService.MaximumCadenceDays} days.",
+                        $"failure={cadenceBelow.Failure}; reason={cadenceBelow.Reason}");
+
+                    ContractProposalResult cadenceAbove = ProposeTermFixture(
+                        ProcurementContractService.MaximumCadenceDays + 1, 1);
+                    // This fails if a cadence above the procurement upper bound is accepted or
+                    // reports anything other than the procurement refusal reason.
+                    Check("selling cadence above maximum is refused",
+                        !cadenceAbove.Success &&
+                        cadenceAbove.Failure == ContractProposalFailure.CadenceOutOfRange &&
+                        cadenceAbove.Reason ==
+                        $"Cadence must be between {ProcurementContractService.MinimumCadenceDays} and " +
+                        $"{ProcurementContractService.MaximumCadenceDays} days.",
+                        $"failure={cadenceAbove.Failure}; reason={cadenceAbove.Reason}");
+
+                    ContractProposalResult cyclesBelow = ProposeTermFixture(1,
+                        ProcurementContractService.MinimumTotalCycles - 1);
+                    // This fails if a cycle count below the procurement lower bound is accepted or
+                    // reports anything other than the procurement refusal reason.
+                    Check("selling total cycles below minimum is refused",
+                        !cyclesBelow.Success &&
+                        cyclesBelow.Failure == ContractProposalFailure.TotalCyclesOutOfRange &&
+                        cyclesBelow.Reason ==
+                        $"Total cycles must be between {ProcurementContractService.MinimumTotalCycles} and " +
+                        $"{ProcurementContractService.MaximumTotalCycles}.",
+                        $"failure={cyclesBelow.Failure}; reason={cyclesBelow.Reason}");
+
+                    ContractProposalResult cyclesAbove = ProposeTermFixture(1,
+                        ProcurementContractService.MaximumTotalCycles + 1);
+                    // This fails if a cycle count above the procurement upper bound is accepted or
+                    // reports anything other than the procurement refusal reason.
+                    Check("selling total cycles above maximum is refused",
+                        !cyclesAbove.Success &&
+                        cyclesAbove.Failure == ContractProposalFailure.TotalCyclesOutOfRange &&
+                        cyclesAbove.Reason ==
+                        $"Total cycles must be between {ProcurementContractService.MinimumTotalCycles} and " +
+                        $"{ProcurementContractService.MaximumTotalCycles}.",
+                        $"failure={cyclesAbove.Failure}; reason={cyclesAbove.Reason}");
+
+                    ContractProposalResult termTooLong = ProposeTermFixture(
+                        ProcurementContractService.MaximumCadenceDays, 2);
+                    // This fails if a valid cadence/cycle pair whose product exceeds the maximum
+                    // term is accepted or reports anything other than the procurement reason.
+                    Check("selling term over maximum is refused",
+                        !termTooLong.Success &&
+                        termTooLong.Failure == ContractProposalFailure.TermTooLong &&
+                        termTooLong.Reason ==
+                        $"Cadence multiplied by total cycles must not exceed " +
+                        $"{ProcurementContractService.MaximumTermDays} days.",
+                        $"failure={termTooLong.Failure}; reason={termTooLong.Reason}");
+
+                    ContractProposalResult invalidFulfillment = ProposeTermFixture(
+                        1, 1, (FulfillmentMode)int.MaxValue);
+                    // This fails if an enum value outside the two legal fulfillment modes reaches
+                    // proposal construction instead of using the procurement refusal reason.
+                    Check("selling invalid fulfillment is refused",
+                        !invalidFulfillment.Success &&
+                        invalidFulfillment.Failure == ContractProposalFailure.InvalidFulfillment &&
+                        invalidFulfillment.Reason ==
+                        "Fulfillment must be supplier delivery or buyer pickup.",
+                        $"failure={invalidFulfillment.Failure}; reason={invalidFulfillment.Reason}");
+
+                    const int previewQuantity = 76;
+                    const int previewCadenceDays = 5;
+                    const int previewTotalCycles = 5;
+                    const FulfillmentMode previewFulfillment = FulfillmentMode.BuyerPickup;
+                    state.Contracts.Clear();
+                    ContractTerms preview = ContractService.PreviewContractTerms(
+                        state, subject, meat, previewQuantity, previewCadenceDays,
+                        previewTotalCycles, agreedUnitPrice: null,
+                        fulfillment: previewFulfillment);
+                    int nextIdBeforeAcceptancePreviews = state.PeekNextId();
+                    int contractCountBeforeAcceptancePreviews = state.Contracts.Count;
+                    IntercolonyNegotiationAcceptancePreview acceptancePreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: null,
+                            fulfillment: previewFulfillment);
+                    float continuousPrice = preview == null
+                        ? -1f
+                        : preview.referenceUnitPrice * 1.20f;
+                    float slightlyDifferentPrice = preview == null
+                        ? -1f
+                        : preview.referenceUnitPrice * 1.21f;
+                    IntercolonyNegotiationAcceptancePreview continuousFirstPreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: continuousPrice,
+                            fulfillment: previewFulfillment);
+                    IntercolonyNegotiationAcceptancePreview continuousSecondPreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: slightlyDifferentPrice,
+                            fulfillment: previewFulfillment);
+                    IntercolonyNegotiationAcceptancePreview repeatedAcceptancePreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: null,
+                            fulfillment: previewFulfillment);
+                    IntercolonyNegotiationAcceptancePreview thirdAcceptancePreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat, previewQuantity, previewCadenceDays,
+                            previewTotalCycles, agreedUnitPrice: null,
+                            fulfillment: previewFulfillment);
+
+                    // This fails if a preview consumes an ID, records a contract, or mutates the
+                    // contract collection while it is only answering a read-only question.
+                    Check("selling acceptance preview leaves state untouched",
+                        acceptancePreview != null && repeatedAcceptancePreview != null &&
+                        thirdAcceptancePreview != null &&
+                        state.PeekNextId() == nextIdBeforeAcceptancePreviews &&
+                        state.Contracts.Count == contractCountBeforeAcceptancePreviews,
+                        $"next id {nextIdBeforeAcceptancePreviews}->{state.PeekNextId()}; " +
+                        $"contracts {contractCountBeforeAcceptancePreviews}->{state.Contracts.Count}");
+
+                    ContractProposalResult previewProposal = ContractService.ProposeContract(
+                        state, subject, meat, previewQuantity, previewCadenceDays,
+                        previewTotalCycles, agreedUnitPrice: null,
+                        fulfillment: previewFulfillment);
+
+                    // This fails if a Refused preview reaches Likely or stronger, an Accepted
+                    // preview falls at Unlikely or weaker, or the previewed score or factor count
+                    // differs from the proposal evaluation.
+                    Check("selling acceptance preview matches the proposal band",
+                        acceptancePreview != null && previewProposal.Success &&
+                        previewProposal.Evaluation != null &&
+                        (previewProposal.Evaluation.Decision !=
+                             IntercolonyNegotiationDecision.Refused ||
+                         (int)acceptancePreview.Band <
+                             (int)IntercolonyNegotiationAcceptanceBand.Likely) &&
+                        (previewProposal.Evaluation.Decision !=
+                             IntercolonyNegotiationDecision.Accepted ||
+                         (int)acceptancePreview.Band >
+                             (int)IntercolonyNegotiationAcceptanceBand.Unlikely) &&
+                        acceptancePreview.Score == previewProposal.Evaluation.AcceptanceScore &&
+                        acceptancePreview.Factors.Count == previewProposal.Evaluation.Factors.Count,
+                        $"preview band={acceptancePreview?.Band.ToString() ?? "null"}; " +
+                        $"proposal decision={previewProposal.Evaluation?.Decision.ToString() ?? "null"}; " +
+                        $"preview score={acceptancePreview?.Score.ToString("R") ?? "null"}; " +
+                        $"proposal score={previewProposal.Evaluation?.AcceptanceScore.ToString("R") ?? "null"}; " +
+                        $"preview factors={acceptancePreview?.Factors.Count.ToString() ?? "null"}; " +
+                        $"proposal factors={previewProposal.Evaluation?.Factors.Count.ToString() ?? "null"}");
+
+                    float answerChance = previewProposal.Contract == null
+                        ? -1f
+                        : ContractService.AcceptanceChanceForAppeal(
+                            previewProposal.Contract.proposalAppeal);
+                    // This fails if the preview or the delayed answer path grows its own appeal
+                    // to chance mapping, if the preview does not use the stored appeal, or if the
+                    // shared appeal property diverges from the value stored for the roll.
+                    Check("selling acceptance preview exposes the answer chance",
+                        previewProposal.Contract != null &&
+                        acceptancePreview?.AcceptanceChance.HasValue == true &&
+                        Mathf.Abs(
+                            acceptancePreview.ProposalAppeal -
+                            previewProposal.Contract.proposalAppeal) <= 0.000001f &&
+                        Mathf.Abs(acceptancePreview.AcceptanceChance.Value - answerChance) <= 0.000001f,
+                        $"preview chance={acceptancePreview?.AcceptanceChance?.ToString("R") ?? "null"}; " +
+                        $"preview appeal={acceptancePreview?.ProposalAppeal.ToString("R") ?? "null"}; " +
+                        $"stored appeal={previewProposal.Contract?.proposalAppeal.ToString("R") ?? "null"}; " +
+                        $"answer chance={answerChance:R}");
+
+                    // This must fail if anyone reintroduces a bucketed appeal: two packages that
+                    // differ only by a slight price change must retain different appeal values,
+                    // and neither value may be one of the old 0, 0.5, or 1 buckets.
+                    Check("selling proposal appeal remains continuous",
+                        preview != null &&
+                        continuousFirstPreview != null && continuousSecondPreview != null &&
+                        Mathf.Abs(slightlyDifferentPrice - continuousPrice) > 0f &&
+                        Mathf.Abs(
+                            continuousFirstPreview.ProposalAppeal -
+                            continuousSecondPreview.ProposalAppeal) > 0.000001f &&
+                        !IsLegacyAppealBucket(continuousFirstPreview.ProposalAppeal) &&
+                        !IsLegacyAppealBucket(continuousSecondPreview.ProposalAppeal),
+                        $"prices={continuousPrice:R}/{slightlyDifferentPrice:R}; " +
+                        $"appeals={continuousFirstPreview?.ProposalAppeal.ToString("R") ?? "null"}/" +
+                        $"{continuousSecondPreview?.ProposalAppeal.ToString("R") ?? "null"}");
+
+                    // This fails if preview and proposal calculate their price or rounded
+                    // per-cycle payment independently.
+                    Check("selling preview matches the proposed package",
+                        preview != null && previewProposal.Success &&
+                        previewProposal.Contract != null &&
+                        preview.unitPrice == previewProposal.Contract.unitPrice &&
+                        preview.paymentPerDelivery == previewProposal.Contract.CyclePayment,
+                        $"preview unit={preview?.unitPrice.ToString("R") ?? "null"}; " +
+                        $"proposal unit={previewProposal.Contract?.unitPrice.ToString("R") ?? "null"}; " +
+                        $"preview payment={preview?.paymentPerDelivery}; " +
+                        $"proposal payment={previewProposal.Contract?.CyclePayment}; " +
+                        $"reason={previewProposal.Reason ?? "none"}");
+
+                    state.Contracts.Clear();
+                    IntercolonyNegotiationAcceptancePreview outOfRangeAcceptancePreview =
+                        ContractService.PreviewAcceptance(
+                            state, subject, meat,
+                            ContractService.MinimumQuantityPerCycle - 1,
+                            previewCadenceDays, previewTotalCycles,
+                            agreedUnitPrice: null, fulfillment: previewFulfillment);
+                    // This fails if a package outside the service's quantity bound receives a
+                    // band instead of the null used for a package that cannot be proposed.
+                    Check("selling acceptance preview refuses an out-of-range package",
+                        outOfRangeAcceptancePreview == null,
+                        $"preview={(outOfRangeAcceptancePreview == null
+                            ? "null" : outOfRangeAcceptancePreview.Band.ToString())}");
+
+                    ContractProposalResult legacyProposal = ContractService.ProposeContract(
+                        state, subject, meat, ContractService.MinimumQuantityPerCycle);
+                    // This fails if the untouched overload stops using its seeded 3-to-6 draw or
+                    // its one-quadrum cadence while delegating to the explicit-term path.
+                    Check("legacy selling proposal keeps seeded terms",
+                        legacyProposal.Success && legacyProposal.Contract != null &&
+                        legacyProposal.Contract.totalCycles >= 3 &&
+                        legacyProposal.Contract.totalCycles <= 6 &&
+                        legacyProposal.Contract.cadenceTicks == GenDate.TicksPerQuadrum,
+                        $"success={legacyProposal.Success}; failure={legacyProposal.Failure}; " +
+                        $"cycles={legacyProposal.Contract?.totalCycles}; " +
+                        $"cadence={legacyProposal.Contract?.CadenceDays:F0}; " +
+                        $"reason={legacyProposal.Reason ?? "none"}");
                 }
             }
             finally
@@ -555,9 +1011,380 @@ namespace Intercolony
                 state.Orders.AddRange(savedStateOrders);
                 state.CommercialHistory.Clear();
                 state.CommercialHistory.AddRange(savedCommercialHistory);
+                state.ProductBrandRecords.Clear();
+                state.ProductBrandRecords.AddRange(savedProductBrandRecords);
             }
 
             return Summarize();
+        }
+
+        private static void CheckAutoReadySerialization(
+            Action<string, bool, string> check)
+        {
+            ContractAutoReadyRoundTripProbe sellingOffLoaded =
+                RoundTripContractAutoReady(
+                    new ContractAutoReadyRoundTripProbe
+                    {
+                        sellingAgreement = new RecurringContract { autoReadyOrders = false }
+                    },
+                    "intercolonySellingAgreementAutoReadyOffTest",
+                    out bool sellingOffNodePresent,
+                    out string sellingOffFailure);
+            bool? sellingOffValue = sellingOffLoaded?.sellingAgreement?.autoReadyOrders;
+            check(
+                "a selling agreement with auto-ready off loads off",
+                sellingOffFailure == null && sellingOffValue == false && !sellingOffNodePresent,
+                $"loaded autoReadyOrders={sellingOffValue?.ToString() ?? "null"}; " +
+                $"autoReadyOrders node present={sellingOffNodePresent}; " +
+                $"failure={sellingOffFailure ?? "none"}");
+
+            ContractAutoReadyRoundTripProbe sellingOnLoaded =
+                RoundTripContractAutoReady(
+                    new ContractAutoReadyRoundTripProbe
+                    {
+                        sellingAgreement = new RecurringContract { autoReadyOrders = true }
+                    },
+                    "intercolonySellingAgreementAutoReadyOnTest",
+                    out bool sellingOnNodePresent,
+                    out string sellingOnFailure);
+            bool? sellingOnValue = sellingOnLoaded?.sellingAgreement?.autoReadyOrders;
+            check(
+                "a selling agreement with auto-ready on loads on",
+                sellingOnFailure == null && sellingOnValue == true && sellingOnNodePresent,
+                $"loaded autoReadyOrders={sellingOnValue?.ToString() ?? "null"}; " +
+                $"autoReadyOrders node present={sellingOnNodePresent}; " +
+                $"failure={sellingOnFailure ?? "none"}");
+
+            ContractAutoReadyRoundTripProbe procurementOffLoaded =
+                RoundTripContractAutoReady(
+                    new ContractAutoReadyRoundTripProbe
+                    {
+                        procurementAgreement = new ProcurementContract
+                        {
+                            autoReadyOrders = false
+                        }
+                    },
+                    "intercolonyProcurementAgreementAutoReadyOffTest",
+                    out bool procurementOffNodePresent,
+                    out string procurementOffFailure);
+            bool? procurementOffValue =
+                procurementOffLoaded?.procurementAgreement?.autoReadyOrders;
+            check(
+                "a procurement agreement with auto-ready off loads off",
+                procurementOffFailure == null && procurementOffValue == false &&
+                !procurementOffNodePresent,
+                $"loaded autoReadyOrders={procurementOffValue?.ToString() ?? "null"}; " +
+                $"autoReadyOrders node present={procurementOffNodePresent}; " +
+                $"failure={procurementOffFailure ?? "none"}");
+
+            ContractAutoReadyRoundTripProbe procurementOnLoaded =
+                RoundTripContractAutoReady(
+                    new ContractAutoReadyRoundTripProbe
+                    {
+                        procurementAgreement = new ProcurementContract
+                        {
+                            autoReadyOrders = true
+                        }
+                    },
+                    "intercolonyProcurementAgreementAutoReadyOnTest",
+                    out bool procurementOnNodePresent,
+                    out string procurementOnFailure);
+            bool? procurementOnValue =
+                procurementOnLoaded?.procurementAgreement?.autoReadyOrders;
+            check(
+                "a procurement agreement with auto-ready on loads on",
+                procurementOnFailure == null && procurementOnValue == true &&
+                procurementOnNodePresent,
+                $"loaded autoReadyOrders={procurementOnValue?.ToString() ?? "null"}; " +
+                $"autoReadyOrders node present={procurementOnNodePresent}; " +
+                $"failure={procurementOnFailure ?? "none"}");
+        }
+
+        private static void CheckContractStartsExpanded(
+            Action<string, bool, string> check)
+        {
+            string Describe(RecurringContract contract, bool returned)
+            {
+                return $"status={contract.status}; " +
+                       $"IsOffer={contract.IsOffer}; " +
+                       $"IsPendingPlayerProposal={contract.IsPendingPlayerProposal}; " +
+                       $"consecutiveFailures={contract.consecutiveFailures}; " +
+                       $"renewalOffered={contract.renewalOffered}; " +
+                       $"DaysUntilRenewalExpires={contract.DaysUntilRenewalExpires:F2}; " +
+                       $"returned={returned}";
+            }
+
+            RecurringContract settlementOffer = new RecurringContract
+            {
+                status = ContractStatus.Offered
+            };
+            bool settlementOfferExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(settlementOffer);
+            check(
+                "a settlement's offer starts expanded",
+                settlementOfferExpanded,
+                Describe(settlementOffer, settlementOfferExpanded));
+
+            RecurringContract pendingPlayerProposal = new RecurringContract
+            {
+                status = ContractStatus.Offered,
+                decisionDueTick = GenTicks.TicksGame + GenDate.TicksPerDay,
+                proposalAppeal = 0.5f,
+                renewalOffered = true,
+                renewalExpiryTick = GenTicks.TicksGame + GenDate.TicksPerDay * 8
+            };
+            bool pendingPlayerProposalExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(pendingPlayerProposal);
+            check(
+                "a proposal awaiting the settlement starts collapsed",
+                !pendingPlayerProposalExpanded,
+                Describe(pendingPlayerProposal, pendingPlayerProposalExpanded));
+
+            RecurringContract routineActive = new RecurringContract
+            {
+                status = ContractStatus.Active
+            };
+            bool routineActiveExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(routineActive);
+            check(
+                "a routine active agreement starts collapsed",
+                !routineActiveExpanded,
+                Describe(routineActive, routineActiveExpanded));
+
+            RecurringContract missedActive = new RecurringContract
+            {
+                status = ContractStatus.Active,
+                consecutiveFailures = 1
+            };
+            bool missedActiveExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(missedActive);
+
+            RecurringContract missedBreached = new RecurringContract
+            {
+                status = ContractStatus.Breached,
+                consecutiveFailures = 1
+            };
+            bool missedBreachedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(missedBreached);
+            check(
+                "an active agreement that has missed starts expanded",
+                missedActiveExpanded && !missedBreachedExpanded,
+                $"{Describe(missedActive, missedActiveExpanded)}; " +
+                Describe(missedBreached, missedBreachedExpanded));
+
+            RecurringContract liveRenewal = new RecurringContract
+            {
+                status = ContractStatus.Completed,
+                renewalOffered = true,
+                renewalExpiryTick = GenTicks.TicksGame + GenDate.TicksPerDay * 8
+            };
+            bool liveRenewalExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(liveRenewal);
+
+            RecurringContract expiredRenewal = new RecurringContract
+            {
+                status = ContractStatus.Completed,
+                renewalOffered = true,
+                renewalExpiryTick = GenTicks.TicksGame - GenDate.TicksPerDay
+            };
+            bool expiredRenewalExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(expiredRenewal);
+            check(
+                "a live renewal decision starts expanded",
+                liveRenewalExpanded && !expiredRenewalExpanded,
+                $"{Describe(liveRenewal, liveRenewalExpanded)}; " +
+                Describe(expiredRenewal, expiredRenewalExpanded));
+
+            RecurringContract suspended = new RecurringContract
+            {
+                status = ContractStatus.Suspended
+            };
+            bool suspendedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(suspended);
+            check(
+                "a suspended agreement starts expanded",
+                suspendedExpanded,
+                Describe(suspended, suspendedExpanded));
+
+            RecurringContract completed = new RecurringContract
+            {
+                status = ContractStatus.Completed,
+                renewalOffered = false
+            };
+            RecurringContract breached = new RecurringContract
+            {
+                status = ContractStatus.Breached,
+                renewalOffered = false
+            };
+            RecurringContract cancelled = new RecurringContract
+            {
+                status = ContractStatus.Cancelled,
+                renewalOffered = false
+            };
+            RecurringContract declined = new RecurringContract
+            {
+                status = ContractStatus.Declined,
+                renewalOffered = false
+            };
+            bool completedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(completed);
+            bool breachedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(breached);
+            bool cancelledExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(cancelled);
+            bool declinedExpanded =
+                MainTabWindow_Intercolony.ContractStartsExpanded(declined);
+            check(
+                "terminal history starts collapsed",
+                !completedExpanded && !breachedExpanded &&
+                !cancelledExpanded && !declinedExpanded,
+                $"{Describe(completed, completedExpanded)}; " +
+                $"{Describe(breached, breachedExpanded)}; " +
+                $"{Describe(cancelled, cancelledExpanded)}; " +
+                Describe(declined, declinedExpanded));
+        }
+
+        private static void CheckProcurementContractStartsExpanded(
+            Action<string, bool, string> check)
+        {
+            string Describe(ProcurementContract contract, bool returned)
+            {
+                return $"status={contract.status}; " +
+                       $"IsPendingProposal={contract.IsPendingProposal}; " +
+                       $"cyclesFailed={contract.cyclesFailed}; " +
+                       $"returned={returned}";
+            }
+
+            ProcurementContract supplierCounteroffer = new ProcurementContract
+            {
+                status = ProcurementContractStatus.CounterpartyCountered
+            };
+            bool supplierCounterofferExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(supplierCounteroffer);
+
+            ProcurementContract suspended = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Suspended
+            };
+            bool suspendedExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(suspended);
+            check(
+                "a supplier counteroffer starts expanded",
+                supplierCounterofferExpanded && suspendedExpanded,
+                $"{Describe(supplierCounteroffer, supplierCounterofferExpanded)}; " +
+                Describe(suspended, suspendedExpanded));
+
+            ProcurementContract pendingSupplierProposal = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Offered,
+                decisionDueTick = 1,
+                proposalAppeal = 0.5f
+            };
+            bool pendingSupplierProposalExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(
+                    pendingSupplierProposal);
+            check(
+                "a proposal awaiting the supplier starts collapsed",
+                pendingSupplierProposal.IsPendingProposal && !pendingSupplierProposalExpanded,
+                Describe(pendingSupplierProposal, pendingSupplierProposalExpanded));
+
+            ProcurementContract routineActive = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Active
+            };
+            bool routineActiveExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(routineActive);
+            check(
+                "a routine active procurement agreement starts collapsed",
+                !routineActiveExpanded,
+                Describe(routineActive, routineActiveExpanded));
+
+            ProcurementContract counterpartyRefused = new ProcurementContract
+            {
+                status = ProcurementContractStatus.CounterpartyRefused
+            };
+            ProcurementContract completed = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Completed
+            };
+            ProcurementContract cancelled = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Cancelled
+            };
+            ProcurementContract supplierDefault = new ProcurementContract
+            {
+                status = ProcurementContractStatus.SupplierDefault
+            };
+            bool counterpartyRefusedExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(counterpartyRefused);
+            bool completedExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(completed);
+            bool cancelledExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(cancelled);
+            bool supplierDefaultExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(supplierDefault);
+            check(
+                "procurement terminal history starts collapsed",
+                !counterpartyRefusedExpanded && !completedExpanded &&
+                !cancelledExpanded && !supplierDefaultExpanded,
+                $"{Describe(counterpartyRefused, counterpartyRefusedExpanded)}; " +
+                $"{Describe(completed, completedExpanded)}; " +
+                $"{Describe(cancelled, cancelledExpanded)}; " +
+                Describe(supplierDefault, supplierDefaultExpanded));
+
+            // cyclesFailed is cumulative, so treating it as an alarm would leave a long-running
+            // agreement open forever.
+            ProcurementContract pastMiss = new ProcurementContract
+            {
+                status = ProcurementContractStatus.Active,
+                cyclesFailed = 1
+            };
+            bool pastMissExpanded =
+                MainTabWindow_Intercolony.ProcurementContractStartsExpanded(pastMiss);
+            check(
+                "a past procurement miss does not keep the row open",
+                !pastMissExpanded,
+                Describe(pastMiss, pastMissExpanded));
+        }
+
+        private static ContractAutoReadyRoundTripProbe RoundTripContractAutoReady(
+            ContractAutoReadyRoundTripProbe saved,
+            string saveLabel,
+            out bool autoReadyNodePresent,
+            out string failure)
+        {
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ContractAutoReady-{Guid.NewGuid():N}.xml");
+            ContractAutoReadyRoundTripProbe loaded = null;
+            autoReadyNodePresent = false;
+            failure = null;
+            try
+            {
+                Scribe.saver.InitSaving(path, saveLabel);
+                Scribe_Deep.Look(ref saved, "probe");
+                Scribe.saver.FinalizeSaving();
+
+                string savedXml = File.ReadAllText(path);
+                autoReadyNodePresent = savedXml.Contains("autoReadyOrders");
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loaded, "probe");
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception exception)
+            {
+                failure = $"{exception.GetType().Name}: {exception.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            return loaded;
         }
 
         /// <summary>Leaves a live multi-cycle contract in the save for the reload check (§107).</summary>
@@ -678,6 +1505,18 @@ namespace Intercolony
                 }
 
                 candidate++;
+            }
+        }
+
+        public class ContractAutoReadyRoundTripProbe : IExposable
+        {
+            public RecurringContract sellingAgreement;
+            public ProcurementContract procurementAgreement;
+
+            public void ExposeData()
+            {
+                Scribe_Deep.Look(ref sellingAgreement, "sellingAgreement");
+                Scribe_Deep.Look(ref procurementAgreement, "procurementAgreement");
             }
         }
     }

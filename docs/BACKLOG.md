@@ -16,6 +16,119 @@ Nothing here is committed to. An item may be rejected later; record that too, wi
 
 ---
 
+## ~~The full self-test run intermittently reports one extra world pawn~~ — NOT A LEAK, closed 2026-08-29 (`6a74a78`)
+
+**Raised:** 2026-08-29, during full self-test verification.
+**Closed:** 2026-08-29 in commit `6a74a78`. The delta is a departing employee still legitimately in
+the world at measurement time, nothing is pinned and forgotten, and the guard that exists now
+watches the pinned count rather than the delta.
+
+On a fresh world, the whole suite reported a world-pawn delta of `1` on two of three runs and `0`
+on the third. All three runs passed `1377` assertions with a clean log, and the suite's own leak
+guards for the commercial timeline and market pressure read `OK` on every run. With that day's
+uncommitted batch stashed, three consecutive full runs all reported delta `0`. With the batch
+restored, the individual suites reported contract `57` assertions / delta `0`, job posting `25` /
+delta `0`, and labor `36` / delta `0`. No individual suite reproduces it. The job posting suite
+also asserts that postings opened and closed leak no world pawns, and it passes.
+
+The delta appears only in a full run, only sometimes, and correlates with the batch on samples of
+three against three. That is a correlation on small numbers, **not an identified mechanism**.
+
+Unverified hypotheses, not findings: `LaborCandidateService` keeps a static census pool whose
+prospects are generated pawns; a census rebuilt mid-run could hold a pawn when the harness takes
+its closing count, before its `Abandon` path releases it. The labor suite also completes an
+employment and leaves the worker walking off the map; a pawn still departing when the run ends may
+still be counted.
+
+This matters because the project has a documented history of exactly this static pool leaking pawns
+and faction objects between games, unnoticed for four phases. A single stray world pawn per run is
+small, but the same mechanism at play scale bloats saves; the harness reports the delta precisely
+because of that history.
+
+**To settle it:** capture the world pawn list before and after a full run and diff identities, so the
+extra pawn can be named and traced to its creator.
+
+## The negotiation evaluator does not price term length.
+
+**Raised:** 2026-08-28, during review of the selling-side cadence controls. **PRE-EXISTING:**
+procurement has shipped this way since standing procurement agreements were built; the selling
+side inherited it that day when the player gained the procurement dialog's cadence, deliveries and
+fulfilment controls.
+**Size:** medium — shared terms type and evaluator change, with balance moving on both sides.
+**Status:** open.
+
+`IntercolonyNegotiationTerms` in `Source/Intercolony/Contracts/` carries exactly four fields:
+`quantity`, `unitPrice`, `deadlineDays` and `fulfillment`; it has no field for the number of cycles
+or deliveries. Both `ProcurementContractService` and `ContractService` build `originalTerms` and
+`proposedTerms` from that type, so the counterparty's appraisal sees a single cycle's cadence but
+never how many cycles are committed to.
+
+A proposal for four deliveries and one for forty deliveries of the same goods at the same rate and
+cadence are therefore judged equally appealing. Appeal drives accept, counter or refuse, so term
+length is unpriced for both parties even though it changes the deal's total value and risk. Both
+services reject a package whose cadence multiplied by its cycle count exceeds 365 days, so no
+single agreement can run longer than a year.
+
+Fixing the shared type moves existing balance in both directions at once; do it deliberately, not
+as a side effect of another change.
+
+## The coarse economy refresh is over its budget on a large world.
+
+**Raised:** 2026-08-26, during the full self-test suite against a real 4.8-million-tick colony save
+through the dev bridge. PRE-EXISTING; not caused by the Find Buyer work committed that day.
+**Size:** unknown until the scaling path is addressed.
+**Status:** open.
+
+The performance suite asserts a 100 ms budget for the coarse economy refresh. On a generated test
+world with 92 settlements it measures 14.925 ms and passes. On the real colony with 252 settlements
+it measures 103.818 ms, 107.092 ms and 114.151 ms across three runs, and fails.
+
+Settlement count grew 2.7 times while the cost grew roughly 7 times. This is an observation from two
+data points, not a measured complexity. The refresh runs on the market refresh cycle rather than per
+frame, so this is an occasional hitch of about a tenth of a second rather than a sustained framerate
+drop — but it is on the main thread, grows with world size, and breaches a deliberately chosen budget.
+
+The profile entry is `Source/Intercolony/Debug/IntercolonyPerformanceProfile.cs:180`; it names the
+per-tick guard at `Source/Intercolony/Core/IntercolonyWorldComponent.cs:1569` and the `DoRefresh` body
+at `Source/Intercolony/Core/IntercolonyWorldComponent.cs:1672`.
+
+## The transition assertion reports a saturated fixture as a failure.
+
+**Raised:** 2026-08-26, during the full self-test suite against a real 4.8-million-tick colony save
+through the dev bridge. PRE-EXISTING; not caused by the Find Buyer work committed that day.
+**Size:** small — test-fixture fix.
+**Status:** open.
+
+The transition suite's **settling properly improves it** assertion reads `50 -> 60` on a fresh world
+and passes, but reads `100 -> 100` on the real colony and **FAILS** because the underlying value is
+already at its maximum and cannot improve.
+
+The defect is in the assertion, not the mechanic: an input already at its cap makes the claim
+untestable. An untestable assertion should **SKIP** with a stated reason; this project treats that as
+"not proof", not a pass or a failure. Reporting it as a failure makes a real regression
+indistinguishable from a saturated fixture.
+
+**Fix:** detect the saturated precondition and **SKIP** with a reason naming it, following the skip
+conventions already used elsewhere in the suite.
+
+## Procurement agreements can never be renewed.
+
+**Raised:** 2026-08-25, while building the procurement agreements UI.
+**Size:** unknown until the renewal path is implemented.
+**Status:** open.
+
+`ProcurementContract.cs` declares `renewalOffered`, `renewalExpiryTick` and `renewals`, and persists
+all three through `ExposeData` (around lines 239–245 and 495). Nothing in the procurement code under
+`Source/Intercolony` sets `renewalOffered` to `true`; `ProcurementContractService` has no
+`AcceptRenewal` or `DeclineRenewal`, unlike the selling-side `ContractService`, whose UI answers a
+renewal offer inline.
+
+A procurement agreement runs its scheduled cycles and ends; the three fields are scribed into every
+save and read back as defaults forever. The selling side renews and the buying side does not, breaking
+the mirror the procurement work was built to hold; a persisted field nobody writes looks implemented
+from the save schema and is not. The tab had no way to offer a renewal, which exposed this during UI
+work.
+
 ## ~~Skip-reporting output still has suite-side format gaps~~ — FIXED in 1.0 (`ff93d94`)
 
 **Raised:** 2026-08-23, during skip-reporting verification.
@@ -829,6 +942,37 @@ first and uses `AnyPlayerHomeMap` only as a last resort; market generation has n
 and debug and self-test files do not ship.
 
 ---
+
+## The "only silver is waited for" assertion is an open, unexplained intermittent failure
+
+**Raised:** 2026-08-30, during `dev.ps1 test all -Fresh`.
+**Size:** unknown — the cause is not established.
+**Status:** open, unexplained, intermittent test failure — not a known-good test and not a known
+product defect.
+
+The self-test assertion **"only silver is waited for"**, in
+`IntercolonyLongTermSelfTest.CheckProcurementWaitForSilver`, failed on four consecutive fresh worlds
+under `dev.ps1 test all -Fresh`, reporting `failuresIncreased=False, advancedOneCadence=False`.
+The same assertion passed every time under `dev.ps1 test long-term -Fresh` in isolation, so it is
+sensitive to something the other suites leave behind.
+
+After the diagnostic-only change in commit `07b6bb7`, it then passed five consecutive times under
+`test all`. That change is non-mutating and therefore cannot be the fix. The cause is **not
+established**.
+
+Two hypotheses were checked by reading the source and eliminated. No production code removes from
+`state.ProcurementContracts`, so `AdvanceCycles` cannot abort mid-`foreach` on a modified collection.
+`Complete` only sets status, so a leftover contract from an earlier suite cannot cut the pass short.
+
+The assertion is now instrumented. On the next failure, its detail line reports the contract's
+status, unit price, quantity, cycle counters, active order id, next-cycle tick as an offset,
+wait-notice marker, outcome note, colony silver, the `CanPayForPurchase` verdict and reason, the
+procurement-contract counts, and whether any **OTHER** contract's counters moved across the same
+`AdvanceCycles` call — naming the first one that did.
+
+When it recurs, read that detail line rather than re-deriving the problem. The
+`otherContractChanged` / `firstOtherChangedId` fields are the ones that will identify a cross-suite
+leak.
 
 ## Rejected or superseded
 
