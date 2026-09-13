@@ -21,7 +21,30 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: **G IS COMPLETE. THE RELEASE CANDIDATE IS BUILT AND AUDITED. HANDOFF IS THE OPERATOR'S.**
+Unit: none. **G IS COMPLETE AND 1.1.0 IS PUBLISHED. The run is halted; await a new instruction.**
+
+### **1.1.0 WAS UPLOADED TO THE WORKSHOP BY THE OPERATOR on 2026-09-12, and cleanup is DONE.**
+
+I staged the upload copy myself at the operator's instruction — their only manual act was the
+irreversible publish in RimWorld's UI. Junction removed with `cmd /c rmdir` (never a recursive
+PowerShell delete), package staged as a real directory, Workshop ID `3780094556` installed at
+`About\PublishedFileId.txt`, **all 9 files verified byte-identical by SHA-256** to the audited
+package with that ID as the sole addition, changenotes placed on the clipboard, RimWorld launched
+after checking Steam was logged in and dev mode on. **After the upload: staged copy removed and the
+development junction restored; dev tree confirmed reachable.**
+
+**`main` is STILL untouched. Nothing was merged, tagged, or released on GitHub** — those remain the
+operator's to call.
+
+### G-D14 — the Workshop DESCRIPTION is stale; edit notes delivered, NOT applied
+
+The operator asked for review only. `docs/WORKSHOP_DESCRIPTION.bbcode` predates most of this batch:
+**Produce is entirely absent** (the headline automation feature, and the description's own pitch is
+"produce-to-sell"); auto-ready/auto-renew, delivery destinations, equipment bonds, emergency
+dispatch and the seventeen settings are unmentioned; Business is undersold; "five screens" (`:26`)
+is now wrong; the "This is 1.0" section (`:60-62`) and the pinned test revision (`:67`) are dated.
+**The narrative at `:7-21` is the strongest part and should be added around, not rewritten.**
+**No edit was made — do not apply these without the operator asking.**
 
 ### **STOP CONDITIONS — NONE OF THESE ARE MINE TO TAKE**
 
@@ -583,7 +606,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-12 — G COMPLETE; release candidate built, audited, smoke-tested; handoff pending
+Updated: 2026-09-12 — 1.1.0 PUBLISHED; cleanup done; halted
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
