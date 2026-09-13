@@ -21,7 +21,43 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: G.4e — a PRE-EXISTING FLAKY ASSERTION makes the gate untrustworthy; fix before G.5
+Unit: **G IS COMPLETE. THE RELEASE CANDIDATE IS BUILT AND AUDITED. HANDOFF IS THE OPERATOR'S.**
+
+### **STOP CONDITIONS — NONE OF THESE ARE MINE TO TAKE**
+
+**DO NOT publish or update the Workshop. DO NOT create a second item. DO NOT merge to `main`. DO NOT
+tag. DO NOT create a GitHub release.** The package is prepared and handed over; the irreversible
+step is the operator's alone.
+
+**THE UPLOAD COPY IS NOT IN PLACE — the development junction has been restored**, which is the
+correct resting state. Re-doing the swap is step 1 of the operator's handoff.
+
+### G-D11 — the release candidate
+
+`dist\Intercolony-1.1.0` — **9 files, 2.72 MiB**; zip `dist\Intercolony-1.1.0.zip`, 1.52 MiB.
+`About.xml` 1.1.0, `supportedVersions` 1.6, Harmony declared as a dependency and NOT shipped,
+`Preview.png` 933,975 bytes (under Steam's 1 MB cap). No `Source/`, `reference/`, `docs/`, `.git/`,
+no Foreman or scratchpad artefacts, **no dev bridge, no F diagnostics** in the DLL.
+
+**`package.ps1` REFUSED THE FIRST ATTEMPT and was right to** — the DLL on disk was the
+bridge-enabled build left by the last `-Fresh` suite run, and a release must never carry a listener.
+Rebuilt plain, re-packaged.
+
+### G-D12 — the packaged smoke test PASSED, on the packaged copy
+
+Junction removed with `cmd /c rmdir` (never `Remove-Item -Recurse` on a junction), repository
+integrity asserted before and after, package copied in as a real directory, `PublishedFileId.txt`
+restored by hand from `.workshop\`. RimWorld loaded it from `Mods\Intercolony` and logged
+**`[Intercolony] loaded, version 1.1.0.`**, `Harmony patches applied.`, **no startup faults, no dev
+bridge listening**. Junction then restored and the dev tree confirmed reachable.
+
+### G-D13 — the gate, honestly stated
+
+**Assertion totals VARY BY WORLD** (1601–1606 observed) because some assertions only run when the
+generated world supplies a fixture. **Report zero failures across runs and a range, never a single
+number.** Six consecutive fresh runs, 0 failures; counted skips == printed skips every time; startup
+CLEAN every time. **All 16 remaining skips are world-contingent** and individually named; the three
+formerly self-referential ones now FAIL when their production function breaks.
 
 ### G-D8 — G.4c and G.4d are DONE and mutation-proven. G.5 is still held.
 
@@ -547,7 +583,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-12 — G.4c/G.4d done; G.4e fixing a flaky gate assertion
+Updated: 2026-09-12 — G COMPLETE; release candidate built, audited, smoke-tested; handoff pending
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
