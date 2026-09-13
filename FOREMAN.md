@@ -21,7 +21,36 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: G.4c — make every counted skip visible; then G.4d — eliminate the self-referential skips
+Unit: G.4e — a PRE-EXISTING FLAKY ASSERTION makes the gate untrustworthy; fix before G.5
+
+### G-D8 — G.4c and G.4d are DONE and mutation-proven. G.5 is still held.
+
+  - **G.4c `760b15f`** — every counted skip is now printed (verified 16 = 16 by me) and a mismatch
+    guard warns if a future suite invents a third format. The two recovered records were a faction
+    shock cap the world never reached and a brand threshold with no headroom; both benign, neither
+    knowable before.
+  - **G.4d `abe1204`** — the three self-referential skips now FAIL instead of SKIP. Proven by
+    breaking each depended-on function: classifier forced false, `MatchingColonyAnimals` forced
+    empty, `AvailableAnimalQuantity` forced zero. A fourth nearby assertion was inspected and left
+    alone — it already draws its fixture from a test-local scan.
+
+### G-D9 — **ASSERTION TOTALS VARY BETWEEN WORLDS. I QUOTED A FIXED FIGURE AND WAS WRONG.**
+
+Observed across fresh runs: **1601, 1603, 1604, 1605, 1606** — some assertions only run when the
+generated world supplies their fixture. My earlier "1601 → 1606" comparisons were never like for
+like. **The release report must state zero failures across runs and a range, never one number.**
+
+### G-D10 — a flaky assertion, PRE-EXISTING and not from G.4d, blocks the gate
+
+`IntercolonyJobPostingSelfTest.cs:326` requires `demanding.applicants < noMinimum.applicants` —
+strictly fewer **queued**. The queue is capped, so in a rich world every tier fills the cap and
+`6 < 6` fails. **The product was correct**: interested fell 615 → 6 monotonically, so the bar was
+applied. Two consecutive runs gave **1601/1/18 FAIL** then **1605/0/15 PASS**.
+
+This is the same family as the rest of G.4 — an assertion that cannot tell "the thing under test
+broke" from "the world did not cooperate" — inverted, producing a spurious FAIL. **A gate red one run
+in two cannot evidence the next change, so it is fixed rather than re-rolled until green.** Bounded
+to one file; conditions 1 and 2 stay; proof required that it still fails on a real regression.
 
 ### G-D6 — THE HARNESS DISCARDS SKIP EVIDENCE. Found, cause proven, fix in flight.
 
@@ -518,7 +547,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-12 — G.4c fixing the lost skip evidence
+Updated: 2026-09-12 — G.4c/G.4d done; G.4e fixing a flaky gate assertion
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
