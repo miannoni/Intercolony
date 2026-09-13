@@ -21,7 +21,22 @@ regression** (no trade partners, no labour candidates) and must be reported that
 
 Superseded stage line, kept for the record:
 Stage: **F — REOPENED 2026-09-10 by the operator. The earlier "not ours" verdict is WITHDRAWN.**
-Unit: none. **G IS COMPLETE AND 1.1.0 IS PUBLISHED. The run is halted; await a new instruction.**
+Unit: none. **THE RUN IS FINISHED AND SHIPPED. 1.1.0 is on the Workshop, merged, tagged and released.**
+
+### H — the release was finalised 2026-09-13, on the operator's instruction
+
+  - **Merged to `main` at `6322edf`** with `--no-ff`, following the precedent of the 1.0 merge
+    (`e7053b6`) rather than fast-forwarding, so the batch keeps its shape in history. 307 commits.
+  - **`main` was verified AFTER the merge, not assumed:** clean build, and the full fresh-world
+    suite at **1605/0/15, exit 0, startup CLEAN**.
+  - **Tagged `v1.1.0`** (annotated) and pushed with `main`.
+  - **GitHub release created**, marked Latest, **not** pre-release — unlike every 0.9.x — with
+    `dist/Intercolony-1.1.0.zip` (1,592,125 bytes) attached.
+    https://github.com/miannoni/Intercolony/releases/tag/v1.1.0
+
+**Note for a future run: `FOREMAN.md` is now ON `main`.** It arrived with the merge and describes a
+finished run, so it will read as stale there. Harmless, and removing it would make `main`'s tree
+diverge from the branch tip — but worth a deliberate decision next time rather than drift.
 
 ### **1.1.0 WAS UPLOADED TO THE WORKSHOP BY THE OPERATOR on 2026-09-12, and cleanup is DONE.**
 
@@ -606,7 +621,7 @@ identically before this branch existed. Closing record at `ed0a3d5`.
 not substitute.** `main` is untouched; nothing was merged and nothing was released.
 
 **If a new run starts here, it needs a new plan.** This one has no unfinished units.
-Updated: 2026-09-12 — 1.1.0 PUBLISHED; cleanup done; halted
+Updated: 2026-09-13 — MERGED, TAGGED, RELEASED. Run complete.
 Foreman load: 2026-09-10 19:30
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
