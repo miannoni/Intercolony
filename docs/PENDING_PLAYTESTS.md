@@ -2225,6 +2225,14 @@ Added 2026-09-14 on branch `foreman/playtest-finalization-2026-09-13`. Employee 
 
 The assertions cover the height arithmetic and the happiness mapping and prove nothing about how any of it looks.
 
+### F19/F20: the Business P&L has never been read by a person
+
+Added 2026-09-14 on branch `foreman/playtest-finalization-2026-09-13`. The contract economics block is now a **five-row P&L** — **Revenue, Materials, Paid labor, Production margin, Margin %** — with **per-cycle and per-unit** columns. Gone from it entirely: **"If you bought the goods instead"**, the **whole-company wage bill**, the duplicated fallback rows, the **"making rather than buying is worth…"** sentence, and the **delivery premium** row. **Transport is not subtracted** — that figure came from the delivery price premium, not a measured caravan cost — and a seller-delivery agreement instead carries **one note outside the arithmetic**. **Materials now resolve for furniture**, which is built rather than cooked, and price through **recent completed purchases (median), then current market evidence, then a generic value**, with the tier recorded. **Paid labour understands construction**, so a Construction employee counts towards a furniture contract, and each employee's wage is still **shared across the goods they could make**. An **unresolved material cost withholds the margin** instead of printing a confident number. **Paid labor 0** is a real answer and prints as 0. Below the P&L, **Your sale price** sits against **Median market price**, which shows an **em dash** rather than an invented number when no supplier is quoting.
+
+**Steps.** Ask a person to judge whether the P&L can actually be read in about five seconds without tooltip archaeology, which is the whole point of the rewrite; whether the per-unit column is the one they look at or clutter; whether the market benchmark clearly reads as a comparison rather than as part of the cost arithmetic; whether a furniture agreement and a crafted-good agreement both produce figures that feel right against what the colony is actually spending; whether the withheld-margin state is understandable or just looks broken; and whether the em dash reads as "nobody is selling this" rather than as a bug.
+
+The routes, the price tiers, the median, the wage sharing and the margin's contents are asserted through the real production code and mutation-proven, and none of that says anything about whether the block reads well.
+
 ---
 
 ## Proven in play
