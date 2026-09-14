@@ -2964,3 +2964,29 @@ Known limitations:
 Manual test:
 - No manual test result is recorded in this scope-lock entry.
 
+## Playtest finalization — F04, F06, F16, F19/F20, F21/F24, F23  (2026-09-15)
+
+Implemented:
+- **F04** — A Produce program can hold a target count and a resume-below threshold, restrict who may build it, require a minimum Construction skill, and choose which materials it may consume; it stops at the target and does not restart until stock falls to the resume threshold.
+- **F06** — An employee's apparel can be changed by the colony's own policy, once the player has consented to buying the bonded piece out; the bond drops by exactly what the consent prompt warned, and colony-supplied gear comes back at contract end.
+- **F16** — The employee card is collapsed by default and shows what is being paid, what is held, and how the worker is doing.
+- **F19/F20** — The Business report resolves a built product's material cost through the construction route and counts paid employee labor, so margin reflects what production actually cost.
+- **F21/F24** — A settlement able to launch drop pods can send a worker in hours rather than days, and the emergency arrival is a real pod landing rather than a teleport.
+- **F23** — A job posting can require an equipment level; settlements that cannot supply it never answer, and what the applicant actually carries is shown above the bond it will cost.
+- **Fixed rather than added — `6a7d0b8`:** fixed the `package.ps1` omission of `Patches/`, which is why the shipped 1.1.0 has no Produce designators and no Economy tab.
+- **Fixed rather than added — `893e1ae`, asserted in `f80095d`:** fixed the refundable-bond display defect so the bond shown is the one the settlement pays.
+- The whole suite runs **1670 passed / 0 failed / 17 skipped** fresh, with log signal **CLEAN**, world-pawn delta **0**, and the save schema now **59**. Every one of the 17 skips names a missing world fixture rather than a suppressed failure.
+
+Not implemented:
+- **F12 and F22 remained frozen**, and the final branch diff was read end to end to confirm no code belonging to either was written.
+- The operator's actions, which this run did not perform and was told not to: no merge to `main`, no tag, no GitHub release, no Workshop publish or update.
+
+Known limitations:
+- **The published 1.1.0 is missing `Patches/`.** The packaging fix is on this branch but nothing has been re-published; whether a 1.1.1 goes out is the operator's call.
+- **Odyssey outfit stands bypass the apparel consent path**, because vanilla's stand job moves apparel with direct calls rather than through the drop the mod observes. Marked in the code as a known uncovered route.
+- `PurchaseOrderService.DeliverToColony` refunds only when **ZERO goods were placed**. With any non-zero count it calls `Complete` with what was placed, so a partial delivery silently completes short and the player pays in full. Pre-existing. Fixing it means deciding what SHOULD happen — hold, partial refund, or overflow elsewhere.
+- A recurring contract whose counterparty becomes inaccessible is cancelled silently (`ContractService.cs:1655`): status plus a `ContractCancelled` timeline record, no letter. The contract is already terminal, so a letter would be noise of a different kind. Left alone; say if you want it announced.
+
+Manual test:
+- Seven entries were added to `docs/PENDING_PLAYTESTS.md`, covering all six findings plus the three cross-system sittings of plan section 14. Nothing in this run was played by a person. Machine evidence cannot settle whether the tiers feel different, whether a pod landing looks right, whether the card reads well, or whether the Produce controls are usable.
+

@@ -147,6 +147,7 @@ These meanings should remain predictable at both individual-object and area-cont
 ---
 
 ## F04 — Programmable Produce behavior
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). See the `Playtest finalization` entry in `PROGRESS.md`.
 
 Right-clicking or otherwise configuring Produce should support a program concept similar in spirit to RimWorld bills.
 
@@ -224,6 +225,7 @@ The request should feel as though information is propagating through a world eco
 ---
 
 ## F12 — Preprogrammed and recurring player caravans for agreements
+**Disposition: FROZEN.** Not implemented, deliberately. See `docs/PLAYTEST_FINALIZATION_PLAN.md`.
 
 > F12 — FROZEN.
 > Existing order-availability work retained.
@@ -279,6 +281,7 @@ Recurring logistics should remove repeated caravan setup work, not remove the pl
 ---
 
 ## F21 — Logistics should become economically meaningful
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). See the `Playtest finalization` entry in `PROGRESS.md`.
 
 The current logistics cost model is too shallow.
 
@@ -343,6 +346,7 @@ Settlements should feel like actual economic places with differing logistical in
 # C. Employees and employment UX
 
 ## F06 — Optional apparel policies for employees
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). See the `Playtest finalization` entry in `PROGRESS.md`.
 
 Employees should optionally be controllable by the colony's apparel-policy system.
 
@@ -390,6 +394,7 @@ Employment should participate in inter-settlement relationships.
 ---
 
 ## F13 — Auto-renew status visible directly on employee cards
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). F13's accepted auto-renew semantics were folded into the F16 redesign. See the `Playtest finalization` entry in `PROGRESS.md`.
 
 The employee card should expose whether Auto-renew is currently ON or OFF without requiring the player to open a secondary menu.
 
@@ -398,6 +403,7 @@ Changing the setting may remain behind an appropriate interaction if necessary, 
 ---
 
 ## F16/F17 — Simplify employee cards
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). F17's blanket rule was superseded by the F16 redesign. See the `Playtest finalization` entry in `PROGRESS.md`.
 
 Current employee cards contain too much secondary information and too many actions in their primary surface.
 
@@ -518,6 +524,7 @@ The player should see capacity shortfalls before a contract fails.
 ---
 
 ## F19 — Material replacement cost / purchased-input estimate
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). See the `Playtest finalization` entry in `PROGRESS.md`.
 
 Business profitability should account for the economic value of internally produced or extracted inputs.
 
@@ -560,6 +567,7 @@ The Business screen should show economic production margin, not merely silver th
 ---
 
 ## F20 — Direct labor cost should reflect actual recent work where practical
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). See the `Playtest finalization` entry in `PROGRESS.md`.
 
 The current wage-bill attribution to product profitability should become materially more accurate.
 
@@ -706,6 +714,7 @@ This should feel structurally closer to Procurement/RFQ behavior than to guessin
 ---
 
 ## F22 — The player can supply their own colonists to the labor market
+**Disposition: FROZEN.** Not implemented, deliberately. See `docs/PLAYTEST_FINALIZATION_PLAN.md`.
 
 > F22 — FROZEN.
 > Reverse/player-supplied labor market intentionally not part of the current release scope.
@@ -795,6 +804,7 @@ income + training opportunity versus absence + risk.
 ---
 
 ## F23 — Requested equipment quality and refundable equipment bond
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). See the `Playtest finalization` entry in `PROGRESS.md`.
 
 When hiring workers, especially Armed Employees and Security Contractors, the player should be able to request a level of supplied equipment.
 
@@ -863,6 +873,7 @@ At the same time, Intercolony generally prefers pricing consequences to arbitrar
 ---
 
 ## F24 — Emergency / urgent hiring
+**Disposition: IMPLEMENTED** on branch `foreman/playtest-finalization-2026-09-13` (2026-09-15). See the `Playtest finalization` entry in `PROGRESS.md`.
 
 The player should be able to issue an emergency labor request when ordinary market arrival times are insufficient.
 
