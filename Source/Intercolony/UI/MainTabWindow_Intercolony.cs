@@ -4152,7 +4152,9 @@ namespace Intercolony
         }
 
         private const float ContractEstimateColumnGap = 8f;
-        private const float ContractMarketBenchmarkReservedHeight = 48f;
+        private const float ContractMarketBenchmarkRowGap = 2f;
+        private const string ContractMarketBenchmarkTooltip =
+            "Median current procurement price for this product across available suppliers.";
         private const string ContractSellerDeliveryNote =
             "Seller delivery — caravan cost not included in production margin";
 
@@ -4334,6 +4336,21 @@ namespace Intercolony
             return (estimate.ProductionMargin / (float)estimate.revenue).ToString("0.#%");
         }
 
+        private static string ContractSalePriceLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            RecurringContract contract = estimate?.contract;
+            return contract == null ? "—" : $"{contract.unitPrice:F2} / unit";
+        }
+
+        private static string ContractMarketMedianPriceLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate != null && estimate.hasMarketMedianUnitPrice
+                ? $"{estimate.marketMedianUnitPrice:F2} / unit"
+                : "—";
+        }
+
         private static string DirectInputTooltip(
             BusinessReportService.DirectInputEstimate estimate)
         {
@@ -4400,6 +4417,20 @@ namespace Intercolony
                 "cycle length. " + estimate.eligibleEmployeeCount + " employee(s) contribute.";
         }
 
+        private static float ContractMarketBenchmarkBlockHeight(
+            BusinessReportService.ContractEstimate estimate,
+            float labelWidth,
+            float numberWidth)
+        {
+            return ContractEstimateLineHeight(
+                       "Your sale price:", "", ContractSalePriceLabel(estimate),
+                       labelWidth, numberWidth) +
+                   ContractMarketBenchmarkRowGap +
+                   ContractEstimateLineHeight(
+                       "Median market price:", "", ContractMarketMedianPriceLabel(estimate),
+                       labelWidth, numberWidth);
+        }
+
         private static float ContractEstimateBlockHeight(
             BusinessReportService.ContractEstimate estimate, float tableWidth)
         {
@@ -4448,9 +4479,10 @@ namespace Intercolony
                     ContractSellerDeliveryNote, contentWidth);
             }
 
-            // Reserve the next unit's benchmark space below this P&L without presenting a
-            // placeholder before the market benchmark has its own read-only data source.
-            height += 8f + ContractMarketBenchmarkReservedHeight;
+            // Keep the market comparison below the P&L's arithmetic and give its two lines their
+            // own measured block.
+            height += 8f + ContractMarketBenchmarkBlockHeight(
+                estimate, labelWidth, numberWidth);
             return height + 12f;
         }
 
@@ -4653,7 +4685,16 @@ namespace Intercolony
 
             Widgets.DrawLineHorizontal(rect.x + 6f, lineY + 2f, contentWidth);
             lineY += 8f;
-            lineY += ContractMarketBenchmarkReservedHeight;
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "Your sale price:", "", ContractSalePriceLabel(estimate),
+                labelWidth, numberWidth, cycleNumberX, unitNumberX,
+                new Color(0.85f, 0.85f, 0.85f));
+            lineY += ContractMarketBenchmarkRowGap;
+            lineY += DrawContractEstimateLine(
+                rect, lineY, "Median market price:", "",
+                ContractMarketMedianPriceLabel(estimate),
+                labelWidth, numberWidth, cycleNumberX, unitNumberX,
+                new Color(0.85f, 0.85f, 0.85f), ContractMarketBenchmarkTooltip);
         }
 
         private void DrawContractRow(

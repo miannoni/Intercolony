@@ -45,6 +45,12 @@ namespace Intercolony
             /// <summary>Agreed, not estimated — the price is locked for the contract's life.</summary>
             public int revenue;
 
+            /// <summary>Whether current external procurement evidence supports the market benchmark.</summary>
+            public bool hasMarketMedianUnitPrice;
+
+            /// <summary>Median current procurement price for the contract's product, per unit.</summary>
+            public float marketMedianUnitPrice;
+
             /// <summary>What procuring the same goods would cost. Negative.</summary>
             public int inputsIfBought;
 
@@ -182,6 +188,13 @@ namespace Intercolony
             }
 
             estimate.revenue = contract.DiscountedCyclePayment;
+            estimate.hasMarketMedianUnitPrice =
+                TryGetCurrentProcurementMarketMedianUnitPrice(
+                    state,
+                    contract.thingDef,
+                    contract.stuffDef,
+                    contract.minQuality,
+                    out estimate.marketMedianUnitPrice);
 
             // Base value plus what a supplier marks up, using procurement's own constant so the
             // dashboard cannot recommend buying at a price procurement would not offer.
@@ -1096,6 +1109,100 @@ namespace Intercolony
             // generator or SupplierUnitPrice again, because its negotiation roll would perturb
             // global RNG and a new request would mutate procurement state.
             return found && IsUsablePositive(unitPrice);
+        }
+
+        /// <summary>
+        /// Reads the current supplier evidence used by procurement and returns its lower-middle
+        /// median. This is deliberately separate from the input lookup above: input pricing asks
+        /// for the cheapest replacement, while the Business comparison asks what the product goes
+        /// for across the market.
+        /// </summary>
+        private static bool TryGetCurrentProcurementMarketMedianUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef productDef,
+            ThingDef stuffDef,
+            QualityCategory? minQuality,
+            out float unitPrice)
+        {
+            unitPrice = 0f;
+            if (state == null || productDef == null)
+            {
+                return false;
+            }
+
+            List<float> prices = new List<float>();
+
+            if (state.SupplierListings != null)
+            {
+                foreach (SupplierListing listing in state.SupplierListings)
+                {
+                    if (listing == null || !listing.IsAvailable ||
+                        listing.refreshWindow != state.RefreshCount ||
+                        listing.thingDef != productDef || listing.stuffDef != stuffDef ||
+                        !MatchesMarketQuality(listing.quality, minQuality) ||
+                        !IsUsablePositive(listing.unitPrice) ||
+                        !IsCurrentProcurementSupplier(listing.settlementId))
+                    {
+                        continue;
+                    }
+
+                    prices.Add(listing.unitPrice);
+                }
+            }
+
+            int nowTick = GenTicks.TicksGame;
+            if (state.Requests != null)
+            {
+                foreach (PurchaseRequest request in state.Requests)
+                {
+                    if (request == null || !request.IsOpen || request.HasExpired(nowTick) ||
+                        request.thingDef != productDef || request.stuffDef != stuffDef ||
+                        request.quotes == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (Quotation quote in request.quotes)
+                    {
+                        if (quote == null || quote.quantityOffered <= 0 ||
+                            quote.offeredStuff != stuffDef ||
+                            !MatchesMarketQuality(quote.offeredQuality, minQuality) ||
+                            !IsUsablePositive(quote.unitPrice) ||
+                            !IsCurrentProcurementSupplier(quote.settlementId))
+                        {
+                            continue;
+                        }
+
+                        prices.Add(quote.unitPrice);
+                    }
+                }
+            }
+
+            if (prices.Count == 0)
+            {
+                return false;
+            }
+
+            // Work on a new price list and take the lower middle, matching the established
+            // purchase-median convention for an even number of observations.
+            prices.Sort();
+            unitPrice = prices[(prices.Count - 1) / 2];
+
+            // The agreement's unitPrice is the player's own offer, while referenceUnitPrice is
+            // only the historical spot rate recorded when it was struck; neither is current
+            // external evidence, so neither is added here. Reading only published supplier
+            // prices also deliberately avoids applying the player's brand or reputation premium.
+            return IsUsablePositive(unitPrice);
+        }
+
+        private static bool MatchesMarketQuality(
+            QualityCategory? offeredQuality, QualityCategory? minQuality)
+        {
+            // RecurringContract.minQuality is a floor (shown as "Quality+"), so a quote at or
+            // above that floor matches. A contract with no quality term accepts either qualityless
+            // or quality-bearing market evidence because it imposes no quality constraint.
+            return !minQuality.HasValue ||
+                   (offeredQuality.HasValue && offeredQuality.Value >= minQuality.Value);
         }
 
         private static bool IsCurrentProcurementSupplier(int settlementId)
