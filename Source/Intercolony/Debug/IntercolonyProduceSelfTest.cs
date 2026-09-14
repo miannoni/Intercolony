@@ -109,6 +109,8 @@ namespace Intercolony
                         r, map, loops, subject, reservedCells, testRects, addedDesignations);
                     CheckTargetBehavior(
                         r, map, loops, subject, reservedCells, testRects, testZones);
+                    CheckResumeBelowBehavior(
+                        r, map, loops, subject, reservedCells, testRects, testZones);
                     CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
                     CheckProduceDesignators(r, map, subject, reservedCells, testRects);
                     CheckBlueprintRotation(r, map, loops, subject, reservedCells, testRects);
@@ -119,6 +121,7 @@ namespace Intercolony
                 if (subject == null)
                 {
                     SkipTargetAssertions(r, "no loaded minifiable stuff-built building");
+                    SkipResumeBelowAssertions(r, "no loaded minifiable stuff-built building");
                     r.Skip(
                         "a record survives a save/load round trip",
                         "no loaded minifiable stuff-built building");
@@ -128,10 +131,17 @@ namespace Intercolony
                     r.Skip(
                         "a target survives a save and a load, and an old record loads unlimited",
                         "no loaded minifiable stuff-built building");
+                    r.Skip(
+                        "a latched program survives a save and reload still latched",
+                        "no loaded minifiable stuff-built building");
+                    r.Skip(
+                        "a record saved before this feature loads as its old program",
+                        "no loaded minifiable stuff-built building");
                 }
                 else
                 {
                     CheckRecordRoundTrip(r, map, subject);
+                    CheckNewFieldDefaults(r, map, subject);
                 }
             }
             catch (Exception ex)
@@ -3074,6 +3084,257 @@ namespace Intercolony
             }
         }
 
+        private static void CheckResumeBelowBehavior(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects,
+            List<Zone_Stockpile> testZones)
+        {
+            const string latchLabel = "a met target latches the program";
+            const string bandLabel =
+                "a latched program stays stopped above the resume threshold";
+            const string resumeLabel =
+                "a latched program restarts at the resume threshold";
+    const string oldBehaviorLabel =
+        "an unset resume threshold reproduces the released behaviour";
+
+    const int resumeBandStorageCellCount = 3;
+    const int releasedBehaviorStorageCellCount = 2;
+
+            IntVec3 cell;
+            if (!TryFindBuildCell(
+                    map, loops, subject, Rot4.North, reservedCells, out cell))
+            {
+                const string reason = "no empty valid cell for the resume-below fixture";
+                SkipResumeBelowAssertions(r, reason);
+                r.Skip(oldBehaviorLabel, reason);
+                return;
+            }
+
+            RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+
+    List<IntVec3> storageCells;
+    string storageFailure;
+    if (!TryCreateTargetStorageCells(
+            map,
+            reservedCells,
+            testZones,
+            resumeBandStorageCellCount,
+            out storageCells,
+            out storageFailure))
+    {
+        SkipResumeBelowAssertions(r, storageFailure);
+        r.Skip(oldBehaviorLabel, storageFailure);
+        return;
+    }
+
+    foreach (IntVec3 storageCell in storageCells)
+    {
+        RememberCell(storageCell, null, Rot4.North, reservedCells, testRects);
+    }
+
+    List<IntVec3> releasedStorageCells = new List<IntVec3>();
+    for (int i = 0; i < releasedBehaviorStorageCellCount; i++)
+    {
+        releasedStorageCells.Add(storageCells[i]);
+    }
+
+    CellRect buildRect = GenAdj.OccupiedRect(
+        cell, Rot4.North, subject.thingDef.Size);
+
+    List<Thing> fixtureStock = null;
+            try
+            {
+                const int target = 3;
+                const int resumeBelow = 1;
+                int countedStock = 0;
+                string stockFailure;
+        bool stockSpawned = TrySpawnStoredTargetStockAcross(
+            map,
+            subject,
+            storageCells,
+            out fixtureStock,
+            out countedStock,
+            out stockFailure);
+                if (!stockSpawned || countedStock != 3)
+                {
+                    string reason = countedStock != 3
+                        ? $"needs exactly 3 stored units for the resume band; the world supplied {countedStock}"
+                        : stockFailure ?? "the resume-band stock fixture was unavailable";
+                    SkipResumeBelowAssertions(r, reason);
+                }
+                else
+                {
+                    bool blueprintAppeared = false;
+                    CheckSafely(
+                        r,
+                        latchLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            loops.SetTargetCount(cell, target);
+                            loops.SetResumeBelow(cell, resumeBelow);
+                            countedStock = CountStoredTargetStock(map, subject.thingDef);
+                            loops.RunPass();
+                            blueprintAppeared =
+                                FindBlueprint(map, cell, subject.thingDef) != null;
+                            return countedStock == target && !blueprintAppeared;
+                    },
+                    () =>
+                        TargetDetail(
+                            cell, target, countedStock, blueprintAppeared) +
+                        $"; resumeBelow {resumeBelow}");
+
+                    // Remove a failed first-pass blueprint so the next assertion exercises only the
+                    // latch at stock 2; the released stored >= target rule would place one here.
+                    DestroyThingsInRect(map, buildRect);
+
+                    bool stockRemoved = false;
+                    CheckSafely(
+                        r,
+                        bandLabel,
+                        () =>
+                        {
+                            stockRemoved = fixtureStock != null &&
+                                           fixtureStock.Count > 0 &&
+                                           DestroyStoredTargetStock(
+                                               new List<Thing> { fixtureStock[0] });
+                            countedStock = CountStoredTargetStock(map, subject.thingDef);
+                            loops.RunPass();
+                            blueprintAppeared =
+                                FindBlueprint(map, cell, subject.thingDef) != null;
+                            return stockRemoved && countedStock == 2 && !blueprintAppeared;
+                        },
+                        () =>
+                            TargetDetail(
+                                cell, target, countedStock, blueprintAppeared) +
+                            $"; resumeBelow {resumeBelow}");
+
+                    DestroyThingsInRect(map, buildRect);
+
+                    stockRemoved = false;
+                    CheckSafely(
+                        r,
+                        resumeLabel,
+                        () =>
+                        {
+                            stockRemoved = fixtureStock != null &&
+                                           fixtureStock.Count > 1 &&
+                                           DestroyStoredTargetStock(
+                                               new List<Thing> { fixtureStock[1] });
+                            countedStock = CountStoredTargetStock(map, subject.thingDef);
+                            loops.RunPass();
+                            blueprintAppeared =
+                                FindBlueprint(map, cell, subject.thingDef) != null;
+                            return stockRemoved && countedStock == 1 && blueprintAppeared;
+                        },
+                        () =>
+                            TargetDetail(
+                                cell, target, countedStock, blueprintAppeared) +
+                            $"; resumeBelow {resumeBelow}");
+                }
+            }
+    finally
+    {
+        DestroyStoredTargetStock(fixtureStock);
+        foreach (IntVec3 storageCell in storageCells)
+        {
+            DestroyThingsInRect(
+                map, new CellRect(storageCell.x, storageCell.z, 1, 1));
+        }
+
+        loops.Disable(cell);
+        DestroyThingsInRect(map, buildRect);
+    }
+
+            fixtureStock = null;
+            try
+            {
+                const int target = 2;
+                const int effectiveResumeBelow = 1;
+                int countedStockBefore = 0;
+                int countedStockAfter = 0;
+                bool blueprintBefore = false;
+                bool blueprintAppeared = false;
+                bool stockRemoved = false;
+                string stockFailure;
+        bool stockSpawned = TrySpawnStoredTargetStockAcross(
+            map,
+            subject,
+            releasedStorageCells,
+            out fixtureStock,
+            out countedStockBefore,
+            out stockFailure);
+                if (!stockSpawned || countedStockBefore != 2)
+                {
+                    string reason = countedStockBefore != 2
+                        ? $"needs exactly 2 stored units for the released-behaviour fixture; the world supplied {countedStockBefore}"
+                        : stockFailure ?? "the released-behaviour stock fixture was unavailable";
+                    r.Skip(oldBehaviorLabel, reason);
+                    return;
+                }
+
+                CheckSafely(
+                    r,
+                    oldBehaviorLabel,
+                    () =>
+                    {
+                        loops.Enable(
+                            cell,
+                            Rot4.North,
+                            subject.thingDef,
+                            subject.stuffDef,
+                            null);
+                        loops.SetTargetCount(cell, target);
+                        countedStockBefore =
+                            CountStoredTargetStock(map, subject.thingDef);
+                        loops.RunPass();
+                        blueprintBefore =
+                            FindBlueprint(map, cell, subject.thingDef) != null;
+                        stockRemoved = fixtureStock != null &&
+                                       fixtureStock.Count > 0 &&
+                                       DestroyStoredTargetStock(
+                                           new List<Thing> { fixtureStock[0] });
+                        countedStockAfter =
+                            CountStoredTargetStock(map, subject.thingDef);
+                        loops.RunPass();
+                        blueprintAppeared =
+                            FindBlueprint(map, cell, subject.thingDef) != null;
+                        return countedStockBefore == target &&
+                               !blueprintBefore &&
+                               stockRemoved &&
+                               countedStockAfter == effectiveResumeBelow &&
+                               blueprintAppeared;
+                    },
+                    () =>
+                        TargetDetail(
+                            cell, target, countedStockAfter, blueprintAppeared) +
+                        $"; resumeBelow -1 (effective {effectiveResumeBelow}); stock before " +
+                        $"{countedStockBefore}; blueprint before " +
+                        $"{(blueprintBefore ? "yes" : "no")}");
+            }
+    finally
+    {
+        DestroyStoredTargetStock(fixtureStock);
+        foreach (IntVec3 storageCell in releasedStorageCells)
+        {
+            DestroyThingsInRect(
+                map, new CellRect(storageCell.x, storageCell.z, 1, 1));
+        }
+
+        loops.Disable(cell);
+        DestroyThingsInRect(map, buildRect);
+            }
+        }
+
 
         private static void CheckDesignatorCancel(
             Results r,
@@ -4252,6 +4513,285 @@ namespace Intercolony
                 targetPersistenceDetail);
         }
 
+        private static void CheckNewFieldDefaults(Results r, Map map, Subject subject)
+        {
+            const string latchedLabel =
+                "a latched program survives a save and reload still latched";
+            const string oldRecordLabel =
+                "a record saved before this feature loads as its old program";
+
+            IntVec3 expectedCell = map.Center;
+            Rot4 expectedRotation = Rot4.West;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProduceLoop-{Guid.NewGuid():N}.xml");
+
+            ProduceLoopMapComponent saved = new ProduceLoopMapComponent(map);
+            ProduceLoopMapComponent loaded = null;
+            int loadedTargetCount = 0;
+            int loadedResumeBelow = -2;
+            int loadedEffectiveResumeBelow = -2;
+            bool loadedWaitingForResume = false;
+            bool loadedRecordFound = false;
+
+            CheckSafely(
+                r,
+                latchedLabel,
+                () =>
+                {
+                    try
+                    {
+                        saved.Enable(
+                            expectedCell,
+                            expectedRotation,
+                            subject.thingDef,
+                            subject.stuffDef,
+                            null);
+                        saved.SetTargetCount(expectedCell, 5);
+                        saved.SetResumeBelow(expectedCell, 2);
+                        saved.Find(expectedCell).waitingForResume = true;
+
+                        Scribe.saver.InitSaving(path, "intercolonyProduceLoopResumeBelowTest");
+                        Scribe_Deep.Look(ref saved, "produceLoopMapComponent");
+                        Scribe.saver.FinalizeSaving();
+
+                        Scribe.loader.InitLoading(path);
+                        Scribe_Deep.Look(ref loaded, "produceLoopMapComponent", map);
+                        Scribe.loader.FinalizeLoading();
+
+                        ProduceLoopRecord loadedRecord = loaded?.Find(expectedCell);
+                        loadedRecordFound = loadedRecord != null;
+                        if (!loadedRecordFound)
+                        {
+                            return false;
+                        }
+
+                        loadedTargetCount = loadedRecord.targetCount;
+                        loadedResumeBelow = loadedRecord.resumeBelow;
+                        loadedWaitingForResume = loadedRecord.waitingForResume;
+                        return loadedWaitingForResume &&
+                               loadedResumeBelow == 2 &&
+                               loadedTargetCount == 5;
+                    }
+                    finally
+                    {
+                        Scribe.ForceStop();
+                        if (File.Exists(path))
+                        {
+                            File.Delete(path);
+                        }
+
+                        saved?.Disable(expectedCell);
+                        loaded?.Disable(expectedCell);
+                    }
+                },
+                () =>
+                    $"loaded record {(loadedRecordFound ? "yes" : "no")}; target " +
+                    $"{loadedTargetCount}; resumeBelow {loadedResumeBelow}; " +
+                    $"waitingForResume {(loadedWaitingForResume ? "yes" : "no")}");
+
+            path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProduceLoop-{Guid.NewGuid():N}.xml");
+            saved = new ProduceLoopMapComponent(map);
+            loaded = null;
+            loadedTargetCount = 0;
+            loadedResumeBelow = -2;
+            loadedEffectiveResumeBelow = -2;
+            loadedWaitingForResume = false;
+            loadedRecordFound = false;
+            int loadedAllowedStuffCount = -1;
+            bool loadedAllowedStuffExact = false;
+            int loadedAllowedWorkersCount = -1;
+            bool loadedAllowedWorkersWasNull = true;
+            bool loadedRestrictToSelectedWorkers = true;
+            int loadedMinConstructionSkill = -1;
+            bool xmlHasAllowedStuff = false;
+            bool xmlHasResumeBelow = false;
+            bool xmlHasWaitingForResume = false;
+            bool xmlHasRestrictToSelectedWorkers = false;
+            bool xmlHasAllowedWorkers = false;
+            bool xmlHasMinConstructionSkill = false;
+            string xmlFailure = null;
+
+            CheckSafely(
+                r,
+                oldRecordLabel,
+                () =>
+                {
+                    try
+                    {
+                        saved.Enable(
+                            expectedCell,
+                            expectedRotation,
+                            subject.thingDef,
+                            subject.stuffDef,
+                            null);
+                        saved.SetTargetCount(expectedCell, 4);
+
+                        Scribe.saver.InitSaving(path, "intercolonyProduceLoopOldRecordTest");
+                        Scribe_Deep.Look(ref saved, "produceLoopMapComponent");
+                        Scribe.saver.FinalizeSaving();
+
+                        string xml = File.ReadAllText(path);
+                        string[] nodeNames =
+                        {
+                            "resumeBelow",
+                            "waitingForResume",
+                            "allowedStuff",
+                            "restrictToSelectedWorkers",
+                            "allowedWorkers",
+                            "minConstructionSkill"
+                        };
+                        xmlHasAllowedStuff =
+                            xml.IndexOf("<allowedStuff", StringComparison.Ordinal) >= 0;
+                        xmlHasResumeBelow =
+                            xml.IndexOf("<resumeBelow", StringComparison.Ordinal) >= 0;
+                        xmlHasWaitingForResume =
+                            xml.IndexOf("<waitingForResume", StringComparison.Ordinal) >= 0;
+                        xmlHasRestrictToSelectedWorkers =
+                            xml.IndexOf(
+                                "<restrictToSelectedWorkers",
+                                StringComparison.Ordinal) >= 0;
+                        xmlHasAllowedWorkers =
+                            xml.IndexOf("<allowedWorkers", StringComparison.Ordinal) >= 0;
+                        xmlHasMinConstructionSkill =
+                            xml.IndexOf(
+                                "<minConstructionSkill",
+                                StringComparison.Ordinal) >= 0;
+
+                        for (int i = 0; i < nodeNames.Length; i++)
+                        {
+                            string nodeName = nodeNames[i];
+                            string nodePrefix = "<" + nodeName;
+                            int nodeStart = xml.IndexOf(
+                                nodePrefix, StringComparison.Ordinal);
+                            if (nodeStart < 0)
+                            {
+                                if (nodeName == "allowedStuff")
+                                {
+                                    xmlFailure =
+                                        "expected XML node <allowedStuff> was not present";
+                                    return false;
+                                }
+
+                                continue;
+                            }
+
+                            int tagEnd = xml.IndexOf('>', nodeStart);
+                            if (tagEnd < 0)
+                            {
+                                xmlFailure =
+                                    $"XML node <{nodeName}> had no closing angle bracket";
+                                return false;
+                            }
+
+                            int nodeEnd;
+                            if (xml[tagEnd - 1] == '/')
+                            {
+                                nodeEnd = tagEnd + 1;
+                            }
+                            else
+                            {
+                                string closeTag = "</" + nodeName + ">";
+                                int closeStart = xml.IndexOf(
+                                    closeTag,
+                                    tagEnd + 1,
+                                    StringComparison.Ordinal);
+                                if (closeStart < 0)
+                                {
+                                    xmlFailure =
+                                        $"XML node <{nodeName}> had no closing tag";
+                                    return false;
+                                }
+
+                                nodeEnd = closeStart + closeTag.Length;
+                            }
+
+                            xml = xml.Remove(nodeStart, nodeEnd - nodeStart);
+                        }
+
+                        if (xml.IndexOf("<allowedStuff", StringComparison.Ordinal) >= 0)
+                        {
+                            xmlFailure =
+                                "the <allowedStuff> node was still present after stripping";
+                            return false;
+                        }
+
+                        File.WriteAllText(path, xml);
+
+                        Scribe.loader.InitLoading(path);
+                        Scribe_Deep.Look(ref loaded, "produceLoopMapComponent", map);
+                        Scribe.loader.FinalizeLoading();
+
+                        ProduceLoopRecord loadedRecord = loaded?.Find(expectedCell);
+                        loadedRecordFound = loadedRecord != null;
+                        if (!loadedRecordFound)
+                        {
+                            return false;
+                        }
+
+                        loadedTargetCount = loadedRecord.targetCount;
+                        loadedResumeBelow = loadedRecord.resumeBelow;
+                        loadedEffectiveResumeBelow = loadedRecord.EffectiveResumeBelow;
+                        loadedWaitingForResume = loadedRecord.waitingForResume;
+                        loadedAllowedStuffCount = loadedRecord.allowedStuff?.Count ?? -1;
+                        loadedAllowedStuffExact =
+                            loadedRecord.allowedStuff != null &&
+                            loadedRecord.allowedStuff.Count == 1 &&
+                            loadedRecord.allowedStuff[0] == subject.stuffDef;
+                        loadedAllowedWorkersWasNull = loadedRecord.allowedWorkers == null;
+                        loadedAllowedWorkersCount = loadedRecord.allowedWorkers?.Count ?? -1;
+                        loadedRestrictToSelectedWorkers =
+                            loadedRecord.restrictToSelectedWorkers;
+                        loadedMinConstructionSkill = loadedRecord.minConstructionSkill;
+                        return loadedAllowedStuffExact &&
+                               loadedAllowedWorkersCount == 0 &&
+                               !loadedAllowedWorkersWasNull &&
+                               !loadedRestrictToSelectedWorkers &&
+                               loadedMinConstructionSkill == 0 &&
+                               loadedResumeBelow == -1 &&
+                               loadedEffectiveResumeBelow == 3 &&
+                               !loadedWaitingForResume &&
+                               xmlHasAllowedStuff &&
+                               !xmlHasResumeBelow &&
+                               !xmlHasWaitingForResume &&
+                               !xmlHasRestrictToSelectedWorkers &&
+                               !xmlHasMinConstructionSkill &&
+                               loadedTargetCount == 4;
+                    }
+                    finally
+                    {
+                        Scribe.ForceStop();
+                        if (File.Exists(path))
+                        {
+                            File.Delete(path);
+                        }
+
+                        saved?.Disable(expectedCell);
+                        loaded?.Disable(expectedCell);
+                    }
+                },
+                () =>
+                    $"loaded record {(loadedRecordFound ? "yes" : "no")}; target " +
+                    $"{loadedTargetCount}; allowedStuff count {loadedAllowedStuffCount}, " +
+                    $"exact {(loadedAllowedStuffExact ? "yes" : "no")}; allowedWorkers " +
+                    $"{(loadedAllowedWorkersWasNull ? "null" : loadedAllowedWorkersCount.ToString())}; " +
+                    $"restrictToSelectedWorkers " +
+                    $"{(loadedRestrictToSelectedWorkers ? "true" : "false")}; " +
+                    $"minConstructionSkill {loadedMinConstructionSkill}; resumeBelow " +
+                    $"{loadedResumeBelow}; effective resumeBelow " +
+                    $"{loadedEffectiveResumeBelow}; " +
+                    $"waitingForResume {(loadedWaitingForResume ? "true" : "false")}; " +
+                    $"XML nodes allowedStuff {(xmlHasAllowedStuff ? "present" : "absent")}, " +
+                    $"resumeBelow {(xmlHasResumeBelow ? "present" : "absent")}, " +
+                    $"waitingForResume {(xmlHasWaitingForResume ? "present" : "absent")}, " +
+                    $"restrictToSelectedWorkers " +
+                    $"{(xmlHasRestrictToSelectedWorkers ? "present" : "absent")}, " +
+                    $"allowedWorkers {(xmlHasAllowedWorkers ? "present" : "absent")}, " +
+                    $"minConstructionSkill " +
+                    $"{(xmlHasMinConstructionSkill ? "present" : "absent")}" +
+                    $"{(xmlFailure == null ? "" : $"; {xmlFailure}")}");
+        }
+
         private static Subject FindSubject()
         {
             Subject fallback = null;
@@ -4536,7 +5076,104 @@ namespace Intercolony
                    IsCellEmpty(map, candidate);
         }
 
-        private static bool TrySpawnStoredTargetStock(
+private static bool TryCreateTargetStorageCells(
+    Map map,
+    HashSet<IntVec3> reservedCells,
+    List<Zone_Stockpile> testZones,
+    int cellCount,
+    out List<IntVec3> storageCells,
+    out string failure)
+{
+    storageCells = new List<IntVec3>();
+    failure = null;
+    if (map == null || map.zoneManager == null)
+    {
+        failure = "the map has no zone manager for the target stock fixture";
+        return false;
+    }
+
+    if (cellCount <= 0)
+    {
+        failure =
+            $"needed {cellCount} storage cells for the resume band; only 0 were available";
+        return false;
+    }
+
+    HashSet<IntVec3> selectedCells = new HashSet<IntVec3>();
+    IntVec3 root = DropCellFinder.TradeDropSpot(map);
+    if (root.IsValid)
+    {
+        foreach (IntVec3 candidate in GenRadial.RadialCellsAround(
+            root, 12f, useCenter: true))
+        {
+            if (storageCells.Count >= cellCount)
+            {
+                break;
+            }
+
+            if (selectedCells.Contains(candidate))
+            {
+                continue;
+            }
+
+            if (IsTargetStorageCellAvailable(map, candidate, reservedCells))
+            {
+                selectedCells.Add(candidate);
+                storageCells.Add(candidate);
+            }
+        }
+    }
+
+    if (storageCells.Count < cellCount)
+    {
+        foreach (IntVec3 candidate in map.AllCells)
+        {
+            if (storageCells.Count >= cellCount)
+            {
+                break;
+            }
+
+            if (selectedCells.Contains(candidate))
+            {
+                continue;
+            }
+
+            if (IsTargetStorageCellAvailable(map, candidate, reservedCells))
+            {
+                selectedCells.Add(candidate);
+                storageCells.Add(candidate);
+            }
+        }
+    }
+
+    if (storageCells.Count < cellCount)
+    {
+        failure =
+            $"needed {cellCount} storage cells for the resume band; only {storageCells.Count} were available";
+        return false;
+    }
+
+    Zone_Stockpile zone = new Zone_Stockpile(
+        StorageSettingsPreset.DefaultStockpile, map.zoneManager);
+    try
+    {
+        map.zoneManager.RegisterZone(zone);
+        testZones.Add(zone);
+        foreach (IntVec3 storageCell in storageCells)
+        {
+            zone.AddCell(storageCell);
+        }
+
+        return true;
+    }
+    catch (Exception ex)
+    {
+        failure = $"could not create target stock storage: {ex.Message}";
+        return false;
+    }
+}
+
+private static bool TrySpawnStoredTargetStock(
             Map map,
             Subject subject,
             IntVec3 storageCell,
@@ -4679,7 +5316,142 @@ namespace Intercolony
             return removed;
         }
 
-        private static int CountStoredTargetStock(Map map, ThingDef thingDef)
+private static bool TrySpawnStoredTargetStockAcross(
+    Map map,
+    Subject subject,
+    List<IntVec3> storageCells,
+    out List<Thing> spawnedStock,
+    out int countedStock,
+    out string failure)
+{
+    spawnedStock = new List<Thing>();
+    countedStock = 0;
+    failure = null;
+    if (map == null || subject?.thingDef == null ||
+        storageCells == null || storageCells.Count <= 0)
+    {
+        failure = "the target stock fixture inputs were unavailable";
+        return false;
+    }
+
+    int before;
+    try
+    {
+        before = CountStoredTargetStock(map, subject.thingDef);
+    }
+    catch (Exception ex)
+    {
+        failure = $"could not inspect target stock before spawning: {ex.Message}";
+        return false;
+    }
+
+    for (int i = 0; i < storageCells.Count; i++)
+    {
+        IntVec3 storageCell = storageCells[i];
+        if (!storageCell.IsValid)
+        {
+            failure = "the target stock fixture included an invalid storage cell";
+            break;
+        }
+
+        Thing original = null;
+        Thing minified = null;
+        try
+        {
+            original = ThingMaker.MakeThing(subject.thingDef, subject.stuffDef);
+            minified = original.TryMakeMinified();
+            if (minified != null)
+            {
+                original = null;
+            }
+
+            if (minified == null ||
+                minified.GetInnerIfMinified()?.def != subject.thingDef)
+            {
+                failure = "the subject building could not be minified for storage";
+            }
+            else
+            {
+                Thing spawned = GenSpawn.Spawn(minified, storageCell, map);
+                if (spawned != null && !spawned.Destroyed)
+                {
+                    spawnedStock.Add(spawned);
+                }
+
+                if (spawned == null ||
+                    spawned.Destroyed ||
+                    !(spawned is MinifiedThing) ||
+                    !OrderValidator.IsAvailableColonyStock(spawned))
+                {
+                    failure =
+                        "the spawned subject building was not genuinely available in colony storage";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            failure = $"could not create stored target stock: {ex.Message}";
+        }
+        finally
+        {
+            if (original != null && !original.Destroyed)
+            {
+                original.Destroy(DestroyMode.Vanish);
+            }
+
+            if (minified != null &&
+                !minified.Destroyed &&
+                !spawnedStock.Contains(minified))
+            {
+                minified.Destroy(DestroyMode.Vanish);
+            }
+        }
+
+        if (failure != null)
+        {
+            break;
+        }
+    }
+
+    if (failure != null)
+    {
+        DestroyStoredTargetStock(spawnedStock);
+        try
+        {
+            countedStock = CountStoredTargetStock(map, subject.thingDef);
+        }
+        catch (Exception)
+        {
+            countedStock = 0;
+        }
+
+        return false;
+    }
+
+    try
+    {
+        countedStock = CountStoredTargetStock(map, subject.thingDef);
+    }
+    catch (Exception ex)
+    {
+        failure = $"could not inspect target stock after spawning: {ex.Message}";
+        DestroyStoredTargetStock(spawnedStock);
+        countedStock = 0;
+        return false;
+    }
+
+    if (countedStock - before < storageCells.Count)
+    {
+        failure =
+            $"stored target stock increased by {countedStock - before}, expected {storageCells.Count}";
+        DestroyStoredTargetStock(spawnedStock);
+        return false;
+    }
+
+    return true;
+}
+
+private static int CountStoredTargetStock(Map map, ThingDef thingDef)
         {
             if (map?.haulDestinationManager == null || thingDef == null)
             {
@@ -5128,6 +5900,17 @@ namespace Intercolony
             r.Skip("a target above stock still produces", reason);
             r.Skip("a zero target produces without limit", reason);
             r.Skip("spending stock below the target resumes production", reason);
+        }
+
+        private static void SkipResumeBelowAssertions(Results r, string reason)
+        {
+            r.Skip("a met target latches the program", reason);
+            r.Skip(
+                "a latched program stays stopped above the resume threshold",
+                reason);
+            r.Skip(
+                "a latched program restarts at the resume threshold",
+                reason);
         }
 
         private static void SkipSubjectAssertions(Results r)
