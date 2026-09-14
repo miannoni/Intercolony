@@ -2261,6 +2261,26 @@ An **empty applicant list for a demanding posting is expected, not a bug**; a te
 
 The capability gate, the tier ordering, the classification of an empty loadout and the headline wording are asserted and mutation-proven, and none of that shows whether the tiers feel meaningfully different in play.
 
+### Integration: the three places two finished systems meet
+
+Added 2026-09-15 on branch `foreman/playtest-finalization-2026-09-13`, covering plan §14.
+
+**Produce and the Business report (§14.1).** Machine evidence here is already strong: the Produce loop places an **ORDINARY VANILLA BLUEPRINT** rather than inventing its own completion, so **`Frame.CompleteConstruction`** records the product once through the same path a hand-placed building uses. Existing assertions already cover the **completion record**, the **construction-route material cost**, and the **paid-employee labor contribution**. What a person still has to see is the whole loop running in one colony over real time: a wooden-chair program at **target 10, resume below 5**, an allowed Construction employee working it, and the Business tab's production rate and margin moving as chairs are actually finished and sold.
+
+**Steps.** Set up that wooden-chair program with wood allowed, let the allowed Construction employee work it, and watch the Business tab while chairs are finished and sold. Sell inventory down to **6** and confirm the program stays stopped, then down to **5** and confirm it resumes.
+
+**Apparel, the employee card and the bond (§14.2).** What a person must drive is the part no fixture can: **vanilla's own apparel optimizer deciding it wants a change**, the consent prompt appearing **once** rather than every time the optimizer re-runs, and the expanded card's refundable bond dropping by **exactly the amount the warning named**. This arithmetic was a real defect found during this stage and fixed in `893e1ae` — the card used to re-round the remaining gear instead of prorating the deposit actually charged — so a tester who sees the warned figure and the card disagree by even one silver should report it. At contract end, colony-supplied apparel stays with the colony, while the employee's own gear that was never bought out goes home with them.
+
+The known gap is plain: **Odyssey outfit stands bypass the consent path.** Vanilla's outfit-stand job moves apparel with **direct calls** rather than through **the drop the mod observes**, so an employee sent to a stand can shed bonded gear without the prompt. This is recorded in the code as a **known uncovered route**; a tester with Odyssey should try it and report what the bond does.
+
+**Steps.** Hire an employee with bonded apparel and confirm the employee card starts collapsed and readable. Let vanilla's apparel policy want a change, confirm the consent prompt appears once, accept it, inspect the expanded card's bond, and watch the employee later wear colony apparel. At contract end, confirm colony apparel stays with the colony and never-bought-out employee gear goes home with the employee. With Odyssey installed, send the employee to an outfit stand and try the known uncovered route.
+
+**Emergency arrival and equipment (§14.3).** Reading the code says pod arrival touches none of the equipment state — the pod branch only launches or completes, and never changes the bond, the captured gear list or ownership. What a person has to confirm is the lifecycle end to end: **save while a pod-hired worker is still in transit, reload, and check they still land with the same gear, the same bond and the same contract.** No assertion covers it because a successful pod landing needs a real generated pawn, the world-pawn pool, a landing cell and a live transporter, and a fixture that generated one would be indistinguishable from the pawn leak the suite watches for.
+
+**Steps.** Create the high-tier applicant/job-post path and verify its bond, separately hire an emergency direct-market worker from a drop-pod-capable settlement, save while the worker is still in transit, reload, and watch them arrive by pod. Confirm the same gear, bond and contract survive the arrival.
+
+Each system was asserted and mutation-proven on its own, and none of that establishes that they behave when run together in one colony over real time.
+
 ---
 
 ## Proven in play

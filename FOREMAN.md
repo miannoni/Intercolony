@@ -1,10 +1,10 @@
 # Foreman state — Intercolony
 
 Stage: P8 — integration, regression, documentation, clean halt
-Unit: P8.2b — assertions for the bond authority
-Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-2b-out.txt`
-Last done: P8.2a accepted, `893e1ae` — the shown refundable bond is now the one settlement pays
-Updated: 2026-09-15 08:20
+Unit: P8.3 — the §14 integration sittings recorded as human evidence
+Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-3-out.txt`
+Last done: P8.2b accepted, `f80095d` — labor **97/0/0**; PB and PC both reddened, PA did not bite
+Updated: 2026-09-15 08:55
 Foreman load: 2026-09-15 07:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -192,8 +192,8 @@ serialising is cheaper than reconciling.
 |---|---|---|
 | ✅ | P8.1 — recon: §14 seams traced, F12/F22 diff audit | accepted; P8-D1..D3 |
 | ✅ | P8.2a — one authority for the refundable bond | accepted, `893e1ae`. labor **89/0/3** |
-| 🔨 | P8.2b — assertions for the bond authority | Luna running |
-| ⬜ | P8.3 — integration human evidence recorded | — |
+| ✅ | P8.2b — assertions for the bond authority | accepted, `f80095d`. labor **97/0/0** |
+| 🔨 | P8.3 — integration human evidence recorded | Luna running |
 | ⬜ | P8.4 — full build + fresh whole suite | — |
 | ⬜ | P8.5 — `PROGRESS.md`, disposition markers, final state | — |
 
