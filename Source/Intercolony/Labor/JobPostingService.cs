@@ -303,6 +303,11 @@ namespace Intercolony
                     continue;
                 }
 
+                if (posting.requestedEquipmentLevel == LaborEquipmentLevel.None)
+                {
+                    StripBondableEquipment(pawn);
+                }
+
                 LaborEquipmentLevel actual = LaborEquipmentTierService.Classify(
                     pawn, posting.combatClause);
                 if (!LaborEquipmentTierService.MeetsOrExceeds(
@@ -319,6 +324,35 @@ namespace Intercolony
             // Failure to sample a qualifying naturally generated loadout is scarcity, not an
             // error. Leave the worker unapplied and let a later market refresh try again.
             return false;
+        }
+
+        private static void StripBondableEquipment(Pawn pawn)
+        {
+            if (pawn?.equipment != null)
+            {
+                List<ThingWithComps> equipment = pawn.equipment.AllEquipmentListForReading;
+                for (int i = equipment.Count - 1; i >= 0; i--)
+                {
+                    ThingWithComps item = equipment[i];
+                    if (item != null && item.def != null && item.def.IsWeapon)
+                    {
+                        // DestroyEquipment removes the item through the equipment tracker before
+                        // destroying it; never mutate AllEquipmentListForReading directly.
+                        pawn.equipment.DestroyEquipment(item);
+                    }
+                }
+            }
+
+            if (pawn?.apparel != null)
+            {
+                List<Apparel> wornApparel = pawn.apparel.WornApparel;
+                for (int i = wornApparel.Count - 1; i >= 0; i--)
+                {
+                    Apparel item = wornApparel[i];
+                    pawn.apparel.Remove(item);
+                    item.Destroy(DestroyMode.Vanish);
+                }
+            }
         }
 
         private static void AddApplicant(
