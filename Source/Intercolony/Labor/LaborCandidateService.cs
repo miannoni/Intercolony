@@ -778,7 +778,11 @@ namespace Intercolony
             return candidate != null && candidate.pawn != null && candidate.travelDays >= 0;
         }
 
-        private static bool IsEmergencyDropPodArrival(LaborCandidate candidate)
+        /// <summary>
+        /// Whether this candidate's emergency route uses a drop pod. This is the single route
+        /// predicate shared by emergency arrival timing and the transport recorded at hire.
+        /// </summary>
+        public static bool IsEmergencyDropPodArrival(LaborCandidate candidate)
         {
             if (!IsEmergencyCandidate(candidate))
             {

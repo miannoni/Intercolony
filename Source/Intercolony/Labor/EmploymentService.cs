@@ -38,7 +38,8 @@ namespace Intercolony
         /// </param>
         /// <param name="emergencyDispatch">
         /// UI-only direct-hire mode. It filters the existing candidate pool, applies the shared
-        /// urgency wage multiplier, and changes the existing arrival tick; it is not persisted.
+        /// urgency wage multiplier, and selects the existing arrival deadline and the transport
+        /// recorded on the contract; the flag itself is not persisted.
         /// </param>
         public static EmploymentContract TryHire(
             IntercolonyWorldComponent state, LaborCandidate candidate, int termDays, Map paymentMap,
@@ -180,6 +181,8 @@ namespace Intercolony
             // string "no skills" into every completed record.
             string skills = candidate.SkillSummary();
 
+            bool arrivalByDropPod = emergencyDispatch &&
+                LaborCandidateService.IsEmergencyDropPodArrival(candidate);
             int arrivalTicks = LaborCandidateService.ArrivalTicksFor(candidate, emergencyDispatch);
             Pawn worker = candidate.Release();
             LaborCandidateService.Take(candidate);
@@ -204,9 +207,12 @@ namespace Intercolony
                 equipmentBond = equipmentBond,
                 paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
-                // Emergency mode changes only this existing arrival deadline. The mode itself is
-                // deliberately not retained as a new contract field or save-state concept.
+                // Emergency mode selects the existing arrival deadline and the transport recorded
+                // on the contract. The flag itself is not retained as a separate save-state field.
                 arrivalTick = GenTicks.TicksGame + arrivalTicks,
+                arrivalTransport = arrivalByDropPod
+                    ? EmploymentArrivalTransport.DropPod
+                    : EmploymentArrivalTransport.Conventional,
                 status = EmploymentStatus.Travelling
             };
 
