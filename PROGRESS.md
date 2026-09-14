@@ -2870,3 +2870,97 @@ Manual test:
   quicktest world and is not a valid integrity oracle on a mature save. The fresh-world run is the
   apples-to-apples comparison, and it is green.
 
+## 1.1.0 release — merged, tagged, released and published  (2026-09-13)
+
+Implemented:
+- The playtest batch branch `foreman/playtest-batch-2026-09-06` was merged to `main` at `6322edf`
+  with `--no-ff`, following the precedent of the 1.0 merge (`e7053b6`) rather than fast-forwarding,
+  so the batch keeps its shape in history. 307 commits.
+- `main` was verified AFTER the merge, not assumed: clean build, and the full fresh-world suite at
+  1605 passed / 0 failed / 15 skipped, exit 0, startup log CLEAN.
+- Tagged `v1.1.0` (annotated) and pushed with `main`.
+- A GitHub release was created, marked Latest and — unlike every 0.9.x — NOT a pre-release, with
+  `dist/Intercolony-1.1.0.zip` (1,592,125 bytes) attached:
+  https://github.com/miannoni/Intercolony/releases/tag/v1.1.0
+- The release candidate was `dist\Intercolony-1.1.0`: 9 files, 2.72 MiB; zip 1.52 MiB. `About.xml`
+  at 1.1.0, `supportedVersions` 1.6, Harmony declared as a dependency and NOT shipped,
+  `Preview.png` 933,975 bytes (under Steam's 1 MB cap). No `Source/`, `reference/`, `docs/`,
+  `.git/`, no Foreman or scratchpad artefacts, and no dev bridge in the DLL.
+- `package.ps1` refused the first packaging attempt and was right to: the DLL on disk was the
+  bridge-enabled build left by the last `-Fresh` suite run, and a release must never carry
+  a listener. It was rebuilt plain and re-packaged.
+- A packaged smoke test passed on the packaged copy, not on the repository: RimWorld loaded it from
+  `Mods\Intercolony` and logged `[Intercolony] loaded, version 1.1.0.` and `Harmony patches
+  applied.`, with no startup faults and no dev bridge listening.
+- The operator published 1.1.0 to the Steam Workshop on 2026-09-12 as item `3780094556`. The upload
+  copy was staged mechanically — junction removed with `cmd /c rmdir` rather than a recursive
+  PowerShell delete, package staged as a real directory, `About\PublishedFileId.txt` restored by
+  hand, all 9 files verified byte-identical by SHA-256 to the audited package with that file as the
+  sole addition. Afterwards the staged copy was removed and the development junction restored.
+
+Not implemented:
+- `docs/WORKSHOP_DESCRIPTION.bbcode` was reviewed and deliberately NOT edited. It predates most of
+  the batch: Produce is entirely absent from it, auto-ready/auto-renew, delivery destinations,
+  equipment bonds, emergency dispatch and the seventeen settings are unmentioned, "five screens" is
+  now wrong, and the "This is 1.0" section is dated. The Workshop description is create-only, so
+  the stale copy survives re-uploads until somebody edits it on Steam.
+
+Known limitations:
+- **The released 1.1.0 package does not contain `Patches/`.** `package.ps1` built releases from
+  `About`, `Assemblies` and `Defs` only, so no release zip has ever carried
+  `Patches/ProduceDesignators.xml` or `Patches/WorldObjectDefs.xml`. Both registrations exist only
+  in those XML patches and have no C# fallback, so in the published build the area
+  Produce / Pause / Stop designators never register into the vanilla Orders category and the
+  Settlement Economy inspector tab never appears. The self-tests instantiate those classes
+  directly, which is why a green suite never caught it. Found and fixed on the finalization branch
+  at `6a7d0b8`; NOT released. Whether a 1.1.1 goes out is the operator's decision.
+- Assertion totals vary between generated worlds — 1601, 1603, 1604, 1605 and 1606 were all
+  observed — because some assertions only run when the world supplies their fixture. Report zero
+  failures across runs and a range, never a single number.
+- All 16 remaining skips are world-contingent and individually named.
+
+Manual test:
+- Twenty-one play observations remain owed in `docs/PENDING_PLAYTESTS.md`.
+
+## Playtest finalization run — scope lock  (2026-09-14)
+
+Implemented:
+- The authority for this run is `docs/PLAYTEST_FINALIZATION_PLAN.md` (the operator's original lives
+  at `C:\dev\INTERCOLONY_PLAYTEST_FINALIZATION_EXECUTION_PLAN.md`). It supersedes
+  `docs/PLAYTEST_BATCH_SOURCE_PLAN.md`, `docs/PLAYTEST_CORRECTION_PLAN.md` and all older recon and
+  progress records FOR THE FINDINGS IT COVERS, and only those.
+- Branch `foreman/playtest-finalization-2026-09-13`, cut from `main` at `e79fba0`, contains the
+  released 1.1.0. Save schema at the base is 58.
+- The scope matrix is:
+
+  | Finding | This run |
+  | --- | --- |
+  | F04 | Implement expanded Produce Controls |
+  | F06 | Implement apparel policy + bond consent/buyout |
+  | F16 | Implement full employee-card redesign |
+  | F19 + F20 | Replace economics presentation/calculation shape |
+  | F21 + F24 | Implement rapid-logistics capability + real emergency arrival |
+  | F23 | Implement requested equipment level |
+  | F12 | Frozen |
+  | F22 | Frozen |
+  | all other findings | Regression-only |
+
+- F13 and F17 are not separate slices in this run. Their accepted semantics fold into the F16
+  redesign: auto-renew stays directly visible and directly toggleable, and occasional actions do
+  not clutter the collapsed card. F16 is the newest presentation authority and supersedes F17's
+  blanket rule that every occasional action lives behind `...`.
+
+Not implemented:
+- F12 (recurring/preprogrammed player caravans) and F22 (player-supplied reverse labor market)
+  remain FROZEN. The rapid-transport work in F21/F24 must not become a back door into F12, and the
+  F23 labor work applies only to hiring workers FROM the market.
+- Reserved for the operator and not performed by this run: no merge to `main`, no tag, no GitHub
+  release, no Workshop publish or update.
+
+Known limitations:
+- This entry opens the finalization run at the locked scope; findings outside the matrix are
+  regression-only.
+
+Manual test:
+- No manual test result is recorded in this scope-lock entry.
+
