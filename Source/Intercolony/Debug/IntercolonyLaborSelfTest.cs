@@ -102,6 +102,7 @@ namespace Intercolony
             {
                 CheckAutoRenewPersistence(r);
                 CheckLaborSpineRoundTrip(r);
+                CheckEquipmentBondBuyout(r);
                 CheckSettingsDefaultMigration(r);
 
                 // --- Candidate pool ---
@@ -3074,6 +3075,533 @@ namespace Intercolony
                 $"first refund {firstRefund:0.###}, second refund {secondRefund:0.###}, " +
                 $"silver after first {silverAfterFirstSettlement:0.###}, after second " +
                 $"{silverAfterSecondSettlement:0.###}, settled {contract.equipmentBondSettled}");
+        }
+
+        private static void CheckEquipmentBondBuyout(Results r)
+        {
+            const string boughtOutUnitLabel = "a bought-out unit is not refunded";
+            const string fullyBoughtOutLabel = "a fully bought-out record refunds nothing";
+            const string replacementLabel =
+                "a replacement item does not resurrect a bought-out unit";
+            const string wearLabel = "ordinary wear does not reduce the refund";
+
+            bool[] emitted = new bool[4];
+            bool skipped = false;
+            List<Thing> createdItems = new List<Thing>();
+            Map refundMap = null;
+            int savedRefundSilver = 0;
+            List<Thing> silverBefore = new List<Thing>();
+
+            void CheckEquipment(int index, string label, bool condition, string detail)
+            {
+                emitted[index] = true;
+                r.Check(condition, label, detail);
+            }
+
+            try
+            {
+                Pawn carrier = null;
+                List<Pawn> worldPawns = Find.WorldPawns?.AllPawnsAliveOrDead;
+                if (worldPawns != null)
+                {
+                    // An unspawned real pawn is enough: SettleBond reads the pawn's trackers and
+                    // does not require an employee quest, a map, or an arrival transition here.
+                    foreach (Pawn pawn in worldPawns)
+                    {
+                        if (pawn != null && !pawn.Dead && !pawn.Discarded && !pawn.Spawned &&
+                            pawn.inventory?.innerContainer != null)
+                        {
+                            carrier = pawn;
+                            break;
+                        }
+                    }
+
+                    if (carrier == null)
+                    {
+                        foreach (Pawn pawn in worldPawns)
+                        {
+                            if (pawn != null && !pawn.Dead && !pawn.Discarded &&
+                                pawn.inventory?.innerContainer != null)
+                            {
+                                carrier = pawn;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (carrier == null && Find.Maps != null)
+                {
+                    foreach (Map map in Find.Maps)
+                    {
+                        if (map?.mapPawns?.AllPawnsSpawned == null)
+                        {
+                            continue;
+                        }
+
+                        foreach (Pawn pawn in map.mapPawns.AllPawnsSpawned)
+                        {
+                            if (pawn != null && !pawn.Dead && !pawn.Discarded &&
+                                pawn.inventory?.innerContainer != null)
+                            {
+                                carrier = pawn;
+                                break;
+                            }
+                        }
+
+                        if (carrier != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                if (carrier == null)
+                {
+                    skipped = true;
+                    SkipEquipmentBondBuyoutChecks(
+                        r, "no existing pawn with an inventory tracker was available");
+                    return;
+                }
+
+                ThingDef thingDef = ThingDefOf.Apparel_Parka;
+                ThingDef stuffDef = ThingDefOf.Cloth;
+                if (thingDef == null || stuffDef == null || !thingDef.MadeFromStuff ||
+                    !stuffDef.IsStuff)
+                {
+                    skipped = true;
+                    SkipEquipmentBondBuyoutChecks(
+                        r, "Core parka or cloth ThingDef was unavailable for the item fixture");
+                    return;
+                }
+
+                QualityCategory? fixtureQuality = null;
+                bool fixtureReady = false;
+                string fixtureFailure = null;
+                QualityCategory[] qualityCandidates =
+                {
+                    QualityCategory.Legendary,
+                    QualityCategory.Masterwork,
+                    QualityCategory.Excellent,
+                    QualityCategory.Good,
+                    QualityCategory.Normal,
+                    QualityCategory.Poor,
+                    QualityCategory.Awful
+                };
+
+                foreach (QualityCategory requestedQuality in qualityCandidates)
+                {
+                    Apparel probe = null;
+                    try
+                    {
+                        probe = ThingMaker.MakeThing(thingDef, stuffDef) as Apparel;
+                        if (probe == null)
+                        {
+                            fixtureFailure = "ThingMaker did not create a parka fixture";
+                            break;
+                        }
+
+                        createdItems.Add(probe);
+                        CompQuality qualityComp = probe.TryGetComp<CompQuality>();
+                        if (qualityComp != null)
+                        {
+                            qualityComp.SetQuality(
+                                requestedQuality, ArtGenerationContext.Outsider);
+                        }
+
+                        QualityCategory? observedQuality = null;
+                        if (probe.TryGetQuality(out QualityCategory observed))
+                        {
+                            observedQuality = observed;
+                        }
+
+                        if (probe.def != thingDef || probe.Stuff != stuffDef)
+                        {
+                            fixtureFailure =
+                                $"parka fixture did not preserve its tuple: " +
+                                $"def {probe.def?.defName ?? "null"}, " +
+                                $"stuff {probe.Stuff?.defName ?? "null"}";
+                            break;
+                        }
+
+                        EmploymentEquipmentRecord probeRecord = new EmploymentEquipmentRecord
+                        {
+                            thingDef = thingDef,
+                            stuffDef = stuffDef,
+                            quality = observedQuality,
+                            unitValue = 100f,
+                            quantity = 1
+                        };
+                        bool collidesWithCarrier = false;
+                        foreach (Thing existing in CaptureCarriedEquipmentForTest(carrier))
+                        {
+                            if (SameEquipment(probeRecord, existing))
+                            {
+                                collidesWithCarrier = true;
+                                break;
+                            }
+                        }
+
+                        if (!collidesWithCarrier)
+                        {
+                            fixtureQuality = observedQuality;
+                            fixtureReady = true;
+                            break;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        fixtureFailure =
+                            $"vanilla item fixture construction threw {ex.GetType().Name}: " +
+                            ex.Message;
+                        break;
+                    }
+                }
+
+                if (!fixtureReady)
+                {
+                    skipped = true;
+                    SkipEquipmentBondBuyoutChecks(
+                        r, fixtureFailure ?? "every available quality tuple collided with the carrier");
+                    return;
+                }
+
+                refundMap = Find.AnyPlayerHomeMap;
+                if (refundMap == null && Find.Maps != null && Find.Maps.Count > 0)
+                {
+                    refundMap = Find.Maps[0];
+                }
+
+                if (refundMap != null)
+                {
+                    savedRefundSilver = PurchaseOrderService.CountColonySilver(refundMap);
+                    if (ThingDefOf.Silver != null && refundMap.listerThings != null)
+                    {
+                        foreach (Thing silver in refundMap.listerThings.ThingsOfDef(ThingDefOf.Silver))
+                        {
+                            silverBefore.Add(silver);
+                        }
+                    }
+                }
+
+                bool RefundWasDelivered(
+                    EmploymentEquipmentSettlement settlement, int expected)
+                {
+                    if (settlement == null || settlement.matchedBond != expected)
+                    {
+                        return false;
+                    }
+
+                    // A world without a destination can still exercise SettleBond's arithmetic;
+                    // in the ordinary map case the actual silver placement must also agree.
+                    return refundMap == null
+                        ? settlement.returnedSilver == 0 && settlement.undeliveredSilver == expected
+                        : settlement.returnedSilver == expected && settlement.undeliveredSilver == 0;
+                }
+
+                string SettlementDetail(
+                    EmploymentContract contract, EmploymentEquipmentRecord record, int carried,
+                    EmploymentEquipmentSettlement settlement)
+                {
+                    return
+                        $"record quantity {record?.quantity ?? -1}, boughtOutQuantity " +
+                        $"{record?.boughtOutQuantity ?? -1}, RefundableQuantity " +
+                        $"{record?.RefundableQuantity ?? -1}; carried {carried}, matched " +
+                        $"{settlement?.returnedQuantity ?? -1}/{record?.quantity ?? -1} " +
+                        $"(denominator), retained quantity {settlement?.retainedQuantity ?? -1}; " +
+                        $"bond {contract?.equipmentBond ?? -1}, matchedBond " +
+                        $"{settlement?.matchedBond ?? -1}, returnedSilver " +
+                        $"{settlement?.returnedSilver ?? -1}, retainedSilver " +
+                        $"{settlement?.retainedSilver ?? -1}, undeliveredSilver " +
+                        $"{settlement?.undeliveredSilver ?? -1}, settled " +
+                        $"{contract?.equipmentBondSettled.ToString() ?? "missing"}";
+                }
+
+                EmploymentEquipmentSettlement SettleFixture(
+                    int quantity, int boughtOutQuantity, int carriedQuantity, int bond, bool damaged,
+                    out EmploymentContract contract, out EmploymentEquipmentRecord record,
+                    out int carried, out int hitPointsBefore, out int hitPointsAfter,
+                    out int hitPointsMax, out string failure)
+                {
+                    contract = null;
+                    record = null;
+                    carried = 0;
+                    hitPointsBefore = -1;
+                    hitPointsAfter = -1;
+                    hitPointsMax = -1;
+                    failure = null;
+                    List<Thing> caseItems = new List<Thing>();
+
+                    try
+                    {
+                        record = new EmploymentEquipmentRecord
+                        {
+                            thingDef = thingDef,
+                            stuffDef = stuffDef,
+                            quality = fixtureQuality,
+                            unitValue = 100f,
+                            quantity = quantity,
+                            boughtOutQuantity = boughtOutQuantity
+                        };
+                        contract = new EmploymentContract
+                        {
+                            pawn = carrier,
+                            destinationMap = refundMap,
+                            arrivedEquipment = new List<EmploymentEquipmentRecord> { record },
+                            equipmentBond = bond,
+                            settlementName = "labor self-test",
+                            workerName = "equipment bond fixture"
+                        };
+
+                        for (int i = 0; i < carriedQuantity; i++)
+                        {
+                            Apparel item = ThingMaker.MakeThing(thingDef, stuffDef) as Apparel;
+                            if (item == null)
+                            {
+                                throw new InvalidOperationException(
+                                    "ThingMaker did not create a parka fixture item.");
+                            }
+
+                            caseItems.Add(item);
+                            createdItems.Add(item);
+                            CompQuality qualityComp = item.TryGetComp<CompQuality>();
+                            if (qualityComp != null && fixtureQuality.HasValue)
+                            {
+                                qualityComp.SetQuality(
+                                    fixtureQuality.Value, ArtGenerationContext.Outsider);
+                            }
+
+                            QualityCategory? observedQuality = null;
+                            if (item.TryGetQuality(out QualityCategory observed))
+                            {
+                                observedQuality = observed;
+                            }
+
+                            if (item.def != record.thingDef || item.Stuff != record.stuffDef ||
+                                observedQuality != record.quality)
+                            {
+                                throw new InvalidOperationException(
+                                    "fixture item did not match the recorded def, stuff and quality.");
+                            }
+
+                            item.stackCount = 1;
+                            if (i == 0)
+                            {
+                                hitPointsBefore = item.HitPoints;
+                                hitPointsMax = item.MaxHitPoints;
+                            }
+
+                            if (damaged && item.HitPoints > 1)
+                            {
+                                item.HitPoints = Mathf.Max(1, item.MaxHitPoints / 4);
+                            }
+
+                            if (i == 0)
+                            {
+                                hitPointsAfter = item.HitPoints;
+                            }
+
+                            if (!carrier.inventory.innerContainer.TryAdd(
+                                    item, canMergeWithExistingStacks: false))
+                            {
+                                throw new InvalidOperationException(
+                                    "the carrier inventory rejected a fixture item.");
+                            }
+
+                            carried++;
+                        }
+
+                        return EmploymentEquipmentService.SettleBond(contract);
+                    }
+                    catch (Exception ex)
+                    {
+                        failure = $"{ex.GetType().Name}: {ex.Message}";
+                        return null;
+                    }
+                    finally
+                    {
+                        foreach (Thing item in caseItems)
+                        {
+                            CleanupFixtureItem(r, item);
+                        }
+                    }
+                }
+
+                EmploymentContract boughtOutUnitContract;
+                EmploymentEquipmentRecord boughtOutUnitRecord;
+                int boughtOutUnitCarried;
+                int ignoredHitPointsBefore;
+                int ignoredHitPointsAfter;
+                int ignoredHitPointsMax;
+                string boughtOutUnitFailure;
+                EmploymentEquipmentSettlement boughtOutUnitSettlement = SettleFixture(
+                    quantity: 3, boughtOutQuantity: 1, carriedQuantity: 3, bond: 300,
+                    damaged: false,
+                    out boughtOutUnitContract, out boughtOutUnitRecord,
+                    out boughtOutUnitCarried, out ignoredHitPointsBefore,
+                    out ignoredHitPointsAfter, out ignoredHitPointsMax,
+                    out boughtOutUnitFailure);
+                CheckEquipment(
+                    0, boughtOutUnitLabel,
+                    boughtOutUnitFailure == null &&
+                    boughtOutUnitContract?.equipmentBondSettled == true &&
+                    boughtOutUnitSettlement?.returnedQuantity == 2 &&
+                    boughtOutUnitSettlement.retainedQuantity == 1 &&
+                    RefundWasDelivered(boughtOutUnitSettlement, 200),
+                    $"{boughtOutUnitFailure ?? "no setup failure"}; " +
+                    SettlementDetail(
+                        boughtOutUnitContract, boughtOutUnitRecord,
+                        boughtOutUnitCarried, boughtOutUnitSettlement) +
+                    "; expected matchedBond 200 from 2 refundable units over denominator 3");
+
+                EmploymentContract fullyBoughtOutContract;
+                EmploymentEquipmentRecord fullyBoughtOutRecord;
+                int fullyBoughtOutCarried;
+                string fullyBoughtOutFailure;
+                EmploymentEquipmentSettlement fullyBoughtOutSettlement = SettleFixture(
+                    quantity: 2, boughtOutQuantity: 2, carriedQuantity: 2, bond: 200,
+                    damaged: false,
+                    out fullyBoughtOutContract, out fullyBoughtOutRecord,
+                    out fullyBoughtOutCarried, out ignoredHitPointsBefore,
+                    out ignoredHitPointsAfter, out ignoredHitPointsMax,
+                    out fullyBoughtOutFailure);
+                CheckEquipment(
+                    1, fullyBoughtOutLabel,
+                    fullyBoughtOutFailure == null &&
+                    fullyBoughtOutContract?.equipmentBondSettled == true &&
+                    fullyBoughtOutSettlement?.returnedQuantity == 0 &&
+                    fullyBoughtOutSettlement.retainedQuantity == 2 &&
+                    RefundWasDelivered(fullyBoughtOutSettlement, 0),
+                    $"{fullyBoughtOutFailure ?? "no setup failure"}; " +
+                    SettlementDetail(
+                        fullyBoughtOutContract, fullyBoughtOutRecord,
+                        fullyBoughtOutCarried, fullyBoughtOutSettlement) +
+                    "; expected matchedBond 0 from 0 refundable units over denominator 2");
+
+                EmploymentContract replacementContract;
+                EmploymentEquipmentRecord replacementRecord;
+                int replacementCarried;
+                string replacementFailure;
+                EmploymentEquipmentSettlement replacementSettlement = SettleFixture(
+                    quantity: 1, boughtOutQuantity: 1, carriedQuantity: 2, bond: 100,
+                    damaged: false,
+                    out replacementContract, out replacementRecord,
+                    out replacementCarried, out ignoredHitPointsBefore,
+                    out ignoredHitPointsAfter, out ignoredHitPointsMax,
+                    out replacementFailure);
+                CheckEquipment(
+                    2, replacementLabel,
+                    replacementFailure == null && replacementCarried == 2 &&
+                    replacementContract?.equipmentBondSettled == true &&
+                    replacementSettlement?.returnedQuantity == 0 &&
+                    replacementSettlement.retainedQuantity == 1 &&
+                    RefundWasDelivered(replacementSettlement, 0),
+                    $"{replacementFailure ?? "no setup failure"}; " +
+                    SettlementDetail(
+                        replacementContract, replacementRecord,
+                        replacementCarried, replacementSettlement) +
+                    "; expected matchedBond 0 with one bought-out unit");
+
+                EmploymentContract wearContract;
+                EmploymentEquipmentRecord wearRecord;
+                int wearCarried;
+                int wearHitPointsBefore;
+                int wearHitPointsAfter;
+                int wearHitPointsMax;
+                string wearFailure;
+                EmploymentEquipmentSettlement wearSettlement = SettleFixture(
+                    quantity: 1, boughtOutQuantity: 0, carriedQuantity: 1, bond: 100,
+                    damaged: true,
+                    out wearContract, out wearRecord, out wearCarried,
+                    out wearHitPointsBefore, out wearHitPointsAfter,
+                    out wearHitPointsMax, out wearFailure);
+                bool wearApplied = wearHitPointsBefore > 1 &&
+                    wearHitPointsAfter >= 1 && wearHitPointsAfter < wearHitPointsBefore;
+                CheckEquipment(
+                    3, wearLabel,
+                    wearFailure == null && wearApplied && wearContract?.equipmentBondSettled == true &&
+                    wearSettlement?.returnedQuantity == 1 &&
+                    wearSettlement.retainedQuantity == 0 &&
+                    RefundWasDelivered(wearSettlement, 100),
+                    $"{wearFailure ?? "no setup failure"}; " +
+                    SettlementDetail(wearContract, wearRecord, wearCarried, wearSettlement) +
+                    $"; condition {wearHitPointsAfter}/{wearHitPointsMax} " +
+                    $"(was {wearHitPointsBefore})" +
+                    "; expected matchedBond 100 despite ordinary wear");
+
+                // Idempotence is deliberately not re-asserted here because E4 "an equipment
+                // bond settles once" already owns that claim with a working silver oracle;
+                // a second weaker copy of an assertion is worse than none.
+            }
+            catch (Exception ex)
+            {
+                if (!skipped)
+                {
+                    string detail =
+                        $"equipment-bond settlement fixture threw {ex.GetType().Name}: " +
+                        ex.Message;
+                    if (!emitted[0])
+                    {
+                        CheckEquipment(0, boughtOutUnitLabel, false, detail);
+                    }
+
+                    if (!emitted[1])
+                    {
+                        CheckEquipment(1, fullyBoughtOutLabel, false, detail);
+                    }
+
+                    if (!emitted[2])
+                    {
+                        CheckEquipment(2, replacementLabel, false, detail);
+                    }
+
+                    if (!emitted[3])
+                    {
+                        CheckEquipment(3, wearLabel, false, detail);
+                    }
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (refundMap != null && ThingDefOf.Silver != null &&
+                        refundMap.listerThings != null)
+                    {
+                        foreach (Thing silver in refundMap.listerThings.ThingsOfDef(ThingDefOf.Silver))
+                        {
+                            if (!ContainsReference(silverBefore, silver) &&
+                                !createdItems.Contains(silver))
+                            {
+                                createdItems.Add(silver);
+                            }
+                        }
+
+                        IntercolonyLaborSelfTestSupport.RestoreStorageSilver(
+                            refundMap, savedRefundSilver);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    r.Check(false, "equipment-bond fixture silver cleans up",
+                        $"{ex.GetType().Name}: {ex.Message}");
+                }
+
+                foreach (Thing item in createdItems)
+                {
+                    CleanupFixtureItem(r, item);
+                }
+            }
+        }
+
+        private static void SkipEquipmentBondBuyoutChecks(Results r, string reason)
+        {
+            string detail =
+                $"equipment-bond buyout fixture unavailable: {reason ?? "no reason supplied"}";
+            r.Skip("a bought-out unit is not refunded", detail);
+            r.Skip("a fully bought-out record refunds nothing", detail);
+            r.Skip("a replacement item does not resurrect a bought-out unit", detail);
+            r.Skip("ordinary wear does not reduce the refund", detail);
         }
 
         private static bool BuildEquipmentBondFixture(
