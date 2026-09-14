@@ -104,6 +104,7 @@ namespace Intercolony
                 CheckLaborSpineRoundTrip(r);
                 CheckEquipmentTierRules(r, map);
                 CheckEquipmentBondBuyout(r);
+                CheckRefundableBondAgreesWithSettlement(r);
                 CheckSettingsDefaultMigration(r);
 
                 // --- Candidate pool ---
@@ -4164,6 +4165,410 @@ namespace Intercolony
                 $"first refund {firstRefund:0.###}, second refund {secondRefund:0.###}, " +
                 $"silver after first {silverAfterFirstSettlement:0.###}, after second " +
                 $"{silverAfterSecondSettlement:0.###}, settled {contract.equipmentBondSettled}");
+        }
+
+        private static void CheckRefundableBondAgreesWithSettlement(Results r)
+        {
+            // These are display/settlement-rule checks only. SettleBond's end-to-end path needs
+            // a spawned pawn with live trackers and is covered by the existing world-pawn-delta
+            // fixture below; these checks pin both displays to that same prorating rule.
+            ThingDef syntheticThingDef = new ThingDef
+            {
+                defName = "IntercolonyLaborSelfTestBondThing"
+            };
+
+            EmploymentEquipmentRecord BuildRecord(
+                float unitValue, int quantity, int boughtOutQuantity = 0)
+            {
+                return new EmploymentEquipmentRecord
+                {
+                    thingDef = syntheticThingDef,
+                    unitValue = unitValue,
+                    quantity = quantity,
+                    boughtOutQuantity = boughtOutQuantity
+                };
+            }
+
+            EmploymentContract BuildContract(
+                List<EmploymentEquipmentRecord> records, int equipmentBond,
+                bool equipmentBondSettled = false)
+            {
+                return new EmploymentContract
+                {
+                    arrivedEquipment = records,
+                    equipmentBond = equipmentBond,
+                    equipmentBondSettled = equipmentBondSettled
+                };
+            }
+
+            // (a) With no buy-outs, the whole already-charged bond is refundable. The record
+            // sets deliberately include both premium-rounding directions.
+            EmploymentContract fullReturnDownContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    BuildRecord(2f, 1)
+                },
+                2);
+            EmploymentContract fullReturnUpContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    BuildRecord(7f, 1)
+                },
+                8);
+            EmploymentContract fullReturnMixedContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    BuildRecord(2f, 1),
+                    BuildRecord(7f, 1)
+                },
+                10);
+            EmploymentContract fullReturnQuantityContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    BuildRecord(2f, 2),
+                    BuildRecord(3f, 1)
+                },
+                8);
+
+            int fullReturnDownObserved = EmploymentEquipmentService.RefundableBondFor(
+                fullReturnDownContract);
+            int fullReturnUpObserved = EmploymentEquipmentService.RefundableBondFor(
+                fullReturnUpContract);
+            int fullReturnMixedObserved = EmploymentEquipmentService.RefundableBondFor(
+                fullReturnMixedContract);
+            int fullReturnQuantityObserved = EmploymentEquipmentService.RefundableBondFor(
+                fullReturnQuantityContract);
+            bool fullReturnAgrees =
+                fullReturnDownObserved == fullReturnDownContract.equipmentBond &&
+                fullReturnUpObserved == fullReturnUpContract.equipmentBond &&
+                fullReturnMixedObserved == fullReturnMixedContract.equipmentBond &&
+                fullReturnQuantityObserved == fullReturnQuantityContract.equipmentBond;
+            r.Check(
+                fullReturnAgrees,
+                "the refundable bond is the whole bond until something is bought out",
+                "[2] premium 2.2 -> bond 2, observed " +
+                $"{fullReturnDownObserved}; [7] premium 7.7 -> bond 8, observed " +
+                $"{fullReturnUpObserved}; [2,7] premium 9.9 -> bond 10, observed " +
+                $"{fullReturnMixedObserved}; [2x2,3] premium 7.7 -> bond 8, observed " +
+                $"{fullReturnQuantityObserved}");
+
+            // (b) The expected value is plain arithmetic over the recorded values and the
+            // already-charged bond. Each case also proves that freshly rounding the remainder
+            // would produce a different answer before the production return is trusted.
+            EmploymentEquipmentRecord twoAndThreeBoughtOutRecord = BuildRecord(2f, 1, 1);
+            EmploymentEquipmentRecord twoAndThreeRemainingRecord = BuildRecord(3f, 1);
+            EmploymentContract twoAndThreeContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    twoAndThreeBoughtOutRecord,
+                    twoAndThreeRemainingRecord
+                },
+                6);
+            EmploymentEquipmentRecord twoAndFourBoughtOutRecord = BuildRecord(2f, 1, 1);
+            EmploymentEquipmentRecord twoAndFourRemainingRecord = BuildRecord(4f, 1);
+            EmploymentContract twoAndFourContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    twoAndFourBoughtOutRecord,
+                    twoAndFourRemainingRecord
+                },
+                7);
+            EmploymentEquipmentRecord twoAndFourteenBoughtOutRecord = BuildRecord(2f, 1, 1);
+            EmploymentEquipmentRecord twoAndFourteenRemainingRecord = BuildRecord(14f, 1);
+            EmploymentContract twoAndFourteenContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    twoAndFourteenBoughtOutRecord,
+                    twoAndFourteenRemainingRecord
+                },
+                18);
+
+            float twoAndThreeTotalValue =
+                twoAndThreeBoughtOutRecord.unitValue * twoAndThreeBoughtOutRecord.quantity +
+                twoAndThreeRemainingRecord.unitValue * twoAndThreeRemainingRecord.quantity;
+            float twoAndThreeRemainingValue =
+                twoAndThreeRemainingRecord.unitValue * twoAndThreeRemainingRecord.RefundableQuantity;
+            int twoAndThreeProrated = Mathf.RoundToInt(
+                twoAndThreeContract.equipmentBond * twoAndThreeRemainingValue /
+                twoAndThreeTotalValue);
+            int twoAndThreeFreshlyRounded = Mathf.RoundToInt(
+                twoAndThreeRemainingValue * 1.10f);
+            int twoAndThreeObserved = EmploymentEquipmentService.RefundableBondFor(
+                twoAndThreeContract);
+
+            float twoAndFourTotalValue =
+                twoAndFourBoughtOutRecord.unitValue * twoAndFourBoughtOutRecord.quantity +
+                twoAndFourRemainingRecord.unitValue * twoAndFourRemainingRecord.quantity;
+            float twoAndFourRemainingValue =
+                twoAndFourRemainingRecord.unitValue * twoAndFourRemainingRecord.RefundableQuantity;
+            int twoAndFourProrated = Mathf.RoundToInt(
+                twoAndFourContract.equipmentBond * twoAndFourRemainingValue /
+                twoAndFourTotalValue);
+            int twoAndFourFreshlyRounded = Mathf.RoundToInt(
+                twoAndFourRemainingValue * 1.10f);
+            int twoAndFourObserved = EmploymentEquipmentService.RefundableBondFor(
+                twoAndFourContract);
+
+            float twoAndFourteenTotalValue =
+                twoAndFourteenBoughtOutRecord.unitValue *
+                    twoAndFourteenBoughtOutRecord.quantity +
+                twoAndFourteenRemainingRecord.unitValue *
+                    twoAndFourteenRemainingRecord.quantity;
+            float twoAndFourteenRemainingValue =
+                twoAndFourteenRemainingRecord.unitValue *
+                twoAndFourteenRemainingRecord.RefundableQuantity;
+            int twoAndFourteenProrated = Mathf.RoundToInt(
+                twoAndFourteenContract.equipmentBond * twoAndFourteenRemainingValue /
+                twoAndFourteenTotalValue);
+            int twoAndFourteenFreshlyRounded = Mathf.RoundToInt(
+                twoAndFourteenRemainingValue * 1.10f);
+            int twoAndFourteenObserved = EmploymentEquipmentService.RefundableBondFor(
+                twoAndFourteenContract);
+
+            bool boughtOutProratingAgrees =
+                twoAndThreeContract.equipmentBond == Mathf.RoundToInt(
+                    twoAndThreeTotalValue * 1.10f) &&
+                twoAndFourContract.equipmentBond == Mathf.RoundToInt(
+                    twoAndFourTotalValue * 1.10f) &&
+                twoAndFourteenContract.equipmentBond == Mathf.RoundToInt(
+                    twoAndFourteenTotalValue * 1.10f) &&
+                twoAndThreeProrated != twoAndThreeFreshlyRounded &&
+                twoAndFourProrated != twoAndFourFreshlyRounded &&
+                twoAndFourteenProrated != twoAndFourteenFreshlyRounded &&
+                twoAndThreeObserved == twoAndThreeProrated &&
+                twoAndFourObserved == twoAndFourProrated &&
+                twoAndFourteenObserved == twoAndFourteenProrated;
+            r.Check(
+                boughtOutProratingAgrees,
+                "a bought-out item costs the bond its prorated share, not a freshly rounded one",
+                $"2+3: bond {twoAndThreeContract.equipmentBond}, remaining value " +
+                $"{twoAndThreeRemainingValue:0.###}, prorated {twoAndThreeProrated}, " +
+                $"freshly rounded {twoAndThreeFreshlyRounded}, observed {twoAndThreeObserved}; " +
+                $"2+4: bond {twoAndFourContract.equipmentBond}, remaining value " +
+                $"{twoAndFourRemainingValue:0.###}, prorated {twoAndFourProrated}, " +
+                $"freshly rounded {twoAndFourFreshlyRounded}, observed {twoAndFourObserved}; " +
+                $"2+14: bond {twoAndFourteenContract.equipmentBond}, remaining value " +
+                $"{twoAndFourteenRemainingValue:0.###}, prorated {twoAndFourteenProrated}, " +
+                $"freshly rounded {twoAndFourteenFreshlyRounded}, observed " +
+                $"{twoAndFourteenObserved}");
+
+            // (c) The warning is the drop in the same refundable amount that the card reports
+            // after the buy-out is really recorded. The fresh item-bond figures are included to
+            // keep these cases sensitive to the old warning calculation as well.
+            EmploymentEquipmentRecord warningTwoRecord = BuildRecord(2f, 1);
+            EmploymentEquipmentRecord warningThreeRecord = BuildRecord(3f, 1);
+            EmploymentContract warningTwoAndThreeContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    warningTwoRecord,
+                    warningThreeRecord
+                },
+                6);
+            EmploymentEquipmentRecord warningFourRecord = BuildRecord(4f, 1);
+            EmploymentContract warningTwoAndFourContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    BuildRecord(2f, 1),
+                    warningFourRecord
+                },
+                7);
+            EmploymentEquipmentRecord warningTwoStackRecord = BuildRecord(2f, 2);
+            EmploymentContract warningStackContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    warningTwoStackRecord,
+                    BuildRecord(3f, 1)
+                },
+                8);
+
+            EmploymentContract[] warningContracts =
+            {
+                warningTwoAndThreeContract,
+                warningTwoAndFourContract,
+                warningStackContract
+            };
+            EmploymentEquipmentRecord[] warningRecords =
+            {
+                warningThreeRecord,
+                warningFourRecord,
+                warningTwoStackRecord
+            };
+            int[] warningUnits = { 1, 1, 2 };
+            bool warningAndCardAgree = true;
+            List<string> warningDetails = new List<string>();
+            for (int i = 0; i < warningContracts.Length; i++)
+            {
+                EmploymentContract warningContract = warningContracts[i];
+                EmploymentEquipmentRecord warningRecord = warningRecords[i];
+                int units = warningUnits[i];
+                int before = EmploymentEquipmentService.RefundableBondFor(warningContract);
+                int bondAtRisk = EmploymentEquipmentService.BondAtRiskFor(
+                    warningContract, warningRecord, units);
+                float removedValue = warningRecord.unitValue * units;
+                int freshlyRoundedRemovedBond = Mathf.RoundToInt(removedValue * 1.10f);
+
+                warningRecord.boughtOutQuantity += units;
+                int after = EmploymentEquipmentService.RefundableBondFor(warningContract);
+                bool caseAgrees = bondAtRisk + after == before &&
+                    bondAtRisk != freshlyRoundedRemovedBond;
+                warningAndCardAgree &= caseAgrees;
+                warningDetails.Add(
+                    $"case {i + 1}: units {units}, before {before}, warning {bondAtRisk}, " +
+                    $"after {after}, sum {bondAtRisk + after}, freshly rounded removed " +
+                    $"{freshlyRoundedRemovedBond}");
+            }
+
+            r.Check(
+                warningAndCardAgree,
+                "what the player is warned they will lose is what the card then stops offering",
+                string.Join("; ", warningDetails));
+
+            // (d) Both hypothetical overloads must be observational. Capture every mutable field
+            // they could be tempted to borrow before asking the same questions repeatedly.
+            EmploymentEquipmentRecord unchangedFirstRecord = BuildRecord(2f, 3, 1);
+            EmploymentEquipmentRecord unchangedSecondRecord = BuildRecord(7f, 2);
+            EmploymentEquipmentRecord unchangedThirdRecord = BuildRecord(3f, 1);
+            EmploymentContract unchangedContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    unchangedFirstRecord,
+                    unchangedSecondRecord,
+                    unchangedThirdRecord
+                },
+                25);
+            int[] quantitiesBefore =
+            {
+                unchangedFirstRecord.quantity,
+                unchangedSecondRecord.quantity,
+                unchangedThirdRecord.quantity
+            };
+            int[] boughtOutQuantitiesBefore =
+            {
+                unchangedFirstRecord.boughtOutQuantity,
+                unchangedSecondRecord.boughtOutQuantity,
+                unchangedThirdRecord.boughtOutQuantity
+            };
+            int equipmentBondBefore = unchangedContract.equipmentBond;
+            bool equipmentBondSettledBefore = unchangedContract.equipmentBondSettled;
+
+            int publicRiskFirst = EmploymentEquipmentService.BondAtRiskFor(
+                unchangedContract, unchangedFirstRecord, 1);
+            int publicRiskSecond = EmploymentEquipmentService.BondAtRiskFor(
+                unchangedContract, unchangedSecondRecord, 1);
+            int publicRiskThird = EmploymentEquipmentService.BondAtRiskFor(
+                unchangedContract, unchangedThirdRecord, 1);
+            int publicRiskRepeat = EmploymentEquipmentService.BondAtRiskFor(
+                unchangedContract, unchangedFirstRecord, 1);
+            int combinedRiskFirst = EmploymentEquipmentService.BondAtRiskFor(
+                unchangedContract,
+                new List<EmploymentEquipmentRecord>
+                {
+                    unchangedFirstRecord,
+                    unchangedSecondRecord
+                },
+                new List<int> { 1, 1 });
+            int combinedRiskSecond = EmploymentEquipmentService.BondAtRiskFor(
+                unchangedContract,
+                new List<EmploymentEquipmentRecord>
+                {
+                    unchangedSecondRecord,
+                    unchangedThirdRecord
+                },
+                new List<int> { 1, 1 });
+            int combinedRiskRepeat = EmploymentEquipmentService.BondAtRiskFor(
+                unchangedContract,
+                new List<EmploymentEquipmentRecord>
+                {
+                    unchangedFirstRecord,
+                    unchangedSecondRecord
+                },
+                new List<int> { 1, 1 });
+
+            bool hypotheticalIsNonMutating =
+                publicRiskFirst == publicRiskRepeat &&
+                combinedRiskFirst == combinedRiskRepeat &&
+                unchangedFirstRecord.quantity == quantitiesBefore[0] &&
+                unchangedSecondRecord.quantity == quantitiesBefore[1] &&
+                unchangedThirdRecord.quantity == quantitiesBefore[2] &&
+                unchangedFirstRecord.boughtOutQuantity == boughtOutQuantitiesBefore[0] &&
+                unchangedSecondRecord.boughtOutQuantity == boughtOutQuantitiesBefore[1] &&
+                unchangedThirdRecord.boughtOutQuantity == boughtOutQuantitiesBefore[2] &&
+                unchangedContract.equipmentBond == equipmentBondBefore &&
+                unchangedContract.equipmentBondSettled == equipmentBondSettledBefore;
+            r.Check(
+                hypotheticalIsNonMutating,
+                "asking what a buy-out would cost changes nothing",
+                $"public [{publicRiskFirst}, {publicRiskSecond}, {publicRiskThird}, " +
+                $"repeat {publicRiskRepeat}], combined [{combinedRiskFirst}, " +
+                $"{combinedRiskSecond}, repeat {combinedRiskRepeat}]; quantities " +
+                $"[{unchangedFirstRecord.quantity}, {unchangedSecondRecord.quantity}, " +
+                $"{unchangedThirdRecord.quantity}] before " +
+                $"[{quantitiesBefore[0]}, {quantitiesBefore[1]}, {quantitiesBefore[2]}]; " +
+                $"bought out [{unchangedFirstRecord.boughtOutQuantity}, " +
+                $"{unchangedSecondRecord.boughtOutQuantity}, " +
+                $"{unchangedThirdRecord.boughtOutQuantity}] before " +
+                $"[{boughtOutQuantitiesBefore[0]}, {boughtOutQuantitiesBefore[1]}, " +
+                $"{boughtOutQuantitiesBefore[2]}]; bond {unchangedContract.equipmentBond} " +
+                $"before {equipmentBondBefore}, settled {unchangedContract.equipmentBondSettled} " +
+                $"before {equipmentBondSettledBefore}");
+
+            // (e) A settled deposit, a zero deposit, and missing/empty snapshots have no refund
+            // or hypothetical loss left to offer.
+            EmploymentEquipmentRecord emptyBondProbeRecord = BuildRecord(2f, 1);
+            EmploymentContract settledContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    emptyBondProbeRecord
+                },
+                2,
+                equipmentBondSettled: true);
+            EmploymentContract zeroBondContract = BuildContract(
+                new List<EmploymentEquipmentRecord>
+                {
+                    BuildRecord(2f, 1)
+                },
+                0);
+            EmploymentContract nullRecordsContract = BuildContract(null, 2);
+            EmploymentContract emptyRecordsContract = BuildContract(
+                new List<EmploymentEquipmentRecord>(),
+                2);
+            EmploymentContract[] emptyBondContracts =
+            {
+                settledContract,
+                zeroBondContract,
+                nullRecordsContract,
+                emptyRecordsContract
+            };
+            string[] emptyBondCaseNames =
+            {
+                "settled",
+                "zero bond",
+                "null records",
+                "empty records"
+            };
+            bool emptyBondIsNotRefundable = true;
+            List<string> emptyBondDetails = new List<string>();
+            for (int i = 0; i < emptyBondContracts.Length; i++)
+            {
+                EmploymentContract emptyBondContract = emptyBondContracts[i];
+                int refundable = EmploymentEquipmentService.RefundableBondFor(emptyBondContract);
+                int publicRisk = EmploymentEquipmentService.BondAtRiskFor(
+                    emptyBondContract, emptyBondProbeRecord, 1);
+                int combinedRisk = EmploymentEquipmentService.BondAtRiskFor(
+                    emptyBondContract,
+                    new List<EmploymentEquipmentRecord> { emptyBondProbeRecord },
+                    new List<int> { 1 });
+                bool caseIsEmpty = refundable == 0 && publicRisk == 0 && combinedRisk == 0;
+                emptyBondIsNotRefundable &= caseIsEmpty;
+                emptyBondDetails.Add(
+                    $"{emptyBondCaseNames[i]}: refundable {refundable}, public risk " +
+                    $"{publicRisk}, combined risk {combinedRisk}");
+            }
+
+            r.Check(
+                emptyBondIsNotRefundable,
+                "a settled or empty bond is refundable to nobody",
+                string.Join("; ", emptyBondDetails));
         }
 
         private static void CheckEquipmentBondBuyout(Results r)

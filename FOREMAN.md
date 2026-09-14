@@ -1,10 +1,10 @@
 # Foreman state — Intercolony
 
 Stage: P8 — integration, regression, documentation, clean halt
-Unit: P8.2a — one authority for the refundable bond (a real defect P8.1 found)
-Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-2a-out.txt`
-Last done: P8.1 recon accepted — **F12 and F22 both clean**; §14 steps classified; one real defect found
-Updated: 2026-09-15 07:55
+Unit: P8.2b — assertions for the bond authority
+Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-2b-out.txt`
+Last done: P8.2a accepted, `893e1ae` — the shown refundable bond is now the one settlement pays
+Updated: 2026-09-15 08:20
 Foreman load: 2026-09-15 07:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -191,8 +191,8 @@ serialising is cheaper than reconciling.
 | | Unit | Status |
 |---|---|---|
 | ✅ | P8.1 — recon: §14 seams traced, F12/F22 diff audit | accepted; P8-D1..D3 |
-| 🔨 | P8.2a — one authority for the refundable bond | Luna running |
-| ⬜ | P8.2b — assertions for the bond authority and the §14.1 seam | — |
+| ✅ | P8.2a — one authority for the refundable bond | accepted, `893e1ae`. labor **89/0/3** |
+| 🔨 | P8.2b — assertions for the bond authority | Luna running |
 | ⬜ | P8.3 — integration human evidence recorded | — |
 | ⬜ | P8.4 — full build + fresh whole suite | — |
 | ⬜ | P8.5 — `PROGRESS.md`, disposition markers, final state | — |
