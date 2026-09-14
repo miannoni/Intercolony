@@ -2233,6 +2233,20 @@ Added 2026-09-14 on branch `foreman/playtest-finalization-2026-09-13`. The contr
 
 The routes, the price tiers, the median, the wage sharing and the margin's contents are asserted through the real production code and mutation-proven, and none of that says anything about whether the block reads well.
 
+### F21/F24: nobody has watched an emergency worker drop out of the sky
+
+Added 2026-09-15 on branch `foreman/playtest-finalization-2026-09-13`. Every settlement now has a stable **rapid-logistics capability** — **drop pods available** or **conventional transport only** — derived from tech, wealth and archetype, shown on its economic display, and **never available below Industrial**. **Emergency Dispatch no longer keeps "the nearest half"**. A worker qualifies if their ordinary travel is already **2 days or under**, or if their settlement **can send a pod**. Capability, not proximity.
+
+Travel is no longer **divided by three**: a close settlement's own caravan is the explanation, and a pod arrives in **about 4 hours** — arrival moved to **ticks** so hours survive. The **4x premium is unchanged**, and the hire dialog shows the **method and ETA** from the same call that sets the arrival tick. The mode is **frozen onto the contract at hire**, so a pod hire is still a pod hire after a save.
+
+A pod hire **really arrives by drop pod** — vanilla's pod, a safe colony landing cell, the pawn stepping out — and only then becomes an active employee, so **payroll does not start mid-air**. If the pod **cannot fly safely**, nothing is destroyed: the **contract stays travelling**, the **worker stays pinned**, and a technical failure is logged **once**.
+
+**Steps.** Ask a person to judge whether an emergency worker actually falls out of the sky and whether that reads as visibly different from an ordinary hire walking in, which is the entire point of the feature; whether the pod lands somewhere sensible rather than across the map or inside the killbox; whether roughly four hours FEELS like the cavalry arriving or like a teleport; whether the Emergency Dispatch list is usefully populated or usually empty in a real game — the suite measures about a third of settlements as pod-capable, and the 2-day conventional threshold is expected almost never to fire; whether the premium feels earned; and whether saving and reloading mid-descent still lands the same worker.
+
+**The empty-list case is a real possible outcome by design** — emergency hiring buys priority, not a guarantee; a tester who sees nothing should report the world's settlement mix rather than assuming a bug.
+
+The capability model, the eligibility rule, the arrival timing and the failure path are asserted and mutation-proven, and none of that shows whether a pod landing looks or feels right.
+
 ---
 
 ## Proven in play
