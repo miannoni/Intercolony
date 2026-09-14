@@ -51,7 +51,7 @@ namespace Intercolony
             // the resume-below threshold. Work already under way is never destroyed.
             if (loop.targetCount > 0)
             {
-                int stored = CountStoredThings(loop.thingDef);
+                int stored = CountStoredThings(loop);
 
                 if (!loop.waitingForResume && stored >= loop.targetCount)
                 {
@@ -135,12 +135,25 @@ namespace Intercolony
                 return;
             }
 
+            ThingDef resolvedStuff = ResolveStuffForNextCycle(loop);
+            if (resolvedStuff == null)
+            {
+                // No allowed material can make this product at all; this is a configuration problem, not a transient shortage.
+                // Keep this silent because TickLoop runs every 60 ticks.
+                return;
+            }
+
+            if (resolvedStuff != loop.stuffDef)
+            {
+                loop.stuffDef = resolvedStuff;
+            }
+
             if (!GenConstruct.CanPlaceBlueprintAt(
                     loop.thingDef,
                     loop.cell,
                     loop.rotation,
                     map,
-                    stuffDef: loop.stuffDef).Accepted)
+                    stuffDef: resolvedStuff).Accepted)
             {
                 return;
             }
@@ -151,8 +164,112 @@ namespace Intercolony
                 map,
                 loop.rotation,
                 Faction.OfPlayer,
-                loop.stuffDef,
+                resolvedStuff,
                 styleDef: loop.styleDef);
+        }
+
+        private ThingDef ResolveStuffForNextCycle(ProduceLoopRecord loop)
+        {
+            // The execution plan's rule 6.7 said not to start a new blueprint when no allowed stuff could satisfy the requirement.
+            // Applied literally, that stopped production in any colony whose stockpile was momentarily empty, breaking ten existing assertions.
+            // Availability now ranks the candidates instead of vetoing blueprint placement.
+            if (!loop.thingDef.MadeFromStuff)
+            {
+                return loop.stuffDef;
+            }
+
+            ThingDef currentStuff = loop.stuffDef;
+            int currentAvailable;
+            if (IsAllowedStuff(loop, currentStuff) &&
+                HasEnoughMaterial(loop, currentStuff, out currentAvailable))
+            {
+                return currentStuff;
+            }
+
+            ThingDef bestStuff = null;
+            int bestAvailable = -1;
+            for (int i = 0; i < loop.allowedStuff.Count; i++)
+            {
+                ThingDef candidate = loop.allowedStuff[i];
+                int available;
+                if (!IsAllowedStuff(loop, candidate) ||
+                    !HasEnoughMaterial(loop, candidate, out available))
+                {
+                    continue;
+                }
+
+                if (bestStuff == null ||
+                    available > bestAvailable ||
+                    (available == bestAvailable &&
+                     string.CompareOrdinal(candidate.defName, bestStuff.defName) < 0))
+                {
+                    bestStuff = candidate;
+                    bestAvailable = available;
+                }
+            }
+
+            if (bestStuff != null)
+            {
+                return bestStuff;
+            }
+
+            if (IsAllowedStuff(loop, currentStuff))
+            {
+                return currentStuff;
+            }
+
+            ThingDef fallbackStuff = null;
+            for (int i = 0; i < loop.allowedStuff.Count; i++)
+            {
+                ThingDef candidate = loop.allowedStuff[i];
+                if (!IsAllowedStuff(loop, candidate))
+                {
+                    continue;
+                }
+
+                if (fallbackStuff == null ||
+                    string.CompareOrdinal(candidate.defName, fallbackStuff.defName) < 0)
+                {
+                    fallbackStuff = candidate;
+                }
+            }
+
+            return fallbackStuff;
+        }
+
+        private bool IsAllowedStuff(ProduceLoopRecord loop, ThingDef stuff)
+        {
+            return stuff != null &&
+                loop.allowedStuff.Contains(stuff) &&
+                stuff.stuffProps != null &&
+                loop.thingDef != null &&
+                stuff.stuffProps.CanMake(loop.thingDef);
+        }
+
+        private bool HasEnoughMaterial(ProduceLoopRecord loop, ThingDef stuff, out int available)
+        {
+            int required = 0;
+            List<ThingDefCountClass> costList = loop.thingDef.CostListAdjusted(stuff);
+            if (costList != null)
+            {
+                for (int i = 0; i < costList.Count; i++)
+                {
+                    if (costList[i] != null && costList[i].thingDef == stuff)
+                    {
+                        required = costList[i].count;
+                        break;
+                    }
+                }
+            }
+
+            if (!stuff.CountAsResource)
+            {
+                available = int.MaxValue;
+                return true;
+            }
+
+            available = map.resourceCounter.GetCount(stuff);
+            return available >= required;
         }
 
         private static bool PassesVanillaUninstallEligibility(Building building)
@@ -197,7 +314,7 @@ namespace Intercolony
             return null;
         }
 
-        private int CountStoredThings(ThingDef thingDef)
+        private int CountStoredThings(ProduceLoopRecord loop)
         {
             // Storage groups are the relevant source, not ColonyStock: its trade-item filter would
             // discard minified buildings even though their inner thing is exactly what we count.
@@ -220,7 +337,11 @@ namespace Intercolony
                     }
 
                     Thing inner = thing.GetInnerIfMinified();
-                    if (inner?.def == thingDef)
+                    if (inner?.def == loop.thingDef &&
+                        (loop.thingDef == null ||
+                         !loop.thingDef.MadeFromStuff ||
+                         loop.allowedStuff.Count == 0 ||
+                         loop.allowedStuff.Contains(inner.Stuff)))
                     {
                         count += inner.stackCount;
                     }
