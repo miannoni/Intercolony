@@ -3700,17 +3700,66 @@ namespace Intercolony
 
             try
             {
-                List<ThingDef> allowedStuff = new List<ThingDef> { subject.stuffDef };
+                List<ThingDef> validStuffs = new List<ThingDef>();
+                foreach (ThingDef stuff in GenStuff.AllowedStuffsFor(subject.thingDef))
+                {
+                    if (stuff != null &&
+                        stuff.stuffProps != null &&
+                        stuff.stuffProps.CanMake(subject.thingDef) &&
+                        !validStuffs.Contains(stuff))
+                    {
+                        validStuffs.Add(stuff);
+                    }
+                }
+
+                validStuffs.Sort(
+                    (left, right) => string.CompareOrdinal(left.defName, right.defName));
+
+                ThingDef zeroStockStuff = null;
+                int zeroStockResourceCount = 0;
+                ThingDef lowestStockStuff = null;
+                int lowestStockCount = 0;
+                for (int i = 0; i < validStuffs.Count; i++)
+                {
+                    ThingDef stuff = validStuffs[i];
+                    int resourceCount = ResourceCount(map, stuff);
+                    if (lowestStockStuff == null ||
+                        resourceCount < lowestStockCount ||
+                        (resourceCount == lowestStockCount &&
+                         string.CompareOrdinal(stuff.defName, lowestStockStuff.defName) < 0))
+                    {
+                        lowestStockStuff = stuff;
+                        lowestStockCount = resourceCount;
+                    }
+
+                    if (zeroStockStuff == null && resourceCount == 0)
+                    {
+                        zeroStockStuff = stuff;
+                        zeroStockResourceCount = resourceCount;
+                    }
+                }
+
+                List<ThingDef> allowedStuff = zeroStockStuff == null
+                    ? new List<ThingDef>()
+                    : new List<ThingDef> { zeroStockStuff };
                 int observedStoredCount = 0;
-                int subjectResourceCount = ResourceCount(map, subject.stuffDef);
                 Blueprint blueprint = null;
                 ProduceLoopRecord record = null;
-                if (subjectResourceCount != 0)
+                if (validStuffs.Count == 0)
+                {
+                    r.Check(
+                        false,
+                        emptyStockpileLabel,
+                        $"no valid stuff for {subject.thingDef.defName}; " +
+                        "examined 0 candidates");
+                }
+                else if (zeroStockStuff == null)
                 {
                     r.Skip(
                         emptyStockpileLabel,
-                        $"needs zero {subject.stuffDef.defName} stock; measured " +
-                        $"{subjectResourceCount}");
+                        $"every valid stuff for {subject.thingDef.defName} is in stock; " +
+                        $"{validStuffs.Count} examined, lowest is " +
+                        $"{lowestStockStuff.defName}={lowestStockCount}");
                 }
                 else
                 {
@@ -3733,14 +3782,14 @@ namespace Intercolony
 
                             // Regression: availability must rank candidates, not veto placement;
                             // the veto regression took the suite to 36/10/5.
-                            record.allowedStuff = new List<ThingDef> { subject.stuffDef };
+                            record.allowedStuff = allowedStuff;
                             observedStoredCount =
                                 CountStoredTargetStock(map, subject.thingDef, allowedStuff);
                             loops.RunPass();
                             blueprint = FindBlueprint(map, cell, subject.thingDef);
                             Blueprint_Build buildBlueprint = blueprint as Blueprint_Build;
                             return buildBlueprint != null &&
-                                   buildBlueprint.stuffToUse == subject.stuffDef;
+                                   buildBlueprint.stuffToUse == zeroStockStuff;
                         },
                         () =>
                             AllowedMaterialsDetail(
@@ -3750,7 +3799,8 @@ namespace Intercolony
                                 blueprint,
                                 record,
                                 includeRecordStuff: true) +
-                            $"; stock {subject.stuffDef.defName}={subjectResourceCount}");
+                            $"; chosen material {zeroStockStuff.defName}; " +
+                            $"stock {zeroStockStuff.defName}={zeroStockResourceCount}");
                 }
             }
             finally
