@@ -42,7 +42,7 @@ namespace Intercolony
             /// <summary>What procuring the same goods would cost. Negative.</summary>
             public int inputsIfBought;
 
-            /// <summary>What the selected recipe's direct inputs would cost. Negative when known.</summary>
+            /// <summary>What the selected recipe or construction route's direct inputs would cost. Negative when known.</summary>
             public int directInputsIfBought;
 
             /// <summary>Direct-input price and resolution state for the contracted good.</summary>
@@ -106,9 +106,10 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Replacement price for the immediate ingredients of one output unit. This deliberately
-        /// stops at the selected recipe's direct ingredients; an intermediate good is priced as the
-        /// good that production consumes rather than being recursively decomposed.
+        /// Replacement price for the immediate ingredients or construction materials of one output
+        /// unit. This deliberately stops at the selected recipe's direct ingredients or the
+        /// construction cost list; an intermediate good is priced as the good that production
+        /// consumes rather than being recursively decomposed.
         /// </summary>
         public class DirectInputEstimate
         {
@@ -116,6 +117,8 @@ namespace Intercolony
             public float costPerUnit;
             public bool hasDirectInputs;
             public string recipeDefName;
+            /// <summary>Names the vanilla construction route when it supplied the estimate.</summary>
+            public string constructionRouteName;
             public string reason;
         }
 
@@ -165,7 +168,7 @@ namespace Intercolony
                          RfqService.SupplierMargin;
             estimate.inputsIfBought = -Mathf.RoundToInt(unit * contract.quantityPerCycle);
 
-            estimate.directInputs = EstimateDirectInputs(contract.thingDef);
+            estimate.directInputs = EstimateDirectInputs(contract.thingDef, contract.stuffDef);
             if (estimate.directInputs.status == DirectInputCostStatus.Resolved)
             {
                 estimate.directInputsIfBought = -Mathf.RoundToInt(
@@ -509,12 +512,13 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Prices one product's direct recipe inputs as replacement purchases. Recipe selection is
-        /// deterministic: the non-surgery recipe with the smallest ordinal defName that produces
-        /// the product is selected. An ingredient filter may allow several definitions; the lowest
-        /// priced acceptable definition wins, with ordinal defName as its tie-breaker.
+        /// Prices one product's direct recipe inputs or construction materials as replacement
+        /// purchases. Recipe selection is deterministic: the non-surgery recipe with the smallest
+        /// ordinal defName that produces the product is selected. An ingredient filter may allow
+        /// several definitions; the lowest priced acceptable definition wins, with ordinal defName
+        /// as its tie-breaker.
         /// </summary>
-        public static DirectInputEstimate EstimateDirectInputs(ThingDef product)
+        public static DirectInputEstimate EstimateDirectInputs(ThingDef product, ThingDef stuffDef)
         {
             DirectInputEstimate estimate = new DirectInputEstimate();
             if (product == null)
@@ -527,8 +531,55 @@ namespace Intercolony
             RecipeDef recipe = FindDirectInputRecipe(product);
             if (recipe == null)
             {
-                estimate.status = DirectInputCostStatus.NoKnownRecipe;
-                estimate.reason = "No non-surgery recipe in the loaded defs produces this good.";
+                if (product.MadeFromStuff && stuffDef == null)
+                {
+                    // Do not pass null stuff to vanilla's defaulting overload: it logs an error
+                    // for a stuffable product, and a clean report cannot tolerate that fallback.
+                    estimate.status = DirectInputCostStatus.CannotBePriced;
+                    estimate.reason = "The construction route cannot be priced because the contract has no stuffDef for this stuffable product.";
+                    return estimate;
+                }
+
+                if (product.blueprintDef == null)
+                {
+                    estimate.status = DirectInputCostStatus.NoKnownRecipe;
+                    estimate.reason = "No non-surgery recipe in the loaded defs produces this good, and the product is not player-buildable.";
+                    return estimate;
+                }
+
+                List<ThingDefCountClass> costList = product.CostListAdjusted(stuffDef);
+                if (costList == null || costList.Count == 0)
+                {
+                    estimate.status = DirectInputCostStatus.CannotBePriced;
+                    estimate.reason = "The player-buildable product does not expose a construction cost list.";
+                    return estimate;
+                }
+
+                float constructionInputCost = 0f;
+                for (int i = 0; i < costList.Count; i++)
+                {
+                    ThingDefCountClass costEntry = costList[i];
+                    float ingredientCost;
+                    if (!TryPriceDirectIngredient(costEntry, out ingredientCost))
+                    {
+                        estimate.status = DirectInputCostStatus.CannotBePriced;
+                        estimate.reason = "At least one construction material has no usable definition, count, or BaseValue price.";
+                        return estimate;
+                    }
+
+                    constructionInputCost += ingredientCost;
+                    if (!IsUsablePositive(constructionInputCost))
+                    {
+                        estimate.status = DirectInputCostStatus.CannotBePriced;
+                        estimate.reason = "The construction material total is not a usable price.";
+                        return estimate;
+                    }
+                }
+
+                estimate.status = DirectInputCostStatus.Resolved;
+                estimate.hasDirectInputs = true;
+                estimate.costPerUnit = constructionInputCost;
+                estimate.constructionRouteName = "CostListAdjusted";
                 return estimate;
             }
 
@@ -679,14 +730,8 @@ namespace Intercolony
                     continue;
                 }
 
-                float unitBaseValue = IntercolonyPricing.BaseValue(allowedDef, null);
-                if (!IsUsablePositive(unitBaseValue))
-                {
-                    continue;
-                }
-
-                float candidateCost = requiredCount * unitBaseValue * RfqService.SupplierMargin;
-                if (!IsUsablePositive(candidateCost))
+                float candidateCost;
+                if (!TryPriceDirectIngredient(allowedDef, requiredCount, out candidateCost))
                 {
                     continue;
                 }
@@ -708,6 +753,47 @@ namespace Intercolony
             }
 
             ingredientCost = selectedCost;
+            return true;
+        }
+
+        private static bool TryPriceDirectIngredient(
+            ThingDefCountClass ingredient,
+            out float ingredientCost)
+        {
+            ingredientCost = 0f;
+            if (ingredient == null)
+            {
+                return false;
+            }
+
+            return TryPriceDirectIngredient(
+                ingredient.thingDef, ingredient.count, out ingredientCost);
+        }
+
+        private static bool TryPriceDirectIngredient(
+            ThingDef ingredientDef,
+            int requiredCount,
+            out float ingredientCost)
+        {
+            ingredientCost = 0f;
+            if (ingredientDef == null || requiredCount <= 0)
+            {
+                return false;
+            }
+
+            float unitBaseValue = IntercolonyPricing.BaseValue(ingredientDef, null);
+            if (!IsUsablePositive(unitBaseValue))
+            {
+                return false;
+            }
+
+            float candidateCost = requiredCount * unitBaseValue * RfqService.SupplierMargin;
+            if (!IsUsablePositive(candidateCost))
+            {
+                return false;
+            }
+
+            ingredientCost = candidateCost;
             return true;
         }
 
