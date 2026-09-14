@@ -2217,6 +2217,14 @@ control or silently changed by the new menu condition.
 the tab redraws the wrong state, or any named `...` action is missing or behaves differently. Keep
 F13 and F17 unverified until the failure is understood and the sequence passes.
 
+### F16: the redesigned employee card has never been seen by a person
+
+Added 2026-09-14 on branch `foreman/playtest-finalization-2026-09-13`. Employee cards are **collapsed by default**; a collapsed card carries **portrait, name, combat type and Auto-renew** and nothing else. **Auto-renew is readable and clickable without expanding**; the **portrait jumps to the pawn** while the identity area **toggles expansion**. The expanded card is a six-row contract table — **Pay, Time remaining, Payment, Equipment bond, Death compensation, Happiness** — where Pay is **what the colony is charged**, the bond shows **what is still refundable** after any F06 buyout, and Happiness is one word or **Unmeasured**; **Renew / Keep them / Negotiate** hold **fixed positions** and dim rather than moving; **Negotiate is permanently disabled** because no negotiation exists; and the tooltips were **cut by about three quarters**.
+
+**Steps.** Ask a person to judge whether a dozen collapsed cards are genuinely scannable; whether a long worker name collides with the type or the Auto-renew control; whether the expanded table is readable at the project's standard manual UI scale; whether the action stack really does stay still as contracts change state, which is the point of it; whether clicking the identity area to expand ever steals a click meant for a control, which is the defect the layout comment in that file records; and whether the tooltips now feel shorter rather than merely rearranged.
+
+The assertions cover the height arithmetic and the happiness mapping and prove nothing about how any of it looks.
+
 ---
 
 ## Proven in play

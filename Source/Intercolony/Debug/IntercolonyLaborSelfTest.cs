@@ -100,6 +100,7 @@ namespace Intercolony
 
             try
             {
+                CheckEmployeeCardLayout(r);
                 CheckAutoRenewPersistence(r);
                 CheckLaborSpineRoundTrip(r);
                 CheckEquipmentBondBuyout(r);
@@ -1520,6 +1521,413 @@ namespace Intercolony
                 $"{settings.commercialReputationRequired}; minimumDays=" +
                 $"{settings.minimumEmploymentDaysForGoodwill}; impact=" +
                 $"{settings.employmentGoodwillImpact}";
+        }
+
+        private static void CheckEmployeeCardLayout(Results r)
+        {
+            // These are model-level checks only. They exercise the production height and
+            // happiness functions, plus the window-local expansion state, but they cannot prove
+            // screen geometry, click feel, readability, or any other visual property.
+            const float rowWidth = 720f;
+            const string collapsedLabel = "a collapsed employee card is shorter than an expanded one";
+            const string positiveLabel = "every employee row height is positive and finite";
+            const string sumLabel = "the rows' total height is the sum of the rows";
+            const string happinessLabel =
+                "the happiness word is one of the five bands, or Unmeasured";
+            const string unmeasuredLabel = "an unmeasured mood never reports a band";
+            const string expansionLabel = "expanding a card changes no contract state";
+
+            MethodInfo employeeRowHeight = typeof(MainTabWindow_Intercolony).GetMethod(
+                "EmployeeRowHeight", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo employeeRowsHeight = typeof(MainTabWindow_Intercolony).GetMethod(
+                "EmployeeRowsHeight", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo employeeHappinessLine = typeof(MainTabWindow_Intercolony).GetMethod(
+                "EmployeeHappinessLine", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo expansionField = typeof(MainTabWindow_Intercolony).GetField(
+                "expandedEmployeeContractIds", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo drawEmployeeRow = typeof(MainTabWindow_Intercolony).GetMethod(
+                "DrawEmployeeRow", BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo expansionAdd = typeof(HashSet<int>).GetMethod(
+                "Add", new[] { typeof(int) });
+            MethodInfo expansionRemove = typeof(HashSet<int>).GetMethod(
+                "Remove", new[] { typeof(int) });
+
+            float collapsedHeight = 0f;
+            float expandedHeight = 0f;
+            float rowsHeight = 0f;
+            float sumHeight = 0f;
+            float rowDifference = 0f;
+            float minimumRowHeight = 0f;
+            float maximumRowHeight = 0f;
+            float collapsedHeightAfterToggle = 0f;
+            float expandedHeightAfterToggle = 0f;
+            int rowCount = 0;
+            int positiveRowCount = 0;
+            int finiteRowCount = 0;
+            int happinessSampleCount = 0;
+            int unexpectedHappinessCount = 0;
+            int persistedFieldCount = 0;
+            int changedPersistedFieldCount = 0;
+            bool collapsedIsShorter = false;
+            bool allRowsPositiveAndFinite = false;
+            bool rowsSumMatches = false;
+            bool happinessWordsAllowed = false;
+            bool unmeasuredMoodIsUnmeasured = false;
+            bool expansionStateIsIsolated = false;
+            bool collapsedBeforeToggle = false;
+            bool expandedAfterFirstToggle = false;
+            bool collapsedAfterSecondToggle = false;
+            bool autoRenewBefore = false;
+            bool autoRenewAfter = false;
+            bool productionToggleUsesWindowState = false;
+            bool productionDrawStoresContractField = false;
+            string unmeasuredWord = null;
+            string failure = null;
+            StringBuilder rowHeightValues = new StringBuilder();
+            StringBuilder happinessValues = new StringBuilder();
+            StringBuilder changedPersistedFields = new StringBuilder();
+
+            try
+            {
+                if (employeeRowHeight == null || employeeRowsHeight == null ||
+                    employeeHappinessLine == null || expansionField == null)
+                {
+                    throw new InvalidOperationException(
+                        "one or more employee-card private members were unavailable");
+                }
+
+                MainTabWindow_Intercolony window = new MainTabWindow_Intercolony();
+                HashSet<int> expansionIds = expansionField.GetValue(window) as HashSet<int>;
+                if (expansionIds == null)
+                {
+                    throw new InvalidOperationException(
+                        "the employee expansion field was not a HashSet<int>");
+                }
+
+                int now = GenTicks.TicksGame;
+                EmploymentContract openEnded = new EmploymentContract
+                {
+                    id = 161601,
+                    settlementName = "Layout test settlement",
+                    factionName = "",
+                    workerName = "",
+                    workerSkills = "",
+                    dailyWage = 100,
+                    termDays = 0,
+                    combatClause = CombatClause.Civilian,
+                    wageStructure = WageStructure.Daily,
+                    nextPaymentTick = now + GenDate.TicksPerDay,
+                    hiredTick = now,
+                    arrivalTick = now,
+                    arrivedTick = now,
+                    status = EmploymentStatus.Active,
+                    autoRenew = true
+                };
+                EmploymentContract servingNotice = new EmploymentContract
+                {
+                    id = 161602,
+                    settlementName = "Notice test settlement",
+                    factionName = "Notice test faction",
+                    workerName = "Notice worker",
+                    workerSkills = "Plants 8",
+                    dailyWage = 120,
+                    termDays = 0,
+                    combatClause = CombatClause.Armed,
+                    wageStructure = WageStructure.Daily,
+                    nextPaymentTick = now + GenDate.TicksPerDay,
+                    hiredTick = now,
+                    arrivalTick = now,
+                    arrivedTick = now,
+                    noticeEndTick = now + GenDate.TicksPerDay * 2,
+                    status = EmploymentStatus.Active,
+                    autoRenew = true
+                };
+                EmploymentContract prepaidWithBond = new EmploymentContract
+                {
+                    id = 161603,
+                    settlementName = "Prepaid test settlement",
+                    factionName = "Prepaid test faction",
+                    workerName = "Prepaid worker",
+                    workerSkills = "Construction 10",
+                    dailyWage = 180,
+                    termDays = 30,
+                    endTick = now + GenDate.TicksPerDay * 30,
+                    combatClause = CombatClause.Security,
+                    wageStructure = WageStructure.Prepaid,
+                    arrivedEquipment = new List<EmploymentEquipmentRecord>(),
+                    equipmentBond = 500,
+                    hiredTick = now,
+                    arrivalTick = now,
+                    arrivedTick = now,
+                    status = EmploymentStatus.Active,
+                    autoRenew = true
+                };
+                EmploymentContract dailyWithoutBond = new EmploymentContract
+                {
+                    id = 161604,
+                    settlementName = "Daily test settlement",
+                    factionName = "Daily test faction",
+                    workerName = "A deliberately long worker name for row measurement",
+                    workerSkills = "Mining 6",
+                    dailyWage = 75,
+                    termDays = 14,
+                    endTick = now + GenDate.TicksPerDay * 14,
+                    combatClause = CombatClause.Civilian,
+                    wageStructure = WageStructure.Daily,
+                    nextPaymentTick = now + GenDate.TicksPerDay,
+                    hiredTick = now,
+                    arrivalTick = now,
+                    arrivedTick = now,
+                    status = EmploymentStatus.Active,
+                    autoRenew = false
+                };
+                List<EmploymentContract> contracts = new List<EmploymentContract>
+                {
+                    openEnded,
+                    servingNotice,
+                    prepaidWithBond,
+                    dailyWithoutBond
+                };
+                rowCount = contracts.Count;
+
+                // A single contract is measured through the real height function in both states;
+                // no copy of EmployeeRowLayout's arithmetic is used here.
+                collapsedHeight = (float)employeeRowHeight.Invoke(
+                    window, new object[] { rowWidth, prepaidWithBond });
+                expansionIds.Add(prepaidWithBond.id);
+                expandedHeight = (float)employeeRowHeight.Invoke(
+                    window, new object[] { rowWidth, prepaidWithBond });
+                expansionIds.Remove(prepaidWithBond.id);
+                collapsedIsShorter = expandedHeight > collapsedHeight;
+
+                bool rowsPositiveAndFinite = true;
+                for (int i = 0; i < contracts.Count; i++)
+                {
+                    float height = (float)employeeRowHeight.Invoke(
+                        window, new object[] { rowWidth, contracts[i] });
+                    if (i > 0)
+                    {
+                        rowHeightValues.Append(", ");
+                    }
+
+                    rowHeightValues.Append(height.ToString("0.###"));
+                    if (height > 0f)
+                    {
+                        positiveRowCount++;
+                    }
+
+                    if (!float.IsNaN(height) && !float.IsInfinity(height))
+                    {
+                        finiteRowCount++;
+                    }
+
+                    if (height <= 0f || float.IsNaN(height) || float.IsInfinity(height))
+                    {
+                        rowsPositiveAndFinite = false;
+                    }
+
+                    if (i == 0 || height < minimumRowHeight)
+                    {
+                        minimumRowHeight = height;
+                    }
+
+                    if (i == 0 || height > maximumRowHeight)
+                    {
+                        maximumRowHeight = height;
+                    }
+                }
+
+                allRowsPositiveAndFinite = rowsPositiveAndFinite &&
+                    positiveRowCount == rowCount && finiteRowCount == rowCount;
+
+                rowsHeight = (float)employeeRowsHeight.Invoke(
+                    window, new object[] { contracts, rowWidth });
+                for (int i = 0; i < contracts.Count; i++)
+                {
+                    sumHeight += (float)employeeRowHeight.Invoke(
+                        window, new object[] { rowWidth, contracts[i] });
+                }
+
+                rowDifference = rowsHeight - sumHeight;
+                rowsSumMatches = rowsHeight == sumHeight;
+
+                EmploymentContract moodContract = new EmploymentContract
+                {
+                    id = 161605,
+                    workerName = "Mood probe",
+                    workerSkills = "none",
+                    factionName = "Mood test faction",
+                    dailyWage = 1,
+                    termDays = 30,
+                    endTick = now + GenDate.TicksPerDay * 30,
+                    status = EmploymentStatus.Active,
+                    moodSampleCount = 1
+                };
+                HashSet<string> allowedHappinessWords = new HashSet<string>(StringComparer.Ordinal)
+                {
+                    "Miserable",
+                    "Unhappy",
+                    "Content",
+                    "Happy",
+                    "Excellent",
+                    "Unmeasured"
+                };
+                for (int step = 0; step <= 20; step++)
+                {
+                    float averageMood = step / 20f;
+                    moodContract.moodSampleTotal = averageMood;
+                    string word = (string)employeeHappinessLine.Invoke(
+                        null, new object[] { moodContract });
+                    happinessSampleCount++;
+                    if (step > 0)
+                    {
+                        happinessValues.Append(", ");
+                    }
+
+                    happinessValues.Append($"{averageMood:0.00}={word ?? "<null>"}");
+                    if (!allowedHappinessWords.Contains(word))
+                    {
+                        unexpectedHappinessCount++;
+                    }
+                }
+
+                happinessWordsAllowed = happinessSampleCount == 21 &&
+                    unexpectedHappinessCount == 0;
+
+                moodContract.moodSampleTotal = 1f;
+                moodContract.moodSampleCount = 0;
+                unmeasuredWord = (string)employeeHappinessLine.Invoke(
+                    null, new object[] { moodContract });
+                unmeasuredMoodIsUnmeasured = unmeasuredWord == "Unmeasured";
+
+                // The expansion event needs a screen to synthesize, so drive the same window-local
+                // set that DrawEmployeeRow owns. Snapshot every EmploymentContract instance field
+                // (including autoRenew and the private Scribe-backed dictionary) before doing so.
+                FieldInfo[] persistedFields = typeof(EmploymentContract).GetFields(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                Dictionary<string, object> persistedBefore =
+                    new Dictionary<string, object>(StringComparer.Ordinal);
+                for (int i = 0; i < persistedFields.Length; i++)
+                {
+                    persistedBefore[persistedFields[i].Name] =
+                        persistedFields[i].GetValue(prepaidWithBond);
+                }
+
+                expansionIds.Remove(prepaidWithBond.id);
+                collapsedBeforeToggle = !expansionIds.Contains(prepaidWithBond.id);
+                autoRenewBefore = prepaidWithBond.autoRenew;
+                expansionIds.Add(prepaidWithBond.id);
+                expandedAfterFirstToggle = expansionIds.Contains(prepaidWithBond.id);
+                expandedHeightAfterToggle = (float)employeeRowHeight.Invoke(
+                    window, new object[] { rowWidth, prepaidWithBond });
+                expansionIds.Remove(prepaidWithBond.id);
+                collapsedAfterSecondToggle = !expansionIds.Contains(prepaidWithBond.id);
+                collapsedHeightAfterToggle = (float)employeeRowHeight.Invoke(
+                    window, new object[] { rowWidth, prepaidWithBond });
+                autoRenewAfter = prepaidWithBond.autoRenew;
+
+                for (int i = 0; i < persistedFields.Length; i++)
+                {
+                    FieldInfo field = persistedFields[i];
+                    object before = persistedBefore[field.Name];
+                    object after = field.GetValue(prepaidWithBond);
+                    if (object.Equals(before, after))
+                    {
+                        continue;
+                    }
+
+                    changedPersistedFieldCount++;
+                    if (changedPersistedFields.Length > 0)
+                    {
+                        changedPersistedFields.Append(", ");
+                    }
+
+                    changedPersistedFields.Append(field.Name);
+                }
+
+                persistedFieldCount = persistedFields.Length;
+                productionToggleUsesWindowState = CallsMethod(drawEmployeeRow, expansionAdd) &&
+                    CallsMethod(drawEmployeeRow, expansionRemove);
+
+                // A direct contract assignment in the expansion branch would be an accidental
+                // persisted-state write. Detect that model-level regression without drawing a row.
+                byte[] drawEmployeeRowIl = drawEmployeeRow?.GetMethodBody()?.GetILAsByteArray();
+                if (drawEmployeeRowIl != null)
+                {
+                    for (int i = 0; i + 4 < drawEmployeeRowIl.Length; i++)
+                    {
+                        if (drawEmployeeRowIl[i] != 0x7D)
+                        {
+                            continue;
+                        }
+
+                        int token = drawEmployeeRowIl[i + 1] |
+                            (drawEmployeeRowIl[i + 2] << 8) |
+                            (drawEmployeeRowIl[i + 3] << 16) |
+                            (drawEmployeeRowIl[i + 4] << 24);
+                        try
+                        {
+                            FieldInfo storedField = drawEmployeeRow.Module.ResolveField(token);
+                            if (storedField?.DeclaringType == typeof(EmploymentContract))
+                            {
+                                productionDrawStoresContractField = true;
+                                break;
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            // An unrelated IL token is not evidence of a contract write.
+                        }
+                    }
+                }
+
+                expansionStateIsIsolated = collapsedBeforeToggle &&
+                    expandedAfterFirstToggle && collapsedAfterSecondToggle &&
+                    changedPersistedFieldCount == 0 && autoRenewBefore == autoRenewAfter &&
+                    productionToggleUsesWindowState && !productionDrawStoresContractField;
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+
+            string failureDetail = failure == null ? "" : $"; failure={failure}";
+            r.Check(
+                collapsedIsShorter && failure == null,
+                collapsedLabel,
+                $"collapsed {collapsedHeight:0.###}, expanded {expandedHeight:0.###}, " +
+                $"delta {expandedHeight - collapsedHeight:0.###}{failureDetail}");
+            r.Check(
+                allRowsPositiveAndFinite && failure == null,
+                positiveLabel,
+                $"rows {positiveRowCount}/{rowCount} positive, finite {finiteRowCount}/{rowCount}, " +
+                $"min {minimumRowHeight:0.###}, max {maximumRowHeight:0.###}, " +
+                $"heights [{rowHeightValues}]{failureDetail}");
+            r.Check(
+                rowsSumMatches && failure == null,
+                sumLabel,
+                $"rows total {rowsHeight:0.###}, summed rows {sumHeight:0.###}, " +
+                $"difference {rowDifference:0.######}, count {rowCount}{failureDetail}");
+            r.Check(
+                happinessWordsAllowed && failure == null,
+                happinessLabel,
+                $"samples {happinessSampleCount}, unexpected {unexpectedHappinessCount}, " +
+                $"observed [{happinessValues}]{failureDetail}");
+            r.Check(
+                unmeasuredMoodIsUnmeasured && failure == null,
+                unmeasuredLabel,
+                $"mood total 1, samples 0, observed {unmeasuredWord ?? "<null>"}{failureDetail}");
+            r.Check(
+                expansionStateIsIsolated && failure == null,
+                expansionLabel,
+                $"heights {collapsedHeightAfterToggle:0.###} -> " +
+                $"{expandedHeightAfterToggle:0.###} -> {collapsedHeightAfterToggle:0.###}; " +
+                $"collapsed before {collapsedBeforeToggle}, expanded after first " +
+                $"{expandedAfterFirstToggle}, collapsed after second {collapsedAfterSecondToggle}; " +
+                $"persisted fields {persistedFieldCount}, changed {changedPersistedFieldCount}" +
+                $" [{changedPersistedFields}], autoRenew {autoRenewBefore} -> {autoRenewAfter}; " +
+                $"draw uses window Add/Remove {productionToggleUsesWindowState}, " +
+                $"direct contract field store {productionDrawStoresContractField}{failureDetail}");
         }
 
         private static void CheckAutoRenewPersistence(Results r)
