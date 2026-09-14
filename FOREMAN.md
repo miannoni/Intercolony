@@ -1,15 +1,19 @@
 # Foreman state — Intercolony
 
-Stage: P8 — integration, regression, documentation, clean halt
-Unit: P8.8 — the three §17 bullets recorded nowhere
-Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-8-out.txt`
-Last done: P8.7 accepted, `9ce7518` — produce **69/0/1**; PS1 and PS2 both reddened
-Updated: 2026-09-15 10:40
+Stage: **RUN COMPLETE — CLEAN HALT.** All nine stages closed; every executable requirement done.
+Unit: none. Only human-playtest evidence remains, and it is recorded in `docs/PENDING_PLAYTESTS.md`.
+Worker: idle/none
+Last done: P8.9, `8ad2e16`. Branch `foreman/playtest-finalization-2026-09-13` pushed at `8ad2e16`.
+Updated: 2026-09-15 11:35
 Foreman load: 2026-09-15 07:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
 <!-- Everything above this line is the header. A fresh session reads only the header. -->
+
+**Nothing is waiting on a delegate. The remaining work is the operator's:** the playtest sittings in
+`docs/PENDING_PLAYTESTS.md`, and the release actions this run was told not to perform — no merge to
+`main`, no tag, no GitHub release, no Workshop publish. **None was performed.**
 
 ## THE RUN — read this before dispatching anything
 
@@ -83,7 +87,7 @@ serialising is cheaper than reconciling.
 | ✅ | P5 — F19/F20 contract economics | F19, F20 | closed, `ba35be9`. **1650/0/17, exit 0, CLEAN** |
 | ✅ | P6 — F21/F24 rapid logistics + pod hiring | F21, F24 | closed, `e10df9c`. **1660/0/15, exit 0, CLEAN** |
 | ✅ | P7 — F23 requested equipment levels | F23 | closed `b6ca829` |
-| 🔨 | P8 — integration, regression, docs, clean halt | — | — |
+| ✅ | P8 — integration, regression, docs, clean halt | — | closed `8ad2e16` |
 
 ## Units — stage P0
 
@@ -198,8 +202,10 @@ serialising is cheaper than reconciling.
 | ✅ | P8.5 — `PROGRESS.md`, disposition markers | accepted, `5822740`. 11 markers |
 | ✅ | P8.6 — audit: §17 save/load evidence + checklist coverage | accepted; P8-D4, P8-D5 |
 | ✅ | P8.7 — save/load evidence for the five unproven Produce fields | accepted, `9ce7518`. **69/0/1** |
-| 🔨 | P8.8 — the three checklist bullets nobody recorded | Luna running |
-| ⬜ | P8.9 — clean halt and final report | — |
+| ✅ | P8.8 — the three checklist bullets nobody recorded | accepted, `89c7ab0`. PT1/PT2/PT3 all bit |
+| ✅ | P8.8b — final gate: build 0/0, fresh suite **1674/0/19**, CLEAN, delta 0 | passed |
+| ✅ | P8.9 — the one save/load gap a person must close | accepted, `8ad2e16` |
+| ✅ | P8.10 — clean halt | branch pushed; nothing left executable |
 
 ## Decisions
 
