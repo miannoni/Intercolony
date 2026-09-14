@@ -22,8 +22,11 @@ namespace Intercolony
     public static class EmployeeApparelPatch
     {
         private static readonly HashSet<int> contractsBeingAsked = new HashSet<int>();
+        private static readonly Dictionary<EmploymentContract, HashSet<Thing>>
+            approvedForcedReleases = new Dictionary<EmploymentContract, HashSet<Thing>>();
         private static IntercolonyWorldComponent askingWorld;
         private static bool consentPostfixErrorLogged;
+        private static bool apparelDropPostfixErrorLogged;
 
         /// <summary>
         /// Returns true only for a quest lodger who is not an active Intercolony employee.
@@ -31,6 +34,28 @@ namespace Intercolony
         internal static bool IsRestrictedQuestLodger(Pawn pawn)
         {
             return pawn != null && pawn.IsQuestLodger() && !EmploymentService.IsEmployee(pawn);
+        }
+
+        /// <summary>
+        /// Reserves one exact item release for the forced-drop flow. This is deliberately
+        /// transient: the caller must approve the item again after a world change.
+        /// </summary>
+        internal static void ApproveOneForcedRelease(EmploymentContract contract, Thing item)
+        {
+            ResetTransientConsentState();
+            if (contract == null || item == null)
+            {
+                return;
+            }
+
+            if (!approvedForcedReleases.TryGetValue(
+                    contract, out HashSet<Thing> approvedItems))
+            {
+                approvedItems = new HashSet<Thing>();
+                approvedForcedReleases.Add(contract, approvedItems);
+            }
+
+            approvedItems.Add(item);
         }
 
         [HarmonyPatch(
@@ -321,7 +346,8 @@ namespace Intercolony
             for (int i = 0; i < records.Count; i++)
             {
                 EmploymentEquipmentRecord record = records[i];
-                if (record != null && record.RefundableQuantity > 0 && Matches(record, apparel))
+                if (record != null && record.RefundableQuantity > 0 &&
+                    EmploymentEquipmentService.Matches(record, apparel))
                 {
                     return record;
                 }
@@ -330,23 +356,23 @@ namespace Intercolony
             return null;
         }
 
-        // EmploymentEquipmentService.Matches is private, so keep this predicate identical to the
-        // settlement matcher while the allowed file scope for this unit remains narrow.
-        private static bool Matches(EmploymentEquipmentRecord record, Apparel apparel)
+        private static bool ConsumeForcedReleaseApproval(
+            EmploymentContract contract, Thing item)
         {
-            if (record == null || apparel == null || apparel.Destroyed || apparel.def == null ||
-                apparel.def != record.thingDef || apparel.Stuff != record.stuffDef)
+            if (contract == null || item == null ||
+                !approvedForcedReleases.TryGetValue(
+                    contract, out HashSet<Thing> approvedItems) ||
+                !approvedItems.Remove(item))
             {
                 return false;
             }
 
-            QualityCategory? quality = null;
-            if (apparel.TryGetQuality(out QualityCategory observedQuality))
+            if (approvedItems.Count == 0)
             {
-                quality = observedQuality;
+                approvedForcedReleases.Remove(contract);
             }
 
-            return quality == record.quality;
+            return true;
         }
 
         private static int BondAtRiskFor(
@@ -381,10 +407,25 @@ namespace Intercolony
                 return;
             }
 
-            // This set is intentionally transient. A newly loaded world must not inherit a
-            // suppression entry for a dialog that no longer exists in the window stack.
+            // These sets are intentionally transient. A newly loaded world must not inherit a
+            // suppression entry for a dialog that no longer exists in the window stack or a
+            // forced-release approval for an item from the old world.
             contractsBeingAsked.Clear();
+            approvedForcedReleases.Clear();
             askingWorld = currentWorld;
+        }
+
+        private static void LogApparelDropPostfixErrorOnce(Exception ex)
+        {
+            if (apparelDropPostfixErrorLogged)
+            {
+                return;
+            }
+
+            apparelDropPostfixErrorLogged = true;
+            IntercolonyLog.Error(
+                "Failed to record bought-out employee apparel; leaving vanilla removal unchanged: " +
+                ex);
         }
 
         private static void LogConsentPostfixErrorOnce(Exception ex)
@@ -397,6 +438,78 @@ namespace Intercolony
             consentPostfixErrorLogged = true;
             IntercolonyLog.Error(
                 "Failed to enforce employee apparel consent; leaving vanilla job unchanged: " + ex);
+        }
+
+        [HarmonyPatch]
+        private static class PawnApparelTrackerTryDropPatch
+        {
+            private static MethodBase TargetMethod()
+            {
+                return AccessTools.Method(
+                    typeof(Pawn_ApparelTracker),
+                    nameof(Pawn_ApparelTracker.TryDrop),
+                    new[]
+                    {
+                        typeof(Apparel),
+                        typeof(Apparel).MakeByRefType(),
+                        typeof(IntVec3),
+                        typeof(bool)
+                    });
+            }
+
+            [HarmonyPostfix]
+            private static void Postfix(
+                Pawn_ApparelTracker __instance,
+                Apparel ap,
+                bool __result)
+            {
+                try
+                {
+                    ResetTransientConsentState();
+                    if (!__result || __instance?.pawn == null || ap == null)
+                    {
+                        return;
+                    }
+
+                    EmploymentContract contract =
+                        EmploymentService.GetActiveContract(__instance.pawn);
+                    if (contract == null)
+                    {
+                        return;
+                    }
+
+                    // A forced approval is for this exact Thing and is consumed only after the
+                    // full TryDrop call succeeds. An Allowed contract needs no marker.
+                    bool forcedApproval = ConsumeForcedReleaseApproval(contract, ap);
+                    if (contract.apparelBondDecision != ApparelBondDecision.Allowed &&
+                        !forcedApproval)
+                    {
+                        return;
+                    }
+
+                    EmploymentEquipmentRecord record = FindRefundableRecord(contract, ap);
+                    if (record == null)
+                    {
+                        return;
+                    }
+
+                    // Identical apparel is indistinguishable in a snapshot with only def, stuff
+                    // and quality, so the first still-refundable record is the stated convention.
+                    // Only this full overload is patched; the short overloads forward here. One
+                    // successful full TryDrop call reports one removed item; count one unit per
+                    // true result. If vanilla ever reports the same physical removal true twice,
+                    // this assumption would double-count it.
+                    if (record.boughtOutQuantity < record.quantity)
+                    {
+                        record.boughtOutQuantity++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // This observer must never break vanilla apparel removal for the colony.
+                    LogApparelDropPostfixErrorOnce(ex);
+                }
+            }
         }
     }
 }

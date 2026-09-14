@@ -444,9 +444,9 @@ namespace Intercolony
             // remains record.quantity: with 3 identical items, 1 bought out, and 2 returned,
             // matched = 2 while total = 3, so BondShare refunds two thirds and forfeits the third.
             // If total became 2 as well, the full bond would be refunded and the colony would get
-            // the item for nothing. boughtOutQuantity is persisted, but no current path increments
-            // it; it is 0 on existing saves and current paths, so RefundableQuantity equals
-            // quantity. That behavior-neutrality is load-bearing, not accidental.
+            // the item for nothing. boughtOutQuantity is persisted and advances when an approved
+            // original worn apparel item is removed, so RefundableQuantity is the only matchable
+            // portion while record.quantity remains the settlement denominator.
             if (record == null || record.RefundableQuantity <= 0)
             {
                 return 0;
@@ -471,7 +471,11 @@ namespace Intercolony
             return matched;
         }
 
-        private static bool Matches(EmploymentEquipmentRecord record, Thing item)
+        /// <summary>
+        /// Matches a live item to an original equipment record using the fields that the record
+        /// preserves: definition, stuff and quality.
+        /// </summary>
+        internal static bool Matches(EmploymentEquipmentRecord record, Thing item)
         {
             if (record == null || item == null || item.Destroyed || item.def == null ||
                 item.def != record.thingDef || item.Stuff != record.stuffDef)
