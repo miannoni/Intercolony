@@ -43,6 +43,7 @@ namespace Intercolony
         public const float DefaultNegativeExperienceThreshold = 0.35f;
         public const int DefaultEmploymentGoodwillImpact = 2;
         public const float DefaultRfqResponseSpeed = 1f;
+        public const int DefaultMaxProduceTarget = 1000;
 
         public const int LegacyCommercialGoodwillIntervalDays = 15;
         public const int LegacyCommercialGoodwillPerInterval = 1;
@@ -80,6 +81,8 @@ namespace Intercolony
         public const int MaxEmploymentGoodwillImpact = 10;
         public const float MinRfqResponseSpeed = 0.5f;
         public const float MaxRfqResponseSpeed = 2f;
+        public const int MinMaxProduceTarget = 100;
+        public const int MaxMaxProduceTarget = 10000;
 
         // -1 is deliberately outside the settings-version domain, so this node is always saved.
         public int settingsVersion = CurrentSettingsVersion;
@@ -113,6 +116,7 @@ namespace Intercolony
         public float negativeExperienceThreshold = DefaultNegativeExperienceThreshold;
         public int employmentGoodwillImpact = DefaultEmploymentGoodwillImpact;
         public float rfqResponseSpeed = DefaultRfqResponseSpeed;
+        public int maxProduceTarget = DefaultMaxProduceTarget;
 
         public override void ExposeData()
         {
@@ -196,6 +200,10 @@ namespace Intercolony
                 ref rfqResponseSpeed,
                 "rfqResponseSpeed",
                 DefaultRfqResponseSpeed);
+            Scribe_Values.Look(
+                ref maxProduceTarget,
+                "maxProduceTarget",
+                DefaultMaxProduceTarget);
 
             if (enabledBuyOnlyTradeCategoryKeys == null)
             {
@@ -263,6 +271,8 @@ namespace Intercolony
                 MaxEmploymentGoodwillImpact);
             rfqResponseSpeed = Mathf.Clamp(
                 rfqResponseSpeed, MinRfqResponseSpeed, MaxRfqResponseSpeed);
+            maxProduceTarget = Mathf.Clamp(
+                maxProduceTarget, MinMaxProduceTarget, MaxMaxProduceTarget);
         }
     }
 }

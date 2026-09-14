@@ -347,6 +347,30 @@ namespace Intercolony
             }
 
             SectionGap(ref y);
+            SectionTitle("Produce", width, ref y, draw);
+            float maxProduceTarget = Settings.maxProduceTarget;
+            Slider(
+                MaxProduceTargetLabel(maxProduceTarget),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinMaxProduceTarget,
+                    IntercolonySettings.MaxMaxProduceTarget,
+                    100f,
+                    MaxProduceTargetLabel),
+                ref maxProduceTarget,
+                IntercolonySettings.MinMaxProduceTarget,
+                IntercolonySettings.MaxMaxProduceTarget,
+                100f,
+                width,
+                ref y,
+                draw,
+                MaxProduceTargetTooltip);
+            if (draw)
+            {
+                Settings.maxProduceTarget = Mathf.RoundToInt(maxProduceTarget);
+            }
+
+            SectionGap(ref y);
             SectionTitle("Find Buyer", width, ref y, draw);
             bool markReadyByDefault = Settings.markReadyNowByDefault;
             float markReadyHeight = Mathf.Max(
@@ -528,6 +552,10 @@ namespace Intercolony
         private const string RfqResponseSpeedTooltip =
             "Higher values make supplier replies arrive sooner, but distance still matters and " +
             "price or offer quality may still influence timing.";
+        private const string MaxProduceTargetTooltip =
+            "Sets the highest stock target a Produce program may be set to. Raising it lets a " +
+            "single program maintain a larger stock; lowering it does not change programs that " +
+            "are already set higher.";
 
         private static string RefreshDaysLabel(float refreshDays)
         {
@@ -593,6 +621,11 @@ namespace Intercolony
         private static string RfqResponseSpeedLabel(float speed)
         {
             return $"RFQ response speed: {speed:0.0}x";
+        }
+
+        private static string MaxProduceTargetLabel(float value)
+        {
+            return $"Maximum Produce target: {Mathf.RoundToInt(value)}";
         }
 
         /// <summary>

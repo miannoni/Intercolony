@@ -16,7 +16,6 @@ namespace Intercolony
         private const int ProduceGroupKey = 104729;
         private const int PauseGroupKey = 104730;
         private const int TargetGroupKey = 104731;
-        private const int MaxTargetCount = 100;
 
         public static IEnumerable<Gizmo> Postfix(IEnumerable<Gizmo> values, Thing __instance)
         {
@@ -130,7 +129,7 @@ namespace Intercolony
                 gizmos.Add(new Command_Action
                 {
                     defaultLabel = "Set target",
-                    defaultDesc = "Current target: " + currentTarget + ". While the colony holds at least this many, the program waits, and it starts again when stock falls below. Zero means produce without limit. Maximum: " + MaxTargetCount + ".",
+                    defaultDesc = "Current target: " + currentTarget + ". While the colony holds at least this many, the program waits, and it starts again when stock falls below. Zero means produce without limit. Maximum: " + IntercolonyMod.Settings.maxProduceTarget + ".",
                     icon = ContentFinder<Texture2D>.Get("UI/Designators/Uninstall"),
                     groupKeyIgnoreContent = TargetGroupKey,
                     action = () =>
@@ -142,15 +141,14 @@ namespace Intercolony
                         }
 
                         int startingValue = currentLoop.targetCount <= 0 ? 0 : currentLoop.targetCount;
-                        if (startingValue > MaxTargetCount)
-                        {
-                            startingValue = MaxTargetCount;
-                        }
+                        int configuredCeiling = IntercolonyMod.Settings.maxProduceTarget;
+                        // Keep an existing target visible when the setting is lowered; only new upward changes are capped.
+                        int dialogMaximum = System.Math.Max(configuredCeiling, startingValue);
 
                         Find.WindowStack.Add(new Dialog_Slider(
                             "Target count: {0}",
                             0,
-                            MaxTargetCount,
+                            dialogMaximum,
                             value => loopComponent.SetTargetCount(cell, value),
                             startingValue));
                     }
