@@ -122,35 +122,20 @@ namespace Intercolony
                     }
                 });
 
-                ProduceLoopRecord loop = loopComponent.Find(cell);
-                string currentTarget = loop.targetCount <= 0
-                    ? "0 (no limit)"
-                    : loop.targetCount.ToString();
                 gizmos.Add(new Command_Action
                 {
-                    defaultLabel = "Set target",
-                    defaultDesc = "Current target: " + currentTarget + ". While the colony holds at least this many, the program waits, and it starts again when stock falls below. Zero means produce without limit. Maximum: " + IntercolonyMod.Settings.maxProduceTarget + ".",
+                    defaultLabel = "Produce controls",
+                    defaultDesc = "Configure this production program.",
                     icon = ContentFinder<Texture2D>.Get("UI/Designators/Uninstall"),
                     groupKeyIgnoreContent = TargetGroupKey,
                     action = () =>
                     {
-                        ProduceLoopRecord currentLoop = loopComponent.Find(cell);
-                        if (currentLoop == null)
+                        if (loopComponent.Find(cell) == null)
                         {
                             return;
                         }
 
-                        int startingValue = currentLoop.targetCount <= 0 ? 0 : currentLoop.targetCount;
-                        int configuredCeiling = IntercolonyMod.Settings.maxProduceTarget;
-                        // Keep an existing target visible when the setting is lowered; only new upward changes are capped.
-                        int dialogMaximum = System.Math.Max(configuredCeiling, startingValue);
-
-                        Find.WindowStack.Add(new Dialog_Slider(
-                            "Target count: {0}",
-                            0,
-                            dialogMaximum,
-                            value => loopComponent.SetTargetCount(cell, value),
-                            startingValue));
+                        Find.WindowStack.Add(new Dialog_ProduceControls(map, cell));
                     }
                 });
             }
