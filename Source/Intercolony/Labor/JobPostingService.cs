@@ -37,6 +37,10 @@ namespace Intercolony
         // Separates applicant-queue shuffles from the labor-census random stream.
         private const int ApplicantShuffleSalt = 0x4C41_5445;
 
+        // Full pawn generation is expensive by this codebase's own account, so an equipment
+        // request gets only a small number of naturally generated loadout attempts.
+        private const int MaxEquipmentMaterialisationAttempts = 3;
+
         // --- Creating ----------------------------------------------------------------------
 
         public static JobPosting TryPost(
@@ -218,7 +222,7 @@ namespace Intercolony
                     int taken = 0;
                     for (int i = 0; i < queue.Count && taken < room; i++)
                     {
-                        if (Apply(posting, queue[i].worker, queue[i].ask))
+                        if (Apply(state, posting, queue[i].worker, queue[i].ask))
                         {
                             taken++;
                         }
@@ -260,17 +264,66 @@ namespace Intercolony
         ///
         /// This is what makes a deep market affordable. The census can be hundreds of workers
         /// because none of them exist until one of them applies for something; generating a pawn is
-        /// the expensive call, and it happens once per applicant rather than once per worker
-        /// considered.
+        /// the expensive call, and it happens once for a legacy applicant or at most the small
+        /// equipment-attempt cap for a demanding posting rather than once per worker considered.
         /// </summary>
-        private static bool Apply(JobPosting posting, LaborProspect worker, int ask)
+        private static bool Apply(
+            IntercolonyWorldComponent state, JobPosting posting, LaborProspect worker, int ask)
         {
-            Pawn pawn = worker.Materialise();
-            if (pawn == null)
+            // Any is the legacy path: one generation, no capability gate, no classification and
+            // no retry. Existing postings load as Any and must behave exactly as they did before
+            // equipment requests existed.
+            if (posting.requestedEquipmentLevel == LaborEquipmentLevel.Any)
             {
+                Pawn pawn = worker.Materialise();
+                if (pawn == null)
+                {
+                    return false;
+                }
+
+                AddApplicant(posting, worker, pawn, ask);
+                return true;
+            }
+
+            if (!LaborEquipmentTierService.CanSupply(
+                    ProfileFor(state, worker.settlementId),
+                    posting.requestedEquipmentLevel,
+                    posting.combatClause))
+            {
+                // This is the cheap source-settlement filter. Do it before Materialise: full pawn
+                // generation is expensive, and an incapable source must not spend it.
                 return false;
             }
 
+            for (int attempt = 0; attempt < MaxEquipmentMaterialisationAttempts; attempt++)
+            {
+                Pawn pawn = worker.Materialise();
+                if (pawn == null)
+                {
+                    continue;
+                }
+
+                LaborEquipmentLevel actual = LaborEquipmentTierService.Classify(
+                    pawn, posting.combatClause);
+                if (!LaborEquipmentTierService.MeetsOrExceeds(
+                        actual, posting.requestedEquipmentLevel))
+                {
+                    DiscardRejectedPawn(pawn);
+                    continue;
+                }
+
+                AddApplicant(posting, worker, pawn, ask);
+                return true;
+            }
+
+            // Failure to sample a qualifying naturally generated loadout is scarcity, not an
+            // error. Leave the worker unapplied and let a later market refresh try again.
+            return false;
+        }
+
+        private static void AddApplicant(
+            JobPosting posting, LaborProspect worker, Pawn pawn, int ask)
+        {
             // Nothing else owns this pawn - it was built for this list. KeepForever rather than
             // Decide for the reason the notes give:
             // WorldPawnGC knows nothing about a job posting and would collect an applicant the
@@ -293,8 +346,21 @@ namespace Intercolony
                 openMarketAsk = ask,
                 appliedTick = GenTicks.TicksGame
             });
+        }
 
-            return true;
+        private static void DiscardRejectedPawn(Pawn pawn)
+        {
+            if (Find.WorldPawns.Contains(pawn))
+            {
+                Find.WorldPawns.RemoveAndDiscardPawnViaGC(pawn);
+                return;
+            }
+
+            // Destroy() on an uncontained pawn passes it back to WorldPawns, which leaks it. Do
+            // not use RemoveAndDiscardPawnViaGC here either: its RemovePawn step logs an error
+            // for a pawn that was never contained. PassToWorld marks this uncontained rejection
+            // as Discard, so vanilla removes and disposes it without either defect.
+            Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
         }
 
         /// <summary>

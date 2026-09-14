@@ -134,7 +134,11 @@ namespace Intercolony
             // (docs/LABOR_TECHNICAL_NOTES.md).
             if (pawn.Faction != null && pawn.Faction.leader == pawn)
             {
-                Find.WorldPawns?.RemoveAndDiscardPawnViaGC(pawn);
+                // GeneratePawn returns this pawn uncontained. Destroying it would pass it back
+                // into WorldPawns, and RemoveAndDiscardPawnViaGC would call RemovePawn and log an
+                // error because there is nothing to remove. PassToWorld marks the rejection as
+                // Discard and lets vanilla dispose of it cleanly.
+                Find.WorldPawns?.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
                 return null;
             }
 

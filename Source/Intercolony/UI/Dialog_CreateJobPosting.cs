@@ -95,6 +95,7 @@ namespace Intercolony
         private int termDays = 20;
         private WageStructure structure = WageStructure.Daily;
         private CombatClause clause = CombatClause.Civilian;
+        private LaborEquipmentLevel requestedEquipmentLevel = LaborEquipmentLevel.Any;
 
         private Vector2 optionsScroll;
 
@@ -166,7 +167,18 @@ namespace Intercolony
 
             if (Widgets.ButtonText(new Rect(ContentLeft, bottom, 170f, 36f), "Post"))
             {
+                int postingCountBeforeConfirm = state?.Postings?.Count ?? 0;
                 onConfirm?.Invoke(skill, minLevel, termDays, structure, clause);
+
+                // The existing confirmation seam returns void and its caller appends exactly one
+                // posting. Apply this dialog-only term to that new posting without changing the
+                // caller or the other posting terms it already owns.
+                if (state?.Postings != null && state.Postings.Count > postingCountBeforeConfirm)
+                {
+                    state.Postings[postingCountBeforeConfirm].requestedEquipmentLevel =
+                        requestedEquipmentLevel;
+                }
+
                 Close();
             }
 
@@ -225,7 +237,16 @@ namespace Intercolony
             }
             const string termGuidance = "Longer terms cost less per day.";
             TooltipHandler.TipRegion(new Rect(0f, y, width, SliderRowHeight), termGuidance);
-            y += SliderRowHeight;
+            y += SliderRowHeight + RowGap;
+
+            // Equipment row.
+            DrawRowLabel("Equipment", y, ControlRowHeight);
+            if (Widgets.ButtonText(new Rect(controlsX, y, SkillButtonWidth, ControlRowHeight),
+                    LaborEquipmentTierService.Label(requestedEquipmentLevel)))
+            {
+                OpenEquipmentMenu();
+            }
+            y += ControlRowHeight + RowGap;
 
             y = DrawSectionDivider(width, y);
 
@@ -364,7 +385,8 @@ namespace Intercolony
             {
                 height += SliderRowHeight + RowGap;
             }
-            height += SliderRowHeight;
+            height += SliderRowHeight + RowGap;
+            height += ControlRowHeight + RowGap;
             height += SectionGap;
 
             height += RateAdviceHeight(width - controlsX);
@@ -526,6 +548,28 @@ namespace Intercolony
                 {
                     skill = captured;
                     rateKey = int.MinValue;
+                }));
+            }
+
+            Find.WindowStack.Add(new FloatMenu(options));
+        }
+
+        private void OpenEquipmentMenu()
+        {
+            List<FloatMenuOption> options = new List<FloatMenuOption>();
+            foreach (LaborEquipmentLevel option in new[]
+                     {
+                         LaborEquipmentLevel.Any,
+                         LaborEquipmentLevel.None,
+                         LaborEquipmentLevel.Standard,
+                         LaborEquipmentLevel.Professional,
+                         LaborEquipmentLevel.Elite
+                     })
+            {
+                LaborEquipmentLevel captured = option;
+                options.Add(new FloatMenuOption(LaborEquipmentTierService.Label(option), () =>
+                {
+                    requestedEquipmentLevel = captured;
                 }));
             }
 
