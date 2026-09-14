@@ -2247,6 +2247,20 @@ A pod hire **really arrives by drop pod** — vanilla's pod, a safe colony landi
 
 The capability model, the eligibility rule, the arrival timing and the failure path are asserted and mutation-proven, and none of that shows whether a pod landing looks or feels right.
 
+### F23: requested equipment levels have never been posted by a person
+
+Added 2026-09-15 on branch `foreman/playtest-finalization-2026-09-13`. Post a Job gains **Equipment: Any / None / Standard / Professional / Elite**, a **requirement on the posting** rather than a purchase. The **source settlement is gated before any pawn is generated** — an incapable settlement never produces an applicant — and **Elite requires Spacer tech and at least Comfortable wealth** as hard rules, because vanilla applies **no faction-tech ceiling** to generated gear.
+
+The **actual loadout is classified after generation** and must meet the request, with a small bounded number of attempts; classification uses **real vanilla stats** — weapon DPS and accuracy, armour ratings, quality and tech — and **no defName lists**, so modded gear is judged on what it does. The tier is read **through the combat clause**: a **Civilian's tier is never raised by a weapon**, and asking high never hands a cook a rifle.
+
+**None** strips the settlement-supplied weapon and apparel before the applicant is shown, and the **equipment bond computes to zero** rather than being special-cased. The posting line shows the requirement, the applicant shows **their actual gear with quality** above the bond, and both come from **one capture** so the shown list and the charged bond cannot disagree. **Finding nobody is a designed outcome** — a demanding skill plus clause plus Elite should shrink the replies rather than synthesise someone.
+
+**Steps.** Create three postings — **Any, None and Elite** — with otherwise identical terms, and compare how many applicants each attracts and what they carry; judge whether an Elite applicant's gear actually looks elite rather than merely expensive; whether a Civilian posting at a high tier produces better work clothes rather than a weapon; whether the **None** applicant really arrives with nothing and is charged no bond; whether the gear listed on the applicant row matches what the pawn has after hiring; and whether the selector reads as a **requirement** rather than as a shop.
+
+An **empty applicant list for a demanding posting is expected, not a bug**; a tester seeing it should report the settlement mix and the requested tier rather than filing a defect.
+
+The capability gate, the tier ordering, the classification of an empty loadout and the headline wording are asserted and mutation-proven, and none of that shows whether the tiers feel meaningfully different in play.
+
 ---
 
 ## Proven in play
