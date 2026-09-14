@@ -223,6 +223,8 @@ namespace Intercolony
         /// Estimates the wages of employees who could produce one good over a period.
         ///
         /// This is deliberately F20's relevant-workforce fallback, not actual-work attribution.
+        /// It now covers both production routes: recipes that produce the good and the vanilla
+        /// player-buildable construction route when the good has a blueprint.
         /// The only completion seam available to this mod is the postfix on
         /// RecordsUtility.Notify_BillDone, which receives the pawn who finished the bill and the
         /// products, but no elapsed time. Inferring time from a recipe's nominal work amount and
@@ -260,9 +262,9 @@ namespace Intercolony
                 WorkTypesByRecipe(recipesByGood);
 
             List<RecipeDef> productRecipes = recipesByGood[product];
-            if (productRecipes.Count == 0)
+            if (productRecipes.Count == 0 && !IsPlayerBuildable(product))
             {
-                estimate.status = DirectLaborCostStatus.NoEligibleEmployees;
+                estimate.status = DirectLaborCostStatus.Unavailable;
                 return estimate;
             }
 
@@ -277,7 +279,8 @@ namespace Intercolony
             {
                 if (employee == null || employee.status != EmploymentStatus.Active ||
                     employee.pawn == null ||
-                    !CanProduceAny(employee.pawn, productRecipes, workTypesByRecipe))
+                    !CanProduceGood(
+                        employee.pawn, product, productRecipes, workTypesByRecipe))
                 {
                     continue;
                 }
@@ -285,8 +288,8 @@ namespace Intercolony
                 int eligibleGoods = 0;
                 for (int i = 0; i < goods.Count; i++)
                 {
-                    if (CanProduceAny(
-                            employee.pawn, recipesByGood[goods[i]], workTypesByRecipe))
+                    if (CanProduceGood(
+                            employee.pawn, goods[i], recipesByGood[goods[i]], workTypesByRecipe))
                     {
                         eligibleGoods++;
                     }
@@ -357,6 +360,11 @@ namespace Intercolony
             return goods;
         }
 
+        private static bool IsPlayerBuildable(ThingDef product)
+        {
+            return product != null && product.blueprintDef != null;
+        }
+
         private static List<RecipeDef> RecipesProducing(ThingDef product)
         {
             List<RecipeDef> recipes = new List<RecipeDef>();
@@ -405,6 +413,16 @@ namespace Intercolony
             }
 
             return false;
+        }
+
+        private static bool CanProduceGood(
+            Pawn pawn,
+            ThingDef product,
+            List<RecipeDef> recipes,
+            Dictionary<RecipeDef, List<WorkTypeDef>> workTypesByRecipe)
+        {
+            return CanProduceAny(pawn, recipes, workTypesByRecipe) ||
+                   (IsPlayerBuildable(product) && CanPerformConstruction(pawn, product));
         }
 
         private static Dictionary<RecipeDef, List<WorkTypeDef>> WorkTypesByRecipe(
@@ -515,10 +533,7 @@ namespace Intercolony
                 bool canDoWorkType = false;
                 for (int i = 0; i < workTypes.Count; i++)
                 {
-                    WorkTypeDef workType = workTypes[i];
-                    if (workType != null && pawn.workSettings != null &&
-                        !pawn.WorkTypeIsDisabled(workType) &&
-                        pawn.workSettings.WorkIsActive(workType))
+                    if (CanPerformWorkType(pawn, workTypes[i]))
                     {
                         canDoWorkType = true;
                         break;
@@ -532,6 +547,43 @@ namespace Intercolony
             }
 
             return recipe.PawnSatisfiesSkillRequirements(pawn);
+        }
+
+        private static bool CanPerformWorkType(Pawn pawn, WorkTypeDef workType)
+        {
+            return pawn != null && workType != null && pawn.workSettings != null &&
+                   !pawn.WorkTypeIsDisabled(workType) &&
+                   pawn.workSettings.WorkIsActive(workType);
+        }
+
+        private static bool CanPerformConstruction(Pawn pawn, ThingDef product)
+        {
+            if (!CanPerformWorkType(pawn, WorkTypeDefOf.Construction))
+            {
+                return false;
+            }
+
+            int requiredSkill = product.constructionSkillPrerequisite;
+            if (requiredSkill <= 0)
+            {
+                return true;
+            }
+
+            if (pawn.skills != null)
+            {
+                SkillRecord constructionSkill = pawn.skills.GetSkill(SkillDefOf.Construction);
+                if (constructionSkill == null || constructionSkill.Level < requiredSkill)
+                {
+                    return false;
+                }
+            }
+            else if (!pawn.IsColonyMech)
+            {
+                return false;
+            }
+
+            return !pawn.IsColonyMech ||
+                   pawn.RaceProps.mechFixedSkillLevel >= requiredSkill;
         }
 
         /// <summary>
@@ -574,7 +626,7 @@ namespace Intercolony
                     return estimate;
                 }
 
-                if (product.blueprintDef == null)
+                if (!IsPlayerBuildable(product))
                 {
                     estimate.status = DirectInputCostStatus.NoKnownRecipe;
                     estimate.reason = "No non-surgery recipe in the loaded defs produces this good, and the product is not player-buildable.";
