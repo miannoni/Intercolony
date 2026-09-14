@@ -252,8 +252,11 @@ namespace Intercolony
         /// <summary>§35.2's headline, one line.</summary>
         public string Headline()
         {
+            string equipmentRequirement = requestedEquipmentLevel == LaborEquipmentLevel.Any
+                ? ""
+                : $" — Equipment: {LaborEquipmentTierService.ShortLabel(requestedEquipmentLevel)}";
             return $"{SkillLabel} — open, {termDays}d, {wageStructure.Label()}, " +
-                   $"{combatClause.Label()}";
+                   $"{combatClause.Label()}{equipmentRequirement}";
         }
 
         public string StatusLine()

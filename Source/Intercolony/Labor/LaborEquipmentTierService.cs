@@ -139,6 +139,25 @@ namespace Intercolony
             }
         }
 
+        public static string ShortLabel(LaborEquipmentLevel level)
+        {
+            switch (level)
+            {
+                case LaborEquipmentLevel.Any:
+                    return "Any";
+                case LaborEquipmentLevel.None:
+                    return "None";
+                case LaborEquipmentLevel.Standard:
+                    return "Standard";
+                case LaborEquipmentLevel.Professional:
+                    return "Professional";
+                case LaborEquipmentLevel.Elite:
+                    return "Elite";
+                default:
+                    return "Unknown";
+            }
+        }
+
         private static LoadoutSummary ReadQualifyingLoadout(Pawn pawn)
         {
             LoadoutSummary summary = default(LoadoutSummary);

@@ -400,10 +400,12 @@ namespace Intercolony
 
             Rect outRect = new Rect(0f, y, inRect.width, inRect.yMax - y);
             float viewWidth = Mathf.Max(1f, inRect.width - 16f);
+            Dictionary<JobApplicant, ApplicantHirePreview> applicantPreviews =
+                BuildApplicantPreviews(live);
             float height = 0f;
             foreach (JobPosting posting in live)
             {
-                height += PostingBlockHeight(posting, viewWidth);
+                height += PostingBlockHeight(posting, viewWidth, applicantPreviews);
             }
 
             Rect viewRect = new Rect(0f, 0f, viewWidth, height);
@@ -415,9 +417,10 @@ namespace Intercolony
                 float rowY = 0f;
                 for (int i = 0; i < live.Count; i++)
                 {
-                    float blockHeight = PostingBlockHeight(live[i], viewRect.width);
+                    float blockHeight = PostingBlockHeight(
+                        live[i], viewRect.width, applicantPreviews);
                     DrawPostingBlock(new Rect(0f, rowY, viewRect.width, blockHeight), live[i],
-                        state, i, ref pendingAction);
+                        state, i, applicantPreviews, ref pendingAction);
                     rowY += blockHeight;
                 }
             }
@@ -431,7 +434,7 @@ namespace Intercolony
             pendingAction?.Invoke();
         }
 
-        private const float PostingHeaderHeight = 54f;
+        private const float PostingHeaderMinimumHeight = 54f;
         private const float ApplicantRowMinimumHeight = 66f;
         private const float ApplicantRowTopPadding = 2f;
         private const float ApplicantRowBottomPadding = 2f;
@@ -448,6 +451,42 @@ namespace Intercolony
         private static float ApplicantLabelHeight(string text, float width)
         {
             return Mathf.Max(Text.LineHeight, Text.CalcHeight(text ?? "", Mathf.Max(1f, width)));
+        }
+
+        private sealed class ApplicantHirePreview
+        {
+            public readonly EmploymentHireCostQuote hireCost;
+            public readonly LaborEquipmentLevel equipmentLevel;
+            public readonly List<string> equipmentLines;
+
+            public ApplicantHirePreview(JobPosting posting, JobApplicant applicant)
+            {
+                int upFront = WageStructureUtility.UpFrontCost(
+                    posting.wageStructure, applicant.openMarketAsk, posting.termDays);
+                EmploymentEquipmentQuote equipmentQuote =
+                    EmploymentEquipmentService.Quote(applicant.pawn);
+                hireCost = EmploymentEquipmentService.QuoteHireCost(upFront, equipmentQuote);
+                equipmentLevel = LaborEquipmentTierService.Classify(
+                    equipmentQuote.sourcePawn, posting.combatClause);
+                equipmentLines = ApplicantEquipmentLines(equipmentQuote);
+            }
+        }
+
+        private static Dictionary<JobApplicant, ApplicantHirePreview> BuildApplicantPreviews(
+            List<JobPosting> postings)
+        {
+            Dictionary<JobApplicant, ApplicantHirePreview> previews =
+                new Dictionary<JobApplicant, ApplicantHirePreview>();
+            foreach (JobPosting posting in postings)
+            {
+                for (int i = 0; i < posting.Applicants.Count; i++)
+                {
+                    JobApplicant applicant = posting.Applicants[i];
+                    previews[applicant] = new ApplicantHirePreview(posting, applicant);
+                }
+            }
+
+            return previews;
         }
 
         private static string ApplicantTitleLine(JobApplicant applicant)
@@ -479,6 +518,42 @@ namespace Intercolony
             return $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentQuote.bond)}.";
         }
 
+        private static string ApplicantEquipmentTierLine(ApplicantHirePreview preview)
+        {
+            return $"Equipment: {LaborEquipmentTierService.ShortLabel(preview.equipmentLevel)}";
+        }
+
+        private static List<string> ApplicantEquipmentLines(
+            EmploymentEquipmentQuote equipmentQuote)
+        {
+            List<string> lines = new List<string>();
+            if (equipmentQuote?.equipment == null)
+            {
+                return lines;
+            }
+
+            for (int i = 0; i < equipmentQuote.equipment.Count; i++)
+            {
+                EmploymentEquipmentRecord record = equipmentQuote.equipment[i];
+                if (record?.thingDef == null || record.quantity <= 0)
+                {
+                    continue;
+                }
+
+                string itemLabel = GenLabel.ThingLabel(
+                    record.thingDef, record.stuffDef, Mathf.Max(1, record.quantity))
+                    .CapitalizeFirst();
+                if (record.quality.HasValue)
+                {
+                    itemLabel += $" — {record.quality.Value.GetLabel()}";
+                }
+
+                lines.Add(itemLabel);
+            }
+
+            return lines;
+        }
+
         private static string ApplicantHireCostLine(long totalDue)
         {
             return $"Due at hire: {totalDue:N0} silver.";
@@ -497,14 +572,11 @@ namespace Intercolony
         }
 
         private static float ApplicantRowHeight(
-            float rowWidth, JobPosting posting, JobApplicant applicant)
+            float rowWidth, JobPosting posting, JobApplicant applicant,
+            ApplicantHirePreview preview)
         {
             float textWidth = ApplicantTextWidth(rowWidth);
-            int upFront = WageStructureUtility.UpFrontCost(
-                posting.wageStructure, applicant.openMarketAsk, posting.termDays);
-            EmploymentEquipmentQuote equipmentQuote = EmploymentEquipmentService.Quote(applicant.pawn);
-            EmploymentHireCostQuote hireCostQuote = EmploymentEquipmentService.QuoteHireCost(
-                upFront, equipmentQuote);
+            EmploymentHireCostQuote hireCostQuote = preview.hireCost;
             int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
 
             float height = ApplicantRowTopPadding + ApplicantRowBottomPadding;
@@ -513,6 +585,11 @@ namespace Intercolony
             height += ApplicantLabelHeight(
                 ApplicantPaymentLine(posting, hireCostQuote.upfrontWages), textWidth);
             height += ApplicantLabelHeight(ApplicantStorageLine(available), textWidth);
+            height += ApplicantLabelHeight(ApplicantEquipmentTierLine(preview), textWidth);
+            for (int i = 0; i < preview.equipmentLines.Count; i++)
+            {
+                height += ApplicantLabelHeight(preview.equipmentLines[i], textWidth);
+            }
             height += ApplicantLabelHeight(ApplicantEquipmentBondLine(hireCostQuote.equipment), textWidth);
             height += ApplicantLabelHeight(ApplicantHireCostLine(hireCostQuote.totalDue), textWidth);
 
@@ -525,12 +602,27 @@ namespace Intercolony
             return Mathf.Max(ApplicantRowMinimumHeight, height);
         }
 
-        private static float PostingBlockHeight(JobPosting posting, float width)
+        private static float PostingHeaderHeightFor(JobPosting posting, float width)
         {
-            float height = PostingHeaderHeight + 8f;
+            float textWidth = Mathf.Max(1f, width - 280f);
+            float headlineHeight = ApplicantLabelHeight(posting.Headline(), textWidth);
+            float statusHeight = ApplicantLabelHeight(posting.StatusLine(), textWidth);
+            float statusY = Mathf.Max(25f, 3f + headlineHeight);
+            return Mathf.Max(
+                PostingHeaderMinimumHeight,
+                statusY + statusHeight);
+        }
+
+        private static float PostingBlockHeight(
+            JobPosting posting, float width,
+            Dictionary<JobApplicant, ApplicantHirePreview> applicantPreviews)
+        {
+            float height = PostingHeaderHeightFor(posting, width) + 8f;
             for (int i = 0; i < posting.Applicants.Count; i++)
             {
-                height += ApplicantRowHeight(width, posting, posting.Applicants[i]);
+                JobApplicant applicant = posting.Applicants[i];
+                height += ApplicantRowHeight(
+                    width, posting, applicant, applicantPreviews[applicant]);
             }
 
             return height;
@@ -538,30 +630,38 @@ namespace Intercolony
 
         private void DrawPostingBlock(
             Rect rect, JobPosting posting, IntercolonyWorldComponent state, int index,
+            Dictionary<JobApplicant, ApplicantHirePreview> applicantPreviews,
             ref System.Action pendingAction)
         {
+            float headerHeight = PostingHeaderHeightFor(posting, rect.width);
             if (index % 2 == 1)
             {
-                Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, PostingHeaderHeight));
+                Widgets.DrawLightHighlight(new Rect(rect.x, rect.y, rect.width, headerHeight));
             }
 
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 3f, rect.width - 280f, 22f), posting.Headline());
+            float headerTextWidth = Mathf.Max(1f, rect.width - 280f);
+            string headline = posting.Headline();
+            float headlineHeight = ApplicantLabelHeight(headline, headerTextWidth);
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + 3f, headerTextWidth, headlineHeight), headline);
 
             GUI.color = posting.Applicants.Count > 0
                 ? new Color(0.65f, 0.95f, 0.65f)
                 : new Color(1f, 1f, 1f, 0.65f);
-            Widgets.Label(new Rect(rect.x + 6f, rect.y + 25f, rect.width - 280f, 22f),
-                posting.StatusLine());
+            string status = posting.StatusLine();
+            float statusHeight = ApplicantLabelHeight(status, headerTextWidth);
+            float statusY = Mathf.Max(25f, 3f + headlineHeight);
+            Widgets.Label(new Rect(rect.x + 6f, rect.y + statusY, headerTextWidth, statusHeight), status);
             GUI.color = Color.white;
 
-            Rect tipRect = new Rect(rect.x, rect.y, rect.width, PostingHeaderHeight);
+            Rect tipRect = new Rect(rect.x, rect.y, rect.width, headerHeight);
             if (ShouldBuildTooltip(tipRect))
             {
                 TooltipHandler.TipRegion(
                     tipRect, new TipSignal(PostingTooltip(posting, state), posting.id * 5701));
             }
 
-            Rect withdrawRect = new Rect(rect.xMax - 120f, rect.y + 12f, 110f, 30f);
+            Rect withdrawRect = new Rect(
+                rect.xMax - 120f, rect.y + (headerHeight - 30f) / 2f, 110f, 30f);
             if (Widgets.ButtonText(withdrawRect, "Withdraw"))
             {
                 pendingAction = () => Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
@@ -573,20 +673,21 @@ namespace Intercolony
                         destructive: true));
             }
 
-            float y = rect.y + PostingHeaderHeight;
+            float y = rect.y + headerHeight;
             for (int i = posting.Applicants.Count - 1; i >= 0; i--)
             {
                 JobApplicant applicant = posting.Applicants[i];
-                float rowHeight = ApplicantRowHeight(rect.width, posting, applicant);
+                ApplicantHirePreview preview = applicantPreviews[applicant];
+                float rowHeight = ApplicantRowHeight(rect.width, posting, applicant, preview);
                 DrawApplicantRow(new Rect(rect.x, y, rect.width, rowHeight),
-                    posting, applicant, state, ref pendingAction);
+                    posting, applicant, state, preview, ref pendingAction);
                 y += rowHeight;
             }
         }
 
         private void DrawApplicantRow(
             Rect rect, JobPosting posting, JobApplicant applicant, IntercolonyWorldComponent state,
-            ref System.Action pendingAction)
+            ApplicantHirePreview preview, ref System.Action pendingAction)
         {
             Widgets.DrawHighlightIfMouseover(rect);
 
@@ -612,11 +713,7 @@ namespace Intercolony
             GUI.color = Color.white;
             lineY += valueHeight;
 
-            int upFront = WageStructureUtility.UpFrontCost(
-                posting.wageStructure, applicant.openMarketAsk, posting.termDays);
-            EmploymentEquipmentQuote equipmentQuote = EmploymentEquipmentService.Quote(applicant.pawn);
-            EmploymentHireCostQuote hireCostQuote = EmploymentEquipmentService.QuoteHireCost(
-                upFront, equipmentQuote);
+            EmploymentHireCostQuote hireCostQuote = preview.hireCost;
             long totalDue = hireCostQuote.totalDue;
             int available = PurchaseOrderService.CountColonySilver(Find.CurrentMap);
             bool affordable = totalDue <= int.MaxValue && available >= totalDue;
@@ -634,6 +731,26 @@ namespace Intercolony
             Widgets.Label(new Rect(rect.x + ApplicantTextInset, lineY, textWidth, storageHeight), storage);
             GUI.color = Color.white;
             lineY += storageHeight;
+
+            string equipmentTier = ApplicantEquipmentTierLine(preview);
+            float equipmentTierHeight = ApplicantLabelHeight(equipmentTier, textWidth);
+            GUI.color = new Color(1f, 1f, 1f, 0.65f);
+            Widgets.Label(new Rect(
+                rect.x + ApplicantTextInset, lineY, textWidth, equipmentTierHeight), equipmentTier);
+            GUI.color = Color.white;
+            lineY += equipmentTierHeight;
+
+            for (int i = 0; i < preview.equipmentLines.Count; i++)
+            {
+                string equipmentLine = preview.equipmentLines[i];
+                float equipmentLineHeight = ApplicantLabelHeight(equipmentLine, textWidth);
+                GUI.color = new Color(1f, 1f, 1f, 0.65f);
+                Widgets.Label(new Rect(
+                    rect.x + ApplicantTextInset, lineY, textWidth, equipmentLineHeight),
+                    equipmentLine);
+                GUI.color = Color.white;
+                lineY += equipmentLineHeight;
+            }
 
             string bond = ApplicantEquipmentBondLine(hireCostQuote.equipment);
             float bondHeight = ApplicantLabelHeight(bond, textWidth);
