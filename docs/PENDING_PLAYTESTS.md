@@ -46,6 +46,31 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### F04: the Produce Controls popup has never been seen by a person
+
+Added 2026-09-14 on branch `foreman/playtest-finalization-2026-09-13`. The **Set target** slider is
+gone; the gizmo is **Produce controls** and opens a dialog. **Mode** is a radio pair, **Produce
+indefinitely** or **Maintain stock**, and the mode is the target itself — zero means indefinite.
+**Target** and **Resume below** are typed fields with **-10/-1/+1/+10** steps, not sliders;
+**Resume below** is clamped to **target - 1** and the field refreshes from what was actually stored,
+so a visible repair replaces a silent one. Reaching the target **latches** the program, and it
+restarts only at or below **Resume below**; a **Status** row says whether it is currently waiting.
+**Workers** is **Any eligible pawn** or a named list, plus a **Minimum Construction skill** that
+governs building and Construction-work-type delivery but deliberately not hauling. **Materials** is
+a checkbox per stuff that can really build the product; the last ticked material **cannot** be
+unticked. **Maximum Produce target** is a setting, default **1000**, and lowering it never rewrites
+a program already set higher.
+
+**Steps.** At the project's standard manual UI scale, judge whether the typed fields and step
+buttons are usable; whether the worker list stays readable with a dozen colonists and the material
+list with a dozen stuffs; whether anything clips or overlaps when both lists are long, which is the
+real risk because both are variable length; whether the **Status** row reads as useful or as noise;
+and whether refusing to untick the last material is understandable or merely feels broken. Set a
+program to **Maintain stock** 10 / **Resume below** 5 with a colonist assigned and watch it over a
+few in-game days. Judge whether it actually behaves that way, including that selling stock down to
+6 does not restart it and down to 5 does. The model-level assertions prove the domain rules and
+prove nothing about how any of it looks.
+
 ### Stage 8: F08 and F09 need a seasons-long diplomatic read
 
 Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. F08 and F09 are slow, quiet

@@ -116,6 +116,8 @@ namespace Intercolony
                         r, map, loops, subject, reservedCells, testRects, testZones);
                     CheckProduceWorkerGate(
                         r, map, loops, subject, reservedCells, testRects);
+                    CheckProduceProgramSetters(
+                        r, map, loops, subject, reservedCells, testRects);
                     CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
                     CheckProduceDesignators(r, map, subject, reservedCells, testRects);
                     CheckBlueprintRotation(r, map, loops, subject, reservedCells, testRects);
@@ -4148,6 +4150,364 @@ namespace Intercolony
             }
         }
 
+        private static void CheckProduceProgramSetters(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string emptyStuffLabel =
+                "the allowed material set cannot be emptied";
+            const string nonStuffableLabel =
+                "a non-stuffable program accepts an empty material set";
+            const string copiedStuffLabel =
+                "the allowed material set is copied, not aliased";
+            const string copiedWorkersLabel =
+                "the allowed worker list is copied and strips nulls";
+            const string clampedSkillLabel =
+                "the minimum Construction skill is clamped to the skill range";
+            const string isolatedRecordLabel =
+                "setting a program's fields leaves an unrelated program alone";
+
+            List<IntVec3> enabledCells = new List<IntVec3>();
+            List<CellRect> buildRects = new List<CellRect>();
+            IntVec3 cell = IntVec3.Invalid;
+            IntVec3 unrelatedCell = IntVec3.Invalid;
+            IntVec3 nonStuffableCell = IntVec3.Invalid;
+            ThingDef nonStuffableDef = null;
+            string nonStuffableReason = null;
+
+            try
+            {
+                if (!TryFindBuildCell(
+                        map, loops, subject, Rot4.North, reservedCells, out cell))
+                {
+                    SkipProduceProgramSettersAssertions(
+                        r,
+                        "no empty valid cell for the setter fixture; measured 0");
+                    return;
+                }
+
+                RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+                buildRects.Add(GenAdj.OccupiedRect(
+                    cell, Rot4.North, subject.thingDef.Size));
+
+                if (!TryFindBuildCell(
+                        map, loops, subject, Rot4.North, reservedCells, out unrelatedCell))
+                {
+                    SkipProduceProgramSettersAssertions(
+                        r,
+                        "needs two empty valid cells for the setter fixture; measured 1");
+                    return;
+                }
+
+                RememberCell(
+                    unrelatedCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+                buildRects.Add(GenAdj.OccupiedRect(
+                    unrelatedCell, Rot4.North, subject.thingDef.Size));
+
+                int nonStuffableDefinitionCount = 0;
+                int nonStuffableCellCount = 0;
+                foreach (ThingDef candidate in DefDatabase<ThingDef>.AllDefs)
+                {
+                    if (candidate == null ||
+                        !candidate.Minifiable ||
+                        candidate.category != ThingCategory.Building ||
+                        candidate.MadeFromStuff ||
+                        candidate.IsFrame ||
+                        candidate.blueprintDef == null ||
+                        candidate.building == null ||
+                        candidate.thingClass == null ||
+                        !typeof(Building).IsAssignableFrom(candidate.thingClass) ||
+                        !candidate.CanHaveFaction ||
+                        candidate.GetStatValueAbstract(StatDefOf.WorkToBuild, null) <= 0f)
+                    {
+                        continue;
+                    }
+
+                    nonStuffableDefinitionCount++;
+                    foreach (IntVec3 candidateCell in map.AllCells)
+                    {
+                        if (loops.IsEnabled(candidateCell) ||
+                            reservedCells.Contains(candidateCell))
+                        {
+                            continue;
+                        }
+
+                        CellRect occupied = GenAdj.OccupiedRect(
+                            candidateCell,
+                            Rot4.North,
+                            candidate.Size);
+                        if (!occupied.InBounds(map) ||
+                            Intersects(occupied, reservedCells) ||
+                            !IsEmpty(map, occupied) ||
+                            !GenConstruct.CanPlaceBlueprintAt(
+                                candidate,
+                                candidateCell,
+                                Rot4.North,
+                                map).Accepted)
+                        {
+                            continue;
+                        }
+
+                        nonStuffableDef = candidate;
+                        nonStuffableCell = candidateCell;
+                        nonStuffableCellCount++;
+                        break;
+                    }
+
+                    if (nonStuffableDef != null)
+                    {
+                        break;
+                    }
+                }
+
+                if (nonStuffableDef == null)
+                {
+                    nonStuffableReason =
+                        "no non-stuffable minifiable building with WorkToBuild > 0 and " +
+                        $"an empty placeable cell; measured {nonStuffableDefinitionCount} " +
+                        $"definition(s), {nonStuffableCellCount} valid cell(s)";
+                }
+                else
+                {
+                    RememberCell(
+                        nonStuffableCell,
+                        nonStuffableDef,
+                        Rot4.North,
+                        reservedCells,
+                        testRects);
+                    buildRects.Add(GenAdj.OccupiedRect(
+                        nonStuffableCell,
+                        Rot4.North,
+                        nonStuffableDef.Size));
+                }
+
+                enabledCells.Add(cell);
+                loops.Enable(cell, Rot4.North, subject.thingDef, subject.stuffDef, null);
+                enabledCells.Add(unrelatedCell);
+                ThingDef unrelatedStuff = subject.alternateStuff ?? subject.stuffDef;
+                loops.Enable(
+                    unrelatedCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    unrelatedStuff,
+                    null);
+                if (nonStuffableDef != null)
+                {
+                    enabledCells.Add(nonStuffableCell);
+                    loops.Enable(
+                        nonStuffableCell,
+                        Rot4.North,
+                        nonStuffableDef,
+                        null,
+                        null);
+                }
+
+                ProduceLoopRecord record;
+                List<ThingDef> callerStuffs;
+                int observedStuffCount;
+                ThingDef observedStuff;
+
+                loops.SetAllowedStuff(cell, new List<ThingDef>());
+                record = loops.Find(cell);
+                observedStuffCount = record?.allowedStuff?.Count ?? -1;
+                observedStuff = observedStuffCount == 1
+                    ? record.allowedStuff[0]
+                    : null;
+                CheckSafely(
+                    r,
+                    emptyStuffLabel,
+                    () => observedStuffCount == 1 && observedStuff == subject.stuffDef,
+                    () =>
+                        $"cell {cell}; observed allowedStuff " +
+                        $"{DescribeThingDefs(record?.allowedStuff)}; observed count " +
+                        $"{observedStuffCount}; expected one {subject.stuffDef.defName}");
+
+                if (nonStuffableDef == null)
+                {
+                    r.Skip(nonStuffableLabel, nonStuffableReason);
+                }
+                else
+                {
+                    loops.SetAllowedStuff(
+                        nonStuffableCell,
+                        new List<ThingDef> { subject.stuffDef });
+                    loops.SetAllowedStuff(nonStuffableCell, new List<ThingDef>());
+                    ProduceLoopRecord nonStuffableRecord = loops.Find(nonStuffableCell);
+                    int observedNonStuffableCount =
+                        nonStuffableRecord?.allowedStuff?.Count ?? -1;
+                    CheckSafely(
+                        r,
+                        nonStuffableLabel,
+                        () => observedNonStuffableCount == 0,
+                        () =>
+                            $"cell {nonStuffableCell}; product " +
+                            $"{nonStuffableDef.defName}; observed allowedStuff " +
+                            $"{DescribeThingDefs(nonStuffableRecord?.allowedStuff)}; observed " +
+                            $"count {observedNonStuffableCount}; expected empty");
+                }
+
+                callerStuffs = new List<ThingDef> { subject.stuffDef };
+                loops.SetAllowedStuff(cell, callerStuffs);
+                callerStuffs.Clear();
+                record = loops.Find(cell);
+                observedStuffCount = record?.allowedStuff?.Count ?? -1;
+                observedStuff = observedStuffCount == 1
+                    ? record.allowedStuff[0]
+                    : null;
+                CheckSafely(
+                    r,
+                    copiedStuffLabel,
+                    () => observedStuffCount == 1 && observedStuff == subject.stuffDef,
+                    () =>
+                        $"cell {cell}; caller list count {callerStuffs.Count}; observed " +
+                        $"allowedStuff {DescribeThingDefs(record?.allowedStuff)}; observed count " +
+                        $"{observedStuffCount}; expected caller 0 and one {subject.stuffDef.defName}");
+
+                List<Pawn> freeColonists = map?.mapPawns?.FreeColonistsSpawned;
+                Pawn worker = null;
+                int freeColonistCount = freeColonists?.Count ?? 0;
+                if (freeColonists != null)
+                {
+                    for (int i = 0; i < freeColonists.Count; i++)
+                    {
+                        if (freeColonists[i] != null)
+                        {
+                            worker = freeColonists[i];
+                            break;
+                        }
+                    }
+                }
+
+                if (worker == null)
+                {
+                    r.Skip(
+                        copiedWorkersLabel,
+                        $"no existing free colonist was available; measured " +
+                        $"{freeColonistCount} spawned entry(s)");
+                }
+                else
+                {
+                    List<Pawn> callerWorkers = new List<Pawn> { worker, null };
+                    loops.SetAllowedWorkers(cell, callerWorkers);
+                    callerWorkers.Clear();
+                    record = loops.Find(cell);
+                    int observedWorkerCount = record?.allowedWorkers?.Count ?? -1;
+                    int observedNullWorkerCount = 0;
+                    int observedMatchingWorkerCount = 0;
+                    if (record?.allowedWorkers != null)
+                    {
+                        for (int i = 0; i < record.allowedWorkers.Count; i++)
+                        {
+                            Pawn observedWorker = record.allowedWorkers[i];
+                            if (observedWorker == null)
+                            {
+                                observedNullWorkerCount++;
+                            }
+                            else if (observedWorker == worker)
+                            {
+                                observedMatchingWorkerCount++;
+                            }
+                        }
+                    }
+
+                    CheckSafely(
+                        r,
+                        copiedWorkersLabel,
+                        () => observedWorkerCount == 1 &&
+                            observedMatchingWorkerCount == 1 &&
+                            observedNullWorkerCount == 0,
+                        () =>
+                            $"cell {cell}; caller list count {callerWorkers.Count}; observed " +
+                            $"allowedWorkers count {observedWorkerCount}, matching pawn count " +
+                            $"{observedMatchingWorkerCount}, null count {observedNullWorkerCount}; " +
+                            $"expected caller 0 and pawn {worker.ToStringSafe()}");
+                }
+
+                loops.SetMinConstructionSkill(cell, -5);
+                record = loops.Find(cell);
+                int observedLowSkill = record?.minConstructionSkill ?? int.MinValue;
+                loops.SetMinConstructionSkill(cell, 99);
+                record = loops.Find(cell);
+                int observedHighSkill = record?.minConstructionSkill ?? int.MinValue;
+                CheckSafely(
+                    r,
+                    clampedSkillLabel,
+                    () => observedLowSkill == 0 && observedHighSkill == 20,
+                    () =>
+                        $"cell {cell}; observed after -5 {observedLowSkill}; observed after " +
+                        $"99 {observedHighSkill}; expected 0 and 20");
+
+                List<Pawn> configuredWorkers = worker == null
+                    ? new List<Pawn>()
+                    : new List<Pawn> { worker };
+                loops.SetWorkerRestriction(cell, true);
+                loops.SetAllowedWorkers(cell, configuredWorkers);
+                loops.SetMinConstructionSkill(cell, 7);
+                loops.SetAllowedStuff(cell, new List<ThingDef> { subject.stuffDef });
+
+                ProduceLoopRecord firstRecord = loops.Find(cell);
+                ProduceLoopRecord unrelatedRecord = loops.Find(unrelatedCell);
+                int unrelatedWorkerCount = unrelatedRecord?.allowedWorkers?.Count ?? -1;
+                int unrelatedNullWorkerCount = 0;
+                if (unrelatedRecord?.allowedWorkers != null)
+                {
+                    for (int i = 0; i < unrelatedRecord.allowedWorkers.Count; i++)
+                    {
+                        if (unrelatedRecord.allowedWorkers[i] == null)
+                        {
+                            unrelatedNullWorkerCount++;
+                        }
+                    }
+                }
+
+                int unrelatedStuffCount = unrelatedRecord?.allowedStuff?.Count ?? -1;
+                ThingDef observedUnrelatedStuff = unrelatedStuffCount == 1
+                    ? unrelatedRecord.allowedStuff[0]
+                    : null;
+                CheckSafely(
+                    r,
+                    isolatedRecordLabel,
+                    () => unrelatedRecord != null &&
+                        !unrelatedRecord.restrictToSelectedWorkers &&
+                        unrelatedWorkerCount == 0 &&
+                        unrelatedNullWorkerCount == 0 &&
+                        unrelatedRecord.minConstructionSkill == 0 &&
+                        unrelatedStuffCount == 1 &&
+                        observedUnrelatedStuff == unrelatedStuff,
+                    () =>
+                        $"first cell {cell} configured restrict " +
+                        $"{firstRecord?.restrictToSelectedWorkers.ToString() ?? "<missing>"}, " +
+                        $"workers {firstRecord?.allowedWorkers?.Count ?? -1}, min skill " +
+                        $"{firstRecord?.minConstructionSkill.ToString() ?? "<missing>"}; second cell " +
+                        $"{unrelatedCell} observed restrict " +
+                        $"{unrelatedRecord?.restrictToSelectedWorkers.ToString() ?? "<missing>"}, " +
+                        $"workers {unrelatedWorkerCount} (nulls {unrelatedNullWorkerCount}), min skill " +
+                        $"{unrelatedRecord?.minConstructionSkill.ToString() ?? "<missing>"}, " +
+                        $"allowedStuff {DescribeThingDefs(unrelatedRecord?.allowedStuff)}; expected " +
+                        $"false, 0 workers, min skill 0, and {unrelatedStuff.defName}");
+            }
+            finally
+            {
+                for (int i = 0; i < buildRects.Count; i++)
+                {
+                    DestroyThingsInRect(map, buildRects[i]);
+                }
+
+                for (int i = 0; i < enabledCells.Count; i++)
+                {
+                    loops.Disable(enabledCells[i]);
+                }
+            }
+        }
+
         private static void CheckDesignatorCancel(
             Results r,
             Map map,
@@ -7197,6 +7557,21 @@ private static int CountStoredTargetStock(
                 reason);
             SkipAllowedMaterialsAssertions(r, reason);
             SkipProduceWorkerGateAssertions(r, reason);
+            SkipProduceProgramSettersAssertions(r, reason);
+        }
+
+        private static void SkipProduceProgramSettersAssertions(Results r, string reason)
+        {
+            r.Skip("the allowed material set cannot be emptied", reason);
+            r.Skip("a non-stuffable program accepts an empty material set", reason);
+            r.Skip("the allowed material set is copied, not aliased", reason);
+            r.Skip("the allowed worker list is copied and strips nulls", reason);
+            r.Skip(
+                "the minimum Construction skill is clamped to the skill range",
+                reason);
+            r.Skip(
+                "setting a program's fields leaves an unrelated program alone",
+                reason);
         }
 
         private static void SkipBlueprintAssertions(Results r, string reason)
