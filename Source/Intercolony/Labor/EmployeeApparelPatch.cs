@@ -17,6 +17,9 @@ namespace Intercolony
     /// cannot make its skipped else branch run without reimplementing the dropdown. The consent
     /// postfix below is different: it sees the job vanilla already decided to return and can
     /// suppress that job without reimplementing the optimizer.
+    ///
+    /// Known uncovered route: the Odyssey outfit stand transfers gear directly in
+    /// reference/decompiled/RimWorld/JobDriver_UseOutfitStand.cs:81 (DoTransfer).
     /// </summary>
     [HarmonyPatch]
     public static class EmployeeApparelPatch
@@ -24,9 +27,24 @@ namespace Intercolony
         private static readonly HashSet<int> contractsBeingAsked = new HashSet<int>();
         private static readonly Dictionary<EmploymentContract, HashSet<Thing>>
             approvedForcedReleases = new Dictionary<EmploymentContract, HashSet<Thing>>();
+        private static readonly HashSet<Job> orderedJobReissueBypasses = new HashSet<Job>();
         private static IntercolonyWorldComponent askingWorld;
         private static bool consentPostfixErrorLogged;
         private static bool apparelDropPostfixErrorLogged;
+        private static bool orderedJobPrefixErrorLogged;
+        private static bool stripDesignatorPrefixErrorLogged;
+
+        private sealed class ForcedReleaseItem
+        {
+            internal readonly Thing item;
+            internal readonly EmploymentEquipmentRecord record;
+
+            internal ForcedReleaseItem(Thing item, EmploymentEquipmentRecord record)
+            {
+                this.item = item;
+                this.record = record;
+            }
+        }
 
         /// <summary>
         /// Returns true only for a quest lodger who is not an active Intercolony employee.
@@ -56,6 +74,320 @@ namespace Intercolony
             }
 
             approvedItems.Add(item);
+        }
+
+        private static bool IsForcedRemovalJob(JobDef jobDef)
+        {
+            return jobDef == JobDefOf.DropEquipment ||
+                jobDef == JobDefOf.RemoveApparel ||
+                jobDef == JobDefOf.Equip ||
+                jobDef == JobDefOf.Wear ||
+                jobDef == JobDefOf.ForceTargetWear ||
+                jobDef == JobDefOf.Strip;
+        }
+
+        [HarmonyPatch(
+            typeof(Pawn_JobTracker),
+            nameof(Pawn_JobTracker.TryTakeOrderedJob),
+            new[] { typeof(Job), typeof(Nullable<JobTag>), typeof(bool) })]
+        [HarmonyPrefix]
+        private static bool TryTakeOrderedJobPrefix(
+            Pawn_JobTracker __instance,
+            Pawn ___pawn,
+            Job job,
+            JobTag? tag,
+            bool requestQueueing)
+        {
+            // TryTakeOrderedJob is on the hot path for every ordered job. The def check must be
+            // the only work for unrelated jobs; vanilla sets job.playerForced after this prefix.
+            if (!IsForcedRemovalJob(job?.def))
+            {
+                return true;
+            }
+
+            try
+            {
+                ResetTransientConsentState();
+                if (job == null || orderedJobReissueBypasses.Contains(job))
+                {
+                    return true;
+                }
+
+                if (!TryFindForcedReleaseItems(
+                        ___pawn,
+                        job,
+                        out Pawn employee,
+                        out EmploymentContract contract,
+                        out List<ForcedReleaseItem> affectedItems))
+                {
+                    return true;
+                }
+
+                if (contractsBeingAsked.Contains(contract.id))
+                {
+                    return false;
+                }
+
+                int bondAtRisk = BondAtRiskFor(contract, affectedItems);
+                contractsBeingAsked.Add(contract.id);
+                try
+                {
+                    if (job.def == JobDefOf.Strip)
+                    {
+                        Find.WindowStack.Add(new Dialog_ForcedApparelReleaseConsent(
+                            employee,
+                            bondAtRisk,
+                            () => ConfirmOrderedForcedRelease(
+                                __instance, job, tag, requestQueueing, contract, affectedItems),
+                            () => contractsBeingAsked.Remove(contract.id)));
+                    }
+                    else
+                    {
+                        Find.WindowStack.Add(new Dialog_ForcedApparelReleaseConsent(
+                            employee,
+                            BuildAffectedItemLabel(affectedItems),
+                            bondAtRisk,
+                            () => ConfirmOrderedForcedRelease(
+                                __instance, job, tag, requestQueueing, contract, affectedItems),
+                            () => contractsBeingAsked.Remove(contract.id)));
+                    }
+
+                    return false;
+                }
+                catch
+                {
+                    contractsBeingAsked.Remove(contract.id);
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                // A broken veto must never break the job tracker; failing open costs a bond share,
+                // while failing closed can strand the colony's ordered-job flow.
+                LogOrderedJobPrefixErrorOnce(ex);
+                return true;
+            }
+        }
+
+        [HarmonyPatch(
+            typeof(Designator_Strip),
+            nameof(Designator_Strip.DesignateThing),
+            new[] { typeof(Thing) })]
+        [HarmonyPrefix]
+        private static bool DesignateStripThingPrefix(Designator_Strip __instance, Thing t)
+        {
+            try
+            {
+                ResetTransientConsentState();
+                Pawn employee = t as Pawn;
+                EmploymentContract contract = EmploymentService.GetActiveContract(employee);
+                if (contract == null)
+                {
+                    return true;
+                }
+
+                List<ForcedReleaseItem> affectedItems = FindRefundableStripItems(employee, contract);
+                if (affectedItems.Count == 0)
+                {
+                    return true;
+                }
+
+                if (contractsBeingAsked.Contains(contract.id))
+                {
+                    return false;
+                }
+
+                int bondAtRisk = BondAtRiskFor(contract, affectedItems);
+                contractsBeingAsked.Add(contract.id);
+                try
+                {
+                    Find.WindowStack.Add(new Dialog_ForcedApparelReleaseConsent(
+                        employee,
+                        bondAtRisk,
+                        () => ConfirmStripDesignation(
+                            __instance, t, contract, affectedItems),
+                        () => contractsBeingAsked.Remove(contract.id)));
+                    return false;
+                }
+                catch
+                {
+                    contractsBeingAsked.Remove(contract.id);
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                // A broken veto must never prevent vanilla from recording a strip designation.
+                LogStripDesignatorPrefixErrorOnce(ex);
+                return true;
+            }
+        }
+
+        private static void ConfirmOrderedForcedRelease(
+            Pawn_JobTracker tracker,
+            Job job,
+            JobTag? tag,
+            bool requestQueueing,
+            EmploymentContract contract,
+            List<ForcedReleaseItem> affectedItems)
+        {
+            contractsBeingAsked.Remove(contract?.id ?? 0);
+            try
+            {
+                for (int i = 0; i < affectedItems.Count; i++)
+                {
+                    ApproveOneForcedRelease(contract, affectedItems[i].item);
+                }
+
+                // This marker covers only this exact job object and only the synchronous re-entry
+                // below. The finally is deliberately adjacent to TryTakeOrderedJob so a throw
+                // cannot leave a session-wide bypass behind.
+                orderedJobReissueBypasses.Add(job);
+                try
+                {
+                    tracker.TryTakeOrderedJob(job, tag, requestQueueing);
+                }
+                finally
+                {
+                    orderedJobReissueBypasses.Remove(job);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogOrderedJobPrefixErrorOnce(ex);
+            }
+        }
+
+        private static void ConfirmStripDesignation(
+            Designator_Strip designator,
+            Thing target,
+            EmploymentContract contract,
+            List<ForcedReleaseItem> affectedItems)
+        {
+            contractsBeingAsked.Remove(contract?.id ?? 0);
+            try
+            {
+                for (int i = 0; i < affectedItems.Count; i++)
+                {
+                    ApproveOneForcedRelease(contract, affectedItems[i].item);
+                }
+
+                // This is the vanilla DesignateThing body. The strip route has no job to reissue;
+                // add the designation only after all exact approvals have been reserved.
+                designator.Map.designationManager.AddDesignation(
+                    new Designation(target, DesignationDefOf.Strip));
+                StrippableUtility.CheckSendStrippingImpactsGoodwillMessage(target);
+            }
+            catch (Exception ex)
+            {
+                LogStripDesignatorPrefixErrorOnce(ex);
+            }
+        }
+
+        private static bool TryFindForcedReleaseItems(
+            Pawn actingPawn,
+            Job job,
+            out Pawn employee,
+            out EmploymentContract contract,
+            out List<ForcedReleaseItem> affectedItems)
+        {
+            employee = actingPawn;
+            contract = null;
+            affectedItems = new List<ForcedReleaseItem>();
+            if (job == null)
+            {
+                return false;
+            }
+
+            // ForceTargetWear and Strip operate on targetA, not on the pawn issuing the job.
+            if (job.def == JobDefOf.ForceTargetWear || job.def == JobDefOf.Strip)
+            {
+                employee = job.targetA.Pawn;
+            }
+
+            contract = EmploymentService.GetActiveContract(employee);
+            if (contract == null)
+            {
+                return false;
+            }
+
+            if (job.def == JobDefOf.DropEquipment)
+            {
+                ThingWithComps targetEquipment = job.targetA.Thing as ThingWithComps;
+                if (employee?.equipment == null || targetEquipment == null ||
+                    !employee.equipment.Contains(targetEquipment))
+                {
+                    return false;
+                }
+
+                AddForcedReleaseItem(affectedItems, contract, targetEquipment);
+            }
+            else if (job.def == JobDefOf.RemoveApparel)
+            {
+                Apparel targetApparel = job.targetA.Thing as Apparel;
+                if (employee?.apparel == null || targetApparel == null ||
+                    !employee.apparel.WornApparel.Contains(targetApparel))
+                {
+                    return false;
+                }
+
+                AddForcedReleaseItem(affectedItems, contract, targetApparel);
+            }
+            else if (job.def == JobDefOf.Equip)
+            {
+                ThingWithComps incomingEquipment = job.targetA.Thing as ThingWithComps;
+                ThingWithComps currentPrimary = employee?.equipment?.Primary;
+                if (incomingEquipment == null || currentPrimary == null ||
+                    incomingEquipment == currentPrimary || incomingEquipment.def == null ||
+                    incomingEquipment.def.equipmentType != EquipmentType.Primary)
+                {
+                    return false;
+                }
+
+                AddForcedReleaseItem(affectedItems, contract, currentPrimary);
+            }
+            else if (job.def == JobDefOf.Wear || job.def == JobDefOf.ForceTargetWear)
+            {
+                Apparel incomingApparel = job.def == JobDefOf.Wear
+                    ? job.targetA.Thing as Apparel
+                    : job.targetB.Thing as Apparel;
+                affectedItems = FindRefundableApparelItemsRemovedByWear(
+                    employee, incomingApparel, contract);
+            }
+            else if (job.def == JobDefOf.Strip)
+            {
+                affectedItems = FindRefundableStripItems(employee, contract);
+            }
+
+            return affectedItems.Count > 0;
+        }
+
+        private static void AddForcedReleaseItem(
+            List<ForcedReleaseItem> affectedItems,
+            EmploymentContract contract,
+            Thing item)
+        {
+            EmploymentEquipmentRecord record = FindRefundableRecord(contract, item);
+            if (record != null)
+            {
+                affectedItems.Add(new ForcedReleaseItem(item, record));
+            }
+        }
+
+        private static string BuildAffectedItemLabel(List<ForcedReleaseItem> affectedItems)
+        {
+            if (affectedItems == null || affectedItems.Count == 0)
+            {
+                return "Unknown gear";
+            }
+
+            List<string> labels = new List<string>(affectedItems.Count);
+            for (int i = 0; i < affectedItems.Count; i++)
+            {
+                labels.Add(affectedItems[i].item?.LabelCap.ToString() ?? "Unknown gear");
+            }
+
+            return string.Join(", ", labels.ToArray());
         }
 
         [HarmonyPatch(
@@ -306,13 +638,32 @@ namespace Intercolony
             }
 
             Apparel newApparel = job.targetA.Thing as Apparel;
-            if (newApparel?.def?.apparel == null || pawn.RaceProps?.body == null)
+            List<ForcedReleaseItem> affectedItems = FindRefundableApparelItemsRemovedByWear(
+                pawn, newApparel, contract);
+            if (affectedItems.Count == 0)
             {
                 return null;
             }
 
-            // JobDriver_Wear scans in reverse order and removes every worn item that cannot be
-            // worn with its target. Keep the same order and find the first such original item.
+            matchingRecord = affectedItems[0].record;
+            return affectedItems[0].item as Apparel;
+        }
+
+        private static List<ForcedReleaseItem> FindRefundableApparelItemsRemovedByWear(
+            Pawn pawn,
+            Apparel newApparel,
+            EmploymentContract contract)
+        {
+            List<ForcedReleaseItem> affectedItems = new List<ForcedReleaseItem>();
+            if (pawn?.apparel == null || newApparel?.def?.apparel == null ||
+                pawn.RaceProps?.body == null || contract == null)
+            {
+                return affectedItems;
+            }
+
+            // JobDriver_Wear and JobDriver_ForceTargetWear scan in reverse order and remove every
+            // worn item that cannot be worn with their target. Preserve that order here so every
+            // original item removed by the one job receives its own exact approval.
             List<Apparel> wornApparel = pawn.apparel.WornApparel;
             for (int i = wornApparel.Count - 1; i >= 0; i--)
             {
@@ -323,21 +674,59 @@ namespace Intercolony
                     continue;
                 }
 
-                matchingRecord = FindRefundableRecord(contract, candidate);
+                EmploymentEquipmentRecord matchingRecord = FindRefundableRecord(contract, candidate);
                 if (matchingRecord != null)
                 {
-                    return candidate;
+                    affectedItems.Add(new ForcedReleaseItem(candidate, matchingRecord));
                 }
             }
 
-            return null;
+            return affectedItems;
+        }
+
+        private static List<ForcedReleaseItem> FindRefundableStripItems(
+            Pawn pawn,
+            EmploymentContract contract)
+        {
+            List<ForcedReleaseItem> affectedItems = new List<ForcedReleaseItem>();
+            if (pawn == null || contract == null)
+            {
+                return affectedItems;
+            }
+
+            if (pawn.equipment != null)
+            {
+                List<ThingWithComps> equipment = pawn.equipment.AllEquipmentListForReading;
+                for (int i = 0; i < equipment.Count; i++)
+                {
+                    AddForcedReleaseItem(affectedItems, contract, equipment[i]);
+                }
+            }
+
+            if (pawn.apparel != null)
+            {
+                bool dropLocked = pawn.Destroyed;
+                List<Apparel> wornApparel = pawn.apparel.WornApparel;
+                for (int i = 0; i < wornApparel.Count; i++)
+                {
+                    Apparel apparel = wornApparel[i];
+                    if (!dropLocked && pawn.apparel.IsLocked(apparel))
+                    {
+                        continue;
+                    }
+
+                    AddForcedReleaseItem(affectedItems, contract, apparel);
+                }
+            }
+
+            return affectedItems;
         }
 
         private static EmploymentEquipmentRecord FindRefundableRecord(
-            EmploymentContract contract, Apparel apparel)
+            EmploymentContract contract, Thing item)
         {
-            if (contract?.arrivedEquipment == null || apparel == null || apparel.Destroyed ||
-                apparel.def == null)
+            if (contract?.arrivedEquipment == null || item == null || item.Destroyed ||
+                item.def == null)
             {
                 return null;
             }
@@ -347,7 +736,7 @@ namespace Intercolony
             {
                 EmploymentEquipmentRecord record = records[i];
                 if (record != null && record.RefundableQuantity > 0 &&
-                    EmploymentEquipmentService.Matches(record, apparel))
+                    EmploymentEquipmentService.Matches(record, item))
                 {
                     return record;
                 }
@@ -399,6 +788,43 @@ namespace Intercolony
             return Mathf.Clamp(itemBond, 0, Mathf.Max(0, contract?.equipmentBond ?? 0));
         }
 
+        private static int BondAtRiskFor(
+            EmploymentContract contract,
+            List<ForcedReleaseItem> affectedItems)
+        {
+            if (contract == null || affectedItems == null || affectedItems.Count == 0)
+            {
+                return 0;
+            }
+
+            List<EmploymentEquipmentRecord> itemRecords =
+                new List<EmploymentEquipmentRecord>(affectedItems.Count);
+            for (int i = 0; i < affectedItems.Count; i++)
+            {
+                ForcedReleaseItem affectedItem = affectedItems[i];
+                EmploymentEquipmentRecord record = affectedItem?.record;
+                if (record == null)
+                {
+                    continue;
+                }
+
+                int quantity = Mathf.Min(
+                    Mathf.Max(1, affectedItem.item?.stackCount ?? 1),
+                    Mathf.Max(1, record.RefundableQuantity));
+                itemRecords.Add(new EmploymentEquipmentRecord
+                {
+                    thingDef = record.thingDef,
+                    stuffDef = record.stuffDef,
+                    quality = record.quality,
+                    unitValue = record.unitValue,
+                    quantity = quantity
+                });
+            }
+
+            int totalBond = EmploymentEquipmentService.BondFor(itemRecords);
+            return Mathf.Clamp(totalBond, 0, Mathf.Max(0, contract.equipmentBond));
+        }
+
         private static void ResetTransientConsentState()
         {
             IntercolonyWorldComponent currentWorld = IntercolonyWorldComponent.Current;
@@ -412,6 +838,7 @@ namespace Intercolony
             // forced-release approval for an item from the old world.
             contractsBeingAsked.Clear();
             approvedForcedReleases.Clear();
+            orderedJobReissueBypasses.Clear();
             askingWorld = currentWorld;
         }
 
@@ -424,7 +851,33 @@ namespace Intercolony
 
             apparelDropPostfixErrorLogged = true;
             IntercolonyLog.Error(
-                "Failed to record bought-out employee apparel; leaving vanilla removal unchanged: " +
+                "Failed to record bought-out employee gear; leaving vanilla removal unchanged: " +
+                ex);
+        }
+
+        private static void LogOrderedJobPrefixErrorOnce(Exception ex)
+        {
+            if (orderedJobPrefixErrorLogged)
+            {
+                return;
+            }
+
+            orderedJobPrefixErrorLogged = true;
+            IntercolonyLog.Error(
+                "Failed to enforce employee gear consent before an ordered job; allowing vanilla: " +
+                ex);
+        }
+
+        private static void LogStripDesignatorPrefixErrorOnce(Exception ex)
+        {
+            if (stripDesignatorPrefixErrorLogged)
+            {
+                return;
+            }
+
+            stripDesignatorPrefixErrorLogged = true;
+            IntercolonyLog.Error(
+                "Failed to enforce employee gear consent before a strip designation; allowing vanilla: " +
                 ex);
         }
 
@@ -465,43 +918,9 @@ namespace Intercolony
             {
                 try
                 {
-                    ResetTransientConsentState();
-                    if (!__result || __instance?.pawn == null || ap == null)
+                    if (__result && __instance?.pawn != null && ap != null)
                     {
-                        return;
-                    }
-
-                    EmploymentContract contract =
-                        EmploymentService.GetActiveContract(__instance.pawn);
-                    if (contract == null)
-                    {
-                        return;
-                    }
-
-                    // A forced approval is for this exact Thing and is consumed only after the
-                    // full TryDrop call succeeds. An Allowed contract needs no marker.
-                    bool forcedApproval = ConsumeForcedReleaseApproval(contract, ap);
-                    if (contract.apparelBondDecision != ApparelBondDecision.Allowed &&
-                        !forcedApproval)
-                    {
-                        return;
-                    }
-
-                    EmploymentEquipmentRecord record = FindRefundableRecord(contract, ap);
-                    if (record == null)
-                    {
-                        return;
-                    }
-
-                    // Identical apparel is indistinguishable in a snapshot with only def, stuff
-                    // and quality, so the first still-refundable record is the stated convention.
-                    // Only this full overload is patched; the short overloads forward here. One
-                    // successful full TryDrop call reports one removed item; count one unit per
-                    // true result. If vanilla ever reports the same physical removal true twice,
-                    // this assumption would double-count it.
-                    if (record.boughtOutQuantity < record.quantity)
-                    {
-                        record.boughtOutQuantity++;
+                        ObserveSuccessfulOriginalDrop(__instance.pawn, ap, allowContractDecision: true);
                     }
                 }
                 catch (Exception ex)
@@ -509,6 +928,89 @@ namespace Intercolony
                     // This observer must never break vanilla apparel removal for the colony.
                     LogApparelDropPostfixErrorOnce(ex);
                 }
+            }
+        }
+
+        [HarmonyPatch]
+        private static class PawnEquipmentTrackerTryDropEquipmentPatch
+        {
+            private static MethodBase TargetMethod()
+            {
+                return AccessTools.Method(
+                    typeof(Pawn_EquipmentTracker),
+                    nameof(Pawn_EquipmentTracker.TryDropEquipment),
+                    new[]
+                    {
+                        typeof(ThingWithComps),
+                        typeof(ThingWithComps).MakeByRefType(),
+                        typeof(IntVec3),
+                        typeof(bool)
+                    });
+            }
+
+            [HarmonyPostfix]
+            private static void Postfix(
+                Pawn_EquipmentTracker __instance,
+                ThingWithComps eq,
+                bool __result)
+            {
+                try
+                {
+                    if (__result && __instance?.pawn != null && eq != null)
+                    {
+                        // Equipment has no apparel-consent decision; only an exact forced
+                        // approval can make an original weapon non-refundable.
+                        ObserveSuccessfulOriginalDrop(
+                            __instance.pawn, eq, allowContractDecision: false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // This observer must never break vanilla equipment removal for the colony.
+                    LogApparelDropPostfixErrorOnce(ex);
+                }
+            }
+        }
+
+        private static void ObserveSuccessfulOriginalDrop(
+            Pawn pawn,
+            Thing item,
+            bool allowContractDecision)
+        {
+            ResetTransientConsentState();
+            if (pawn == null || item == null)
+            {
+                return;
+            }
+
+            EmploymentContract contract = EmploymentService.GetActiveContract(pawn);
+            if (contract == null)
+            {
+                return;
+            }
+
+            // A forced approval is for this exact Thing and is consumed only after the full
+            // tracker drop call succeeds. Apparel's standing Allowed decision is intentionally
+            // not applied to equipment, whose replacement routes have no standing consent card.
+            bool forcedApproval = ConsumeForcedReleaseApproval(contract, item);
+            if (!forcedApproval &&
+                (!allowContractDecision || contract.apparelBondDecision != ApparelBondDecision.Allowed))
+            {
+                return;
+            }
+
+            EmploymentEquipmentRecord record = FindRefundableRecord(contract, item);
+            if (record == null)
+            {
+                return;
+            }
+
+            // Identical gear is indistinguishable in a snapshot with only def, stuff and quality,
+            // so the first still-refundable record is the stated convention. This observer is the
+            // sole owner of boughtOutQuantity: one successful tracker drop marks one unit.
+            if (record.boughtOutQuantity < record.quantity)
+            {
+                record.boughtOutQuantity++;
             }
         }
     }
