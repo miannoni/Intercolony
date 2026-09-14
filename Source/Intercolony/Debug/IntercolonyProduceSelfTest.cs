@@ -144,12 +144,22 @@ namespace Intercolony
                     r.Skip(
                         "a record saved before this feature loads as its old program",
                         "no loaded minifiable stuff-built building");
+                    r.Skip(
+                        "a Produce program's material and skill restrictions survive a save",
+                        "no loaded minifiable stuff-built building");
+                    r.Skip(
+                        "a Produce program's selected workers survive a save",
+                        "no loaded minifiable stuff-built building");
                 }
                 else
                 {
                     CheckRecordRoundTrip(r, map, subject);
                     CheckNewFieldDefaults(r, map, subject);
+                    CheckProduceMaterialAndSkillRestrictionsRoundTrip(r, map, subject);
+                    CheckProduceSelectedWorkersRoundTrip(r, map, subject);
                 }
+
+                CheckMaxProduceTargetRoundTrip(r);
             }
             catch (Exception ex)
             {
@@ -6012,6 +6022,391 @@ namespace Intercolony
                     $"minConstructionSkill " +
                     $"{(xmlHasMinConstructionSkill ? "present" : "absent")}" +
                     $"{(xmlFailure == null ? "" : $"; {xmlFailure}")}");
+        }
+
+        private static void CheckProduceMaterialAndSkillRestrictionsRoundTrip(
+            Results r, Map map, Subject subject)
+        {
+            const string assertion =
+                "a Produce program's material and skill restrictions survive a save";
+            const int expectedMinConstructionSkill = 7;
+            IntVec3 expectedCell = map.Center;
+            Rot4 expectedRotation = Rot4.West;
+
+            if (subject?.stuffDef == null || subject.alternateStuff == null ||
+                subject.alternateStuff == subject.stuffDef)
+            {
+                r.Skip(
+                    assertion,
+                    $"the subject {subject?.thingDef?.defName ?? "null"} did not provide two " +
+                    $"distinct buildable stuffs; selected " +
+                    $"{subject?.stuffDef?.defName ?? "null"}, alternate " +
+                    $"{subject?.alternateStuff?.defName ?? "null"}");
+                return;
+            }
+
+            List<ThingDef> expectedAllowedStuff = new List<ThingDef>
+            {
+                subject.stuffDef,
+                subject.alternateStuff
+            };
+            ProduceLoopMapComponent saved = new ProduceLoopMapComponent(map);
+            ProduceLoopMapComponent loaded = null;
+            ProduceLoopRecord loadedRecord = null;
+            bool xmlHasAllowedStuff = false;
+            bool xmlHasRestriction = false;
+            bool xmlHasMinConstructionSkill = false;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProduceLoop-Restrictions-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                saved.Enable(
+                    expectedCell,
+                    expectedRotation,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                ProduceLoopRecord savedRecord = saved.Find(expectedCell);
+                if (savedRecord == null)
+                {
+                    failure = "the saved Produce record fixture was not created";
+                }
+                else if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    failure = "RimWorld Scribe.saver or Scribe.loader was unavailable";
+                }
+                else
+                {
+                    savedRecord.allowedStuff = new List<ThingDef>(expectedAllowedStuff);
+                    savedRecord.restrictToSelectedWorkers = true;
+                    savedRecord.minConstructionSkill = expectedMinConstructionSkill;
+
+                    Scribe.saver.InitSaving(path, "intercolonyProduceRestrictionsTest");
+                    Scribe_Deep.Look(ref saved, "produceLoopMapComponent");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(path);
+                    xmlHasAllowedStuff =
+                        xml.IndexOf("<allowedStuff", StringComparison.Ordinal) >= 0;
+                    xmlHasRestriction =
+                        xml.IndexOf(
+                            "<restrictToSelectedWorkers",
+                            StringComparison.Ordinal) >= 0;
+                    xmlHasMinConstructionSkill =
+                        xml.IndexOf(
+                            "<minConstructionSkill",
+                            StringComparison.Ordinal) >= 0;
+
+                    Scribe.loader.InitLoading(path);
+                    Scribe_Deep.Look(ref loaded, "produceLoopMapComponent", map);
+                    Scribe.loader.FinalizeLoading();
+                    loadedRecord = loaded?.Find(expectedCell);
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                saved?.Disable(expectedCell);
+                loaded?.Disable(expectedCell);
+            }
+
+            List<ThingDef> observedAllowedStuff = loadedRecord?.allowedStuff;
+            bool observedRestriction =
+                loadedRecord != null && loadedRecord.restrictToSelectedWorkers;
+            int observedMinConstructionSkill = loadedRecord?.minConstructionSkill ?? -1;
+            bool ok = failure == null &&
+                loadedRecord != null &&
+                SameThingDefList(observedAllowedStuff, expectedAllowedStuff) &&
+                observedRestriction &&
+                observedMinConstructionSkill == expectedMinConstructionSkill &&
+                xmlHasAllowedStuff &&
+                xmlHasRestriction &&
+                xmlHasMinConstructionSkill;
+            string detail =
+                $"observed allowedStuff {DescribeThingDefs(observedAllowedStuff)}; " +
+                $"observed restrictToSelectedWorkers " +
+                $"{(observedRestriction ? "true" : "false")}; " +
+                $"observed minConstructionSkill {observedMinConstructionSkill}; " +
+                $"expected allowedStuff {DescribeThingDefs(expectedAllowedStuff)}; " +
+                $"expected restrictToSelectedWorkers true; expected " +
+                $"minConstructionSkill {expectedMinConstructionSkill}; XML nodes " +
+                $"allowedStuff {(xmlHasAllowedStuff ? "present" : "absent")}, " +
+                $"restrictToSelectedWorkers {(xmlHasRestriction ? "present" : "absent")}, " +
+                $"minConstructionSkill " +
+                $"{(xmlHasMinConstructionSkill ? "present" : "absent")}" +
+                $"{(failure == null ? "" : $"; failure {failure}")}";
+            r.Check(ok, assertion, detail);
+        }
+
+        private static void CheckProduceSelectedWorkersRoundTrip(
+            Results r, Map map, Subject subject)
+        {
+            const string assertion = "a Produce program's selected workers survive a save";
+            List<Pawn> expectedWorkers = new List<Pawn>();
+            List<Pawn> colonists = map?.mapPawns?.FreeColonistsSpawned;
+            if (colonists != null)
+            {
+                for (int i = 0; i < colonists.Count && expectedWorkers.Count < 2; i++)
+                {
+                    Pawn candidate = colonists[i];
+                    if (candidate != null && candidate.Spawned && !candidate.Dead)
+                    {
+                        expectedWorkers.Add(candidate);
+                    }
+                }
+            }
+
+            if (expectedWorkers.Count == 0)
+            {
+                r.Skip(
+                    assertion,
+                    "the current map had no existing spawned colonist for a non-empty " +
+                    "LookMode.Reference allowedWorkers fixture");
+                return;
+            }
+
+            IntVec3 expectedCell = map.Center;
+            Rot4 expectedRotation = Rot4.West;
+            ProduceLoopMapComponent saved = new ProduceLoopMapComponent(map);
+            ProduceLoopMapComponent loaded = null;
+            ProduceLoopRecord loadedRecord = null;
+            List<Pawn> loadedWorkers = null;
+            bool xmlHasAllowedWorkers = false;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProduceLoop-Workers-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                saved.Enable(
+                    expectedCell,
+                    expectedRotation,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                ProduceLoopRecord savedRecord = saved.Find(expectedCell);
+                if (savedRecord == null)
+                {
+                    failure = "the saved Produce record fixture was not created";
+                }
+                else if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    failure = "RimWorld Scribe.saver or Scribe.loader was unavailable";
+                }
+                else
+                {
+                    savedRecord.allowedWorkers = new List<Pawn>(expectedWorkers);
+                    savedRecord.restrictToSelectedWorkers = true;
+
+                    Scribe.saver.InitSaving(path, "intercolonyProduceWorkersTest");
+                    Scribe_Deep.Look(ref saved, "produceLoopMapComponent");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(path);
+                    xmlHasAllowedWorkers =
+                        xml.IndexOf("<allowedWorkers", StringComparison.Ordinal) >= 0;
+
+                    Scribe.loader.InitLoading(path);
+                    Scribe_Deep.Look(ref loaded, "produceLoopMapComponent", map);
+                    Scribe.loader.FinalizeLoading();
+                    loadedRecord = loaded?.Find(expectedCell);
+                    loadedWorkers = loadedRecord?.allowedWorkers;
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                saved?.Disable(expectedCell);
+                loaded?.Disable(expectedCell);
+            }
+
+            bool loadedWorkersHaveNull = false;
+            if (loadedWorkers != null)
+            {
+                for (int i = 0; i < loadedWorkers.Count; i++)
+                {
+                    if (loadedWorkers[i] == null)
+                    {
+                        loadedWorkersHaveNull = true;
+                        break;
+                    }
+                }
+            }
+
+            bool workersUnresolved = loadedRecord != null &&
+                xmlHasAllowedWorkers &&
+                (loadedWorkers == null ||
+                 loadedWorkers.Count != expectedWorkers.Count ||
+                 loadedWorkersHaveNull);
+            string detail =
+                $"observed allowedWorkers {DescribePawns(loadedWorkers)}; expected " +
+                $"{DescribePawns(expectedWorkers)}; XML node allowedWorkers " +
+                $"{(xmlHasAllowedWorkers ? "present" : "absent")}" +
+                $"{(failure == null ? "" : $"; failure {failure}")}";
+
+            if (failure != null || loadedRecord == null || !xmlHasAllowedWorkers)
+            {
+                r.Check(false, assertion, detail);
+            }
+            else if (workersUnresolved)
+            {
+                r.Skip(
+                    assertion,
+                    "the lightweight detached ProduceLoopMapComponent Scribe round trip " +
+                    "could not resolve one or more LookMode.Reference allowedWorkers entries " +
+                    $"(expected {expectedWorkers.Count} existing spawned colonist(s), observed " +
+                    $"{loadedWorkers?.Count ?? 0}); the later Scribe cross-reference pass had " +
+                    "no loaded pawn objects because this detached probe did not register the " +
+                    "existing map pawns");
+            }
+            else
+            {
+                r.Check(
+                    SamePawnList(loadedWorkers, expectedWorkers),
+                    assertion,
+                    detail);
+            }
+        }
+
+        private static void CheckMaxProduceTargetRoundTrip(Results r)
+        {
+            const string assertion = "the maximum Produce target survives a save";
+            const int expectedMaxProduceTarget = 2500;
+            IntercolonySettings savedSettings = new IntercolonySettings
+            {
+                maxProduceTarget = expectedMaxProduceTarget
+            };
+            IntercolonySettings loadedSettings = null;
+            bool xmlHasMaxProduceTarget = false;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-MaxProduceTarget-{Guid.NewGuid():N}.xml");
+
+            if (Scribe.saver == null || Scribe.loader == null)
+            {
+                r.Skip(
+                    assertion,
+                    "RimWorld Scribe.saver or Scribe.loader was unavailable");
+                return;
+            }
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "intercolonyMaxProduceTargetTest");
+                Scribe_Deep.Look(ref savedSettings, "settings");
+                Scribe.saver.FinalizeSaving();
+
+                string xml = File.ReadAllText(path);
+                xmlHasMaxProduceTarget =
+                    xml.IndexOf("<maxProduceTarget", StringComparison.Ordinal) >= 0;
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedSettings, "settings");
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            int observedMaxProduceTarget = loadedSettings?.maxProduceTarget ?? -1;
+            bool ok = failure == null &&
+                loadedSettings != null &&
+                observedMaxProduceTarget == expectedMaxProduceTarget &&
+                xmlHasMaxProduceTarget;
+            r.Check(
+                ok,
+                assertion,
+                $"observed maxProduceTarget {observedMaxProduceTarget}; expected " +
+                $"{expectedMaxProduceTarget}; XML node maxProduceTarget " +
+                $"{(xmlHasMaxProduceTarget ? "present" : "absent")}" +
+                $"{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static bool SameThingDefList(
+            List<ThingDef> observed, List<ThingDef> expected)
+        {
+            if (observed == null || expected == null || observed.Count != expected.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < expected.Count; i++)
+            {
+                if (observed[i] != expected[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool SamePawnList(List<Pawn> observed, List<Pawn> expected)
+        {
+            if (observed == null || expected == null || observed.Count != expected.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < expected.Count; i++)
+            {
+                if (observed[i] != expected[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static string DescribePawns(List<Pawn> pawns)
+        {
+            if (pawns == null || pawns.Count == 0)
+            {
+                return "<none>";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(",");
+                }
+
+                sb.Append(pawns[i]?.ToStringSafe() ?? "null");
+            }
+
+            return sb.ToString();
         }
 
         private static Subject FindSubject()

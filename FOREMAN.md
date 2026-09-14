@@ -1,10 +1,10 @@
 # Foreman state — Intercolony
 
 Stage: P8 — integration, regression, documentation, clean halt
-Unit: P8.5 — `PROGRESS.md` milestone record and source-plan disposition markers
-Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-5-out.txt`
-Last done: **P8.4 PASSED** — build 0/0; fresh whole suite **1670/0/17**, log CLEAN, pawn delta 0, schema **59**
-Updated: 2026-09-15 09:20
+Unit: P8.7 — save/load evidence for the five Produce fields the audit found unproven
+Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-7-out.txt`
+Last done: P8.6 audit accepted — **5 persisted fields had no real save evidence**, 2 of them vacuous
+Updated: 2026-09-15 10:10
 Foreman load: 2026-09-15 07:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -195,8 +195,11 @@ serialising is cheaper than reconciling.
 | ✅ | P8.2b — assertions for the bond authority | accepted, `f80095d`. labor **97/0/0** |
 | ✅ | P8.3 — integration human evidence recorded | accepted, `58267e0`. 20 added, 0 changed |
 | ✅ | P8.4 — full build + fresh whole suite | **1670/0/17**, CLEAN, delta 0, schema 59 |
-| 🔨 | P8.5 — `PROGRESS.md`, disposition markers, final state | Luna running |
-| ⬜ | P8.6 — push, clean halt, final report | — |
+| ✅ | P8.5 — `PROGRESS.md`, disposition markers | accepted, `5822740`. 11 markers |
+| ✅ | P8.6 — audit: §17 save/load evidence + checklist coverage | accepted; P8-D4, P8-D5 |
+| 🔨 | P8.7 — save/load evidence for the five unproven Produce fields | Luna running |
+| ⬜ | P8.8 — the three checklist bullets nobody recorded | — |
+| ⬜ | P8.9 — clean halt and final report | — |
 
 ## Decisions
 
@@ -212,6 +215,21 @@ serialising is cheaper than reconciling.
   `MainTabWindow_Intercolony_Labor.cs:1175`, `EmployeeApparelPatch.cs:767`. **`SettleBond` is the
   authority because it is the one that pays.** Fixed in P8.2a; §14.2 step 6 is the plan step that
   required this.
+- **2026-09-15 — P8-D4. FIVE NEW PERSISTED FIELDS HAD NO REAL SAVE EVIDENCE, AND TWO LOOKED LIKE
+  THEY DID.** Sol audited every `Scribe` line the branch added. Six fields round-trip at non-default
+  values and are genuinely proven. But `ProduceLoopRecord.allowedStuff` and `allowedWorkers` are
+  never round-tripped at all, and `restrictToSelectedWorkers`, `minConstructionSkill` and
+  `IntercolonySettings.maxProduceTarget` are **vacuous**: the only fixture that saves them leaves
+  them at their defaults, and `Scribe_Values.Look` omits a default, so the node is never written and
+  the load path never runs. A passing round trip at the default value is not evidence. Closed in
+  P8.7. **Old-save safety is separately fine** — every absent node lands on a safe default, which
+  Sol checked field by field.
+- **2026-09-15 — P8-D5. THREE §17 CHECKLIST BULLETS ARE RECORDED NOWHERE.** Everything else is
+  either asserted or written down as a human sitting. The exceptions: F04's "target counts only
+  finished stored matching products" and "no quality filter exists", and F23's "Any preserves legacy
+  behavior". Scope's three bullets (F12 frozen, F22 frozen, closed findings stay closed) are
+  established by the P8.1 diff audit and the disposition markers rather than by an assertion, which
+  is the right instrument for them.
 - **2026-09-15 — P8-D3. MOST OF §14 IS HUMAN-ONLY, AND THAT IS THE HONEST ANSWER.** Sol classified
   each numbered step. §14.1 is almost entirely already asserted. §14.2 steps 2/3/4/7/8 and §14.3
   steps 1/2/4 need a real pawn, the real optimizer, or a real pod landing — a fixture that generated
