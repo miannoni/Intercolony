@@ -25,6 +25,11 @@ namespace Intercolony
     /// </summary>
     public static class EmploymentService
     {
+        // Session-only diagnostic state. The contract itself remains unchanged and this is not
+        // persisted: a failed preflight must not add a save field just to suppress duplicate logs.
+        private static readonly HashSet<EmploymentContract> dropPodPreflightFailuresLogged =
+            new HashSet<EmploymentContract>();
+
         /// <summary>
         /// Hires a worker under one of §37's wage structures and one of §42's combat clauses.
         /// Prepaid takes the whole discounted term at hire; periodic structures take a signing fee
@@ -406,6 +411,32 @@ namespace Intercolony
             for (int i = contracts.Count - 1; i >= 0; i--)
             {
                 EmploymentContract contract = contracts[i];
+
+                if (contract.status == EmploymentStatus.Travelling &&
+                    contract.arrivalTransport == EmploymentArrivalTransport.DropPod)
+                {
+                    if (contract.pawn != null && contract.pawn.Spawned)
+                    {
+                        try
+                        {
+                            CompleteArrival(contract);
+                        }
+                        catch (System.Exception ex)
+                        {
+                            // Never End here: a pod has already taken ownership of the pawn, and
+                            // End's pre-arrival cleanup is allowed to discard unspawned workers.
+                            IntercolonyLog.Error(
+                                $"Employment #{contract.id} failed completing drop-pod arrival: {ex}");
+                        }
+                    }
+                    else if (now >= contract.arrivalTick &&
+                             !IsInFlightDropPod(contract.pawn))
+                    {
+                        LaunchDropPodArrival(contract);
+                    }
+
+                    continue;
+                }
 
                 if (contract.status == EmploymentStatus.Travelling && now >= contract.arrivalTick)
                 {
@@ -909,65 +940,212 @@ namespace Intercolony
                 }
 
                 GenSpawn.Spawn(worker, cell, map);
-
-                contract.quest = MakeEmploymentQuest(contract);
-                worker.SetFaction(Faction.OfPlayer);
-
-                // Belt and braces. Lodger status should have stopped ChangeKind from firing at
-                // all; if some other mod's patch got there first, this is the cheap correction.
-                if (contract.originalKind != null && worker.kindDef != contract.originalKind)
-                {
-                    IntercolonyLog.Warning(
-                        $"{contract.workerName}'s kindDef was rewritten to {worker.kindDef?.defName} " +
-                        $"despite lodger status; restoring {contract.originalKind.defName}.");
-                    worker.kindDef = contract.originalKind;
-                }
-
-                contract.status = EmploymentStatus.Active;
-                contract.arrivedTick = GenTicks.TicksGame;
-
-                // An open-ended engagement has no end tick at all (§36.4). Everything that reads
-                // endTick already treats -1 as "no deadline", so this needs no special case beyond
-                // not setting one.
-                contract.endTick = contract.IsOpenEnded
-                    ? -1
-                    : GenTicks.TicksGame + contract.termDays * GenDate.TicksPerDay;
-
-                // §43 pays for harm the colony did, so what they walked in with does not count.
-                // Snapshotted here rather than at hire because the journey is not the colony's
-                // responsibility either.
-                contract.permanentInjuriesOnArrival = CompensationService.CountPermanentInjuries(worker);
-
-                // Any attack recorded before employment belongs to their previous life. Without
-                // this, a mercenary generated mid-firefight would arrive already in breach.
-                contract.countedAttackTick = worker.mindState?.lastAttackTargetTick ?? -99999;
-
-                // The pay clock runs from the first day of work, not from hiring: a worker who
-                // spent a week on the road has not earned a week's wage.
-                PayrollService.BeginPayroll(contract);
-
-                IntercolonyLetters.Send(
-                    IntercolonyLetterImportance.Chatty,
-                    "Employee arrived",
-                    $"{contract.workerName} of {contract.factionName} has arrived from {contract.settlementName} " +
-                    $"to work for {contract.termDays} days.\n\n" +
-                    $"Skills: {contract.workerSkills}\n" +
-                    $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}\n" +
-                    $"{contract.paidSilver} silver paid in advance.\n" +
-                    $"Equipment: {contract.EquipmentBondLabel}.\n" +
-                    $"Terms: {contract.combatClause.LabelCap()}. {contract.combatClause.Explain()}\n\n" +
-                    "They can be assigned work and given a bed like a colonist, but they are not one: " +
-                    "they belong to their own faction and will leave when the term ends.\n\n" +
-                    $"If they die while employed, {contract.settlementName} expects " +
-                    $"{CompensationService.DeathCompensation(contract)} silver in compensation.",
-                    LetterDefOf.PositiveEvent, worker);
-
-                IntercolonyLog.Message($"Arrived: {contract}");
+                CompleteArrival(contract);
             }
             catch (System.Exception ex)
             {
                 IntercolonyLog.Warning($"Employment #{contract.id} failed on arrival: {ex}");
                 End(contract, EmploymentStatus.Failed, $"{contract.workerName} could not be received");
+            }
+        }
+
+        /// <summary>Completes the shared post-spawn portion of an arrival.</summary>
+        private static void CompleteArrival(EmploymentContract contract)
+        {
+            Pawn worker = contract.pawn;
+
+            contract.quest = MakeEmploymentQuest(contract);
+            worker.SetFaction(Faction.OfPlayer);
+
+            // Belt and braces. Lodger status should have stopped ChangeKind from firing at
+            // all; if some other mod's patch got there first, this is the cheap correction.
+            if (contract.originalKind != null && worker.kindDef != contract.originalKind)
+            {
+                IntercolonyLog.Warning(
+                    $"{contract.workerName}'s kindDef was rewritten to {worker.kindDef?.defName} " +
+                    $"despite lodger status; restoring {contract.originalKind.defName}.");
+                worker.kindDef = contract.originalKind;
+            }
+
+            contract.status = EmploymentStatus.Active;
+            contract.arrivedTick = GenTicks.TicksGame;
+
+            // An open-ended engagement has no end tick at all (§36.4). Everything that reads
+            // endTick already treats -1 as "no deadline", so this needs no special case beyond
+            // not setting one.
+            contract.endTick = contract.IsOpenEnded
+                ? -1
+                : GenTicks.TicksGame + contract.termDays * GenDate.TicksPerDay;
+
+            // §43 pays for harm the colony did, so what they walked in with does not count.
+            // Snapshotted here rather than at hire because the journey is not the colony's
+            // responsibility either.
+            contract.permanentInjuriesOnArrival = CompensationService.CountPermanentInjuries(worker);
+
+            // Any attack recorded before employment belongs to their previous life. Without
+            // this, a mercenary generated mid-firefight would arrive already in breach.
+            contract.countedAttackTick = worker.mindState?.lastAttackTargetTick ?? -99999;
+
+            // The pay clock runs from the first day of work, not from hiring: a worker who
+            // spent a week on the road has not earned a week's wage.
+            PayrollService.BeginPayroll(contract);
+
+            IntercolonyLetters.Send(
+                IntercolonyLetterImportance.Chatty,
+                "Employee arrived",
+                $"{contract.workerName} of {contract.factionName} has arrived from {contract.settlementName} " +
+                $"to work for {contract.termDays} days.\n\n" +
+                $"Skills: {contract.workerSkills}\n" +
+                $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}\n" +
+                $"{contract.paidSilver} silver paid in advance.\n" +
+                $"Equipment: {contract.EquipmentBondLabel}.\n" +
+                $"Terms: {contract.combatClause.LabelCap()}. {contract.combatClause.Explain()}\n\n" +
+                "They can be assigned work and given a bed like a colonist, but they are not one: " +
+                "they belong to their own faction and will leave when the term ends.\n\n" +
+                $"If they die while employed, {contract.settlementName} expects " +
+                $"{CompensationService.DeathCompensation(contract)} silver in compensation.",
+                LetterDefOf.PositiveEvent, worker);
+
+            dropPodPreflightFailuresLogged.Remove(contract);
+            IntercolonyLog.Message($"Arrived: {contract}");
+        }
+
+        /// <summary>
+        /// Launches a drop pod without changing the contract's travelling state. Vanilla removes
+        /// world pawns itself once the real skyfaller exists, so every destructive operation stays
+        /// after the complete preflight and the landing-cell check.
+        /// </summary>
+        private static void LaunchDropPodArrival(EmploymentContract contract)
+        {
+            if (contract == null)
+            {
+                IntercolonyLog.Error("Drop-pod arrival preflight failed: contract is null.");
+                return;
+            }
+
+            Map map = contract.destinationMap;
+            // Every failure below preserves the travelling contract and its pinned pawn. Never
+            // call End here: End discards a live, never-arrived, unspawned worker.
+            if (map == null)
+            {
+                LogDropPodPreflightFailure(contract, "destinationMap is null");
+                return;
+            }
+
+            if (Find.Maps == null || !Find.Maps.Contains(map))
+            {
+                LogDropPodPreflightFailure(contract, "destinationMap is not present in Find.Maps");
+                return;
+            }
+
+            if (!map.IsPlayerHome)
+            {
+                LogDropPodPreflightFailure(contract, "destinationMap is not a player-home map");
+                return;
+            }
+
+            Pawn worker = contract.pawn;
+            if (worker == null)
+            {
+                LogDropPodPreflightFailure(contract, "pawn is null");
+                return;
+            }
+
+            if (worker.Destroyed)
+            {
+                LogDropPodPreflightFailure(contract, "pawn is destroyed");
+                return;
+            }
+
+            if (worker.Dead)
+            {
+                LogDropPodPreflightFailure(contract, "pawn is dead");
+                return;
+            }
+
+            if (worker.Spawned)
+            {
+                LogDropPodPreflightFailure(contract, "pawn is already spawned");
+                return;
+            }
+
+            if (worker.GetCaravan() != null)
+            {
+                LogDropPodPreflightFailure(contract, "pawn is in a caravan");
+                return;
+            }
+
+            if (IsCapturedEmployee(contract))
+            {
+                LogDropPodPreflightFailure(contract, "pawn is captured or kidnapped");
+                return;
+            }
+
+            if (worker.ParentHolder != null)
+            {
+                LogDropPodPreflightFailure(contract, "pawn is already held by a container");
+                return;
+            }
+
+            if (Find.WorldPawns == null || !Find.WorldPawns.Contains(worker))
+            {
+                LogDropPodPreflightFailure(contract, "pawn is not in Find.WorldPawns");
+                return;
+            }
+
+            Faction employerFaction = contract.employerFaction;
+            if (employerFaction == null)
+            {
+                LogDropPodPreflightFailure(contract, "employer faction is null");
+                return;
+            }
+
+            if (Find.FactionManager == null ||
+                !Find.FactionManager.AllFactionsListForReading.Contains(employerFaction))
+            {
+                LogDropPodPreflightFailure(contract, "employer faction is not registered in this world");
+                return;
+            }
+
+            // HostilityPolicy.Sweep runs immediately before this hourly pass. Reuse its single
+            // war predicate as Arrive's same-hour backstop, but do not call Sweep here: it ends
+            // travelling contracts, and End would discard this pinned pre-arrival pawn.
+            if (HostilityPolicy.IsAtWar(employerFaction))
+            {
+                LogDropPodPreflightFailure(contract, "employer faction is at war with the colony");
+                return;
+            }
+
+            IntVec3 cell = DropCellFinder.TryFindSafeLandingSpotCloseToColony(
+                map, IntVec2.One, Faction.OfPlayer);
+            if (!cell.IsValid || !cell.InBounds(map))
+            {
+                LogDropPodPreflightFailure(contract, "no valid safe landing cell was found");
+                return;
+            }
+
+            ActiveTransporterInfo info = new ActiveTransporterInfo();
+            if (!info.innerContainer.TryAdd(worker))
+            {
+                LogDropPodPreflightFailure(contract, "the pawn could not be added to the transporter");
+                return;
+            }
+
+            DropPodUtility.MakeDropPodAt(cell, map, info);
+        }
+
+        private static bool IsInFlightDropPod(Pawn worker)
+        {
+            return worker != null && ThingOwnerUtility.AnyParentIs<ActiveTransporterInfo>(worker);
+        }
+
+        private static void LogDropPodPreflightFailure(EmploymentContract contract, string reason)
+        {
+            if (dropPodPreflightFailuresLogged.Add(contract))
+            {
+                IntercolonyLog.Error(
+                    $"Drop-pod arrival preflight failed for employment #{contract.id} " +
+                    $"({contract.workerName}): {reason}.");
             }
         }
 
