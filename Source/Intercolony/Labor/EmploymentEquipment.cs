@@ -440,12 +440,19 @@ namespace Intercolony
         private static int MatchQuantity(
             EmploymentEquipmentRecord record, List<CarriedEquipmentStack> carried)
         {
-            if (record == null || record.quantity <= 0)
+            // Only the refundable numerator is matchable. The settlement denominator intentionally
+            // remains record.quantity: with 3 identical items, 1 bought out, and 2 returned,
+            // matched = 2 while total = 3, so BondShare refunds two thirds and forfeits the third.
+            // If total became 2 as well, the full bond would be refunded and the colony would get
+            // the item for nothing. boughtOutQuantity is persisted, but no current path increments
+            // it; it is 0 on existing saves and current paths, so RefundableQuantity equals
+            // quantity. That behavior-neutrality is load-bearing, not accidental.
+            if (record == null || record.RefundableQuantity <= 0)
             {
                 return 0;
             }
 
-            int needed = record.quantity;
+            int needed = record.RefundableQuantity;
             int matched = 0;
             for (int i = 0; i < carried.Count && needed > 0; i++)
             {
