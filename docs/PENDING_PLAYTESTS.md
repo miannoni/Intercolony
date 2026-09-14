@@ -68,7 +68,21 @@ real risk because both are variable length; whether the **Status** row reads as 
 and whether refusing to untick the last material is understandable or merely feels broken. Set a
 program to **Maintain stock** 10 / **Resume below** 5 with a colonist assigned and watch it over a
 few in-game days. Judge whether it actually behaves that way, including that selling stock down to
-6 does not restart it and down to 5 does. The model-level assertions prove the domain rules and
+6 does not restart it and down to 5 does.
+
+The **selected-worker list is the one Produce setting whose survival across a save is not machine-
+proven.** `allowedWorkers` is stored as a **reference to a pawn**, not a value, so the suite's
+lightweight probe cannot resolve it — the assertion **skips rather than passing**, and says so. A
+person should **restrict a program to one or two named colonists, save, quit to the menu, reload,
+and reopen the Produce controls** to confirm the same colonists are still selected, and that
+**nobody else has become able to work it**. Note that a pawn who **dies or leaves the colony**
+between save and load is the interesting case: the record strips references that no longer resolve,
+so the program should come back with the remaining workers rather than with an empty list that
+silently lets anyone build. Every other Produce setting — the target, the resume-below threshold,
+the allowed materials, the skill floor and the configurable maximum — is machine-proven across a
+save.
+
+The model-level assertions prove the domain rules and
 prove nothing about how any of it looks.
 
 ### F06: employee apparel, the consent card, and what the bond actually costs
