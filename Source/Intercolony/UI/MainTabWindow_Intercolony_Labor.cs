@@ -214,10 +214,9 @@ namespace Intercolony
             Widgets.CheckboxLabeled(emergencyToggleRect, "Emergency dispatch", ref emergencyDispatch);
             TooltipHandler.TipRegion(
                 emergencyToggleRect,
-                "Show only the nearest half of the existing worker market by ordinary travel time. " +
-                "Emergency dispatch compresses the listed travel estimate to about one third, " +
-                "with a one-day minimum, and buys that speed with a large wage premium; it does " +
-                "not create workers, guarantee fulfilment, queue a request, or select a drop pod.");
+                "Show only workers whose settlement can reach the colony quickly, either because " +
+                "it is already close or because it can send a drop pod. That speed is bought with " +
+                "a large wage premium.");
             if (emergencyDispatch != wasEmergencyDispatch)
             {
                 SoundDefOf.Tick_Tiny.PlayOneShotOnCamera();
@@ -233,9 +232,8 @@ namespace Intercolony
             if (pool.Count == 0)
             {
                 GUI.color = Color.gray;
-                // The nearest-half rule guarantees an emergency candidate whenever the ordinary
-                // listing contains one; this established empty state therefore remains for an
-                // empty ordinary market.
+                // Capability and travel filtering can leave the emergency list empty even when
+                // the ordinary listing contains workers.
                 string emptyMessage = emergencyDispatch
                     ? "No workers are currently on offer.\n\n" +
                       "Emergency dispatch filters the existing direct-hire market; it does not " +

@@ -55,8 +55,8 @@ namespace Intercolony
 
             if (emergencyDispatch && !LaborCandidateService.CanReachEmergency(candidate))
             {
-                failReason = $"{candidate.Name} is not in the nearest half of the current " +
-                    "direct-hire market for emergency dispatch.";
+                failReason = $"The source settlement cannot get {candidate.Name} here quickly " +
+                    "enough for emergency dispatch.";
                 return null;
             }
 
@@ -180,7 +180,7 @@ namespace Intercolony
             // string "no skills" into every completed record.
             string skills = candidate.SkillSummary();
 
-            int arrivalDays = LaborCandidateService.ArrivalDaysFor(candidate, emergencyDispatch);
+            int arrivalTicks = LaborCandidateService.ArrivalTicksFor(candidate, emergencyDispatch);
             Pawn worker = candidate.Release();
             LaborCandidateService.Take(candidate);
 
@@ -206,7 +206,7 @@ namespace Intercolony
                 hiredTick = GenTicks.TicksGame,
                 // Emergency mode changes only this existing arrival deadline. The mode itself is
                 // deliberately not retained as a new contract field or save-state concept.
-                arrivalTick = GenTicks.TicksGame + arrivalDays * GenDate.TicksPerDay,
+                arrivalTick = GenTicks.TicksGame + arrivalTicks,
                 status = EmploymentStatus.Travelling
             };
 
@@ -227,7 +227,7 @@ namespace Intercolony
                 $"Term: {termDays} days. " +
                 $"{WageStructureUtility.Explain(structure, dailyWage, termDays)} " +
                 $"Equipment bond: {EmploymentEquipmentService.BondLabel(equipmentBond)}. " +
-                $"Arrives in {arrivalDays} days.",
+                $"Arrives in {LaborCandidateService.ArrivalDurationLabel(arrivalTicks)}.",
                 MessageTypeDefOf.PositiveEvent, historical: false);
 
             IntercolonyLog.Message($"Hired: {contract}");

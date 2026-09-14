@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using Verse;
 
 namespace Intercolony
@@ -39,6 +40,7 @@ namespace Intercolony
             }
 
             sb.AppendLine("Profile generation self-test");
+            Info(sb, CurrentWorldSettlementCapabilityMeasurement());
 
             // --- Every tech level, including Undefined and Animal, must produce a sane profile.
             foreach (TechLevel tech in AllTechLevels)
@@ -151,6 +153,70 @@ namespace Intercolony
 
             sb.AppendLine($"  {passed} passed, {failed} failed, 0 skipped.");
             return sb.ToString();
+        }
+
+        private static void Info(StringBuilder sb, string line)
+        {
+            sb.AppendLine($"        {line}");
+        }
+
+        private static string CurrentWorldSettlementCapabilityMeasurement()
+        {
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            Dictionary<TechLevel, int[]> byTechTier = new Dictionary<TechLevel, int[]>();
+            int eligibleSettlements = 0;
+            int capableSettlements = 0;
+
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements != null)
+            {
+                foreach (Settlement settlement in settlements)
+                {
+                    if (!SettlementProfileGenerator.IsEligible(settlement))
+                    {
+                        continue;
+                    }
+
+                    eligibleSettlements++;
+                    SettlementEconomicProfile profile = state?.GetProfile(settlement);
+                    if (profile == null)
+                    {
+                        continue;
+                    }
+
+                    if (!byTechTier.TryGetValue(profile.techTier, out int[] tierCounts))
+                    {
+                        tierCounts = new int[2];
+                        byTechTier.Add(profile.techTier, tierCounts);
+                    }
+
+                    tierCounts[0]++;
+                    if (profile.rapidLogisticsCapability ==
+                        SettlementRapidLogisticsCapability.DropPodsAvailable)
+                    {
+                        capableSettlements++;
+                        tierCounts[1]++;
+                    }
+                }
+            }
+
+            float capablePercentage = eligibleSettlements == 0
+                ? 0f
+                : capableSettlements * 100f / eligibleSettlements;
+            List<string> tierBreakdown = new List<string>();
+            foreach (TechLevel tech in AllTechLevels)
+            {
+                if (byTechTier.TryGetValue(tech, out int[] tierCounts))
+                {
+                    tierBreakdown.Add(
+                        $"{tech}: {tierCounts[0]} total, {tierCounts[1]} capable");
+                }
+            }
+
+            return $"world settlement capability: eligible settlements {eligibleSettlements}; " +
+                $"drop-pod capable {capableSettlements}/{eligibleSettlements} " +
+                $"({capablePercentage:0.0}%); by tech tier " +
+                $"[{(tierBreakdown.Count == 0 ? "none" : string.Join("; ", tierBreakdown))}]";
         }
     }
 }

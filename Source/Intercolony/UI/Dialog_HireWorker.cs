@@ -295,7 +295,8 @@ namespace Intercolony
             if (emergencyDispatch)
             {
                 int premium = Mathf.Max(0, wage - ordinaryWage);
-                int arrivalDays = LaborCandidateService.ArrivalDaysFor(candidate, true);
+                int arrivalTicks = LaborCandidateService.ArrivalTicksFor(candidate, true);
+                string arrivalMethod = LaborCandidateService.EmergencyArrivalMethodFor(candidate);
                 rows.Add(new TermRow(
                     "Emergency premium",
                     $"+{premium:N0} ask silver/day " +
@@ -303,8 +304,8 @@ namespace Intercolony
                     EmergencyPremiumTooltip(ordinaryWage, wage)));
                 rows.Add(new TermRow(
                     "Arrival",
-                    $"{ArrivalLabel(arrivalDays)} (ordinary: {ArrivalLabel(candidate.travelDays)})",
-                    EmergencyArrivalTooltip(candidate, arrivalDays)));
+                    $"{LaborCandidateService.ArrivalDurationLabel(arrivalTicks)} — {arrivalMethod}",
+                    EmergencyArrivalTooltip(candidate, arrivalTicks, arrivalMethod)));
             }
 
             rows.Add(new TermRow("Due at hire", $"{hireCostQuote.totalDue:N0} silver"));
@@ -320,20 +321,12 @@ namespace Intercolony
                    "not guarantee that a worker exists or can fulfil the request.";
         }
 
-        private static string EmergencyArrivalTooltip(LaborCandidate candidate, int arrivalDays)
+        private static string EmergencyArrivalTooltip(
+            LaborCandidate candidate, int arrivalTicks, string arrivalMethod)
         {
-            return $"This worker is in the nearest half of the current direct-hire market by ordinary " +
-                   $"travel time ({candidate.travelDays} days). Emergency dispatch uses the existing " +
-                   $"employment arrival time and compresses that trip to {ArrivalLabel(arrivalDays)} " +
-                   "with a one-day minimum. Drop-pod arrival is not offered because F21 has no " +
-                   "settlement logistics capability model to gate it on.";
-        }
-
-        private static string ArrivalLabel(int days)
-        {
-            return days <= 0
-                ? "Same day"
-                : $"Within {days} {(days == 1 ? "day" : "days")}";
+            return $"This worker's source settlement can send them by {arrivalMethod} in " +
+                   $"{LaborCandidateService.ArrivalDurationLabel(arrivalTicks)}. " +
+                   $"Their ordinary travel estimate is {candidate.travelDays} days.";
         }
 
         private static float CostRowsHeight(List<TermRow> rows, float width)

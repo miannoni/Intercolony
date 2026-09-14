@@ -25,20 +25,17 @@ namespace Intercolony
         public const float EmergencyDispatchWageMultiplier = 4f;
 
         /// <summary>
-        /// Emergency dispatch keeps the nearest half of the existing direct-hire market, ranked
-        /// by the ordinary travel estimate. This is a deliberately narrow starting balance figure:
-        /// it preserves scarcity without making eligibility depend on a world-specific day count.
+        /// An ordinary caravan can qualify for emergency dispatch when its existing travel
+        /// estimate is no more than this many in-game days. The estimate is not compressed again:
+        /// the short caravan trip is already the capability being paid for.
         /// </summary>
-        public const float EmergencyMarketFraction = 0.5f;
+        public const int EmergencyConventionalMaxDays = 2;
 
         /// <summary>
-        /// Emergency direct hires compress the candidate's ordinary travel estimate to roughly one
-        /// third. This is a deliberately urgent starting balance figure; the one-day floor keeps
-        /// the existing arrival-tick contract in whole days. Drop-pod arrival is deliberately
-        /// absent: F21 has no settlement logistics capability model to gate it on, and equipment
-        /// tier remains F23's unbuilt request work.
+        /// Starting emergency drop-pod arrival time. It is kept in hours because a pod arrival
+        /// must not be rounded up to the existing whole-day caravan floor.
         /// </summary>
-        public const float EmergencyArrivalFraction = 1f / 3f;
+        public const float EmergencyPodArrivalHours = 4f;
 
         /// <summary>
         /// What a labor cost of 100% means, relative to the rate this mod shipped with. The
@@ -757,55 +754,23 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Whether an already-listed worker belongs to F24's urgent slice of the current market.
-        /// The slice is the nearest fraction of the transient direct-hire pool by the existing
-        /// ordinary travel estimate. It does not synthesize a replacement, preserve a request,
-        /// select a transport pod, or add an equipment requirement.
+        /// Whether an already-listed worker can physically reach the colony through emergency
+        /// dispatch. This evaluates only the candidate and its source settlement; the result does
+        /// not depend on the size or order of the transient direct-hire pool.
         /// </summary>
         public static bool CanReachEmergency(LaborCandidate candidate)
         {
-            if (!IsEmergencyCandidate(candidate) || pool == null || pool.Count == 0)
+            if (!IsEmergencyCandidate(candidate))
             {
                 return false;
             }
 
-            int candidateIndex = pool.IndexOf(candidate);
-            if (candidateIndex < 0)
+            if (candidate.travelDays <= EmergencyConventionalMaxDays)
             {
-                return false;
+                return true;
             }
 
-            int available = EmergencyCandidateCount();
-            if (available == 0)
-            {
-                return false;
-            }
-
-            int rank = 0;
-            for (int i = 0; i < pool.Count; i++)
-            {
-                LaborCandidate offered = pool[i];
-                if (!IsEmergencyCandidate(offered) || ReferenceEquals(offered, candidate))
-                {
-                    continue;
-                }
-
-                int travelComparison = offered.travelDays.CompareTo(candidate.travelDays);
-                bool comesFirst = travelComparison < 0;
-                if (travelComparison == 0)
-                {
-                    int distanceComparison = offered.distanceTiles.CompareTo(candidate.distanceTiles);
-                    comesFirst = distanceComparison < 0 ||
-                        (distanceComparison == 0 && i < candidateIndex);
-                }
-
-                if (comesFirst)
-                {
-                    rank++;
-                }
-            }
-
-            return rank < available;
+            return IsEmergencyDropPodArrival(candidate);
         }
 
         private static bool IsEmergencyCandidate(LaborCandidate candidate)
@@ -813,38 +778,79 @@ namespace Intercolony
             return candidate != null && candidate.pawn != null && candidate.travelDays >= 0;
         }
 
-        private static int EmergencyCandidateCount()
+        private static bool IsEmergencyDropPodArrival(LaborCandidate candidate)
         {
-            int candidateCount = 0;
-            foreach (LaborCandidate candidate in pool)
+            if (!IsEmergencyCandidate(candidate))
             {
-                if (IsEmergencyCandidate(candidate))
-                {
-                    candidateCount++;
-                }
+                return false;
             }
 
-            return candidateCount == 0
-                ? 0
-                : Mathf.Max(1, Mathf.CeilToInt(candidateCount * EmergencyMarketFraction));
+            SettlementEconomicProfile profile = SourceSettlementProfile(candidate);
+            return profile != null &&
+                   profile.rapidLogisticsCapability == SettlementRapidLogisticsCapability.DropPodsAvailable;
         }
 
         /// <summary>
-        /// Arrival days for the existing employment arrival tick. Emergency dispatch compresses
-        /// ordinary travel to the starting urgency fraction and rounds up to a whole day, with a
-        /// one-day floor.
+        /// The source settlement's current economic profile, or null when the settlement or live
+        /// world state cannot be resolved. A missing profile cannot provide a drop-pod route.
         /// </summary>
-        public static int ArrivalDaysFor(LaborCandidate candidate, bool emergencyDispatch)
+        private static SettlementEconomicProfile SourceSettlementProfile(LaborCandidate candidate)
+        {
+            if (candidate == null)
+            {
+                return null;
+            }
+
+            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(candidate.settlementId);
+            return state == null || settlement == null
+                ? null
+                : state.GetProfile(settlement);
+        }
+
+        /// <summary>
+        /// Arrival ticks for the existing employment arrival deadline. A capable source
+        /// settlement uses the four-hour emergency pod estimate; a conventional emergency route
+        /// and an ordinary hire retain the candidate's ordinary travel estimate exactly.
+        /// </summary>
+        public static int ArrivalTicksFor(LaborCandidate candidate, bool emergencyDispatch)
         {
             if (candidate == null)
             {
                 return 0;
             }
 
-            return emergencyDispatch
-                ? Mathf.Max(1, Mathf.CeilToInt(
-                    Mathf.Max(0, candidate.travelDays) * EmergencyArrivalFraction))
-                : candidate.travelDays;
+            if (emergencyDispatch && IsEmergencyDropPodArrival(candidate))
+            {
+                return Mathf.RoundToInt(EmergencyPodArrivalHours * GenDate.TicksPerHour);
+            }
+
+            return candidate.travelDays * GenDate.TicksPerDay;
+        }
+
+        /// <summary>
+        /// The player-facing route explanation for the emergency arrival estimate. This shares
+        /// the same capability predicate as <see cref="ArrivalTicksFor"/>.
+        /// </summary>
+        public static string EmergencyArrivalMethodFor(LaborCandidate candidate)
+        {
+            return IsEmergencyDropPodArrival(candidate)
+                ? "Drop pod"
+                : "Emergency caravan";
+        }
+
+        /// <summary>Formats an arrival duration from the ticks used by the contract.</summary>
+        public static string ArrivalDurationLabel(int arrivalTicks)
+        {
+            if (arrivalTicks <= 0)
+            {
+                return "Same day";
+            }
+
+            float hours = arrivalTicks / (float)GenDate.TicksPerHour;
+            return hours < 24f
+                ? $"{hours:0.#}h"
+                : $"{hours / 24f:0.#}d";
         }
 
         /// <summary>
