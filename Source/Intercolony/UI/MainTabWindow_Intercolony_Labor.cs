@@ -994,10 +994,7 @@ namespace Intercolony
                 new EmployeeContractRow(
                     "Pay",
                     pay,
-                    contract == null
-                        ? null
-                        : WageStructureUtility.DailyWageTooltip(
-                            contract.wageStructure, contract.dailyWage)),
+                    null),
                 new EmployeeContractRow(
                     "Time remaining",
                     EmployeeTimeRemaining(contract),
@@ -1014,9 +1011,7 @@ namespace Intercolony
                 new EmployeeContractRow(
                     "Death compensation",
                     compensation,
-                    deathCompensation > 0
-                        ? "Current compensation owed if this worker dies now."
-                        : null),
+                    null),
                 new EmployeeContractRow(
                     "Happiness",
                     EmployeeHappinessLine(contract),
@@ -1387,7 +1382,8 @@ namespace Intercolony
                 ? RenewalService.RenewalWage(contract)
                 : 0;
             string renewalTooltip = hasLiveRenewalOffer
-                ? WageStructureUtility.DailyWageTooltip(contract.wageStructure, renewalWage)
+                ? $"Renewal would charge {WageStructureUtility.EffectiveDailyWage(
+                    contract.wageStructure, renewalWage):N0} silver/day."
                 : "No renewal offer is available.";
 
             DrawEmployeeActionButton(
@@ -1403,7 +1399,7 @@ namespace Intercolony
             DrawEmployeeActionButton(
                 layout.actionStack[1], "Keep them", hasLiveTransitionOffer,
                 hasLiveTransitionOffer
-                    ? "They have offered to stay permanently."
+                    ? null
                     : "No offer to stay permanently is available.",
                 () => OpenTransitionDialog(contract));
 
@@ -1524,11 +1520,11 @@ namespace Intercolony
                     }));
             }
 
-            if (ShouldBuildTooltip(layout.contractActions))
+            if (options.Count == 0 && ShouldBuildTooltip(layout.contractActions))
             {
                 TooltipHandler.TipRegion(
                     layout.contractActions,
-                    "Contract actions for this worker.");
+                    "No additional contract actions are available.");
             }
 
             if (Widgets.ButtonText(layout.contractActions, "...",
@@ -1576,78 +1572,24 @@ namespace Intercolony
 
         private static string EmployeeTooltip(EmploymentContract contract)
         {
-            string text =
-                $"{contract.workerName} of {contract.factionName}\n" +
-                $"Home settlement: {contract.settlementName}\n" +
-                $"Skills at hire: {contract.workerSkills}\n\n" +
-                $"Term: {contract.TermLabel}\n" +
-                $"{WageStructureUtility.DailyWageDisclosure(contract.wageStructure, contract.dailyWage)}\n" +
-                $"Wage structure: {contract.wageStructure.Label()}\n" +
-                $"{WageStructureUtility.StructureTooltip(contract.wageStructure)}\n" +
-                $"Paid in advance: {contract.paidSilver} silver\n\n" +
-                $"Equipment bond: {EmployeeEquipmentBondLine(contract)}\n\n" +
-
-                // §42 and §43 in the tooltip, together, because they are one decision: what you may
-                // ask of them, and what it costs if it goes wrong.
-                $"Clause: {contract.combatClause.LabelCap()}\n" +
-                $"{contract.combatClause.Explain()}\n" +
-                $"Compensation on death: {CompensationService.DeathCompensation(contract)} silver\n";
-
-            if (contract.combatIncidents > 0)
+            string text;
+            switch (contract.combatClause)
             {
-                text += $"Fights drafted into: {contract.combatIncidents}";
-                text += contract.clauseBreaches > 0
-                    ? $", {contract.clauseBreaches} of them outside the clause\n"
-                    : ", all within the clause\n";
-            }
-
-            if (contract.status == EmploymentStatus.Active)
-            {
-                // §116 wants this rare, which makes it worth showing how far off it is — a rare
-                // outcome nobody can see approaching is indistinguishable from one that does not
-                // exist.
-                text += TransitionService.IsEligible(
-                    IntercolonyWorldComponent.Current, contract, out string blocker)
-                    ? "\nThey have grown attached and would stay permanently.\n"
-                    : $"\nSettling here permanently: {blocker}\n";
-            }
-
-            if (contract.compensationPaid > 0)
-            {
-                text += $"Compensation already paid: {contract.compensationPaid} silver\n";
+                case CombatClause.Armed:
+                    text = "They may defend this colony, but not join attacks away from it.";
+                    break;
+                case CombatClause.Security:
+                    text = "They may fight anywhere.";
+                    break;
+                default:
+                    text = "Drafting them breaches the contract; self-defense is allowed.";
+                    break;
             }
 
             if (contract.status == EmploymentStatus.Travelling)
             {
-                text += $"\nArrives in {Mathf.Max(0f, contract.DaysUntilArrival):0.#} days.\n" +
-                        "Cancelling now does not return the wage — they are already on the road.";
-            }
-            else if (contract.status == EmploymentStatus.Severed)
-            {
-                text += $"\n{contract.factionName} is at war with you, so this contract is over.\n\n" +
-                        "They are walking out in no faction at all and will not fight. Nothing in " +
-                        "the colony will shoot them unless you order it — and if they die on the " +
-                        "way out, compensation is owed in full.";
-
-                if (contract.safePassageEndTick > 0)
-                {
-                    float daysLeft = (contract.safePassageEndTick - GenTicks.TicksGame) /
-                                     (float)GenDate.TicksPerDay;
-                    text += $"\n\nSafe passage lasts another {Mathf.Max(0f, daysLeft):0.#} days. " +
-                            "After that they rejoin their own people, here.";
-                }
-            }
-            else
-            {
-                text += $"\n{contract.RemainingLabel} on the term.\n\n" +
-                        "They can be given work priorities, assigned a bed and sent on caravans " +
-                        "like a colonist — but they are not one. They belong to their own faction " +
-                        "and go home when the term ends.";
-
-                if (!contract.CombatUsePermittedNow)
-                {
-                    text += "\n\nDrafting them into a fight breaches their contract.";
-                }
+                text += $" Arrives in {Mathf.Max(0f, contract.DaysUntilArrival):0.#} days; " +
+                        "cancelling now does not return the wage.";
             }
 
             return text;
