@@ -53,6 +53,7 @@ namespace Intercolony
         {
             public ThingDef thingDef;
             public ThingDef stuffDef;
+            public ThingDef alternateStuff;
             public ThingDef nonDefaultStuff;
             public int validStuffCount;
         }
@@ -110,6 +111,8 @@ namespace Intercolony
                     CheckTargetBehavior(
                         r, map, loops, subject, reservedCells, testRects, testZones);
                     CheckResumeBelowBehavior(
+                        r, map, loops, subject, reservedCells, testRects, testZones);
+                    CheckAllowedMaterials(
                         r, map, loops, subject, reservedCells, testRects, testZones);
                     CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
                     CheckProduceDesignators(r, map, subject, reservedCells, testRects);
@@ -3335,6 +3338,425 @@ namespace Intercolony
             }
         }
 
+        private static void CheckAllowedMaterials(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects,
+            List<Zone_Stockpile> testZones)
+        {
+            const string disallowedTargetLabel =
+                "a disallowed material variant does not count towards the target";
+            const string allowedTargetLabel =
+                "an allowed material variant does count towards the target";
+            const string keepCurrentLabel =
+                "the loop keeps a material it is already using when that material is in stock";
+            const string switchAwayLabel =
+                "a loop switches away from a material it is not allowed to use";
+            const string emptyStockpileLabel =
+                "an empty stockpile does not stop the loop";
+
+            if (subject?.alternateStuff == null ||
+                subject.alternateStuff == subject.stuffDef ||
+                subject.validStuffCount < 2)
+            {
+                SkipAllowedMaterialsAssertions(
+                    r,
+                    $"the subject {subject?.thingDef?.defName ?? "null"} has no second " +
+                    $"buildable stuff; valid stuff count " +
+                    $"{subject?.validStuffCount.ToString() ?? "0"}");
+                return;
+            }
+
+            IntVec3 cell;
+            if (!TryFindBuildCell(
+                    map, loops, subject, Rot4.North, reservedCells, out cell))
+            {
+                SkipAllowedMaterialsAssertions(
+                    r,
+                    "no empty valid cell for the allowed-materials fixture; measured 0");
+                return;
+            }
+
+            RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+
+            List<IntVec3> storageCells;
+            string storageFailure;
+            if (!TryCreateTargetStorageCells(
+                    map,
+                    reservedCells,
+                    testZones,
+                    2,
+                    out storageCells,
+                    out storageFailure))
+            {
+                SkipAllowedMaterialsAssertions(r, storageFailure);
+                return;
+            }
+
+            foreach (IntVec3 storageCell in storageCells)
+            {
+                RememberCell(storageCell, null, Rot4.North, reservedCells, testRects);
+            }
+
+            CellRect buildRect = GenAdj.OccupiedRect(
+                cell, Rot4.North, subject.thingDef.Size);
+
+            List<Thing> fixtureStock = null;
+            try
+            {
+                const int target = 2;
+                string stockFailure;
+                if (!TrySpawnMaterialVariantTargetStock(
+                        map,
+                        subject,
+                        storageCells,
+                        out fixtureStock,
+                        out stockFailure))
+                {
+                    r.Skip(disallowedTargetLabel, stockFailure);
+                    r.Skip(allowedTargetLabel, stockFailure);
+                }
+                else
+                {
+                    List<ThingDef> allowedStuff = new List<ThingDef> { subject.stuffDef };
+                    int observedStoredCount = 0;
+                    Blueprint blueprint = null;
+                    CheckSafely(
+                        r,
+                        disallowedTargetLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            ProduceLoopRecord record = loops.Find(cell);
+                            if (record == null)
+                            {
+                                return false;
+                            }
+
+                            record.allowedStuff = new List<ThingDef> { subject.stuffDef };
+                            loops.SetTargetCount(cell, target);
+                            observedStoredCount =
+                                CountStoredTargetStock(map, subject.thingDef, allowedStuff);
+                            loops.RunPass();
+                            blueprint = FindBlueprint(map, cell, subject.thingDef);
+                            Blueprint_Build buildBlueprint = blueprint as Blueprint_Build;
+                            return observedStoredCount == 1 && buildBlueprint != null;
+                        },
+                        () => AllowedMaterialsDetail(
+                            cell,
+                            allowedStuff,
+                            observedStoredCount,
+                            blueprint));
+
+                    DestroyThingsInRect(map, buildRect);
+                    loops.Disable(cell);
+
+                    allowedStuff = new List<ThingDef>
+                    {
+                        subject.stuffDef,
+                        subject.alternateStuff
+                    };
+                    observedStoredCount = 0;
+                    blueprint = null;
+                    CheckSafely(
+                        r,
+                        allowedTargetLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            ProduceLoopRecord record = loops.Find(cell);
+                            if (record == null)
+                            {
+                                return false;
+                            }
+
+                            record.allowedStuff = new List<ThingDef>
+                            {
+                                subject.stuffDef,
+                                subject.alternateStuff
+                            };
+                            loops.SetTargetCount(cell, target);
+                            observedStoredCount =
+                                CountStoredTargetStock(map, subject.thingDef, allowedStuff);
+                            loops.RunPass();
+                            blueprint = FindBlueprint(map, cell, subject.thingDef);
+                            return observedStoredCount == 2 && blueprint == null;
+                        },
+                        () => AllowedMaterialsDetail(
+                            cell,
+                            allowedStuff,
+                            observedStoredCount,
+                            blueprint));
+                }
+            }
+            finally
+            {
+                DestroyStoredTargetStock(fixtureStock);
+                DestroyAllowedMaterialsCells(map, storageCells, buildRect);
+                loops.Disable(cell);
+            }
+
+            List<Thing> rawStock = null;
+            try
+            {
+                List<ThingDef> allowedStuff = new List<ThingDef>
+                {
+                    subject.stuffDef,
+                    subject.alternateStuff
+                };
+                int observedStoredCount = 0;
+                int subjectResourceCount = 0;
+                int alternateResourceCount = 0;
+                Blueprint blueprint = null;
+                ProduceLoopRecord record = null;
+                string stockFailure;
+                int required = RequiredMaterialCount(subject.thingDef, subject.stuffDef);
+                if (required <= 0)
+                {
+                    r.Skip(
+                        keepCurrentLabel,
+                        $"actual build material requirement measured {required}");
+                }
+                else if (!TrySpawnMaterialChoiceRawStock(
+                             map,
+                             subject,
+                             storageCells,
+                             required,
+                             out rawStock,
+                             out subjectResourceCount,
+                             out alternateResourceCount,
+                             out stockFailure))
+                {
+                    r.Skip(keepCurrentLabel, stockFailure);
+                }
+                else if (subjectResourceCount < required)
+                {
+                    r.Skip(
+                        keepCurrentLabel,
+                        $"needs {required} {subject.stuffDef.defName}; measured " +
+                        $"{subjectResourceCount}");
+                }
+                else
+                {
+                    CheckSafely(
+                        r,
+                        keepCurrentLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            record = loops.Find(cell);
+                            if (record == null)
+                            {
+                                return false;
+                            }
+
+                            record.allowedStuff = new List<ThingDef>
+                            {
+                                subject.stuffDef,
+                                subject.alternateStuff
+                            };
+                            observedStoredCount =
+                                CountStoredTargetStock(map, subject.thingDef, allowedStuff);
+                            loops.RunPass();
+                            blueprint = FindBlueprint(map, cell, subject.thingDef);
+                            Blueprint_Build buildBlueprint = blueprint as Blueprint_Build;
+                            return buildBlueprint != null &&
+                                   buildBlueprint.stuffToUse == subject.stuffDef &&
+                                   record.stuffDef == subject.stuffDef;
+                        },
+                        () =>
+                            AllowedMaterialsDetail(
+                                cell,
+                                allowedStuff,
+                                observedStoredCount,
+                                blueprint,
+                                record,
+                                includeRecordStuff: true) +
+                            $"; required {required}; stock {subject.stuffDef.defName}=" +
+                            $"{subjectResourceCount}, {subject.alternateStuff.defName}=" +
+                            $"{alternateResourceCount}");
+                }
+            }
+            finally
+            {
+                DestroyStoredTargetStock(rawStock);
+                DestroyAllowedMaterialsCells(map, storageCells, buildRect);
+                loops.Disable(cell);
+                UpdateResourceCounts(map);
+            }
+
+            rawStock = null;
+            try
+            {
+                List<ThingDef> allowedStuff = new List<ThingDef>
+                {
+                    subject.alternateStuff
+                };
+                int observedStoredCount = 0;
+                int alternateResourceCount = 0;
+                Blueprint blueprint = null;
+                ProduceLoopRecord record = null;
+                string stockFailure;
+                int required = RequiredMaterialCount(
+                    subject.thingDef,
+                    subject.alternateStuff);
+                if (required <= 0)
+                {
+                    r.Skip(
+                        switchAwayLabel,
+                        $"actual build material requirement measured {required}");
+                }
+                else if (!TrySpawnRawMaterialStock(
+                    map,
+                             subject.alternateStuff,
+                             storageCells[0],
+                             required,
+                             out rawStock,
+                             out alternateResourceCount,
+                             out stockFailure))
+                {
+                    r.Skip(switchAwayLabel, stockFailure);
+                }
+                else if (alternateResourceCount < required)
+                {
+                    r.Skip(
+                        switchAwayLabel,
+                        $"needs {required} {subject.alternateStuff.defName}; measured " +
+                        $"{alternateResourceCount}");
+                }
+                else
+                {
+                    CheckSafely(
+                        r,
+                        switchAwayLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            record = loops.Find(cell);
+                            if (record == null)
+                            {
+                                return false;
+                            }
+
+                            record.allowedStuff = new List<ThingDef>
+                            {
+                                subject.alternateStuff
+                            };
+                            observedStoredCount =
+                                CountStoredTargetStock(map, subject.thingDef, allowedStuff);
+                            loops.RunPass();
+                            blueprint = FindBlueprint(map, cell, subject.thingDef);
+                            Blueprint_Build buildBlueprint = blueprint as Blueprint_Build;
+                            return buildBlueprint != null &&
+                                   buildBlueprint.stuffToUse == subject.alternateStuff &&
+                                   record.stuffDef == subject.alternateStuff;
+                        },
+                        () =>
+                            AllowedMaterialsDetail(
+                                cell,
+                                allowedStuff,
+                                observedStoredCount,
+                                blueprint,
+                                record,
+                                includeRecordStuff: true) +
+                            $"; required {required}; stock " +
+                            $"{subject.alternateStuff.defName}={alternateResourceCount}");
+                }
+            }
+            finally
+            {
+                DestroyStoredTargetStock(rawStock);
+                DestroyAllowedMaterialsCells(map, storageCells, buildRect);
+                loops.Disable(cell);
+                UpdateResourceCounts(map);
+            }
+
+            try
+            {
+                List<ThingDef> allowedStuff = new List<ThingDef> { subject.stuffDef };
+                int observedStoredCount = 0;
+                int subjectResourceCount = ResourceCount(map, subject.stuffDef);
+                Blueprint blueprint = null;
+                ProduceLoopRecord record = null;
+                if (subjectResourceCount != 0)
+                {
+                    r.Skip(
+                        emptyStockpileLabel,
+                        $"needs zero {subject.stuffDef.defName} stock; measured " +
+                        $"{subjectResourceCount}");
+                }
+                else
+                {
+                    CheckSafely(
+                        r,
+                        emptyStockpileLabel,
+                        () =>
+                        {
+                            loops.Enable(
+                                cell,
+                                Rot4.North,
+                                subject.thingDef,
+                                subject.stuffDef,
+                                null);
+                            record = loops.Find(cell);
+                            if (record == null)
+                            {
+                                return false;
+                            }
+
+                            // Regression: availability must rank candidates, not veto placement;
+                            // the veto regression took the suite to 36/10/5.
+                            record.allowedStuff = new List<ThingDef> { subject.stuffDef };
+                            observedStoredCount =
+                                CountStoredTargetStock(map, subject.thingDef, allowedStuff);
+                            loops.RunPass();
+                            blueprint = FindBlueprint(map, cell, subject.thingDef);
+                            Blueprint_Build buildBlueprint = blueprint as Blueprint_Build;
+                            return buildBlueprint != null &&
+                                   buildBlueprint.stuffToUse == subject.stuffDef;
+                        },
+                        () =>
+                            AllowedMaterialsDetail(
+                                cell,
+                                allowedStuff,
+                                observedStoredCount,
+                                blueprint,
+                                record,
+                                includeRecordStuff: true) +
+                            $"; stock {subject.stuffDef.defName}={subjectResourceCount}");
+                }
+            }
+            finally
+            {
+                DestroyAllowedMaterialsCells(map, storageCells, buildRect);
+                loops.Disable(cell);
+                UpdateResourceCounts(map);
+            }
+        }
+
 
         private static void CheckDesignatorCancel(
             Results r,
@@ -4859,15 +5281,28 @@ namespace Intercolony
                     continue;
                 }
 
+                ThingDef alternateStuff = null;
+                for (int i = 0; i < validStuffs.Count; i++)
+                {
+                    ThingDef candidateStuff = validStuffs[i];
+                    if (candidateStuff != selectedStuff &&
+                        def.GetStatValueAbstract(StatDefOf.WorkToBuild, candidateStuff) > 0f)
+                    {
+                        alternateStuff = candidateStuff;
+                        break;
+                    }
+                }
+
                 Subject candidate = new Subject
                 {
                     thingDef = def,
                     stuffDef = selectedStuff,
+                    alternateStuff = alternateStuff,
                     nonDefaultStuff = selectedStuff != defaultStuff ? selectedStuff : null,
                     validStuffCount = validStuffs.Count
                 };
 
-                if (candidate.nonDefaultStuff != null)
+                if (candidate.nonDefaultStuff != null && candidate.alternateStuff != null)
                 {
                     return candidate;
                 }
@@ -5279,6 +5714,147 @@ private static bool TrySpawnStoredTargetStock(
             return true;
         }
 
+        private static bool TrySpawnStoredTargetStock(
+            Map map,
+            Subject subject,
+            IntVec3 storageCell,
+            ThingDef stuffDef,
+            out Thing spawnedStock,
+            out string failure)
+        {
+            spawnedStock = null;
+            failure = null;
+            if (map == null ||
+                subject?.thingDef == null ||
+                stuffDef == null ||
+                !storageCell.IsValid)
+            {
+                failure = "the explicit material target stock fixture inputs were unavailable";
+                return false;
+            }
+
+            Thing original = null;
+            Thing minified = null;
+            try
+            {
+                original = ThingMaker.MakeThing(subject.thingDef, stuffDef);
+                minified = original.TryMakeMinified();
+                if (minified != null)
+                {
+                    original = null;
+                }
+
+                if (minified == null ||
+                    minified.GetInnerIfMinified()?.def != subject.thingDef ||
+                    minified.GetInnerIfMinified()?.Stuff != stuffDef)
+                {
+                    failure =
+                        $"the subject building could not be minified as {stuffDef.defName}";
+                    return false;
+                }
+
+                spawnedStock = GenSpawn.Spawn(minified, storageCell, map);
+                if (spawnedStock == null ||
+                    spawnedStock.Destroyed ||
+                    !(spawnedStock is MinifiedThing) ||
+                    !OrderValidator.IsAvailableColonyStock(spawnedStock))
+                {
+                    failure =
+                        "the spawned material variant was not genuinely available in colony storage";
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure = $"could not create stored material variant: {ex.Message}";
+                return false;
+            }
+            finally
+            {
+                if (original != null && !original.Destroyed)
+                {
+                    original.Destroy(DestroyMode.Vanish);
+                }
+
+                if (minified != null &&
+                    !minified.Destroyed &&
+                    minified != spawnedStock)
+                {
+                    minified.Destroy(DestroyMode.Vanish);
+                }
+            }
+        }
+
+        private static bool TrySpawnMaterialVariantTargetStock(
+            Map map,
+            Subject subject,
+            List<IntVec3> storageCells,
+            out List<Thing> spawnedStock,
+            out string failure)
+        {
+            spawnedStock = new List<Thing>();
+            failure = null;
+            if (storageCells == null || storageCells.Count < 2)
+            {
+                failure =
+                    $"needs 2 storage cells for material variants; measured " +
+                    $"{(storageCells == null ? 0 : storageCells.Count)}";
+                return false;
+            }
+
+            Thing first;
+            if (!TrySpawnStoredTargetStock(
+                    map,
+                    subject,
+                    storageCells[0],
+                    subject.stuffDef,
+                    out first,
+                    out failure))
+            {
+                int measuredAfterFirstFailure = CountStoredTargetStock(
+                    map,
+                    subject.thingDef,
+                    new List<ThingDef> { subject.stuffDef, subject.alternateStuff });
+                failure = $"{failure}; measured {measuredAfterFirstFailure}";
+                return false;
+            }
+
+            spawnedStock.Add(first);
+
+            Thing second;
+            if (!TrySpawnStoredTargetStock(
+                    map,
+                    subject,
+                    storageCells[1],
+                    subject.alternateStuff,
+                    out second,
+                    out failure))
+            {
+                int measuredAfterSecondFailure = CountStoredTargetStock(
+                    map,
+                    subject.thingDef,
+                    new List<ThingDef> { subject.stuffDef, subject.alternateStuff });
+                failure = $"{failure}; measured {measuredAfterSecondFailure}";
+                return false;
+            }
+
+            spawnedStock.Add(second);
+            int measured = CountStoredTargetStock(
+                map,
+                subject.thingDef,
+                new List<ThingDef> { subject.stuffDef, subject.alternateStuff });
+            if (measured < 2)
+            {
+                failure = $"needs 2 stored material variants; measured {measured}";
+                DestroyStoredTargetStock(spawnedStock);
+                return false;
+            }
+
+            return true;
+        }
+
         private static bool DestroyStoredTargetStock(List<Thing> spawnedStock)
         {
             bool removed = true;
@@ -5453,6 +6029,14 @@ private static bool TrySpawnStoredTargetStockAcross(
 
 private static int CountStoredTargetStock(Map map, ThingDef thingDef)
         {
+            return CountStoredTargetStock(map, thingDef, null);
+        }
+
+private static int CountStoredTargetStock(
+            Map map,
+            ThingDef thingDef,
+            List<ThingDef> allowedStuff)
+        {
             if (map?.haulDestinationManager == null || thingDef == null)
             {
                 return 0;
@@ -5477,7 +6061,10 @@ private static int CountStoredTargetStock(Map map, ThingDef thingDef)
                     }
 
                     Thing inner = thing.GetInnerIfMinified();
-                    if (inner?.def == thingDef)
+                    if (inner?.def == thingDef &&
+                        (allowedStuff == null ||
+                         allowedStuff.Count == 0 ||
+                         allowedStuff.Contains(inner.Stuff)))
                     {
                         count += inner.stackCount;
                     }
@@ -5487,11 +6074,249 @@ private static int CountStoredTargetStock(Map map, ThingDef thingDef)
             return count;
         }
 
+        private static bool TrySpawnRawMaterialStock(
+            Map map,
+            ThingDef material,
+            IntVec3 storageCell,
+            int amount,
+            out List<Thing> spawnedStock,
+            out int measuredCount,
+            out string failure)
+        {
+            spawnedStock = new List<Thing>();
+            measuredCount = 0;
+            failure = null;
+            if (map == null || material == null || !storageCell.IsValid || amount <= 0)
+            {
+                failure =
+                    $"the raw material fixture inputs were unavailable; measured amount {amount}";
+                return false;
+            }
+
+            Thing raw = null;
+            try
+            {
+                raw = ThingMaker.MakeThing(material);
+                if (raw == null)
+                {
+                    failure = $"ThingMaker returned null for {material.defName}; measured 0";
+                    return false;
+                }
+
+                raw.stackCount = amount;
+                Thing spawned = GenSpawn.Spawn(raw, storageCell, map);
+                if (spawned == null || spawned.Destroyed)
+                {
+                    failure = $"could not spawn raw {material.defName}; measured 0";
+                    return false;
+                }
+
+                raw = null;
+                spawnedStock.Add(spawned);
+                UpdateResourceCounts(map);
+                measuredCount = ResourceCount(map, material);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure =
+                    $"could not create raw {material.defName} stock; measured " +
+                    $"{measuredCount}; {ex.Message}";
+                return false;
+            }
+            finally
+            {
+                if (raw != null && !raw.Destroyed)
+                {
+                    raw.Destroy(DestroyMode.Vanish);
+                }
+            }
+        }
+
+        private static bool TrySpawnMaterialChoiceRawStock(
+            Map map,
+            Subject subject,
+            List<IntVec3> storageCells,
+            int required,
+            out List<Thing> spawnedStock,
+            out int subjectResourceCount,
+            out int alternateResourceCount,
+            out string failure)
+        {
+            spawnedStock = new List<Thing>();
+            subjectResourceCount = ResourceCount(map, subject.stuffDef);
+            alternateResourceCount = ResourceCount(map, subject.alternateStuff);
+            failure = null;
+            if (storageCells == null || storageCells.Count < 2)
+            {
+                failure =
+                    $"needs 2 storage cells for raw material stock; measured " +
+                    $"{(storageCells == null ? 0 : storageCells.Count)}";
+                return false;
+            }
+
+            List<Thing> subjectStock;
+            if (!TrySpawnRawMaterialStock(
+                    map,
+                    subject.stuffDef,
+                    storageCells[0],
+                    required,
+                    out subjectStock,
+                    out subjectResourceCount,
+                    out failure))
+            {
+                return false;
+            }
+
+            spawnedStock.AddRange(subjectStock);
+
+            int desiredNonDefault = Math.Max(
+                RequiredMaterialCount(subject.thingDef, subject.alternateStuff),
+                subjectResourceCount - alternateResourceCount + 1);
+            List<Thing> nonDefaultStock;
+            if (!TrySpawnRawMaterialStock(
+                     map,
+                     subject.alternateStuff,
+                     storageCells[1],
+                     Math.Max(1, desiredNonDefault),
+                     out nonDefaultStock,
+                     out alternateResourceCount,
+                     out failure))
+            {
+                return false;
+            }
+
+            spawnedStock.AddRange(nonDefaultStock);
+            if (subjectResourceCount < required ||
+                alternateResourceCount <= subjectResourceCount)
+            {
+                    failure =
+                        $"needs {subject.stuffDef.defName}>={required} and " +
+                        $"{subject.alternateStuff.defName}>{subject.stuffDef.defName}; " +
+                        $"measured {subject.stuffDef.defName}={subjectResourceCount}, " +
+                        $"{subject.alternateStuff.defName}={alternateResourceCount}";
+                DestroyStoredTargetStock(spawnedStock);
+                return false;
+            }
+
+            return true;
+        }
+
+        private static int RequiredMaterialCount(ThingDef thingDef, ThingDef stuffDef)
+        {
+            if (thingDef == null || stuffDef == null)
+            {
+                return 0;
+            }
+
+            List<ThingDefCountClass> costList = thingDef.CostListAdjusted(stuffDef);
+            if (costList == null)
+            {
+                return 0;
+            }
+
+            for (int i = 0; i < costList.Count; i++)
+            {
+                if (costList[i] != null && costList[i].thingDef == stuffDef)
+                {
+                    return costList[i].count;
+                }
+            }
+
+            return 0;
+        }
+
+        private static int ResourceCount(Map map, ThingDef thingDef)
+        {
+            return map?.resourceCounter == null || thingDef == null
+                ? 0
+                : map.resourceCounter.GetCount(thingDef);
+        }
+
+        private static void UpdateResourceCounts(Map map)
+        {
+            if (map?.resourceCounter != null)
+            {
+                map.resourceCounter.UpdateResourceCounts();
+            }
+        }
+
+        private static void DestroyAllowedMaterialsCells(
+            Map map,
+            List<IntVec3> storageCells,
+            CellRect buildRect)
+        {
+            if (storageCells != null)
+            {
+                for (int i = 0; i < storageCells.Count; i++)
+                {
+                    DestroyThingsInRect(
+                        map,
+                        new CellRect(storageCells[i].x, storageCells[i].z, 1, 1));
+                }
+            }
+
+            DestroyThingsInRect(map, buildRect);
+        }
+
         private static string TargetDetail(
             IntVec3 cell, int target, int countedStock, bool blueprintAppeared)
         {
             return $"cell {cell}; target {target}; counted stock {countedStock}; " +
                    $"blueprint appeared {(blueprintAppeared ? "yes" : "no")}";
+        }
+
+        private static string AllowedMaterialsDetail(
+            IntVec3 cell,
+            List<ThingDef> allowedStuff,
+            int observedStoredCount,
+            Blueprint blueprint,
+            ProduceLoopRecord record = null,
+            bool includeRecordStuff = false)
+        {
+            return $"cell {cell}; allowed {DescribeThingDefs(allowedStuff)}; " +
+                   $"observed stored count {observedStoredCount}; blueprint stuff " +
+                   $"{DescribeBlueprintStuff(blueprint)}" +
+                   (!includeRecordStuff
+                       ? ""
+                       : $"; record stuff {record?.stuffDef?.defName ?? "null"}");
+        }
+
+        private static string DescribeThingDefs(List<ThingDef> defs)
+        {
+            if (defs == null || defs.Count == 0)
+            {
+                return "<none>";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < defs.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(",");
+                }
+
+                sb.Append(defs[i]?.defName ?? "null");
+            }
+
+            return sb.ToString();
+        }
+
+        private static string DescribeBlueprintStuff(Blueprint blueprint)
+        {
+            if (blueprint == null)
+            {
+                return "<none>";
+            }
+
+            Blueprint_Build buildBlueprint = blueprint as Blueprint_Build;
+            if (buildBlueprint == null)
+            {
+                return $"non-Blueprint_Build {blueprint.GetType().Name}";
+            }
+
+            return buildBlueprint.stuffToUse?.defName ?? "null";
         }
 
 
@@ -5913,6 +6738,23 @@ private static int CountStoredTargetStock(Map map, ThingDef thingDef)
                 reason);
         }
 
+        private static void SkipAllowedMaterialsAssertions(Results r, string reason)
+        {
+            r.Skip(
+                "a disallowed material variant does not count towards the target",
+                reason);
+            r.Skip(
+                "an allowed material variant does count towards the target",
+                reason);
+            r.Skip(
+                "the loop keeps a material it is already using when that material is in stock",
+                reason);
+            r.Skip(
+                "a loop switches away from a material it is not allowed to use",
+                reason);
+            r.Skip("an empty stockpile does not stop the loop", reason);
+        }
+
         private static void SkipSubjectAssertions(Results r)
         {
             const string reason = "no loaded minifiable stuff-built building";
@@ -5944,6 +6786,7 @@ private static int CountStoredTargetStock(Map map, ThingDef thingDef)
             r.Skip(
                 "a paused loop reloads paused, and an old record reloads running",
                 reason);
+            SkipAllowedMaterialsAssertions(r, reason);
         }
 
         private static void SkipBlueprintAssertions(Results r, string reason)
