@@ -47,11 +47,30 @@ namespace Intercolony
                 return;
             }
 
-            // Reaching the target only stops a new cycle: in-flight work is left alone, and the
-            // count is deliberately not latched so consumption or sale below the target resumes it.
-            if (loop.targetCount > 0 && CountStoredThings(loop.thingDef) >= loop.targetCount)
+            // Reaching the target stops new cycles and latches; the latch clears only at or below
+            // the resume-below threshold. Work already under way is never destroyed.
+            if (loop.targetCount > 0)
             {
-                return;
+                int stored = CountStoredThings(loop.thingDef);
+
+                if (!loop.waitingForResume && stored >= loop.targetCount)
+                {
+                    loop.waitingForResume = true;
+                }
+
+                if (loop.waitingForResume)
+                {
+                    if (stored > loop.EffectiveResumeBelow)
+                    {
+                        return;
+                    }
+
+                    loop.waitingForResume = false;
+                }
+            }
+            else if (loop.waitingForResume)
+            {
+                loop.waitingForResume = false;
             }
 
             if (loop.thingDef == null || !loop.cell.InBounds(map) || !loop.thingDef.Minifiable)
@@ -297,13 +316,13 @@ namespace Intercolony
 
             loop.targetCount = targetCount < 0 ? 0 : targetCount;
             loop.waitingForResume = false;
-            if (loop.resumeBelow >= 0 && loop.resumeBelow >= loop.targetCount)
+            if (loop.targetCount == 0)
+            {
+                loop.resumeBelow = -1;
+            }
+            else if (loop.resumeBelow >= 0 && loop.resumeBelow >= loop.targetCount)
             {
                 loop.resumeBelow = loop.targetCount - 1;
-                if (loop.resumeBelow < 0)
-                {
-                    loop.resumeBelow = 0;
-                }
             }
         }
 

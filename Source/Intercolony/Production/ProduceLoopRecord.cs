@@ -17,11 +17,11 @@ namespace Intercolony
         // Zero means the original indefinite program mode; a positive value is the stored-stock target.
         public int targetCount;
 
-        public int resumeBelow;
+        public int resumeBelow = -1;
         public bool waitingForResume;
-        public List<ThingDef> allowedStuff;
+        public List<ThingDef> allowedStuff = new List<ThingDef>();
         public bool restrictToSelectedWorkers;
-        public List<Pawn> allowedWorkers;
+        public List<Pawn> allowedWorkers = new List<Pawn>();
         public int minConstructionSkill;
 
         // -1 means "never set", not a quantity; 0 is a valid restart threshold.
