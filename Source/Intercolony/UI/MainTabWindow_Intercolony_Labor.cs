@@ -36,8 +36,13 @@ namespace Intercolony
         private const float EmployeeHeaderLineGap = 2f;
         private const float EmployeeTypeColumnWidth = 180f;
         private const float EmployeeExpandedDetailGap = 4f;
-        private const float EmployeeLegacyTopPadding = 3f;
-        private const float EmployeeDetailBottomPadding = 3f;
+        private const float EmployeeContractLabelWidth = 132f;
+        private const float EmployeeContractRowGap = 3f;
+        private const float EmployeeExpandedTopPadding = 4f;
+        private const float EmployeeExpandedBottomPadding = 4f;
+        private const float EmployeeActionGap = 4f;
+        private const float EmployeeActionHeight = 30f;
+        private const int EmployeeActionCount = 3;
         private const float EmployeeCheckboxSize = 24f;
         private const float CandidateRowHeight = 32f;
 
@@ -961,28 +966,200 @@ namespace Intercolony
             return contract.autoRenew ? "Auto-renew: ON" : "Auto-renew: OFF";
         }
 
-        private static string EmployeeLegacyTitleLine(EmploymentContract contract)
+        private struct EmployeeContractRow
         {
-            return $"{contract.workerName}  —  {contract.workerSkills}";
+            public string label;
+            public string value;
+            public string tooltip;
+
+            public EmployeeContractRow(string label, string value, string tooltip)
+            {
+                this.label = label;
+                this.value = value;
+                this.tooltip = tooltip;
+            }
         }
 
-        private static string EmployeeClauseLine(EmploymentContract contract)
+        private static EmployeeContractRow[] EmployeeContractRows(EmploymentContract contract)
         {
-            string clause = contract.combatClause.LabelCap();
-            if (contract.clauseBreaches > 0)
+            int chargedPay = contract?.ChargedDailyWage ?? 0;
+            int deathCompensation = CompensationService.DeathCompensation(contract);
+            string pay = contract == null ? "Unavailable" : $"{chargedPay:N0} silver/day";
+            string compensation = deathCompensation > 0
+                ? $"{deathCompensation:N0} silver"
+                : "No compensation applies";
+
+            return new[]
             {
-                clause += $", {contract.clauseBreaches} BREACHED";
+                new EmployeeContractRow(
+                    "Pay",
+                    pay,
+                    contract == null
+                        ? null
+                        : WageStructureUtility.DailyWageTooltip(
+                            contract.wageStructure, contract.dailyWage)),
+                new EmployeeContractRow(
+                    "Time remaining",
+                    EmployeeTimeRemaining(contract),
+                    null),
+                new EmployeeContractRow(
+                    "Payment",
+                    EmployeePaymentLine(contract),
+                    contract == null ? null : WageStructureUtility.StructureTooltip(
+                        contract.wageStructure)),
+                new EmployeeContractRow(
+                    "Equipment bond",
+                    EmployeeEquipmentBondLine(contract),
+                    contract == null ? null : EmploymentEquipmentService.BondTooltip),
+                new EmployeeContractRow(
+                    "Death compensation",
+                    compensation,
+                    deathCompensation > 0
+                        ? "Current compensation owed if this worker dies now."
+                        : null),
+                new EmployeeContractRow(
+                    "Happiness",
+                    EmployeeHappinessLine(contract),
+                    EmployeeHappinessTooltip(contract))
+            };
+        }
+
+        private static string EmployeeTimeRemaining(EmploymentContract contract)
+        {
+            if (contract == null)
+            {
+                return "Unavailable";
             }
 
-            return clause;
+            if (contract.status == EmploymentStatus.Severed)
+            {
+                return "Leaving";
+            }
+
+            if (contract.ServingNotice)
+            {
+                return contract.RemainingLabel;
+            }
+
+            return contract.IsOpenEnded ? "Open-ended" : contract.RemainingLabel;
         }
 
-        private static string EmployeeDetailLine(EmploymentContract contract)
+        private static string EmployeePaymentLine(EmploymentContract contract)
         {
-            string detail = WageStructureUtility.DailyWageDisclosure(
-                contract.wageStructure, contract.dailyWage) +
-                            $" — {contract.TermLabel} — {contract.StatusLine()}";
-            return detail;
+            if (contract == null)
+            {
+                return "Unavailable";
+            }
+
+            switch (contract.wageStructure)
+            {
+                case WageStructure.Daily:
+                    return "Daily";
+                case WageStructure.Quadrum:
+                    return "Per quadrum";
+                default:
+                    return "Prepaid";
+            }
+        }
+
+        private static int EmployeeRefundableEquipmentBond(EmploymentContract contract)
+        {
+            if (contract == null || contract.equipmentBond <= 0 || contract.equipmentBondSettled ||
+                contract.arrivedEquipment == null)
+            {
+                return 0;
+            }
+
+            // Use the same replacement-value and premium path as the equipment quote. The
+            // refundable quantity is the only part of a bought-out record that belongs in this
+            // subset; do not prorate the original rounded deposit here.
+            List<EmploymentEquipmentRecord> refundableRecords =
+                new List<EmploymentEquipmentRecord>();
+            foreach (EmploymentEquipmentRecord record in contract.arrivedEquipment)
+            {
+                int quantity = record?.RefundableQuantity ?? 0;
+                if (quantity <= 0)
+                {
+                    continue;
+                }
+
+                refundableRecords.Add(new EmploymentEquipmentRecord
+                {
+                    thingDef = record.thingDef,
+                    stuffDef = record.stuffDef,
+                    quality = record.quality,
+                    unitValue = record.unitValue,
+                    quantity = quantity
+                });
+            }
+
+            return Mathf.Clamp(
+                EmploymentEquipmentService.BondFor(refundableRecords),
+                0,
+                Mathf.Max(0, contract.equipmentBond));
+        }
+
+        private static string EmployeeEquipmentBondLine(EmploymentContract contract)
+        {
+            if (contract == null || contract.equipmentBondSettled)
+            {
+                return "Bond settled";
+            }
+
+            if (contract.equipmentBond <= 0)
+            {
+                return "No equipment bond";
+            }
+
+            int refundableBond = EmployeeRefundableEquipmentBond(contract);
+            return refundableBond > 0
+                ? $"Bond held — {refundableBond:N0} silver refundable"
+                : "Bond held — nothing refundable";
+        }
+
+        private static string EmployeeHappinessLine(EmploymentContract contract)
+        {
+            if (contract == null || contract.moodSampleCount <= 0)
+            {
+                // Returning a band at zero samples would make zero mean unknown, a mistake this project has made six times.
+                return "Unmeasured";
+            }
+
+            float averageMood = Mathf.Clamp01(
+                contract.moodSampleTotal / (float)contract.moodSampleCount);
+            if (averageMood < 0.2f)
+            {
+                return "Miserable";
+            }
+
+            if (averageMood < 0.4f)
+            {
+                return "Unhappy";
+            }
+
+            if (averageMood < 0.6f)
+            {
+                return "Content";
+            }
+
+            if (averageMood < 0.8f)
+            {
+                return "Happy";
+            }
+
+            return "Excellent";
+        }
+
+        private static string EmployeeHappinessTooltip(EmploymentContract contract)
+        {
+            if (contract == null || contract.moodSampleCount <= 0)
+            {
+                return "Mood is sampled once a day. A newly arrived employee has not been sampled yet.";
+            }
+
+            float averageMood = Mathf.Clamp01(
+                contract.moodSampleTotal / (float)contract.moodSampleCount);
+            return $"Average mood: {averageMood:0.00}";
         }
 
         private static RenderTexture TryGetEmployeePortrait(EmploymentContract contract)
@@ -1008,31 +1185,31 @@ namespace Intercolony
 
         /// <summary>
         /// One employee row's geometry, computed in a single place so the portrait jump region, the
-        /// expansion regions, labels, and action buttons cannot disagree about where they are.
+        /// expansion regions, measured contract table, and action stack cannot disagree about where
+        /// they are.
         ///
         /// **This type exists because they did disagree, and it cost a play-test.** The text width
-        /// reserved room for *one* button, but several row states draw two — pay + dismiss, renew +
-        /// let go, keep + not now. The row's invisible click-to-jump region spans the text width, is
-        /// drawn before the buttons, and therefore took the mouse-up for anything underneath it. The
-        /// left-hand button was 106 of its 110 pixels under that region and was simply dead; the
-        /// right-hand one sat clear and worked perfectly, which made it look like a problem with one
-        /// specific button rather than with the layout.
+        /// reserved room for *one* button, but several row states drew two — pay + dismiss, renew +
+        /// let go, keep + not now. The row's invisible click-to-jump region then took the mouse-up
+        /// for a button underneath it. The left-hand button was 106 of its 110 pixels under that
+        /// region and was simply dead; the right-hand one sat clear and worked perfectly, which
+        /// made it look like a problem with one specific button rather than with the layout.
         ///
-        /// Nothing threw, nothing logged, and the only visible clue was the clause label clipping
-        /// behind the button — the same over-wide text width showing itself in a way that could be
-        /// seen. Deriving all of it from one place is what stops the next state that wants two
-        /// buttons from reintroducing it. The expansion targets below stop before every control, and
-        /// the portrait has its own jump target, so no clickable region can sit underneath another.
+        /// Deriving all of it from one place keeps the expansion target clear of every control. The
+        /// expanded table and the three action slots are measured and reserved together, so a long
+        /// value cannot paint over the employee below and an unavailable action cannot move the
+        /// actions that follow it.
         /// </summary>
         private struct EmployeeRowLayout
         {
             public const float ActionWidth = 110f;
             public const float MenuWidth = 28f;
 
-            /// <summary>Width available for identity labels and the non-control expansion region.</summary>
+            /// <summary>Width available for identity labels, the table, and expansion region.</summary>
             public float textWidth;
 
             public float height;
+            public float headerHeight;
             public Rect portrait;
             public Rect portraitJump;
             public Rect name;
@@ -1045,39 +1222,31 @@ namespace Intercolony
             /// <summary>Where the contract-actions menu button goes.</summary>
             public Rect contractActions;
 
-            /// <summary>Where a second-from-right button goes, when the expanded row draws two.</summary>
-            public Rect leftAction;
-
-            /// <summary>Where the rightmost button goes in the expanded detail.</summary>
-            public Rect rightAction;
-
-            public Rect legacyName;
-            public Rect legacyClause;
-            public Rect legacyDetail;
+            public Rect[] contractLabels;
+            public Rect[] contractValues;
+            public Rect[] actionStack;
 
             public static EmployeeRowLayout For(
                 Rect rect, EmploymentContract contract, bool hasPortrait, bool expanded)
             {
-                float leftActionX = rect.xMax - ActionWidth * 2f - 8f;
-                float rightActionX = rect.xMax - ActionWidth - 4f;
+                float actionX = rect.xMax - ActionWidth - 4f;
                 float typeColumnWidth = Mathf.Min(
                     EmployeeTypeColumnWidth, Mathf.Max(1f, rect.width * 0.32f));
                 float typeX = rect.xMax - typeColumnWidth;
                 float contractActionsX = typeX - MenuWidth - EmployeeColumnGap;
 
-                // Always reserve the two legacy action columns, even when the collapsed row does
-                // not draw either button. The text and expansion regions therefore remain clear of
-                // every control in every state.
-                float textRight = Mathf.Min(contractActionsX, leftActionX) - EmployeeColumnGap;
+                // Always reserve the menu and the expanded action column, even when the collapsed
+                // row does not draw the stack. The text and expansion regions therefore remain
+                // clear of every control in every state.
+                float textRight = Mathf.Min(contractActionsX, actionX) - EmployeeColumnGap;
                 float textX = rect.x + EmployeeRowHorizontalPadding +
                               (hasPortrait ? EmployeePortraitSize + EmployeeColumnGap : 0f);
 
                 EmployeeRowLayout layout = new EmployeeRowLayout
                 {
                     textWidth = Mathf.Max(1f, textRight - textX),
-                    contractActions = new Rect(contractActionsX, rect.y, MenuWidth, 30f),
-                    leftAction = new Rect(leftActionX, rect.y, ActionWidth, 30f),
-                    rightAction = new Rect(rightActionX, rect.y, ActionWidth, 30f)
+                    contractActions = new Rect(
+                        contractActionsX, rect.y, MenuWidth, EmployeeActionHeight)
                 };
 
                 float nameHeight = EmployeeLabelHeight(contract.workerName, layout.textWidth);
@@ -1104,6 +1273,7 @@ namespace Intercolony
                 float typeY = headerY;
 
                 layout.height = headerHeight;
+                layout.headerHeight = headerHeight;
                 layout.name = new Rect(textX, headerY, layout.textWidth, nameHeight);
                 layout.secondary = new Rect(
                     textX, layout.name.yMax + EmployeeHeaderLineGap,
@@ -1113,7 +1283,10 @@ namespace Intercolony
                     typeX, layout.type.yMax + EmployeeHeaderLineGap,
                     typeColumnWidth, autoHeight);
                 layout.contractActions = new Rect(
-                    contractActionsX, rect.y + (headerHeight - 30f) / 2f, MenuWidth, 30f);
+                    contractActionsX,
+                    rect.y + (headerHeight - EmployeeActionHeight) / 2f,
+                    MenuWidth,
+                    EmployeeActionHeight);
 
                 if (hasPortrait)
                 {
@@ -1132,35 +1305,124 @@ namespace Intercolony
                     return layout;
                 }
 
-                string legacyTitle = EmployeeLegacyTitleLine(contract);
-                string clause = EmployeeClauseLine(contract);
-                string detail = EmployeeDetailLine(contract);
-                float legacyTitleHeight = EmployeeLabelHeight(legacyTitle, layout.textWidth);
-                float clauseHeight = EmployeeLabelHeight(clause, layout.textWidth);
-                float legacyHeaderHeight = Mathf.Max(legacyTitleHeight, clauseHeight);
-                float detailHeight = EmployeeLabelHeight(detail, layout.textWidth);
-                float legacyBodyHeight = Mathf.Max(
-                    EmployeeRowMinimumHeight,
-                    EmployeeLegacyTopPadding + legacyHeaderHeight + EmployeeHeaderLineGap +
-                    detailHeight + EmployeeDetailBottomPadding);
+                EmployeeContractRow[] rows = EmployeeContractRows(contract);
+                float labelWidth = Mathf.Min(
+                    EmployeeContractLabelWidth, Mathf.Max(1f, layout.textWidth * 0.4f));
+                float valueWidth = Mathf.Max(
+                    1f, layout.textWidth - labelWidth - EmployeeColumnGap);
                 float detailY = rect.y + headerHeight + EmployeeExpandedDetailGap;
-                float actionY = detailY + (legacyBodyHeight - 30f) / 2f;
+                float tableY = detailY + EmployeeExpandedTopPadding;
 
-                layout.height = headerHeight + EmployeeExpandedDetailGap + legacyBodyHeight;
-                layout.leftAction = new Rect(leftActionX, actionY, ActionWidth, 30f);
-                layout.rightAction = new Rect(rightActionX, actionY, ActionWidth, 30f);
-                layout.legacyName = new Rect(
-                    textX, detailY + EmployeeLegacyTopPadding,
-                    layout.textWidth, legacyTitleHeight);
-                layout.legacyClause = new Rect(
-                    textX, detailY + EmployeeLegacyTopPadding,
-                    layout.textWidth, clauseHeight);
-                layout.legacyDetail = new Rect(
-                    textX,
-                    detailY + EmployeeLegacyTopPadding + legacyHeaderHeight + EmployeeHeaderLineGap,
-                    layout.textWidth, detailHeight);
+                layout.contractLabels = new Rect[rows.Length];
+                layout.contractValues = new Rect[rows.Length];
+                for (int i = 0; i < rows.Length; i++)
+                {
+                    EmployeeContractRow row = rows[i];
+                    float labelHeight = EmployeeLabelHeight(row.label, labelWidth);
+                    float valueHeight = EmployeeLabelHeight(row.value, valueWidth);
+                    float rowHeight = Mathf.Max(labelHeight, valueHeight);
+
+                    layout.contractLabels[i] = new Rect(
+                        textX, tableY, labelWidth, rowHeight);
+                    layout.contractValues[i] = new Rect(
+                        textX + labelWidth + EmployeeColumnGap,
+                        tableY,
+                        valueWidth,
+                        rowHeight);
+                    tableY += rowHeight;
+                    if (i < rows.Length - 1)
+                    {
+                        tableY += EmployeeContractRowGap;
+                    }
+                }
+
+                float stackY = detailY + EmployeeExpandedTopPadding;
+                layout.actionStack = new Rect[EmployeeActionCount];
+                for (int i = 0; i < layout.actionStack.Length; i++)
+                {
+                    layout.actionStack[i] = new Rect(
+                        actionX,
+                        stackY + i * (EmployeeActionHeight + EmployeeActionGap),
+                        ActionWidth,
+                        EmployeeActionHeight);
+                }
+
+                float stackBottom = stackY + EmployeeActionCount * EmployeeActionHeight +
+                                    (EmployeeActionCount - 1) * EmployeeActionGap;
+                float detailContentBottom = Mathf.Max(tableY, stackBottom);
+                float detailBodyHeight = detailContentBottom - detailY +
+                                         EmployeeExpandedBottomPadding;
+                layout.height = headerHeight + EmployeeExpandedDetailGap + detailBodyHeight;
                 layout.expandText.height = layout.height;
                 return layout;
+            }
+        }
+
+        private static void DrawEmployeeContractTable(
+            EmployeeRowLayout layout, EmploymentContract contract)
+        {
+            EmployeeContractRow[] rows = EmployeeContractRows(contract);
+            for (int i = 0; i < rows.Length; i++)
+            {
+                EmployeeContractRow row = rows[i];
+
+                GUI.color = new Color(1f, 1f, 1f, 0.6f);
+                Widgets.Label(layout.contractLabels[i], row.label);
+                GUI.color = Color.white;
+                Widgets.Label(layout.contractValues[i], row.value);
+
+                if (ShouldBuildTooltip(layout.contractValues[i]) &&
+                    !string.IsNullOrEmpty(row.tooltip))
+                {
+                    TooltipHandler.TipRegion(layout.contractValues[i], row.tooltip);
+                }
+            }
+        }
+
+        private void DrawEmployeeActionStack(
+            EmployeeRowLayout layout, EmploymentContract contract,
+            bool hasLiveRenewalOffer, bool hasLiveTransitionOffer)
+        {
+            int renewalWage = hasLiveRenewalOffer
+                ? RenewalService.RenewalWage(contract)
+                : 0;
+            string renewalTooltip = hasLiveRenewalOffer
+                ? WageStructureUtility.DailyWageTooltip(contract.wageStructure, renewalWage)
+                : "No renewal offer is available.";
+
+            DrawEmployeeActionButton(
+                layout.actionStack[0], "Renew", hasLiveRenewalOffer, renewalTooltip,
+                () =>
+                {
+                    if (!RenewalService.Accept(contract, out string failReason))
+                    {
+                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                    }
+                });
+
+            DrawEmployeeActionButton(
+                layout.actionStack[1], "Keep them", hasLiveTransitionOffer,
+                hasLiveTransitionOffer
+                    ? "They have offered to stay permanently."
+                    : "No offer to stay permanently is available.",
+                () => OpenTransitionDialog(contract));
+
+            DrawEmployeeActionButton(
+                layout.actionStack[2], "Negotiate", false,
+                "Negotiation is not available yet.", null);
+        }
+
+        private static void DrawEmployeeActionButton(
+            Rect rect, string label, bool available, string tooltip, System.Action action)
+        {
+            if (ShouldBuildTooltip(rect) && !string.IsNullOrEmpty(tooltip))
+            {
+                TooltipHandler.TipRegion(rect, tooltip);
+            }
+
+            if (Widgets.ButtonText(rect, label, active: available))
+            {
+                action?.Invoke();
             }
         }
 
@@ -1211,26 +1473,13 @@ namespace Intercolony
 
             if (expanded)
             {
-                string legacyTitle = EmployeeLegacyTitleLine(contract);
-                Widgets.Label(layout.legacyName, legacyTitle);
+                DrawEmployeeContractTable(layout, contract);
 
-                string clause = EmployeeClauseLine(contract);
-                GUI.color = contract.clauseBreaches > 0
-                    ? new Color(1f, 0.55f, 0.55f)
-                    : new Color(1f, 1f, 1f, 0.6f);
-                Text.Anchor = TextAnchor.UpperRight;
-                Widgets.Label(layout.legacyClause, clause);
-                Text.Anchor = TextAnchor.UpperLeft;
-                GUI.color = StatusColour(contract);
-
-                string detail = EmployeeDetailLine(contract);
-                Widgets.Label(layout.legacyDetail, detail);
-                GUI.color = Color.white;
-
-                if (ShouldBuildTooltip(rect))
+                Rect headerRect = new Rect(rect.x, rect.y, rect.width, layout.headerHeight);
+                if (ShouldBuildTooltip(headerRect))
                 {
                     TooltipHandler.TipRegion(
-                        rect, new TipSignal(EmployeeTooltip(contract), contract.id * 7919));
+                        headerRect, new TipSignal(EmployeeTooltip(contract), contract.id * 7919));
                 }
             }
 
@@ -1238,35 +1487,16 @@ namespace Intercolony
             bool hasLiveTransitionOffer = TransitionService.HasLiveOffer(contract);
             List<FloatMenuOption> options = new List<FloatMenuOption>();
 
-            // An offer to stay for good outranks everything, including renewal: it is the rarest
-            // thing this tab ever shows and it is a decision the player has earned (§44).
+            // The stack owns the two affirmative offer actions. The menu keeps only their existing
+            // decline paths, so dismiss and the other occasional actions remain secondary.
             if (hasLiveTransitionOffer)
             {
-                options.Add(new FloatMenuOption(
-                    "Keep them", () => OpenTransitionDialog(contract)));
                 options.Add(new FloatMenuOption(
                     "Not now", () => TransitionService.Decline(contract)));
             }
 
-            // A live renewal offer outranks the dismiss option: it expires on its own, and it is
-            // the thing the player is being asked about (§115).
             if (hasLiveRenewalOffer)
             {
-                int renewalWage = RenewalService.RenewalWage(contract);
-                FloatMenuOption renewalOption = new FloatMenuOption(
-                    $"Renew — {WageStructureUtility.DailyWageDisclosure(
-                        contract.wageStructure, renewalWage)}",
-                    () =>
-                    {
-                        if (!RenewalService.Accept(contract, out string failReason))
-                        {
-                            Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
-                        }
-                    });
-                renewalOption.tooltip = WageStructureUtility.DailyWageTooltip(
-                    contract.wageStructure, renewalWage);
-                options.Add(renewalOption);
-
                 options.Add(new FloatMenuOption(
                     "Let them go at the end of the term",
                     () => RenewalService.Decline(contract)));
@@ -1278,6 +1508,20 @@ namespace Intercolony
                 options.Add(new FloatMenuOption(
                     contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss",
                     () => ConfirmDismiss(contract)));
+            }
+
+            if (contract.arrearsSilver > 0)
+            {
+                options.Add(new FloatMenuOption(
+                    $"Pay {contract.arrearsSilver}",
+                    () =>
+                    {
+                        if (!PayrollService.TryPayArrears(
+                                contract, Find.CurrentMap, out string failReason))
+                        {
+                            Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                        }
+                    }));
             }
 
             if (ShouldBuildTooltip(layout.contractActions))
@@ -1295,30 +1539,8 @@ namespace Intercolony
 
             if (expanded)
             {
-                // Paying what is owed takes priority over dismissing: it is the action that fixes
-                // the situation, and §39's escalation is only playable if stopping it is easy to find.
-                if (contract.arrearsSilver > 0)
-                {
-                    Rect payRect = layout.leftAction;
-                    if (Widgets.ButtonText(payRect, $"Pay {contract.arrearsSilver}"))
-                    {
-                        if (!PayrollService.TryPayArrears(contract, Find.CurrentMap, out string failReason))
-                        {
-                            Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
-                        }
-                    }
-                }
-
-                // A severed worker cannot be dismissed — the employment is already over and they are
-                // walking out. Showing a live button that does nothing would be worse than no button.
-                if (contract.status == EmploymentStatus.Severed)
-                {
-                    GUI.color = new Color(1f, 1f, 1f, 0.5f);
-                    Text.Anchor = TextAnchor.MiddleCenter;
-                    Widgets.Label(layout.rightAction, "leaving");
-                    Text.Anchor = TextAnchor.UpperLeft;
-                    GUI.color = Color.white;
-                }
+                DrawEmployeeActionStack(
+                    layout, contract, hasLiveRenewalOffer, hasLiveTransitionOffer);
             }
 
             // The portrait is jump/select only. These two non-overlapping regions toggle expansion;
@@ -1352,28 +1574,6 @@ namespace Intercolony
             }
         }
 
-        private static Color StatusColour(EmploymentContract contract)
-        {
-            if (contract.status == EmploymentStatus.Travelling)
-            {
-                return new Color(0.6f, 0.9f, 1f);
-            }
-
-            if (contract.status == EmploymentStatus.Severed)
-            {
-                return new Color(1f, 0.7f, 0.4f);
-            }
-
-            if (contract.termLapsedNotified)
-            {
-                return Color.yellow;
-            }
-
-            return contract.DaysRemaining <= 2f
-                ? new Color(1f, 0.85f, 0.5f)
-                : new Color(1f, 1f, 1f, 0.7f);
-        }
-
         private static string EmployeeTooltip(EmploymentContract contract)
         {
             string text =
@@ -1385,7 +1585,7 @@ namespace Intercolony
                 $"Wage structure: {contract.wageStructure.Label()}\n" +
                 $"{WageStructureUtility.StructureTooltip(contract.wageStructure)}\n" +
                 $"Paid in advance: {contract.paidSilver} silver\n\n" +
-                $"Equipment bond: {contract.EquipmentBondLabel}\n\n" +
+                $"Equipment bond: {EmployeeEquipmentBondLine(contract)}\n\n" +
 
                 // §42 and §43 in the tooltip, together, because they are one decision: what you may
                 // ask of them, and what it costs if it goes wrong.
