@@ -84,6 +84,7 @@ namespace Intercolony
 
             try
             {
+                CheckProduceHasNoQualityFilter(r);
                 CheckProductionLedger(r, state);
                 CheckBillDonePatch(r, state, map);
                 CheckProductionLedgerMigration(r, state);
@@ -93,11 +94,17 @@ namespace Intercolony
                 Subject subject = FindSubject();
                 if (subject == null)
                 {
+                    r.Check(
+                        false,
+                        "target counts only finished stored matching products",
+                        "no loaded minifiable stuff-built building was available for the finished-stock fixture");
                     SkipSubjectAssertions(r);
                 }
                 else
                 {
                     r.Info($"subject {subject.thingDef.defName} using {subject.stuffDef.defName}");
+                    CheckFinishedStoredTargetCount(
+                        r, map, loops, subject, reservedCells, testRects, testZones);
                     CheckFinishedBuilding(r, map, loops, subject, reservedCells, testRects, addedDesignations);
                     CheckDeconstructGuard(r, map, loops, subject, reservedCells, testRects, addedDesignations);
                     CheckDisablePreservesWork(
@@ -2818,6 +2825,276 @@ namespace Intercolony
                             subject.thingDef.Size));
                 }
             }
+        }
+
+        private static void CheckFinishedStoredTargetCount(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects,
+            List<Zone_Stockpile> testZones)
+        {
+            const string label = "target counts only finished stored matching products";
+            List<IntVec3> storageCells = null;
+            List<Thing> finishedStock = null;
+            IntVec3 blueprintCell = IntVec3.Invalid;
+            IntVec3 installedCell = IntVec3.Invalid;
+            Blueprint_Build blueprint = null;
+            Building installed = null;
+
+            try
+            {
+                if (map == null || loops == null || subject?.thingDef == null ||
+                    subject.stuffDef == null)
+                {
+                    r.Check(false, label, "the finished-stock fixture inputs were unavailable");
+                    return;
+                }
+
+                string storageFailure;
+                if (!TryCreateTargetStorageCells(
+                        map,
+                        reservedCells,
+                        testZones,
+                        2,
+                        out storageCells,
+                        out storageFailure))
+                {
+                    r.Check(false, label, storageFailure);
+                    return;
+                }
+
+                foreach (IntVec3 storageCell in storageCells)
+                {
+                    RememberCell(storageCell, null, Rot4.North, reservedCells, testRects);
+                }
+
+                List<ThingDef> allowedStuff = new List<ThingDef> { subject.stuffDef };
+                int baselineStored = CountStoredTargetStock(
+                    map, subject.thingDef, allowedStuff);
+                int measuredStored;
+                if (!TrySpawnStoredTargetStockAcross(
+                        map,
+                        subject,
+                        storageCells,
+                        out finishedStock,
+                        out measuredStored,
+                        out storageFailure))
+                {
+                    r.Check(false, label, storageFailure);
+                    return;
+                }
+
+                int finishedFixtureUnits = 0;
+                for (int i = 0; i < finishedStock.Count; i++)
+                {
+                    Thing inner = finishedStock[i]?.GetInnerIfMinified();
+                    if (inner?.def == subject.thingDef && inner.Stuff == subject.stuffDef)
+                    {
+                        finishedFixtureUnits += inner.stackCount;
+                    }
+                }
+
+                IntVec3 candidateCell;
+                if (!TryFindBuildCell(
+                        map,
+                        loops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out candidateCell))
+                {
+                    r.Check(false, label, "no empty valid cell was available for the blueprint fixture");
+                    return;
+                }
+
+                blueprintCell = candidateCell;
+                RememberCell(
+                    blueprintCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+                blueprint = GenConstruct.PlaceBlueprintForBuild(
+                    subject.thingDef,
+                    blueprintCell,
+                    map,
+                    Rot4.North,
+                    Faction.OfPlayer,
+                    subject.stuffDef);
+                if (blueprint == null || !blueprint.Spawned ||
+                    blueprint.def.entityDefToBuild != subject.thingDef)
+                {
+                    r.Check(
+                        false,
+                        label,
+                        "the same-product Blueprint_Build fixture could not be placed");
+                    return;
+                }
+
+                if (!TryFindBuildCell(
+                        map,
+                        loops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out candidateCell))
+                {
+                    r.Check(false, label, "no empty valid cell was available for the installed fixture");
+                    return;
+                }
+
+                installedCell = candidateCell;
+                RememberCell(
+                    installedCell,
+                    subject.thingDef,
+                    Rot4.North,
+                    reservedCells,
+                    testRects);
+                installed = SpawnFinishedBuilding(
+                    map, subject, installedCell, Rot4.North);
+                if (installed == null || !installed.Spawned || installed.def != subject.thingDef)
+                {
+                    r.Check(
+                        false,
+                        label,
+                        "the same-product installed fixture could not be spawned");
+                    return;
+                }
+
+                MethodInfo countMethod = typeof(ProduceLoopMapComponent).GetMethod(
+                    "CountStoredThings",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                if (countMethod == null)
+                {
+                    r.Check(false, label, "ProduceLoopMapComponent.CountStoredThings was not found by reflection");
+                    return;
+                }
+
+                int expectedStored = baselineStored + finishedFixtureUnits;
+                int target = expectedStored + 1;
+                loops.Enable(
+                    blueprintCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                loops.SetTargetCount(blueprintCell, target);
+                ProduceLoopRecord record = loops.Find(blueprintCell);
+                int countedBeforePass = (int)countMethod.Invoke(
+                    loops, new object[] { record });
+                loops.RunPass();
+                int countedAfterPass = (int)countMethod.Invoke(
+                    loops, new object[] { record });
+                bool blueprintStillPresent =
+                    FindBlueprint(map, blueprintCell, subject.thingDef) != null;
+                bool waitingForResume = record != null && record.waitingForResume;
+
+                bool assertionPassed = finishedFixtureUnits > 0 &&
+                    countedBeforePass == expectedStored &&
+                    countedAfterPass == expectedStored &&
+                    !waitingForResume &&
+                    blueprintStillPresent;
+                r.Check(
+                    assertionPassed,
+                    label,
+                    $"CountStoredThings returned {countedAfterPass} after the pass " +
+                    $"({countedBeforePass} before); finished stored fixture " +
+                    $"{finishedFixtureUnits} unit(s) plus baseline {baselineStored}, " +
+                    $"expected {expectedStored}; helper measured {measuredStored}; " +
+                    $"ignored Blueprint_Build " +
+                    $"({blueprint.def.entityDefToBuild.defName}) and installed " +
+                    $"{installed.def.defName}; target {target}; " +
+                    $"latch {(waitingForResume ? "set" : "clear")}");
+            }
+            catch (Exception ex)
+            {
+                r.Check(false, label, $"{ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                if (blueprintCell.IsValid)
+                {
+                    loops.Disable(blueprintCell);
+                }
+
+                DestroyStoredTargetStock(finishedStock);
+                if (storageCells != null)
+                {
+                    foreach (IntVec3 storageCell in storageCells)
+                    {
+                        DestroyThingsInRect(
+                            map, new CellRect(storageCell.x, storageCell.z, 1, 1));
+                    }
+                }
+
+                if (blueprintCell.IsValid)
+                {
+                    DestroyThingsInRect(
+                        map,
+                        GenAdj.OccupiedRect(blueprintCell, Rot4.North, subject.thingDef.Size));
+                }
+
+                if (installedCell.IsValid)
+                {
+                    DestroyThingsInRect(
+                        map,
+                        GenAdj.OccupiedRect(installedCell, Rot4.North, subject.thingDef.Size));
+                }
+            }
+        }
+
+        private static void CheckProduceHasNoQualityFilter(Results r)
+        {
+            const string label = "no quality filter exists";
+            BindingFlags fieldFlags = BindingFlags.Instance |
+                BindingFlags.Static |
+                BindingFlags.Public |
+                BindingFlags.NonPublic |
+                BindingFlags.DeclaredOnly;
+            FieldInfo[] recordFields = typeof(ProduceLoopRecord).GetFields(fieldFlags);
+            FieldInfo[] dialogFields = typeof(Dialog_ProduceControls).GetFields(fieldFlags);
+            List<string> recordNames = new List<string>();
+            List<string> dialogNames = new List<string>();
+            List<string> qualityFields = new List<string>();
+
+            foreach (FieldInfo field in recordFields)
+            {
+                recordNames.Add(field.Name);
+                Type fieldType = Nullable.GetUnderlyingType(field.FieldType) ?? field.FieldType;
+                if (fieldType == typeof(QualityCategory) ||
+                    fieldType == typeof(QualityRange) ||
+                    field.Name.IndexOf("quality", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    qualityFields.Add($"ProduceLoopRecord.{field.Name}:{field.FieldType.Name}");
+                }
+            }
+
+            foreach (FieldInfo field in dialogFields)
+            {
+                dialogNames.Add(field.Name);
+                Type fieldType = Nullable.GetUnderlyingType(field.FieldType) ?? field.FieldType;
+                if (fieldType == typeof(QualityCategory) ||
+                    fieldType == typeof(QualityRange) ||
+                    field.Name.IndexOf("quality", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    qualityFields.Add($"Dialog_ProduceControls.{field.Name}:{field.FieldType.Name}");
+                }
+            }
+
+            recordNames.Sort(StringComparer.Ordinal);
+            dialogNames.Sort(StringComparer.Ordinal);
+            qualityFields.Sort(StringComparer.Ordinal);
+
+            // Decision guard, not a behavioural assertion: F04 deliberately has no quality filter.
+            r.Check(
+                recordFields.Length > 0 && dialogFields.Length > 0 && qualityFields.Count == 0,
+                label,
+                $"ProduceLoopRecord fields examined [{string.Join(", ", recordNames)}]; " +
+                $"Dialog_ProduceControls fields examined [{string.Join(", ", dialogNames)}]; " +
+                $"quality fields found [{string.Join(", ", qualityFields)}]");
         }
 
         private static void CheckTargetBehavior(

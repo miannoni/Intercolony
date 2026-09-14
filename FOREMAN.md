@@ -1,10 +1,10 @@
 # Foreman state — Intercolony
 
 Stage: P8 — integration, regression, documentation, clean halt
-Unit: P8.7 — save/load evidence for the five Produce fields the audit found unproven
-Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-7-out.txt`
-Last done: P8.6 audit accepted — **5 persisted fields had no real save evidence**, 2 of them vacuous
-Updated: 2026-09-15 10:10
+Unit: P8.8 — the three §17 bullets recorded nowhere
+Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-8-out.txt`
+Last done: P8.7 accepted, `9ce7518` — produce **69/0/1**; PS1 and PS2 both reddened
+Updated: 2026-09-15 10:40
 Foreman load: 2026-09-15 07:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
@@ -197,8 +197,8 @@ serialising is cheaper than reconciling.
 | ✅ | P8.4 — full build + fresh whole suite | **1670/0/17**, CLEAN, delta 0, schema 59 |
 | ✅ | P8.5 — `PROGRESS.md`, disposition markers | accepted, `5822740`. 11 markers |
 | ✅ | P8.6 — audit: §17 save/load evidence + checklist coverage | accepted; P8-D4, P8-D5 |
-| 🔨 | P8.7 — save/load evidence for the five unproven Produce fields | Luna running |
-| ⬜ | P8.8 — the three checklist bullets nobody recorded | — |
+| ✅ | P8.7 — save/load evidence for the five unproven Produce fields | accepted, `9ce7518`. **69/0/1** |
+| 🔨 | P8.8 — the three checklist bullets nobody recorded | Luna running |
 | ⬜ | P8.9 — clean halt and final report | — |
 
 ## Decisions

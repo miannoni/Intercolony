@@ -972,6 +972,59 @@ namespace Intercolony
                 $"\"{professionalHeadline}\" (short \"{professionalShortLabel}\" " +
                 $"present={professionalContainsShortLabel}, long " +
                 $"\"{professionalLongLabel}\" absent={professionalOmitsLongLabel})");
+
+            const string legacyAnyLabel = "Any preserves legacy behavior";
+            JobPosting legacyAnyPosting = new JobPosting
+            {
+                termDays = 30,
+                wageStructure = WageStructure.Daily,
+                combatClause = CombatClause.Civilian
+            };
+            int anyCapabilityFailureCount = 0;
+            string firstAnyCapabilityFailure = null;
+            int anyCapabilityObservationCount = 0;
+            foreach (SettlementEconomicProfile profile in allProfiles)
+            {
+                foreach (CombatClause clause in clauses)
+                {
+                    bool admitted = LaborEquipmentTierService.CanSupply(
+                        profile,
+                        legacyAnyPosting.requestedEquipmentLevel,
+                        clause);
+                    anyCapabilityObservationCount++;
+                    if (!admitted)
+                    {
+                        anyCapabilityFailureCount++;
+                        if (firstAnyCapabilityFailure == null)
+                        {
+                            firstAnyCapabilityFailure =
+                                $"{profile.techTier}/{profile.wealthTier}/" +
+                                $"{profile.archetype}/{clause} => {admitted}";
+                        }
+                    }
+                }
+            }
+
+            string legacyAnyHeadline = legacyAnyPosting.Headline();
+            bool legacyAnyOmitsEquipmentText = legacyAnyHeadline.IndexOf(
+                "equipment", StringComparison.OrdinalIgnoreCase) < 0;
+            bool legacyAnyPreserved =
+                legacyAnyPosting.requestedEquipmentLevel == LaborEquipmentLevel.Any &&
+                anyCapabilityObservationCount > 0 &&
+                anyCapabilityFailureCount == 0 &&
+                legacyAnyOmitsEquipmentText;
+            r.Check(
+                legacyAnyPreserved,
+                legacyAnyLabel,
+                $"new posting default {legacyAnyPosting.requestedEquipmentLevel}; " +
+                $"capability gate admitted {anyCapabilityObservationCount - anyCapabilityFailureCount}/" +
+                $"{anyCapabilityObservationCount} profile/clause combinations; " +
+                $"headline \"{legacyAnyHeadline}\" (equipment text absent=" +
+                $"{legacyAnyOmitsEquipmentText}); first capability failure " +
+                $"{firstAnyCapabilityFailure ?? "none"}");
+            r.Info(
+                "Any applicant materialisation and AddApplicant ownership were not exercised " +
+                "because that legacy path necessarily generates a pawn.");
         }
 
         private static void SkipArrivalSafetyChecks(Results r, string reason)
