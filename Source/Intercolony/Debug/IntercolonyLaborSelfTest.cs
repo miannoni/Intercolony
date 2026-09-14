@@ -1240,7 +1240,13 @@ namespace Intercolony
             // presence of these already-known nodes is candidate-dependent, not F24 state. The
             // experience fields can likewise be absent when their default zero values are omitted.
             HashSet<string> candidateDependentNodes = new HashSet<string>(
-                new[] { "equipmentBond", "moodSampleTotal", "moodSampleCount" },
+                new[]
+                {
+                    "equipmentBond", "moodSampleTotal", "moodSampleCount",
+                    // Emergency pod hires write DropPod while ordinary hires keep the Conventional
+                    // default, which Scribe omits; presence reflects the route, not schema drift.
+                    "arrivalTransport"
+                },
                 StringComparer.Ordinal);
             HashSet<string> ordinaryOnly = new HashSet<string>(
                 ordinaryNodes, StringComparer.Ordinal);
