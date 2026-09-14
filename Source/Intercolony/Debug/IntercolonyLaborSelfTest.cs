@@ -101,6 +101,7 @@ namespace Intercolony
             try
             {
                 CheckAutoRenewPersistence(r);
+                CheckLaborSpineRoundTrip(r);
                 CheckSettingsDefaultMigration(r);
 
                 // --- Candidate pool ---
@@ -1543,6 +1544,798 @@ namespace Intercolony
                 $"saved false, node present {disabledNodePresent}, loaded " +
                 $"{(disabled == null ? "missing" : disabled.autoRenew.ToString())}; " +
                 $"failure={disabledFailure ?? "none"}");
+        }
+
+        private static void CheckLaborSpineRoundTrip(Results r)
+        {
+            const string contractRoundTripLabel =
+                "an employment contract's apparel consent and arrival transport survive a save";
+            const string contractLegacyLabel =
+                "a contract saved before this feature loads as Pending and Conventional";
+            const string contractDefaultsLabel =
+                "a default contract writes no apparel-consent or arrival-transport node";
+            const string equipmentRoundTripLabel =
+                "an equipment record's bought-out quantity survives a save, and reduces the refundable part";
+            const string equipmentLegacyLabel =
+                "an equipment record saved before this feature is fully refundable";
+            const string postingRoundTripLabel =
+                "a job posting's requested equipment level survives, and an old posting is Any";
+
+            EmploymentContract loadedContract = null;
+            bool contractApparelNodePresent = false;
+            bool contractTransportNodePresent = false;
+            string contractFailure = null;
+            string contractPath = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-LaborSpine-Contract-{Guid.NewGuid():N}.xml");
+            try
+            {
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    contractFailure = "vanilla Scribe saver or loader was unavailable";
+                }
+                else
+                {
+                    EmploymentContract savedContract = new EmploymentContract
+                    {
+                        apparelBondDecision = ApparelBondDecision.Allowed,
+                        arrivalTransport = EmploymentArrivalTransport.DropPod
+                    };
+
+                    Scribe.saver.InitSaving(contractPath, "intercolony-labor-spine-contract");
+                    Scribe_Deep.Look(ref savedContract, "contract");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(contractPath);
+                    contractApparelNodePresent =
+                        xml.IndexOf("<apparelBondDecision", StringComparison.Ordinal) >= 0;
+                    contractTransportNodePresent =
+                        xml.IndexOf("<arrivalTransport", StringComparison.Ordinal) >= 0;
+
+                    Scribe.loader.InitLoading(contractPath);
+                    Scribe_Deep.Look(ref loadedContract, "contract");
+                    Scribe.loader.FinalizeLoading();
+                }
+            }
+            catch (Exception ex)
+            {
+                contractFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (contractFailure == null)
+                    {
+                        contractFailure =
+                            $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(contractPath))
+                    {
+                        File.Delete(contractPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (contractFailure == null)
+                    {
+                        contractFailure =
+                            $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            r.Check(
+                contractFailure == null && contractApparelNodePresent &&
+                contractTransportNodePresent && loadedContract != null &&
+                loadedContract.apparelBondDecision == ApparelBondDecision.Allowed &&
+                loadedContract.arrivalTransport == EmploymentArrivalTransport.DropPod,
+                contractRoundTripLabel,
+                $"loaded apparelBondDecision " +
+                    $"{(loadedContract == null ? "missing" : loadedContract.apparelBondDecision.ToString())}; " +
+                    $"arrivalTransport " +
+                    $"{(loadedContract == null ? "missing" : loadedContract.arrivalTransport.ToString())}; " +
+                    $"XML nodes apparelBondDecision " +
+                    $"{(contractApparelNodePresent ? "present" : "absent")}, " +
+                    $"arrivalTransport {(contractTransportNodePresent ? "present" : "absent")}; " +
+                    $"failure={contractFailure ?? "none"}");
+
+            EmploymentContract loadedLegacyContract = null;
+            bool legacyContractApparelNodeBeforeStrip = false;
+            bool legacyContractTransportNodeBeforeStrip = false;
+            bool legacyContractApparelNodeAfterStrip = false;
+            bool legacyContractTransportNodeAfterStrip = false;
+            string legacyContractFailure = null;
+            string legacyContractStripFailure = null;
+            string legacyContractPath = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-LaborSpine-ContractLegacy-{Guid.NewGuid():N}.xml");
+            try
+            {
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    legacyContractFailure = "vanilla Scribe saver or loader was unavailable";
+                }
+                else
+                {
+                    EmploymentContract savedContract = new EmploymentContract
+                    {
+                        apparelBondDecision = ApparelBondDecision.Allowed,
+                        arrivalTransport = EmploymentArrivalTransport.DropPod
+                    };
+
+                    Scribe.saver.InitSaving(
+                        legacyContractPath, "intercolony-labor-spine-contract-legacy");
+                    Scribe_Deep.Look(ref savedContract, "contract");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(legacyContractPath);
+                    legacyContractApparelNodeBeforeStrip =
+                        xml.IndexOf("<apparelBondDecision", StringComparison.Ordinal) >= 0;
+                    legacyContractTransportNodeBeforeStrip =
+                        xml.IndexOf("<arrivalTransport", StringComparison.Ordinal) >= 0;
+                    string[] nodeNames =
+                    {
+                        "apparelBondDecision",
+                        "arrivalTransport"
+                    };
+
+                    for (int i = 0; i < nodeNames.Length; i++)
+                    {
+                        string nodeName = nodeNames[i];
+                        string nodePrefix = "<" + nodeName;
+                        int nodeStart = xml.IndexOf(
+                            nodePrefix, StringComparison.Ordinal);
+                        if (nodeStart < 0)
+                        {
+                            legacyContractStripFailure =
+                                $"expected XML node <{nodeName}> was not present";
+                            break;
+                        }
+
+                        int tagEnd = xml.IndexOf('>', nodeStart);
+                        if (tagEnd < 0)
+                        {
+                            legacyContractStripFailure =
+                                $"XML node <{nodeName}> had no closing angle bracket";
+                            break;
+                        }
+
+                        int nodeEnd;
+                        if (xml[tagEnd - 1] == '/')
+                        {
+                            nodeEnd = tagEnd + 1;
+                        }
+                        else
+                        {
+                            string closeTag = "</" + nodeName + ">";
+                            int closeStart = xml.IndexOf(
+                                closeTag, tagEnd + 1, StringComparison.Ordinal);
+                            if (closeStart < 0)
+                            {
+                                legacyContractStripFailure =
+                                    $"XML node <{nodeName}> had no closing tag";
+                                break;
+                            }
+
+                            nodeEnd = closeStart + closeTag.Length;
+                        }
+
+                        xml = xml.Remove(nodeStart, nodeEnd - nodeStart);
+                    }
+
+                    legacyContractApparelNodeAfterStrip =
+                        xml.IndexOf("<apparelBondDecision", StringComparison.Ordinal) >= 0;
+                    legacyContractTransportNodeAfterStrip =
+                        xml.IndexOf("<arrivalTransport", StringComparison.Ordinal) >= 0;
+                    if (legacyContractStripFailure == null &&
+                        (legacyContractApparelNodeAfterStrip || legacyContractTransportNodeAfterStrip))
+                    {
+                        legacyContractStripFailure =
+                            "one or more expected XML nodes were still present after stripping";
+                    }
+
+                    if (legacyContractStripFailure == null)
+                    {
+                        File.WriteAllText(legacyContractPath, xml);
+                        Scribe.loader.InitLoading(legacyContractPath);
+                        Scribe_Deep.Look(ref loadedLegacyContract, "contract");
+                        Scribe.loader.FinalizeLoading();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                legacyContractFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (legacyContractFailure == null)
+                    {
+                        legacyContractFailure =
+                            $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(legacyContractPath))
+                    {
+                        File.Delete(legacyContractPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (legacyContractFailure == null)
+                    {
+                        legacyContractFailure =
+                            $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            r.Check(
+                legacyContractFailure == null && legacyContractStripFailure == null &&
+                legacyContractApparelNodeBeforeStrip && legacyContractTransportNodeBeforeStrip &&
+                !legacyContractApparelNodeAfterStrip && !legacyContractTransportNodeAfterStrip &&
+                loadedLegacyContract != null &&
+                loadedLegacyContract.apparelBondDecision == ApparelBondDecision.Pending &&
+                loadedLegacyContract.arrivalTransport == EmploymentArrivalTransport.Conventional,
+                contractLegacyLabel,
+                $"loaded apparelBondDecision " +
+                    $"{(loadedLegacyContract == null ? "missing" : loadedLegacyContract.apparelBondDecision.ToString())}; " +
+                    $"arrivalTransport " +
+                    $"{(loadedLegacyContract == null ? "missing" : loadedLegacyContract.arrivalTransport.ToString())}; " +
+                    $"XML before strip apparelBondDecision " +
+                    $"{(legacyContractApparelNodeBeforeStrip ? "present" : "absent")}, " +
+                    $"arrivalTransport " +
+                    $"{(legacyContractTransportNodeBeforeStrip ? "present" : "absent")}; " +
+                    $"after strip apparelBondDecision " +
+                    $"{(legacyContractApparelNodeAfterStrip ? "present" : "absent")}, " +
+                    $"arrivalTransport " +
+                    $"{(legacyContractTransportNodeAfterStrip ? "present" : "absent")}; " +
+                    $"stripFailure={legacyContractStripFailure ?? "none"}; " +
+                    $"failure={legacyContractFailure ?? "none"}");
+
+            bool defaultContractApparelNodePresent = false;
+            bool defaultContractTransportNodePresent = false;
+            string defaultContractFailure = null;
+            string defaultContractPath = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-LaborSpine-ContractDefaults-{Guid.NewGuid():N}.xml");
+            try
+            {
+                if (Scribe.saver == null)
+                {
+                    defaultContractFailure = "vanilla Scribe saver was unavailable";
+                }
+                else
+                {
+                    EmploymentContract savedContract = new EmploymentContract();
+                    Scribe.saver.InitSaving(
+                        defaultContractPath, "intercolony-labor-spine-contract-defaults");
+                    Scribe_Deep.Look(ref savedContract, "contract");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(defaultContractPath);
+                    defaultContractApparelNodePresent =
+                        xml.IndexOf("<apparelBondDecision", StringComparison.Ordinal) >= 0;
+                    defaultContractTransportNodePresent =
+                        xml.IndexOf("<arrivalTransport", StringComparison.Ordinal) >= 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                defaultContractFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (defaultContractFailure == null)
+                    {
+                        defaultContractFailure =
+                            $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(defaultContractPath))
+                    {
+                        File.Delete(defaultContractPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (defaultContractFailure == null)
+                    {
+                        defaultContractFailure =
+                            $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            r.Check(
+                defaultContractFailure == null && !defaultContractApparelNodePresent &&
+                !defaultContractTransportNodePresent,
+                contractDefaultsLabel,
+                $"XML nodes apparelBondDecision " +
+                    $"{(defaultContractApparelNodePresent ? "present" : "absent")}, " +
+                    $"arrivalTransport " +
+                    $"{(defaultContractTransportNodePresent ? "present" : "absent")}; " +
+                    $"failure={defaultContractFailure ?? "none"}");
+
+            EmploymentEquipmentRecord loadedEquipmentRecord = null;
+            bool equipmentBoughtOutNodePresent = false;
+            string equipmentFailure = null;
+            string equipmentPath = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-LaborSpine-Equipment-{Guid.NewGuid():N}.xml");
+            try
+            {
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    equipmentFailure = "vanilla Scribe saver or loader was unavailable";
+                }
+                else
+                {
+                    EmploymentEquipmentRecord savedEquipmentRecord =
+                        new EmploymentEquipmentRecord
+                        {
+                            quantity = 3,
+                            boughtOutQuantity = 1
+                        };
+
+                    Scribe.saver.InitSaving(equipmentPath, "intercolony-labor-spine-equipment");
+                    Scribe_Deep.Look(ref savedEquipmentRecord, "equipmentRecord");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(equipmentPath);
+                    equipmentBoughtOutNodePresent =
+                        xml.IndexOf("<boughtOutQuantity", StringComparison.Ordinal) >= 0;
+
+                    Scribe.loader.InitLoading(equipmentPath);
+                    Scribe_Deep.Look(ref loadedEquipmentRecord, "equipmentRecord");
+                    Scribe.loader.FinalizeLoading();
+                }
+            }
+            catch (Exception ex)
+            {
+                equipmentFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (equipmentFailure == null)
+                    {
+                        equipmentFailure =
+                            $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(equipmentPath))
+                    {
+                        File.Delete(equipmentPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (equipmentFailure == null)
+                    {
+                        equipmentFailure =
+                            $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            r.Check(
+                equipmentFailure == null && equipmentBoughtOutNodePresent &&
+                loadedEquipmentRecord != null && loadedEquipmentRecord.quantity == 3 &&
+                loadedEquipmentRecord.boughtOutQuantity == 1 &&
+                loadedEquipmentRecord.RefundableQuantity == 2,
+                equipmentRoundTripLabel,
+                $"loaded quantity " +
+                    $"{(loadedEquipmentRecord == null ? "missing" : loadedEquipmentRecord.quantity.ToString())}; " +
+                    $"boughtOutQuantity " +
+                    $"{(loadedEquipmentRecord == null ? "missing" : loadedEquipmentRecord.boughtOutQuantity.ToString())}; " +
+                    $"RefundableQuantity " +
+                    $"{(loadedEquipmentRecord == null ? "missing" : loadedEquipmentRecord.RefundableQuantity.ToString())}; " +
+                    $"XML node boughtOutQuantity " +
+                    $"{(equipmentBoughtOutNodePresent ? "present" : "absent")}; " +
+                    $"failure={equipmentFailure ?? "none"}");
+
+            EmploymentEquipmentRecord loadedLegacyEquipmentRecord = null;
+            bool legacyEquipmentBoughtOutNodeBeforeStrip = false;
+            bool legacyEquipmentBoughtOutNodeAfterStrip = false;
+            string legacyEquipmentFailure = null;
+            string legacyEquipmentStripFailure = null;
+            string legacyEquipmentPath = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-LaborSpine-EquipmentLegacy-{Guid.NewGuid():N}.xml");
+            try
+            {
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    legacyEquipmentFailure = "vanilla Scribe saver or loader was unavailable";
+                }
+                else
+                {
+                    EmploymentEquipmentRecord savedEquipmentRecord =
+                        new EmploymentEquipmentRecord
+                        {
+                            quantity = 3,
+                            boughtOutQuantity = 1
+                        };
+
+                    Scribe.saver.InitSaving(
+                        legacyEquipmentPath, "intercolony-labor-spine-equipment-legacy");
+                    Scribe_Deep.Look(ref savedEquipmentRecord, "equipmentRecord");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(legacyEquipmentPath);
+                    legacyEquipmentBoughtOutNodeBeforeStrip =
+                        xml.IndexOf("<boughtOutQuantity", StringComparison.Ordinal) >= 0;
+                    string nodeName = "boughtOutQuantity";
+                    string nodePrefix = "<" + nodeName;
+                    int nodeStart = xml.IndexOf(nodePrefix, StringComparison.Ordinal);
+                    if (nodeStart < 0)
+                    {
+                        legacyEquipmentStripFailure =
+                            $"expected XML node <{nodeName}> was not present";
+                    }
+                    else
+                    {
+                        int tagEnd = xml.IndexOf('>', nodeStart);
+                        if (tagEnd < 0)
+                        {
+                            legacyEquipmentStripFailure =
+                                $"XML node <{nodeName}> had no closing angle bracket";
+                        }
+                        else
+                        {
+                            int nodeEnd;
+                            if (xml[tagEnd - 1] == '/')
+                            {
+                                nodeEnd = tagEnd + 1;
+                            }
+                            else
+                            {
+                                string closeTag = "</" + nodeName + ">";
+                                int closeStart = xml.IndexOf(
+                                    closeTag, tagEnd + 1, StringComparison.Ordinal);
+                                if (closeStart < 0)
+                                {
+                                    legacyEquipmentStripFailure =
+                                        $"XML node <{nodeName}> had no closing tag";
+                                    nodeEnd = -1;
+                                }
+                                else
+                                {
+                                    nodeEnd = closeStart + closeTag.Length;
+                                }
+                            }
+
+                            if (legacyEquipmentStripFailure == null)
+                            {
+                                xml = xml.Remove(nodeStart, nodeEnd - nodeStart);
+                            }
+                        }
+                    }
+
+                    legacyEquipmentBoughtOutNodeAfterStrip =
+                        xml.IndexOf("<boughtOutQuantity", StringComparison.Ordinal) >= 0;
+                    if (legacyEquipmentStripFailure == null &&
+                        legacyEquipmentBoughtOutNodeAfterStrip)
+                    {
+                        legacyEquipmentStripFailure =
+                            "the <boughtOutQuantity> node was still present after stripping";
+                    }
+
+                    if (legacyEquipmentStripFailure == null)
+                    {
+                        File.WriteAllText(legacyEquipmentPath, xml);
+                        Scribe.loader.InitLoading(legacyEquipmentPath);
+                        Scribe_Deep.Look(
+                            ref loadedLegacyEquipmentRecord, "equipmentRecord");
+                        Scribe.loader.FinalizeLoading();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                legacyEquipmentFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (legacyEquipmentFailure == null)
+                    {
+                        legacyEquipmentFailure =
+                            $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(legacyEquipmentPath))
+                    {
+                        File.Delete(legacyEquipmentPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (legacyEquipmentFailure == null)
+                    {
+                        legacyEquipmentFailure =
+                            $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            r.Check(
+                legacyEquipmentFailure == null && legacyEquipmentStripFailure == null &&
+                legacyEquipmentBoughtOutNodeBeforeStrip &&
+                !legacyEquipmentBoughtOutNodeAfterStrip && loadedLegacyEquipmentRecord != null &&
+                loadedLegacyEquipmentRecord.quantity == 3 &&
+                loadedLegacyEquipmentRecord.boughtOutQuantity == 0 &&
+                loadedLegacyEquipmentRecord.RefundableQuantity ==
+                    loadedLegacyEquipmentRecord.quantity,
+                equipmentLegacyLabel,
+                $"loaded quantity " +
+                    $"{(loadedLegacyEquipmentRecord == null ? "missing" : loadedLegacyEquipmentRecord.quantity.ToString())}; " +
+                    $"boughtOutQuantity " +
+                    $"{(loadedLegacyEquipmentRecord == null ? "missing" : loadedLegacyEquipmentRecord.boughtOutQuantity.ToString())}; " +
+                    $"RefundableQuantity " +
+                    $"{(loadedLegacyEquipmentRecord == null ? "missing" : loadedLegacyEquipmentRecord.RefundableQuantity.ToString())}; " +
+                    $"XML before strip boughtOutQuantity " +
+                    $"{(legacyEquipmentBoughtOutNodeBeforeStrip ? "present" : "absent")}; " +
+                    $"after strip " +
+                    $"{(legacyEquipmentBoughtOutNodeAfterStrip ? "present" : "absent")}; " +
+                    $"stripFailure={legacyEquipmentStripFailure ?? "none"}; " +
+                    $"failure={legacyEquipmentFailure ?? "none"}");
+
+            JobPosting loadedPosting = null;
+            bool postingNodePresent = false;
+            string postingFailure = null;
+            string postingPath = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-LaborSpine-Posting-{Guid.NewGuid():N}.xml");
+            try
+            {
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    postingFailure = "vanilla Scribe saver or loader was unavailable";
+                }
+                else
+                {
+                    JobPosting savedPosting = new JobPosting
+                    {
+                        requestedEquipmentLevel = LaborEquipmentLevel.Elite
+                    };
+
+                    Scribe.saver.InitSaving(postingPath, "intercolony-labor-spine-posting");
+                    Scribe_Deep.Look(ref savedPosting, "posting");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(postingPath);
+                    postingNodePresent =
+                        xml.IndexOf("<requestedEquipmentLevel", StringComparison.Ordinal) >= 0;
+
+                    Scribe.loader.InitLoading(postingPath);
+                    Scribe_Deep.Look(ref loadedPosting, "posting");
+                    Scribe.loader.FinalizeLoading();
+                }
+            }
+            catch (Exception ex)
+            {
+                postingFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (postingFailure == null)
+                    {
+                        postingFailure =
+                            $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(postingPath))
+                    {
+                        File.Delete(postingPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (postingFailure == null)
+                    {
+                        postingFailure =
+                            $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            JobPosting loadedLegacyPosting = null;
+            bool legacyPostingNodeBeforeStrip = false;
+            bool legacyPostingNodeAfterStrip = false;
+            string legacyPostingFailure = null;
+            string legacyPostingStripFailure = null;
+            string legacyPostingPath = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-LaborSpine-PostingLegacy-{Guid.NewGuid():N}.xml");
+            try
+            {
+                if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    legacyPostingFailure = "vanilla Scribe saver or loader was unavailable";
+                }
+                else
+                {
+                    JobPosting savedPosting = new JobPosting
+                    {
+                        requestedEquipmentLevel = LaborEquipmentLevel.Elite
+                    };
+
+                    Scribe.saver.InitSaving(
+                        legacyPostingPath, "intercolony-labor-spine-posting-legacy");
+                    Scribe_Deep.Look(ref savedPosting, "posting");
+                    Scribe.saver.FinalizeSaving();
+
+                    string xml = File.ReadAllText(legacyPostingPath);
+                    legacyPostingNodeBeforeStrip =
+                        xml.IndexOf("<requestedEquipmentLevel", StringComparison.Ordinal) >= 0;
+                    string nodeName = "requestedEquipmentLevel";
+                    string nodePrefix = "<" + nodeName;
+                    int nodeStart = xml.IndexOf(nodePrefix, StringComparison.Ordinal);
+                    if (nodeStart < 0)
+                    {
+                        legacyPostingStripFailure =
+                            $"expected XML node <{nodeName}> was not present";
+                    }
+                    else
+                    {
+                        int tagEnd = xml.IndexOf('>', nodeStart);
+                        if (tagEnd < 0)
+                        {
+                            legacyPostingStripFailure =
+                                $"XML node <{nodeName}> had no closing angle bracket";
+                        }
+                        else
+                        {
+                            int nodeEnd;
+                            if (xml[tagEnd - 1] == '/')
+                            {
+                                nodeEnd = tagEnd + 1;
+                            }
+                            else
+                            {
+                                string closeTag = "</" + nodeName + ">";
+                                int closeStart = xml.IndexOf(
+                                    closeTag, tagEnd + 1, StringComparison.Ordinal);
+                                if (closeStart < 0)
+                                {
+                                    legacyPostingStripFailure =
+                                        $"XML node <{nodeName}> had no closing tag";
+                                    nodeEnd = -1;
+                                }
+                                else
+                                {
+                                    nodeEnd = closeStart + closeTag.Length;
+                                }
+                            }
+
+                            if (legacyPostingStripFailure == null)
+                            {
+                                xml = xml.Remove(nodeStart, nodeEnd - nodeStart);
+                            }
+                        }
+                    }
+
+                    legacyPostingNodeAfterStrip =
+                        xml.IndexOf("<requestedEquipmentLevel", StringComparison.Ordinal) >= 0;
+                    if (legacyPostingStripFailure == null && legacyPostingNodeAfterStrip)
+                    {
+                        legacyPostingStripFailure =
+                            "the <requestedEquipmentLevel> node was still present after stripping";
+                    }
+
+                    if (legacyPostingStripFailure == null)
+                    {
+                        File.WriteAllText(legacyPostingPath, xml);
+                        Scribe.loader.InitLoading(legacyPostingPath);
+                        Scribe_Deep.Look(ref loadedLegacyPosting, "posting");
+                        Scribe.loader.FinalizeLoading();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                legacyPostingFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                try
+                {
+                    Scribe.ForceStop();
+                }
+                catch (Exception ex)
+                {
+                    if (legacyPostingFailure == null)
+                    {
+                        legacyPostingFailure =
+                            $"Scribe cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+
+                try
+                {
+                    if (File.Exists(legacyPostingPath))
+                    {
+                        File.Delete(legacyPostingPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (legacyPostingFailure == null)
+                    {
+                        legacyPostingFailure =
+                            $"temporary XML cleanup {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+            }
+
+            r.Check(
+                postingFailure == null && legacyPostingFailure == null &&
+                legacyPostingStripFailure == null && postingNodePresent &&
+                legacyPostingNodeBeforeStrip && !legacyPostingNodeAfterStrip &&
+                loadedPosting != null &&
+                loadedPosting.requestedEquipmentLevel == LaborEquipmentLevel.Elite &&
+                loadedLegacyPosting != null &&
+                loadedLegacyPosting.requestedEquipmentLevel == LaborEquipmentLevel.Any,
+                postingRoundTripLabel,
+                $"loaded requestedEquipmentLevel " +
+                    $"{(loadedPosting == null ? "missing" : loadedPosting.requestedEquipmentLevel.ToString())}; " +
+                    $"old loaded requestedEquipmentLevel " +
+                    $"{(loadedLegacyPosting == null ? "missing" : loadedLegacyPosting.requestedEquipmentLevel.ToString())}; " +
+                    $"XML explicit node " +
+                    $"{(postingNodePresent ? "present" : "absent")}; " +
+                    $"old XML before strip " +
+                    $"{(legacyPostingNodeBeforeStrip ? "present" : "absent")}, after strip " +
+                    $"{(legacyPostingNodeAfterStrip ? "present" : "absent")}; " +
+                    $"stripFailure={legacyPostingStripFailure ?? "none"}; " +
+                    $"failure={postingFailure ?? "none"}; " +
+                    $"oldFailure={legacyPostingFailure ?? "none"}");
         }
 
         private static EmploymentContract RoundTripAutoRenew(
