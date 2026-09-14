@@ -45,7 +45,8 @@ $SourceHashFile = Join-Path $Repo "Assemblies\Intercolony.dll.sources.sha256"
 
 # Keep this list deliberately small. New repository folders do not become release
 # content until somebody explicitly decides that RimWorld needs them at runtime.
-$ReleaseDirectories = @("About", "Assemblies", "Defs")
+# Patches ships because RimWorld applies these XML patches at load; their designator and world-tab registrations exist nowhere else.
+$ReleaseDirectories = @("About", "Assemblies", "Defs", "Patches")
 $ReleaseFiles       = @("LICENSE", "README.md")
 
 # ------------------------------------------------------------- utilities ----
@@ -303,7 +304,9 @@ foreach ($relativePath in $ReleaseFiles) {
 foreach ($required in @(
     "About\About.xml",
     "About\Preview.png",
-    "Assemblies\Intercolony.dll"
+    "Assemblies\Intercolony.dll",
+    "Patches\WorldObjectDefs.xml",
+    "Patches\ProduceDesignators.xml"
 )) {
     Assert-PackagePath $required $true
 }
@@ -340,7 +343,9 @@ try {
     foreach ($required in @(
         "About/About.xml",
         "About/Preview.png",
-        "Assemblies/Intercolony.dll"
+        "Assemblies/Intercolony.dll",
+        "Patches/WorldObjectDefs.xml",
+        "Patches/ProduceDesignators.xml"
     )) {
         if (-not ($entryNames | Where-Object { $_ -match "/$([regex]::Escape($required))$" })) {
             throw "Package verification failed: the zip does not contain '$required'."
