@@ -772,20 +772,7 @@ namespace Intercolony
             int quantity = Mathf.Min(
                 Mathf.Max(1, apparel?.stackCount ?? 1),
                 Mathf.Max(1, record.RefundableQuantity));
-            EmploymentEquipmentRecord itemRecord = new EmploymentEquipmentRecord
-            {
-                thingDef = record.thingDef,
-                stuffDef = record.stuffDef,
-                quality = record.quality,
-                unitValue = record.unitValue,
-                quantity = quantity
-            };
-
-            // BondFor is the same replacement-value-plus-premium path used by the hire quote.
-            // A one-item record makes the displayed amount the share attached to this apparel.
-            int itemBond = EmploymentEquipmentService.BondFor(
-                new List<EmploymentEquipmentRecord> { itemRecord });
-            return Mathf.Clamp(itemBond, 0, Mathf.Max(0, contract?.equipmentBond ?? 0));
+            return EmploymentEquipmentService.BondAtRiskFor(contract, record, quantity);
         }
 
         private static int BondAtRiskFor(
@@ -797,8 +784,9 @@ namespace Intercolony
                 return 0;
             }
 
-            List<EmploymentEquipmentRecord> itemRecords =
+            List<EmploymentEquipmentRecord> adjustedRecords =
                 new List<EmploymentEquipmentRecord>(affectedItems.Count);
+            List<int> adjustmentUnits = new List<int>(affectedItems.Count);
             for (int i = 0; i < affectedItems.Count; i++)
             {
                 ForcedReleaseItem affectedItem = affectedItems[i];
@@ -811,18 +799,12 @@ namespace Intercolony
                 int quantity = Mathf.Min(
                     Mathf.Max(1, affectedItem.item?.stackCount ?? 1),
                     Mathf.Max(1, record.RefundableQuantity));
-                itemRecords.Add(new EmploymentEquipmentRecord
-                {
-                    thingDef = record.thingDef,
-                    stuffDef = record.stuffDef,
-                    quality = record.quality,
-                    unitValue = record.unitValue,
-                    quantity = quantity
-                });
+                adjustedRecords.Add(record);
+                adjustmentUnits.Add(quantity);
             }
 
-            int totalBond = EmploymentEquipmentService.BondFor(itemRecords);
-            return Mathf.Clamp(totalBond, 0, Mathf.Max(0, contract.equipmentBond));
+            return EmploymentEquipmentService.BondAtRiskFor(
+                contract, adjustedRecords, adjustmentUnits);
         }
 
         private static void ResetTransientConsentState()

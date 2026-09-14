@@ -225,6 +225,111 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Returns the refundable share of the already-rounded equipment bond when every unit
+        /// that has not been bought out is still returned.
+        /// </summary>
+        public static int RefundableBondFor(EmploymentContract contract)
+        {
+            return RefundableBondFor(contract, null, null);
+        }
+
+        /// <summary>
+        /// Returns the drop in the refundable bond caused by buying out more units of one record.
+        /// </summary>
+        public static int BondAtRiskFor(
+            EmploymentContract contract,
+            EmploymentEquipmentRecord record,
+            int units)
+        {
+            int currentRefundableBond = RefundableBondFor(contract);
+            if (currentRefundableBond <= 0 || record == null || units <= 0)
+            {
+                return 0;
+            }
+
+            int hypotheticalRefundableBond = RefundableBondFor(
+                contract,
+                new List<EmploymentEquipmentRecord> { record },
+                new List<int> { units });
+            return Mathf.Clamp(
+                currentRefundableBond - hypotheticalRefundableBond,
+                0,
+                currentRefundableBond);
+        }
+
+        /// <summary>
+        /// Returns the combined refundable-bond drop for several hypothetical buy-outs without
+        /// changing the contract or any of its records.
+        /// </summary>
+        internal static int BondAtRiskFor(
+            EmploymentContract contract,
+            List<EmploymentEquipmentRecord> records,
+            List<int> units)
+        {
+            int currentRefundableBond = RefundableBondFor(contract);
+            if (currentRefundableBond <= 0 || records == null || units == null ||
+                records.Count == 0 || records.Count != units.Count)
+            {
+                return 0;
+            }
+
+            int hypotheticalRefundableBond = RefundableBondFor(contract, records, units);
+            return Mathf.Clamp(
+                currentRefundableBond - hypotheticalRefundableBond,
+                0,
+                currentRefundableBond);
+        }
+
+        private static int RefundableBondFor(
+            EmploymentContract contract,
+            List<EmploymentEquipmentRecord> adjustedRecords,
+            List<int> adjustmentUnits)
+        {
+            if (contract == null || contract.equipmentBond <= 0 || contract.equipmentBondSettled ||
+                contract.arrivedEquipment == null || contract.arrivedEquipment.Count == 0)
+            {
+                return 0;
+            }
+
+            int bond = Mathf.Max(0, contract.equipmentBond);
+            List<EmploymentEquipmentRecord> records = contract.arrivedEquipment;
+            float totalReplacementValue = 0f;
+            float matchedReplacementValue = 0f;
+            int totalQuantity = 0;
+            int matchedQuantity = 0;
+
+            for (int i = 0; i < records.Count; i++)
+            {
+                EmploymentEquipmentRecord record = records[i];
+                int quantity = Mathf.Max(0, record?.quantity ?? 0);
+                int matched = record?.RefundableQuantity ?? 0;
+                if (adjustedRecords != null && adjustmentUnits != null)
+                {
+                    for (int j = 0; j < adjustedRecords.Count && j < adjustmentUnits.Count; j++)
+                    {
+                        if (ReferenceEquals(record, adjustedRecords[j]))
+                        {
+                            matched = Mathf.Max(0, matched - Mathf.Max(0, adjustmentUnits[j]));
+                        }
+                    }
+                }
+
+                float unitValue = ReplacementValuePerUnit(record);
+                if (unitValue > 0f && !float.IsNaN(unitValue) && !float.IsInfinity(unitValue))
+                {
+                    totalReplacementValue += unitValue * quantity;
+                    matchedReplacementValue += unitValue * matched;
+                }
+
+                totalQuantity += quantity;
+                matchedQuantity += matched;
+            }
+
+            return BondShare(
+                bond, totalReplacementValue, matchedReplacementValue, totalQuantity, matchedQuantity);
+        }
+
+        /// <summary>
         /// The amount due at hire. Wages and the refundable bond remain separate inputs and are
         /// only combined at the final payment boundary.
         /// </summary>

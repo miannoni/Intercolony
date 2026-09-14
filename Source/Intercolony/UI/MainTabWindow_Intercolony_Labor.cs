@@ -1174,39 +1174,7 @@ namespace Intercolony
 
         private static int EmployeeRefundableEquipmentBond(EmploymentContract contract)
         {
-            if (contract == null || contract.equipmentBond <= 0 || contract.equipmentBondSettled ||
-                contract.arrivedEquipment == null)
-            {
-                return 0;
-            }
-
-            // Use the same replacement-value and premium path as the equipment quote. The
-            // refundable quantity is the only part of a bought-out record that belongs in this
-            // subset; do not prorate the original rounded deposit here.
-            List<EmploymentEquipmentRecord> refundableRecords =
-                new List<EmploymentEquipmentRecord>();
-            foreach (EmploymentEquipmentRecord record in contract.arrivedEquipment)
-            {
-                int quantity = record?.RefundableQuantity ?? 0;
-                if (quantity <= 0)
-                {
-                    continue;
-                }
-
-                refundableRecords.Add(new EmploymentEquipmentRecord
-                {
-                    thingDef = record.thingDef,
-                    stuffDef = record.stuffDef,
-                    quality = record.quality,
-                    unitValue = record.unitValue,
-                    quantity = quantity
-                });
-            }
-
-            return Mathf.Clamp(
-                EmploymentEquipmentService.BondFor(refundableRecords),
-                0,
-                Mathf.Max(0, contract.equipmentBond));
+            return EmploymentEquipmentService.RefundableBondFor(contract);
         }
 
         private static string EmployeeEquipmentBondLine(EmploymentContract contract)

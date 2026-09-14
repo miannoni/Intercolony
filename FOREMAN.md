@@ -1,11 +1,11 @@
 # Foreman state — Intercolony
 
-Stage: P7 — F23 requested equipment levels
-Unit: P7.7 — F23's human evidence recorded
-Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p7-7-out.txt`
-Last done: P7.6 accepted, `d29524b` — suite 1666/0/16; PH1 reddened Elite, PH2 taught that the guard is redundant
-Updated: 2026-09-15 07:05
-Foreman load: 2026-09-15 03:15
+Stage: P8 — integration, regression, documentation, clean halt
+Unit: P8.2a — one authority for the refundable bond (a real defect P8.1 found)
+Worker: luna running — `C:\Users\matte\.claude\jobs\439462af\tmp\p8-2a-out.txt`
+Last done: P8.1 recon accepted — **F12 and F22 both clean**; §14 steps classified; one real defect found
+Updated: 2026-09-15 07:55
+Foreman load: 2026-09-15 07:35
 Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
 Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
 
@@ -82,8 +82,8 @@ serialising is cheaper than reconciling.
 | ✅ | P4 — F16 employee-card redesign | F16 (+F13/F17) | closed, `9a1670b`. **1642/0/16, exit 0, CLEAN** |
 | ✅ | P5 — F19/F20 contract economics | F19, F20 | closed, `ba35be9`. **1650/0/17, exit 0, CLEAN** |
 | ✅ | P6 — F21/F24 rapid logistics + pod hiring | F21, F24 | closed, `e10df9c`. **1660/0/15, exit 0, CLEAN** |
-| 🔨 | P7 — F23 requested equipment levels | F23 | one focused pawn-gear recon |
-| ⬜ | P8 — integration, regression, docs, clean halt | — | — |
+| ✅ | P7 — F23 requested equipment levels | F23 | closed `b6ca829` |
+| 🔨 | P8 — integration, regression, docs, clean halt | — | — |
 
 ## Units — stage P0
 
@@ -182,9 +182,40 @@ serialising is cheaper than reconciling.
 | ✅ | P7.4 — `None` strips bondable supplied gear; the bond quotes zero | accepted, `ede4cae`. **1659/0/16** |
 | ✅ | P7.5 + P7.5b — the applicant UI shows the tier and the actual gear | accepted, `a1d7009` |
 | ✅ | P7.6 — assertions and mutations | accepted, `d29524b`. **1666/0/16** |
-| 🔨 | P7.7 — F23 human evidence recorded | Luna running |
+| ✅ | P7.7 — F23 human evidence recorded | accepted, `b6ca829`. 14 added, 0 changed |
+
+**P7 is closed.**
+
+## Units — stage P8
+
+| | Unit | Status |
+|---|---|---|
+| ✅ | P8.1 — recon: §14 seams traced, F12/F22 diff audit | accepted; P8-D1..D3 |
+| 🔨 | P8.2a — one authority for the refundable bond | Luna running |
+| ⬜ | P8.2b — assertions for the bond authority and the §14.1 seam | — |
+| ⬜ | P8.3 — integration human evidence recorded | — |
+| ⬜ | P8.4 — full build + fresh whole suite | — |
+| ⬜ | P8.5 — `PROGRESS.md`, disposition markers, final state | — |
 
 ## Decisions
+
+- **2026-09-15 — P8-D1. F12 AND F22 DID NOT LEAK IN.** Sol read the whole `main...HEAD` diff under
+  `Source Defs Patches` (Source only; no Defs or Patches changed) and found no player-scheduled
+  outbound caravan and no player-colonist labor export. The adjacent new code is
+  `EmploymentArrivalTransport`, which is travel **into** the colony. Spot-checked.
+- **2026-09-15 — P8-D2. THE CARD SHOWED A REFUNDABLE BOND THE SETTLEMENT WOULD NOT PAY.** Three
+  methods answered the same question three ways: `SettleBond` prorates the already-rounded deposit
+  through `BondShare`, while the employee card and the consent warning each re-ran `BondFor` on a
+  subset and rounded a second time. Items worth 2 and 3 give a bond of 6; buy out the 2 and the card
+  reads 3 where settlement pays 4. Citations spot-checked at `EmploymentEquipment.cs:297/622`,
+  `MainTabWindow_Intercolony_Labor.cs:1175`, `EmployeeApparelPatch.cs:767`. **`SettleBond` is the
+  authority because it is the one that pays.** Fixed in P8.2a; §14.2 step 6 is the plan step that
+  required this.
+- **2026-09-15 — P8-D3. MOST OF §14 IS HUMAN-ONLY, AND THAT IS THE HONEST ANSWER.** Sol classified
+  each numbered step. §14.1 is almost entirely already asserted. §14.2 steps 2/3/4/7/8 and §14.3
+  steps 1/2/4 need a real pawn, the real optimizer, or a real pod landing — a fixture that generated
+  them would be indistinguishable from the leak the suite watches for. They go to
+  `PENDING_PLAYTESTS.md`, not to a fabricated assertion.
 
 - **2026-09-15 — P7-D1. VANILLA DOES NOT STOP A LOW-TECH SETTLEMENT PRODUCING HIGH-TECH GEAR.** Sol
   recon, spot-checked. Weapon and apparel generation roll the kind's `weaponMoney` / `apparelMoney`
