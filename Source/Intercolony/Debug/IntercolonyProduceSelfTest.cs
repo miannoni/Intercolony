@@ -408,7 +408,7 @@ namespace Intercolony
             const string assertion =
                 "a pre-58 state migrates to an existing empty production ledger";
             const int preMigrationVersion = 57;
-            const int postMigrationVersion = 58;
+            const int postMigrationVersion = 59;
 
             FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
                 "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);

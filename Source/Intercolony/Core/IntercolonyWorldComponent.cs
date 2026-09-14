@@ -28,7 +28,7 @@ namespace Intercolony
         /// <see cref="MigrateIfNeeded"/>. Additive nodes with safe defaults may ride the current
         /// schema when the batch explicitly authorises them to do so.
         /// </summary>
-        public const int CurrentSaveVersion = 58;
+        public const int CurrentSaveVersion = 59;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -2793,6 +2793,19 @@ namespace Intercolony
 
                 IntercolonyLog.Message(
                     "  schema 57 -> 58: completed-production ledger added; no historical production was fabricated.");
+            }
+
+            if (saveVersion < 59)
+            {
+                // 58 -> 59 added labor equipment bought-out quantity, employee apparel consent and
+                // arrival transport, and job-posting equipment level. Nothing is moved or rewritten:
+                // every new node is additive, and Scribe_Values.Look omits a value equal to its
+                // default, so an absent node is the old shape. No existing bond, employee, or
+                // posting is altered.
+                IntercolonyLog.Message(
+                    "  schema 58 -> 59: labor equipment bought-out quantity, employee apparel consent " +
+                    "and arrival transport, and job-posting equipment level added; all additive with " +
+                    "safe defaults.");
             }
 
             saveVersion = CurrentSaveVersion;

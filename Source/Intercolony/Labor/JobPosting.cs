@@ -199,6 +199,8 @@ namespace Intercolony
 
         public CombatClause combatClause = CombatClause.Civilian;
 
+        public LaborEquipmentLevel requestedEquipmentLevel = LaborEquipmentLevel.Any;
+
         // --- Lifecycle ---------------------------------------------------------------------
 
         public int postedTick;
@@ -345,6 +347,7 @@ namespace Intercolony
             Scribe_Values.Look(ref wageOffered, "wageOffered", 0);
             Scribe_Values.Look(ref wageStructure, "wageStructure", WageStructure.Daily);
             Scribe_Values.Look(ref combatClause, "combatClause", CombatClause.Civilian);
+            Scribe_Values.Look(ref requestedEquipmentLevel, "requestedEquipmentLevel", LaborEquipmentLevel.Any);
 
             Scribe_Values.Look(ref postedTick, "postedTick", 0);
             Scribe_Values.Look(ref expiryTick, "expiryTick", 0);

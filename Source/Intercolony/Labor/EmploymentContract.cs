@@ -310,6 +310,9 @@ namespace Intercolony
         /// </summary>
         public int safePassageEndTick = -1;
 
+        public ApparelBondDecision apparelBondDecision = ApparelBondDecision.Pending;
+        public EmploymentArrivalTransport arrivalTransport = EmploymentArrivalTransport.Conventional;
+
         /// <summary>Work priorities saved when the worker downed tools, restored when arrears clear.</summary>
         private Dictionary<WorkTypeDef, int> heldPriorities = new Dictionary<WorkTypeDef, int>();
 
@@ -528,6 +531,8 @@ namespace Intercolony
             Scribe_Values.Look(ref downedNotified, "downedNotified", false);
             Scribe_Values.Look(ref safePassage, "safePassage", false);
             Scribe_Values.Look(ref safePassageEndTick, "safePassageEndTick", -1);
+            Scribe_Values.Look(ref apparelBondDecision, "apparelBondDecision", ApparelBondDecision.Pending);
+            Scribe_Values.Look(ref arrivalTransport, "arrivalTransport", EmploymentArrivalTransport.Conventional);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {

@@ -67,6 +67,16 @@ namespace Intercolony
         public float unitValue;
         public int quantity;
 
+        /// <summary>
+        /// The number of units of this original record that the colony has deliberately kept, whose
+        /// share of the bond is therefore no longer refundable. Zero means that no units were bought
+        /// out, as in a legacy record saved before this field existed.
+        /// </summary>
+        public int boughtOutQuantity;
+
+        /// <summary>Only the still-refundable part participates in settlement.</summary>
+        public int RefundableQuantity => Math.Max(0, quantity - boughtOutQuantity);
+
         public void ExposeData()
         {
             Scribe_Defs.Look(ref thingDef, "thingDef");
@@ -74,6 +84,7 @@ namespace Intercolony
             Scribe_Values.Look(ref quality, "quality");
             Scribe_Values.Look(ref unitValue, "unitValue", 0f);
             Scribe_Values.Look(ref quantity, "quantity", 0);
+            Scribe_Values.Look(ref boughtOutQuantity, "boughtOutQuantity", 0);
         }
     }
 
