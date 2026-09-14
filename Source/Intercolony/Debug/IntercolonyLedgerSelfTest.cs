@@ -75,6 +75,7 @@ namespace Intercolony
                 CheckAgreesWithRealSilver(r, state, map);
                 CheckContractEstimate(r, state);
                 CheckDirectInputEstimate(r, state);
+                CheckContractMaterialEconomics(r, state);
                 CheckDirectLaborAttribution(r, state);
                 CheckProductionCommitments(r, state);
                 CheckPruning(r, state);
@@ -577,6 +578,1122 @@ namespace Intercolony
                             $"Steel remains a direct input while {steelRecipe.defName} can craft it");
                     }
                 }
+            }
+        }
+
+        private static void CheckContractMaterialEconomics(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string constructionAssertion =
+                "a built product resolves its material cost from the construction route";
+            const string alternateStuffAssertion =
+                "the same product in a different material costs differently";
+            const string recipeAssertion =
+                "a crafted product still resolves from its recipe";
+            const string intermediateAssertion =
+                "an intermediate ingredient is not decomposed";
+            const string purchasePriorityAssertion =
+                "a recent purchase outranks the market estimate";
+            const string purchaseMedianAssertion =
+                "one wild purchase does not move the price";
+            const string cancelledPurchaseAssertion =
+                "a cancelled purchase is not price evidence";
+            const string benchmarkAssertion =
+                "the market benchmark is unavailable rather than invented";
+
+            List<ThingDef> thingDefs = DefDatabase<ThingDef>.AllDefsListForReading;
+            List<RecipeDef> recipes = DefDatabase<RecipeDef>.AllDefsListForReading;
+            if (thingDefs == null || recipes == null)
+            {
+                string reason = thingDefs == null
+                    ? "the loaded ThingDef collection is unavailable"
+                    : "the loaded RecipeDef collection is unavailable";
+                r.Skip(constructionAssertion, reason);
+                r.Skip(alternateStuffAssertion, reason);
+                r.Skip(recipeAssertion, reason);
+                r.Skip(intermediateAssertion, reason);
+                r.Skip(purchasePriorityAssertion, reason);
+                r.Skip(purchaseMedianAssertion, reason);
+                r.Skip(cancelledPurchaseAssertion, reason);
+                r.Skip(benchmarkAssertion, reason);
+                return;
+            }
+
+            // Find a furniture-like buildable with no recipe so the production route under test
+            // must be CostListAdjusted. The two stuffs are chosen from the loaded allowed-stuff
+            // set, and their own BaseMarketValue is only used to avoid a coincidental equal pair.
+            ThingDef builtProduct = null;
+            ThingDef firstStuff = null;
+            ThingDef secondStuff = null;
+            for (int i = 0; i < thingDefs.Count && builtProduct == null; i++)
+            {
+                ThingDef candidate = thingDefs[i];
+                if (candidate == null || candidate.category != ThingCategory.Building ||
+                    candidate.building == null || candidate.IsFrame || !candidate.Minifiable ||
+                    !candidate.MadeFromStuff || candidate.blueprintDef == null)
+                {
+                    continue;
+                }
+
+                bool hasRecipe = false;
+                for (int j = 0; j < recipes.Count; j++)
+                {
+                    RecipeDef recipe = recipes[j];
+                    if (recipe != null && !recipe.IsSurgery && recipe.products != null &&
+                        FindTestProduct(recipe, candidate) != null)
+                    {
+                        hasRecipe = true;
+                        break;
+                    }
+                }
+
+                if (hasRecipe)
+                {
+                    continue;
+                }
+
+                List<ThingDef> allowedStuffs;
+                try
+                {
+                    allowedStuffs = new List<ThingDef>(GenStuff.AllowedStuffsFor(candidate));
+                }
+                catch (System.Exception)
+                {
+                    continue;
+                }
+
+                allowedStuffs.Sort((left, right) => string.CompareOrdinal(
+                    left?.defName ?? string.Empty, right?.defName ?? string.Empty));
+                for (int leftIndex = 0;
+                     leftIndex < allowedStuffs.Count && builtProduct == null;
+                     leftIndex++)
+                {
+                    ThingDef leftStuff = allowedStuffs[leftIndex];
+                    if (leftStuff == null || !leftStuff.IsStuff || leftStuff.BaseMarketValue <= 0f)
+                    {
+                        continue;
+                    }
+
+                    List<ThingDefCountClass> leftCostList;
+                    try
+                    {
+                        leftCostList = candidate.CostListAdjusted(leftStuff);
+                    }
+                    catch (System.Exception)
+                    {
+                        continue;
+                    }
+
+                    if (leftCostList == null || leftCostList.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    for (int rightIndex = leftIndex + 1;
+                         rightIndex < allowedStuffs.Count;
+                         rightIndex++)
+                    {
+                        ThingDef rightStuff = allowedStuffs[rightIndex];
+                        if (rightStuff == null || !rightStuff.IsStuff ||
+                            rightStuff.BaseMarketValue <= 0f ||
+                            leftStuff.BaseMarketValue == rightStuff.BaseMarketValue)
+                        {
+                            continue;
+                        }
+
+                        List<ThingDefCountClass> rightCostList;
+                        try
+                        {
+                            rightCostList = candidate.CostListAdjusted(rightStuff);
+                        }
+                        catch (System.Exception)
+                        {
+                            continue;
+                        }
+
+                        if (rightCostList == null || rightCostList.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        builtProduct = candidate;
+                        firstStuff = leftStuff;
+                        secondStuff = rightStuff;
+                        break;
+                    }
+                }
+            }
+
+            string builtSearchReason =
+                "searched loaded minifiable Building ThingDefs made from stuff with a blueprint, " +
+                "no non-surgery recipe, and two allowed positive-value stuffs";
+            if (builtProduct == null)
+            {
+                r.Skip(constructionAssertion, builtSearchReason);
+                r.Skip(alternateStuffAssertion, builtSearchReason);
+            }
+            else
+            {
+                BusinessReportService.DirectInputEstimate constructionEstimate = null;
+                string constructionException = null;
+                try
+                {
+                    constructionEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, builtProduct, firstStuff);
+                }
+                catch (System.Exception ex)
+                {
+                    constructionException = ex.Message;
+                }
+
+                r.Check(
+                    constructionEstimate != null &&
+                    constructionEstimate.status ==
+                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                    constructionEstimate.hasDirectInputs &&
+                    constructionEstimate.recipeDefName == null &&
+                    constructionEstimate.constructionRouteName == "CostListAdjusted" &&
+                    constructionEstimate.costPerUnit > 0f,
+                    constructionAssertion,
+                    $"product {builtProduct.defName}; stuff {firstStuff.defName}; " +
+                    $"status {(constructionEstimate == null ? "<null>" :
+                        constructionEstimate.status.ToString())}; cost " +
+                    $"{(constructionEstimate == null ? 0f : constructionEstimate.costPerUnit):0.###}; " +
+                    $"recipe {(constructionEstimate?.recipeDefName ?? "<none>")}; route " +
+                    $"{(constructionEstimate?.constructionRouteName ?? "<none>")}" +
+                    (constructionException == null ? "" : $"; exception {constructionException}"));
+
+                BusinessReportService.DirectInputEstimate alternateConstructionEstimate = null;
+                string alternateConstructionException = null;
+                try
+                {
+                    alternateConstructionEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, builtProduct, secondStuff);
+                }
+                catch (System.Exception ex)
+                {
+                    alternateConstructionException = ex.Message;
+                }
+
+                r.Check(
+                    constructionEstimate != null && alternateConstructionEstimate != null &&
+                    constructionEstimate.status ==
+                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                    alternateConstructionEstimate.status ==
+                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                    constructionEstimate.constructionRouteName == "CostListAdjusted" &&
+                    alternateConstructionEstimate.constructionRouteName == "CostListAdjusted" &&
+                    constructionEstimate.costPerUnit != alternateConstructionEstimate.costPerUnit,
+                    alternateStuffAssertion,
+                    $"product {builtProduct.defName}; {firstStuff.defName} " +
+                    $"{(constructionEstimate == null ? 0f : constructionEstimate.costPerUnit):0.###}; " +
+                    $"{secondStuff.defName} " +
+                    $"{(alternateConstructionEstimate == null ? 0f :
+                        alternateConstructionEstimate.costPerUnit):0.###}; " +
+                    $"routes {(constructionEstimate?.constructionRouteName ?? "<none>")} / " +
+                    $"{(alternateConstructionEstimate?.constructionRouteName ?? "<none>")}" +
+                    (alternateConstructionException == null ? "" :
+                        $"; exception {alternateConstructionException}"));
+            }
+
+            // This deliberately overlaps the construction properties above. A recipe-only
+            // product would not catch construction taking precedence over a real recipe. The
+            // product need not be a building: being produced by a direct-input recipe is the
+            // property this assertion is actually checking.
+            ThingDef recipeProduct = null;
+            RecipeDef selectedRecipe = null;
+            int recipeThingDefsExamined = 0;
+            int recipeDefinitionsExamined = 0;
+            int recipeProductsWithDirectIngredients = 0;
+            for (int i = 0; i < thingDefs.Count && recipeProduct == null; i++)
+            {
+                ThingDef candidate = thingDefs[i];
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                recipeThingDefsExamined++;
+                RecipeDef candidateRecipe = null;
+                for (int j = 0; j < recipes.Count; j++)
+                {
+                    RecipeDef recipe = recipes[j];
+                    if (recipe == null)
+                    {
+                        continue;
+                    }
+
+                    recipeDefinitionsExamined++;
+                    if (recipe.IsSurgery || recipe.products == null ||
+                        recipe.ingredients == null || recipe.ingredients.Count == 0 ||
+                        FindTestProduct(recipe, candidate) == null)
+                    {
+                        continue;
+                    }
+
+                    if (candidateRecipe == null || string.CompareOrdinal(
+                            recipe.defName ?? string.Empty,
+                            candidateRecipe.defName ?? string.Empty) < 0)
+                    {
+                        candidateRecipe = recipe;
+                    }
+                }
+
+                if (candidateRecipe != null)
+                {
+                    recipeProductsWithDirectIngredients++;
+                    recipeProduct = candidate;
+                    selectedRecipe = candidateRecipe;
+                }
+            }
+
+            string recipeSearchReason =
+                $"searched {recipeThingDefsExamined} loaded ThingDefs and " +
+                $"{recipeDefinitionsExamined} loaded RecipeDefs for any ThingDef produced by a " +
+                $"non-surgery recipe with at least one direct ingredient; found " +
+                $"{recipeProductsWithDirectIngredients} matching product candidates";
+            if (recipeProduct == null)
+            {
+                r.Skip(recipeAssertion, recipeSearchReason);
+            }
+            else
+            {
+                BusinessReportService.DirectInputEstimate recipeEstimate = null;
+                string recipeException = null;
+                try
+                {
+                    recipeEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, recipeProduct, null);
+                }
+                catch (System.Exception ex)
+                {
+                    recipeException = ex.Message;
+                }
+
+                r.Check(
+                    recipeEstimate != null &&
+                    recipeEstimate.status == BusinessReportService.DirectInputCostStatus.Resolved &&
+                    recipeEstimate.recipeDefName == selectedRecipe.defName &&
+                    recipeEstimate.constructionRouteName == null &&
+                    recipeEstimate.hasDirectInputs,
+                    recipeAssertion,
+                    $"product {recipeProduct.defName}; status " +
+                    $"{(recipeEstimate == null ? "<null>" : recipeEstimate.status.ToString())}; " +
+                    $"cost {(recipeEstimate == null ? 0f : recipeEstimate.costPerUnit):0.###}; " +
+                    $"recipe {(recipeEstimate?.recipeDefName ?? "<none>")}; route " +
+                    $"{(recipeEstimate?.constructionRouteName ?? "<none>")}" +
+                    (recipeException == null ? "" : $"; exception {recipeException}"));
+            }
+
+            // Choose the manufactured intermediate X first. Its own recipe must have a positive
+            // direct-input price that differs from X's own price; otherwise the outer figure could
+            // not distinguish pricing X from decomposing X. Then choose a product P whose selected
+            // non-surgery recipe consumes X. Its recipe counts are kept as fixture data so the
+            // comparison can isolate X's contribution without copying the production resolver's
+            // price arithmetic.
+            ThingDef intermediateProduct = null;
+            RecipeDef intermediateProductRecipe = null;
+            ThingDef manufacturedIntermediate = null;
+            RecipeDef manufacturedIntermediateRecipe = null;
+            ThingDefCountClass intermediateOutput = null;
+            int intermediateRequiredCount = 0;
+            float manufacturedIntermediatePrice = 0f;
+            int intermediateThingDefsExamined = 0;
+            int producedIntermediateCandidates = 0;
+            int positiveIntermediateInputCandidates = 0;
+            int positiveIntermediatePriceCandidates = 0;
+            int distinctIntermediatePriceCandidates = 0;
+            int intermediateCandidatesWithExistingPurchase = 0;
+            int intermediateCandidatesWithoutExistingPurchase = 0;
+            int outerProductThingDefsExamined = 0;
+            int outerIngredientEntriesExamined = 0;
+            int outerRecipeCandidates = 0;
+            for (int i = 0; i < thingDefs.Count && intermediateProduct == null; i++)
+            {
+                ThingDef ingredientCandidate = thingDefs[i];
+                if (ingredientCandidate == null)
+                {
+                    continue;
+                }
+
+                intermediateThingDefsExamined++;
+                RecipeDef producer = null;
+                for (int j = 0; j < recipes.Count; j++)
+                {
+                    RecipeDef recipe = recipes[j];
+                    if (recipe == null || recipe.IsSurgery || recipe.products == null ||
+                        FindTestProduct(recipe, ingredientCandidate) == null)
+                    {
+                        continue;
+                    }
+
+                    if (producer == null || string.CompareOrdinal(
+                            recipe.defName ?? string.Empty,
+                            producer.defName ?? string.Empty) < 0)
+                    {
+                        producer = recipe;
+                    }
+                }
+
+                if (producer == null)
+                {
+                    continue;
+                }
+
+                producedIntermediateCandidates++;
+                if (producer.ingredients == null || producer.ingredients.Count == 0)
+                {
+                    continue;
+                }
+
+                BusinessReportService.DirectInputEstimate ingredientInputEstimate = null;
+                float ingredientPrice = 0f;
+                try
+                {
+                    ingredientInputEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, ingredientCandidate, null);
+                    ingredientPrice = IntercolonyPricing.BaseValue(ingredientCandidate, null);
+                }
+                catch (System.Exception)
+                {
+                    continue;
+                }
+
+                if (ingredientInputEstimate == null ||
+                    ingredientInputEstimate.status !=
+                        BusinessReportService.DirectInputCostStatus.Resolved ||
+                    !ingredientInputEstimate.hasDirectInputs ||
+                    ingredientInputEstimate.recipeDefName != producer.defName ||
+                    ingredientInputEstimate.costPerUnit <= 0f ||
+                    float.IsNaN(ingredientInputEstimate.costPerUnit) ||
+                    float.IsInfinity(ingredientInputEstimate.costPerUnit))
+                {
+                    continue;
+                }
+
+                positiveIntermediateInputCandidates++;
+                if (ingredientPrice <= 0f || float.IsNaN(ingredientPrice) ||
+                    float.IsInfinity(ingredientPrice))
+                {
+                    continue;
+                }
+
+                positiveIntermediatePriceCandidates++;
+                if (Mathf.Approximately(ingredientPrice, ingredientInputEstimate.costPerUnit))
+                {
+                    continue;
+                }
+
+                distinctIntermediatePriceCandidates++;
+                bool hasExistingPurchase = false;
+                if (state.PurchaseOrders != null)
+                {
+                    foreach (PurchaseOrder order in state.PurchaseOrders)
+                    {
+                        if (order != null && order.status == PurchaseOrderStatus.Completed &&
+                            order.quantity > 0 && order.thingDef == ingredientCandidate &&
+                            order.stuffDef == null && order.quality == null)
+                        {
+                            hasExistingPurchase = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (hasExistingPurchase)
+                {
+                    intermediateCandidatesWithExistingPurchase++;
+                    continue;
+                }
+
+                intermediateCandidatesWithoutExistingPurchase++;
+                for (int productIndex = 0;
+                     productIndex < thingDefs.Count && intermediateProduct == null;
+                     productIndex++)
+                {
+                    ThingDef productCandidate = thingDefs[productIndex];
+                    if (productCandidate == null || productCandidate == ingredientCandidate)
+                    {
+                        continue;
+                    }
+
+                    outerProductThingDefsExamined++;
+                    RecipeDef productRecipe = null;
+                    for (int j = 0; j < recipes.Count; j++)
+                    {
+                        RecipeDef recipe = recipes[j];
+                        if (recipe == null || recipe.IsSurgery || recipe.products == null ||
+                            FindTestProduct(recipe, productCandidate) == null)
+                        {
+                            continue;
+                        }
+
+                        if (productRecipe == null || string.CompareOrdinal(
+                                recipe.defName ?? string.Empty,
+                                productRecipe.defName ?? string.Empty) < 0)
+                        {
+                            productRecipe = recipe;
+                        }
+                    }
+
+                    if (productRecipe == null || productRecipe.ingredients == null ||
+                        productRecipe.ingredients.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    int requiredIntermediateCount = 0;
+                    for (int ingredientIndex = 0;
+                         ingredientIndex < productRecipe.ingredients.Count;
+                         ingredientIndex++)
+                    {
+                        outerIngredientEntriesExamined++;
+                        ThingDef allowedIntermediate;
+                        string ignoredReason;
+                        if (!TryGetSingleAllowedThingDef(
+                                productRecipe.ingredients[ingredientIndex],
+                                out allowedIntermediate,
+                                out ignoredReason) ||
+                            allowedIntermediate != ingredientCandidate)
+                        {
+                            continue;
+                        }
+
+                        int requiredCount;
+                        try
+                        {
+                            requiredCount = productRecipe.ingredients[ingredientIndex].CountRequiredOfFor(
+                                allowedIntermediate, productRecipe);
+                        }
+                        catch (System.Exception)
+                        {
+                            continue;
+                        }
+
+                        if (requiredCount > 0)
+                        {
+                            requiredIntermediateCount += requiredCount;
+                        }
+                    }
+
+                    ThingDefCountClass output = FindTestProduct(productRecipe, productCandidate);
+
+                    if (output == null || requiredIntermediateCount <= 0 || output.count <= 0)
+                    {
+                        continue;
+                    }
+
+                    outerRecipeCandidates++;
+                    intermediateProduct = productCandidate;
+                    intermediateProductRecipe = productRecipe;
+                    manufacturedIntermediate = ingredientCandidate;
+                    manufacturedIntermediateRecipe = producer;
+                    intermediateOutput = output;
+                    intermediateRequiredCount = requiredIntermediateCount;
+                    manufacturedIntermediatePrice = ingredientPrice;
+                }
+            }
+
+            string intermediateSearchReason =
+                $"searched {intermediateThingDefsExamined} loaded ThingDefs as ingredient X for a " +
+                $"non-surgery recipe producing X; {producedIntermediateCandidates} had a producer " +
+                $"recipe, {positiveIntermediateInputCandidates} had a resolved positive own " +
+                $"direct-input price, {positiveIntermediatePriceCandidates} had a positive X own " +
+                $"price, and {distinctIntermediatePriceCandidates} had different X price/input " +
+                $"figures; {intermediateCandidatesWithExistingPurchase} were excluded for existing " +
+                $"completed purchase evidence and {intermediateCandidatesWithoutExistingPurchase} " +
+                $"remained for the outer search, which examined {outerProductThingDefsExamined} " +
+                $"loaded ThingDefs as product P, examined {outerIngredientEntriesExamined} direct " +
+                $"ingredient entries, and found {outerRecipeCandidates} valid recipes consuming X";
+            if (intermediateProduct == null || state.PurchaseOrders == null)
+            {
+                r.Skip(
+                    intermediateAssertion,
+                    intermediateProduct == null
+                        ? intermediateSearchReason
+                        : "the world purchase-order collection is unavailable for the evidence fixture");
+            }
+            else
+            {
+                PurchaseOrder intermediatePurchase = new PurchaseOrder
+                {
+                    id = -11041,
+                    settlementId = 0,
+                    settlementName = "Self-test evidence",
+                    factionName = "Self-test faction",
+                    thingDef = manufacturedIntermediate,
+                    stuffDef = null,
+                    quality = null,
+                    quantity = 1,
+                    unitPrice = manufacturedIntermediatePrice,
+                    paidSilver = Mathf.RoundToInt(manufacturedIntermediatePrice),
+                    orderedTick = GenTicks.TicksGame,
+                    readyTick = GenTicks.TicksGame,
+                    status = PurchaseOrderStatus.Completed
+                };
+
+                BusinessReportService.DirectInputEstimate pricedOuterEstimate = null;
+                BusinessReportService.DirectInputEstimate decomposedOuterEstimate = null;
+                BusinessReportService.DirectInputEstimate innerEstimate = null;
+                float pricedFigure = 0f;
+                float decomposedFigure = 0f;
+                string intermediateException = null;
+                PurchaseOrder decomposedPurchase = null;
+                try
+                {
+                    // Measure X's own inputs before adding the synthetic purchase. The purchase
+                    // then supplies X's real price to P, so these are two distinct real figures.
+                    innerEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, manufacturedIntermediate, null);
+                    decomposedPurchase = new PurchaseOrder
+                    {
+                        id = -11044,
+                        settlementId = 0,
+                        settlementName = "Self-test evidence",
+                        factionName = "Self-test faction",
+                        thingDef = manufacturedIntermediate,
+                        stuffDef = null,
+                        quality = null,
+                        quantity = 1,
+                        unitPrice = innerEstimate.costPerUnit,
+                        paidSilver = Mathf.RoundToInt(innerEstimate.costPerUnit),
+                        orderedTick = GenTicks.TicksGame,
+                        readyTick = GenTicks.TicksGame,
+                        status = PurchaseOrderStatus.Completed
+                    };
+
+                    state.PurchaseOrders.Add(intermediatePurchase);
+                    pricedOuterEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, intermediateProduct, null);
+                    state.PurchaseOrders.Remove(intermediatePurchase);
+                    state.PurchaseOrders.Add(decomposedPurchase);
+                    decomposedOuterEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, intermediateProduct, null);
+                    pricedFigure = pricedOuterEstimate == null
+                        ? 0f
+                        : pricedOuterEstimate.costPerUnit;
+                    decomposedFigure = decomposedOuterEstimate == null
+                        ? 0f
+                        : decomposedOuterEstimate.costPerUnit;
+                }
+                catch (System.Exception ex)
+                {
+                    intermediateException = ex.Message;
+                }
+                finally
+                {
+                    state.PurchaseOrders.Remove(intermediatePurchase);
+                    if (decomposedPurchase != null)
+                    {
+                        state.PurchaseOrders.Remove(decomposedPurchase);
+                    }
+                }
+
+                // If X's price and X's own input cost coincide, the outer figure cannot
+                // distinguish pricing X as an intermediate from decomposing X, so skip rather
+                // than passing vacuously.
+                if (innerEstimate != null &&
+                    innerEstimate.status ==
+                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                    innerEstimate.hasDirectInputs &&
+                    Mathf.Approximately(
+                        manufacturedIntermediatePrice, innerEstimate.costPerUnit))
+                {
+                    r.Skip(
+                        intermediateAssertion,
+                        $"intermediate {manufacturedIntermediate.defName}; X price " +
+                        $"{manufacturedIntermediatePrice:0.###} equals own-input cost " +
+                        $"{innerEstimate.costPerUnit:0.###}; the two behaviours are not " +
+                        "distinguishable");
+                }
+                else
+                {
+                    r.Check(
+                        pricedOuterEstimate != null && decomposedOuterEstimate != null &&
+                        innerEstimate != null &&
+                        pricedOuterEstimate.status ==
+                            BusinessReportService.DirectInputCostStatus.Resolved &&
+                        decomposedOuterEstimate.status ==
+                            BusinessReportService.DirectInputCostStatus.Resolved &&
+                        innerEstimate.status ==
+                            BusinessReportService.DirectInputCostStatus.Resolved &&
+                        pricedOuterEstimate.hasDirectInputs &&
+                        decomposedOuterEstimate.hasDirectInputs &&
+                        innerEstimate.hasDirectInputs &&
+                        pricedOuterEstimate.recipeDefName == intermediateProductRecipe.defName &&
+                        decomposedOuterEstimate.recipeDefName == intermediateProductRecipe.defName &&
+                        innerEstimate.recipeDefName == manufacturedIntermediateRecipe.defName &&
+                        pricedOuterEstimate.ingredientPriceTiers != null &&
+                        pricedOuterEstimate.ingredientPriceTiers.Contains(
+                            BusinessReportService.DirectInputPriceTier.RecentCompletedPurchaseMedian) &&
+                        decomposedOuterEstimate.ingredientPriceTiers != null &&
+                        decomposedOuterEstimate.ingredientPriceTiers.Contains(
+                            BusinessReportService.DirectInputPriceTier.RecentCompletedPurchaseMedian) &&
+                        !Mathf.Approximately(pricedFigure, decomposedFigure) &&
+                        Mathf.Approximately(
+                            pricedFigure - decomposedFigure,
+                            (manufacturedIntermediatePrice - innerEstimate.costPerUnit) *
+                                intermediateRequiredCount / intermediateOutput.count),
+                        intermediateAssertion,
+                        $"outer {intermediateProduct.defName} via " +
+                        $"{(pricedOuterEstimate?.recipeDefName ?? "<none>")} priced cost " +
+                        $"{pricedFigure:0.###}; decomposed cost " +
+                        $"{decomposedFigure:0.###}; " +
+                        $"intermediate {manufacturedIntermediate.defName} via " +
+                        $"{(innerEstimate?.recipeDefName ?? "<none>")} own-input cost " +
+                        $"{(innerEstimate == null ? 0f : innerEstimate.costPerUnit):0.###}; " +
+                        $"X price {manufacturedIntermediatePrice:0.###}; fixture " +
+                        $"{intermediateRequiredCount}/{intermediateOutput.count} units at " +
+                        $"X price; tiers " +
+                        $"{(pricedOuterEstimate?.priceTier.ToString() ?? "<none>")} / " +
+                        $"{(decomposedOuterEstimate?.priceTier.ToString() ?? "<none>")}" +
+                        (intermediateException == null ? "" :
+                            $"; exception {intermediateException}"));
+                }
+            }
+
+            // A single direct input makes the purchase/market fixtures observable without
+            // reimplementing the resolver. Existing completed purchases are excluded
+            // conservatively so the three prices below are the only matching observations.
+            ThingDef probeProduct = null;
+            RecipeDef probeRecipe = null;
+            ThingDef probeInput = null;
+            int probeRequiredCount = 0;
+            int probeOutputCount = 0;
+            for (int i = 0; i < thingDefs.Count && probeProduct == null; i++)
+            {
+                ThingDef candidate = thingDefs[i];
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                RecipeDef candidateRecipe = null;
+                for (int j = 0; j < recipes.Count; j++)
+                {
+                    RecipeDef recipe = recipes[j];
+                    if (recipe == null || recipe.IsSurgery || recipe.products == null ||
+                        recipe.ingredients == null || recipe.ingredients.Count != 1 ||
+                        FindTestProduct(recipe, candidate) == null)
+                    {
+                        continue;
+                    }
+
+                    if (candidateRecipe == null || string.CompareOrdinal(
+                            recipe.defName ?? string.Empty,
+                            candidateRecipe.defName ?? string.Empty) < 0)
+                    {
+                        candidateRecipe = recipe;
+                    }
+                }
+
+                if (candidateRecipe == null)
+                {
+                    continue;
+                }
+
+                ThingDef allowedInput;
+                string ignoredReason;
+                if (!TryGetSingleAllowedThingDef(
+                        candidateRecipe.ingredients[0], out allowedInput, out ignoredReason) ||
+                    allowedInput == null)
+                {
+                    continue;
+                }
+
+                ThingDefCountClass output = FindTestProduct(candidateRecipe, candidate);
+                int requiredCount;
+                try
+                {
+                    requiredCount = candidateRecipe.ingredients[0].CountRequiredOfFor(
+                        allowedInput, candidateRecipe);
+                }
+                catch (System.Exception)
+                {
+                    continue;
+                }
+
+                if (output == null || requiredCount <= 0 || output.count <= 0)
+                {
+                    continue;
+                }
+
+                bool hasExistingPurchase = false;
+                if (state.PurchaseOrders != null)
+                {
+                    foreach (PurchaseOrder order in state.PurchaseOrders)
+                    {
+                        if (order != null && order.status == PurchaseOrderStatus.Completed &&
+                            order.quantity > 0 && order.thingDef == allowedInput &&
+                            order.stuffDef == null && order.quality == null)
+                        {
+                            hasExistingPurchase = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (hasExistingPurchase)
+                {
+                    continue;
+                }
+
+                probeProduct = candidate;
+                probeRecipe = candidateRecipe;
+                probeInput = allowedInput;
+                probeRequiredCount = requiredCount;
+                probeOutputCount = output.count;
+            }
+
+            string probeSearchReason =
+                "searched loaded products with a selected non-surgery recipe containing exactly " +
+                "one allowed direct input and no existing completed purchase evidence";
+
+            int supplierSettlementId = -1;
+            if (Find.WorldObjects != null)
+            {
+                foreach (var settlement in Find.WorldObjects.Settlements)
+                {
+                    if (settlement != null && IntercolonyMarketAccess.IsAccessible(settlement))
+                    {
+                        supplierSettlementId = settlement.ID;
+                        break;
+                    }
+                }
+            }
+
+            if (probeProduct == null || state.PurchaseOrders == null ||
+                state.SupplierListings == null || supplierSettlementId < 0)
+            {
+                string reason = probeProduct == null
+                    ? probeSearchReason
+                    : state.PurchaseOrders == null
+                        ? "the world purchase-order collection is unavailable"
+                        : state.SupplierListings == null
+                            ? "the world supplier-listing collection is unavailable"
+                            : "no accessible loaded settlement is available for a market listing fixture";
+                r.Skip(purchasePriorityAssertion, reason);
+            }
+            else
+            {
+                const float marketPrice = 73.5f;
+                const float purchasePrice = 0.125f;
+                SupplierListing marketListing = new SupplierListing
+                {
+                    id = -11042,
+                    settlementId = supplierSettlementId,
+                    thingDef = probeInput,
+                    stuffDef = null,
+                    quality = null,
+                    quantityAvailable = 100,
+                    unitPrice = marketPrice,
+                    createdTick = GenTicks.TicksGame,
+                    expiryTick = SupplierListing.NoExpiryTick,
+                    refreshWindow = state.RefreshCount
+                };
+                PurchaseOrder purchase = new PurchaseOrder
+                {
+                    id = -11043,
+                    settlementId = supplierSettlementId,
+                    settlementName = "Self-test evidence",
+                    factionName = "Self-test faction",
+                    thingDef = probeInput,
+                    stuffDef = null,
+                    quality = null,
+                    quantity = 8,
+                    unitPrice = purchasePrice,
+                    paidSilver = Mathf.RoundToInt(purchasePrice * 8f),
+                    orderedTick = GenTicks.TicksGame,
+                    readyTick = GenTicks.TicksGame,
+                    status = PurchaseOrderStatus.Completed
+                };
+
+                BusinessReportService.DirectInputEstimate marketEstimate = null;
+                BusinessReportService.DirectInputEstimate purchaseEstimate = null;
+                float observedPurchaseUnit = 0f;
+                string purchasePriorityException = null;
+                try
+                {
+                    state.SupplierListings.Add(marketListing);
+                    marketEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, probeProduct, null);
+                    state.PurchaseOrders.Add(purchase);
+                    purchaseEstimate = BusinessReportService.EstimateDirectInputs(
+                        state, probeProduct, null);
+                    observedPurchaseUnit = purchaseEstimate == null
+                        ? 0f
+                        : purchaseEstimate.costPerUnit * probeOutputCount /
+                          (float)probeRequiredCount;
+                }
+                catch (System.Exception ex)
+                {
+                    purchasePriorityException = ex.Message;
+                }
+                finally
+                {
+                    state.PurchaseOrders.Remove(purchase);
+                    state.SupplierListings.Remove(marketListing);
+                }
+
+                r.Check(
+                    marketEstimate != null && purchaseEstimate != null &&
+                    marketEstimate.status ==
+                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                    purchaseEstimate.status ==
+                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                    marketEstimate.recipeDefName == probeRecipe.defName &&
+                    purchaseEstimate.recipeDefName == probeRecipe.defName &&
+                    marketEstimate.priceTier ==
+                        BusinessReportService.DirectInputPriceTier.ProcurementMarketEstimate &&
+                    purchaseEstimate.priceTier ==
+                        BusinessReportService.DirectInputPriceTier.RecentCompletedPurchaseMedian &&
+                    Mathf.Approximately(observedPurchaseUnit, purchasePrice) &&
+                    purchaseEstimate.costPerUnit < marketEstimate.costPerUnit,
+                    purchasePriorityAssertion,
+                    $"input {probeInput.defName}; market fixture {marketPrice:0.###}; " +
+                    $"market cost {(marketEstimate == null ? 0f : marketEstimate.costPerUnit):0.###} " +
+                    $"tier {(marketEstimate?.priceTier.ToString() ?? "<none>")}; purchase fixture " +
+                    $"{purchasePrice:0.###}; purchase cost " +
+                    $"{(purchaseEstimate == null ? 0f : purchaseEstimate.costPerUnit):0.###} " +
+                    $"unit {(observedPurchaseUnit):0.###}; tier " +
+                    $"{(purchaseEstimate?.priceTier.ToString() ?? "<none>")}" +
+                    (purchasePriorityException == null ? "" :
+                        $"; exception {purchasePriorityException}"));
+            }
+
+            if (probeProduct == null || state.PurchaseOrders == null)
+            {
+                r.Skip(
+                    purchaseMedianAssertion,
+                    probeProduct == null
+                        ? probeSearchReason
+                        : "the world purchase-order collection is unavailable");
+            }
+            else
+            {
+                float[] medianPrices = { 2.0f, 2.1f, 9.0f };
+                List<PurchaseOrder> medianPurchases = new List<PurchaseOrder>();
+                BusinessReportService.DirectInputEstimate medianEstimate = null;
+                float observedMedianUnitPrice = 0f;
+                string purchaseMedianException = null;
+                try
+                {
+                    for (int i = 0; i < medianPrices.Length; i++)
+                    {
+                        medianPurchases.Add(new PurchaseOrder
+                        {
+                            id = -11050 - i,
+                            settlementId = 0,
+                            settlementName = "Self-test evidence",
+                            factionName = "Self-test faction",
+                            thingDef = probeInput,
+                            stuffDef = null,
+                            quality = null,
+                            quantity = 1,
+                            unitPrice = medianPrices[i],
+                            paidSilver = Mathf.RoundToInt(medianPrices[i]),
+                            orderedTick = GenTicks.TicksGame,
+                            readyTick = GenTicks.TicksGame,
+                            status = PurchaseOrderStatus.Completed
+                        });
+                        state.PurchaseOrders.Add(medianPurchases[i]);
+                    }
+
+                    medianEstimate =
+                        BusinessReportService.EstimateDirectInputs(state, probeProduct, null);
+                    observedMedianUnitPrice = medianEstimate == null
+                        ? 0f
+                        : medianEstimate.costPerUnit * probeOutputCount /
+                          (float)probeRequiredCount;
+                }
+                catch (System.Exception ex)
+                {
+                    purchaseMedianException = ex.Message;
+                }
+                finally
+                {
+                    for (int i = 0; i < medianPurchases.Count; i++)
+                    {
+                        state.PurchaseOrders.Remove(medianPurchases[i]);
+                    }
+                }
+
+                r.Check(
+                    medianEstimate != null &&
+                    medianEstimate.status ==
+                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                    medianEstimate.recipeDefName == probeRecipe.defName &&
+                    medianEstimate.priceTier ==
+                        BusinessReportService.DirectInputPriceTier.RecentCompletedPurchaseMedian &&
+                    Mathf.Approximately(observedMedianUnitPrice, 2.1f),
+                    purchaseMedianAssertion,
+                    $"input {probeInput.defName}; purchases 2.0, 2.1, 9.0; observed " +
+                    $"{(medianEstimate == null ? 0f : medianEstimate.costPerUnit):0.###}; " +
+                    $"unit {(observedMedianUnitPrice):0.###}; expected median 2.1; " +
+                    $"fixture scale {probeRequiredCount}/{probeOutputCount}; tier " +
+                    $"{(medianEstimate?.priceTier.ToString() ?? "<none>")}" +
+                    (purchaseMedianException == null ? "" :
+                        $"; exception {purchaseMedianException}"));
+            }
+
+            if (probeProduct == null || state.PurchaseOrders == null)
+            {
+                r.Skip(
+                    cancelledPurchaseAssertion,
+                    probeProduct == null
+                        ? probeSearchReason
+                        : "the world purchase-order collection is unavailable");
+            }
+            else
+            {
+                BusinessReportService.DirectInputEstimate beforeCancelled = null;
+                BusinessReportService.DirectInputEstimate afterCancelled = null;
+                PurchaseOrder cancelledPurchase = new PurchaseOrder
+                {
+                    id = -11060,
+                    settlementId = 0,
+                    settlementName = "Self-test evidence",
+                    factionName = "Self-test faction",
+                    thingDef = probeInput,
+                    stuffDef = null,
+                    quality = null,
+                    quantity = 1,
+                    unitPrice = 999999f,
+                    paidSilver = 999999,
+                    orderedTick = GenTicks.TicksGame,
+                    readyTick = GenTicks.TicksGame,
+                    status = PurchaseOrderStatus.Cancelled
+                };
+
+                string cancelledPurchaseException = null;
+                try
+                {
+                    beforeCancelled = BusinessReportService.EstimateDirectInputs(
+                        state, probeProduct, null);
+                    state.PurchaseOrders.Add(cancelledPurchase);
+                    afterCancelled = BusinessReportService.EstimateDirectInputs(
+                        state, probeProduct, null);
+                }
+                catch (System.Exception ex)
+                {
+                    cancelledPurchaseException = ex.Message;
+                }
+                finally
+                {
+                    state.PurchaseOrders.Remove(cancelledPurchase);
+                }
+
+                r.Check(
+                    beforeCancelled != null && afterCancelled != null &&
+                    beforeCancelled.status == afterCancelled.status &&
+                    beforeCancelled.recipeDefName == afterCancelled.recipeDefName &&
+                    beforeCancelled.priceTier == afterCancelled.priceTier &&
+                    Mathf.Approximately(
+                        beforeCancelled.costPerUnit, afterCancelled.costPerUnit) &&
+                    beforeCancelled.hasDirectInputs == afterCancelled.hasDirectInputs,
+                    cancelledPurchaseAssertion,
+                    $"input {probeInput.defName}; cancelled fixture {cancelledPurchase.unitPrice:0.###}; " +
+                    $"before {(beforeCancelled == null ? "<null>" :
+                        beforeCancelled.status.ToString())} " +
+                    $"{(beforeCancelled == null ? 0f : beforeCancelled.costPerUnit):0.###} " +
+                    $"tier {(beforeCancelled?.priceTier.ToString() ?? "<none>")}; after " +
+                    $"{(afterCancelled == null ? "<null>" : afterCancelled.status.ToString())} " +
+                    $"{(afterCancelled == null ? 0f : afterCancelled.costPerUnit):0.###} " +
+                    $"tier {(afterCancelled?.priceTier.ToString() ?? "<none>")}" +
+                    (cancelledPurchaseException == null ? "" :
+                        $"; exception {cancelledPurchaseException}"));
+            }
+
+            ThingDef benchmarkProduct = null;
+            for (int i = 0; i < thingDefs.Count && benchmarkProduct == null; i++)
+            {
+                ThingDef candidate = thingDefs[i];
+                if (candidate == null || candidate.BaseMarketValue <= 0f ||
+                    (candidate.category != ThingCategory.Item &&
+                     candidate.category != ThingCategory.Building))
+                {
+                    continue;
+                }
+
+                bool hasMatchingEvidence = false;
+                if (state.SupplierListings != null)
+                {
+                    foreach (SupplierListing listing in state.SupplierListings)
+                    {
+                        if (listing != null && listing.thingDef == candidate &&
+                            listing.stuffDef == null)
+                        {
+                            hasMatchingEvidence = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasMatchingEvidence && state.Requests != null)
+                {
+                    foreach (PurchaseRequest request in state.Requests)
+                    {
+                        if (request != null && request.thingDef == candidate &&
+                            request.stuffDef == null)
+                        {
+                            hasMatchingEvidence = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!hasMatchingEvidence)
+                {
+                    benchmarkProduct = candidate;
+                }
+            }
+
+            string benchmarkSearchReason =
+                "searched loaded positive-BaseMarketValue Item or Building ThingDefs with no " +
+                "matching supplier listing or purchase request";
+            if (benchmarkProduct == null)
+            {
+                r.Skip(benchmarkAssertion, benchmarkSearchReason);
+            }
+            else
+            {
+                RecurringContract benchmarkContract = new RecurringContract
+                {
+                    id = -11070,
+                    settlementName = "Self-test benchmark",
+                    factionName = "Self-test faction",
+                    thingDef = benchmarkProduct,
+                    stuffDef = null,
+                    quantityPerCycle = 1,
+                    cadenceTicks = GenDate.TicksPerDay,
+                    totalCycles = 1,
+                    unitPrice = 1f,
+                    status = ContractStatus.Active
+                };
+                BusinessReportService.ContractEstimate benchmarkEstimate = null;
+                string benchmarkException = null;
+                try
+                {
+                    benchmarkEstimate = BusinessReportService.Estimate(
+                        state, benchmarkContract);
+                }
+                catch (System.Exception ex)
+                {
+                    benchmarkException = ex.Message;
+                }
+
+                r.Check(
+                    benchmarkEstimate != null &&
+                    !benchmarkEstimate.hasMarketMedianUnitPrice &&
+                    benchmarkEstimate.marketMedianUnitPrice == 0f,
+                    benchmarkAssertion,
+                    $"product {benchmarkProduct.defName}; has median " +
+                    $"{(benchmarkEstimate == null ? "<null>" :
+                        benchmarkEstimate.hasMarketMedianUnitPrice.ToString())}; observed " +
+                    $"{(benchmarkEstimate == null ? 0f :
+                        benchmarkEstimate.marketMedianUnitPrice):0.###}; " +
+                    "matching listing/request search returned none" +
+                    (benchmarkException == null ? "" : $"; exception {benchmarkException}"));
             }
         }
 
