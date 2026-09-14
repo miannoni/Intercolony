@@ -71,6 +71,34 @@ few in-game days. Judge whether it actually behaves that way, including that sel
 6 does not restart it and down to 5 does. The model-level assertions prove the domain rules and
 prove nothing about how any of it looks.
 
+### F06: employee apparel, the consent card, and what the bond actually costs
+
+Added 2026-09-14 on branch `foreman/playtest-finalization-2026-09-13`. An active Intercolony
+employee can now be given a **vanilla apparel policy** in the Assign tab and is acted on by
+**vanilla apparel optimisation**; every other quest lodger still reads **Unchangeable** and is
+still skipped. The first time apparel management wants to remove **original issued gear**, one
+**consent card** appears naming the worker, the item, and the **bond at risk**. **Keep issued apparel**
+denies and the card never returns; **Allow change** consents. **Denied is silent** — the
+optimiser keeps trying and nothing is logged or announced. A **player-forced** drop, strip, forced
+wear, dress-other-pawn, or weapon swap on an employee asks the same question before it happens, and
+cancelling changes nothing at all. Consenting makes that item's share of the bond **permanently non-refundable**;
+no silver moves at the time, because the bond was already paid at hire. **Colony-supplied gear does not leave the map**
+with a departing employee, including on the safe-passage
+release when their faction goes to war, while **original gear still refundable leaves with them**
+and refunds its share.
+
+**Steps.** Judge specifically whether the first clothing swap produces ONE understandable card rather
+than a stream of them; whether accepting leads to normal vanilla outfit behaviour afterwards with no
+further prompting; whether declining really is silent over a long stretch rather than quietly
+spamming the log; whether an employee under a policy stops ending up **tattered or half-dressed**
+when the colony has suitable apparel, which is the actual player complaint this feature exists to
+fix; whether the bond figure on the card matches what is actually withheld at the end of the
+contract; whether a departing employee visibly leaves colony gear behind without also being stripped
+of their own clothes; and whether the forced-drop confirmation feels like a fair warning rather than
+an obstruction when the player genuinely wants that gear. The settlement arithmetic is asserted
+through the real settlement path and mutation-proven, and none of it proves anything about how the
+card reads, when it appears, or how any of this feels in play.
+
 ### Stage 8: F08 and F09 need a seasons-long diplomatic read
 
 Added 2026-09-09 on branch `foreman/playtest-batch-2026-09-06`. F08 and F09 are slow, quiet
