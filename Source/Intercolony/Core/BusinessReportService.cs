@@ -27,6 +27,12 @@ namespace Intercolony
         /// <summary>A year, the longer view. Matches the ledger's retention exactly.</summary>
         public const int YearDays = GenDate.DaysPerYear;
 
+        /// <summary>
+        /// Completed purchase evidence is useful for a year, not forever: material prices drift
+        /// with the market, and a purchase from three years ago is not evidence about today.
+        /// </summary>
+        private const int RecentPurchaseWindowTicks = YearDays * GenDate.TicksPerDay;
+
         // --- Forward-looking: is this contract worth it? (§45) -----------------------------
 
         /// <summary>
@@ -105,6 +111,15 @@ namespace Intercolony
             CannotBePriced
         }
 
+        public enum DirectInputPriceTier
+        {
+            None,
+            RecentCompletedPurchaseMedian,
+            ProcurementMarketEstimate,
+            GenericMarketValue,
+            Mixed
+        }
+
         /// <summary>
         /// Replacement price for the immediate ingredients or construction materials of one output
         /// unit. This deliberately stops at the selected recipe's direct ingredients or the
@@ -119,6 +134,13 @@ namespace Intercolony
             public string recipeDefName;
             /// <summary>Names the vanilla construction route when it supplied the estimate.</summary>
             public string constructionRouteName;
+            /// <summary>
+            /// Price evidence used by the estimate. Mixed means different direct inputs used
+            /// different tiers; <see cref="ingredientPriceTiers"/> preserves their route order.
+            /// </summary>
+            public DirectInputPriceTier priceTier;
+            public List<DirectInputPriceTier> ingredientPriceTiers =
+                new List<DirectInputPriceTier>();
             public string reason;
         }
 
@@ -168,7 +190,8 @@ namespace Intercolony
                          RfqService.SupplierMargin;
             estimate.inputsIfBought = -Mathf.RoundToInt(unit * contract.quantityPerCycle);
 
-            estimate.directInputs = EstimateDirectInputs(contract.thingDef, contract.stuffDef);
+            estimate.directInputs = EstimateDirectInputs(
+                state, contract.thingDef, contract.stuffDef);
             if (estimate.directInputs.status == DirectInputCostStatus.Resolved)
             {
                 estimate.directInputsIfBought = -Mathf.RoundToInt(
@@ -520,6 +543,17 @@ namespace Intercolony
         /// </summary>
         public static DirectInputEstimate EstimateDirectInputs(ThingDef product, ThingDef stuffDef)
         {
+            return EstimateDirectInputs(
+                IntercolonyWorldComponent.Current, product, stuffDef);
+        }
+
+        /// <summary>
+        /// State-aware overload used by contract reports so direct inputs can read the colony's
+        /// purchase history and already-published procurement quotes without creating new state.
+        /// </summary>
+        public static DirectInputEstimate EstimateDirectInputs(
+            IntercolonyWorldComponent state, ThingDef product, ThingDef stuffDef)
+        {
             DirectInputEstimate estimate = new DirectInputEstimate();
             if (product == null)
             {
@@ -560,13 +594,16 @@ namespace Intercolony
                 {
                     ThingDefCountClass costEntry = costList[i];
                     float ingredientCost;
-                    if (!TryPriceDirectIngredient(costEntry, out ingredientCost))
+                    DirectInputPriceTier priceTier;
+                    if (!TryPriceDirectIngredient(
+                            state, costEntry, out ingredientCost, out priceTier))
                     {
                         estimate.status = DirectInputCostStatus.CannotBePriced;
                         estimate.reason = "At least one construction material has no usable definition, count, or BaseValue price.";
                         return estimate;
                     }
 
+                    RecordIngredientPriceTier(estimate, priceTier);
                     constructionInputCost += ingredientCost;
                     if (!IsUsablePositive(constructionInputCost))
                     {
@@ -604,13 +641,16 @@ namespace Intercolony
             {
                 IngredientCount ingredient = recipe.ingredients[i];
                 float ingredientCost;
-                if (!TryPriceDirectIngredient(ingredient, recipe, out ingredientCost))
+                DirectInputPriceTier priceTier;
+                if (!TryPriceDirectIngredient(
+                        state, ingredient, recipe, out ingredientCost, out priceTier))
                 {
                     estimate.status = DirectInputCostStatus.CannotBePriced;
                     estimate.reason = "At least one direct ingredient has no usable allowed definition or BaseValue price.";
                     return estimate;
                 }
 
+                RecordIngredientPriceTier(estimate, priceTier);
                 recipeInputCost += ingredientCost;
                 if (!IsUsablePositive(recipeInputCost))
                 {
@@ -686,12 +726,39 @@ namespace Intercolony
             return null;
         }
 
+        private static void RecordIngredientPriceTier(
+            DirectInputEstimate estimate, DirectInputPriceTier priceTier)
+        {
+            if (estimate == null || priceTier == DirectInputPriceTier.None)
+            {
+                return;
+            }
+
+            if (estimate.ingredientPriceTiers == null)
+            {
+                estimate.ingredientPriceTiers = new List<DirectInputPriceTier>();
+            }
+
+            estimate.ingredientPriceTiers.Add(priceTier);
+            if (estimate.ingredientPriceTiers.Count == 1)
+            {
+                estimate.priceTier = priceTier;
+            }
+            else if (estimate.priceTier != priceTier)
+            {
+                estimate.priceTier = DirectInputPriceTier.Mixed;
+            }
+        }
+
         private static bool TryPriceDirectIngredient(
+            IntercolonyWorldComponent state,
             IngredientCount ingredient,
             RecipeDef recipe,
-            out float ingredientCost)
+            out float ingredientCost,
+            out DirectInputPriceTier priceTier)
         {
             ingredientCost = 0f;
+            priceTier = DirectInputPriceTier.None;
             if (ingredient == null || ingredient.filter == null)
             {
                 return false;
@@ -731,7 +798,9 @@ namespace Intercolony
                 }
 
                 float candidateCost;
-                if (!TryPriceDirectIngredient(allowedDef, requiredCount, out candidateCost))
+                DirectInputPriceTier candidateTier;
+                if (!TryPriceDirectIngredient(
+                        state, allowedDef, requiredCount, out candidateCost, out candidateTier))
                 {
                     continue;
                 }
@@ -744,6 +813,7 @@ namespace Intercolony
                     foundPrice = true;
                     selectedDef = allowedDef;
                     selectedCost = candidateCost;
+                    priceTier = candidateTier;
                 }
             }
 
@@ -757,37 +827,47 @@ namespace Intercolony
         }
 
         private static bool TryPriceDirectIngredient(
+            IntercolonyWorldComponent state,
             ThingDefCountClass ingredient,
-            out float ingredientCost)
+            out float ingredientCost,
+            out DirectInputPriceTier priceTier)
         {
             ingredientCost = 0f;
+            priceTier = DirectInputPriceTier.None;
             if (ingredient == null)
             {
                 return false;
             }
 
             return TryPriceDirectIngredient(
-                ingredient.thingDef, ingredient.count, out ingredientCost);
+                state, ingredient.thingDef, ingredient.count,
+                out ingredientCost, out priceTier);
         }
 
         private static bool TryPriceDirectIngredient(
+            IntercolonyWorldComponent state,
             ThingDef ingredientDef,
             int requiredCount,
-            out float ingredientCost)
+            out float ingredientCost,
+            out DirectInputPriceTier priceTier)
         {
             ingredientCost = 0f;
+            priceTier = DirectInputPriceTier.None;
             if (ingredientDef == null || requiredCount <= 0)
             {
                 return false;
             }
 
-            float unitBaseValue = IntercolonyPricing.BaseValue(ingredientDef, null);
-            if (!IsUsablePositive(unitBaseValue))
+            float unitPrice;
+            if (!TryPriceDirectIngredientUnit(
+                    state, ingredientDef, null, out unitPrice, out priceTier))
             {
                 return false;
             }
 
-            float candidateCost = requiredCount * unitBaseValue * RfqService.SupplierMargin;
+            float candidateCost = priceTier == DirectInputPriceTier.GenericMarketValue
+                ? requiredCount * unitPrice * RfqService.SupplierMargin
+                : requiredCount * unitPrice;
             if (!IsUsablePositive(candidateCost))
             {
                 return false;
@@ -795,6 +875,182 @@ namespace Intercolony
 
             ingredientCost = candidateCost;
             return true;
+        }
+
+        private static bool TryPriceDirectIngredientUnit(
+            IntercolonyWorldComponent state,
+            ThingDef ingredientDef,
+            ThingDef stuffDef,
+            out float unitPrice,
+            out DirectInputPriceTier priceTier)
+        {
+            unitPrice = 0f;
+            priceTier = DirectInputPriceTier.None;
+
+            if (ingredientDef == null)
+            {
+                return false;
+            }
+
+            if (TryGetRecentPurchaseMedianUnitPrice(
+                    state, ingredientDef, stuffDef, out unitPrice))
+            {
+                priceTier = DirectInputPriceTier.RecentCompletedPurchaseMedian;
+                return true;
+            }
+
+            if (TryGetCurrentProcurementMarketUnitPrice(
+                    state, ingredientDef, stuffDef, out unitPrice))
+            {
+                priceTier = DirectInputPriceTier.ProcurementMarketEstimate;
+                return true;
+            }
+
+            float unitBaseValue = IntercolonyPricing.BaseValue(ingredientDef, stuffDef);
+            if (!IsUsablePositive(unitBaseValue))
+            {
+                return false;
+            }
+
+            // Keep the old fallback expression exactly: absent evidence, direct-input pricing
+            // must remain BaseValue multiplied by procurement's existing supplier margin.
+            unitPrice = unitBaseValue;
+            priceTier = DirectInputPriceTier.GenericMarketValue;
+            return true;
+        }
+
+        private static bool TryGetRecentPurchaseMedianUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef ingredientDef,
+            ThingDef stuffDef,
+            out float unitPrice)
+        {
+            unitPrice = 0f;
+            if (state?.PurchaseOrders == null)
+            {
+                return false;
+            }
+
+            int nowTick = GenTicks.TicksGame;
+            List<float> prices = new List<float>();
+            foreach (PurchaseOrder order in state.PurchaseOrders)
+            {
+                if (order == null || order.status != PurchaseOrderStatus.Completed ||
+                    order.quantity <= 0 || order.orderedTick < 0 ||
+                    !MatchesDirectIngredientSpecification(order, ingredientDef, stuffDef))
+                {
+                    continue;
+                }
+
+                long ageTicks = (long)nowTick - order.orderedTick;
+                if (ageTicks < 0 || ageTicks > RecentPurchaseWindowTicks ||
+                    !IsUsablePositive(order.unitPrice))
+                {
+                    continue;
+                }
+
+                prices.Add(order.unitPrice);
+            }
+
+            if (prices.Count == 0)
+            {
+                return false;
+            }
+
+            // This local list is a copy of the stored prices. Sort it and take the lower middle
+            // for an even count, so the median is always a price somebody actually paid rather
+            // than an average invented between two purchases.
+            prices.Sort();
+            unitPrice = prices[(prices.Count - 1) / 2];
+            return IsUsablePositive(unitPrice);
+        }
+
+        private static bool MatchesDirectIngredientSpecification(
+            PurchaseOrder order, ThingDef ingredientDef, ThingDef stuffDef)
+        {
+            // Direct raw ingredients have no quality requirement. Nullable equality is deliberate:
+            // a quality-bearing order is not evidence for a quality-less ingredient. This follows
+            // the existing def/stuff/quality comparison used by EmploymentEquipment.Matches.
+            return order != null && order.thingDef == ingredientDef &&
+                   order.stuffDef == stuffDef && order.quality == null;
+        }
+
+        private static bool TryGetCurrentProcurementMarketUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef ingredientDef,
+            ThingDef stuffDef,
+            out float unitPrice)
+        {
+            unitPrice = 0f;
+            if (state == null)
+            {
+                return false;
+            }
+
+            bool found = false;
+            if (state.SupplierListings != null)
+            {
+                foreach (SupplierListing listing in state.SupplierListings)
+                {
+                    if (listing == null || !listing.IsAvailable ||
+                        listing.refreshWindow != state.RefreshCount ||
+                        listing.thingDef != ingredientDef || listing.stuffDef != stuffDef ||
+                        listing.quality.HasValue || !IsUsablePositive(listing.unitPrice) ||
+                        !IsCurrentProcurementSupplier(listing.settlementId))
+                    {
+                        continue;
+                    }
+
+                    if (!found || listing.unitPrice < unitPrice)
+                    {
+                        found = true;
+                        unitPrice = listing.unitPrice;
+                    }
+                }
+            }
+
+            int nowTick = GenTicks.TicksGame;
+            if (state.Requests != null)
+            {
+                foreach (PurchaseRequest request in state.Requests)
+                {
+                    if (request == null || !request.IsOpen || request.HasExpired(nowTick) ||
+                        request.thingDef != ingredientDef || request.stuffDef != stuffDef ||
+                        request.quotes == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (Quotation quote in request.quotes)
+                    {
+                        if (quote == null || quote.quantityOffered <= 0 ||
+                            quote.offeredStuff != stuffDef || quote.offeredQuality.HasValue ||
+                            !IsUsablePositive(quote.unitPrice) ||
+                            !IsCurrentProcurementSupplier(quote.settlementId))
+                        {
+                            continue;
+                        }
+
+                        if (!found || quote.unitPrice < unitPrice)
+                        {
+                            found = true;
+                            unitPrice = quote.unitPrice;
+                        }
+                    }
+                }
+            }
+
+            // SupplierListing/Quotation.unitPrice is already the supplier quote produced by
+            // IntercolonyPricing.SupplierUnitPrice. Read that published value; do not call the
+            // generator or SupplierUnitPrice again, because its negotiation roll would perturb
+            // global RNG and a new request would mutate procurement state.
+            return found && IsUsablePositive(unitPrice);
+        }
+
+        private static bool IsCurrentProcurementSupplier(int settlementId)
+        {
+            var settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
+            return settlement != null && IntercolonyMarketAccess.IsAccessible(settlement);
         }
 
         private static bool IsUsablePositive(float value)
