@@ -33,6 +33,7 @@ namespace Intercolony
 
             StringBuilder sb = new StringBuilder();
             sb.AppendLine($"Economy: {profile.archetype} / {profile.wealthTier}");
+            sb.AppendLine($"Rapid logistics: {profile.rapidLogisticsCapability.Label()}");
             sb.AppendLine($"Usually supplies: {LeadingCategories(profile, supply: true)}");
             sb.AppendLine($"Usually demands: {LeadingCategories(profile, supply: false)}");
             sb.AppendLine($"Quality preference: {QualityPreferenceLabel(profile.qualityPreference)}");

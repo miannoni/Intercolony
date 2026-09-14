@@ -87,6 +87,12 @@ namespace Intercolony
         public IntercolonyWealthTier wealthTier;
         public IntercolonyArchetype archetype;
 
+        /// <summary>
+        /// Stable capability derived from this profile's seed and identity tiers. This profile is
+        /// regenerated rather than scribed, so the capability must remain derived and unsaved.
+        /// </summary>
+        public SettlementRapidLogisticsCapability rapidLogisticsCapability;
+
         /// <summary>Relative appetite to buy, per category. Higher means more likely to demand.</summary>
         public float[] demandWeights = new float[IntercolonyProductCategoryUtility.Count];
 
@@ -200,6 +206,7 @@ namespace Intercolony
             sb.AppendLine($"{settlementName} ({factionName})");
             sb.AppendLine($"  id {settlementId}  seed {seed}");
             sb.AppendLine($"  {archetype} / {wealthTier} / {techTier}");
+            sb.AppendLine($"  Rapid logistics: {rapidLogisticsCapability.Label()}");
             sb.AppendLine($"  quality pref {qualityPreference:F2}  labor x{laborSupplyModifier:F2}  volatility {volatility:F2}");
             sb.AppendLine(
                 $"  exact-good affinity band {1f - ExactGoodAffinitySpread:F2}-" +

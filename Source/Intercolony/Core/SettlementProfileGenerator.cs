@@ -16,6 +16,33 @@ namespace Intercolony
     /// </summary>
     public static class SettlementProfileGenerator
     {
+        // The score shape is intentionally broad: poor/rural Industrial settlements are usually
+        // conventional-only, ordinary Industrial settlements are mixed, wealthy Industrial /
+        // Military / TradeHub settlements are frequent drop-pod candidates, and Spacer+ is near
+        // certain. The final score is clamped below before the stable roll is applied.
+        private const int RapidLogisticsSeedSalt = 0x524C_4753;
+        private const float RapidLogisticsMinimumScore = 0.02f;
+        private const float RapidLogisticsMaximumScore = 0.99f;
+
+        private const float IndustrialRapidLogisticsScore = 0.35f;
+        private const float SpacerRapidLogisticsScore = 1.05f;
+        private const float UltraRapidLogisticsScore = 1.10f;
+        private const float ArchotechRapidLogisticsScore = 1.12f;
+
+        private const float DestituteRapidLogisticsModifier = -0.05f;
+        private const float ModestRapidLogisticsModifier = 0f;
+        private const float ComfortableRapidLogisticsModifier = 0.15f;
+        private const float WealthyRapidLogisticsModifier = 0.30f;
+
+        private const float AgriculturalRapidLogisticsModifier = -0.07f;
+        private const float IndustrialRapidLogisticsModifier = 0.10f;
+        private const float MilitaryRapidLogisticsModifier = 0.15f;
+        private const float AffluentRapidLogisticsModifier = 0.12f;
+        private const float FrontierRapidLogisticsModifier = -0.10f;
+        private const float TribalRapidLogisticsModifier = -0.12f;
+        private const float TradeHubRapidLogisticsModifier = 0.15f;
+        private const float MixedRapidLogisticsModifier = 0f;
+
         /// <summary>
         /// Whether a settlement takes part in the Intercolony economy at all.
         ///
@@ -119,6 +146,8 @@ namespace Intercolony
                 Rand.PopState();
             }
 
+            profile.rapidLogisticsCapability = RollRapidLogisticsCapability(profile);
+
             return profile;
         }
 
@@ -133,6 +162,97 @@ namespace Intercolony
         private static TechLevel NormalizeTech(TechLevel tech)
         {
             return tech == TechLevel.Undefined ? TechLevel.Industrial : tech;
+        }
+
+        private static SettlementRapidLogisticsCapability RollRapidLogisticsCapability(
+            SettlementEconomicProfile profile)
+        {
+            // No seeded roll is performed for pre-industrial settlements: their technology is a
+            // hard rule, not merely a negative contribution to the score.
+            if (profile.techTier <= TechLevel.Medieval)
+            {
+                return SettlementRapidLogisticsCapability.ConventionalTransportOnly;
+            }
+
+            float score = RapidLogisticsTechScore(profile.techTier) +
+                          RapidLogisticsWealthModifier(profile.wealthTier) +
+                          RapidLogisticsArchetypeModifier(profile.archetype);
+            score = Mathf.Clamp(score, RapidLogisticsMinimumScore, RapidLogisticsMaximumScore);
+
+            // This is a separate deterministic stream from the profile-generation stream. The
+            // push/pop pair restores the caller's Rand state, so adding this roll cannot shift
+            // archetype, wealth, volatility, weights, or any other generated value.
+            int capabilitySeed = Gen.HashCombineInt(profile.seed, RapidLogisticsSeedSalt);
+            Rand.PushState(capabilitySeed);
+            try
+            {
+                return Rand.Value < score
+                    ? SettlementRapidLogisticsCapability.DropPodsAvailable
+                    : SettlementRapidLogisticsCapability.ConventionalTransportOnly;
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+        }
+
+        private static float RapidLogisticsTechScore(TechLevel tech)
+        {
+            switch (tech)
+            {
+                case TechLevel.Industrial:
+                    return IndustrialRapidLogisticsScore;
+                case TechLevel.Spacer:
+                    return SpacerRapidLogisticsScore;
+                case TechLevel.Ultra:
+                    return UltraRapidLogisticsScore;
+                case TechLevel.Archotech:
+                    return ArchotechRapidLogisticsScore;
+                default:
+                    // NormalizeTech handles Undefined; this fallback keeps an unexpected
+                    // industrial-era enum value conservative without weakening the hard gate.
+                    return tech > TechLevel.Medieval
+                        ? IndustrialRapidLogisticsScore
+                        : 0f;
+            }
+        }
+
+        private static float RapidLogisticsWealthModifier(IntercolonyWealthTier wealth)
+        {
+            switch (wealth)
+            {
+                case IntercolonyWealthTier.Destitute:
+                    return DestituteRapidLogisticsModifier;
+                case IntercolonyWealthTier.Modest:
+                    return ModestRapidLogisticsModifier;
+                case IntercolonyWealthTier.Comfortable:
+                    return ComfortableRapidLogisticsModifier;
+                default:
+                    return WealthyRapidLogisticsModifier;
+            }
+        }
+
+        private static float RapidLogisticsArchetypeModifier(IntercolonyArchetype archetype)
+        {
+            switch (archetype)
+            {
+                case IntercolonyArchetype.Agricultural:
+                    return AgriculturalRapidLogisticsModifier;
+                case IntercolonyArchetype.Industrial:
+                    return IndustrialRapidLogisticsModifier;
+                case IntercolonyArchetype.Military:
+                    return MilitaryRapidLogisticsModifier;
+                case IntercolonyArchetype.Affluent:
+                    return AffluentRapidLogisticsModifier;
+                case IntercolonyArchetype.Frontier:
+                    return FrontierRapidLogisticsModifier;
+                case IntercolonyArchetype.Tribal:
+                    return TribalRapidLogisticsModifier;
+                case IntercolonyArchetype.TradeHub:
+                    return TradeHubRapidLogisticsModifier;
+                default:
+                    return MixedRapidLogisticsModifier;
+            }
         }
 
         private static readonly IntercolonyArchetype[] AllArchetypes =
