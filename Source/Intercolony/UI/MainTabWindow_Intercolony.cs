@@ -4151,64 +4151,140 @@ namespace Intercolony
             return expanded ? Mathf.Max(74f, height) : height;
         }
 
+        private const float ContractEstimateColumnGap = 8f;
+        private const float ContractMarketBenchmarkReservedHeight = 48f;
+        private const string ContractSellerDeliveryNote =
+            "Seller delivery — caravan cost not included in production margin";
+
         private static float ContractEstimateLabelWidth(
             float tableWidth, out float contentWidth, out float numberWidth)
         {
             contentWidth = Mathf.Max(1f, tableWidth - 220f);
-            numberWidth = Mathf.Min(140f, contentWidth);
-            return Mathf.Max(1f, contentWidth - numberWidth - 8f);
+            numberWidth = Mathf.Min(
+                120f,
+                Mathf.Max(
+                    1f, (contentWidth - 2f * ContractEstimateColumnGap) / 3f));
+            return Mathf.Max(
+                1f,
+                contentWidth - 2f * numberWidth - 2f * ContractEstimateColumnGap);
         }
 
         private static float ContractEstimateLineHeight(
-            string label, int amount, float labelWidth, float numberWidth)
-        {
-            return Mathf.Max(
-                ContractMeasuredHeight(label, labelWidth),
-                ContractMeasuredHeight(amount.ToString("N0"), numberWidth));
-        }
-
-        private static string DirectInputsAmountLabel(
-            BusinessReportService.ContractEstimate estimate)
-        {
-            BusinessReportService.DirectInputEstimate directInputs = estimate?.directInputs;
-            if (directInputs == null ||
-                directInputs.status == BusinessReportService.DirectInputCostStatus.CannotBePriced)
-            {
-                return "unavailable";
-            }
-
-            if (directInputs.status == BusinessReportService.DirectInputCostStatus.NoKnownRecipe)
-            {
-                return "no known inputs";
-            }
-
-            if (!directInputs.hasDirectInputs)
-            {
-                return "no direct inputs";
-            }
-
-            return DirectInputsIfBoughtIsLessThanOneSilver(estimate)
-                ? "less than 1 silver"
-                : estimate.directInputsIfBought.ToString("N0");
-        }
-
-        private static bool DirectInputsIfBoughtIsLessThanOneSilver(
-            BusinessReportService.ContractEstimate estimate)
-        {
-            return estimate.directInputsIfBought == 0;
-        }
-
-        private static float ContractDirectInputsLineHeight(
-            BusinessReportService.ContractEstimate estimate,
+            string label,
+            string cycleAmount,
+            string unitAmount,
             float labelWidth,
             float numberWidth)
         {
             return Mathf.Max(
-                ContractMeasuredHeight("Direct inputs if bought", labelWidth),
-                ContractMeasuredHeight(DirectInputsAmountLabel(estimate), numberWidth));
+                ContractMeasuredHeight(label, labelWidth),
+                ContractMeasuredHeight(cycleAmount, numberWidth),
+                ContractMeasuredHeight(unitAmount, numberWidth));
         }
 
-        private static string DirectLaborAmountLabel(
+        private static float ContractEstimateHeaderHeight(float numberWidth)
+        {
+            return Mathf.Max(
+                ContractMeasuredHeight("Per cycle", numberWidth),
+                ContractMeasuredHeight("Per unit", numberWidth));
+        }
+
+        private static float ContractEstimateCycleNumberX(float labelWidth)
+        {
+            return 6f + labelWidth + ContractEstimateColumnGap;
+        }
+
+        private static float ContractEstimateUnitNumberX(
+            float labelWidth, float numberWidth)
+        {
+            return ContractEstimateCycleNumberX(labelWidth) + numberWidth +
+                   ContractEstimateColumnGap;
+        }
+
+        private static string ContractCycleAmountLabel(int amount)
+        {
+            string value = amount.ToString("N0");
+            return amount > 0 ? "+" + value : value;
+        }
+
+        private static string ContractPerUnitAmountLabel(
+            BusinessReportService.ContractEstimate estimate, int amount)
+        {
+            int quantity = estimate?.contract?.quantityPerCycle ?? 0;
+            if (quantity <= 0)
+            {
+                return "";
+            }
+
+            float value = amount / (float)quantity;
+            string label = value.ToString("N2");
+            return value > 0f ? "+" + label : label;
+        }
+
+        private static bool ContractMaterialsResolved(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate != null && estimate.HasDirectInputEstimate;
+        }
+
+        private static bool ContractProductionCostsResolved(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            // Without a resolved direct-input cost, a precise production margin would hide a
+            // missing term; the finished-good fallback answers a different question, so withhold
+            // both margin rows instead of substituting it.
+            return ContractMaterialsResolved(estimate) &&
+                   estimate.HasDirectLaborEstimate;
+        }
+
+        private static bool ContractSellerDelivery(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            return estimate?.contract != null &&
+                   estimate.contract.fulfillment == FulfillmentMode.SellerDelivery;
+        }
+
+        private static Color ContractAmountColor(int amount)
+        {
+            if (amount > 0)
+            {
+                return new Color(0.6f, 0.9f, 0.6f);
+            }
+
+            if (amount < 0)
+            {
+                return new Color(1f, 0.75f, 0.75f);
+            }
+
+            return new Color(1f, 1f, 1f, 0.7f);
+        }
+
+        private static string MaterialsAmountLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            if (!ContractMaterialsResolved(estimate))
+            {
+                BusinessReportService.DirectInputEstimate directInputs =
+                    estimate?.directInputs;
+                return directInputs != null &&
+                       directInputs.status ==
+                           BusinessReportService.DirectInputCostStatus.NoKnownRecipe
+                    ? "no known inputs"
+                    : "unavailable";
+            }
+
+            return ContractCycleAmountLabel(estimate.directInputsIfBought);
+        }
+
+        private static string MaterialsPerUnitLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            return ContractMaterialsResolved(estimate)
+                ? ContractPerUnitAmountLabel(estimate, estimate.directInputsIfBought)
+                : "";
+        }
+
+        private static string PaidLaborAmountLabel(
             BusinessReportService.ContractEstimate estimate)
         {
             BusinessReportService.DirectLaborEstimate directLabor = estimate?.directLabor;
@@ -4218,27 +4294,44 @@ namespace Intercolony
                 return "unavailable";
             }
 
-            if (directLabor.status == BusinessReportService.DirectLaborCostStatus.NoEligibleEmployees)
+            if (directLabor.status ==
+                BusinessReportService.DirectLaborCostStatus.NoEligibleEmployees)
             {
-                return "no eligible employees";
+                return "0";
             }
 
-            if (directLabor.status == BusinessReportService.DirectLaborCostStatus.LessThanOneSilver)
+            if (directLabor.status ==
+                BusinessReportService.DirectLaborCostStatus.LessThanOneSilver)
             {
                 return "less than 1 silver";
             }
 
-            return estimate.directPayroll.ToString("N0");
+            return ContractCycleAmountLabel(estimate.directPayroll);
         }
 
-        private static float ContractDirectLaborLineHeight(
-            BusinessReportService.ContractEstimate estimate,
-            float labelWidth,
-            float numberWidth)
+        private static string PaidLaborPerUnitLabel(
+            BusinessReportService.ContractEstimate estimate)
         {
-            return Mathf.Max(
-                ContractMeasuredHeight("Direct labor for this good", labelWidth),
-                ContractMeasuredHeight(DirectLaborAmountLabel(estimate), numberWidth));
+            BusinessReportService.DirectLaborEstimate directLabor = estimate?.directLabor;
+            if (directLabor == null ||
+                directLabor.status == BusinessReportService.DirectLaborCostStatus.Unavailable ||
+                directLabor.status == BusinessReportService.DirectLaborCostStatus.LessThanOneSilver)
+            {
+                return "";
+            }
+
+            return ContractPerUnitAmountLabel(estimate, estimate.directPayroll);
+        }
+
+        private static string ContractMarginPercentLabel(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            if (!ContractProductionCostsResolved(estimate) || estimate.revenue == 0)
+            {
+                return "";
+            }
+
+            return (estimate.ProductionMargin / (float)estimate.revenue).ToString("0.#%");
         }
 
         private static string DirectInputTooltip(
@@ -4263,9 +4356,11 @@ namespace Intercolony
 
             if (estimate.status == BusinessReportService.DirectInputCostStatus.NoKnownRecipe)
             {
-                return method +
-                    " No non-surgery recipe in the loaded defs produces this good, so no known " +
-                    "inputs are reported; this is not a zero cost.";
+                string reason = estimate.reason.NullOrEmpty()
+                    ? "No non-surgery recipe in the loaded defs produces this good."
+                    : estimate.reason;
+                return method + " " + reason +
+                    " No known inputs are reported; this is not a zero cost.";
             }
 
             string recipe = estimate.recipeDefName.NullOrEmpty()
@@ -4305,15 +4400,6 @@ namespace Intercolony
                 "cycle length. " + estimate.eligibleEmployeeCount + " employee(s) contribute.";
         }
 
-        private static string ContractEstimateInterpretation(
-            BusinessReportService.ContractEstimate estimate)
-        {
-            return estimate.Margin >= 0
-                ? $"about {estimate.MarginPerDay:0} silver a day; making the goods rather than " +
-                  $"buying them is worth {estimate.MakingSaves:N0} a cycle"
-                : "direct labor and other estimated costs outweigh this agreement";
-        }
-
         private static float ContractEstimateBlockHeight(
             BusinessReportService.ContractEstimate estimate, float tableWidth)
         {
@@ -4322,24 +4408,49 @@ namespace Intercolony
             float labelWidth = ContractEstimateLabelWidth(
                 tableWidth, out contentWidth, out numberWidth);
             float height = 4f;
+            height += ContractEstimateHeaderHeight(numberWidth);
             height += ContractEstimateLineHeight(
-                "Revenue, payable", estimate.revenue, labelWidth, numberWidth);
+                "Revenue",
+                ContractCycleAmountLabel(estimate.revenue),
+                ContractPerUnitAmountLabel(estimate, estimate.revenue),
+                labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
-                "If you bought the goods instead", estimate.inputsIfBought, labelWidth, numberWidth);
-            height += ContractDirectInputsLineHeight(estimate, labelWidth, numberWidth);
+                "Materials",
+                MaterialsAmountLabel(estimate),
+                MaterialsPerUnitLabel(estimate),
+                labelWidth, numberWidth);
             height += ContractEstimateLineHeight(
-                "Charged wage bill over the cycle", estimate.payroll, labelWidth, numberWidth);
-            height += ContractDirectLaborLineHeight(estimate, labelWidth, numberWidth);
-            height += ContractEstimateLineHeight(
-                "Delivery premium earned, and hauled for", estimate.transport,
+                "Paid labor",
+                PaidLaborAmountLabel(estimate),
+                PaidLaborPerUnitLabel(estimate),
                 labelWidth, numberWidth);
 
-            height += 8f;
-            height += ContractEstimateLineHeight(
-                "Estimated margin", estimate.Margin, labelWidth, numberWidth);
-            height += 4f;
-            height += ContractMeasuredHeight(
-                ContractEstimateInterpretation(estimate), contentWidth);
+            if (ContractProductionCostsResolved(estimate))
+            {
+                height += 8f;
+                height += ContractEstimateLineHeight(
+                    "Production margin",
+                    ContractCycleAmountLabel(estimate.ProductionMargin),
+                    ContractPerUnitAmountLabel(estimate, estimate.ProductionMargin),
+                    labelWidth, numberWidth);
+                if (estimate.revenue != 0)
+                {
+                    height += ContractEstimateLineHeight(
+                        "Margin", ContractMarginPercentLabel(estimate), "",
+                        labelWidth, numberWidth);
+                }
+            }
+
+            if (ContractSellerDelivery(estimate))
+            {
+                height += 4f;
+                height += ContractMeasuredHeight(
+                    ContractSellerDeliveryNote, contentWidth);
+            }
+
+            // Reserve the next unit's benchmark space below this P&L without presenting a
+            // placeholder before the market benchmark has its own read-only data source.
+            height += 8f + ContractMarketBenchmarkReservedHeight;
             return height + 12f;
         }
 
@@ -4391,15 +4502,18 @@ namespace Intercolony
             Rect rect,
             float y,
             string label,
-            int amount,
+            string cycleAmount,
+            string unitAmount,
             float labelWidth,
-            float numberX,
             float numberWidth,
+            float cycleNumberX,
+            float unitNumberX,
+            Color amountColor,
             string tooltip = null)
         {
-            string amountLabel = amount.ToString("N0");
             float labelHeight = 0f;
-            float amountHeight = 0f;
+            float cycleAmountHeight = 0f;
+            float unitAmountHeight = 0f;
             Color previousColor = GUI.color;
             try
             {
@@ -4408,155 +4522,57 @@ namespace Intercolony
                     new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
                     label, TextAnchor.UpperLeft);
 
-                GUI.color = amount >= 0
-                    ? new Color(0.6f, 0.9f, 0.6f)
-                    : new Color(1f, 0.75f, 0.75f);
-                amountHeight = DrawMeasuredContractLabel(
-                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
-                    amountLabel, TextAnchor.UpperRight);
+                GUI.color = amountColor;
+                cycleAmountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + cycleNumberX, y, numberWidth, Text.LineHeight),
+                    cycleAmount, TextAnchor.UpperRight);
+                unitAmountHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + unitNumberX, y, numberWidth, Text.LineHeight),
+                    unitAmount, TextAnchor.UpperRight);
             }
             finally
             {
                 GUI.color = previousColor;
             }
 
-            float rowHeight = Mathf.Max(labelHeight, amountHeight);
-            if (!tooltip.NullOrEmpty())
+            float rowHeight = Mathf.Max(labelHeight, cycleAmountHeight, unitAmountHeight);
+            Rect tooltipRect = new Rect(
+                rect.x + 6f, y, labelWidth + 2f * ContractEstimateColumnGap +
+                2f * numberWidth, rowHeight);
+            if (ShouldBuildTooltip(tooltipRect) && !tooltip.NullOrEmpty())
             {
-                TooltipHandler.TipRegion(
-                    new Rect(rect.x + 6f, y, labelWidth + 8f + numberWidth, rowHeight),
-                    tooltip);
+                TooltipHandler.TipRegion(tooltipRect, tooltip);
             }
 
             return rowHeight;
         }
 
-        private static float DrawContractDirectInputsLine(
+        private static float DrawContractEstimateHeader(
             Rect rect,
             float y,
-            BusinessReportService.ContractEstimate estimate,
-            float labelWidth,
-            float numberX,
-            float numberWidth)
-        {
-            string amountLabel = DirectInputsAmountLabel(estimate);
-            float labelHeight = 0f;
-            float amountHeight = 0f;
-            Color previousColor = GUI.color;
-            try
-            {
-                GUI.color = new Color(1f, 1f, 1f, 0.85f);
-                labelHeight = DrawMeasuredContractLabel(
-                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
-                    "Direct inputs if bought", TextAnchor.UpperLeft);
-
-                GUI.color = estimate != null && estimate.directInputs != null &&
-                            estimate.directInputs.status ==
-                                BusinessReportService.DirectInputCostStatus.Resolved &&
-                            estimate.directInputs.hasDirectInputs
-                    ? new Color(1f, 0.75f, 0.75f)
-                    : new Color(1f, 1f, 1f, 0.6f);
-                amountHeight = DrawMeasuredContractLabel(
-                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
-                    amountLabel, TextAnchor.UpperRight);
-            }
-            finally
-            {
-                GUI.color = previousColor;
-            }
-
-            Rect tooltipRect = new Rect(
-                rect.x + 6f, y, labelWidth + 8f + numberWidth,
-                Mathf.Max(labelHeight, amountHeight));
-            if (ShouldBuildTooltip(tooltipRect))
-            {
-                TooltipHandler.TipRegion(
-                    tooltipRect, DirectInputTooltip(estimate?.directInputs));
-            }
-
-            return Mathf.Max(labelHeight, amountHeight);
-        }
-
-        private static float DrawContractDirectLaborLine(
-            Rect rect,
-            float y,
-            BusinessReportService.ContractEstimate estimate,
-            float labelWidth,
-            float numberX,
-            float numberWidth)
-        {
-            string amountLabel = DirectLaborAmountLabel(estimate);
-            float labelHeight = 0f;
-            float amountHeight = 0f;
-            Color previousColor = GUI.color;
-            try
-            {
-                GUI.color = new Color(1f, 1f, 1f, 0.85f);
-                labelHeight = DrawMeasuredContractLabel(
-                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
-                    "Direct labor for this good", TextAnchor.UpperLeft);
-
-                bool hasNumericCost = estimate != null && estimate.directLabor != null &&
-                                      (estimate.directLabor.status ==
-                                           BusinessReportService.DirectLaborCostStatus.Resolved ||
-                                       estimate.directLabor.status ==
-                                           BusinessReportService.DirectLaborCostStatus.LessThanOneSilver);
-                GUI.color = hasNumericCost && estimate.directPayroll < 0
-                    ? new Color(1f, 0.75f, 0.75f)
-                    : new Color(1f, 1f, 1f, 0.6f);
-                amountHeight = DrawMeasuredContractLabel(
-                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
-                    amountLabel, TextAnchor.UpperRight);
-            }
-            finally
-            {
-                GUI.color = previousColor;
-            }
-
-            Rect tooltipRect = new Rect(
-                rect.x + 6f, y, labelWidth + 8f + numberWidth,
-                Mathf.Max(labelHeight, amountHeight));
-            if (ShouldBuildTooltip(tooltipRect))
-            {
-                TooltipHandler.TipRegion(
-                    tooltipRect, DirectLaborTooltip(estimate?.directLabor));
-            }
-
-            return Mathf.Max(labelHeight, amountHeight);
-        }
-
-        private static float DrawContractEstimateMargin(
-            Rect rect,
-            float y,
-            float labelWidth,
-            float numberX,
             float numberWidth,
-            BusinessReportService.ContractEstimate estimate)
+            float cycleNumberX,
+            float unitNumberX)
         {
-            string amountLabel = estimate.Margin.ToString("N0");
-            float labelHeight = 0f;
-            float amountHeight = 0f;
+            float cycleHeight = 0f;
+            float unitHeight = 0f;
             Color previousColor = GUI.color;
             try
             {
-                GUI.color = Color.white;
-                labelHeight = DrawMeasuredContractLabel(
-                    new Rect(rect.x + 6f, y, labelWidth, Text.LineHeight),
-                    "Estimated margin", TextAnchor.UpperLeft);
-
-                GUI.color = estimate.Margin >= 0
-                    ? new Color(0.6f, 0.9f, 0.6f)
-                    : new Color(1f, 0.55f, 0.55f);
-                amountHeight = DrawMeasuredContractLabel(
-                    new Rect(rect.x + numberX, y, numberWidth, Text.LineHeight),
-                    amountLabel, TextAnchor.UpperRight);
+                GUI.color = new Color(1f, 1f, 1f, 0.6f);
+                cycleHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + cycleNumberX, y, numberWidth, Text.LineHeight),
+                    "Per cycle", TextAnchor.UpperRight);
+                unitHeight = DrawMeasuredContractLabel(
+                    new Rect(rect.x + unitNumberX, y, numberWidth, Text.LineHeight),
+                    "Per unit", TextAnchor.UpperRight);
             }
             finally
             {
                 GUI.color = previousColor;
             }
 
-            return Mathf.Max(labelHeight, amountHeight);
+            return Mathf.Max(cycleHeight, unitHeight);
         }
 
         private static void DrawContractEstimate(
@@ -4566,49 +4582,78 @@ namespace Intercolony
             float numberWidth;
             float labelWidth = ContractEstimateLabelWidth(
                 rect.width, out contentWidth, out numberWidth);
-            float numberX = 6f + Mathf.Max(0f, contentWidth - numberWidth);
+            float cycleNumberX = ContractEstimateCycleNumberX(labelWidth);
+            float unitNumberX = ContractEstimateUnitNumberX(labelWidth, numberWidth);
             float lineY = y + 4f;
+            lineY += DrawContractEstimateHeader(
+                rect, lineY, numberWidth, cycleNumberX, unitNumberX);
             lineY += DrawContractEstimateLine(
-                rect, lineY, "Revenue, payable", estimate.revenue,
-                labelWidth, numberX, numberWidth);
+                rect, lineY, "Revenue",
+                ContractCycleAmountLabel(estimate.revenue),
+                ContractPerUnitAmountLabel(estimate, estimate.revenue),
+                labelWidth, numberWidth, cycleNumberX, unitNumberX,
+                ContractAmountColor(estimate.revenue));
             lineY += DrawContractEstimateLine(
-                rect, lineY, "If you bought the goods instead", estimate.inputsIfBought,
-                labelWidth, numberX, numberWidth);
-            lineY += DrawContractDirectInputsLine(
-                rect, lineY, estimate, labelWidth, numberX, numberWidth);
+                rect, lineY, "Materials",
+                MaterialsAmountLabel(estimate), MaterialsPerUnitLabel(estimate),
+                labelWidth, numberWidth, cycleNumberX, unitNumberX,
+                ContractMaterialsResolved(estimate)
+                    ? ContractAmountColor(estimate.directInputsIfBought)
+                    : new Color(1f, 1f, 1f, 0.6f),
+                DirectInputTooltip(estimate?.directInputs));
             lineY += DrawContractEstimateLine(
-                rect, lineY, "Charged wage bill over the cycle", estimate.payroll,
-                labelWidth, numberX, numberWidth,
-                "This estimate uses each employee's charged daily rate: the worker's ask " +
-                "passed through that employee's selected wage structure, multiplied across the " +
-                "agreement cycle. Daily terms cost more than prepaid because the colony can stop " +
-                "paying any morning; the worker charges a premium for that flexibility.");
-            lineY += DrawContractDirectLaborLine(
-                rect, lineY, estimate, labelWidth, numberX, numberWidth);
-            lineY += DrawContractEstimateLine(
-                rect, lineY, "Delivery premium earned, and hauled for", estimate.transport,
-                labelWidth, numberX, numberWidth);
+                rect, lineY, "Paid labor",
+                PaidLaborAmountLabel(estimate), PaidLaborPerUnitLabel(estimate),
+                labelWidth, numberWidth, cycleNumberX, unitNumberX,
+                estimate?.directLabor != null &&
+                (estimate.directLabor.status ==
+                     BusinessReportService.DirectLaborCostStatus.Resolved ||
+                 estimate.directLabor.status ==
+                     BusinessReportService.DirectLaborCostStatus.NoEligibleEmployees)
+                    ? ContractAmountColor(estimate.directPayroll)
+                    : new Color(1f, 1f, 1f, 0.6f),
+                DirectLaborTooltip(estimate?.directLabor));
+
+            if (ContractProductionCostsResolved(estimate))
+            {
+                Widgets.DrawLineHorizontal(rect.x + 6f, lineY + 2f, contentWidth);
+                lineY += 8f;
+                lineY += DrawContractEstimateLine(
+                    rect, lineY, "Production margin",
+                    ContractCycleAmountLabel(estimate.ProductionMargin),
+                    ContractPerUnitAmountLabel(estimate, estimate.ProductionMargin),
+                    labelWidth, numberWidth, cycleNumberX, unitNumberX,
+                    ContractAmountColor(estimate.ProductionMargin));
+                if (estimate.revenue != 0)
+                {
+                    lineY += DrawContractEstimateLine(
+                        rect, lineY, "Margin",
+                        ContractMarginPercentLabel(estimate), "",
+                        labelWidth, numberWidth, cycleNumberX, unitNumberX,
+                        ContractAmountColor(estimate.ProductionMargin));
+                }
+            }
+
+            if (ContractSellerDelivery(estimate))
+            {
+                lineY += 4f;
+                Color previousColor = GUI.color;
+                try
+                {
+                    GUI.color = new Color(1f, 1f, 1f, 0.6f);
+                    lineY += DrawMeasuredContractLabel(
+                        new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
+                        ContractSellerDeliveryNote, TextAnchor.UpperLeft);
+                }
+                finally
+                {
+                    GUI.color = previousColor;
+                }
+            }
 
             Widgets.DrawLineHorizontal(rect.x + 6f, lineY + 2f, contentWidth);
             lineY += 8f;
-
-            lineY += DrawContractEstimateMargin(
-                rect, lineY, labelWidth, numberX, numberWidth, estimate);
-            lineY += 4f;
-
-            // The sentence that turns four numbers into a decision (§45), below the number column.
-            Color previousColor = GUI.color;
-            try
-            {
-                GUI.color = new Color(1f, 1f, 1f, 0.6f);
-                lineY += DrawMeasuredContractLabel(
-                    new Rect(rect.x + 6f, lineY, contentWidth, Text.LineHeight),
-                    ContractEstimateInterpretation(estimate), TextAnchor.UpperLeft);
-            }
-            finally
-            {
-                GUI.color = previousColor;
-            }
+            lineY += ContractMarketBenchmarkReservedHeight;
         }
 
         private void DrawContractRow(

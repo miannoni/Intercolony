@@ -83,12 +83,11 @@ namespace Intercolony
                 (HasDirectLaborEstimate ? directPayroll : payroll) +
                 transport;
 
-            /// <summary>What making the goods rather than buying them is worth, per cycle.</summary>
-            public int MakingSaves => -inputsIfBought;
-
-            public float CadenceDays => contract?.CadenceDays ?? 1f;
-
-            public float MarginPerDay => CadenceDays <= 0f ? 0f : Margin / CadenceDays;
+            /// <summary>
+            /// Revenue less direct materials and relevant paid labour, per cycle. The transport
+            /// premium is deliberately excluded because it is not a measured caravan cost.
+            /// </summary>
+            public int ProductionMargin => revenue + directInputsIfBought + directPayroll;
         }
 
         /// <summary>
