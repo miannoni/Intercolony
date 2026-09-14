@@ -225,7 +225,13 @@ namespace Intercolony
                 rotation = rotation,
                 thingDef = thingDef,
                 stuffDef = stuffDef,
-                styleDef = styleDef
+                styleDef = styleDef,
+                resumeBelow = -1,
+                waitingForResume = false,
+                allowedStuff = stuffDef != null ? new List<ThingDef> { stuffDef } : new List<ThingDef>(),
+                restrictToSelectedWorkers = false,
+                allowedWorkers = new List<Pawn>(),
+                minConstructionSkill = 0
             });
         }
 
@@ -290,6 +296,39 @@ namespace Intercolony
             }
 
             loop.targetCount = targetCount < 0 ? 0 : targetCount;
+            loop.waitingForResume = false;
+            if (loop.resumeBelow >= 0 && loop.resumeBelow >= loop.targetCount)
+            {
+                loop.resumeBelow = loop.targetCount - 1;
+                if (loop.resumeBelow < 0)
+                {
+                    loop.resumeBelow = 0;
+                }
+            }
+        }
+
+        public void SetResumeBelow(IntVec3 cell, int resumeBelow)
+        {
+            ProduceLoopRecord loop = Find(cell);
+            if (loop == null)
+            {
+                return;
+            }
+
+            if (resumeBelow < 0)
+            {
+                loop.resumeBelow = -1;
+            }
+            else if (loop.targetCount > 0)
+            {
+                loop.resumeBelow = System.Math.Min(resumeBelow, loop.targetCount - 1);
+            }
+            else
+            {
+                loop.resumeBelow = resumeBelow;
+            }
+
+            loop.waitingForResume = false;
         }
 
         public IReadOnlyList<ProduceLoopRecord> Loops
