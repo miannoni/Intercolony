@@ -102,6 +102,7 @@ namespace Intercolony
                 CheckEmployeeCardLayout(r);
                 CheckAutoRenewPersistence(r);
                 CheckLaborSpineRoundTrip(r);
+                CheckEquipmentTierRules(r, map);
                 CheckEquipmentBondBuyout(r);
                 CheckSettingsDefaultMigration(r);
 
@@ -484,6 +485,492 @@ namespace Intercolony
             }
 
             return Summarize(r);
+        }
+
+        private static void CheckEquipmentTierRules(Results r, Map map)
+        {
+            const string eliteSupplyLabel =
+                "a pre-Spacer or poor settlement can never supply Elite";
+            const string wildcardSupplyLabel =
+                "Any and None are supplyable by every settlement";
+            const string deterministicLabel = "the capability gate is deterministic";
+            const string emptyLoadoutLabel =
+                "a pawn carrying nothing classifies as None for every clause";
+            const string wildcardMatchLabel =
+                "Any accepts any actual tier, and Any is never an acceptable actual tier";
+            const string orderingLabel =
+                "a higher actual tier satisfies a lower request, and not the reverse";
+            const string headlineLabel =
+                "a posting headline names its requirement only when one was asked for";
+
+            List<TechLevel> techLevels = new List<TechLevel>();
+            foreach (TechLevel level in Enum.GetValues(typeof(TechLevel)))
+            {
+                techLevels.Add(level);
+            }
+
+            List<IntercolonyWealthTier> wealthLevels =
+                new List<IntercolonyWealthTier>();
+            foreach (IntercolonyWealthTier level in
+                     Enum.GetValues(typeof(IntercolonyWealthTier)))
+            {
+                wealthLevels.Add(level);
+            }
+
+            List<IntercolonyArchetype> archetypes = new List<IntercolonyArchetype>();
+            foreach (IntercolonyArchetype archetype in
+                     Enum.GetValues(typeof(IntercolonyArchetype)))
+            {
+                archetypes.Add(archetype);
+            }
+
+            List<CombatClause> clauses = new List<CombatClause>();
+            foreach (CombatClause clause in Enum.GetValues(typeof(CombatClause)))
+            {
+                clauses.Add(clause);
+            }
+
+            List<LaborEquipmentLevel> equipmentLevels =
+                new List<LaborEquipmentLevel>();
+            List<LaborEquipmentLevel> realEquipmentLevels =
+                new List<LaborEquipmentLevel>();
+            foreach (LaborEquipmentLevel level in
+                     Enum.GetValues(typeof(LaborEquipmentLevel)))
+            {
+                equipmentLevels.Add(level);
+                if (level != LaborEquipmentLevel.Any)
+                {
+                    realEquipmentLevels.Add(level);
+                }
+            }
+
+            // The union is deliberate: the assertion must exercise both halves of Elite's hard
+            // conjunction independently. A pre-Spacer but wealthy profile and a Spacer-or-better
+            // but poor profile can both have a high enough capability score if either gate leaks
+            // into the score instead of remaining a gate.
+            List<SettlementEconomicProfile> allProfiles =
+                new List<SettlementEconomicProfile>();
+            List<SettlementEconomicProfile> preSpacerOrPoorProfiles =
+                new List<SettlementEconomicProfile>();
+            foreach (TechLevel techTier in techLevels)
+            {
+                foreach (IntercolonyWealthTier wealthTier in wealthLevels)
+                {
+                    foreach (IntercolonyArchetype archetype in archetypes)
+                    {
+                        SettlementEconomicProfile profile = new SettlementEconomicProfile
+                        {
+                            techTier = techTier,
+                            wealthTier = wealthTier,
+                            archetype = archetype
+                        };
+                        allProfiles.Add(profile);
+                        if (techTier < TechLevel.Spacer ||
+                            wealthTier < IntercolonyWealthTier.Comfortable)
+                        {
+                            preSpacerOrPoorProfiles.Add(profile);
+                        }
+                    }
+                }
+            }
+
+            int supplyCombinationCount =
+                preSpacerOrPoorProfiles.Count * clauses.Count;
+            int eliteSupplyableCount = 0;
+            string firstEliteSupplyable = null;
+            foreach (SettlementEconomicProfile profile in preSpacerOrPoorProfiles)
+            {
+                foreach (CombatClause clause in clauses)
+                {
+                    bool observed = LaborEquipmentTierService.CanSupply(
+                        profile, LaborEquipmentLevel.Elite, clause);
+                    if (observed)
+                    {
+                        eliteSupplyableCount++;
+                        if (firstEliteSupplyable == null)
+                        {
+                            firstEliteSupplyable =
+                                $"{profile.techTier}/{profile.wealthTier}/" +
+                                $"{profile.archetype}/{clause} => {observed}";
+                        }
+                    }
+                }
+            }
+
+            r.Check(eliteSupplyableCount == 0, eliteSupplyLabel,
+                $"examined {supplyCombinationCount} combinations; observed Elite=true " +
+                $"{eliteSupplyableCount}; first true " +
+                $"{firstEliteSupplyable ?? "none"}");
+
+            int anyFalseCount = 0;
+            int noneFalseCount = 0;
+            string firstAnyFalse = null;
+            string firstNoneFalse = null;
+            foreach (SettlementEconomicProfile profile in preSpacerOrPoorProfiles)
+            {
+                foreach (CombatClause clause in clauses)
+                {
+                    bool anyObserved = LaborEquipmentTierService.CanSupply(
+                        profile, LaborEquipmentLevel.Any, clause);
+                    bool noneObserved = LaborEquipmentTierService.CanSupply(
+                        profile, LaborEquipmentLevel.None, clause);
+                    if (!anyObserved)
+                    {
+                        anyFalseCount++;
+                        if (firstAnyFalse == null)
+                        {
+                            firstAnyFalse =
+                                $"{profile.techTier}/{profile.wealthTier}/" +
+                                $"{profile.archetype}/{clause} => {anyObserved}";
+                        }
+                    }
+
+                    if (!noneObserved)
+                    {
+                        noneFalseCount++;
+                        if (firstNoneFalse == null)
+                        {
+                            firstNoneFalse =
+                                $"{profile.techTier}/{profile.wealthTier}/" +
+                                $"{profile.archetype}/{clause} => {noneObserved}";
+                        }
+                    }
+                }
+            }
+
+            r.Check(anyFalseCount == 0 && noneFalseCount == 0, wildcardSupplyLabel,
+                $"examined {supplyCombinationCount} combinations; Any true " +
+                $"{supplyCombinationCount - anyFalseCount}/{supplyCombinationCount}, " +
+                $"None true {supplyCombinationCount - noneFalseCount}/" +
+                $"{supplyCombinationCount}; first Any=false " +
+                $"{firstAnyFalse ?? "none"}; first None=false " +
+                $"{firstNoneFalse ?? "none"}");
+
+            const int deterministicObservationsPerCase = 32;
+            int deterministicCaseCount = 0;
+            int deterministicCallCount = 0;
+            int deterministicMismatchCount = 0;
+            string firstDeterministicMismatch = null;
+            foreach (SettlementEconomicProfile profile in allProfiles)
+            {
+                foreach (CombatClause clause in clauses)
+                {
+                    foreach (LaborEquipmentLevel requested in equipmentLevels)
+                    {
+                        bool firstObserved = LaborEquipmentTierService.CanSupply(
+                            profile, requested, clause);
+                        deterministicCallCount++;
+                        for (int observation = 1;
+                             observation < deterministicObservationsPerCase;
+                             observation++)
+                        {
+                            bool observed = LaborEquipmentTierService.CanSupply(
+                                profile, requested, clause);
+                            deterministicCallCount++;
+                            if (observed != firstObserved)
+                            {
+                                deterministicMismatchCount++;
+                                if (firstDeterministicMismatch == null)
+                                {
+                                    firstDeterministicMismatch =
+                                        $"{profile.techTier}/{profile.wealthTier}/" +
+                                        $"{profile.archetype}/{clause}/{requested}: " +
+                                        $"first {firstObserved}, observed {observed}";
+                                }
+                            }
+                        }
+
+                        deterministicCaseCount++;
+                    }
+                }
+            }
+
+            r.Check(deterministicMismatchCount == 0, deterministicLabel,
+                $"observed {deterministicCaseCount} profile/tier/clause cases, " +
+                $"{deterministicCallCount} calls, {deterministicObservationsPerCase} " +
+                $"observations per case; mismatches {deterministicMismatchCount}; " +
+                $"first mismatch {firstDeterministicMismatch ?? "none"}");
+
+            Pawn emptyLoadoutPawn = null;
+            List<ThingWithComps> savedEquipment = new List<ThingWithComps>();
+            List<Apparel> savedApparel = new List<Apparel>();
+            bool emptyLoadoutPass = false;
+            StringBuilder emptyLoadoutDetail = new StringBuilder();
+            try
+            {
+                if (map?.mapPawns?.AllPawnsSpawned != null)
+                {
+                    foreach (Pawn candidate in map.mapPawns.AllPawnsSpawned)
+                    {
+                        if (candidate != null && candidate.Spawned && !candidate.Dead &&
+                            !candidate.Discarded && candidate.RaceProps != null &&
+                            candidate.RaceProps.Humanlike)
+                        {
+                            emptyLoadoutPawn = candidate;
+                            break;
+                        }
+                    }
+
+                    if (emptyLoadoutPawn == null)
+                    {
+                        foreach (Pawn candidate in map.mapPawns.AllPawnsSpawned)
+                        {
+                            if (candidate != null && candidate.Spawned && !candidate.Dead &&
+                                !candidate.Discarded)
+                            {
+                                emptyLoadoutPawn = candidate;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (emptyLoadoutPawn == null)
+                {
+                    emptyLoadoutDetail.Append("no live spawned pawn was available on the map");
+                }
+                else
+                {
+                    if (emptyLoadoutPawn.equipment?.AllEquipmentListForReading != null)
+                    {
+                        foreach (ThingWithComps item in
+                                 emptyLoadoutPawn.equipment.AllEquipmentListForReading)
+                        {
+                            if (item != null)
+                            {
+                                savedEquipment.Add(item);
+                            }
+                        }
+                    }
+
+                    if (emptyLoadoutPawn.apparel?.WornApparel != null)
+                    {
+                        foreach (Apparel item in emptyLoadoutPawn.apparel.WornApparel)
+                        {
+                            if (item != null)
+                            {
+                                savedApparel.Add(item);
+                            }
+                        }
+                    }
+
+                    foreach (ThingWithComps item in savedEquipment)
+                    {
+                        if (emptyLoadoutPawn.equipment != null &&
+                            emptyLoadoutPawn.equipment.Contains(item))
+                        {
+                            emptyLoadoutPawn.equipment.Remove(item);
+                        }
+                    }
+
+                    foreach (Apparel item in savedApparel)
+                    {
+                        if (emptyLoadoutPawn.apparel != null &&
+                            emptyLoadoutPawn.apparel.Contains(item))
+                        {
+                            emptyLoadoutPawn.apparel.Remove(item);
+                        }
+                    }
+
+                    bool allClausesAreNone = true;
+                    StringBuilder observedClauses = new StringBuilder();
+                    foreach (CombatClause clause in clauses)
+                    {
+                        LaborEquipmentLevel observed = LaborEquipmentTierService.Classify(
+                            emptyLoadoutPawn, clause);
+                        allClausesAreNone &= observed == LaborEquipmentLevel.None;
+                        if (observedClauses.Length > 0)
+                        {
+                            observedClauses.Append(", ");
+                        }
+
+                        observedClauses.Append(clause).Append('=').Append(observed);
+                    }
+
+                    emptyLoadoutPass = allClausesAreNone;
+                    emptyLoadoutDetail.Append($"pawn {emptyLoadoutPawn.LabelShortCap}; ")
+                        .Append($"saved equipment {savedEquipment.Count}, apparel " +
+                                $"{savedApparel.Count}; after clearing equipment " +
+                                $"{emptyLoadoutPawn.equipment?.AllEquipmentListForReading?.Count ?? 0}, " +
+                                $"apparel {emptyLoadoutPawn.apparel?.WornApparel?.Count ?? 0}; ")
+                        .Append($"observed [{observedClauses}]");
+                }
+            }
+            catch (Exception ex)
+            {
+                emptyLoadoutPass = false;
+                emptyLoadoutDetail.Append($"fixture threw {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                try
+                {
+                    if (emptyLoadoutPawn?.equipment != null)
+                    {
+                        foreach (ThingWithComps item in savedEquipment)
+                        {
+                            if (item != null && !item.Destroyed &&
+                                !emptyLoadoutPawn.equipment.Contains(item))
+                            {
+                                emptyLoadoutPawn.equipment.AddEquipment(item);
+                            }
+                        }
+                    }
+
+                    if (emptyLoadoutPawn?.apparel != null)
+                    {
+                        foreach (Apparel item in savedApparel)
+                        {
+                            if (item != null && !item.Destroyed &&
+                                !emptyLoadoutPawn.apparel.WornApparel.Contains(item))
+                            {
+                                emptyLoadoutPawn.apparel.Wear(
+                                    item, dropReplacedApparel: false);
+                            }
+                        }
+                    }
+
+                    bool equipmentRestored = emptyLoadoutPawn == null ||
+                        emptyLoadoutPawn.equipment == null ||
+                        savedEquipment.TrueForAll(item =>
+                            item == null || emptyLoadoutPawn.equipment.Contains(item));
+                    bool apparelRestored = emptyLoadoutPawn == null ||
+                        emptyLoadoutPawn.apparel == null ||
+                        savedApparel.TrueForAll(item =>
+                            item == null || emptyLoadoutPawn.apparel.WornApparel.Contains(item));
+                    if (!equipmentRestored || !apparelRestored)
+                    {
+                        emptyLoadoutPass = false;
+                        if (emptyLoadoutDetail.Length > 0)
+                        {
+                            emptyLoadoutDetail.Append("; ");
+                        }
+
+                        emptyLoadoutDetail.Append(
+                            $"restoration equipment={equipmentRestored}, apparel={apparelRestored}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    emptyLoadoutPass = false;
+                    if (emptyLoadoutDetail.Length > 0)
+                    {
+                        emptyLoadoutDetail.Append("; ");
+                    }
+
+                    emptyLoadoutDetail.Append(
+                        $"restoration threw {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            r.Check(emptyLoadoutPass, emptyLoadoutLabel, emptyLoadoutDetail.ToString());
+
+            int requestWildcardFailureCount = 0;
+            int actualWildcardFailureCount = 0;
+            StringBuilder wildcardObservations = new StringBuilder();
+            foreach (LaborEquipmentLevel actual in equipmentLevels)
+            {
+                bool observed = LaborEquipmentTierService.MeetsOrExceeds(
+                    actual, LaborEquipmentLevel.Any);
+                if (!observed)
+                {
+                    requestWildcardFailureCount++;
+                }
+
+                if (wildcardObservations.Length > 0)
+                {
+                    wildcardObservations.Append(", ");
+                }
+
+                wildcardObservations.Append(actual).Append("->Any=").Append(observed);
+            }
+
+            foreach (LaborEquipmentLevel requested in realEquipmentLevels)
+            {
+                bool observed = LaborEquipmentTierService.MeetsOrExceeds(
+                    LaborEquipmentLevel.Any, requested);
+                if (observed)
+                {
+                    actualWildcardFailureCount++;
+                }
+
+                wildcardObservations.Append(", Any->")
+                    .Append(requested).Append('=').Append(observed);
+            }
+
+            r.Check(requestWildcardFailureCount == 0 && actualWildcardFailureCount == 0,
+                wildcardMatchLabel,
+                $"request wildcard observations [{wildcardObservations}]; failures " +
+                $"Any-request={requestWildcardFailureCount}, Any-actual=" +
+                $"{actualWildcardFailureCount}");
+
+            int orderedPairCount = 0;
+            int orderedPairMismatchCount = 0;
+            StringBuilder orderedPairObservations = new StringBuilder();
+            for (int actualIndex = 0; actualIndex < realEquipmentLevels.Count; actualIndex++)
+            {
+                for (int requestedIndex = 0;
+                     requestedIndex < realEquipmentLevels.Count;
+                     requestedIndex++)
+                {
+                    LaborEquipmentLevel actual = realEquipmentLevels[actualIndex];
+                    LaborEquipmentLevel requested = realEquipmentLevels[requestedIndex];
+                    bool observed = LaborEquipmentTierService.MeetsOrExceeds(
+                        actual, requested);
+                    bool expected = actualIndex >= requestedIndex;
+                    if (observed != expected)
+                    {
+                        orderedPairMismatchCount++;
+                    }
+
+                    if (orderedPairObservations.Length > 0)
+                    {
+                        orderedPairObservations.Append(", ");
+                    }
+
+                    orderedPairObservations.Append(actual).Append("->")
+                        .Append(requested).Append('=').Append(observed);
+                    orderedPairCount++;
+                }
+            }
+
+            r.Check(orderedPairMismatchCount == 0, orderingLabel,
+                $"observed {orderedPairCount} ordered pairs; mismatches " +
+                $"{orderedPairMismatchCount}; results [{orderedPairObservations}]");
+
+            JobPosting anyPosting = new JobPosting
+            {
+                termDays = 30,
+                wageStructure = WageStructure.Daily,
+                combatClause = CombatClause.Civilian,
+                requestedEquipmentLevel = LaborEquipmentLevel.Any
+            };
+            JobPosting professionalPosting = new JobPosting
+            {
+                termDays = 30,
+                wageStructure = WageStructure.Daily,
+                combatClause = CombatClause.Civilian,
+                requestedEquipmentLevel = LaborEquipmentLevel.Professional
+            };
+            string anyHeadline = anyPosting.Headline();
+            string professionalHeadline = professionalPosting.Headline();
+            string professionalShortLabel = LaborEquipmentTierService.ShortLabel(
+                LaborEquipmentLevel.Professional);
+            string professionalLongLabel = LaborEquipmentTierService.Label(
+                LaborEquipmentLevel.Professional);
+            bool anyOmitsEquipmentText = anyHeadline.IndexOf(
+                "equipment", StringComparison.OrdinalIgnoreCase) < 0;
+            bool professionalContainsShortLabel = professionalHeadline.IndexOf(
+                professionalShortLabel, StringComparison.Ordinal) >= 0;
+            bool professionalOmitsLongLabel = professionalHeadline.IndexOf(
+                professionalLongLabel, StringComparison.Ordinal) < 0;
+            r.Check(anyOmitsEquipmentText && professionalContainsShortLabel &&
+                    professionalOmitsLongLabel, headlineLabel,
+                $"Any headline \"{anyHeadline}\" (equipment text absent=" +
+                $"{anyOmitsEquipmentText}); Professional headline " +
+                $"\"{professionalHeadline}\" (short \"{professionalShortLabel}\" " +
+                $"present={professionalContainsShortLabel}, long " +
+                $"\"{professionalLongLabel}\" absent={professionalOmitsLongLabel})");
         }
 
         private static void SkipArrivalSafetyChecks(Results r, string reason)
