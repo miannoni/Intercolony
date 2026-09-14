@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -35,13 +37,21 @@ namespace Intercolony
         private const float NumericFieldWidth = 90f;
         private const float StepButtonWidth = 44f;
         private const float StepButtonGap = 4f;
-        private const float FutureSectionsGap = 12f;
 
         private const string Title = "Produce controls";
         private const string IndefiniteMode = "Produce indefinitely";
         private const string MaintainMode = "Maintain stock";
         private const string WaitingStatus = "Waiting for stock to fall";
         private const string NotWaitingStatus = "Not waiting for stock to fall";
+        private const string WorkersHeading = "Workers";
+        private const string MaterialsHeading = "Materials";
+        private const string AnyWorkerMode = "Any eligible pawn";
+        private const string SelectedWorkerMode = "Selected pawns";
+        private const string WorkerSelectionLabel = "Selection";
+        private const string MinConstructionSkillLabel = "Minimum Construction skill";
+        private const string FixedMaterialMessage =
+            "Product is always made of the same material.";
+        private const string UnavailableWorkerSuffix = " (unavailable)";
 
         private readonly Map map;
         private readonly IntVec3 cell;
@@ -50,8 +60,10 @@ namespace Intercolony
         private int lastPositiveTarget = 10;
         private string targetBuffer = "0";
         private string resumeBelowBuffer = "0";
+        private string minConstructionSkillBuffer = "0";
         private int syncedTargetCount;
         private int syncedEffectiveResumeBelow;
+        private int syncedMinConstructionSkill;
         private bool buffersInitialized;
         private Vector2 controlsScroll;
 
@@ -82,7 +94,7 @@ namespace Intercolony
 
                 // Measure the fullest state so switching from indefinite to maintain stock cannot
                 // draw newly visible rows into the footer before the next window layout pass.
-                float contentHeight = ControlsHeight(contentWidth, true);
+                float contentHeight = ControlsHeight(contentWidth, true, FindLoop());
                 float height = Mathf.Min(fixedHeight + contentHeight,
                     UI.screenHeight * MaxScreenHeightFraction);
                 return new Vector2(WindowWidth,
@@ -108,7 +120,7 @@ namespace Intercolony
                 Mathf.Max(1f, bottom));
             // The full measured content height keeps the scroll viewport safe if the mode changes
             // during this draw call, while hidden rows remain absent from the window face.
-            float contentHeight = ControlsHeight(contentWidth, true);
+            float contentHeight = ControlsHeight(contentWidth, true, loop);
             if (contentHeight <= controlsRect.height)
             {
                 controlsScroll = Vector2.zero;
@@ -329,9 +341,197 @@ namespace Intercolony
                 y += statusRowHeight;
             }
 
-            // Future Workers and Materials sections belong in this reserved gap in the next unit.
-            // Do not add placeholder controls: unfinished settings must not look configurable.
-            y += FutureSectionsGap;
+            y += SectionGap;
+
+            float workersHeadingHeight = SectionHeadingHeight(WorkersHeading, width);
+            DrawSectionHeading(WorkersHeading, y, width, workersHeadingHeight);
+            y += workersHeadingHeight + RowGap;
+
+            float anyWorkerHeight = RadioRowHeight(AnyWorkerMode, controlsWidth);
+            float selectedWorkerHeight = RadioRowHeight(SelectedWorkerMode, controlsWidth);
+            float workerModeHeight = anyWorkerHeight + RowGap + selectedWorkerHeight;
+            DrawRowLabel(WorkerSelectionLabel, y, workerModeHeight);
+
+            if (Widgets.RadioButtonLabeled(
+                    new Rect(controlsX, y, controlsWidth, anyWorkerHeight),
+                    AnyWorkerMode,
+                    !loop.restrictToSelectedWorkers))
+            {
+                loop = CommitWorkerRestriction(false);
+                if (loop == null)
+                {
+                    return;
+                }
+            }
+
+            y += anyWorkerHeight + RowGap;
+            if (Widgets.RadioButtonLabeled(
+                    new Rect(controlsX, y, controlsWidth, selectedWorkerHeight),
+                    SelectedWorkerMode,
+                    loop.restrictToSelectedWorkers))
+            {
+                loop = CommitWorkerRestriction(true);
+                if (loop == null)
+                {
+                    return;
+                }
+            }
+
+            y += selectedWorkerHeight + RowGap;
+            if (loop.restrictToSelectedWorkers)
+            {
+                List<Pawn> availableWorkers = AvailableWorkerCandidates();
+                List<Pawn> workerRows = WorkerCandidates(loop, availableWorkers);
+                for (int i = 0; i < workerRows.Count; i++)
+                {
+                    Pawn pawn = workerRows[i];
+                    string workerLabel = WorkerLabel(pawn, !availableWorkers.Contains(pawn));
+                    float workerRowHeight = CheckboxRowHeight(workerLabel, controlsWidth);
+                    bool selected = loop.allowedWorkers != null && loop.allowedWorkers.Contains(pawn);
+                    bool wasSelected = selected;
+                    Widgets.CheckboxLabeled(
+                        new Rect(controlsX, y, controlsWidth, workerRowHeight),
+                        workerLabel,
+                        ref selected);
+                    if (selected != wasSelected)
+                    {
+                        List<Pawn> allowedWorkers = CopyAllowedWorkers(loop);
+                        if (selected)
+                        {
+                            if (!allowedWorkers.Contains(pawn))
+                            {
+                                allowedWorkers.Add(pawn);
+                            }
+                        }
+                        else
+                        {
+                            allowedWorkers.RemoveAll(worker => worker == pawn);
+                        }
+
+                        loop = CommitAllowedWorkers(allowedWorkers);
+                        if (loop == null)
+                        {
+                            return;
+                        }
+                    }
+
+                    y += workerRowHeight + RowGap;
+                }
+            }
+
+            DrawRowLabel(MinConstructionSkillLabel, y, ControlRowHeight);
+            TooltipHandler.TipRegion(new Rect(0f, y, width, ControlRowHeight),
+                "This floor applies only when vanilla checks Construction for frame finishing or Construction-work-type delivery; it does not apply to hauling materials.");
+
+            int typedMinConstructionSkill = loop.minConstructionSkill;
+            Widgets.TextFieldNumeric(
+                new Rect(controlsX, y, NumericFieldWidth, ControlRowHeight),
+                ref typedMinConstructionSkill,
+                ref minConstructionSkillBuffer,
+                0,
+                20);
+            if (typedMinConstructionSkill != loop.minConstructionSkill)
+            {
+                loop = CommitMinConstructionSkill(Mathf.Clamp(typedMinConstructionSkill, 0, 20));
+                if (loop == null)
+                {
+                    return;
+                }
+            }
+
+            int skillStep = 0;
+            float skillStepX = controlsX + NumericFieldWidth + StepButtonGap;
+            if (Widgets.ButtonText(
+                    new Rect(skillStepX, y, StepButtonWidth, ControlRowHeight), "-1"))
+            {
+                skillStep = -1;
+            }
+
+            if (Widgets.ButtonText(
+                    new Rect(skillStepX + StepButtonWidth + StepButtonGap, y,
+                        StepButtonWidth, ControlRowHeight), "+1"))
+            {
+                skillStep = 1;
+            }
+
+            if (skillStep != 0)
+            {
+                loop = CommitMinConstructionSkill(
+                    StepValue(loop.minConstructionSkill, skillStep, 0, 20));
+                if (loop == null)
+                {
+                    return;
+                }
+            }
+
+            y += ControlRowHeight + RowGap;
+            y += SectionGap;
+
+            float materialsHeadingHeight = SectionHeadingHeight(MaterialsHeading, width);
+            DrawSectionHeading(MaterialsHeading, y, width, materialsHeadingHeight);
+            y += materialsHeadingHeight + RowGap;
+
+            if (loop.thingDef == null || !loop.thingDef.MadeFromStuff)
+            {
+                float fixedMaterialHeight = ValueRowHeight(FixedMaterialMessage, controlsWidth);
+                DrawRowLabel("Allowed materials", y, fixedMaterialHeight);
+                Widgets.Label(
+                    new Rect(controlsX, y, controlsWidth, fixedMaterialHeight),
+                    FixedMaterialMessage);
+                y += fixedMaterialHeight;
+            }
+            else
+            {
+                List<ThingDef> stuffOptions = AllowedStuffs(loop);
+                for (int i = 0; i < stuffOptions.Count; i++)
+                {
+                    ThingDef stuff = stuffOptions[i];
+                    string stuffLabel = stuff.LabelCap.ToString();
+                    float stuffRowHeight = CheckboxRowHeight(stuffLabel, controlsWidth);
+                    bool allowed = loop.allowedStuff != null && loop.allowedStuff.Contains(stuff);
+                    bool wasAllowed = allowed;
+                    Widgets.CheckboxLabeled(
+                        new Rect(controlsX, y, controlsWidth, stuffRowHeight),
+                        stuffLabel,
+                        ref allowed);
+                    if (allowed != wasAllowed)
+                    {
+                        if (!allowed && IsLastAllowedStuff(loop, stuffOptions))
+                        {
+                            // Do not let the UI empty a stuffable program's allowed set: the next
+                            // resolution would return null and silently stop production forever.
+                            allowed = true;
+                        }
+                        else
+                        {
+                            List<ThingDef> allowedStuff = CopyAllowedStuff(loop);
+                            if (allowed)
+                            {
+                                if (!allowedStuff.Contains(stuff))
+                                {
+                                    allowedStuff.Add(stuff);
+                                }
+                            }
+                            else
+                            {
+                                allowedStuff.RemoveAll(candidate => candidate == stuff);
+                            }
+
+                            loop = CommitAllowedStuff(allowedStuff);
+                            if (loop == null)
+                            {
+                                return;
+                            }
+                        }
+                    }
+
+                    y += stuffRowHeight;
+                    if (i < stuffOptions.Count - 1)
+                    {
+                        y += RowGap;
+                    }
+                }
+            }
         }
 
         private static void DrawRowLabel(string label, float rowY, float controlHeight)
@@ -339,6 +539,36 @@ namespace Intercolony
             float labelHeight = Text.CalcHeight(label, LabelColumnWidth);
             float labelY = rowY + (controlHeight - labelHeight) / 2f;
             Widgets.Label(new Rect(0f, labelY, LabelColumnWidth, labelHeight), label);
+        }
+
+        private static void DrawSectionHeading(
+            string heading,
+            float rowY,
+            float width,
+            float headingHeight)
+        {
+            Text.Font = GameFont.Medium;
+            Widgets.Label(new Rect(0f, rowY, width, headingHeight), heading);
+            Text.Font = GameFont.Small;
+        }
+
+        private static float SectionHeadingHeight(string heading, float width)
+        {
+            Text.Font = GameFont.Medium;
+            float headingHeight = Mathf.Max(ControlRowHeight, Text.CalcHeight(heading, width));
+            Text.Font = GameFont.Small;
+            return headingHeight;
+        }
+
+        private static float CheckboxRowHeight(string label, float width)
+        {
+            return Mathf.Max(ControlRowHeight,
+                Text.CalcHeight(label, Mathf.Max(1f, width - 24f)));
+        }
+
+        private static float ValueRowHeight(string label, float width)
+        {
+            return Mathf.Max(ControlRowHeight, Text.CalcHeight(label, width));
         }
 
         private static float RadioRowHeight(string label, float width)
@@ -360,7 +590,7 @@ namespace Intercolony
             return availableWidth - ContentLeft * 2f;
         }
 
-        private static float ControlsHeight(float width, bool maintainStock)
+        private float ControlsHeight(float width, bool maintainStock, ProduceLoopRecord loop)
         {
             float controlsWidth = width - LabelColumnWidth - LabelColumnGap;
             Text.Font = GameFont.Medium;
@@ -377,7 +607,190 @@ namespace Intercolony
                 height += StatusRowHeight(controlsWidth);
             }
 
-            return height + FutureSectionsGap;
+            height += SectionGap;
+            height += SectionHeadingHeight(WorkersHeading, width) + RowGap;
+
+            height += RadioRowHeight(AnyWorkerMode, controlsWidth) + RowGap;
+            height += RadioRowHeight(SelectedWorkerMode, controlsWidth) + RowGap;
+
+            List<Pawn> availableWorkers = AvailableWorkerCandidates();
+            List<Pawn> workerRows = WorkerCandidates(loop, availableWorkers);
+            for (int i = 0; i < workerRows.Count; i++)
+            {
+                height += CheckboxRowHeight(
+                    WorkerLabel(workerRows[i], !availableWorkers.Contains(workerRows[i])),
+                    controlsWidth) + RowGap;
+            }
+
+            height += ControlRowHeight + RowGap;
+            height += SectionGap;
+            height += SectionHeadingHeight(MaterialsHeading, width) + RowGap;
+
+            if (loop == null || loop.thingDef == null || !loop.thingDef.MadeFromStuff)
+            {
+                height += ValueRowHeight(FixedMaterialMessage, controlsWidth);
+            }
+            else
+            {
+                List<ThingDef> stuffOptions = AllowedStuffs(loop);
+                for (int i = 0; i < stuffOptions.Count; i++)
+                {
+                    height += CheckboxRowHeight(stuffOptions[i].LabelCap.ToString(), controlsWidth);
+                    if (i < stuffOptions.Count - 1)
+                    {
+                        height += RowGap;
+                    }
+                }
+            }
+
+            return height;
+        }
+
+        private List<Pawn> AvailableWorkerCandidates()
+        {
+            List<Pawn> candidates = new List<Pawn>();
+            if (map != null && map.mapPawns != null)
+            {
+                List<Pawn> freeColonists = map.mapPawns.FreeColonistsSpawned;
+                for (int i = 0; i < freeColonists.Count; i++)
+                {
+                    AddWorkerIfMissing(candidates, freeColonists[i]);
+                }
+            }
+
+            List<EmploymentContract> employments = IntercolonyWorldComponent.Current?.Employments;
+            if (employments != null)
+            {
+                for (int i = 0; i < employments.Count; i++)
+                {
+                    EmploymentContract contract = employments[i];
+                    Pawn employee = contract?.pawn;
+                    if (contract != null && contract.status == EmploymentStatus.Active &&
+                        employee != null && employee.Spawned && employee.Map == map)
+                    {
+                        AddWorkerIfMissing(candidates, employee);
+                    }
+                }
+            }
+
+            return candidates;
+        }
+
+        private static List<Pawn> WorkerCandidates(
+            ProduceLoopRecord loop,
+            List<Pawn> availableWorkers)
+        {
+            List<Pawn> candidates = new List<Pawn>(availableWorkers);
+            if (loop?.allowedWorkers != null)
+            {
+                for (int i = 0; i < loop.allowedWorkers.Count; i++)
+                {
+                    AddWorkerIfMissing(candidates, loop.allowedWorkers[i]);
+                }
+            }
+
+            candidates.Sort((left, right) =>
+            {
+                return string.CompareOrdinal(WorkerSortLabel(left), WorkerSortLabel(right));
+            });
+            return candidates;
+        }
+
+        private static void AddWorkerIfMissing(List<Pawn> workers, Pawn worker)
+        {
+            if (worker != null && !workers.Contains(worker))
+            {
+                workers.Add(worker);
+            }
+        }
+
+        private static string WorkerSortLabel(Pawn pawn)
+        {
+            return pawn?.LabelShortCap ?? "";
+        }
+
+        private static string WorkerLabel(Pawn pawn, bool unavailable)
+        {
+            string label = (pawn?.LabelShortCap ?? "Unknown pawn") +
+                            " (Construction: " + ConstructionLevel(pawn) + ")";
+            return unavailable ? label + UnavailableWorkerSuffix : label;
+        }
+
+        private static int ConstructionLevel(Pawn pawn)
+        {
+            if (pawn == null)
+            {
+                return 0;
+            }
+
+            if (pawn.skills != null)
+            {
+                return pawn.skills.GetSkill(SkillDefOf.Construction).Level;
+            }
+
+            return pawn.IsColonyMech ? pawn.RaceProps.mechFixedSkillLevel : 0;
+        }
+
+        private static List<ThingDef> AllowedStuffs(ProduceLoopRecord loop)
+        {
+            List<ThingDef> stuffs = new List<ThingDef>();
+            if (loop == null || loop.thingDef == null || !loop.thingDef.MadeFromStuff)
+            {
+                return stuffs;
+            }
+
+            foreach (ThingDef stuff in GenStuff.AllowedStuffsFor(loop.thingDef))
+            {
+                if (stuff != null && !stuffs.Contains(stuff))
+                {
+                    stuffs.Add(stuff);
+                }
+            }
+
+            stuffs.Sort((left, right) =>
+            {
+                int labelComparison = string.CompareOrdinal(
+                    left.LabelCap.ToString(), right.LabelCap.ToString());
+                return labelComparison != 0
+                    ? labelComparison
+                    : string.CompareOrdinal(left.defName, right.defName);
+            });
+            return stuffs;
+        }
+
+        private static bool IsLastAllowedStuff(
+            ProduceLoopRecord loop,
+            List<ThingDef> stuffOptions)
+        {
+            if (loop == null || loop.allowedStuff == null)
+            {
+                return false;
+            }
+
+            int allowedCount = 0;
+            for (int i = 0; i < stuffOptions.Count; i++)
+            {
+                if (loop.allowedStuff.Contains(stuffOptions[i]))
+                {
+                    allowedCount++;
+                }
+            }
+
+            return allowedCount == 1;
+        }
+
+        private static List<Pawn> CopyAllowedWorkers(ProduceLoopRecord loop)
+        {
+            return loop?.allowedWorkers == null
+                ? new List<Pawn>()
+                : new List<Pawn>(loop.allowedWorkers);
+        }
+
+        private static List<ThingDef> CopyAllowedStuff(ProduceLoopRecord loop)
+        {
+            return loop?.allowedStuff == null
+                ? new List<ThingDef>()
+                : new List<ThingDef>(loop.allowedStuff);
         }
 
         private ProduceLoopRecord FindLoop()
@@ -390,7 +803,8 @@ namespace Intercolony
         {
             int effectiveResumeBelow = loop.EffectiveResumeBelow;
             if (!buffersInitialized || syncedTargetCount != loop.targetCount ||
-                syncedEffectiveResumeBelow != effectiveResumeBelow)
+                syncedEffectiveResumeBelow != effectiveResumeBelow ||
+                syncedMinConstructionSkill != loop.minConstructionSkill)
             {
                 RefreshBuffers(loop);
             }
@@ -405,8 +819,10 @@ namespace Intercolony
 
             targetBuffer = loop.targetCount.ToString();
             resumeBelowBuffer = loop.EffectiveResumeBelow.ToString();
+            minConstructionSkillBuffer = loop.minConstructionSkill.ToString();
             syncedTargetCount = loop.targetCount;
             syncedEffectiveResumeBelow = loop.EffectiveResumeBelow;
+            syncedMinConstructionSkill = loop.minConstructionSkill;
             buffersInitialized = true;
             if (loop.targetCount > 0)
             {
@@ -454,6 +870,87 @@ namespace Intercolony
             }
 
             RefreshBuffers(loop);
+            return loop;
+        }
+
+        private ProduceLoopRecord CommitWorkerRestriction(bool restrict)
+        {
+            ProduceLoopMapComponent component = ProduceLoopMapComponent.For(map);
+            if (component == null)
+            {
+                Close();
+                return null;
+            }
+
+            component.SetWorkerRestriction(cell, restrict);
+            ProduceLoopRecord loop = FindLoop();
+            if (loop == null)
+            {
+                Close();
+                return null;
+            }
+
+            return loop;
+        }
+
+        private ProduceLoopRecord CommitAllowedWorkers(List<Pawn> workers)
+        {
+            ProduceLoopMapComponent component = ProduceLoopMapComponent.For(map);
+            if (component == null)
+            {
+                Close();
+                return null;
+            }
+
+            component.SetAllowedWorkers(cell, workers);
+            ProduceLoopRecord loop = FindLoop();
+            if (loop == null)
+            {
+                Close();
+                return null;
+            }
+
+            return loop;
+        }
+
+        private ProduceLoopRecord CommitMinConstructionSkill(int level)
+        {
+            ProduceLoopMapComponent component = ProduceLoopMapComponent.For(map);
+            if (component == null)
+            {
+                Close();
+                return null;
+            }
+
+            component.SetMinConstructionSkill(cell, level);
+            ProduceLoopRecord loop = FindLoop();
+            if (loop == null)
+            {
+                Close();
+                return null;
+            }
+
+            RefreshBuffers(loop);
+            return loop;
+        }
+
+        private ProduceLoopRecord CommitAllowedStuff(List<ThingDef> stuffs)
+        {
+            ProduceLoopMapComponent component = ProduceLoopMapComponent.For(map);
+            if (component == null)
+            {
+                Close();
+                return null;
+            }
+
+            component.SetAllowedStuff(cell, stuffs);
+            ProduceLoopRecord loop = FindLoop();
+            if (loop == null)
+            {
+                Close();
+                return null;
+            }
+
             return loop;
         }
 

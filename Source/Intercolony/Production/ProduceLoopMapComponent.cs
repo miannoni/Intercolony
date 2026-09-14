@@ -471,6 +471,62 @@ namespace Intercolony
             loop.waitingForResume = false;
         }
 
+        public void SetWorkerRestriction(IntVec3 cell, bool restrict)
+        {
+            ProduceLoopRecord loop = Find(cell);
+            if (loop == null)
+            {
+                return;
+            }
+
+            loop.restrictToSelectedWorkers = restrict;
+        }
+
+        public void SetAllowedWorkers(IntVec3 cell, List<Pawn> workers)
+        {
+            ProduceLoopRecord loop = Find(cell);
+            if (loop == null)
+            {
+                return;
+            }
+
+            loop.allowedWorkers = workers == null ? new List<Pawn>() : new List<Pawn>(workers);
+            loop.allowedWorkers.RemoveAll(worker => worker == null);
+        }
+
+        public void SetMinConstructionSkill(IntVec3 cell, int level)
+        {
+            ProduceLoopRecord loop = Find(cell);
+            if (loop == null)
+            {
+                return;
+            }
+
+            loop.minConstructionSkill = System.Math.Max(0, System.Math.Min(20, level));
+        }
+
+        public void SetAllowedStuff(IntVec3 cell, List<ThingDef> stuffs)
+        {
+            ProduceLoopRecord loop = Find(cell);
+            if (loop == null)
+            {
+                return;
+            }
+
+            List<ThingDef> copiedStuffs = stuffs == null
+                ? new List<ThingDef>()
+                : new List<ThingDef>(stuffs);
+            copiedStuffs.RemoveAll(stuff => stuff == null);
+            if (loop.thingDef != null && loop.thingDef.MadeFromStuff && copiedStuffs.Count == 0)
+            {
+                // An empty set makes ResolveStuffForNextCycle return null and silently stops a
+                // stuffable program forever, so keep the existing set instead.
+                return;
+            }
+
+            loop.allowedStuff = copiedStuffs;
+        }
+
         public IReadOnlyList<ProduceLoopRecord> Loops
         {
             get { return loops; }
