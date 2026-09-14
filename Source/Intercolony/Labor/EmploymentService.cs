@@ -1258,26 +1258,34 @@ namespace Intercolony
         /// <summary>Whether this pawn is working under an Intercolony employment contract.</summary>
         public static bool IsEmployee(Pawn pawn)
         {
+            return GetActiveContract(pawn) != null;
+        }
+
+        /// <summary>Returns the active employment contract for this pawn, if any.</summary>
+        public static EmploymentContract GetActiveContract(Pawn pawn)
+        {
             if (pawn == null)
             {
-                return false;
+                return null;
             }
 
             List<EmploymentContract> contracts = IntercolonyWorldComponent.Current?.Employments;
             if (contracts == null)
             {
-                return false;
+                return null;
             }
 
             for (int i = 0; i < contracts.Count; i++)
             {
-                if (contracts[i].status == EmploymentStatus.Active && contracts[i].pawn == pawn)
+                EmploymentContract contract = contracts[i];
+                if (contract != null && contract.status == EmploymentStatus.Active &&
+                    contract.pawn == pawn)
                 {
-                    return true;
+                    return contract;
                 }
             }
 
-            return false;
+            return null;
         }
 
         /// <summary>
