@@ -380,14 +380,64 @@ namespace Intercolony
                 usedStorageFallback, destination == null, message);
         }
 
+        /// <summary>
+        /// Removes colony-supplied equipment from a departing worker while leaving still-refundable
+        /// original gear with them. This must run before quest departure cleanup drops the pawn's
+        /// remaining carried things under their own faction.
+        /// </summary>
+        public static void RecoverColonySuppliedGear(EmploymentContract contract)
+        {
+            Pawn worker = contract?.pawn;
+            if (worker == null || !worker.Spawned || worker.Map == null)
+            {
+                // An off-map death or capture has no valid place to recover gear into. Leave the
+                // existing departure behavior alone rather than inventing an off-map fallback.
+                return;
+            }
+
+            Map map = worker.Map;
+            IntVec3 position = worker.Position;
+            List<CarriedEquipmentStack> carried = CaptureCarriedEquipment(worker);
+            List<EmploymentEquipmentRecord> records = contract.arrivedEquipment ??
+                new List<EmploymentEquipmentRecord>();
+
+            // Use the same record-first reservation as SettleBond, including its first-match
+            // convention and refundable-unit limit. CaptureAtHire never snapshots inventory: an
+            // inventory unit is original only if this pass reserves it against recorded equipment;
+            // every other inventory unit is therefore by definition colony-supplied.
+            for (int i = 0; i < records.Count; i++)
+            {
+                MatchQuantity(records[i], carried);
+            }
+
+            for (int i = 0; i < carried.Count; i++)
+            {
+                CarriedEquipmentStack candidate = carried[i];
+                if (candidate.remaining > 0)
+                {
+                    DropColonySuppliedStack(worker, map, position, candidate);
+                }
+            }
+        }
+
+        private enum CarriedEquipmentLocation
+        {
+            Inventory,
+            CarryTracker,
+            Equipment,
+            Apparel
+        }
+
         private sealed class CarriedEquipmentStack
         {
             public readonly Thing thing;
+            public readonly CarriedEquipmentLocation location;
             public int remaining;
 
-            public CarriedEquipmentStack(Thing thing)
+            public CarriedEquipmentStack(Thing thing, CarriedEquipmentLocation location)
             {
                 this.thing = thing;
+                this.location = location;
                 remaining = Mathf.Max(0, thing?.stackCount ?? 0);
             }
         }
@@ -399,20 +449,21 @@ namespace Intercolony
             {
                 foreach (Thing item in worker.inventory.innerContainer)
                 {
-                    AddCarried(carried, item);
+                    AddCarried(carried, item, CarriedEquipmentLocation.Inventory);
                 }
             }
 
             if (worker?.carryTracker?.CarriedThing != null)
             {
-                AddCarried(carried, worker.carryTracker.CarriedThing);
+                AddCarried(
+                    carried, worker.carryTracker.CarriedThing, CarriedEquipmentLocation.CarryTracker);
             }
 
             if (worker?.equipment != null)
             {
                 foreach (ThingWithComps item in worker.equipment.AllEquipmentListForReading)
                 {
-                    AddCarried(carried, item);
+                    AddCarried(carried, item, CarriedEquipmentLocation.Equipment);
                 }
             }
 
@@ -420,21 +471,97 @@ namespace Intercolony
             {
                 foreach (Apparel item in worker.apparel.WornApparel)
                 {
-                    AddCarried(carried, item);
+                    AddCarried(carried, item, CarriedEquipmentLocation.Apparel);
                 }
             }
 
             return carried;
         }
 
-        private static void AddCarried(List<CarriedEquipmentStack> carried, Thing item)
+        private static void AddCarried(
+            List<CarriedEquipmentStack> carried, Thing item, CarriedEquipmentLocation location)
         {
             if (item == null || item.Destroyed || item.def == null || item.stackCount <= 0)
             {
                 return;
             }
 
-            carried.Add(new CarriedEquipmentStack(item));
+            carried.Add(new CarriedEquipmentStack(item, location));
+        }
+
+        private static void DropColonySuppliedStack(
+            Pawn worker, Map map, IntVec3 position, CarriedEquipmentStack candidate)
+        {
+            Thing item = candidate.thing;
+            int count = candidate.remaining;
+            switch (candidate.location)
+            {
+                case CarriedEquipmentLocation.Inventory:
+                {
+                    Thing resultingThing;
+                    if (worker.inventory?.innerContainer == null ||
+                        !worker.inventory.innerContainer.TryDrop(
+                            item, position, map, ThingPlaceMode.Near, count, out resultingThing))
+                    {
+                        throw new InvalidOperationException(
+                            $"Could not recover inventory item {item?.LabelCap ?? "<null>"}.");
+                    }
+
+                    resultingThing?.TrySetForbidden(false);
+                    return;
+                }
+
+                case CarriedEquipmentLocation.CarryTracker:
+                {
+                    Thing resultingThing;
+                    if (worker.carryTracker == null ||
+                        worker.carryTracker.CarriedThing != item ||
+                        !worker.carryTracker.TryDropCarriedThing(
+                            position, count, ThingPlaceMode.Near, out resultingThing))
+                    {
+                        throw new InvalidOperationException(
+                            $"Could not recover carried item {item?.LabelCap ?? "<null>"}.");
+                    }
+
+                    resultingThing?.TrySetForbidden(false);
+                    return;
+                }
+
+                case CarriedEquipmentLocation.Equipment:
+                {
+                    ThingWithComps equipment = item as ThingWithComps;
+                    ThingWithComps resultingEquipment;
+                    if (worker.equipment == null || equipment == null ||
+                        !worker.equipment.TryDropEquipment(
+                            equipment, out resultingEquipment, position, forbid: false))
+                    {
+                        throw new InvalidOperationException(
+                            $"Could not recover equipped item {item?.LabelCap ?? "<null>"}.");
+                    }
+
+                    resultingEquipment?.TrySetForbidden(false);
+                    return;
+                }
+
+                case CarriedEquipmentLocation.Apparel:
+                {
+                    Apparel apparel = item as Apparel;
+                    Apparel resultingApparel;
+                    if (worker.apparel == null || apparel == null ||
+                        !worker.apparel.TryDrop(
+                            apparel, out resultingApparel, position, forbid: false))
+                    {
+                        throw new InvalidOperationException(
+                            $"Could not recover worn item {item?.LabelCap ?? "<null>"}.");
+                    }
+
+                    resultingApparel?.TrySetForbidden(false);
+                    return;
+                }
+
+                default:
+                    throw new InvalidOperationException("Unknown carried-equipment location.");
+            }
         }
 
         private static int MatchQuantity(

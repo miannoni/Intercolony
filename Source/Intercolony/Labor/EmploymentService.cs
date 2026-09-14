@@ -599,8 +599,21 @@ namespace Intercolony
             CompensationService.ClaimOnEnd(state, contract);
 
             // The worker is about to be made factionless and sent through vanilla departure
-            // cleanup, which drops carried gear. Match the bond before that happens.
+            // cleanup, which drops carried gear. Match the bond before that happens; relieving them
+            // of colony gear at release means they walk out in their own clothes.
             EmploymentEquipmentService.SettleBond(contract);
+
+            try
+            {
+                EmploymentEquipmentService.RecoverColonySuppliedGear(contract);
+            }
+            catch (System.Exception ex)
+            {
+                // A recovery failure must not strand the worker or break the departure itself.
+                IntercolonyLog.Error(
+                    $"Employment #{contract.id} for {contract.pawn} threw while recovering colony-supplied " +
+                    $"gear before departure: {ex}");
+            }
 
             contract.status = EmploymentStatus.Severed;
             contract.outcomeNote =
@@ -683,6 +696,7 @@ namespace Intercolony
                 // A save can contain a severed departure created before the settlement half was
                 // present. The pawn is no longer inspectable, so the bond is retained rather than
                 // silently discarded; current departures already settled it in BeginSafePassage.
+                // This bond-only fallback deliberately skips recovery because dropping gear is not idempotent.
                 EmploymentEquipmentService.SettleBond(contract);
                 contract.safePassage = false;
                 return;
@@ -785,6 +799,7 @@ namespace Intercolony
             // The employment ended, and its bond was settled, in BeginSafePassage. This method
             // normally only closes the already-Severed departure after the pawn is clear. Keep the
             // call here as an idempotent fallback for a save made between those two operations.
+            // This bond-only fallback deliberately skips recovery because dropping gear is not idempotent.
             EmploymentEquipmentService.SettleBond(contract);
 
             contract.outcomeNote = note ?? contract.outcomeNote;
@@ -981,6 +996,21 @@ namespace Intercolony
             // same call applies to completion, dismissal, death, capture, walk-out and failure;
             // the reason the employment ended does not change the bond rule.
             EmploymentEquipmentService.SettleBond(contract);
+
+            // Recover colony gear while the pawn's apparel, equipment and carry trackers are still
+            // available; QuestPart_Leave cleanup runs immediately afterward and would otherwise
+            // let those items leave under the worker's own faction.
+            try
+            {
+                EmploymentEquipmentService.RecoverColonySuppliedGear(contract);
+            }
+            catch (System.Exception ex)
+            {
+                // A recovery failure must not strand the worker or break the departure itself.
+                IntercolonyLog.Error(
+                    $"Employment #{contract.id} for {worker} threw while recovering colony-supplied " +
+                    $"gear before departure: {ex}");
+            }
 
             // Pay for the days actually worked since the last payday before anything else — the
             // pawn's references are cleared below, and the arrears calculation needs them.
