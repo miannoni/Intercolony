@@ -224,6 +224,9 @@ namespace Intercolony
                 r.Check(contract != null, "hire succeeded", failReason ?? $"{workerName}, {term} days");
                 if (contract == null)
                 {
+                    SkipArrivalSafetyChecks(
+                        r, $"the existing hired-contract fixture was unavailable: " +
+                        $"{failReason ?? "no failure reason supplied"}");
                     return Summarize(r);
                 }
 
@@ -279,8 +282,10 @@ namespace Intercolony
                     "worker is parked in the world pawn pool so nothing collects them");
 
                 // --- Arrival ---
-                contract.arrivalTick = GenTicks.TicksGame;
-                EmploymentService.Advance(state.Employments);
+                if (!CheckArrivalSafety(r, state, map, contract))
+                {
+                    return Summarize(r);
+                }
 
                 Pawn worker = contract.pawn;
                 r.Check(contract.status == EmploymentStatus.Active,
@@ -479,6 +484,131 @@ namespace Intercolony
             }
 
             return Summarize(r);
+        }
+
+        private static void SkipArrivalSafetyChecks(Results r, string reason)
+        {
+            string detail = $"arrival fixture unavailable: {reason ?? "no reason supplied"}";
+            r.Skip("a pod preflight failure preserves the contract and the pawn", detail);
+            r.Skip("an ordinary arrival still completes in one pass", detail);
+        }
+
+        private static bool CheckArrivalSafety(
+            Results r, IntercolonyWorldComponent state, Map map, EmploymentContract contract)
+        {
+            const string preflightLabel =
+                "a pod preflight failure preserves the contract and the pawn";
+            const string ordinaryLabel = "an ordinary arrival still completes in one pass";
+
+            if (state == null || map == null || Find.WorldPawns == null || Find.Maps == null ||
+                !Find.Maps.Contains(map) || contract == null || !state.Employments.Contains(contract))
+            {
+                SkipArrivalSafetyChecks(
+                    r, $"world={state != null}, map={map != null}, map present=" +
+                    $"{(map != null && Find.Maps != null && Find.Maps.Contains(map))}, " +
+                    $"world-pawn registry={Find.WorldPawns != null}, " +
+                    $"contract={contract != null}, listed=" +
+                    $"{(contract != null && state != null && state.Employments.Contains(contract))}");
+                return false;
+            }
+
+            Pawn worker = contract.pawn;
+            if (worker == null || worker.Destroyed || worker.Spawned ||
+                !Find.WorldPawns.Contains(worker) ||
+                contract.status != EmploymentStatus.Travelling)
+            {
+                SkipArrivalSafetyChecks(
+                    r, $"worker={worker != null}, destroyed={worker?.Destroyed ?? false}, " +
+                    $"spawned={worker?.Spawned ?? false}, in WorldPawns=" +
+                    $"{(worker != null && Find.WorldPawns.Contains(worker))}, " +
+                    $"status={contract.status}");
+                return false;
+            }
+
+            EmploymentArrivalTransport savedTransport = contract.arrivalTransport;
+            Map savedDestinationMap = contract.destinationMap;
+            int savedArrivalTick = contract.arrivalTick;
+            int savedArrivedTick = contract.arrivedTick;
+            bool preflightAssertionMade = false;
+            bool ordinaryAssertionMade = false;
+
+            try
+            {
+                // The null destination is a deterministic, real preflight failure. It happens
+                // before the transporter is created, so there is no pod to clean up and no
+                // synthetic pawn movement in this assertion.
+                int preflightDueTick = GenTicks.TicksGame;
+                contract.arrivalTransport = EmploymentArrivalTransport.DropPod;
+                contract.destinationMap = null;
+                contract.arrivalTick = preflightDueTick;
+                EmploymentService.Advance(state.Employments);
+
+                bool pawnSurvived = ReferenceEquals(worker, contract.pawn) &&
+                    contract.pawn != null && !contract.pawn.Destroyed &&
+                    Find.WorldPawns.Contains(contract.pawn);
+                bool preflightPreserved = contract.status == EmploymentStatus.Travelling &&
+                    contract.arrivedTick == EmploymentContract.NotArrived && pawnSurvived;
+                preflightAssertionMade = true;
+                r.Check(
+                    preflightPreserved,
+                    preflightLabel,
+                    $"due {preflightDueTick}; transport {contract.arrivalTransport}; " +
+                    $"destination null {contract.destinationMap == null}; status {contract.status}; " +
+                    $"arrivedTick {contract.arrivedTick} (expected " +
+                    $"{EmploymentContract.NotArrived}); pawn same {ReferenceEquals(worker, contract.pawn)}; " +
+                    $"pawn null {contract.pawn == null}; destroyed {contract.pawn?.Destroyed ?? false}; " +
+                    $"in WorldPawns {contract.pawn != null && Find.WorldPawns.Contains(contract.pawn)}");
+
+                // Reuse the same already-hired pawn for the ordinary path. This is deliberately
+                // the public hourly entry point, not a direct call to Arrive or a manual spawn.
+                contract.arrivalTransport = EmploymentArrivalTransport.Conventional;
+                contract.destinationMap = map;
+                int ordinaryDueTick = GenTicks.TicksGame;
+                contract.arrivalTick = ordinaryDueTick;
+                int ordinaryPassTick = GenTicks.TicksGame;
+                EmploymentService.Advance(state.Employments);
+
+                bool ordinaryCompleted = contract.status == EmploymentStatus.Active &&
+                    contract.arrivedTick == ordinaryPassTick;
+                ordinaryAssertionMade = true;
+                r.Check(
+                    ordinaryCompleted,
+                    ordinaryLabel,
+                    $"due {ordinaryDueTick}; pass {ordinaryPassTick}; status {contract.status}; " +
+                    $"arrivedTick {contract.arrivedTick}; worker spawned " +
+                    $"{contract.pawn != null && contract.pawn.Spawned}");
+            }
+            catch (Exception ex)
+            {
+                string detail = $"{ex.GetType().Name}: {ex.Message}; status {contract.status}; " +
+                    $"arrivedTick {contract.arrivedTick}; pawn same " +
+                    $"{ReferenceEquals(worker, contract.pawn)}; pawn destroyed " +
+                    $"{contract.pawn?.Destroyed ?? false}";
+                if (!preflightAssertionMade)
+                {
+                    r.Check(false, preflightLabel, detail);
+                }
+
+                if (!ordinaryAssertionMade)
+                {
+                    r.Check(false, ordinaryLabel, detail);
+                }
+            }
+            finally
+            {
+                // The route mutations are test setup only. Keep the real ordinary-arrival state
+                // if it succeeded, while restoring the saved route fields for every other exit.
+                contract.arrivalTransport = savedTransport;
+                contract.destinationMap = savedDestinationMap;
+                if (contract.status == EmploymentStatus.Travelling)
+                {
+                    contract.arrivalTick = savedArrivalTick;
+                    contract.arrivedTick = savedArrivedTick;
+                }
+            }
+
+            return contract.status == EmploymentStatus.Active &&
+                contract.pawn != null && contract.pawn.Spawned;
         }
 
         /// <summary>Wage rules that must hold regardless of which worker was rolled.</summary>
