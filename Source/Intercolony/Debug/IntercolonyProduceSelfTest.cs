@@ -114,6 +114,8 @@ namespace Intercolony
                         r, map, loops, subject, reservedCells, testRects, testZones);
                     CheckAllowedMaterials(
                         r, map, loops, subject, reservedCells, testRects, testZones);
+                    CheckProduceWorkerGate(
+                        r, map, loops, subject, reservedCells, testRects);
                     CheckDesignatorCancel(r, map, subject, reservedCells, testRects);
                     CheckProduceDesignators(r, map, subject, reservedCells, testRects);
                     CheckBlueprintRotation(r, map, loops, subject, reservedCells, testRects);
@@ -3758,6 +3760,394 @@ namespace Intercolony
         }
 
 
+        private static void CheckProduceWorkerGate(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string selectedLabel =
+                "a selected worker may work a restricted Produce program";
+            const string unselectedLabel =
+                "a pawn who is not selected may not work a restricted Produce program";
+            const string skillFloorLabel =
+                "the Construction floor rejects an under-skilled pawn";
+            const string haulingLabel =
+                "the Construction floor does not block material delivery under Hauling";
+            const string ordinaryLabel =
+                "an ordinary blueprint elsewhere is not affected by a Produce program";
+
+            List<Pawn> colonists = map?.mapPawns?.FreeColonistsSpawned;
+            int colonistCount = colonists?.Count ?? 0;
+            if (colonistCount < 2)
+            {
+                SkipProduceWorkerGateAssertions(
+                    r,
+                    $"needs two free colonists for the worker gate; the map has {colonistCount}");
+                return;
+            }
+
+            Pawn higherSkillPawn = null;
+            Pawn lowerSkillPawn = null;
+            int higherSkillLevel = int.MinValue;
+            int lowerSkillLevel = int.MaxValue;
+            for (int i = 0; i < colonists.Count; i++)
+            {
+                Pawn candidate = colonists[i];
+                if (candidate == null || candidate.skills == null)
+                {
+                    continue;
+                }
+
+                int level = candidate.skills.GetSkill(SkillDefOf.Construction).Level;
+                if (higherSkillPawn == null || level > higherSkillLevel)
+                {
+                    higherSkillPawn = candidate;
+                    higherSkillLevel = level;
+                }
+
+                if (lowerSkillPawn == null || level < lowerSkillLevel)
+                {
+                    lowerSkillPawn = candidate;
+                    lowerSkillLevel = level;
+                }
+            }
+
+            if (higherSkillPawn == null || lowerSkillPawn == null)
+            {
+                SkipProduceWorkerGateAssertions(
+                    r,
+                    $"needs two free colonists with Construction skills for the worker gate; " +
+                    $"the map has {colonistCount}");
+                return;
+            }
+
+            // Keep two distinct pawns even when the measured Construction levels tie. When the
+            // map has a skill spread, this deliberately assigns the higher and lower roles.
+            if (higherSkillPawn == lowerSkillPawn)
+            {
+                for (int i = 0; i < colonists.Count; i++)
+                {
+                    Pawn candidate = colonists[i];
+                    if (candidate == null || candidate == higherSkillPawn || candidate.skills == null)
+                    {
+                        continue;
+                    }
+
+                    lowerSkillPawn = candidate;
+                    lowerSkillLevel = candidate.skills.GetSkill(SkillDefOf.Construction).Level;
+                    break;
+                }
+            }
+
+            if (higherSkillPawn == lowerSkillPawn)
+            {
+                SkipProduceWorkerGateAssertions(
+                    r,
+                    $"needs two distinct free colonists for the worker gate; the map has " +
+                    $"{colonistCount}");
+                return;
+            }
+
+            Pawn pawnA = higherSkillPawn;
+            Pawn pawnB = lowerSkillPawn;
+            int pawnALevel = higherSkillLevel;
+            int pawnBLevel = lowerSkillLevel;
+
+            // The ordinary self-test loop component is detached, but the worker-gate prefix
+            // resolves the map-owned component. Keep the blueprint fixture detached and mirror
+            // only its temporary record onto the component that the installed prefix reads.
+            ProduceLoopMapComponent gateLoops = ProduceLoopMapComponent.For(map);
+            if (gateLoops == null)
+            {
+                SkipProduceWorkerGateAssertions(
+                    r,
+                    "the current map has no map-owned ProduceLoopMapComponent for the worker gate");
+                return;
+            }
+
+            IntVec3 cell;
+            if (!TryFindBuildCell(
+                    map, gateLoops, subject, Rot4.North, reservedCells, out cell))
+            {
+                SkipProduceWorkerGateAssertions(
+                    r,
+                    "no empty valid cell for the Produce worker-gate fixture");
+                return;
+            }
+
+            RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+            CellRect buildRect = GenAdj.OccupiedRect(
+                cell, Rot4.North, subject.thingDef.Size);
+
+            try
+            {
+                Blueprint_Build blueprint;
+                ProduceLoopRecord fixtureRecord;
+                ProduceLoopRecord record;
+                try
+                {
+                    loops.Enable(cell, Rot4.North, subject.thingDef, subject.stuffDef, null);
+                    loops.RunPass();
+                    blueprint = FindBlueprint(map, cell, subject.thingDef);
+                    fixtureRecord = loops.Find(cell);
+                    gateLoops.Enable(
+                        cell, Rot4.North, subject.thingDef, subject.stuffDef, null);
+                    record = gateLoops.Find(cell);
+                }
+                catch (Exception ex)
+                {
+                    SkipProduceWorkerGateAssertions(
+                        r,
+                        $"could not place the real Produce blueprint: {ex.GetType().Name}: " +
+                        $"{ex.Message}");
+                    return;
+                }
+
+                if (blueprint == null || fixtureRecord == null || record == null)
+                {
+                    SkipProduceWorkerGateAssertions(
+                        r,
+                        blueprint == null
+                            ? "the real Produce loop did not place a matching blueprint"
+                            : fixtureRecord == null
+                                ? "the detached Produce loop record could not be found"
+                                : "the map-owned Produce loop record could not be found");
+                    return;
+                }
+
+                // CanConstruct has unrelated vanilla failure reasons (reachability, reservations,
+                // blockers, and so on). Each differential below establishes a true result with an
+                // unrestricted loop first, so a later false result is attributable to this gate.
+                Func<Pawn, int, int, bool, bool, string> gateDetail =
+                    (pawn, constructionLevel, configuredFloor, baseline, gated) =>
+                        $"pawn {pawn.ToStringSafe()}; Construction level {constructionLevel}; " +
+                        $"configured floor {configuredFloor}; baseline {baseline}; gated {gated}";
+
+                bool TryBaseline(
+                    Pawn pawn,
+                    bool checkSkills,
+                    out bool baseline,
+                    out Exception failure)
+                {
+                    baseline = false;
+                    failure = null;
+                    try
+                    {
+                        baseline = GenConstruct.CanConstruct(
+                            blueprint, pawn, checkSkills, false, null);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        failure = ex;
+                        return false;
+                    }
+                }
+
+                bool selectedBaseline;
+                bool selectedGated = false;
+                Exception baselineFailure;
+                record.restrictToSelectedWorkers = false;
+                record.allowedWorkers = new List<Pawn>();
+                record.minConstructionSkill = 0;
+                if (!TryBaseline(pawnA, true, out selectedBaseline, out baselineFailure))
+                {
+                    r.Skip(
+                        selectedLabel,
+                        $"the baseline CanConstruct for {pawnA.ToStringSafe()} could not be " +
+                        $"measured: {baselineFailure.GetType().Name}: {baselineFailure.Message}; " +
+                        "the gate cannot be distinguished");
+                }
+                else if (!selectedBaseline)
+                {
+                    r.Skip(
+                        selectedLabel,
+                        $"the baseline CanConstruct for {pawnA.ToStringSafe()} was already false; " +
+                        "the gate cannot be distinguished");
+                }
+                else
+                {
+                    record.restrictToSelectedWorkers = true;
+                    record.allowedWorkers = new List<Pawn> { pawnA };
+                    CheckSafely(
+                        r,
+                        selectedLabel,
+                        () =>
+                        {
+                            selectedGated = GenConstruct.CanConstruct(
+                                blueprint, pawnA, true, false, null);
+                            return selectedGated;
+                        },
+                        () => gateDetail(
+                            pawnA, pawnALevel, 0, selectedBaseline, selectedGated));
+                }
+
+                bool unselectedBaseline;
+                bool unselectedGated = false;
+                record.restrictToSelectedWorkers = false;
+                record.allowedWorkers = new List<Pawn>();
+                record.minConstructionSkill = 0;
+                if (!TryBaseline(pawnB, true, out unselectedBaseline, out baselineFailure))
+                {
+                    r.Skip(
+                        unselectedLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} could not be " +
+                        $"measured: {baselineFailure.GetType().Name}: {baselineFailure.Message}; " +
+                        "the gate cannot be distinguished");
+                }
+                else if (!unselectedBaseline)
+                {
+                    r.Skip(
+                        unselectedLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} was already false; " +
+                        "the gate cannot be distinguished");
+                }
+                else
+                {
+                    record.restrictToSelectedWorkers = true;
+                    record.allowedWorkers = new List<Pawn> { pawnA };
+                    CheckSafely(
+                        r,
+                        unselectedLabel,
+                        () =>
+                        {
+                            unselectedGated = GenConstruct.CanConstruct(
+                                blueprint, pawnB, true, false, null);
+                            return !unselectedGated;
+                        },
+                        () => gateDetail(
+                            pawnB, pawnBLevel, 0, unselectedBaseline, unselectedGated));
+                }
+
+                int configuredFloor = pawnBLevel + 1;
+                bool skillFloorBaseline;
+                bool skillFloorGated = false;
+                record.restrictToSelectedWorkers = false;
+                record.allowedWorkers = new List<Pawn>();
+                record.minConstructionSkill = 0;
+                if (!TryBaseline(pawnB, true, out skillFloorBaseline, out baselineFailure))
+                {
+                    r.Skip(
+                        skillFloorLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} could not be " +
+                        $"measured: {baselineFailure.GetType().Name}: {baselineFailure.Message}; " +
+                        "the gate cannot be distinguished");
+                }
+                else if (!skillFloorBaseline)
+                {
+                    r.Skip(
+                        skillFloorLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} was already false; " +
+                        "the gate cannot be distinguished");
+                }
+                else
+                {
+                    record.restrictToSelectedWorkers = false;
+                    record.allowedWorkers = new List<Pawn>();
+                    record.minConstructionSkill = configuredFloor;
+                    CheckSafely(
+                        r,
+                        skillFloorLabel,
+                        () =>
+                        {
+                            skillFloorGated = GenConstruct.CanConstruct(
+                                blueprint, pawnB, true, false, null);
+                            return !skillFloorGated;
+                        },
+                        () => gateDetail(
+                            pawnB,
+                            pawnBLevel,
+                            configuredFloor,
+                            skillFloorBaseline,
+                            skillFloorGated));
+                }
+
+                bool haulingBaseline;
+                bool haulingGated = false;
+                record.restrictToSelectedWorkers = false;
+                record.allowedWorkers = new List<Pawn>();
+                record.minConstructionSkill = 0;
+                if (!TryBaseline(pawnB, false, out haulingBaseline, out baselineFailure))
+                {
+                    r.Skip(
+                        haulingLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} could not be " +
+                        $"measured: {baselineFailure.GetType().Name}: {baselineFailure.Message}; " +
+                        "the gate cannot be distinguished");
+                }
+                else if (!haulingBaseline)
+                {
+                    r.Skip(
+                        haulingLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} was already false; " +
+                        "the gate cannot be distinguished");
+                }
+                else
+                {
+                    record.restrictToSelectedWorkers = false;
+                    record.allowedWorkers = new List<Pawn>();
+                    record.minConstructionSkill = configuredFloor;
+                    CheckSafely(
+                        r,
+                        haulingLabel,
+                        () =>
+                        {
+                            haulingGated = GenConstruct.CanConstruct(
+                                blueprint, pawnB, false, false, null);
+                            return haulingGated;
+                        },
+                        () => gateDetail(
+                            pawnB, pawnBLevel, configuredFloor, haulingBaseline, haulingGated));
+                }
+
+                bool ordinaryBaseline;
+                bool ordinaryGated = false;
+                record.restrictToSelectedWorkers = false;
+                record.allowedWorkers = new List<Pawn>();
+                record.minConstructionSkill = 0;
+                if (!TryBaseline(pawnB, true, out ordinaryBaseline, out baselineFailure))
+                {
+                    r.Skip(
+                        ordinaryLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} could not be " +
+                        $"measured: {baselineFailure.GetType().Name}: {baselineFailure.Message}; " +
+                        "the gate cannot be distinguished");
+                }
+                else if (!ordinaryBaseline)
+                {
+                    r.Skip(
+                        ordinaryLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} was already false; " +
+                        "the gate cannot be distinguished");
+                }
+                else
+                {
+                    loops.Disable(cell);
+                    gateLoops.Disable(cell);
+                    CheckSafely(
+                        r,
+                        ordinaryLabel,
+                        () =>
+                        {
+                            ordinaryGated = GenConstruct.CanConstruct(
+                                blueprint, pawnB, true, false, null);
+                            return ordinaryGated;
+                        },
+                        () => gateDetail(
+                            pawnB, pawnBLevel, 0, ordinaryBaseline, ordinaryGated));
+                }
+            }
+            finally
+            {
+                DestroyThingsInRect(map, buildRect);
+                loops.Disable(cell);
+                gateLoops.Disable(cell);
+            }
+        }
+
         private static void CheckDesignatorCancel(
             Results r,
             Map map,
@@ -6755,6 +7145,25 @@ private static int CountStoredTargetStock(
             r.Skip("an empty stockpile does not stop the loop", reason);
         }
 
+        private static void SkipProduceWorkerGateAssertions(Results r, string reason)
+        {
+            r.Skip(
+                "a selected worker may work a restricted Produce program",
+                reason);
+            r.Skip(
+                "a pawn who is not selected may not work a restricted Produce program",
+                reason);
+            r.Skip(
+                "the Construction floor rejects an under-skilled pawn",
+                reason);
+            r.Skip(
+                "the Construction floor does not block material delivery under Hauling",
+                reason);
+            r.Skip(
+                "an ordinary blueprint elsewhere is not affected by a Produce program",
+                reason);
+        }
+
         private static void SkipSubjectAssertions(Results r)
         {
             const string reason = "no loaded minifiable stuff-built building";
@@ -6787,6 +7196,7 @@ private static int CountStoredTargetStock(
                 "a paused loop reloads paused, and an old record reloads running",
                 reason);
             SkipAllowedMaterialsAssertions(r, reason);
+            SkipProduceWorkerGateAssertions(r, reason);
         }
 
         private static void SkipBlueprintAssertions(Results r, string reason)
