@@ -43,10 +43,22 @@ namespace Intercolony
 
         // --- Creating ----------------------------------------------------------------------
 
+        /// <summary>Creates and stores an open job posting.</summary>
+        /// <param name="state">The world state that owns the posting.</param>
+        /// <param name="skill">The required skill, or null for any work.</param>
+        /// <param name="minSkillLevel">The minimum skill level when a skill is required.</param>
+        /// <param name="termDays">The requested employment term in days.</param>
+        /// <param name="structure">The wage payment structure.</param>
+        /// <param name="clause">The combat clause attached to the employment.</param>
+        /// <param name="failReason">The reason creation failed, or null on success.</param>
+        /// <param name="requestedEquipmentLevel">
+        /// The equipment tier the posting requests. Any is the legacy default for existing callers.
+        /// </param>
         public static JobPosting TryPost(
             IntercolonyWorldComponent state, SkillDef skill, int minSkillLevel,
             int termDays, WageStructure structure, CombatClause clause,
-            out string failReason)
+            out string failReason,
+            LaborEquipmentLevel requestedEquipmentLevel = LaborEquipmentLevel.Any)
         {
             failReason = null;
 
@@ -70,6 +82,7 @@ namespace Intercolony
                 termDays = termDays,
                 wageStructure = structure,
                 combatClause = clause,
+                requestedEquipmentLevel = requestedEquipmentLevel,
                 postedTick = GenTicks.TicksGame,
                 expiryTick = -1,
                 status = JobPostingStatus.Open
@@ -153,6 +166,17 @@ namespace Intercolony
                 foreach (JobPosting posting in open)
                 {
                     if (!posting.MeetsRequirement(worker))
+                    {
+                        continue;
+                    }
+
+                    // Reject a prospect whose census promise is below the request before the
+                    // expensive Apply/Materialise path. None is intentionally a wildcard here:
+                    // Apply strips bondable equipment after the pawn is built.
+                    if (posting.requestedEquipmentLevel != LaborEquipmentLevel.Any &&
+                        posting.requestedEquipmentLevel != LaborEquipmentLevel.None &&
+                        !LaborEquipmentTierService.MeetsOrExceeds(
+                            worker.equipmentTier, posting.requestedEquipmentLevel))
                     {
                         continue;
                     }

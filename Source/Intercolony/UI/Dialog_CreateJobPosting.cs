@@ -88,7 +88,7 @@ namespace Intercolony
             "price, which you see before accepting anyone.";
 
         private readonly IntercolonyWorldComponent state;
-        private readonly Action<SkillDef, int, int, WageStructure, CombatClause> onConfirm;
+        private readonly Action<SkillDef, int, int, WageStructure, CombatClause, LaborEquipmentLevel> onConfirm;
 
         private SkillDef skill;
         private int minLevel = 8;
@@ -110,7 +110,7 @@ namespace Intercolony
 
         public Dialog_CreateJobPosting(
             IntercolonyWorldComponent state,
-            Action<SkillDef, int, int, WageStructure, CombatClause> onConfirm)
+            Action<SkillDef, int, int, WageStructure, CombatClause, LaborEquipmentLevel> onConfirm)
         {
             this.state = state;
             this.onConfirm = onConfirm;
@@ -167,18 +167,9 @@ namespace Intercolony
 
             if (Widgets.ButtonText(new Rect(ContentLeft, bottom, 170f, 36f), "Post"))
             {
-                int postingCountBeforeConfirm = state?.Postings?.Count ?? 0;
-                onConfirm?.Invoke(skill, minLevel, termDays, structure, clause);
-
-                // The existing confirmation seam returns void and its caller appends exactly one
-                // posting. Apply this dialog-only term to that new posting without changing the
-                // caller or the other posting terms it already owns.
-                if (state?.Postings != null && state.Postings.Count > postingCountBeforeConfirm)
-                {
-                    state.Postings[postingCountBeforeConfirm].requestedEquipmentLevel =
-                        requestedEquipmentLevel;
-                }
-
+                // The posting is created with every term already set, so state.AddPosting never
+                // sees a partially specified posting.
+                onConfirm?.Invoke(skill, minLevel, termDays, structure, clause, requestedEquipmentLevel);
                 Close();
             }
 
