@@ -34,6 +34,10 @@ namespace Intercolony
         public const float MinLaborCostMultiplier = 0.5f;
         public const float MaxLaborCostMultiplier = 2f;
 
+        public const float DefaultStandardEquipmentAbundance = 1f;
+        public const float DefaultProfessionalEquipmentAbundance = 1f;
+        public const float DefaultEliteEquipmentAbundance = 1f;
+
         public const int DefaultCommercialGoodwillIntervalDays = 7;
         public const int DefaultCommercialGoodwillPerInterval = 2;
         public const int DefaultCommercialGoodwillCeiling = 15;
@@ -63,6 +67,12 @@ namespace Intercolony
         public const int MaxActiveOpportunities = 200;
         public const float MinEconomyDifficulty = 0.5f;
         public const float MaxEconomyDifficulty = 1.5f;
+        public const float MinStandardEquipmentAbundance = 0f;
+        public const float MaxStandardEquipmentAbundance = 3f;
+        public const float MinProfessionalEquipmentAbundance = 0f;
+        public const float MaxProfessionalEquipmentAbundance = 3f;
+        public const float MinEliteEquipmentAbundance = 0f;
+        public const float MaxEliteEquipmentAbundance = 3f;
         public const int MinCommercialGoodwillIntervalDays = 1;
         public const int MaxCommercialGoodwillIntervalDays = 60;
         public const int MinCommercialGoodwillPerInterval = 0;
@@ -107,6 +117,9 @@ namespace Intercolony
         /// <summary>Whether proposal screens show the continuous appeal percentage beside its band.</summary>
         public bool showProposalAppealPercentage = false;
         public float laborCostMultiplier = DefaultLaborCostMultiplier;
+        public float standardEquipmentAbundance = DefaultStandardEquipmentAbundance;
+        public float professionalEquipmentAbundance = DefaultProfessionalEquipmentAbundance;
+        public float eliteEquipmentAbundance = DefaultEliteEquipmentAbundance;
         public int commercialGoodwillIntervalDays = DefaultCommercialGoodwillIntervalDays;
         public int commercialGoodwillPerInterval = DefaultCommercialGoodwillPerInterval;
         public int commercialGoodwillCeiling = DefaultCommercialGoodwillCeiling;
@@ -152,6 +165,18 @@ namespace Intercolony
                 ref showProposalAppealPercentage, "showProposalAppealPercentage", false);
             Scribe_Values.Look(
                 ref laborCostMultiplier, "laborCostMultiplierV2", DefaultLaborCostMultiplier);
+            Scribe_Values.Look(
+                ref standardEquipmentAbundance,
+                "standardEquipmentAbundance",
+                DefaultStandardEquipmentAbundance);
+            Scribe_Values.Look(
+                ref professionalEquipmentAbundance,
+                "professionalEquipmentAbundance",
+                DefaultProfessionalEquipmentAbundance);
+            Scribe_Values.Look(
+                ref eliteEquipmentAbundance,
+                "eliteEquipmentAbundance",
+                DefaultEliteEquipmentAbundance);
             Scribe_Values.Look(
                 ref commercialGoodwillIntervalDays,
                 "commercialGoodwillIntervalDays",
@@ -232,6 +257,18 @@ namespace Intercolony
                 economyDifficulty, MinEconomyDifficulty, MaxEconomyDifficulty);
             laborCostMultiplier = Mathf.Clamp(
                 laborCostMultiplier, MinLaborCostMultiplier, MaxLaborCostMultiplier);
+            standardEquipmentAbundance = Mathf.Clamp(
+                standardEquipmentAbundance,
+                MinStandardEquipmentAbundance,
+                MaxStandardEquipmentAbundance);
+            professionalEquipmentAbundance = Mathf.Clamp(
+                professionalEquipmentAbundance,
+                MinProfessionalEquipmentAbundance,
+                MaxProfessionalEquipmentAbundance);
+            eliteEquipmentAbundance = Mathf.Clamp(
+                eliteEquipmentAbundance,
+                MinEliteEquipmentAbundance,
+                MaxEliteEquipmentAbundance);
             commercialGoodwillIntervalDays = Mathf.Clamp(
                 commercialGoodwillIntervalDays,
                 MinCommercialGoodwillIntervalDays,

@@ -455,6 +455,74 @@ namespace Intercolony
             }
 
             SectionGap(ref y);
+            SectionTitle("Labor equipment abundance", width, ref y, draw);
+            float standardEquipmentAbundance = Settings.standardEquipmentAbundance;
+            Slider(
+                StandardEquipmentAbundanceLabel(standardEquipmentAbundance),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinStandardEquipmentAbundance,
+                    IntercolonySettings.MaxStandardEquipmentAbundance,
+                    0.1f,
+                    StandardEquipmentAbundanceLabel),
+                ref standardEquipmentAbundance,
+                IntercolonySettings.MinStandardEquipmentAbundance,
+                IntercolonySettings.MaxStandardEquipmentAbundance,
+                0.1f,
+                width,
+                ref y,
+                draw,
+                StandardEquipmentAbundanceTooltip);
+            if (draw)
+            {
+                Settings.standardEquipmentAbundance = standardEquipmentAbundance;
+            }
+
+            float professionalEquipmentAbundance = Settings.professionalEquipmentAbundance;
+            Slider(
+                ProfessionalEquipmentAbundanceLabel(professionalEquipmentAbundance),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinProfessionalEquipmentAbundance,
+                    IntercolonySettings.MaxProfessionalEquipmentAbundance,
+                    0.1f,
+                    ProfessionalEquipmentAbundanceLabel),
+                ref professionalEquipmentAbundance,
+                IntercolonySettings.MinProfessionalEquipmentAbundance,
+                IntercolonySettings.MaxProfessionalEquipmentAbundance,
+                0.1f,
+                width,
+                ref y,
+                draw,
+                ProfessionalEquipmentAbundanceTooltip);
+            if (draw)
+            {
+                Settings.professionalEquipmentAbundance = professionalEquipmentAbundance;
+            }
+
+            float eliteEquipmentAbundance = Settings.eliteEquipmentAbundance;
+            Slider(
+                EliteEquipmentAbundanceLabel(eliteEquipmentAbundance),
+                TallestTextHeight(
+                    width,
+                    IntercolonySettings.MinEliteEquipmentAbundance,
+                    IntercolonySettings.MaxEliteEquipmentAbundance,
+                    0.1f,
+                    EliteEquipmentAbundanceLabel),
+                ref eliteEquipmentAbundance,
+                IntercolonySettings.MinEliteEquipmentAbundance,
+                IntercolonySettings.MaxEliteEquipmentAbundance,
+                0.1f,
+                width,
+                ref y,
+                draw,
+                EliteEquipmentAbundanceTooltip);
+            if (draw)
+            {
+                Settings.eliteEquipmentAbundance = eliteEquipmentAbundance;
+            }
+
+            SectionGap(ref y);
             SectionTitle("Buy-only items", width, ref y, draw);
             IReadOnlyList<BuyOnlyTradeCategoryGroup> buyOnlyGroups = BuyOnlyTradeUnlock.Groups;
             if (buyOnlyGroups.Count == 0)
@@ -556,6 +624,18 @@ namespace Intercolony
             "Sets the highest stock target a Produce program may be set to. Raising it lets a " +
             "single program maintain a larger stock; lowering it does not change programs that " +
             "are already set higher.";
+        private const string StandardEquipmentAbundanceTooltip =
+            "Multiplies how often the labor market assigns the exact Standard equipment tier to a " +
+            "new prospect. It applies to the next market refresh, does not change workers already " +
+            "waiting or hired, and cannot make a settlement supply gear it is incapable of supplying.";
+        private const string ProfessionalEquipmentAbundanceTooltip =
+            "Multiplies how often the labor market assigns the exact Professional equipment tier to " +
+            "a new prospect. It applies to the next market refresh, does not change workers already " +
+            "waiting or hired, and cannot make a settlement supply gear it is incapable of supplying.";
+        private const string EliteEquipmentAbundanceTooltip =
+            "Multiplies how often the labor market assigns the exact Elite equipment tier to a new " +
+            "prospect. It applies to the next market refresh, does not change workers already waiting " +
+            "or hired, and cannot make a settlement supply gear it is incapable of supplying.";
 
         private static string RefreshDaysLabel(float refreshDays)
         {
@@ -626,6 +706,21 @@ namespace Intercolony
         private static string MaxProduceTargetLabel(float value)
         {
             return $"Maximum Produce target: {Mathf.RoundToInt(value)}";
+        }
+
+        private static string StandardEquipmentAbundanceLabel(float multiplier)
+        {
+            return $"Standard equipment abundance: {Mathf.RoundToInt(multiplier * 100f)}%";
+        }
+
+        private static string ProfessionalEquipmentAbundanceLabel(float multiplier)
+        {
+            return $"Professional equipment abundance: {Mathf.RoundToInt(multiplier * 100f)}%";
+        }
+
+        private static string EliteEquipmentAbundanceLabel(float multiplier)
+        {
+            return $"Elite equipment abundance: {Mathf.RoundToInt(multiplier * 100f)}%";
         }
 
         /// <summary>
