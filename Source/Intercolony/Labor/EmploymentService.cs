@@ -30,6 +30,17 @@ namespace Intercolony
         private static readonly HashSet<EmploymentContract> dropPodPreflightFailuresLogged =
             new HashSet<EmploymentContract>();
 
+        private static readonly HashSet<EmploymentContract> dropPodArrivalLettersSent =
+            new HashSet<EmploymentContract>();
+
+        private const string EmergencyArrivalLetterLabel = "Emergency reinforcements inbound";
+        private const string EmergencyArrivalLetterBodyFormat =
+            "{0} is inbound from {1} under your emergency contract.\n" +
+            "Drop-pod landing site: {2}.\n" +
+            "ETA: imminent.";
+        private const string EmergencyArrivalLetterLandingSiteFallback = "your colony map";
+        private const string EmergencyArrivalLetterMapSuffix = " map";
+
         /// <summary>
         /// Hires a worker under one of §37's wage structures and one of §42's combat clauses.
         /// Prepaid takes the whole discounted term at hire; periodic structures take a signing fee
@@ -1132,6 +1143,34 @@ namespace Intercolony
             }
 
             DropPodUtility.MakeDropPodAt(cell, map, info);
+
+            // Advance normally stops retrying once the pawn is held by the pod, but this guard
+            // keeps the launch announcement idempotent if the same contract is invoked again.
+            if (dropPodArrivalLettersSent.Add(contract))
+            {
+                // Resolve the skyfaller so Jump to location follows the actual incoming pod;
+                // the cell target is the exact fallback while the pod is not in the grid.
+                DropPodIncoming incomingPod = map.thingGrid.ThingAt<DropPodIncoming>(cell);
+                LookTargets lookTargets = incomingPod != null
+                    ? new LookTargets(incomingPod)
+                    : new LookTargets(cell, map);
+                string landingSite = map.Parent == null
+                    ? EmergencyArrivalLetterLandingSiteFallback
+                    : map.Parent.LabelCap + EmergencyArrivalLetterMapSuffix;
+
+                // Always is required because the default Minimal letter volume suppresses
+                // Chatty, which would make this premium inbound announcement invisible to most players.
+                IntercolonyLetters.Send(
+                    IntercolonyLetterImportance.Always,
+                    EmergencyArrivalLetterLabel,
+                    string.Format(
+                        EmergencyArrivalLetterBodyFormat,
+                        contract.workerName,
+                        contract.settlementName,
+                        landingSite),
+                    LetterDefOf.PositiveEvent,
+                    lookTargets);
+            }
         }
 
         private static bool IsInFlightDropPod(Pawn worker)
