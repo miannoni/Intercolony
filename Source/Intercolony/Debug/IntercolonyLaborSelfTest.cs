@@ -100,6 +100,7 @@ namespace Intercolony
             try
             {
                 CheckEmployeeCardLayout(r);
+                CheckEmployeeCardLifecycle(r);
                 CheckAutoRenewPersistence(r);
                 CheckLaborSpineRoundTrip(r);
                 CheckEquipmentTierRules(r, map);
@@ -2663,6 +2664,165 @@ namespace Intercolony
                 $" [{changedPersistedFields}], autoRenew {autoRenewBefore} -> {autoRenewAfter}; " +
                 $"draw uses window Add/Remove {productionToggleUsesWindowState}, " +
                 $"direct contract field store {productionDrawStoresContractField}{failureDetail}");
+        }
+
+        private static void CheckEmployeeCardLifecycle(Results r)
+        {
+            EmploymentContract bothOffersContract = new EmploymentContract
+            {
+                status = EmploymentStatus.Active
+            };
+            EmploymentContract travellingWithRenewalContract = new EmploymentContract
+            {
+                status = EmploymentStatus.Travelling
+            };
+            EmploymentContract travellingContract = new EmploymentContract
+            {
+                status = EmploymentStatus.Travelling
+            };
+            EmploymentContract activeContract = new EmploymentContract
+            {
+                status = EmploymentStatus.Active
+            };
+            EmploymentContract severedContract = new EmploymentContract
+            {
+                status = EmploymentStatus.Severed
+            };
+            EmploymentContract arrearsContract = new EmploymentContract
+            {
+                status = EmploymentStatus.Active,
+                arrearsSilver = 1
+            };
+            EmploymentContract noArrearsContract = new EmploymentContract
+            {
+                status = EmploymentStatus.Active,
+                arrearsSilver = 0
+            };
+
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind bothOffersObserved =
+                MainTabWindow_Intercolony.ResolveLifecycleAction(
+                    bothOffersContract, true, true);
+            r.Check(
+                bothOffersObserved ==
+                    MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineTransition,
+                "both live offers prefer transition decline",
+                $"OBSERVED {bothOffersObserved}; EXPECTED " +
+                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineTransition}");
+
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind travellingRenewalObserved =
+                MainTabWindow_Intercolony.ResolveLifecycleAction(
+                    travellingWithRenewalContract, false, true);
+            r.Check(
+                travellingRenewalObserved ==
+                    MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineRenewal,
+                "live renewal beats travelling cancel",
+                $"OBSERVED {travellingRenewalObserved}; EXPECTED " +
+                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineRenewal}");
+
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind travellingObserved =
+                MainTabWindow_Intercolony.ResolveLifecycleAction(
+                    travellingContract, false, false);
+            r.Check(
+                travellingObserved == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Cancel,
+                "travelling with no offers cancels",
+                $"OBSERVED {travellingObserved}; EXPECTED " +
+                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Cancel}");
+
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind activeObserved =
+                MainTabWindow_Intercolony.ResolveLifecycleAction(
+                    activeContract, false, false);
+            r.Check(
+                activeObserved == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Dismiss,
+                "active with no offers dismisses",
+                $"OBSERVED {activeObserved}; EXPECTED " +
+                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Dismiss}");
+
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind severedObserved =
+                MainTabWindow_Intercolony.ResolveLifecycleAction(
+                    severedContract, false, false);
+            r.Check(
+                severedObserved == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None,
+                "severed with no offers has no action",
+                $"OBSERVED {severedObserved}; EXPECTED " +
+                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None}");
+
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind nullObserved =
+                MainTabWindow_Intercolony.ResolveLifecycleAction(null, true, true);
+            r.Check(
+                nullObserved == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None,
+                "null contract has no action",
+                $"OBSERVED {nullObserved}; EXPECTED " +
+                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None}");
+
+            string declineRenewalLabel = MainTabWindow_Intercolony.LifecycleActionLabel(
+                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineRenewal);
+            r.Check(
+                declineRenewalLabel == "Let them go",
+                "renewal decline label is short",
+                $"OBSERVED \"{declineRenewalLabel ?? "<null>"}\"; EXPECTED \"Let them go\"");
+
+            string noneLabel = MainTabWindow_Intercolony.LifecycleActionLabel(
+                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None);
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind[] labelledKinds =
+            {
+                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineTransition,
+                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineRenewal,
+                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Cancel,
+                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Dismiss
+            };
+            bool everyOtherLabelNonEmpty = true;
+            StringBuilder otherLabels = new StringBuilder();
+            for (int i = 0; i < labelledKinds.Length; i++)
+            {
+                string label = MainTabWindow_Intercolony.LifecycleActionLabel(labelledKinds[i]);
+                if (i > 0)
+                {
+                    otherLabels.Append(", ");
+                }
+
+                otherLabels.Append($"{labelledKinds[i]}=\"{label ?? "<null>"}\"");
+                if (String.IsNullOrEmpty(label))
+                {
+                    everyOtherLabelNonEmpty = false;
+                }
+            }
+
+            r.Check(
+                noneLabel == null && everyOtherLabelNonEmpty,
+                "only none has no lifecycle label",
+                $"OBSERVED None=\"{noneLabel ?? "<null>"}\", others [{otherLabels}]; " +
+                "EXPECTED None=null, every other kind non-empty");
+
+            MethodInfo employeeActionCountFor = typeof(MainTabWindow_Intercolony).GetMethod(
+                "EmployeeActionCountFor", BindingFlags.Static | BindingFlags.NonPublic);
+            int arrearsActionCount = -1;
+            int noArrearsActionCount = -1;
+            string actionCountFailure = null;
+            try
+            {
+                if (employeeActionCountFor == null)
+                {
+                    actionCountFailure = "private method was unavailable";
+                }
+                else
+                {
+                    arrearsActionCount = (int)employeeActionCountFor.Invoke(
+                        null, new object[] { arrearsContract });
+                    noArrearsActionCount = (int)employeeActionCountFor.Invoke(
+                        null, new object[] { noArrearsContract });
+                }
+            }
+            catch (Exception ex)
+            {
+                actionCountFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+
+            r.Check(
+                actionCountFailure == null && arrearsActionCount == 4 && noArrearsActionCount == 3,
+                "arrears add one expanded action",
+                $"OBSERVED arrears {arrearsActionCount}, no arrears {noArrearsActionCount}; " +
+                $"EXPECTED arrears 4, no arrears 3{(actionCountFailure == null ? "" :
+                $"; failure={actionCountFailure}")}");
         }
 
         private static void CheckAutoRenewPersistence(Results r)
