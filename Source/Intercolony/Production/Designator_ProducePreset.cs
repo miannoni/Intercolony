@@ -8,6 +8,23 @@ namespace Intercolony
 {
     public class Designator_ProducePreset : Designator_Cells
     {
+        private const string DefaultDescription =
+            "Dragging applies this preset's production settings to every eligible object touched.";
+        private const string UnknownFailureReason = "unknown reason";
+        private const string AppliedMessagePrefix = "Applied \"";
+        private const string AppliedMessageSeparator = "\" to ";
+        private const string SingularObject = "object";
+        private const string PluralObjects = "objects";
+        private const string MessageSpace = " ";
+        private const string MessagePeriod = ".";
+        private const string FailureListSeparator = "; ";
+        private const string SkippedMessageSeparator = " skipped: ";
+        private const string EditLabel = "Edit";
+        private const string RenameLabel = "Rename";
+        private const string RemoveLabel = "Remove";
+        private const string RemoveConfirmationText =
+            "Remove this preset?\n\nRemoving it deletes the Architect entry but does not stop or change any production loop already configured from it.";
+
         private readonly ProduceControlPreset preset;
         private readonly int presetId;
 
@@ -16,7 +33,7 @@ namespace Intercolony
             this.preset = preset;
             presetId = preset == null ? 0 : preset.id;
             defaultLabel = preset == null ? string.Empty : preset.name;
-            defaultDesc = "Dragging applies this preset's production settings to every eligible object touched.";
+            defaultDesc = DefaultDescription;
             icon = ContentFinder<Texture2D>.Get("UI/Designators/Uninstall");
             soundDragSustain = SoundDefOf.Designate_DragStandard;
             soundDragChanged = SoundDefOf.Designate_DragStandard_Changed;
@@ -28,6 +45,47 @@ namespace Intercolony
         public override string Label => preset == null || preset.name == null ? string.Empty : preset.name;
 
         public override DrawStyleCategoryDef DrawStyleCategory => DrawStyleCategoryDefOf.FilledRectangle;
+
+        public override IEnumerable<FloatMenuOption> RightClickFloatMenuOptions
+        {
+            get
+            {
+                Map currentMap = base.Map;
+                if (currentMap == null)
+                {
+                    // The inherited designator menu can inspect the map, so skip it during map teardown.
+                    yield break;
+                }
+
+                IEnumerable<FloatMenuOption> inheritedOptions = base.RightClickFloatMenuOptions;
+                if (inheritedOptions != null)
+                {
+                    foreach (FloatMenuOption option in inheritedOptions)
+                    {
+                        yield return option;
+                    }
+                }
+
+                ProduceLoopMapComponent loopComponent = ProduceLoopMapComponent.For(currentMap);
+                ProduceControlPreset currentPreset = loopComponent == null
+                    ? null
+                    : loopComponent.FindPreset(PresetId);
+                if (loopComponent == null || currentPreset == null)
+                {
+                    yield break;
+                }
+
+                yield return new FloatMenuOption(
+                    EditLabel,
+                    () => OpenEditDialog(currentMap));
+                yield return new FloatMenuOption(
+                    RenameLabel,
+                    () => OpenRenameDialog(currentMap));
+                yield return new FloatMenuOption(
+                    RemoveLabel,
+                    () => ConfirmRemovePreset(currentMap));
+            }
+        }
 
         public override AcceptanceReport CanDesignateCell(IntVec3 c)
         {
@@ -102,7 +160,7 @@ namespace Intercolony
                     }
 
                     skipped++;
-                    string failureReason = reason ?? "unknown reason";
+                    string failureReason = reason ?? UnknownFailureReason;
                     int failureCount;
                     if (failures.TryGetValue(failureReason, out failureCount))
                     {
@@ -122,19 +180,91 @@ namespace Intercolony
                 return;
             }
 
-            string objectWord = applied == 1 ? "object" : "objects";
-            string message = "Applied \"" + Label + "\" to " + applied + " " + objectWord + ".";
+            string objectWord = applied == 1 ? SingularObject : PluralObjects;
+            string message = AppliedMessagePrefix + Label + AppliedMessageSeparator +
+                applied + MessageSpace + objectWord + MessagePeriod;
             if (skipped > 0)
             {
                 List<string> sortedReasons = new List<string>(failures.Keys);
                 sortedReasons.Sort(StringComparer.Ordinal);
-                message += " " + skipped + " skipped: " + string.Join("; ", sortedReasons) + ".";
+                message += MessageSpace + skipped + SkippedMessageSeparator +
+                    string.Join(FailureListSeparator, sortedReasons) + MessagePeriod;
             }
 
             MessageTypeDef messageType = applied > 0
                 ? MessageTypeDefOf.TaskCompletion
                 : MessageTypeDefOf.RejectInput;
             Messages.Message(message, messageType, historical: false);
+        }
+
+        private void OpenEditDialog(Map currentMap)
+        {
+            ProduceLoopMapComponent loopComponent = currentMap == null
+                ? null
+                : ProduceLoopMapComponent.For(currentMap);
+            ProduceControlPreset currentPreset = loopComponent == null
+                ? null
+                : loopComponent.FindPreset(PresetId);
+            if (currentMap == null || loopComponent == null || currentPreset == null ||
+                Find.WindowStack == null)
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(new Dialog_EditProducePreset(currentMap, PresetId));
+        }
+
+        private void OpenRenameDialog(Map currentMap)
+        {
+            ProduceLoopMapComponent loopComponent = currentMap == null
+                ? null
+                : ProduceLoopMapComponent.For(currentMap);
+            ProduceControlPreset currentPreset = loopComponent == null
+                ? null
+                : loopComponent.FindPreset(PresetId);
+            if (currentMap == null || loopComponent == null || currentPreset == null ||
+                Find.WindowStack == null)
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(new Dialog_RenameProducePreset(currentMap, PresetId));
+        }
+
+        private void ConfirmRemovePreset(Map currentMap)
+        {
+            ProduceLoopMapComponent loopComponent = currentMap == null
+                ? null
+                : ProduceLoopMapComponent.For(currentMap);
+            ProduceControlPreset currentPreset = loopComponent == null
+                ? null
+                : loopComponent.FindPreset(PresetId);
+            if (currentMap == null || loopComponent == null || currentPreset == null ||
+                Find.WindowStack == null)
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                RemoveConfirmationText,
+                () => RemovePresetFromMap(currentMap),
+                destructive: true));
+        }
+
+        private void RemovePresetFromMap(Map currentMap)
+        {
+            ProduceLoopMapComponent loopComponent = currentMap == null
+                ? null
+                : ProduceLoopMapComponent.For(currentMap);
+            ProduceControlPreset currentPreset = loopComponent == null
+                ? null
+                : loopComponent.FindPreset(PresetId);
+            if (currentMap == null || loopComponent == null || currentPreset == null)
+            {
+                return;
+            }
+
+            loopComponent.RemovePreset(PresetId);
         }
     }
 }
