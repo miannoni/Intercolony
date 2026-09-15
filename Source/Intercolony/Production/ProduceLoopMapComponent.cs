@@ -403,17 +403,37 @@ namespace Intercolony
             ProduceControlPreset preset = new ProduceControlPreset
             {
                 id = nextPresetId++,
-                name = trimmedName,
-                targetCount = loop.targetCount,
-                resumeBelow = loop.resumeBelow,
-                restrictToSelectedWorkers = loop.restrictToSelectedWorkers,
-                allowedWorkers = CopyAllowedWorkers(loop.allowedWorkers),
-                minConstructionSkill = loop.minConstructionSkill,
-                allowedStuff = CopyAllowedStuff(loop.allowedStuff)
+                name = trimmedName
             };
+            CopySettingsFromLoop(preset, loop);
             presets.Add(preset);
             presetsRevision++;
             return preset;
+        }
+
+        public bool TryOverwritePresetFromLoop(
+            int id,
+            ProduceLoopRecord loop,
+            out string reason)
+        {
+            reason = null;
+            ProduceControlPreset preset = FindPreset(id);
+            if (preset == null)
+            {
+                reason = "Preset was not found.";
+                return false;
+            }
+
+            if (loop == null)
+            {
+                reason = "A production loop is required.";
+                return false;
+            }
+
+            // Keep capture and overwrite on the same copy path so preset lists never alias a live loop.
+            CopySettingsFromLoop(preset, loop);
+            presetsRevision++;
+            return true;
         }
 
         public bool TryRenamePreset(int id, string newName, out string reason)
@@ -648,6 +668,18 @@ namespace Intercolony
         private static string NormalizePresetName(string name)
         {
             return name == null ? string.Empty : name.Trim();
+        }
+
+        private static void CopySettingsFromLoop(
+            ProduceControlPreset preset,
+            ProduceLoopRecord loop)
+        {
+            preset.targetCount = loop.targetCount;
+            preset.resumeBelow = loop.resumeBelow;
+            preset.restrictToSelectedWorkers = loop.restrictToSelectedWorkers;
+            preset.allowedWorkers = CopyAllowedWorkers(loop.allowedWorkers);
+            preset.minConstructionSkill = loop.minConstructionSkill;
+            preset.allowedStuff = CopyAllowedStuff(loop.allowedStuff);
         }
 
         private static List<Pawn> CopyAllowedWorkers(List<Pawn> workers)

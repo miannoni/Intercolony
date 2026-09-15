@@ -37,8 +37,12 @@ namespace Intercolony
         private const float NumericFieldWidth = 90f;
         private const float StepButtonWidth = 44f;
         private const float StepButtonGap = 4f;
+        private const float PresetButtonWidth = 120f;
 
         private const string Title = "Produce controls";
+        private const string PresetHeading = "Preset";
+        private const string PresetNameLabel = "Preset name";
+        private const string SavePresetLabel = "Save as preset";
         private const string IndefiniteMode = "Produce indefinitely";
         private const string MaintainMode = "Maintain stock";
         private const string WaitingStatus = "Waiting for stock to fall";
@@ -52,6 +56,10 @@ namespace Intercolony
         private const string FixedMaterialMessage =
             "Product is always made of the same material.";
         private const string UnavailableWorkerSuffix = " (unavailable)";
+        private const string PresetNameRequiredMessage = "Enter a preset name.";
+        private const string PresetSavedMessage = "Preset saved.";
+        private const string PresetOverwriteConfirmation =
+            "A preset with this name already exists. Overwrite it?";
 
         private readonly Map map;
         private readonly IntVec3 cell;
@@ -61,6 +69,7 @@ namespace Intercolony
         private string targetBuffer = "0";
         private string resumeBelowBuffer = "0";
         private string minConstructionSkillBuffer = "0";
+        private string presetNameBuffer = "";
         private int syncedTargetCount;
         private int syncedEffectiveResumeBelow;
         private int syncedMinConstructionSkill;
@@ -156,6 +165,23 @@ namespace Intercolony
                 "Choose whether this program runs continuously or maintains a stock target.");
             y += titleHeight + SectionGap;
             Text.Font = GameFont.Small;
+
+            float presetHeadingHeight = SectionHeadingHeight(PresetHeading, width);
+            DrawSectionHeading(PresetHeading, y, width, presetHeadingHeight);
+            y += presetHeadingHeight + RowGap;
+
+            DrawRowLabel(PresetNameLabel, y, ControlRowHeight);
+            float presetFieldWidth = controlsWidth - PresetButtonWidth - StepButtonGap;
+            presetNameBuffer = Widgets.TextField(
+                new Rect(controlsX, y, presetFieldWidth, ControlRowHeight), presetNameBuffer);
+            if (Widgets.ButtonText(
+                    new Rect(controlsX + presetFieldWidth + StepButtonGap, y,
+                        PresetButtonWidth, ControlRowHeight), SavePresetLabel))
+            {
+                SavePreset();
+            }
+
+            y += ControlRowHeight + SectionGap;
 
             float indefiniteHeight = RadioRowHeight(IndefiniteMode, controlsWidth);
             float maintainHeight = RadioRowHeight(MaintainMode, controlsWidth);
@@ -534,6 +560,86 @@ namespace Intercolony
             }
         }
 
+        // Resolve the loop when the button is clicked so a delayed overwrite confirmation never
+        // captures a record that has already been removed from the map.
+        private void SavePreset()
+        {
+            ProduceLoopRecord loop = FindLoop();
+            if (loop == null)
+            {
+                return;
+            }
+
+            string trimmedName = presetNameBuffer.Trim();
+            if (trimmedName.Length == 0)
+            {
+                Messages.Message(
+                    PresetNameRequiredMessage,
+                    MessageTypeDefOf.RejectInput,
+                    historical: false);
+                return;
+            }
+
+            ProduceLoopMapComponent component = ProduceLoopMapComponent.For(map);
+            if (component == null)
+            {
+                return;
+            }
+
+            ProduceControlPreset existing = component.FindPresetByName(trimmedName);
+            if (existing == null)
+            {
+                string reason;
+                ProduceControlPreset created = component.CreatePresetFromLoop(
+                    trimmedName,
+                    loop,
+                    out reason);
+                ReportPresetSaveResult(created != null, reason);
+                return;
+            }
+
+            int existingPresetId = existing.id;
+            Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
+                PresetOverwriteConfirmation,
+                () =>
+                {
+                    ProduceLoopRecord currentLoop = FindLoop();
+                    if (currentLoop == null)
+                    {
+                        return;
+                    }
+
+                    ProduceLoopMapComponent currentComponent = ProduceLoopMapComponent.For(map);
+                    if (currentComponent == null)
+                    {
+                        return;
+                    }
+
+                    string reason;
+                    bool overwritten = currentComponent.TryOverwritePresetFromLoop(
+                        existingPresetId,
+                        currentLoop,
+                        out reason);
+                    ReportPresetSaveResult(overwritten, reason);
+                },
+                destructive: true));
+        }
+
+        private void ReportPresetSaveResult(bool saved, string reason)
+        {
+            if (saved)
+            {
+                Messages.Message(
+                    PresetSavedMessage,
+                    MessageTypeDefOf.TaskCompletion,
+                    historical: false);
+                presetNameBuffer = "";
+                return;
+            }
+
+            Messages.Message(reason, MessageTypeDefOf.RejectInput, historical: false);
+        }
+
         private static void DrawRowLabel(string label, float rowY, float controlHeight)
         {
             float labelHeight = Text.CalcHeight(label, LabelColumnWidth);
@@ -598,6 +704,8 @@ namespace Intercolony
             Text.Font = GameFont.Small;
 
             float height = titleHeight + SectionGap;
+            height += SectionHeadingHeight(PresetHeading, width) + RowGap;
+            height += ControlRowHeight + SectionGap;
             height += RadioRowHeight(IndefiniteMode, controlsWidth) + RowGap;
             height += RadioRowHeight(MaintainMode, controlsWidth) + RowGap;
             if (maintainStock)
