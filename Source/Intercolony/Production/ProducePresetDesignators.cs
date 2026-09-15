@@ -67,6 +67,33 @@ namespace Intercolony
             cachedPresetsRevision = loopComponent.PresetsRevision;
         }
 
+        internal static Designator_ProducePreset FindFor(int presetId)
+        {
+            DesignationCategoryDef category =
+                DefDatabase<DesignationCategoryDef>.GetNamedSilentFail("IntercolonyProduction");
+            if (category == null)
+            {
+                return null;
+            }
+
+            List<Designator> designators = category.AllResolvedDesignators;
+            if (designators == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < designators.Count; i++)
+            {
+                Designator_ProducePreset designator = designators[i] as Designator_ProducePreset;
+                if (designator != null && designator.PresetId == presetId)
+                {
+                    return designator;
+                }
+            }
+
+            return null;
+        }
+
         internal static void Clear()
         {
             DesignationCategoryDef category =

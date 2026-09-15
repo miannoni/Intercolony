@@ -193,4 +193,51 @@ namespace Intercolony
             }
         }
     }
+
+    public class Designator_ProducePresetManager : Designator
+    {
+        private const string ManagerLabel = "Produce controls";
+        private const string ManagerDescription =
+            "Manages reusable Produce presets and applies them without selecting an object first.";
+
+        public Designator_ProducePresetManager()
+        {
+            defaultLabel = ManagerLabel;
+            defaultDesc = ManagerDescription;
+            icon = ContentFinder<Texture2D>.Get("UI/Designators/Uninstall");
+        }
+
+        public override AcceptanceReport CanDesignateCell(IntVec3 c)
+        {
+            return false;
+        }
+
+        public override void DesignateSingleCell(IntVec3 loc)
+        {
+            // This entry opens a manager, so it must never turn a map click into a designation.
+        }
+
+        public override void ProcessInput(Event ev)
+        {
+            if (!CheckCanInteract())
+            {
+                return;
+            }
+
+            if (Find.DesignatorManager != null)
+            {
+                // Skipping the base ProcessInput prevents this window command from remaining armed.
+                Find.DesignatorManager.Deselect();
+            }
+
+            Map currentMap = Find.CurrentMap;
+            WindowStack windowStack = Find.WindowStack;
+            if (currentMap == null || windowStack == null)
+            {
+                return;
+            }
+
+            windowStack.Add(new Dialog_ProducePresetManager(currentMap));
+        }
+    }
 }
