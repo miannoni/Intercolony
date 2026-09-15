@@ -65,6 +65,23 @@ namespace Intercolony
             public ThingDef stuffDef;
         }
 
+        private sealed class ProduceLoopSnapshot
+        {
+            public IntVec3 cell;
+            public Rot4 rotation;
+            public ThingDef thingDef;
+            public ThingDef stuffDef;
+            public ThingStyleDef styleDef;
+            public bool paused;
+            public int targetCount;
+            public int resumeBelow;
+            public bool waitingForResume;
+            public List<ThingDef> allowedStuff;
+            public bool restrictToSelectedWorkers;
+            public List<Pawn> allowedWorkers;
+            public int minConstructionSkill;
+        }
+
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
             Results r = new Results();
@@ -131,6 +148,8 @@ namespace Intercolony
                 }
 
                 CheckNullDefDrop(r, map, loops, subject, reservedCells, testRects);
+                CheckProducePresetAssertions(
+                    r, map, loops, subject, reservedCells, testRects);
 
                 if (subject == null)
                 {
@@ -1714,6 +1733,26 @@ namespace Intercolony
                 productDef = product,
                 stuffDef = stuff
             };
+        }
+
+        private static Pawn FindExistingPawn(Map map)
+        {
+            IReadOnlyList<Pawn> pawns = map?.mapPawns?.AllPawnsSpawned;
+            if (pawns == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (pawn != null && pawn.Spawned && !pawn.Dead)
+                {
+                    return pawn;
+                }
+            }
+
+            return null;
         }
 
         private static Pawn FindConstructionWorker(Map map)
@@ -6563,6 +6602,1870 @@ namespace Intercolony
                     assertion,
                     detail);
             }
+        }
+
+        private static void CheckProducePresetAssertions(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            r.Skip(
+                "a preset's selected workers survive a save",
+                "allowedWorkers is a LookMode.Reference list and the detached probe has no " +
+                "registered pawn objects for Scribe's cross-reference pass, so preset worker " +
+                "references come back null and PostLoadInit strips them");
+
+            if (subject == null)
+            {
+                SkipProducePresetAssertions(r);
+                return;
+            }
+
+            CheckOldMapWithoutPresets(r, map, loops, subject, reservedCells, testRects);
+            CheckPresetCopiesLoopSettings(r, map, loops, subject, reservedCells, testRects);
+            CheckPresetRoundTrip(r, map, loops, subject, reservedCells, testRects);
+            CheckPresetApplicationIndependence(r, map, loops, subject, reservedCells, testRects);
+            CheckPresetEditingAndLifecycle(r, map, loops, subject, reservedCells, testRects);
+            CheckPresetWaitingLatch(r, map, loops, subject, reservedCells, testRects);
+            CheckPresetMaterialIntersection(r, map, loops, subject, reservedCells, testRects);
+            CheckPresetMaterialRejection(r, map, loops, subject, reservedCells, testRects);
+            CheckMultiCellPresetApplication(r, map, loops, reservedCells, testRects);
+        }
+
+        private static void CheckOldMapWithoutPresets(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "an old map save without presets loads loops unchanged";
+            const int expectedTargetCount = 20;
+            const int expectedResumeBelow = 10;
+            const int expectedMinConstructionSkill = 7;
+            IntVec3 expectedCell;
+            if (!TryFindBuildCell(
+                    map,
+                    loops,
+                    subject,
+                    Rot4.North,
+                    reservedCells,
+                    out expectedCell))
+            {
+                r.Skip(assertion, "no empty valid cell for the old-map loop fixture");
+                return;
+            }
+
+            RememberCell(expectedCell, subject.thingDef, Rot4.North, reservedCells, testRects);
+            List<ThingDef> expectedAllowedStuff = BuildExpectedAllowedStuff(subject);
+            ProduceLoopMapComponent saved = new ProduceLoopMapComponent(map);
+            ProduceLoopMapComponent loaded = null;
+            ProduceLoopSnapshot expectedLoop = null;
+            ProduceLoopRecord loadedRecord = null;
+            int observedPresetCount = -1;
+            int observedLoopCount = -1;
+            bool xmlHasPresetsNodeAfterStrip = true;
+            bool xmlHadPresetsNodeBeforeStrip = false;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProduceLoop-OldMap-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                saved.Enable(
+                    expectedCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                saved.SetTargetCount(expectedCell, expectedTargetCount);
+                saved.SetResumeBelow(expectedCell, expectedResumeBelow);
+                saved.SetWorkerRestriction(expectedCell, true);
+                saved.SetMinConstructionSkill(expectedCell, expectedMinConstructionSkill);
+                saved.SetAllowedStuff(expectedCell, expectedAllowedStuff);
+                ProduceLoopRecord savedRecord = saved.Find(expectedCell);
+                if (savedRecord == null)
+                {
+                    failure = "the old-map loop fixture was not created";
+                }
+                else if (Scribe.saver == null || Scribe.loader == null)
+                {
+                    failure = "RimWorld Scribe.saver or Scribe.loader was unavailable";
+                }
+                else
+                {
+                    savedRecord.paused = true;
+                    savedRecord.waitingForResume = true;
+                    expectedLoop = CaptureLoop(savedRecord);
+
+                    Scribe.saver.InitSaving(path, "intercolonyProduceOldMapTest");
+                    Scribe_Deep.Look(ref saved, "produceLoopMapComponent");
+                    Scribe.saver.FinalizeSaving();
+
+                    bool stripped = StripXmlNodeFromFile(
+                        path,
+                        "presets",
+                        out xmlHadPresetsNodeBeforeStrip);
+                    if (!stripped)
+                    {
+                        failure = "the saved old-map XML could not have its presets node removed";
+                    }
+                    else
+                    {
+                        string xml = File.ReadAllText(path);
+                        xmlHasPresetsNodeAfterStrip =
+                            xml.IndexOf("<presets", StringComparison.Ordinal) >= 0;
+
+                        Scribe.loader.InitLoading(path);
+                        Scribe_Deep.Look(ref loaded, "produceLoopMapComponent", map);
+                        Scribe.loader.FinalizeLoading();
+
+                        loadedRecord = loaded?.Find(expectedCell);
+                        observedPresetCount = loaded == null || loaded.Presets == null
+                            ? -1
+                            : loaded.Presets.Count;
+                        observedLoopCount = loaded == null || loaded.Loops == null
+                            ? -1
+                            : loaded.Loops.Count;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                saved?.Disable(expectedCell);
+                loaded?.Disable(expectedCell);
+            }
+
+            bool loopUnchanged = SameLoopSettings(loadedRecord, expectedLoop);
+            bool ok = failure == null &&
+                observedPresetCount == 0 &&
+                observedLoopCount == 1 &&
+                !xmlHasPresetsNodeAfterStrip &&
+                loopUnchanged;
+            r.Check(
+                ok,
+                assertion,
+                $"observed presets {observedPresetCount}; expected 0; " +
+                $"observed loop count {observedLoopCount}; expected 1; " +
+                $"observed presets XML node " +
+                $"{(xmlHasPresetsNodeAfterStrip ? "present" : "absent")}; expected absent; " +
+                $"observed loop {DescribeLoopSettings(loadedRecord)}; " +
+                $"expected loop {DescribeLoopSnapshot(expectedLoop)}; " +
+                $"saved XML presets node before strip " +
+                $"{(xmlHadPresetsNodeBeforeStrip ? "present" : "absent")}" +
+                $"{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static void CheckPresetCopiesLoopSettings(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "a preset copies non-default loop settings";
+            const int expectedTargetCount = 20;
+            const int expectedResumeBelow = 10;
+            const int expectedMinConstructionSkill = 7;
+            if (!HasTwoBuildableStuffs(subject))
+            {
+                r.Skip(
+                    assertion,
+                    "the selected subject did not provide two distinct buildable stuffs");
+                return;
+            }
+
+            IntVec3 expectedCell;
+            if (!TryFindBuildCell(
+                    map,
+                    loops,
+                    subject,
+                    Rot4.North,
+                    reservedCells,
+                    out expectedCell))
+            {
+                r.Skip(assertion, "no empty valid cell for the preset source loop fixture");
+                return;
+            }
+
+            RememberCell(expectedCell, subject.thingDef, Rot4.North, reservedCells, testRects);
+            List<ThingDef> expectedAllowedStuff = BuildExpectedAllowedStuff(subject);
+            ProduceLoopMapComponent source = new ProduceLoopMapComponent(map);
+            ProduceControlPreset preset = null;
+            string createReason = null;
+            string failure = null;
+
+            try
+            {
+                // Keep these values non-default: Scribe_Values.Look omits equal-to-default
+                // values, so a default fixture would not prove that CreatePresetFromLoop copied it.
+                source.Enable(
+                    expectedCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                source.SetTargetCount(expectedCell, expectedTargetCount);
+                source.SetResumeBelow(expectedCell, expectedResumeBelow);
+                source.SetWorkerRestriction(expectedCell, true);
+                source.SetMinConstructionSkill(expectedCell, expectedMinConstructionSkill);
+                source.SetAllowedStuff(expectedCell, expectedAllowedStuff);
+                ProduceLoopRecord sourceRecord = source.Find(expectedCell);
+                if (sourceRecord == null)
+                {
+                    failure = "the preset source loop fixture was not created";
+                }
+                else
+                {
+                    preset = source.CreatePresetFromLoop(
+                        "preset copy fixture",
+                        sourceRecord,
+                        out createReason);
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                source.Disable(expectedCell);
+            }
+
+            int observedTargetCount = preset == null ? -1 : preset.targetCount;
+            int observedResumeBelow = preset == null ? -2 : preset.resumeBelow;
+            bool observedRestriction = preset != null && preset.restrictToSelectedWorkers;
+            int observedMinConstructionSkill = preset == null
+                ? -1
+                : preset.minConstructionSkill;
+            List<ThingDef> observedAllowedStuff = preset?.allowedStuff;
+            bool ok = failure == null &&
+                createReason == null &&
+                preset != null &&
+                observedTargetCount == expectedTargetCount &&
+                observedResumeBelow == expectedResumeBelow &&
+                observedRestriction &&
+                observedMinConstructionSkill == expectedMinConstructionSkill &&
+                SameThingDefList(observedAllowedStuff, expectedAllowedStuff);
+            r.Check(
+                ok,
+                assertion,
+                $"observed targetCount {observedTargetCount}; expected {expectedTargetCount}; " +
+                $"observed resumeBelow {observedResumeBelow}; expected {expectedResumeBelow}; " +
+                $"observed restrictToSelectedWorkers " +
+                $"{(observedRestriction ? "true" : "false")}; expected true; " +
+                $"observed minConstructionSkill {observedMinConstructionSkill}; expected " +
+                $"{expectedMinConstructionSkill}; observed allowedStuff " +
+                $"{DescribeThingDefs(observedAllowedStuff)}; expected " +
+                $"{DescribeThingDefs(expectedAllowedStuff)}; observed create reason " +
+                $"{createReason ?? "<none>"}; expected <none>" +
+                $"{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static void CheckPresetRoundTrip(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "a preset's settings survive a save and load";
+            const int expectedTargetCount = 20;
+            const int expectedResumeBelow = 10;
+            const int expectedMinConstructionSkill = 7;
+            if (!HasTwoBuildableStuffs(subject))
+            {
+                r.Skip(
+                    assertion,
+                    "the selected subject did not provide two distinct buildable stuffs");
+                return;
+            }
+
+            IntVec3 expectedCell;
+            if (!TryFindBuildCell(
+                    map,
+                    loops,
+                    subject,
+                    Rot4.North,
+                    reservedCells,
+                    out expectedCell))
+            {
+                r.Skip(assertion, "no empty valid cell for the preset save fixture");
+                return;
+            }
+
+            RememberCell(expectedCell, subject.thingDef, Rot4.North, reservedCells, testRects);
+            List<ThingDef> expectedAllowedStuff = BuildExpectedAllowedStuff(subject);
+            ProduceLoopMapComponent saved = new ProduceLoopMapComponent(map);
+            ProduceLoopMapComponent loaded = null;
+            ProduceControlPreset preset = null;
+            ProduceControlPreset loadedPreset = null;
+            ProduceLoopRecord loadedLoop = null;
+            string createReason = null;
+            string failure = null;
+            bool xmlHasPresetsNode = false;
+            int expectedPresetId = -1;
+            int observedPresetCount = -1;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-ProducePreset-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                saved.Enable(
+                    expectedCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                saved.SetTargetCount(expectedCell, expectedTargetCount);
+                saved.SetResumeBelow(expectedCell, expectedResumeBelow);
+                saved.SetWorkerRestriction(expectedCell, true);
+                saved.SetMinConstructionSkill(expectedCell, expectedMinConstructionSkill);
+                saved.SetAllowedStuff(expectedCell, expectedAllowedStuff);
+                ProduceLoopRecord sourceRecord = saved.Find(expectedCell);
+                if (sourceRecord == null)
+                {
+                    failure = "the preset save source loop fixture was not created";
+                }
+                else
+                {
+                    preset = saved.CreatePresetFromLoop(
+                        "preset save fixture",
+                        sourceRecord,
+                        out createReason);
+                    expectedPresetId = preset == null ? -1 : preset.id;
+                }
+
+                if (failure == null && preset == null)
+                {
+                    failure = $"the preset save fixture was not created; reason " +
+                              $"{createReason ?? "<none>"}";
+                }
+                else if (failure == null &&
+                         (Scribe.saver == null || Scribe.loader == null))
+                {
+                    failure = "RimWorld Scribe.saver or Scribe.loader was unavailable";
+                }
+                else if (failure == null)
+                {
+                    Scribe.saver.InitSaving(path, "intercolonyProducePresetTest");
+                    Scribe_Deep.Look(ref saved, "produceLoopMapComponent");
+                    Scribe.saver.FinalizeSaving();
+                    string xml = File.ReadAllText(path);
+                    xmlHasPresetsNode =
+                        xml.IndexOf("<presets", StringComparison.Ordinal) >= 0;
+
+                    Scribe.loader.InitLoading(path);
+                    Scribe_Deep.Look(ref loaded, "produceLoopMapComponent", map);
+                    Scribe.loader.FinalizeLoading();
+                    loadedLoop = loaded?.Find(expectedCell);
+                    loadedPreset = loaded?.FindPreset(expectedPresetId);
+                    observedPresetCount = loaded == null || loaded.Presets == null
+                        ? -1
+                        : loaded.Presets.Count;
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                saved?.Disable(expectedCell);
+                loaded?.Disable(expectedCell);
+            }
+
+            int observedTargetCount = loadedPreset == null ? -1 : loadedPreset.targetCount;
+            int observedResumeBelow = loadedPreset == null ? -2 : loadedPreset.resumeBelow;
+            bool observedRestriction = loadedPreset != null &&
+                loadedPreset.restrictToSelectedWorkers;
+            int observedMinConstructionSkill = loadedPreset == null
+                ? -1
+                : loadedPreset.minConstructionSkill;
+            List<ThingDef> observedAllowedStuff = loadedPreset?.allowedStuff;
+            bool loopOwnStuffSurvived = loadedLoop != null &&
+                loadedLoop.stuffDef == subject.stuffDef;
+            bool nonLoopStuffExpected = subject.alternateStuff != null &&
+                subject.alternateStuff != subject.stuffDef &&
+                expectedAllowedStuff.Contains(subject.alternateStuff);
+            bool ok = failure == null &&
+                createReason == null &&
+                xmlHasPresetsNode &&
+                observedPresetCount == 1 &&
+                loadedPreset != null &&
+                loopOwnStuffSurvived &&
+                nonLoopStuffExpected &&
+                observedTargetCount == expectedTargetCount &&
+                observedResumeBelow == expectedResumeBelow &&
+                observedRestriction &&
+                observedMinConstructionSkill == expectedMinConstructionSkill &&
+                SameThingDefList(observedAllowedStuff, expectedAllowedStuff);
+            r.Check(
+                ok,
+                assertion,
+                $"observed preset count {observedPresetCount}; expected 1; observed targetCount " +
+                $"{observedTargetCount}; expected {expectedTargetCount}; observed resumeBelow " +
+                $"{observedResumeBelow}; expected {expectedResumeBelow}; observed " +
+                $"restrictToSelectedWorkers {(observedRestriction ? "true" : "false")}; " +
+                $"expected true; observed minConstructionSkill {observedMinConstructionSkill}; " +
+                $"expected {expectedMinConstructionSkill}; observed allowedStuff " +
+                $"{DescribeThingDefs(observedAllowedStuff)}; expected " +
+                $"{DescribeThingDefs(expectedAllowedStuff)}; observed loop stuff " +
+                $"{loadedLoop?.stuffDef?.defName ?? "null"}; expected " +
+                $"{subject.stuffDef?.defName ?? "null"}; observed non-loop stuff in preset " +
+                $"{(loadedPreset?.allowedStuff?.Contains(subject.alternateStuff) == true ? "yes" : "no")}; " +
+                $"expected yes; XML presets node {(xmlHasPresetsNode ? "present" : "absent")}; " +
+                $"expected present{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static void CheckPresetApplicationIndependence(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "a preset configures independent loops";
+            const int targetCount = 20;
+            const int resumeBelow = 10;
+            const int minConstructionSkill = 7;
+            const int targetCountToApply = 3;
+            List<ThingDef> expectedAllowedStuff = BuildExpectedAllowedStuff(subject);
+            Pawn fixtureWorker = FindExistingPawn(map);
+            if (fixtureWorker == null)
+            {
+                r.Skip(
+                    assertion,
+                    "the current map had no existing spawned pawn for the in-memory worker-copy fixture");
+                return;
+            }
+
+            ProduceControlPreset preset = new ProduceControlPreset
+            {
+                name = "preset independence fixture",
+                targetCount = targetCount,
+                resumeBelow = resumeBelow,
+                restrictToSelectedWorkers = true,
+                allowedWorkers = new List<Pawn>
+                {
+                    fixtureWorker
+                },
+                minConstructionSkill = minConstructionSkill,
+                allowedStuff = expectedAllowedStuff
+            };
+            List<IntVec3> targetCells = new List<IntVec3>();
+            int expectedLoopCount = loops.Loops.Count + targetCountToApply;
+            int observedLoopCount = loops.Loops.Count;
+            bool allApplied = false;
+            bool allConfigured = false;
+            bool independent = false;
+            string applyFailure = null;
+            string failure = null;
+            string observedFirstDetail = "<none>";
+            string observedFirstWorkersDetail = "<none>";
+            string observedOtherWorkersDetail = "<none>";
+
+            try
+            {
+                for (int i = 0; i < targetCountToApply; i++)
+                {
+                    IntVec3 cell;
+                    if (!TryFindBuildCell(
+                            map,
+                            loops,
+                            subject,
+                            Rot4.North,
+                            reservedCells,
+                            out cell))
+                    {
+                        r.Skip(
+                            assertion,
+                            $"needed {targetCountToApply} empty valid subject cells; found " +
+                            $"{targetCells.Count}");
+                        return;
+                    }
+
+                    RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+                    Building building = SpawnFinishedBuilding(
+                        map,
+                        subject,
+                        cell,
+                        Rot4.North);
+                    if (building == null)
+                    {
+                        r.Skip(
+                            assertion,
+                            $"could not spawn compatible subject {i + 1} of " +
+                            $"{targetCountToApply}");
+                        return;
+                    }
+
+                    targetCells.Add(cell);
+                }
+
+                allApplied = true;
+                for (int i = 0; i < targetCells.Count; i++)
+                {
+                    string reason = null;
+                    bool applied = loops.TryApplyPreset(targetCells[i], preset, out reason);
+                    if (!applied || reason != null)
+                    {
+                        allApplied = false;
+                        applyFailure =
+                            $"cell {targetCells[i]} returned {applied}; reason " +
+                            $"{reason ?? "<none>"}";
+                        break;
+                    }
+                }
+
+                observedLoopCount = loops.Loops.Count;
+                allConfigured = allApplied &&
+                    observedLoopCount == expectedLoopCount;
+                for (int i = 0; i < targetCells.Count && allConfigured; i++)
+                {
+                    ProduceLoopRecord record = loops.Find(targetCells[i]);
+                    if (!LoopMatchesPreset(record, preset))
+                    {
+                        allConfigured = false;
+                    }
+                }
+
+                List<Pawn> expectedPresetWorkers = new List<Pawn>(preset.allowedWorkers);
+                ProduceLoopRecord firstRecord = targetCells.Count == 0
+                    ? null
+                    : loops.Find(targetCells[0]);
+                if (allConfigured && firstRecord?.allowedWorkers != null)
+                {
+                    firstRecord.allowedWorkers.Clear();
+                    bool firstChanged = firstRecord.allowedWorkers.Count == 0;
+                    bool otherLoopsUnchanged = true;
+                    for (int i = 1; i < targetCells.Count; i++)
+                    {
+                        ProduceLoopRecord otherRecord = loops.Find(targetCells[i]);
+                        if (otherRecord == null ||
+                            !SamePawnList(otherRecord.allowedWorkers, expectedPresetWorkers))
+                        {
+                            otherLoopsUnchanged = false;
+                            break;
+                        }
+                    }
+
+                    independent = firstChanged &&
+                        otherLoopsUnchanged &&
+                        SamePawnList(preset.allowedWorkers, expectedPresetWorkers);
+                }
+
+                observedFirstDetail = DescribeLoopSettings(firstRecord);
+                observedFirstWorkersDetail = DescribePawns(firstRecord?.allowedWorkers);
+                observedOtherWorkersDetail =
+                    DescribeTargetWorkers(loops, targetCells, startIndex: 1);
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                for (int i = 0; i < targetCells.Count; i++)
+                {
+                    loops.Disable(targetCells[i]);
+                }
+            }
+
+            bool ok = failure == null &&
+                allApplied &&
+                allConfigured &&
+                independent;
+            r.Check(
+                ok,
+                assertion,
+                $"observed loop count {observedLoopCount}; expected {expectedLoopCount}; " +
+                $"observed all applied {(allApplied ? "true" : "false")}; expected true; " +
+                $"observed first loop {observedFirstDetail}; expected " +
+                $"configured settings {DescribePresetSettings(preset)} before worker mutation; " +
+                $"observed first allowedWorkers " +
+                $"{observedFirstWorkersDetail}; observed other " +
+                $"allowedWorkers {observedOtherWorkersDetail}; " +
+                $"observed preset allowedWorkers {DescribePawns(preset.allowedWorkers)}; " +
+                $"expected first allowedWorkers <none>, other and preset " +
+                $"{DescribePawns(preset.allowedWorkers)}; expected independent copies " +
+                $"{(independent ? "yes" : "no")}" +
+                $"{(applyFailure == null ? "" : $"; apply failure {applyFailure}")}" +
+                $"{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static void CheckPresetEditingAndLifecycle(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string editAssertion = "editing a preset leaves existing loops unchanged";
+            const string reapplyAssertion = "reapplying an edited preset updates existing loops";
+            const string renameAssertion = "renaming preserves a preset id";
+            const string removeAssertion = "removing a preset leaves existing loops";
+            const string lifecycleAssertion = "a preset-applied loop pauses, resumes and stops";
+            const int oldTargetCount = 20;
+            const int oldResumeBelow = 10;
+            const int oldMinConstructionSkill = 7;
+            const int editedTargetCount = 31;
+            const int editedResumeBelow = 14;
+            const int editedMinConstructionSkill = 9;
+            const int targetCountToApply = 3;
+            IntVec3 sourceCell = IntVec3.Invalid;
+            List<IntVec3> targetCells = new List<IntVec3>();
+            List<ThingDef> expectedAllowedStuff = BuildExpectedAllowedStuff(subject);
+            ProduceControlPreset preset = null;
+            int presetId = -1;
+            bool editReported = false;
+            bool reapplyReported = false;
+            bool renameReported = false;
+            bool removeReported = false;
+            bool lifecycleReported = false;
+
+            try
+            {
+                if (!TryFindBuildCell(
+                        map,
+                        loops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out sourceCell))
+                {
+                    SkipPresetFollowupAssertions(
+                        r,
+                        "no empty valid cell for the registered preset source loop fixture");
+                    return;
+                }
+
+                RememberCell(sourceCell, subject.thingDef, Rot4.North, reservedCells, testRects);
+                loops.Enable(
+                    sourceCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                loops.SetTargetCount(sourceCell, oldTargetCount);
+                loops.SetResumeBelow(sourceCell, oldResumeBelow);
+                loops.SetWorkerRestriction(sourceCell, true);
+                loops.SetMinConstructionSkill(sourceCell, oldMinConstructionSkill);
+                loops.SetAllowedStuff(sourceCell, expectedAllowedStuff);
+                ProduceLoopRecord sourceRecord = loops.Find(sourceCell);
+                string createReason = null;
+                preset = sourceRecord == null
+                    ? null
+                    : loops.CreatePresetFromLoop(
+                        "preset edit fixture",
+                        sourceRecord,
+                        out createReason);
+                if (preset == null)
+                {
+                    SkipPresetFollowupAssertions(
+                        r,
+                        $"the registered preset fixture was not created; reason " +
+                        $"{createReason ?? "<none>"}");
+                    return;
+                }
+
+                presetId = preset.id;
+                for (int i = 0; i < targetCountToApply; i++)
+                {
+                    IntVec3 cell;
+                    if (!TryFindBuildCell(
+                            map,
+                            loops,
+                            subject,
+                            Rot4.North,
+                            reservedCells,
+                            out cell))
+                    {
+                        SkipPresetFollowupAssertions(
+                            r,
+                            $"needed {targetCountToApply} empty valid subject cells; found " +
+                            $"{targetCells.Count}");
+                        return;
+                    }
+
+                    RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+                    Building building = SpawnFinishedBuilding(
+                        map,
+                        subject,
+                        cell,
+                        Rot4.North);
+                    if (building == null)
+                    {
+                        SkipPresetFollowupAssertions(
+                            r,
+                            $"could not spawn compatible subject {i + 1} of " +
+                            $"{targetCountToApply}");
+                        return;
+                    }
+
+                    targetCells.Add(cell);
+                }
+
+                bool allApplied = true;
+                string initialApplyFailure = null;
+                for (int i = 0; i < targetCells.Count; i++)
+                {
+                    string reason = null;
+                    bool applied = loops.TryApplyPreset(targetCells[i], preset, out reason);
+                    if (!applied || reason != null)
+                    {
+                        allApplied = false;
+                        initialApplyFailure =
+                            $"cell {targetCells[i]} returned {applied}; reason " +
+                            $"{reason ?? "<none>"}";
+                        break;
+                    }
+                }
+
+                if (!allApplied)
+                {
+                    SkipPresetFollowupAssertions(
+                        r,
+                        $"the registered preset could not configure all three target loops; " +
+                        $"{initialApplyFailure ?? "no failure detail"}");
+                    return;
+                }
+
+                List<ProduceLoopSnapshot> beforeEdit = new List<ProduceLoopSnapshot>();
+                for (int i = 0; i < targetCells.Count; i++)
+                {
+                    beforeEdit.Add(CaptureLoop(loops.Find(targetCells[i])));
+                }
+
+                ProduceControlPreset changedSettings = new ProduceControlPreset
+                {
+                    targetCount = editedTargetCount,
+                    resumeBelow = editedResumeBelow,
+                    restrictToSelectedWorkers = false,
+                    allowedWorkers = new List<Pawn>(),
+                    minConstructionSkill = editedMinConstructionSkill,
+                    allowedStuff = new List<ThingDef>(expectedAllowedStuff)
+                };
+                loops.ApplyPresetSettings(presetId, changedSettings);
+
+                bool existingLoopsUnchanged = true;
+                for (int i = 0; i < targetCells.Count; i++)
+                {
+                    if (!SameLoopSettings(loops.Find(targetCells[i]), beforeEdit[i]))
+                    {
+                        existingLoopsUnchanged = false;
+                        break;
+                    }
+                }
+
+                bool presetEdited = preset.targetCount == editedTargetCount &&
+                    preset.resumeBelow == editedResumeBelow &&
+                    !preset.restrictToSelectedWorkers &&
+                    preset.minConstructionSkill == editedMinConstructionSkill &&
+                    SameThingDefList(preset.allowedStuff, expectedAllowedStuff);
+                editReported = true;
+                r.Check(
+                    existingLoopsUnchanged && presetEdited,
+                    editAssertion,
+                    $"observed preset {DescribePresetSettings(preset)}; expected targetCount " +
+                    $"{editedTargetCount}, resumeBelow {editedResumeBelow}, " +
+                    $"restrictToSelectedWorkers false, minConstructionSkill " +
+                    $"{editedMinConstructionSkill}; observed loops " +
+                    $"{DescribeTargetLoops(loops, targetCells)}; expected loops unchanged from " +
+                    $"{DescribeLoopSnapshots(beforeEdit)}");
+
+                bool allReapplied = true;
+                string reapplyFailure = null;
+                for (int i = 0; i < targetCells.Count; i++)
+                {
+                    string reason = null;
+                    bool applied = loops.TryApplyPreset(targetCells[i], preset, out reason);
+                    if (!applied || reason != null ||
+                        !LoopMatchesPreset(loops.Find(targetCells[i]), preset))
+                    {
+                        allReapplied = false;
+                        reapplyFailure =
+                            $"cell {targetCells[i]} returned {applied}; reason " +
+                            $"{reason ?? "<none>"}; loop " +
+                            $"{DescribeLoopSettings(loops.Find(targetCells[i]))}";
+                        break;
+                    }
+                }
+
+                reapplyReported = true;
+                r.Check(
+                    allReapplied,
+                    reapplyAssertion,
+                    $"observed loops {DescribeTargetLoops(loops, targetCells)}; expected all " +
+                    $"loops to carry edited preset {DescribePresetSettings(preset)}" +
+                    $"{(reapplyFailure == null ? "" : $"; failure {reapplyFailure}")}");
+
+                string oldName = preset.name;
+                string newName = "renamed preset fixture";
+                string renameReason = null;
+                bool renamed = loops.TryRenamePreset(presetId, newName, out renameReason);
+                ProduceControlPreset foundById = loops.FindPreset(presetId);
+                ProduceControlPreset foundByNewName = loops.FindPresetByName(newName);
+                ProduceControlPreset foundByOldName = loops.FindPresetByName(oldName);
+                renameReported = true;
+                r.Check(
+                    renamed &&
+                    renameReason == null &&
+                    foundById == preset &&
+                    foundByNewName == preset &&
+                    foundByOldName == null &&
+                    preset.id == presetId &&
+                    preset.name == newName,
+                    renameAssertion,
+                    $"observed id {preset.id}; expected {presetId}; observed name " +
+                    $"{preset.name ?? "null"}; expected {newName}; observed FindPreset(id) " +
+                    $"{(foundById == preset ? "same preset" : "missing or different")}; expected " +
+                    $"same preset; observed new-name lookup " +
+                    $"{(foundByNewName == preset ? "same preset" : "missing or different")}; " +
+                    $"expected same preset; observed old-name lookup " +
+                    $"{(foundByOldName == null ? "missing" : "present")}; expected missing; " +
+                    $"observed reason {renameReason ?? "<none>"}; expected <none>");
+
+                IntVec3 lifecycleCell = targetCells[0];
+                loops.Pause(lifecycleCell);
+                ProduceLoopRecord pausedRecord = loops.Find(lifecycleCell);
+                bool observedPaused = pausedRecord != null && pausedRecord.paused;
+                loops.Resume(lifecycleCell);
+                ProduceLoopRecord resumedRecord = loops.Find(lifecycleCell);
+                bool observedResumed = resumedRecord != null && !resumedRecord.paused;
+                loops.Disable(lifecycleCell);
+                bool observedStopped = loops.Find(lifecycleCell) == null;
+                lifecycleReported = true;
+                r.Check(
+                    observedPaused && observedResumed && observedStopped,
+                    lifecycleAssertion,
+                    $"observed paused {(observedPaused ? "true" : "false")}; expected true; " +
+                    $"observed resumed {(observedResumed ? "true" : "false")}; expected true; " +
+                    $"observed stopped {(observedStopped ? "true" : "false")}; expected true");
+
+                int beforeRemoveLoopCount = loops.Loops.Count;
+                List<IntVec3> loopCellsBeforeRemove = new List<IntVec3>();
+                List<ProduceLoopSnapshot> loopsBeforeRemove =
+                    new List<ProduceLoopSnapshot>();
+                for (int i = 0; i < loops.Loops.Count; i++)
+                {
+                    ProduceLoopRecord record = loops.Loops[i];
+                    if (record != null)
+                    {
+                        loopCellsBeforeRemove.Add(record.cell);
+                        loopsBeforeRemove.Add(CaptureLoop(record));
+                    }
+                }
+
+                bool removed = loops.RemovePreset(presetId);
+                bool settingsIntact = loops.Loops.Count == beforeRemoveLoopCount &&
+                    loopCellsBeforeRemove.Count == loopsBeforeRemove.Count;
+                for (int i = 0; i < loopCellsBeforeRemove.Count && settingsIntact; i++)
+                {
+                    if (!SameLoopSettings(
+                            loops.Find(loopCellsBeforeRemove[i]),
+                            loopsBeforeRemove[i]))
+                    {
+                        settingsIntact = false;
+                    }
+                }
+
+                removeReported = true;
+                r.Check(
+                    removed &&
+                    loops.FindPreset(presetId) == null &&
+                    loops.Loops.Count == beforeRemoveLoopCount &&
+                    settingsIntact,
+                    removeAssertion,
+                    $"observed removed {(removed ? "true" : "false")}; expected true; " +
+                    $"observed FindPreset(id) " +
+                    $"{(loops.FindPreset(presetId) == null ? "missing" : "present")}; " +
+                    $"expected missing; observed loop count {loops.Loops.Count}; expected " +
+                    $"{beforeRemoveLoopCount}; observed loops {DescribeAllLoops(loops)}; " +
+                    $"expected loops {DescribeLoopSnapshots(loopsBeforeRemove)} with settings " +
+                    $"unchanged");
+            }
+            catch (Exception ex)
+            {
+                string detail = $"observed exception {ex.GetType().Name}: {ex.Message}; " +
+                                "expected all preset edit, reapply, rename, remove, and " +
+                                "lifecycle assertions to run";
+                if (!editReported)
+                {
+                    editReported = true;
+                    r.Check(false, editAssertion, detail);
+                }
+
+                if (!reapplyReported)
+                {
+                    reapplyReported = true;
+                    r.Check(false, reapplyAssertion, detail);
+                }
+
+                if (!renameReported)
+                {
+                    renameReported = true;
+                    r.Check(false, renameAssertion, detail);
+                }
+
+                if (!lifecycleReported)
+                {
+                    lifecycleReported = true;
+                    r.Check(false, lifecycleAssertion, detail);
+                }
+
+                if (!removeReported)
+                {
+                    removeReported = true;
+                    r.Check(false, removeAssertion, detail);
+                }
+            }
+            finally
+            {
+                if (presetId >= 0 && loops.FindPreset(presetId) != null)
+                {
+                    loops.RemovePreset(presetId);
+                }
+
+                if (sourceCell.IsValid)
+                {
+                    loops.Disable(sourceCell);
+                }
+
+                for (int i = 0; i < targetCells.Count; i++)
+                {
+                    loops.Disable(targetCells[i]);
+                }
+            }
+        }
+
+        private static void CheckPresetWaitingLatch(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "a preset does not copy the waiting latch";
+            List<ThingDef> expectedAllowedStuff = BuildExpectedAllowedStuff(subject);
+            if (subject.stuffDef == null || expectedAllowedStuff.Count == 0)
+            {
+                r.Skip(assertion, "the selected subject had no usable material for the latch fixture");
+                return;
+            }
+
+            IntVec3 sourceCell = IntVec3.Invalid;
+            IntVec3 targetCell = IntVec3.Invalid;
+            int expectedTargetCount = -1;
+            int observedStoredCount = -1;
+            bool sourceWaitingBefore = false;
+            bool sourceWaitingAfter = false;
+            bool targetWaitingAfter = true;
+            bool applied = false;
+            string applyReason = null;
+            string failure = null;
+            ProduceControlPreset preset = null;
+            int presetId = -1;
+
+            try
+            {
+                if (!TryFindBuildCell(
+                        map,
+                        loops,
+                        subject,
+                        Rot4.North,
+                        reservedCells,
+                        out sourceCell))
+                {
+                    r.Skip(assertion, "no empty valid cell for the latch source loop fixture");
+                    return;
+                }
+
+                RememberCell(sourceCell, subject.thingDef, Rot4.North, reservedCells, testRects);
+                observedStoredCount = CountStoredTargetStock(
+                    map,
+                    subject.thingDef,
+                    expectedAllowedStuff);
+                if (observedStoredCount == int.MaxValue)
+                {
+                    r.Skip(assertion, "the observed stored stock was already int.MaxValue");
+                    return;
+                }
+
+                expectedTargetCount = observedStoredCount + 1;
+                loops.Enable(
+                    sourceCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                loops.SetTargetCount(sourceCell, expectedTargetCount);
+                loops.SetResumeBelow(sourceCell, Math.Max(0, expectedTargetCount - 1));
+                loops.SetAllowedStuff(sourceCell, expectedAllowedStuff);
+                ProduceLoopRecord sourceRecord = loops.Find(sourceCell);
+                if (sourceRecord == null)
+                {
+                    failure = "the latch source loop fixture was not created";
+                }
+                else
+                {
+                    sourceRecord.waitingForResume = true;
+                    sourceWaitingBefore = sourceRecord.waitingForResume;
+                    string createReason = null;
+                    preset = loops.CreatePresetFromLoop(
+                        "preset latch fixture",
+                        sourceRecord,
+                        out createReason);
+                    if (preset == null)
+                    {
+                        failure = $"the latch preset fixture was not created; reason " +
+                                  $"{createReason ?? "<none>"}";
+                    }
+                    else
+                    {
+                        presetId = preset.id;
+                    }
+                }
+
+                if (failure == null)
+                {
+                    if (!TryFindBuildCell(
+                            map,
+                            loops,
+                            subject,
+                            Rot4.North,
+                            reservedCells,
+                            out targetCell))
+                    {
+                        r.Skip(assertion, "no empty valid cell for the latch target fixture");
+                        return;
+                    }
+
+                    RememberCell(targetCell, subject.thingDef, Rot4.North, reservedCells, testRects);
+                    Building building = SpawnFinishedBuilding(
+                        map,
+                        subject,
+                        targetCell,
+                        Rot4.North);
+                    if (building == null)
+                    {
+                        r.Skip(assertion, "could not spawn the latch target fixture");
+                        return;
+                    }
+
+                    int targetStoredCount = CountStoredTargetStock(
+                        map,
+                        subject.thingDef,
+                        expectedAllowedStuff);
+                    observedStoredCount = targetStoredCount;
+                    applied = loops.TryApplyPreset(targetCell, preset, out applyReason);
+                    ProduceLoopRecord targetRecord = loops.Find(targetCell);
+                    targetWaitingAfter = targetRecord != null && targetRecord.waitingForResume;
+                    ProduceLoopRecord sourceAfter = loops.Find(sourceCell);
+                    sourceWaitingAfter = sourceAfter != null && sourceAfter.waitingForResume;
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                if (presetId >= 0 && loops.FindPreset(presetId) != null)
+                {
+                    loops.RemovePreset(presetId);
+                }
+
+                if (sourceCell.IsValid)
+                {
+                    loops.Disable(sourceCell);
+                }
+
+                if (targetCell.IsValid)
+                {
+                    loops.Disable(targetCell);
+                }
+            }
+
+            bool stockBelowTarget = expectedTargetCount > 0 &&
+                observedStoredCount < expectedTargetCount;
+            bool ok = failure == null &&
+                applied &&
+                applyReason == null &&
+                sourceWaitingBefore &&
+                sourceWaitingAfter &&
+                stockBelowTarget &&
+                !targetWaitingAfter;
+            r.Check(
+                ok,
+                assertion,
+                $"observed source waiting before {(sourceWaitingBefore ? "true" : "false")}; " +
+                $"expected true; observed source waiting after " +
+                $"{(sourceWaitingAfter ? "true" : "false")}; expected true; observed stored " +
+                $"stock {observedStoredCount}; expected below target {expectedTargetCount}; " +
+                $"observed applied {(applied ? "true" : "false")}; expected true; observed " +
+                $"target waiting {(targetWaitingAfter ? "true" : "false")}; expected false; " +
+                $"observed reason {applyReason ?? "<none>"}; expected <none>" +
+                $"{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static void CheckPresetMaterialIntersection(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "a preset keeps only compatible materials";
+            ThingDef incompatibleStuff = FindIncompatibleStuff(subject.thingDef);
+            if (subject.stuffDef == null || incompatibleStuff == null)
+            {
+                r.Skip(
+                    assertion,
+                    "the current def database did not provide both a valid and an incompatible stuff");
+                return;
+            }
+
+            IntVec3 targetCell;
+            if (!TryFindBuildCell(
+                    map,
+                    loops,
+                    subject,
+                    Rot4.North,
+                    reservedCells,
+                    out targetCell))
+            {
+                r.Skip(assertion, "no empty valid cell for the material intersection fixture");
+                return;
+            }
+
+            RememberCell(targetCell, subject.thingDef, Rot4.North, reservedCells, testRects);
+            List<ThingDef> expectedAllowedStuff = new List<ThingDef>
+            {
+                subject.stuffDef
+            };
+            List<ThingDef> requestedAllowedStuff = new List<ThingDef>
+            {
+                subject.stuffDef,
+                incompatibleStuff
+            };
+            ProduceControlPreset preset = new ProduceControlPreset
+            {
+                name = "preset intersection fixture",
+                targetCount = 20,
+                resumeBelow = 10,
+                allowedStuff = requestedAllowedStuff
+            };
+            bool applied = false;
+            string applyReason = null;
+            ProduceLoopRecord observedRecord = null;
+            string failure = null;
+
+            try
+            {
+                Building building = SpawnFinishedBuilding(
+                    map,
+                    subject,
+                    targetCell,
+                    Rot4.North);
+                if (building == null)
+                {
+                    r.Skip(assertion, "could not spawn the material intersection target fixture");
+                    return;
+                }
+
+                applied = loops.TryApplyPreset(targetCell, preset, out applyReason);
+                observedRecord = loops.Find(targetCell);
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                loops.Disable(targetCell);
+            }
+
+            List<ThingDef> observedAllowedStuff = observedRecord?.allowedStuff;
+            bool ok = failure == null &&
+                applied &&
+                applyReason == null &&
+                SameThingDefList(observedAllowedStuff, expectedAllowedStuff);
+            r.Check(
+                ok,
+                assertion,
+                $"observed applied {(applied ? "true" : "false")}; expected true; observed " +
+                $"reason {applyReason ?? "<none>"}; expected <none>; observed requested " +
+                $"allowedStuff {DescribeThingDefs(requestedAllowedStuff)}; expected intersection " +
+                $"{DescribeThingDefs(expectedAllowedStuff)}; observed loop allowedStuff " +
+                $"{DescribeThingDefs(observedAllowedStuff)}; expected " +
+                $"{DescribeThingDefs(expectedAllowedStuff)}" +
+                $"{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static void CheckPresetMaterialRejection(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            Subject subject,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "zero compatible materials reject without changing the loop";
+            const string expectedReason = "no compatible allowed material";
+            ThingDef incompatibleStuff = FindIncompatibleStuff(subject.thingDef);
+            if (subject.stuffDef == null || incompatibleStuff == null)
+            {
+                r.Skip(
+                    assertion,
+                    "the current def database did not provide an incompatible stuff");
+                return;
+            }
+
+            IntVec3 targetCell;
+            if (!TryFindBuildCell(
+                    map,
+                    loops,
+                    subject,
+                    Rot4.North,
+                    reservedCells,
+                    out targetCell))
+            {
+                r.Skip(assertion, "no empty valid cell for the material rejection fixture");
+                return;
+            }
+
+            RememberCell(targetCell, subject.thingDef, Rot4.North, reservedCells, testRects);
+            List<ThingDef> knownAllowedStuff = new List<ThingDef>
+            {
+                subject.stuffDef
+            };
+            List<Pawn> knownAllowedWorkers = new List<Pawn>();
+            ProduceControlPreset preset = new ProduceControlPreset
+            {
+                name = "preset rejection fixture",
+                targetCount = 23,
+                resumeBelow = 11,
+                restrictToSelectedWorkers = false,
+                allowedWorkers = new List<Pawn>(),
+                minConstructionSkill = 12,
+                allowedStuff = new List<ThingDef>
+                {
+                    incompatibleStuff
+                }
+            };
+            ProduceLoopSnapshot before = null;
+            ProduceLoopRecord observedRecord = null;
+            bool applied = true;
+            string observedReason = null;
+            string failure = null;
+
+            try
+            {
+                Building building = SpawnFinishedBuilding(
+                    map,
+                    subject,
+                    targetCell,
+                    Rot4.North);
+                if (building == null)
+                {
+                    r.Skip(assertion, "could not spawn the material rejection target fixture");
+                    return;
+                }
+
+                loops.Enable(
+                    targetCell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                loops.SetTargetCount(targetCell, 23);
+                loops.SetResumeBelow(targetCell, 11);
+                loops.SetWorkerRestriction(targetCell, true);
+                loops.SetAllowedWorkers(targetCell, knownAllowedWorkers);
+                loops.SetMinConstructionSkill(targetCell, 12);
+                loops.SetAllowedStuff(targetCell, knownAllowedStuff);
+                ProduceLoopRecord beforeRecord = loops.Find(targetCell);
+                if (beforeRecord == null)
+                {
+                    failure = "the material rejection loop fixture was not created";
+                }
+                else
+                {
+                    beforeRecord.paused = true;
+                    beforeRecord.waitingForResume = true;
+                    before = CaptureLoop(beforeRecord);
+                    applied = loops.TryApplyPreset(targetCell, preset, out observedReason);
+                    observedRecord = loops.Find(targetCell);
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                loops.Disable(targetCell);
+            }
+
+            bool loopUnchanged = SameLoopSettings(observedRecord, before);
+            bool ok = failure == null &&
+                !applied &&
+                observedReason == expectedReason &&
+                loopUnchanged;
+            r.Check(
+                ok,
+                assertion,
+                $"observed returned {(applied ? "true" : "false")}; expected false; observed " +
+                $"reason {observedReason ?? "<none>"}; expected {expectedReason}; observed loop " +
+                $"{DescribeLoopSettings(observedRecord)}; expected unchanged loop " +
+                $"{DescribeLoopSnapshot(before)}" +
+                $"{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static void CheckMultiCellPresetApplication(
+            Results r,
+            Map map,
+            ProduceLoopMapComponent loops,
+            HashSet<IntVec3> reservedCells,
+            List<CellRect> testRects)
+        {
+            const string assertion = "a multi-cell target gets one loop at its root";
+            const string missingSubjectReason =
+                "no multi-cell minifiable subject can be found in the current def database";
+            Subject multiCellSubject = FindMultiCellSubject();
+            if (multiCellSubject == null)
+            {
+                r.Skip(assertion, missingSubjectReason);
+                return;
+            }
+
+            IntVec3 rootCell;
+            if (!TryFindBuildCell(
+                    map,
+                    loops,
+                    multiCellSubject,
+                    Rot4.North,
+                    reservedCells,
+                    out rootCell))
+            {
+                r.Skip(assertion, "no empty valid cell for the multi-cell target fixture");
+                return;
+            }
+
+            RememberCell(
+                rootCell,
+                multiCellSubject.thingDef,
+                Rot4.North,
+                reservedCells,
+                testRects);
+            ProduceControlPreset preset = new ProduceControlPreset
+            {
+                name = "preset multi-cell fixture",
+                targetCount = 20,
+                resumeBelow = 10,
+                restrictToSelectedWorkers = false,
+                allowedWorkers = new List<Pawn>(),
+                minConstructionSkill = 7,
+                allowedStuff = new List<ThingDef>
+                {
+                    multiCellSubject.stuffDef
+                }
+            };
+            Building building = null;
+            IntVec3 occupiedNonRootCell = IntVec3.Invalid;
+            IntVec3 resolvedCell = IntVec3.Invalid;
+            IntVec3 appliedCell = IntVec3.Invalid;
+            bool resolved = false;
+            bool applied = false;
+            string applyReason = null;
+            int observedRootLoopCount = 0;
+            bool observedNonRootLoop = false;
+            string failure = null;
+
+            try
+            {
+                building = SpawnFinishedBuilding(
+                    map,
+                    multiCellSubject,
+                    rootCell,
+                    Rot4.North);
+                if (building == null)
+                {
+                    r.Skip(assertion, "could not spawn the multi-cell target fixture");
+                    return;
+                }
+
+                foreach (IntVec3 occupiedCell in building.OccupiedRect().Cells)
+                {
+                    if (occupiedCell != building.Position)
+                    {
+                        occupiedNonRootCell = occupiedCell;
+                        break;
+                    }
+                }
+
+                if (!occupiedNonRootCell.IsValid)
+                {
+                    r.Skip(
+                        assertion,
+                        "the selected multi-cell target occupied no distinct non-root cell");
+                    return;
+                }
+
+                resolved = loops.TryResolveProduceTargetCell(
+                    occupiedNonRootCell,
+                    out resolvedCell);
+                applied = loops.TryApplyPreset(
+                    occupiedNonRootCell,
+                    preset,
+                    out appliedCell,
+                    out applyReason);
+                observedRootLoopCount = CountLoopsAtCell(loops, building.Position);
+                observedNonRootLoop = loops.Find(occupiedNonRootCell) != null;
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                if (rootCell.IsValid)
+                {
+                    loops.Disable(rootCell);
+                }
+
+                if (occupiedNonRootCell.IsValid && occupiedNonRootCell != rootCell)
+                {
+                    loops.Disable(occupiedNonRootCell);
+                }
+            }
+
+            bool sameRoot = building != null &&
+                resolvedCell == building.Position &&
+                appliedCell == building.Position;
+            bool ok = failure == null &&
+                resolved &&
+                applied &&
+                applyReason == null &&
+                sameRoot &&
+                observedRootLoopCount == 1 &&
+                !observedNonRootLoop;
+            r.Check(
+                ok,
+                assertion,
+                $"observed occupied non-root cell {occupiedNonRootCell}; expected distinct from " +
+                $"root {building?.Position.ToString() ?? "<none>"}; observed resolved cell " +
+                $"{resolvedCell}; expected {building?.Position.ToString() ?? "<none>"}; observed " +
+                $"applied cell {appliedCell}; expected {building?.Position.ToString() ?? "<none>"}; " +
+                $"observed applied {(applied ? "true" : "false")}; expected true; observed " +
+                $"reason {applyReason ?? "<none>"}; expected <none>; observed root loop count " +
+                $"{observedRootLoopCount}; expected 1; observed non-root loop " +
+                $"{(observedNonRootLoop ? "present" : "absent")}; expected absent" +
+                $"{(failure == null ? "" : $"; failure {failure}")}");
+        }
+
+        private static void SkipProducePresetAssertions(Results r)
+        {
+            const string reason = "no loaded minifiable stuff-built building";
+            r.Skip(
+                "an old map save without presets loads loops unchanged",
+                reason);
+            r.Skip("a preset copies non-default loop settings", reason);
+            r.Skip("a preset's settings survive a save and load", reason);
+            r.Skip("a preset configures independent loops", reason);
+            r.Skip("editing a preset leaves existing loops unchanged", reason);
+            r.Skip("reapplying an edited preset updates existing loops", reason);
+            r.Skip("a preset does not copy the waiting latch", reason);
+            r.Skip("a preset keeps only compatible materials", reason);
+            r.Skip(
+                "zero compatible materials reject without changing the loop",
+                reason);
+            r.Skip("renaming preserves a preset id", reason);
+            r.Skip("removing a preset leaves existing loops", reason);
+            r.Skip("a preset-applied loop pauses, resumes and stops", reason);
+            r.Skip(
+                "a multi-cell target gets one loop at its root",
+                "no multi-cell minifiable subject can be found in the current def database");
+        }
+
+        private static void SkipPresetFollowupAssertions(Results r, string reason)
+        {
+            r.Skip("editing a preset leaves existing loops unchanged", reason);
+            r.Skip("reapplying an edited preset updates existing loops", reason);
+            r.Skip("renaming preserves a preset id", reason);
+            r.Skip("removing a preset leaves existing loops", reason);
+            r.Skip("a preset-applied loop pauses, resumes and stops", reason);
+        }
+
+        private static bool HasTwoBuildableStuffs(Subject subject)
+        {
+            return subject != null &&
+                subject.thingDef != null &&
+                subject.stuffDef != null &&
+                subject.alternateStuff != null &&
+                subject.alternateStuff != subject.stuffDef &&
+                subject.stuffDef.stuffProps != null &&
+                subject.alternateStuff.stuffProps != null &&
+                subject.stuffDef.stuffProps.CanMake(subject.thingDef) &&
+                subject.alternateStuff.stuffProps.CanMake(subject.thingDef);
+        }
+
+        private static List<ThingDef> BuildExpectedAllowedStuff(Subject subject)
+        {
+            List<ThingDef> result = new List<ThingDef>();
+            if (subject?.stuffDef != null)
+            {
+                result.Add(subject.stuffDef);
+            }
+
+            if (subject?.alternateStuff != null &&
+                subject.alternateStuff != subject.stuffDef)
+            {
+                result.Add(subject.alternateStuff);
+            }
+
+            return result;
+        }
+
+        private static ThingDef FindIncompatibleStuff(ThingDef product)
+        {
+            if (product == null)
+            {
+                return null;
+            }
+
+            foreach (ThingDef candidate in DefDatabase<ThingDef>.AllDefs)
+            {
+                if (candidate != null &&
+                    candidate != product &&
+                    candidate.stuffProps != null &&
+                    !candidate.stuffProps.CanMake(product))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static Subject FindMultiCellSubject()
+        {
+            foreach (ThingDef def in DefDatabase<ThingDef>.AllDefs)
+            {
+                if (def == null || (def.Size.x <= 1 && def.Size.z <= 1))
+                {
+                    continue;
+                }
+
+                Subject candidate = BuildSubjectForDefinition(def);
+                if (candidate != null)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static int CountLoopsAtCell(ProduceLoopMapComponent loops, IntVec3 cell)
+        {
+            int count = 0;
+            if (loops == null)
+            {
+                return count;
+            }
+
+            for (int i = 0; i < loops.Loops.Count; i++)
+            {
+                ProduceLoopRecord record = loops.Loops[i];
+                if (record != null && record.cell == cell)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static ProduceLoopSnapshot CaptureLoop(ProduceLoopRecord record)
+        {
+            if (record == null)
+            {
+                return null;
+            }
+
+            return new ProduceLoopSnapshot
+            {
+                cell = record.cell,
+                rotation = record.rotation,
+                thingDef = record.thingDef,
+                stuffDef = record.stuffDef,
+                styleDef = record.styleDef,
+                paused = record.paused,
+                targetCount = record.targetCount,
+                resumeBelow = record.resumeBelow,
+                waitingForResume = record.waitingForResume,
+                allowedStuff = record.allowedStuff == null
+                    ? null
+                    : new List<ThingDef>(record.allowedStuff),
+                restrictToSelectedWorkers = record.restrictToSelectedWorkers,
+                allowedWorkers = record.allowedWorkers == null
+                    ? null
+                    : new List<Pawn>(record.allowedWorkers),
+                minConstructionSkill = record.minConstructionSkill
+            };
+        }
+
+        private static bool SameLoopSettings(
+            ProduceLoopRecord observed,
+            ProduceLoopSnapshot expected)
+        {
+            return observed != null &&
+                expected != null &&
+                observed.cell == expected.cell &&
+                observed.rotation == expected.rotation &&
+                observed.thingDef == expected.thingDef &&
+                observed.stuffDef == expected.stuffDef &&
+                observed.styleDef == expected.styleDef &&
+                observed.paused == expected.paused &&
+                observed.targetCount == expected.targetCount &&
+                observed.resumeBelow == expected.resumeBelow &&
+                observed.waitingForResume == expected.waitingForResume &&
+                SameThingDefList(observed.allowedStuff, expected.allowedStuff) &&
+                observed.restrictToSelectedWorkers == expected.restrictToSelectedWorkers &&
+                SamePawnList(observed.allowedWorkers, expected.allowedWorkers) &&
+                observed.minConstructionSkill == expected.minConstructionSkill;
+        }
+
+        private static bool LoopMatchesPreset(
+            ProduceLoopRecord loop,
+            ProduceControlPreset preset)
+        {
+            return loop != null &&
+                preset != null &&
+                loop.targetCount == preset.targetCount &&
+                loop.resumeBelow == preset.resumeBelow &&
+                loop.restrictToSelectedWorkers == preset.restrictToSelectedWorkers &&
+                SamePawnList(loop.allowedWorkers, preset.allowedWorkers) &&
+                loop.minConstructionSkill == preset.minConstructionSkill &&
+                SameThingDefList(loop.allowedStuff, preset.allowedStuff);
+        }
+
+        private static string DescribeLoopSettings(ProduceLoopRecord record)
+        {
+            if (record == null)
+            {
+                return "<missing>";
+            }
+
+            return $"cell {record.cell}, rotation {record.rotation}, " +
+                   $"def {record.thingDef?.defName ?? "null"}, " +
+                   $"stuff {record.stuffDef?.defName ?? "null"}, " +
+                   $"paused {(record.paused ? "true" : "false")}, targetCount " +
+                   $"{record.targetCount}, resumeBelow {record.resumeBelow}, " +
+                   $"waitingForResume {(record.waitingForResume ? "true" : "false")}, " +
+                   $"allowedStuff {DescribeThingDefs(record.allowedStuff)}, " +
+                   $"restrictToSelectedWorkers " +
+                   $"{(record.restrictToSelectedWorkers ? "true" : "false")}, " +
+                   $"allowedWorkers {DescribePawns(record.allowedWorkers)}, " +
+                   $"minConstructionSkill {record.minConstructionSkill}";
+        }
+
+        private static string DescribeLoopSnapshot(ProduceLoopSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return "<missing>";
+            }
+
+            return $"cell {snapshot.cell}, rotation {snapshot.rotation}, " +
+                   $"def {snapshot.thingDef?.defName ?? "null"}, " +
+                   $"stuff {snapshot.stuffDef?.defName ?? "null"}, " +
+                   $"paused {(snapshot.paused ? "true" : "false")}, targetCount " +
+                   $"{snapshot.targetCount}, resumeBelow {snapshot.resumeBelow}, " +
+                   $"waitingForResume {(snapshot.waitingForResume ? "true" : "false")}, " +
+                   $"allowedStuff {DescribeThingDefs(snapshot.allowedStuff)}, " +
+                   $"restrictToSelectedWorkers " +
+                   $"{(snapshot.restrictToSelectedWorkers ? "true" : "false")}, " +
+                   $"allowedWorkers {DescribePawns(snapshot.allowedWorkers)}, " +
+                   $"minConstructionSkill {snapshot.minConstructionSkill}";
+        }
+
+        private static string DescribePresetSettings(ProduceControlPreset preset)
+        {
+            if (preset == null)
+            {
+                return "<missing>";
+            }
+
+            return $"targetCount {preset.targetCount}, resumeBelow {preset.resumeBelow}, " +
+                   $"restrictToSelectedWorkers " +
+                   $"{(preset.restrictToSelectedWorkers ? "true" : "false")}, " +
+                   $"allowedWorkers {DescribePawns(preset.allowedWorkers)}, " +
+                   $"minConstructionSkill {preset.minConstructionSkill}, " +
+                   $"allowedStuff {DescribeThingDefs(preset.allowedStuff)}";
+        }
+
+        private static string DescribeTargetLoops(
+            ProduceLoopMapComponent loops,
+            List<IntVec3> targetCells)
+        {
+            if (targetCells == null || targetCells.Count == 0)
+            {
+                return "<none>";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < targetCells.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(" | ");
+                }
+
+                sb.Append(DescribeLoopSettings(loops?.Find(targetCells[i])));
+            }
+
+            return sb.ToString();
+        }
+
+        private static string DescribeAllLoops(ProduceLoopMapComponent loops)
+        {
+            if (loops == null || loops.Loops == null || loops.Loops.Count == 0)
+            {
+                return "<none>";
+            }
+
+            List<ProduceLoopSnapshot> snapshots = new List<ProduceLoopSnapshot>();
+            for (int i = 0; i < loops.Loops.Count; i++)
+            {
+                ProduceLoopRecord record = loops.Loops[i];
+                if (record != null)
+                {
+                    snapshots.Add(CaptureLoop(record));
+                }
+            }
+
+            return DescribeLoopSnapshots(snapshots);
+        }
+
+        private static string DescribeTargetWorkers(
+            ProduceLoopMapComponent loops,
+            List<IntVec3> targetCells,
+            int startIndex)
+        {
+            if (targetCells == null || startIndex >= targetCells.Count)
+            {
+                return "<none>";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = startIndex; i < targetCells.Count; i++)
+            {
+                if (i > startIndex)
+                {
+                    sb.Append(" | ");
+                }
+
+                ProduceLoopRecord record = loops?.Find(targetCells[i]);
+                sb.Append($"cell {targetCells[i]}: {DescribePawns(record?.allowedWorkers)}");
+            }
+
+            return sb.ToString();
+        }
+
+        private static string DescribeLoopSnapshots(List<ProduceLoopSnapshot> snapshots)
+        {
+            if (snapshots == null || snapshots.Count == 0)
+            {
+                return "<none>";
+            }
+
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < snapshots.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(" | ");
+                }
+
+                sb.Append(DescribeLoopSnapshot(snapshots[i]));
+            }
+
+            return sb.ToString();
+        }
+
+        private static bool StripXmlNodeFromFile(
+            string path,
+            string nodeName,
+            out bool nodeFound)
+        {
+            nodeFound = false;
+            string xml = File.ReadAllText(path);
+            string nodePrefix = "<" + nodeName;
+            int nodeStart = xml.IndexOf(nodePrefix, StringComparison.Ordinal);
+            if (nodeStart < 0)
+            {
+                return true;
+            }
+
+            int tagEnd = xml.IndexOf('>', nodeStart);
+            if (tagEnd < 0)
+            {
+                return false;
+            }
+
+            int nodeEnd;
+            if (xml[tagEnd - 1] == '/')
+            {
+                nodeEnd = tagEnd + 1;
+            }
+            else
+            {
+                string closeTag = "</" + nodeName + ">";
+                int closeStart = xml.IndexOf(
+                    closeTag,
+                    tagEnd + 1,
+                    StringComparison.Ordinal);
+                if (closeStart < 0)
+                {
+                    return false;
+                }
+
+                nodeEnd = closeStart + closeTag.Length;
+            }
+
+            xml = xml.Remove(nodeStart, nodeEnd - nodeStart);
+            File.WriteAllText(path, xml);
+            nodeFound = true;
+            return true;
         }
 
         private static void CheckMaxProduceTargetRoundTrip(Results r)
