@@ -11,6 +11,9 @@ namespace Intercolony
     public class ProduceLoopMapComponent : MapComponent
     {
         private List<ProduceLoopRecord> loops = new List<ProduceLoopRecord>();
+        private List<ProduceControlPreset> presets = new List<ProduceControlPreset>();
+        private int nextPresetId = 1;
+        private int presetsRevision;
 
         public ProduceLoopMapComponent(Map map) : base(map)
         {
@@ -314,6 +317,191 @@ namespace Intercolony
             return null;
         }
 
+        public IReadOnlyList<ProduceControlPreset> Presets
+        {
+            get { return presets; }
+        }
+
+        public int PresetsRevision
+        {
+            get { return presetsRevision; }
+        }
+
+        public ProduceControlPreset FindPreset(int id)
+        {
+            if (presets == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < presets.Count; i++)
+            {
+                if (presets[i] != null && presets[i].id == id)
+                {
+                    return presets[i];
+                }
+            }
+
+            return null;
+        }
+
+        public ProduceControlPreset FindPresetByName(string name)
+        {
+            if (presets == null || name == null)
+            {
+                return null;
+            }
+
+            string trimmedName = name.Trim();
+            if (trimmedName.Length == 0)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < presets.Count; i++)
+            {
+                ProduceControlPreset preset = presets[i];
+                if (preset != null &&
+                    string.Equals(
+                        preset.name == null ? string.Empty : preset.name.Trim(),
+                        trimmedName,
+                        System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return preset;
+                }
+            }
+
+            return null;
+        }
+
+        public ProduceControlPreset CreatePresetFromLoop(
+            string name,
+            ProduceLoopRecord loop,
+            out string reason)
+        {
+            reason = null;
+            string trimmedName = NormalizePresetName(name);
+            if (trimmedName.Length == 0)
+            {
+                reason = "Preset name cannot be empty.";
+                return null;
+            }
+
+            if (loop == null)
+            {
+                reason = "A production loop is required.";
+                return null;
+            }
+
+            if (FindPresetByName(trimmedName) != null)
+            {
+                reason = "A preset with that name already exists.";
+                return null;
+            }
+
+            ProduceControlPreset preset = new ProduceControlPreset
+            {
+                id = nextPresetId++,
+                name = trimmedName,
+                targetCount = loop.targetCount,
+                resumeBelow = loop.resumeBelow,
+                restrictToSelectedWorkers = loop.restrictToSelectedWorkers,
+                allowedWorkers = CopyAllowedWorkers(loop.allowedWorkers),
+                minConstructionSkill = loop.minConstructionSkill,
+                allowedStuff = CopyAllowedStuff(loop.allowedStuff)
+            };
+            presets.Add(preset);
+            presetsRevision++;
+            return preset;
+        }
+
+        public bool TryRenamePreset(int id, string newName, out string reason)
+        {
+            reason = null;
+            string trimmedName = NormalizePresetName(newName);
+            if (trimmedName.Length == 0)
+            {
+                reason = "Preset name cannot be empty.";
+                return false;
+            }
+
+            ProduceControlPreset preset = FindPreset(id);
+            if (preset == null)
+            {
+                reason = "Preset was not found.";
+                return false;
+            }
+
+            ProduceControlPreset duplicate = FindPresetByName(trimmedName);
+            if (duplicate != null && duplicate.id != id)
+            {
+                reason = "A preset with that name already exists.";
+                return false;
+            }
+
+            if (duplicate == preset)
+            {
+                return true;
+            }
+
+            preset.name = trimmedName;
+            presetsRevision++;
+            return true;
+        }
+
+        public void ApplyPresetSettings(int id, ProduceControlPreset settings)
+        {
+            ProduceControlPreset preset = FindPreset(id);
+            if (preset == null || settings == null)
+            {
+                return;
+            }
+
+            preset.targetCount = settings.targetCount;
+            preset.resumeBelow = settings.resumeBelow;
+            preset.restrictToSelectedWorkers = settings.restrictToSelectedWorkers;
+            preset.allowedWorkers = CopyAllowedWorkers(settings.allowedWorkers);
+            preset.minConstructionSkill = settings.minConstructionSkill;
+            preset.allowedStuff = CopyAllowedStuff(settings.allowedStuff);
+            presetsRevision++;
+        }
+
+        public bool RemovePreset(int id)
+        {
+            ProduceControlPreset preset = FindPreset(id);
+            if (preset == null)
+            {
+                return false;
+            }
+
+            presets.Remove(preset);
+            presetsRevision++;
+            return true;
+        }
+
+        private static string NormalizePresetName(string name)
+        {
+            return name == null ? string.Empty : name.Trim();
+        }
+
+        private static List<Pawn> CopyAllowedWorkers(List<Pawn> workers)
+        {
+            List<Pawn> copiedWorkers = workers == null
+                ? new List<Pawn>()
+                : new List<Pawn>(workers);
+            copiedWorkers.RemoveAll(worker => worker == null);
+            return copiedWorkers;
+        }
+
+        private static List<ThingDef> CopyAllowedStuff(List<ThingDef> stuffs)
+        {
+            List<ThingDef> copiedStuffs = stuffs == null
+                ? new List<ThingDef>()
+                : new List<ThingDef>(stuffs);
+            copiedStuffs.RemoveAll(stuff => stuff == null);
+            return copiedStuffs;
+        }
+
         private int CountStoredThings(ProduceLoopRecord loop)
         {
             // Storage groups are the relevant source, not ColonyStock: its trade-item filter would
@@ -536,10 +724,17 @@ namespace Intercolony
         {
             base.ExposeData();
             Scribe_Collections.Look(ref loops, "loops", LookMode.Deep);
+            Scribe_Collections.Look(ref presets, "presets", LookMode.Deep);
+            Scribe_Values.Look(ref nextPresetId, "nextPresetId", 1);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit && loops == null)
             {
                 loops = new List<ProduceLoopRecord>();
+            }
+
+            if (Scribe.mode == LoadSaveMode.PostLoadInit && presets == null)
+            {
+                presets = new List<ProduceControlPreset>();
             }
         }
     }
