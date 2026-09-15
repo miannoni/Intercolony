@@ -23,8 +23,8 @@ namespace Intercolony
         // Standard source is common, Professional is restricted to industrial-era sources with
         // a reasonably strong economic/combat profile, and Elite is both rare and hard-gated.
         private const float StandardCapabilityFloor = -0.30f;
-        private const float ProfessionalCapabilityFloor = 0.60f;
-        private const float EliteCapabilityFloor = 1.05f;
+        private const float ProfessionalCapabilityFloor = 0.40f;
+        private const float EliteCapabilityFloor = 0.55f;
 
         private const float StandardPromiseWeight = 1.00f;
         private const float ProfessionalPromiseWeight = 0.30f;
@@ -93,10 +93,12 @@ namespace Intercolony
                     return profile.techTier >= TechLevel.Industrial &&
                            CapabilityScore(profile, clause) >= ProfessionalCapabilityFloor;
                 case LaborEquipmentLevel.Elite:
-                    // Vanilla generation has no faction-tech ceiling on gear. These hard gates
-                    // are therefore the rule that stops a poor or pre-Spacer source from handing
-                    // over powered armour merely because a posting asks for Elite.
-                    return profile.techTier >= TechLevel.Spacer &&
+                    // Core worlds have no eligible Spacer settlement: Pirates are permanent
+                    // enemies and Ancients are hidden; the ordinary Royalty Empire is DLC-only.
+                    // Industrial is therefore the hard Elite tech floor for base-game worlds.
+                    // TechLevel ordering keeps medieval, neolithic, and tribal sources out, while
+                    // the wealth and stronger score gates keep Elite rare among industrial ones.
+                    return profile.techTier >= TechLevel.Industrial &&
                            profile.wealthTier >= IntercolonyWealthTier.Comfortable &&
                            CapabilityScore(profile, clause) >= EliteCapabilityFloor;
                 default:

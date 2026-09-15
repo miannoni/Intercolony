@@ -1,6 +1,8 @@
 ﻿using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -89,7 +91,44 @@ namespace Intercolony
             public string fixtureFailureReason;
         }
 
+        private struct EquipmentCensusCounts
+        {
+            public int total;
+            public int none;
+            public int standard;
+            public int professional;
+            public int elite;
+            public int any;
+            public int unknown;
+
+            public int ProfessionalOrBetter => professional + elite;
+            public int StandardOrBetter => standard + professional + elite;
+        }
+
+        private struct TierSample
+        {
+            public int none;
+            public int standard;
+            public int professional;
+            public int elite;
+            public int any;
+            public int unknown;
+            public string exception;
+        }
+
+        private struct EquipmentMatchObservation
+        {
+            public bool fixtureBuilt;
+            public bool applicantQueued;
+            public bool finalGateRejected;
+            public string applyResult;
+            public string failure;
+        }
+
         private const float WaitingListSpreadMargin = 1f;
+        private const int EquipmentBalanceMinimumCensus = 50;
+        private const int EquipmentTierSampleSize = 4096;
+        private const int EquipmentTierSampleSeed = 0x45_51_54_31;
 
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
@@ -114,6 +153,7 @@ namespace Intercolony
 
             try
             {
+                CheckEquipmentMarket(r, state);
                 CheckPoolSplit(r, state);
                 CheckRequirementsDriveApplicants(r, state);
                 CheckWaitingListIsSpread(r, state);
@@ -190,6 +230,900 @@ namespace Intercolony
         }
 
         // --- The pool ----------------------------------------------------------------------
+
+        private static void CheckEquipmentMarket(
+            Results r, IntercolonyWorldComponent state)
+        {
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            float savedStandard = settings.standardEquipmentAbundance;
+            float savedProfessional = settings.professionalEquipmentAbundance;
+            float savedElite = settings.eliteEquipmentAbundance;
+
+            try
+            {
+                // The balance shape is a default-setting diagnostic. The abundance checks below
+                // deliberately mutate these same fields, and the outer finally restores the
+                // player's values even if a fixture or assertion throws.
+                settings.standardEquipmentAbundance =
+                    IntercolonySettings.DefaultStandardEquipmentAbundance;
+                settings.professionalEquipmentAbundance =
+                    IntercolonySettings.DefaultProfessionalEquipmentAbundance;
+                settings.eliteEquipmentAbundance =
+                    IntercolonySettings.DefaultEliteEquipmentAbundance;
+                LaborCandidateService.InvalidateCensus();
+
+                List<LaborProspect> census = LaborCandidateService.Census(state);
+                EquipmentCensusCounts counts = CountEquipmentCensus(census);
+                ReportEquipmentCensus(r, counts);
+
+                if (counts.total < EquipmentBalanceMinimumCensus)
+                {
+                    const string reason = "census has fewer than 50 prospects";
+                    r.Skip(
+                        "standard-or-better is clearly the largest equipment group", reason);
+                    r.Skip(
+                        "professional-or-better is a strict minority of standard-or-better",
+                        reason);
+                    r.Skip("elite is rarer than exact-professional", reason);
+                }
+                else
+                {
+                    r.Check(
+                        counts.StandardOrBetter * 2 > counts.total &&
+                        counts.StandardOrBetter > counts.ProfessionalOrBetter &&
+                        counts.StandardOrBetter > counts.elite,
+                        "standard-or-better is clearly the largest equipment group",
+                        $"OBSERVED standard-or-better={counts.StandardOrBetter}/{counts.total}; " +
+                        "EXPECTED more than half of the census and larger than upper-tier groups");
+
+                    r.Check(
+                        counts.ProfessionalOrBetter * 2 < counts.StandardOrBetter,
+                        "professional-or-better is a strict minority of standard-or-better",
+                        $"OBSERVED professional-or-better={counts.ProfessionalOrBetter}, " +
+                        $"standard-or-better={counts.StandardOrBetter}; EXPECTED professional-or-better " +
+                        "below half of standard-or-better");
+
+                    r.Check(
+                        counts.elite < counts.professional,
+                        "elite is rarer than exact-professional",
+                        $"OBSERVED elite={counts.elite}, exact-professional={counts.professional}; " +
+                        "EXPECTED elite below exact-professional");
+                }
+
+                r.Check(
+                    counts.elite > 0,
+                    "elite is non-zero in the full equipment census",
+                    $"OBSERVED elite={counts.elite} of {counts.total}; EXPECTED at least 1");
+                r.Check(
+                    counts.any == 0,
+                    "no census prospect is assigned the any tier",
+                    $"OBSERVED Any={counts.any}; EXPECTED 0");
+
+                CheckEquipmentAbundance(r);
+                CheckEquipmentCapabilityCeiling(r);
+                CheckEquipmentMatching(r, state);
+                CheckEquipmentFulfilment(r, state);
+            }
+            finally
+            {
+                settings.standardEquipmentAbundance = savedStandard;
+                settings.professionalEquipmentAbundance = savedProfessional;
+                settings.eliteEquipmentAbundance = savedElite;
+
+                // Census is keyed by refresh, not by settings. Do not leave a default-setting or
+                // controlled matching census visible to later postings after restoring the values.
+                LaborCandidateService.InvalidateCensus();
+            }
+        }
+
+        private static EquipmentCensusCounts CountEquipmentCensus(
+            List<LaborProspect> census)
+        {
+            EquipmentCensusCounts counts = new EquipmentCensusCounts
+            {
+                total = census?.Count ?? 0
+            };
+
+            if (census == null)
+            {
+                return counts;
+            }
+
+            foreach (LaborProspect prospect in census)
+            {
+                if (prospect == null)
+                {
+                    counts.unknown++;
+                    continue;
+                }
+
+                switch (prospect.equipmentTier)
+                {
+                    case LaborEquipmentLevel.None:
+                        counts.none++;
+                        break;
+                    case LaborEquipmentLevel.Standard:
+                        counts.standard++;
+                        break;
+                    case LaborEquipmentLevel.Professional:
+                        counts.professional++;
+                        break;
+                    case LaborEquipmentLevel.Elite:
+                        counts.elite++;
+                        break;
+                    case LaborEquipmentLevel.Any:
+                        counts.any++;
+                        break;
+                    default:
+                        counts.unknown++;
+                        break;
+                }
+            }
+
+            return counts;
+        }
+
+        private static void ReportEquipmentCensus(
+            Results r, EquipmentCensusCounts counts)
+        {
+            r.Info($"equipment census total: {counts.total} prospects");
+            r.Info($"equipment census none: {counts.none} ({EquipmentPercentage(counts.none, counts.total):0.0}%)");
+            r.Info($"equipment census standard: {counts.standard} ({EquipmentPercentage(counts.standard, counts.total):0.0}%)");
+            r.Info($"equipment census professional: {counts.professional} ({EquipmentPercentage(counts.professional, counts.total):0.0}%)");
+            r.Info($"equipment census elite: {counts.elite} ({EquipmentPercentage(counts.elite, counts.total):0.0}%)");
+            r.Info($"equipment census professional-or-better: {counts.ProfessionalOrBetter} " +
+                   $"({EquipmentPercentage(counts.ProfessionalOrBetter, counts.total):0.0}%)");
+            r.Info($"equipment census standard-or-better: {counts.StandardOrBetter} " +
+                   $"({EquipmentPercentage(counts.StandardOrBetter, counts.total):0.0}%)");
+        }
+
+        private static float EquipmentPercentage(int count, int total)
+        {
+            return total <= 0 ? 0f : count * 100f / total;
+        }
+
+        private static void CheckEquipmentAbundance(Results r)
+        {
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            float savedStandard = settings.standardEquipmentAbundance;
+            float savedProfessional = settings.professionalEquipmentAbundance;
+            float savedElite = settings.eliteEquipmentAbundance;
+            SettlementEconomicProfile capableProfile = new SettlementEconomicProfile
+            {
+                techTier = TechLevel.Spacer,
+                wealthTier = IntercolonyWealthTier.Comfortable,
+                archetype = IntercolonyArchetype.Military
+            };
+
+            try
+            {
+                settings.standardEquipmentAbundance =
+                    IntercolonySettings.DefaultStandardEquipmentAbundance;
+                settings.professionalEquipmentAbundance =
+                    IntercolonySettings.DefaultProfessionalEquipmentAbundance;
+                settings.eliteEquipmentAbundance =
+                    IntercolonySettings.DefaultEliteEquipmentAbundance;
+                TierSample baseline = RollTierSample(
+                    capableProfile, CombatClause.Civilian,
+                    EquipmentTierSampleSize, EquipmentTierSampleSeed);
+
+                settings.professionalEquipmentAbundance =
+                    IntercolonySettings.MaxProfessionalEquipmentAbundance;
+                TierSample professionalRaised = RollTierSample(
+                    capableProfile, CombatClause.Civilian,
+                    EquipmentTierSampleSize, EquipmentTierSampleSeed);
+
+                settings.professionalEquipmentAbundance =
+                    IntercolonySettings.DefaultProfessionalEquipmentAbundance;
+                settings.eliteEquipmentAbundance =
+                    IntercolonySettings.MaxEliteEquipmentAbundance;
+                TierSample eliteRaised = RollTierSample(
+                    capableProfile, CombatClause.Civilian,
+                    EquipmentTierSampleSize, EquipmentTierSampleSeed);
+
+                settings.eliteEquipmentAbundance = 0f;
+                TierSample eliteDisabled = RollTierSample(
+                    capableProfile, CombatClause.Civilian,
+                    EquipmentTierSampleSize, EquipmentTierSampleSeed);
+
+                settings.standardEquipmentAbundance = 0f;
+                settings.professionalEquipmentAbundance = 0f;
+                settings.eliteEquipmentAbundance = 0f;
+                TierSample allDisabled = RollTierSample(
+                    capableProfile, CombatClause.Civilian,
+                    EquipmentTierSampleSize, EquipmentTierSampleSeed);
+
+                r.Check(
+                    baseline.exception == null && professionalRaised.exception == null &&
+                    professionalRaised.professional >= baseline.professional,
+                    "raising professional abundance does not reduce exact-professional outcomes",
+                    $"OBSERVED baseline={baseline.professional}, raised={professionalRaised.professional}; " +
+                    $"EXPECTED raised >= baseline; samples {EquipmentTierSampleSize}; " +
+                    $"baseline {DescribeTierSample(baseline)}; raised {DescribeTierSample(professionalRaised)}");
+
+                r.Check(
+                    baseline.exception == null && eliteRaised.exception == null &&
+                    eliteRaised.elite >= baseline.elite,
+                    "raising elite abundance does not reduce exact-elite outcomes",
+                    $"OBSERVED baseline={baseline.elite}, raised={eliteRaised.elite}; " +
+                    $"EXPECTED raised >= baseline; samples {EquipmentTierSampleSize}; " +
+                    $"baseline {DescribeTierSample(baseline)}; raised {DescribeTierSample(eliteRaised)}");
+
+                r.Check(
+                    eliteDisabled.exception == null && eliteDisabled.elite == 0 &&
+                    eliteDisabled.standard > 0 && eliteDisabled.professional > 0,
+                    "zero elite abundance disables only exact-elite outcomes",
+                    $"OBSERVED elite={eliteDisabled.elite}, standard={eliteDisabled.standard}, " +
+                    $"professional={eliteDisabled.professional}; EXPECTED elite=0 with standard and " +
+                    $"professional >0; sample {DescribeTierSample(eliteDisabled)}");
+
+                r.Check(
+                    allDisabled.exception == null && allDisabled.none == EquipmentTierSampleSize &&
+                    allDisabled.standard == 0 && allDisabled.professional == 0 &&
+                    allDisabled.elite == 0 && allDisabled.any == 0 && allDisabled.unknown == 0,
+                    "zero abundance for every tier yields none without throwing",
+                    $"OBSERVED {DescribeTierSample(allDisabled)}; EXPECTED none={EquipmentTierSampleSize}, " +
+                    "all other outcomes=0 and exception=none");
+            }
+            finally
+            {
+                settings.standardEquipmentAbundance = savedStandard;
+                settings.professionalEquipmentAbundance = savedProfessional;
+                settings.eliteEquipmentAbundance = savedElite;
+            }
+        }
+
+        private static TierSample RollTierSample(
+            SettlementEconomicProfile profile, CombatClause clause, int sampleSize, int seed)
+        {
+            TierSample sample = new TierSample();
+            Rand.PushState(seed);
+            try
+            {
+                for (int i = 0; i < sampleSize; i++)
+                {
+                    LaborEquipmentLevel tier = LaborEquipmentTierService.RollPromisedTier(
+                        profile, clause);
+                    switch (tier)
+                    {
+                        case LaborEquipmentLevel.None:
+                            sample.none++;
+                            break;
+                        case LaborEquipmentLevel.Standard:
+                            sample.standard++;
+                            break;
+                        case LaborEquipmentLevel.Professional:
+                            sample.professional++;
+                            break;
+                        case LaborEquipmentLevel.Elite:
+                            sample.elite++;
+                            break;
+                        case LaborEquipmentLevel.Any:
+                            sample.any++;
+                            break;
+                        default:
+                            sample.unknown++;
+                            break;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                sample.exception = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            return sample;
+        }
+
+        private static string DescribeTierSample(TierSample sample)
+        {
+            return $"none={sample.none}, standard={sample.standard}, " +
+                   $"professional={sample.professional}, elite={sample.elite}, " +
+                   $"Any={sample.any}, unknown={sample.unknown}, " +
+                   $"exception={sample.exception ?? "none"}";
+        }
+
+        private static void CheckEquipmentCapabilityCeiling(Results r)
+        {
+            IntercolonySettings settings = IntercolonyMod.Settings;
+            float savedStandard = settings.standardEquipmentAbundance;
+            float savedProfessional = settings.professionalEquipmentAbundance;
+            float savedElite = settings.eliteEquipmentAbundance;
+            SettlementEconomicProfile neolithicProfile = new SettlementEconomicProfile
+            {
+                techTier = TechLevel.Neolithic,
+                wealthTier = IntercolonyWealthTier.Comfortable,
+                archetype = IntercolonyArchetype.Military
+            };
+            SettlementEconomicProfile poorIndustrialProfile = new SettlementEconomicProfile
+            {
+                techTier = TechLevel.Industrial,
+                wealthTier = IntercolonyWealthTier.Modest,
+                archetype = IntercolonyArchetype.Military
+            };
+            SettlementEconomicProfile capableIndustrialProfile = new SettlementEconomicProfile
+            {
+                techTier = TechLevel.Industrial,
+                wealthTier = IntercolonyWealthTier.Comfortable,
+                archetype = IntercolonyArchetype.Military
+            };
+
+            try
+            {
+                settings.standardEquipmentAbundance =
+                    IntercolonySettings.DefaultStandardEquipmentAbundance;
+                settings.professionalEquipmentAbundance =
+                    IntercolonySettings.DefaultProfessionalEquipmentAbundance;
+                settings.eliteEquipmentAbundance =
+                    IntercolonySettings.MaxEliteEquipmentAbundance;
+                bool neolithicCanSupplyElite = LaborEquipmentTierService.CanSupply(
+                    neolithicProfile, LaborEquipmentLevel.Elite, CombatClause.Civilian);
+                TierSample neolithicSample = RollTierSample(
+                    neolithicProfile, CombatClause.Civilian,
+                    EquipmentTierSampleSize, EquipmentTierSampleSeed);
+                bool poorIndustrialCanSupplyElite = LaborEquipmentTierService.CanSupply(
+                    poorIndustrialProfile, LaborEquipmentLevel.Elite, CombatClause.Civilian);
+                TierSample poorIndustrialSample = RollTierSample(
+                    poorIndustrialProfile, CombatClause.Civilian,
+                    EquipmentTierSampleSize, EquipmentTierSampleSeed);
+                bool capableIndustrialCanSupplyElite = LaborEquipmentTierService.CanSupply(
+                    capableIndustrialProfile, LaborEquipmentLevel.Elite, CombatClause.Civilian);
+                TierSample capableIndustrialSample = RollTierSample(
+                    capableIndustrialProfile, CombatClause.Civilian,
+                    EquipmentTierSampleSize, EquipmentTierSampleSeed);
+
+                r.Check(
+                    !neolithicCanSupplyElite && neolithicSample.exception == null &&
+                    neolithicSample.elite == 0 &&
+                    !poorIndustrialCanSupplyElite && poorIndustrialSample.exception == null &&
+                    poorIndustrialSample.elite == 0 &&
+                    capableIndustrialCanSupplyElite && capableIndustrialSample.exception == null &&
+                    capableIndustrialSample.elite > 0,
+                    "maximum elite abundance cannot bypass an incapable source ceiling",
+                    $"OBSERVED neolithic={neolithicProfile.techTier}/{neolithicProfile.wealthTier}/" +
+                    $"{neolithicProfile.archetype}, CanSupply(Elite)={neolithicCanSupplyElite}, " +
+                    $"exact-elite={neolithicSample.elite}; poor-industrial=" +
+                    $"{poorIndustrialProfile.techTier}/{poorIndustrialProfile.wealthTier}/" +
+                    $"{poorIndustrialProfile.archetype}, " +
+                    $"CanSupply(Elite)={poorIndustrialCanSupplyElite}, " +
+                    $"exact-elite={poorIndustrialSample.elite}; capable-industrial=" +
+                    $"{capableIndustrialProfile.techTier}/{capableIndustrialProfile.wealthTier}/" +
+                    $"{capableIndustrialProfile.archetype}, " +
+                    $"CanSupply(Elite)={capableIndustrialCanSupplyElite}, " +
+                    $"exact-elite={capableIndustrialSample.elite}; EXPECTED neolithic and " +
+                    $"poor-industrial CanSupply(Elite)=False and exact-elite=0, capable-industrial " +
+                    $"CanSupply(Elite)=True and exact-elite > 0; clause={CombatClause.Civilian}; " +
+                    $"samples={EquipmentTierSampleSize} seeded {EquipmentTierSampleSeed}; " +
+                    $"neolithic {DescribeTierSample(neolithicSample)}; " +
+                    $"poor-industrial {DescribeTierSample(poorIndustrialSample)}; " +
+                    $"capable-industrial {DescribeTierSample(capableIndustrialSample)}");
+            }
+            finally
+            {
+                settings.standardEquipmentAbundance = savedStandard;
+                settings.professionalEquipmentAbundance = savedProfessional;
+                settings.eliteEquipmentAbundance = savedElite;
+            }
+        }
+
+        private static void CheckEquipmentMatching(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string standardLabel =
+                "a standard prospect is not considered by a professional posting";
+            const string eliteLabel =
+                "an elite prospect is considered by a professional posting";
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(standardLabel,
+                    "Find.WorldPawns was null, so controlled MatchAll could not run");
+                r.Skip(eliteLabel,
+                    "Find.WorldPawns was null, so controlled MatchAll could not run");
+                return;
+            }
+
+            LaborProspect standard = null;
+            LaborProspect elite = null;
+            foreach (LaborProspect prospect in LaborCandidateService.Census(state))
+            {
+                if (prospect == null)
+                {
+                    continue;
+                }
+
+                Settlement settlement = IntercolonyMarketAccess.FindSettlement(
+                    prospect.settlementId);
+                SettlementEconomicProfile profile = settlement == null
+                    ? null
+                    : state.GetProfile(settlement);
+                if (profile == null)
+                {
+                    continue;
+                }
+
+                if (standard == null && prospect.equipmentTier == LaborEquipmentLevel.Standard &&
+                    LaborEquipmentTierService.CanSupply(
+                        profile, LaborEquipmentLevel.Professional, CombatClause.Civilian))
+                {
+                    standard = prospect;
+                }
+
+                if (elite == null && prospect.equipmentTier == LaborEquipmentLevel.Elite &&
+                    LaborEquipmentTierService.CanSupply(
+                        profile, LaborEquipmentLevel.Professional, CombatClause.Civilian))
+                {
+                    elite = prospect;
+                }
+
+                if (standard != null && elite != null)
+                {
+                    break;
+                }
+            }
+
+            if (standard == null || elite == null)
+            {
+                string reason =
+                    $"controlled census needs Standard and Elite prospects from profiles capable " +
+                    $"of Professional; observed Standard={(standard == null ? 0 : 1)}, " +
+                    $"Elite={(elite == null ? 0 : 1)}";
+                r.Skip(standardLabel, reason);
+                r.Skip(eliteLabel, reason);
+                return;
+            }
+
+            EquipmentMatchObservation standardObservation =
+                MatchControlledEquipmentProspect(
+                    state, standard, LaborEquipmentLevel.Professional);
+            EquipmentMatchObservation eliteObservation =
+                MatchControlledEquipmentProspect(
+                    state, elite, LaborEquipmentLevel.Professional);
+
+            if (!standardObservation.fixtureBuilt || !eliteObservation.fixtureBuilt)
+            {
+                string reason =
+                    $"controlled MatchAll fixture was unavailable; Standard=" +
+                    $"{standardObservation.failure ?? "built"}; Elite=" +
+                    $"{eliteObservation.failure ?? "built"}";
+                r.Skip(standardLabel, reason);
+                r.Skip(eliteLabel, reason);
+                return;
+            }
+
+            bool standardSatisfies = LaborEquipmentTierService.MeetsOrExceeds(
+                standard.equipmentTier, LaborEquipmentLevel.Professional);
+            bool eliteSatisfies = LaborEquipmentTierService.MeetsOrExceeds(
+                elite.equipmentTier, LaborEquipmentLevel.Professional);
+            r.Check(
+                !standardSatisfies && !standardObservation.applicantQueued,
+                standardLabel,
+                $"OBSERVED promised={standard.equipmentTier}, queued=" +
+                $"{standardObservation.applicantQueued}; EXPECTED promised=Standard, queued=False; " +
+                $"MatchAll {DescribeEquipmentMatch(standardObservation)}");
+            r.Check(
+                eliteSatisfies && eliteObservation.applicantQueued,
+                eliteLabel,
+                $"OBSERVED promised={elite.equipmentTier}, queued=" +
+                $"{eliteObservation.applicantQueued}; EXPECTED promised=Elite, queued=True; " +
+                $"MatchAll {DescribeEquipmentMatch(eliteObservation)}");
+
+            const string finalLoadoutLabel =
+                "an applicant whose actual gear misses the request is not queued";
+            EquipmentMatchObservation finalLoadoutObservation =
+                ExerciseFinalLoadoutGate(state, standard);
+            if (!finalLoadoutObservation.fixtureBuilt)
+            {
+                r.Skip(finalLoadoutLabel,
+                    finalLoadoutObservation.failure ??
+                    "the controlled prospect did not materialise for the final-loadout fixture");
+                return;
+            }
+
+            r.Check(
+                finalLoadoutObservation.finalGateRejected &&
+                !finalLoadoutObservation.applicantQueued,
+                finalLoadoutLabel,
+                $"OBSERVED ApplyResult={finalLoadoutObservation.applyResult ?? "none"}, " +
+                $"final-gate-rejected={finalLoadoutObservation.finalGateRejected}, " +
+                $"queued={finalLoadoutObservation.applicantQueued}; " +
+                "EXPECTED final-gate-rejected=True, queued=False; " +
+                "requested=Professional, controlled promise=None");
+        }
+
+        private static EquipmentMatchObservation MatchControlledEquipmentProspect(
+            IntercolonyWorldComponent state, LaborProspect prospect,
+            LaborEquipmentLevel requested)
+        {
+            EquipmentMatchObservation observation = new EquipmentMatchObservation();
+            FieldInfo censusField = typeof(LaborCandidateService).GetField(
+                "census", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo censusRefreshField = typeof(LaborCandidateService).GetField(
+                "censusRefreshCount", BindingFlags.Static | BindingFlags.NonPublic);
+            if (censusField == null || censusRefreshField == null)
+            {
+                observation.failure = "LaborCandidateService census fields were not found";
+                return observation;
+            }
+
+            List<LaborProspect> savedCensus =
+                censusField.GetValue(null) as List<LaborProspect>;
+            int savedCensusRefreshCount = (int)censusRefreshField.GetValue(null);
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            JobPosting posting = null;
+            try
+            {
+                state.Postings.Clear();
+                censusField.SetValue(
+                    null, new List<LaborProspect> { prospect });
+                censusRefreshField.SetValue(null, state.RefreshCount);
+                posting = JobPostingService.TryPost(
+                    state, null, 0, 20, WageStructure.Daily, CombatClause.Civilian,
+                    out string failReason, requested);
+                if (posting == null)
+                {
+                    observation.failure =
+                        $"TryPost refused the controlled fixture: {failReason ?? "no reason"}";
+                    return observation;
+                }
+
+                observation.fixtureBuilt = true;
+                JobPostingService.MatchAll(state);
+                foreach (JobApplicant applicant in posting.Applicants)
+                {
+                    if (applicant != null && applicant.settlementId == prospect.settlementId)
+                    {
+                        observation.applicantQueued = true;
+                        break;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                observation.failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                if (posting != null)
+                {
+                    JobPostingService.Close(
+                        posting, JobPostingStatus.Withdrawn, "self-test equipment matching");
+                    state.Postings.Remove(posting);
+                }
+
+                state.Postings.Clear();
+                state.Postings.AddRange(savedPostings);
+                censusField.SetValue(null, savedCensus);
+                censusRefreshField.SetValue(null, savedCensusRefreshCount);
+                LaborCandidateService.InvalidateCensus();
+            }
+
+            return observation;
+        }
+
+        private static string DescribeEquipmentMatch(EquipmentMatchObservation observation)
+        {
+            return $"fixtureBuilt={observation.fixtureBuilt}, queued=" +
+                   $"{observation.applicantQueued}, failure={observation.failure ?? "none"}";
+        }
+
+        private static EquipmentMatchObservation ExerciseFinalLoadoutGate(
+            IntercolonyWorldComponent state, LaborProspect prospect)
+        {
+            EquipmentMatchObservation observation = new EquipmentMatchObservation();
+            FieldInfo censusField = typeof(LaborCandidateService).GetField(
+                "census", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo censusRefreshField = typeof(LaborCandidateService).GetField(
+                "censusRefreshCount", BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo applyMethod = typeof(JobPostingService).GetMethod(
+                "Apply", BindingFlags.Static | BindingFlags.NonPublic);
+            if (censusField == null || censusRefreshField == null || applyMethod == null)
+            {
+                observation.failure =
+                    "the controlled census fields or JobPostingService.Apply method were not found";
+                return observation;
+            }
+
+            List<LaborProspect> savedCensus =
+                censusField.GetValue(null) as List<LaborProspect>;
+            int savedCensusRefreshCount = (int)censusRefreshField.GetValue(null);
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            LaborEquipmentLevel savedEquipmentTier = prospect.equipmentTier;
+            JobPosting posting = null;
+            try
+            {
+                prospect.equipmentTier = LaborEquipmentLevel.None;
+                state.Postings.Clear();
+                censusField.SetValue(
+                    null, new List<LaborProspect> { prospect });
+                censusRefreshField.SetValue(null, state.RefreshCount);
+                posting = JobPostingService.TryPost(
+                    state, null, 0, 20, WageStructure.Daily, CombatClause.Civilian,
+                    out string failReason, LaborEquipmentLevel.Professional);
+                if (posting == null)
+                {
+                    observation.failure =
+                        $"TryPost refused the final-loadout fixture: {failReason ?? "no reason"}";
+                    return observation;
+                }
+
+                observation.fixtureBuilt = true;
+
+                // Keep the real phase-one census path in the fixture. It correctly filters this
+                // deliberately lower promise before Apply; the private call below isolates the
+                // final gate that phase one cannot reach with a lower promise.
+                JobPostingService.MatchAll(state);
+
+                object applyResult = applyMethod.Invoke(
+                    null, new object[] { state, posting, prospect, 1 });
+                observation.applyResult = applyResult?.ToString();
+                if (observation.applyResult == "Accepted")
+                {
+                    observation.applicantQueued = posting.Applicants.Count > 0;
+                    if (posting.Applicants.Count > 0)
+                    {
+                        JobPostingService.Reject(
+                            posting, posting.Applicants[posting.Applicants.Count - 1]);
+                    }
+                }
+                else if (observation.applyResult == "FulfilmentRejected")
+                {
+                    // With a materialised pawn and a None promise, TryFulfil cannot fail: it
+                    // strips the loadout and returns true. Therefore this result identifies the
+                    // final actual-loadout gate, rather than the earlier allocator failure path.
+                    observation.finalGateRejected = true;
+                }
+                else if (observation.applyResult == "Rejected")
+                {
+                    observation.fixtureBuilt = false;
+                    observation.failure =
+                        "the controlled prospect could not materialise an applicant pawn";
+                }
+                else
+                {
+                    observation.fixtureBuilt = false;
+                    observation.failure =
+                        $"Apply returned {observation.applyResult ?? "null"} instead of an " +
+                        "applicant or final-gate rejection";
+                }
+            }
+            catch (System.Exception ex)
+            {
+                observation.fixtureBuilt = false;
+                observation.failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                prospect.equipmentTier = savedEquipmentTier;
+                JobPostingService.Close(
+                    posting, JobPostingStatus.Withdrawn, "self-test final-loadout cleanup");
+                if (posting != null)
+                {
+                    state.Postings.Remove(posting);
+                }
+
+                state.Postings.Clear();
+                state.Postings.AddRange(savedPostings);
+                censusField.SetValue(null, savedCensus);
+                censusRefreshField.SetValue(null, savedCensusRefreshCount);
+                LaborCandidateService.InvalidateCensus();
+            }
+
+            return observation;
+        }
+
+        private static void CheckEquipmentFulfilment(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string actualGearLabel =
+                "allocator fulfilment leaves actual gear at or above the promised tier";
+            const string civilianGearLabel =
+                "civilian fulfilment leaves the primary weapon empty";
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(actualGearLabel,
+                    "Find.WorldPawns was null, so generated pawns could not be cleaned up");
+                r.Skip(civilianGearLabel,
+                    "Find.WorldPawns was null, so generated pawns could not be cleaned up");
+                return;
+            }
+
+            LaborProspect prospect;
+            SettlementEconomicProfile profile;
+            LaborEquipmentLevel tier;
+            if (!FindEquipmentFulfilmentFixture(
+                    state, out prospect, out profile, out tier))
+            {
+                string reason =
+                    "the current census had no source profile capable of a shared combat and " +
+                    "Civilian fulfilment tier";
+                r.Skip(actualGearLabel, reason);
+                r.Skip(civilianGearLabel, reason);
+                return;
+            }
+
+            Pawn combatPawn = null;
+            Pawn civilianPawn = null;
+            try
+            {
+                try
+                {
+                    combatPawn = prospect.Materialise();
+                }
+                catch (System.Exception ex)
+                {
+                    r.Skip(actualGearLabel,
+                        $"materialising the combat fixture threw {ex.GetType().Name}: {ex.Message}");
+                    r.Skip(civilianGearLabel,
+                        $"materialising the combat fixture threw {ex.GetType().Name}: {ex.Message}");
+                    return;
+                }
+
+                if (combatPawn == null)
+                {
+                    r.Skip(actualGearLabel,
+                        $"the source prospect could not materialise for {tier}");
+                    r.Skip(civilianGearLabel,
+                        $"the source prospect could not materialise for {tier}");
+                    return;
+                }
+
+                bool combatFulfilled = false;
+                LaborEquipmentLevel combatActual = LaborEquipmentLevel.None;
+                string combatFailure = null;
+                try
+                {
+                    combatFulfilled = LaborEquipmentAllocator.TryFulfil(
+                        combatPawn, tier, CombatClause.Armed, profile, out combatFailure);
+                    combatActual = LaborEquipmentTierService.Classify(
+                        combatPawn, CombatClause.Armed);
+                }
+                catch (System.Exception ex)
+                {
+                    combatFailure = $"{ex.GetType().Name}: {ex.Message}";
+                }
+
+                r.Check(
+                    combatFulfilled && combatFailure == null &&
+                    LaborEquipmentTierService.MeetsOrExceeds(combatActual, tier),
+                    actualGearLabel,
+                    $"OBSERVED fulfilled={combatFulfilled}, actual={combatActual}, promised={tier}; " +
+                    $"EXPECTED fulfilled=True and actual >= {tier}; failure={combatFailure ?? "none"}; " +
+                    $"profile={profile.techTier}/{profile.wealthTier}/{profile.archetype}");
+
+                try
+                {
+                    civilianPawn = prospect.Materialise();
+                }
+                catch (System.Exception ex)
+                {
+                    r.Skip(civilianGearLabel,
+                        $"materialising the Civilian fixture threw {ex.GetType().Name}: {ex.Message}");
+                    return;
+                }
+
+                if (civilianPawn == null)
+                {
+                    r.Skip(civilianGearLabel,
+                        $"the source prospect could not materialise for Civilian {tier}");
+                    return;
+                }
+
+                bool civilianFulfilled = false;
+                LaborEquipmentLevel civilianActual = LaborEquipmentLevel.None;
+                string civilianFailure = null;
+                try
+                {
+                    civilianFulfilled = LaborEquipmentAllocator.TryFulfil(
+                        civilianPawn, tier, CombatClause.Civilian,
+                        profile, out civilianFailure);
+                    civilianActual = LaborEquipmentTierService.Classify(
+                        civilianPawn, CombatClause.Civilian);
+                }
+                catch (System.Exception ex)
+                {
+                    civilianFailure = $"{ex.GetType().Name}: {ex.Message}";
+                }
+
+                bool primaryNull = civilianPawn.equipment != null &&
+                    civilianPawn.equipment.Primary == null;
+                r.Check(
+                    civilianFulfilled && civilianFailure == null &&
+                    LaborEquipmentTierService.MeetsOrExceeds(civilianActual, tier) &&
+                    primaryNull,
+                    civilianGearLabel,
+                    $"OBSERVED fulfilled={civilianFulfilled}, actual={civilianActual}, " +
+                    $"primary-null={primaryNull}, promised={tier}; EXPECTED fulfilled=True, " +
+                    $"actual >= {tier}, primary-null=True; failure={civilianFailure ?? "none"}");
+            }
+            finally
+            {
+                DiscardEquipmentFixturePawn(combatPawn);
+                DiscardEquipmentFixturePawn(civilianPawn);
+            }
+        }
+
+        private static bool FindEquipmentFulfilmentFixture(
+            IntercolonyWorldComponent state, out LaborProspect prospect,
+            out SettlementEconomicProfile profile, out LaborEquipmentLevel tier)
+        {
+            prospect = null;
+            profile = null;
+            tier = LaborEquipmentLevel.None;
+            LaborEquipmentLevel[] tiers =
+            {
+                LaborEquipmentLevel.Elite,
+                LaborEquipmentLevel.Professional,
+                LaborEquipmentLevel.Standard
+            };
+
+            foreach (LaborEquipmentLevel candidateTier in tiers)
+            {
+                foreach (LaborProspect candidate in LaborCandidateService.Census(state))
+                {
+                    if (candidate == null)
+                    {
+                        continue;
+                    }
+
+                    Settlement settlement = IntercolonyMarketAccess.FindSettlement(
+                        candidate.settlementId);
+                    SettlementEconomicProfile candidateProfile = settlement == null
+                        ? null
+                        : state.GetProfile(settlement);
+                    if (candidateProfile == null ||
+                        !LaborEquipmentTierService.CanSupply(
+                            candidateProfile, candidateTier, CombatClause.Armed) ||
+                        !LaborEquipmentTierService.CanSupply(
+                            candidateProfile, candidateTier, CombatClause.Civilian))
+                    {
+                        continue;
+                    }
+
+                    prospect = candidate;
+                    profile = candidateProfile;
+                    tier = candidateTier;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void DiscardEquipmentFixturePawn(Pawn pawn)
+        {
+            if (pawn == null || pawn.Discarded || Find.WorldPawns == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (pawn.Spawned)
+                {
+                    pawn.DeSpawn();
+                }
+
+                if (Find.WorldPawns.Contains(pawn))
+                {
+                    Find.WorldPawns.RemoveAndDiscardPawnViaGC(pawn);
+                }
+                else if (!pawn.Discarded)
+                {
+                    Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                IntercolonyLog.Warning(
+                    $"Could not clean up equipment self-test pawn: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// The census must be deep, and it must price the same way a real pawn does.

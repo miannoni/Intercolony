@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using RimWorld;
+using UnityEngine;
 using Verse;
 
 namespace Intercolony
@@ -48,6 +49,8 @@ namespace Intercolony
                 return false;
             }
 
+            // A raised item ceiling is valid only after the source capability gate authorizes the
+            // promised tier; callers cannot bypass that gate by invoking the allocator directly.
             if (!LaborEquipmentTierService.CanSupply(profile, promisedTier, clause))
             {
                 failReason =
@@ -64,6 +67,8 @@ namespace Intercolony
                 DestroyExistingLoadout(pawn);
                 return true;
             }
+
+            TechLevel itemTechCeiling = GetItemTechCeiling(profile, promisedTier);
 
             if (pawn.apparel == null || pawn.RaceProps == null || pawn.RaceProps.body == null)
             {
@@ -82,7 +87,7 @@ namespace Intercolony
                     {
                         QualityCategory quality = QualityOrder[qualityIndex];
                         List<ItemChoice> apparelChoices = BuildChoices(
-                            pawn, profile, apparel: true, quality: quality);
+                            pawn, profile, itemTechCeiling, apparel: true, quality: quality);
                         if (apparelChoices.Count == 0)
                         {
                             continue;
@@ -117,9 +122,9 @@ namespace Intercolony
                 {
                     QualityCategory quality = QualityOrder[qualityIndex];
                     List<ItemChoice> weaponChoices = BuildChoices(
-                        pawn, profile, apparel: false, quality: quality);
+                        pawn, profile, itemTechCeiling, apparel: false, quality: quality);
                     List<ItemChoice> apparelChoices = BuildChoices(
-                        pawn, profile, apparel: true, quality: quality);
+                        pawn, profile, itemTechCeiling, apparel: true, quality: quality);
                     List<List<ItemChoice>> apparelPlans = BuildApparelPlans(
                         pawn, apparelChoices);
 
@@ -179,15 +184,48 @@ namespace Intercolony
             return false;
         }
 
+        private static TechLevel GetItemTechCeiling(
+            SettlementEconomicProfile profile, LaborEquipmentLevel promisedTier)
+        {
+            TechLevel promisedTechCeiling;
+            switch (promisedTier)
+            {
+                case LaborEquipmentLevel.Standard:
+                    promisedTechCeiling = profile.techTier;
+                    break;
+                case LaborEquipmentLevel.Professional:
+                    // Industrial contributes 0.50 * 0.40 = 0.20; the other terms can add 0.60,
+                    // so an item can reach 0.80 and clear the 0.52 Professional threshold.
+                    promisedTechCeiling = TechLevel.Industrial;
+                    break;
+                case LaborEquipmentLevel.Elite:
+                    // Spacer contributes 0.72 * 0.40 = 0.288; with the other terms, an item can
+                    // reach 0.888 and clear the 0.78 Elite threshold.
+                    promisedTechCeiling = TechLevel.Spacer;
+                    break;
+                default:
+                    promisedTechCeiling = profile.techTier;
+                    break;
+            }
+
+            // The promise gate decides whether this tier is plausible; a wealthy, militarised
+            // industrial settlement may acquire elite kit without manufacturing it. CanSupply's
+            // Industrial floor already keeps pre-industrial sources out of these upper tiers.
+            return (int)profile.techTier >= (int)promisedTechCeiling
+                ? profile.techTier
+                : promisedTechCeiling;
+        }
+
         private static List<ItemChoice> BuildChoices(
-            Pawn pawn, SettlementEconomicProfile profile, bool apparel, QualityCategory quality)
+            Pawn pawn, SettlementEconomicProfile profile, TechLevel itemTechCeiling,
+            bool apparel, QualityCategory quality)
         {
             List<ItemChoice> choices = new List<ItemChoice>();
             List<ThingDef> allDefs = DefDatabase<ThingDef>.AllDefsListForReading;
             for (int defIndex = 0; defIndex < allDefs.Count; defIndex++)
             {
                 ThingDef def = allDefs[defIndex];
-                if (!IsCandidateDefinition(pawn, profile, def, apparel))
+                if (!IsCandidateDefinition(pawn, profile, itemTechCeiling, def, apparel))
                 {
                     continue;
                 }
@@ -198,7 +236,7 @@ namespace Intercolony
                     continue;
                 }
 
-                List<ThingDef> stuffChoices = BuildStuffChoices(def, profile);
+                List<ThingDef> stuffChoices = BuildStuffChoices(def, itemTechCeiling);
                 for (int stuffIndex = 0; stuffIndex < stuffChoices.Count; stuffIndex++)
                 {
                     ItemChoice choice = new ItemChoice
@@ -217,10 +255,12 @@ namespace Intercolony
         }
 
         private static bool IsCandidateDefinition(
-            Pawn pawn, SettlementEconomicProfile profile, ThingDef def, bool apparel)
+            Pawn pawn, SettlementEconomicProfile profile, TechLevel itemTechCeiling,
+            ThingDef def, bool apparel)
         {
             if (def == null || def.category != ThingCategory.Item ||
-                def.generateAllowChance <= 0f || !IsWithinSourceTech(def, profile) ||
+                def.generateAllowChance <= 0f ||
+                !IsWithinSourceTech(def, profile, itemTechCeiling) ||
                 def.thingClass == null)
             {
                 return false;
@@ -246,13 +286,12 @@ namespace Intercolony
         }
 
         private static bool IsWithinSourceTech(
-            ThingDef def, SettlementEconomicProfile profile)
+            ThingDef def, SettlementEconomicProfile profile, TechLevel itemTechCeiling)
         {
-            // CanSupply owns the tier/wealth/archetype capability decision. This second, narrower
-            // check applies its tech ceiling to each actual item, so a low-tech source cannot
-            // leak a spacer item through a Standard or malformed Elite promise. Classifier scoring
-            // already treats an item's undefined tech as Industrial; use that same fallback here.
-            if (def == null || profile == null || profile.techTier == TechLevel.Undefined)
+            // Classifier scoring treats an item's undefined tech as Industrial; use that same
+            // fallback while keeping the source's own tech as the lower bound for Standard.
+            if (def == null || profile == null || profile.techTier == TechLevel.Undefined ||
+                itemTechCeiling == TechLevel.Undefined)
             {
                 return false;
             }
@@ -260,11 +299,11 @@ namespace Intercolony
             TechLevel itemTech = def.techLevel == TechLevel.Undefined
                 ? TechLevel.Industrial
                 : def.techLevel;
-            return (int)itemTech <= (int)profile.techTier;
+            return (int)itemTech <= (int)itemTechCeiling;
         }
 
         private static List<ThingDef> BuildStuffChoices(
-            ThingDef def, SettlementEconomicProfile profile)
+            ThingDef def, TechLevel itemTechCeiling)
         {
             List<ThingDef> choices = new List<ThingDef>();
             if (!def.MadeFromStuff)
@@ -274,10 +313,10 @@ namespace Intercolony
             }
 
             foreach (ThingDef stuff in GenStuff.AllowedStuffsFor(
-                         def, profile.techTier, checkAllowedInStuffGeneration: true))
+                         def, itemTechCeiling, checkAllowedInStuffGeneration: true))
             {
                 if (stuff == null || !stuff.IsStuff ||
-                    !IsWithinSourceStuffTech(stuff, profile) ||
+                    !IsWithinSourceStuffTech(stuff, itemTechCeiling) ||
                     choices.Contains(stuff))
                 {
                     continue;
@@ -291,18 +330,18 @@ namespace Intercolony
         }
 
         private static bool IsWithinSourceStuffTech(
-            ThingDef stuff, SettlementEconomicProfile profile)
+            ThingDef stuff, TechLevel itemTechCeiling)
         {
-            if (stuff == null || profile == null || profile.techTier == TechLevel.Undefined)
+            if (stuff == null || itemTechCeiling == TechLevel.Undefined)
             {
                 return false;
             }
 
             // Core and many modded material Defs intentionally inherit Undefined. GenStuff uses
             // the same zero-value ordering, so an unspecified material does not claim a tech era
-            // above the source; the crafted item's own tech level remains the hard ceiling.
+            // above the promised item ceiling; the crafted item's own tech level remains bounded.
             return stuff.techLevel == TechLevel.Undefined ||
-                   (int)stuff.techLevel <= (int)profile.techTier;
+                   (int)stuff.techLevel <= (int)itemTechCeiling;
         }
 
         private static List<List<ItemChoice>> BuildApparelPlans(
@@ -360,8 +399,9 @@ namespace Intercolony
                         anchorIndex: anchorIndex));
             }
 
-            // The first successful package is the answer. Compare the strongest constituent first,
-            // then package size and value, so a promised floor does not default to best-in-database.
+            // The first successful package is the answer. Compare the estimated package score
+            // first, then package size and value, so a promised floor does not default to
+            // best-in-database. Classify remains the final authority after real Things are made.
             plans.Sort(CompareApparelPlans);
             return plans;
         }
@@ -476,25 +516,8 @@ namespace Intercolony
         private static int CompareApparelPlans(
             List<ItemChoice> left, List<ItemChoice> right)
         {
-            ItemChoice leftStrongest = left[0];
-            for (int index = 1; index < left.Count; index++)
-            {
-                if (CompareChoices(left[index], leftStrongest) > 0)
-                {
-                    leftStrongest = left[index];
-                }
-            }
-
-            ItemChoice rightStrongest = right[0];
-            for (int index = 1; index < right.Count; index++)
-            {
-                if (CompareChoices(right[index], rightStrongest) > 0)
-                {
-                    rightStrongest = right[index];
-                }
-            }
-
-            int comparison = CompareChoices(leftStrongest, rightStrongest);
+            int comparison = CompareFloat(
+                ApparelPlanScore(left), ApparelPlanScore(right));
             if (comparison != 0)
             {
                 return comparison;
@@ -885,6 +908,28 @@ namespace Intercolony
                 return comparison;
             }
 
+            if (left.thingDef != null && left.thingDef.IsApparel &&
+                right.thingDef != null && right.thingDef.IsApparel)
+            {
+                // Tech and quality are the authoritative score's largest discrete inputs. Within
+                // those bands, prefer the properties that make an apparel package useful rather
+                // than only its market value: protection and coverage are what Civilian scoring
+                // actually observes. The final package is still checked with Classify.
+                comparison = CompareFloat(
+                    ApparelChoiceScore(left), ApparelChoiceScore(right));
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+
+                comparison = CompareFloat(
+                    ApparelCoverage(left), ApparelCoverage(right));
+                if (comparison != 0)
+                {
+                    return comparison;
+                }
+            }
+
             comparison = CompareFloat(
                 CandidateValue(left.thingDef, left.stuffDef),
                 CandidateValue(right.thingDef, right.stuffDef));
@@ -894,6 +939,140 @@ namespace Intercolony
             }
 
             return StringComparer.Ordinal.Compare(ChoiceKey(left), ChoiceKey(right));
+        }
+
+        private static float ApparelPlanScore(List<ItemChoice> plan)
+        {
+            if (plan == null || plan.Count == 0)
+            {
+                return 0f;
+            }
+
+            float totalCoverage = 0f;
+            float totalWeight = 0f;
+            float weightedScore = 0f;
+            for (int index = 0; index < plan.Count; index++)
+            {
+                ItemChoice choice = plan[index];
+                float coverage = ApparelCoverage(choice);
+                float weight = Math.Max(0.25f, coverage);
+                totalCoverage += coverage;
+                totalWeight += weight;
+                weightedScore += ApparelChoiceScore(choice) * weight;
+            }
+
+            if (totalWeight <= 0f)
+            {
+                return 0f;
+            }
+
+            float average = weightedScore / totalWeight;
+            float coverageFactor = 0.35f + Mathf.Clamp01(totalCoverage) * 0.65f;
+            return Mathf.Clamp01(average * coverageFactor);
+        }
+
+        private static float ApparelChoiceScore(ItemChoice choice)
+        {
+            if (choice?.thingDef == null)
+            {
+                return 0f;
+            }
+
+            float technology = SelectionTechnologyScore(
+                EffectiveCandidateTech(choice.thingDef));
+            float quality = SelectionQualityScore(choice);
+            float protection = ApparelProtectionScore(choice);
+            float marketValue = Mathf.Clamp01(Mathf.InverseLerp(
+                25f, 2500f,
+                AbstractStatValue(choice.thingDef, StatDefOf.MarketValue, choice.stuffDef)));
+            return Mathf.Clamp01(
+                technology * 0.40f + quality * 0.25f + protection * 0.30f +
+                marketValue * 0.05f);
+        }
+
+        private static float ApparelCoverage(ItemChoice choice)
+        {
+            if (choice?.thingDef?.apparel == null)
+            {
+                return 0f;
+            }
+
+            return Mathf.Clamp01(choice.thingDef.apparel.HumanBodyCoverage);
+        }
+
+        private static float ApparelProtectionScore(ItemChoice choice)
+        {
+            if (choice?.thingDef == null)
+            {
+                return 0f;
+            }
+
+            float sharp = Math.Max(
+                0f, AbstractStatValue(
+                    choice.thingDef, StatDefOf.ArmorRating_Sharp, choice.stuffDef));
+            float blunt = Math.Max(
+                0f, AbstractStatValue(
+                    choice.thingDef, StatDefOf.ArmorRating_Blunt, choice.stuffDef));
+            float heat = Math.Max(
+                0f, AbstractStatValue(
+                    choice.thingDef, StatDefOf.ArmorRating_Heat, choice.stuffDef));
+            float weightedArmor = sharp * 0.45f + blunt * 0.40f + heat * 0.15f;
+            return Mathf.Clamp01(weightedArmor / 0.60f);
+        }
+
+        private static float SelectionQualityScore(ItemChoice choice)
+        {
+            QualityCategory quality = choice.hasQuality
+                ? choice.quality
+                : QualityCategory.Normal;
+            return Mathf.InverseLerp(
+                (float)QualityCategory.Awful,
+                (float)QualityCategory.Legendary,
+                (float)quality);
+        }
+
+        private static float SelectionTechnologyScore(TechLevel tech)
+        {
+            switch (tech)
+            {
+                case TechLevel.Animal:
+                    return 0.05f;
+                case TechLevel.Neolithic:
+                    return 0.10f;
+                case TechLevel.Medieval:
+                    return 0.25f;
+                case TechLevel.Industrial:
+                    return 0.50f;
+                case TechLevel.Spacer:
+                    return 0.72f;
+                case TechLevel.Ultra:
+                    return 0.90f;
+                case TechLevel.Archotech:
+                    return 1f;
+                default:
+                    return 0.50f;
+            }
+        }
+
+        private static float AbstractStatValue(
+            ThingDef def, StatDef stat, ThingDef stuff)
+        {
+            if (def == null || stat == null)
+            {
+                return 0f;
+            }
+
+            try
+            {
+                float value = def.GetStatValueAbstract(stat, stuff);
+                return IsFinite(value) ? value : 0f;
+            }
+            catch (Exception)
+            {
+                // A malformed modded stat must make this candidate weak, not abort every valid
+                // apparel alternative for the pawn.
+                return 0f;
+            }
         }
 
         private static int CompareTech(ItemChoice left, ItemChoice right)

@@ -492,7 +492,7 @@ namespace Intercolony
         private static void CheckEquipmentTierRules(Results r, Map map)
         {
             const string eliteSupplyLabel =
-                "a pre-Spacer or poor settlement can never supply Elite";
+                "a pre-industrial or poor settlement can never supply Elite";
             const string wildcardSupplyLabel =
                 "Any and None are supplyable by every settlement";
             const string deterministicLabel = "the capability gate is deterministic";
@@ -546,11 +546,13 @@ namespace Intercolony
                 }
             }
 
-            // The union is deliberate: the assertion must exercise both halves of Elite's hard
-            // conjunction independently. A pre-Spacer but wealthy profile and a Spacer-or-better
-            // but poor profile can both have a high enough capability score if either gate leaks
-            // into the score instead of remaining a gate.
+            // The union is deliberate: the assertion must exercise each hard source gate
+            // independently. A pre-industrial but wealthy profile and an
+            // industrial-or-better but poor profile can both have a high enough capability score
+            // if either gate leaks into the score instead of remaining a gate.
             List<SettlementEconomicProfile> allProfiles =
+                new List<SettlementEconomicProfile>();
+            List<SettlementEconomicProfile> incapableEliteProfiles =
                 new List<SettlementEconomicProfile>();
             List<SettlementEconomicProfile> preSpacerOrPoorProfiles =
                 new List<SettlementEconomicProfile>();
@@ -567,6 +569,12 @@ namespace Intercolony
                             archetype = archetype
                         };
                         allProfiles.Add(profile);
+                        if (techTier < TechLevel.Industrial ||
+                            wealthTier < IntercolonyWealthTier.Comfortable)
+                        {
+                            incapableEliteProfiles.Add(profile);
+                        }
+
                         if (techTier < TechLevel.Spacer ||
                             wealthTier < IntercolonyWealthTier.Comfortable)
                         {
@@ -578,9 +586,11 @@ namespace Intercolony
 
             int supplyCombinationCount =
                 preSpacerOrPoorProfiles.Count * clauses.Count;
+            int incapableEliteCombinationCount =
+                incapableEliteProfiles.Count * clauses.Count;
             int eliteSupplyableCount = 0;
             string firstEliteSupplyable = null;
-            foreach (SettlementEconomicProfile profile in preSpacerOrPoorProfiles)
+            foreach (SettlementEconomicProfile profile in incapableEliteProfiles)
             {
                 foreach (CombatClause clause in clauses)
                 {
@@ -600,8 +610,8 @@ namespace Intercolony
             }
 
             r.Check(eliteSupplyableCount == 0, eliteSupplyLabel,
-                $"examined {supplyCombinationCount} combinations; observed Elite=true " +
-                $"{eliteSupplyableCount}; first true " +
+                $"OBSERVED Elite=true {eliteSupplyableCount}; EXPECTED Elite=true 0; " +
+                $"examined {incapableEliteCombinationCount} combinations; first true " +
                 $"{firstEliteSupplyable ?? "none"}");
 
             int anyFalseCount = 0;
