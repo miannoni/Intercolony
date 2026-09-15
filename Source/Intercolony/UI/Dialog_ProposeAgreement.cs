@@ -23,6 +23,7 @@ namespace Intercolony
         private const float RowHorizontalPadding = 4f;
         private const float RowVerticalPadding = 2f;
         private const float ControlRowHeight = 28f;
+        private const float MaterialRowHeight = ControlRowHeight + 4f;
         private const float SliderHeight = 20f;
         private const float TermsTopOffset = 316f;
         private const float ButtonWidth = 110f;
@@ -36,6 +37,8 @@ namespace Intercolony
         private const int DefaultCadenceDays = 15;
         private const int DefaultTotalDeliveries = 4;
         private const FulfillmentMode DefaultFulfillment = FulfillmentMode.BuyerPickup;
+        private const string MaterialLabel = "Material:";
+        private const string AnyMaterialLabel = "Any material";
 
         private readonly IntercolonyWorldComponent state;
         private readonly List<Settlement> qualifyingSettlements;
@@ -52,6 +55,8 @@ namespace Intercolony
         private readonly Dictionary<int, ContractTerms> selectedItemSettlementTerms =
             new Dictionary<int, ContractTerms>();
         private ThingDef selectedItem;
+        // Null preserves the generic-product semantics selected by default.
+        private ThingDef selectedStuff;
         private int quantity = ContractService.MinimumQuantityPerCycle;
         private string quantityBuffer = ContractService.MinimumQuantityPerCycle.ToString();
         private int cadenceDays = DefaultCadenceDays;
@@ -68,7 +73,7 @@ namespace Intercolony
             this.state = state;
             qualifyingItemsBySettlement = new Dictionary<int, List<ThingDef>>();
             qualifyingSettlements = FindQualifyingSettlements(
-                state, qualifyingItemsBySettlement);
+                state, qualifyingItemsBySettlement, selectedStuff);
             qualifyingSettlementsByItem = InvertQualifyingItemsBySettlement(
                 qualifyingSettlements, qualifyingItemsBySettlement);
             qualifyingItems = FindQualifyingItems(qualifyingSettlementsByItem);
@@ -125,9 +130,10 @@ namespace Intercolony
             DrawQuantityAndPrice(new Rect(
                 controlsX, y, controlsWidth, contentBottom - y));
 
+            float termsTopOffset = TermsTopOffset + MaterialSelectorHeight;
             DrawTermsSummary(new Rect(
-                controlsX, y + TermsTopOffset, controlsWidth,
-                contentBottom - y - TermsTopOffset));
+                controlsX, y + termsTopOffset, controlsWidth,
+                contentBottom - y - termsTopOffset));
 
             Rect cancelRect = new Rect(
                 inRect.width - ButtonWidth, inRect.height - ButtonHeight,
@@ -240,6 +246,23 @@ namespace Intercolony
         private void DrawQuantityAndPrice(Rect rect)
         {
             float y = rect.y;
+            if (ShouldShowMaterialSelector)
+            {
+                Widgets.Label(new Rect(rect.x, y, rect.width - 78f, ControlRowHeight),
+                    MaterialLabel);
+                string materialValueLabel = selectedStuff == null
+                    ? AnyMaterialLabel
+                    : selectedStuff.LabelCap.ToString();
+                if (Widgets.ButtonText(
+                        new Rect(rect.xMax - 72f, y, 72f, ControlRowHeight),
+                        materialValueLabel))
+                {
+                    OpenMaterialMenu();
+                }
+
+                y += MaterialRowHeight;
+            }
+
             Widgets.Label(new Rect(rect.x, y, rect.width - 78f, ControlRowHeight),
                 "Quantity per delivery:");
 
@@ -590,7 +613,7 @@ namespace Intercolony
         {
             ContractProposalResult result = ContractService.ProposeContract(
                 state, selectedSettlement, selectedItem, quantity, cadenceDays,
-                totalDeliveries, selectedUnitPrice, fulfillment);
+                totalDeliveries, selectedUnitPrice, fulfillment, stuffDef: selectedStuff);
             if (!result.Success)
             {
                 Messages.Message(
@@ -638,6 +661,17 @@ namespace Intercolony
             ApplyCachedTermsForSelectedSettlement();
         }
 
+        private void SelectStuff(ThingDef stuff)
+        {
+            if (selectedStuff == stuff)
+            {
+                return;
+            }
+
+            selectedStuff = stuff;
+            RefreshTerms(resetPrice: true);
+        }
+
         private void SelectItem(ThingDef thingDef)
         {
             if (selectedItem == thingDef)
@@ -646,6 +680,12 @@ namespace Intercolony
             }
 
             selectedItem = thingDef;
+            if (selectedStuff != null &&
+                !selectedStuff.stuffProps.CanMake(selectedItem))
+            {
+                selectedStuff = null;
+            }
+
             selectedSettlement = null;
             ClearSelectedTerms();
             settlementScroll = Vector2.zero;
@@ -690,7 +730,8 @@ namespace Intercolony
             {
                 ContractTerms preview = ContractService.PreviewContractTerms(
                     state, settlement, selectedItem, quantity, cadenceDays,
-                    totalDeliveries, agreedUnitPrice: null, fulfillment: fulfillment);
+                    totalDeliveries, agreedUnitPrice: null, fulfillment: fulfillment,
+                    stuffDef: selectedStuff);
                 if (preview == null)
                 {
                     continue;
@@ -726,7 +767,7 @@ namespace Intercolony
             selectedUnitPrice = selectedTerms.referenceUnitPrice;
             selectedAcceptancePreview = ContractService.PreviewAcceptance(
                 state, selectedSettlement, selectedItem, quantity, cadenceDays,
-                totalDeliveries, selectedUnitPrice, fulfillment);
+                totalDeliveries, selectedUnitPrice, fulfillment, stuffDef: selectedStuff);
         }
 
         private void ClearSelectedTerms()
@@ -754,15 +795,87 @@ namespace Intercolony
             selectedUnitPrice = selectedTerms.unitPrice;
             selectedAcceptancePreview = ContractService.PreviewAcceptance(
                 state, selectedSettlement, selectedItem, quantity, cadenceDays,
-                totalDeliveries, selectedTerms.unitPrice, fulfillment);
+                totalDeliveries, selectedTerms.unitPrice, fulfillment,
+                stuffDef: selectedStuff);
         }
 
         private ContractTerms PreviewTerms(float? agreedUnitPrice = null)
         {
             return ContractService.PreviewContractTerms(
                 state, selectedSettlement, selectedItem, quantity, cadenceDays,
-                totalDeliveries, agreedUnitPrice, fulfillment);
+                totalDeliveries, agreedUnitPrice, fulfillment, stuffDef: selectedStuff);
         }
+
+        private void OpenMaterialMenu()
+        {
+            if (!ShouldShowMaterialSelector)
+            {
+                return;
+            }
+
+            List<FloatMenuOption> menuOptions = new List<FloatMenuOption>
+            {
+                new FloatMenuOption(AnyMaterialLabel, () => SelectStuff(null))
+            };
+            List<ThingDef> options = AvailableStuffOptions();
+            for (int i = 0; i < options.Count; i++)
+            {
+                ThingDef stuff = options[i];
+                menuOptions.Add(new FloatMenuOption(
+                    stuff.LabelCap.ToString(),
+                    () => SelectStuff(stuff)));
+            }
+
+            Find.WindowStack.Add(new FloatMenu(menuOptions));
+        }
+
+        private List<ThingDef> AvailableStuffOptions()
+        {
+            List<ThingDef> options = new List<ThingDef>();
+            if (!ShouldShowMaterialSelector)
+            {
+                return options;
+            }
+
+            List<ThingDef> allDefs = DefDatabase<ThingDef>.AllDefsListForReading;
+            for (int i = 0; i < allDefs.Count; i++)
+            {
+                ThingDef def = allDefs[i];
+                if (def != null && def.IsStuff && def.stuffProps.CanMake(selectedItem))
+                {
+                    options.Add(def);
+                }
+            }
+
+            options.Sort(CompareStuffDefsByLabel);
+            return options;
+        }
+
+        private static int CompareStuffDefsByLabel(ThingDef left, ThingDef right)
+        {
+            if (left == null)
+            {
+                return right == null ? 0 : -1;
+            }
+
+            if (right == null)
+            {
+                return 1;
+            }
+
+            int labelComparison = string.CompareOrdinal(
+                left.LabelCap.ToString(), right.LabelCap.ToString());
+            // DefName breaks translated-label ties so the menu order stays deterministic.
+            return labelComparison != 0
+                ? labelComparison
+                : string.CompareOrdinal(left.defName, right.defName);
+        }
+
+        private bool ShouldShowMaterialSelector =>
+            selectedItem != null && selectedItem.MadeFromStuff;
+
+        private float MaterialSelectorHeight =>
+            ShouldShowMaterialSelector ? MaterialRowHeight : 0f;
 
         private void ClampTermLength()
         {
@@ -843,7 +956,8 @@ namespace Intercolony
 
         private static List<Settlement> FindQualifyingSettlements(
             IntercolonyWorldComponent state,
-            Dictionary<int, List<ThingDef>> qualifyingItemsBySettlement)
+            Dictionary<int, List<ThingDef>> qualifyingItemsBySettlement,
+            ThingDef selectedStuff)
         {
             List<Settlement> result = new List<Settlement>();
             List<Settlement> settlements = Find.WorldObjects?.Settlements;
@@ -870,7 +984,8 @@ namespace Intercolony
                             ContractService.MinimumQuantityPerCycle,
                             DefaultCadenceDays, DefaultTotalDeliveries,
                             agreedUnitPrice: null,
-                            fulfillment: DefaultFulfillment) != null)
+                            fulfillment: DefaultFulfillment,
+                            stuffDef: selectedStuff) != null)
                     {
                         qualifyingItems.Add(thingDef);
                     }
