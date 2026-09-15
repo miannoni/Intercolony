@@ -70,11 +70,16 @@ namespace Intercolony
                 return null;
             }
 
-            if (emergencyDispatch && !LaborCandidateService.CanReachEmergency(candidate))
+            EmergencyArrivalQuote emergencyArrivalQuote = default(EmergencyArrivalQuote);
+            if (emergencyDispatch)
             {
-                failReason = $"The source settlement cannot get {candidate.Name} here quickly " +
-                    "enough for emergency dispatch.";
-                return null;
+                emergencyArrivalQuote = LaborCandidateService.QuoteEmergencyArrival(candidate);
+                if (!emergencyArrivalQuote.available)
+                {
+                    failReason = $"The source settlement cannot get {candidate.Name} here quickly " +
+                        "enough for emergency dispatch.";
+                    return null;
+                }
             }
 
             if (paymentMap == null)
@@ -197,9 +202,12 @@ namespace Intercolony
             // string "no skills" into every completed record.
             string skills = candidate.SkillSummary();
 
-            bool arrivalByDropPod = emergencyDispatch &&
-                LaborCandidateService.IsEmergencyDropPodArrival(candidate);
-            int arrivalTicks = LaborCandidateService.ArrivalTicksFor(candidate, emergencyDispatch);
+            int arrivalTicks = emergencyDispatch
+                ? emergencyArrivalQuote.arrivalTicks
+                : LaborCandidateService.ArrivalTicksFor(candidate, false);
+            EmploymentArrivalTransport contractArrivalTransport = emergencyDispatch
+                ? emergencyArrivalQuote.transport
+                : EmploymentArrivalTransport.Conventional;
             Pawn worker = candidate.Release();
             LaborCandidateService.Take(candidate);
 
@@ -226,9 +234,7 @@ namespace Intercolony
                 // Emergency mode selects the existing arrival deadline and the transport recorded
                 // on the contract. The flag itself is not retained as a separate save-state field.
                 arrivalTick = GenTicks.TicksGame + arrivalTicks,
-                arrivalTransport = arrivalByDropPod
-                    ? EmploymentArrivalTransport.DropPod
-                    : EmploymentArrivalTransport.Conventional,
+                arrivalTransport = contractArrivalTransport,
                 status = EmploymentStatus.Travelling
             };
 

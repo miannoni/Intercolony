@@ -39,6 +39,10 @@ namespace Intercolony
         // listing exposes its already-rounded daily wage. The independent integer oracle is
         // therefore allowed the two-silver maximum induced by that two-observation rounding gap.
         private const int EmergencyWageRoundingTolerance = 2;
+        // The live fixture may not contain a conventional source at both sides of the route
+        // cutoff, so the quote checks reuse a real candidate identity at these test distances.
+        private const float CloseConventionalFixtureDistanceTiles = 10f;
+        private const float DistantConventionalFixtureDistanceTiles = 24f;
         private class Results
         {
             public readonly StringBuilder sb = new StringBuilder();
@@ -128,11 +132,18 @@ namespace Intercolony
                     new List<LaborCandidate>(f24OrdinaryPool);
                 f24EmergencyPool.RemoveAll(candidate =>
                     !LaborCandidateService.CanReachEmergency(candidate));
+                Dictionary<LaborCandidate, EmergencyArrivalQuote> f24EmergencyQuoteSnapshot =
+                    new Dictionary<LaborCandidate, EmergencyArrivalQuote>();
+                foreach (LaborCandidate f24Candidate in f24OrdinaryPool)
+                {
+                    f24EmergencyQuoteSnapshot[f24Candidate] =
+                        LaborCandidateService.QuoteEmergencyArrival(f24Candidate);
+                }
 
                 // --- Hire ---
                 LaborCandidate candidate = pool[0];
                 LaborCandidate podEmergencyCandidate = FindEmergencyFixtureCandidate(
-                    f24EmergencyPool, state, requireDropPod: true);
+                    f24EmergencyPool, requireDropPod: true);
                 if (ReferenceEquals(candidate, podEmergencyCandidate) && pool.Count > 1)
                 {
                     // Leave a pod-capable emergency fixture available for U3 when the ordinary
@@ -261,7 +272,7 @@ namespace Intercolony
                 // both features are commitments made on this same real direct-hire path.
                 CheckEmergencyDispatch(
                     r, state, map, fixturePawns, contract,
-                    f24OrdinaryPool, f24EmergencyPool);
+                    f24OrdinaryPool, f24EmergencyPool, f24EmergencyQuoteSnapshot);
 
                 long expectedWithdrawal = (long)contract.paidSilver + contract.equipmentBond;
                 r.Check(silverBefore - silverAfter == expectedWithdrawal,
@@ -1383,7 +1394,7 @@ namespace Intercolony
         /// <summary>
         /// F24's emergency mode is deliberately a direct-hire slice: the ordinary listing is
         /// filtered, the same candidate is priced with an independent premium, and its arrival
-        /// route follows the source settlement's capability. This stays next to F23's bond
+        /// route follows the authoritative emergency quote. This stays next to F23's bond
         /// assertion because both checks drive the real employment transaction rather than a
         /// private copy of it.
         /// </summary>
@@ -1391,7 +1402,8 @@ namespace Intercolony
             Results r, IntercolonyWorldComponent state, Map map, List<Pawn> fixturePawns,
             EmploymentContract ordinaryContract,
             List<LaborCandidate> ordinaryPoolSnapshot,
-            List<LaborCandidate> emergencyPoolSnapshot)
+            List<LaborCandidate> emergencyPoolSnapshot,
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> emergencyQuoteSnapshot)
         {
             int savedSilver = PurchaseOrderService.CountColonySilver(map);
             int savedEmployments = state.Employments.Count;
@@ -1439,9 +1451,9 @@ namespace Intercolony
                 // hire has already released one pawn by the time this check runs.
                 foreach (LaborCandidate candidateInSnapshot in ordinaryPoolForU1)
                 {
-                    bool dropPodCapable;
+                    EmergencyArrivalQuote expectedQuote;
                     bool expectedEligible = ExpectedEmergencyEligibility(
-                        state, candidateInSnapshot, out dropPodCapable);
+                        candidateInSnapshot, emergencyQuoteSnapshot, out expectedQuote);
                     bool actualEligible = emergencyPoolForU1.Contains(candidateInSnapshot);
                     if (expectedEligible)
                     {
@@ -1452,7 +1464,7 @@ namespace Intercolony
                     {
                         eligibilityDisagreements.Add(
                             EmergencyEligibilityDetail(
-                                candidateInSnapshot, dropPodCapable, expectedEligible, actualEligible));
+                                candidateInSnapshot, expectedQuote, actualEligible));
                     }
                 }
 
@@ -1460,7 +1472,7 @@ namespace Intercolony
                     emergencyPoolForU1.Count == expectedEmergencyCount &&
                     eligibilityDisagreements.Count == 0;
                 r.Check(emergencyEligibilityMatches,
-                    "U1 emergency eligibility follows capability and travel time, not pool rank",
+                    "U1 emergency eligibility follows the authoritative route quote",
                     $"ordinary {ordinaryPoolForU1.Count}, expected eligible {expectedEmergencyCount}, " +
                     $"actual emergency {emergencyPoolForU1.Count}, disagreements " +
                     $"[{(eligibilityDisagreements.Count == 0
@@ -1468,15 +1480,17 @@ namespace Intercolony
                         : string.Join("; ", eligibilityDisagreements))}]");
 
                 LaborCandidate podArrivalCandidate = FindEmergencyFixtureCandidate(
-                    emergencyPool, state, requireDropPod: true);
+                    emergencyPool, requireDropPod: true);
                 LaborCandidate conventionalArrivalCandidate = FindConventionalArrivalFixture(
-                    ordinaryPoolForU1, state);
+                    ordinaryPool, state);
+                LaborCandidate distantConventionalArrivalCandidate =
+                    FindDistantConventionalArrivalFixture(ordinaryPool, state);
                 CheckEmergencyArrivalTicks(
-                    r, ordinaryPoolForU1, state, podArrivalCandidate,
-                    conventionalArrivalCandidate);
+                    r, ordinaryPoolForU1, podArrivalCandidate,
+                    conventionalArrivalCandidate, distantConventionalArrivalCandidate);
 
                 LaborCandidate emergencyCandidate = podArrivalCandidate ??
-                    FindEmergencyFixtureCandidate(emergencyPool, state, requireDropPod: false);
+                    FindEmergencyFixtureCandidate(emergencyPool, requireDropPod: false);
 
                 if (emergencyCandidate == null)
                 {
@@ -1693,7 +1707,7 @@ namespace Intercolony
         }
 
         private static LaborCandidate FindEmergencyFixtureCandidate(
-            List<LaborCandidate> emergencyPool, IntercolonyWorldComponent state,
+            List<LaborCandidate> emergencyPool,
             bool requireDropPod)
         {
             if (emergencyPool == null)
@@ -1703,8 +1717,15 @@ namespace Intercolony
 
             foreach (LaborCandidate candidate in emergencyPool)
             {
-                if (candidate?.pawn != null &&
-                    (!requireDropPod || IsDropPodCapable(state, candidate)))
+                if (candidate?.pawn == null)
+                {
+                    continue;
+                }
+
+                EmergencyArrivalQuote quote =
+                    LaborCandidateService.QuoteEmergencyArrival(candidate);
+                if (quote.available &&
+                    (!requireDropPod || quote.transport == EmploymentArrivalTransport.DropPod))
                 {
                     return candidate;
                 }
@@ -1723,27 +1744,85 @@ namespace Intercolony
 
             foreach (LaborCandidate candidate in ordinaryPool)
             {
-                // The supplied world has no conventional nearby listing. A multi-day
-                // conventional-source candidate still exercises ArrivalTicksFor's emergency
-                // fallback and makes both compression and a whole-day floor observable.
-                if (candidate?.pawn != null && candidate.travelDays > 1 &&
-                    !IsDropPodCapable(state, candidate))
+                if (candidate?.pawn == null || IsDropPodCapable(state, candidate))
                 {
-                    return candidate;
+                    continue;
+                }
+
+                // Use a real conventional candidate identity at a known close distance because
+                // the representative world may not happen to list a nearby source.
+                LaborCandidate closeCandidate = CandidateAtDistance(
+                    candidate, CloseConventionalFixtureDistanceTiles);
+                EmergencyArrivalQuote quote =
+                    LaborCandidateService.QuoteEmergencyArrival(closeCandidate);
+                if (quote.available && quote.transport == EmploymentArrivalTransport.Conventional)
+                {
+                    return closeCandidate;
                 }
             }
 
             return null;
         }
 
-        private static bool ExpectedEmergencyEligibility(
-            IntercolonyWorldComponent state, LaborCandidate candidate,
-            out bool dropPodCapable)
+        private static LaborCandidate FindDistantConventionalArrivalFixture(
+            List<LaborCandidate> ordinaryPool, IntercolonyWorldComponent state)
         {
-            dropPodCapable = IsDropPodCapable(state, candidate);
-            return candidate != null && candidate.travelDays >= 0 &&
-                (candidate.travelDays <= LaborCandidateService.EmergencyConventionalMaxDays ||
-                    dropPodCapable);
+            if (ordinaryPool == null)
+            {
+                return null;
+            }
+
+            foreach (LaborCandidate candidate in ordinaryPool)
+            {
+                if (candidate?.pawn == null || IsDropPodCapable(state, candidate))
+                {
+                    continue;
+                }
+
+                // Keep the same real source and pawn as the close fixture, but put it clearly
+                // beyond the named production cutoff to prove it is unavailable, not slow.
+                LaborCandidate distantCandidate = CandidateAtDistance(
+                    candidate, DistantConventionalFixtureDistanceTiles);
+                EmergencyArrivalQuote quote =
+                    LaborCandidateService.QuoteEmergencyArrival(distantCandidate);
+                if (!quote.available)
+                {
+                    return distantCandidate;
+                }
+            }
+
+            return null;
+        }
+
+        private static LaborCandidate CandidateAtDistance(
+            LaborCandidate source, float distanceTiles)
+        {
+            return new LaborCandidate
+            {
+                pawn = source.pawn,
+                settlementId = source.settlementId,
+                settlementName = source.settlementName,
+                factionName = source.factionName,
+                faction = source.faction,
+                distanceTiles = distanceTiles,
+                dailyWage = source.dailyWage,
+                minTermDays = source.minTermDays,
+                travelDays = source.travelDays
+            };
+        }
+
+        private static bool ExpectedEmergencyEligibility(
+            LaborCandidate candidate,
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> quoteSnapshot,
+            out EmergencyArrivalQuote quote)
+        {
+            if (quoteSnapshot != null && quoteSnapshot.TryGetValue(candidate, out quote))
+            {
+                return quote.available;
+            }
+
+            quote = LaborCandidateService.QuoteEmergencyArrival(candidate);
+            return quote.available;
         }
 
         private static bool IsDropPodCapable(
@@ -1760,24 +1839,25 @@ namespace Intercolony
                 return false;
             }
 
-            SettlementEconomicProfile profile = state.GetProfile(source);
-            return profile != null &&
-                profile.rapidLogisticsCapability == SettlementRapidLogisticsCapability.DropPodsAvailable;
+            EmergencyArrivalQuote quote = LaborCandidateService.QuoteEmergencyArrival(candidate);
+            return quote.available && quote.transport == EmploymentArrivalTransport.DropPod;
         }
 
         private static string EmergencyEligibilityDetail(
-            LaborCandidate candidate, bool dropPodCapable, bool expected, bool actual)
+            LaborCandidate candidate, EmergencyArrivalQuote quote, bool actual)
         {
             string name = candidate == null ? "null" : candidate.Name;
-            return $"{name}={candidate?.travelDays ?? -1}d, drop-pod capable " +
-                $"{dropPodCapable}, expected {expected}, actual {actual}";
+            return $"{name}={candidate?.travelDays ?? -1}d, quote available " +
+                $"{quote.available}, route {quote.transport}, method {quote.methodLabel}, " +
+                $"ETA {LaborCandidateService.ArrivalDurationLabel(quote.arrivalTicks)}, actual " +
+                $"{actual}";
         }
 
         private static void ReportTravelDayDistribution(
             Results r, List<LaborCandidate> candidates)
         {
             List<int> travelDays = new List<int>();
-            int atOrUnderEmergencyThreshold = 0;
+            int emergencyEligibleCount = 0;
             if (candidates != null)
             {
                 foreach (LaborCandidate candidate in candidates)
@@ -1788,9 +1868,11 @@ namespace Intercolony
                     }
 
                     travelDays.Add(candidate.travelDays);
-                    if (candidate.travelDays <= LaborCandidateService.EmergencyConventionalMaxDays)
+                    EmergencyArrivalQuote quote =
+                        LaborCandidateService.QuoteEmergencyArrival(candidate);
+                    if (quote.available)
                     {
-                        atOrUnderEmergencyThreshold++;
+                        emergencyEligibleCount++;
                     }
                 }
             }
@@ -1798,7 +1880,7 @@ namespace Intercolony
             if (travelDays.Count == 0)
             {
                 r.Info("direct-hire travel-day distribution: min n/a, median n/a, max n/a; " +
-                    $"at or under {LaborCandidateService.EmergencyConventionalMaxDays}d: 0/0 candidates");
+                    "emergency eligible: 0/0 candidates");
                 return;
             }
 
@@ -1809,13 +1891,13 @@ namespace Intercolony
                     travelDays[travelDays.Count / 2]) / 2f;
             r.Info($"direct-hire travel-day distribution: min {travelDays[0]}d, " +
                 $"median {median:0.##}d, max {travelDays[travelDays.Count - 1]}d; " +
-                $"at or under {LaborCandidateService.EmergencyConventionalMaxDays}d: " +
-                $"{atOrUnderEmergencyThreshold}/{travelDays.Count} candidates");
+                $"emergency eligible: {emergencyEligibleCount}/{travelDays.Count} candidates");
         }
 
         private static void CheckEmergencyArrivalTicks(
-            Results r, List<LaborCandidate> candidatePool, IntercolonyWorldComponent state,
-            LaborCandidate podCandidate, LaborCandidate conventionalCandidate)
+            Results r, List<LaborCandidate> candidatePool,
+            LaborCandidate podCandidate, LaborCandidate conventionalCandidate,
+            LaborCandidate distantConventionalCandidate)
         {
             int examinedCandidates = candidatePool?.Count ?? 0;
             int podCapableCandidates = 0;
@@ -1823,51 +1905,74 @@ namespace Intercolony
             {
                 foreach (LaborCandidate candidate in candidatePool)
                 {
-                    if (IsDropPodCapable(state, candidate))
+                    EmergencyArrivalQuote quote =
+                        LaborCandidateService.QuoteEmergencyArrival(candidate);
+                    if (quote.available && quote.transport == EmploymentArrivalTransport.DropPod)
                     {
                         podCapableCandidates++;
                     }
                 }
             }
 
-            int expectedConventionalArrivalTicks = conventionalCandidate == null
-                ? -1
-                : conventionalCandidate.travelDays * GenDate.TicksPerDay;
+            EmergencyArrivalQuote conventionalQuote = conventionalCandidate == null
+                ? new EmergencyArrivalQuote()
+                : LaborCandidateService.QuoteEmergencyArrival(conventionalCandidate);
             int actualConventionalArrivalTicks = conventionalCandidate == null
                 ? -1
                 : LaborCandidateService.ArrivalTicksFor(conventionalCandidate, true);
             bool conventionalArrivalMatches = conventionalCandidate != null &&
-                actualConventionalArrivalTicks == expectedConventionalArrivalTicks &&
-                actualConventionalArrivalTicks >= GenDate.TicksPerDay;
+                conventionalQuote.available &&
+                conventionalQuote.transport == EmploymentArrivalTransport.Conventional &&
+                conventionalQuote.methodLabel == "Emergency caravan" &&
+                actualConventionalArrivalTicks == conventionalQuote.arrivalTicks &&
+                actualConventionalArrivalTicks >= 5 * GenDate.TicksPerHour &&
+                actualConventionalArrivalTicks <= 9 * GenDate.TicksPerHour;
             r.Check(conventionalArrivalMatches,
-                "U3 conventional emergency does not arrive in hours",
-                $"{conventionalCandidate?.Name ?? "missing"}: expected " +
-                $"{expectedConventionalArrivalTicks} ticks from " +
-                $"{conventionalCandidate?.travelDays ?? -1}d ordinary travel, actual " +
-                $"{actualConventionalArrivalTicks}");
+                "U3 conventional emergency quotes 5-9 hours",
+                $"{conventionalCandidate?.Name ?? "missing"}: quote available " +
+                $"{conventionalQuote.available}, route {conventionalQuote.transport}, " +
+                $"method {conventionalQuote.methodLabel}, expected " +
+                $"{conventionalQuote.arrivalTicks} ticks, actual {actualConventionalArrivalTicks}");
+
+            EmergencyArrivalQuote distantQuote = distantConventionalCandidate == null
+                ? new EmergencyArrivalQuote()
+                : LaborCandidateService.QuoteEmergencyArrival(distantConventionalCandidate);
+            int distantArrivalTicks = distantConventionalCandidate == null
+                ? -1
+                : LaborCandidateService.ArrivalTicksFor(distantConventionalCandidate, true);
+            bool distantConventionalUnavailable = distantConventionalCandidate != null &&
+                !distantQuote.available &&
+                !LaborCandidateService.CanReachEmergency(distantConventionalCandidate) &&
+                distantArrivalTicks == distantQuote.arrivalTicks &&
+                distantArrivalTicks == 0;
+            r.Check(distantConventionalUnavailable,
+                "U3 distant conventional emergency is unavailable",
+                $"{distantConventionalCandidate?.Name ?? "missing"}: quote available " +
+                $"{distantQuote.available}, ETA ticks {distantArrivalTicks}");
 
             if (podCapableCandidates == 0)
             {
-                r.Skip("U3 emergency pod arrives in hours",
+                r.Skip("U3 emergency pod quotes 1-4 hours",
                     $"no pod-capable source settlement; examined {examinedCandidates} " +
                     $"candidate(s), {podCapableCandidates} pod-capable");
                 return;
             }
 
-            int expectedPodArrivalTicks = Mathf.RoundToInt(
-                LaborCandidateService.EmergencyPodArrivalHours * GenDate.TicksPerHour);
+            EmergencyArrivalQuote podQuote = LaborCandidateService.QuoteEmergencyArrival(podCandidate);
             int actualPodArrivalTicks = podCandidate == null
                 ? -1
                 : LaborCandidateService.ArrivalTicksFor(podCandidate, true);
             bool podArrivalInHours = podCandidate != null &&
-                actualPodArrivalTicks == expectedPodArrivalTicks &&
-                actualPodArrivalTicks > 0 &&
-                actualPodArrivalTicks < GenDate.TicksPerDay;
+                podQuote.available &&
+                podQuote.transport == EmploymentArrivalTransport.DropPod &&
+                podQuote.methodLabel == "Drop pod" &&
+                actualPodArrivalTicks == podQuote.arrivalTicks &&
+                actualPodArrivalTicks >= GenDate.TicksPerHour &&
+                actualPodArrivalTicks <= 4 * GenDate.TicksPerHour;
             r.Check(podArrivalInHours,
-                "U3 emergency pod arrives in hours",
-                $"{podCandidate?.Name ?? "missing"}: expected {expectedPodArrivalTicks} ticks " +
-                $"from {LaborCandidateService.EmergencyPodArrivalHours:0.###}h, actual " +
-                $"{actualPodArrivalTicks}; examined {examinedCandidates} candidate(s), " +
+                "U3 emergency pod quotes 1-4 hours",
+                $"{podCandidate?.Name ?? "missing"}: expected {podQuote.arrivalTicks} ticks " +
+                $"from {podQuote.methodLabel}, actual {actualPodArrivalTicks}; " +
                 $"{podCapableCandidates} pod-capable");
         }
 

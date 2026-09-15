@@ -7,6 +7,18 @@ using Verse;
 namespace Intercolony
 {
     /// <summary>
+    /// The complete emergency-arrival decision shown to the player and stored by a hire.
+    /// ArrivalTicks is a duration, not an absolute game tick.
+    /// </summary>
+    public struct EmergencyArrivalQuote
+    {
+        public bool available;
+        public EmploymentArrivalTransport transport;
+        public int arrivalTicks;
+        public string methodLabel;
+    }
+
+    /// <summary>
     /// Generates the pool of hireable workers (DESIGN.md §35.1).
     ///
     /// The pool is session state, not save state — see <see cref="LaborCandidate"/> for why.
@@ -24,18 +36,17 @@ namespace Intercolony
         /// </summary>
         public const float EmergencyDispatchWageMultiplier = 4f;
 
-        /// <summary>
-        /// An ordinary caravan can qualify for emergency dispatch when its existing travel
-        /// estimate is no more than this many in-game days. The estimate is not compressed again:
-        /// the short caravan trip is already the capability being paid for.
-        /// </summary>
-        public const int EmergencyConventionalMaxDays = 2;
+        private const int EmergencyPodMinArrivalHours = 1;
+        private const int EmergencyPodMaxArrivalHours = 4;
+        private const int EmergencyConventionalMinArrivalHours = 5;
+        private const int EmergencyConventionalMaxArrivalHours = 9;
 
         /// <summary>
-        /// Starting emergency drop-pod arrival time. It is kept in hours because a pod arrival
-        /// must not be rounded up to the existing whole-day caravan floor.
+        /// One ordinary caravan day's geography is the furthest a source can plausibly compress
+        /// into a rushed same-day ground arrival. This is distance-based deliberately, so
+        /// emergency eligibility does not reuse a whole-day ordinary travel threshold.
         /// </summary>
-        public const float EmergencyPodArrivalHours = 4f;
+        private const float EmergencyConventionalMaxDistanceTiles = 12f;
 
         /// <summary>
         /// What a labor cost of 100% means, relative to the rate this mod shipped with. The
@@ -765,17 +776,7 @@ namespace Intercolony
         /// </summary>
         public static bool CanReachEmergency(LaborCandidate candidate)
         {
-            if (!IsEmergencyCandidate(candidate))
-            {
-                return false;
-            }
-
-            if (candidate.travelDays <= EmergencyConventionalMaxDays)
-            {
-                return true;
-            }
-
-            return IsEmergencyDropPodArrival(candidate);
+            return QuoteEmergencyArrival(candidate).available;
         }
 
         private static bool IsEmergencyCandidate(LaborCandidate candidate)
@@ -789,14 +790,8 @@ namespace Intercolony
         /// </summary>
         public static bool IsEmergencyDropPodArrival(LaborCandidate candidate)
         {
-            if (!IsEmergencyCandidate(candidate))
-            {
-                return false;
-            }
-
-            SettlementEconomicProfile profile = SourceSettlementProfile(candidate);
-            return profile != null &&
-                   profile.rapidLogisticsCapability == SettlementRapidLogisticsCapability.DropPodsAvailable;
+            EmergencyArrivalQuote quote = QuoteEmergencyArrival(candidate);
+            return quote.available && quote.transport == EmploymentArrivalTransport.DropPod;
         }
 
         /// <summary>
@@ -818,34 +813,105 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Arrival ticks for the existing employment arrival deadline. A capable source
-        /// settlement uses the four-hour emergency pod estimate; a conventional emergency route
-        /// and an ordinary hire retain the candidate's ordinary travel estimate exactly.
+        /// Produces the one route-specific emergency quote used by eligibility, UI projections and
+        /// the employment contract. Keeping the route and duration together prevents a paid hire
+        /// from recording a different transport or ordinary multi-day deadline.
+        /// </summary>
+        public static EmergencyArrivalQuote QuoteEmergencyArrival(LaborCandidate candidate)
+        {
+            if (!IsEmergencyCandidate(candidate))
+            {
+                return UnavailableEmergencyArrivalQuote();
+            }
+
+            SettlementEconomicProfile profile = SourceSettlementProfile(candidate);
+            if (profile != null &&
+                profile.rapidLogisticsCapability == SettlementRapidLogisticsCapability.DropPodsAvailable)
+            {
+                int arrivalHours = DeterministicEmergencyArrivalHours(
+                    candidate, EmergencyPodMinArrivalHours, EmergencyPodMaxArrivalHours);
+                return new EmergencyArrivalQuote
+                {
+                    available = true,
+                    transport = EmploymentArrivalTransport.DropPod,
+                    arrivalTicks = arrivalHours * GenDate.TicksPerHour,
+                    methodLabel = "Drop pod"
+                };
+            }
+
+            if (candidate.distanceTiles >= 0f &&
+                candidate.distanceTiles <= EmergencyConventionalMaxDistanceTiles)
+            {
+                int arrivalHours = DeterministicEmergencyArrivalHours(
+                    candidate,
+                    EmergencyConventionalMinArrivalHours,
+                    EmergencyConventionalMaxArrivalHours);
+                return new EmergencyArrivalQuote
+                {
+                    available = true,
+                    transport = EmploymentArrivalTransport.Conventional,
+                    arrivalTicks = arrivalHours * GenDate.TicksPerHour,
+                    methodLabel = "Emergency caravan"
+                };
+            }
+
+            return UnavailableEmergencyArrivalQuote();
+        }
+
+        /// <summary>Returns the default shape for a candidate with no emergency route.</summary>
+        private static EmergencyArrivalQuote UnavailableEmergencyArrivalQuote()
+        {
+            return new EmergencyArrivalQuote
+            {
+                available = false,
+                transport = EmploymentArrivalTransport.Conventional,
+                arrivalTicks = 0,
+                methodLabel = string.Empty
+            };
+        }
+
+        /// <summary>
+        /// Maps a stable candidate identity into an inclusive integer-hour band without touching
+        /// RimWorld's global random stream or the moving game clock.
+        /// </summary>
+        private static int DeterministicEmergencyArrivalHours(
+            LaborCandidate candidate, int minHours, int maxHours)
+        {
+            int candidateHash = Gen.HashCombineInt(
+                candidate.settlementId, candidate.pawn.thingIDNumber);
+            int nonNegativeHash = candidateHash & int.MaxValue;
+            int bandWidth = maxHours - minHours + 1;
+            return minHours + nonNegativeHash % bandWidth;
+        }
+
+        /// <summary>
+        /// Arrival ticks for the existing employment arrival deadline. Emergency mode is wholly
+        /// quote-driven; ordinary hiring retains the candidate's existing whole-day timing.
         /// </summary>
         public static int ArrivalTicksFor(LaborCandidate candidate, bool emergencyDispatch)
         {
+            if (emergencyDispatch)
+            {
+                EmergencyArrivalQuote quote = QuoteEmergencyArrival(candidate);
+                return quote.arrivalTicks;
+            }
+
             if (candidate == null)
             {
                 return 0;
-            }
-
-            if (emergencyDispatch && IsEmergencyDropPodArrival(candidate))
-            {
-                return Mathf.RoundToInt(EmergencyPodArrivalHours * GenDate.TicksPerHour);
             }
 
             return candidate.travelDays * GenDate.TicksPerDay;
         }
 
         /// <summary>
-        /// The player-facing route explanation for the emergency arrival estimate. This shares
-        /// the same capability predicate as <see cref="ArrivalTicksFor"/>.
+        /// The player-facing route explanation for the emergency arrival estimate. It is a
+        /// projection of the same quote as the ETA and contract transport.
         /// </summary>
         public static string EmergencyArrivalMethodFor(LaborCandidate candidate)
         {
-            return IsEmergencyDropPodArrival(candidate)
-                ? "Drop pod"
-                : "Emergency caravan";
+            EmergencyArrivalQuote quote = QuoteEmergencyArrival(candidate);
+            return quote.methodLabel;
         }
 
         /// <summary>Formats an arrival duration from the ticks used by the contract.</summary>
