@@ -42,9 +42,13 @@ namespace Intercolony
         private const float EmployeeExpandedBottomPadding = 4f;
         private const float EmployeeActionGap = 4f;
         private const float EmployeeActionHeight = 30f;
-        private const int EmployeeActionCount = 3;
         private const float EmployeeCheckboxSize = 24f;
         private const float CandidateRowHeight = 32f;
+
+        private static int EmployeeActionCountFor(EmploymentContract contract)
+        {
+            return contract != null && contract.arrearsSilver > 0 ? 4 : 3;
+        }
 
         public override void PreClose()
         {
@@ -68,6 +72,80 @@ namespace Intercolony
             MinTerm = 3,
             Travel = 4,
             Source = 5
+        }
+
+        internal enum EmployeeLifecycleActionKind
+        {
+            None,
+            DeclineTransition,
+            DeclineRenewal,
+            Cancel,
+            Dismiss
+        }
+
+        internal static EmployeeLifecycleActionKind ResolveLifecycleAction(
+            EmploymentContract contract, bool hasLiveTransitionOffer, bool hasLiveRenewalOffer)
+        {
+            if (contract == null)
+            {
+                return EmployeeLifecycleActionKind.None;
+            }
+
+            if (hasLiveTransitionOffer)
+            {
+                return EmployeeLifecycleActionKind.DeclineTransition;
+            }
+
+            if (hasLiveRenewalOffer)
+            {
+                return EmployeeLifecycleActionKind.DeclineRenewal;
+            }
+
+            if (contract.status == EmploymentStatus.Travelling)
+            {
+                return EmployeeLifecycleActionKind.Cancel;
+            }
+
+            if (contract.status != EmploymentStatus.Severed)
+            {
+                return EmployeeLifecycleActionKind.Dismiss;
+            }
+
+            return EmployeeLifecycleActionKind.None;
+        }
+
+        internal static string LifecycleActionLabel(EmployeeLifecycleActionKind kind)
+        {
+            switch (kind)
+            {
+                case EmployeeLifecycleActionKind.DeclineTransition:
+                    return "Not now";
+                case EmployeeLifecycleActionKind.DeclineRenewal:
+                    return "Let them go";
+                case EmployeeLifecycleActionKind.Cancel:
+                    return "Cancel";
+                case EmployeeLifecycleActionKind.Dismiss:
+                    return "Dismiss";
+                default:
+                    return null;
+            }
+        }
+
+        private static string LifecycleActionTooltip(EmployeeLifecycleActionKind kind)
+        {
+            switch (kind)
+            {
+                case EmployeeLifecycleActionKind.DeclineTransition:
+                    return "Decline the offer to stay permanently. They finish their current term.";
+                case EmployeeLifecycleActionKind.DeclineRenewal:
+                    return "Let them go at the end of the term instead of renewing.";
+                case EmployeeLifecycleActionKind.Cancel:
+                    return "Cancel this contract before the worker arrives.";
+                case EmployeeLifecycleActionKind.Dismiss:
+                    return "End this contract and send the worker home.";
+                default:
+                    return "No lifecycle action applies to this worker right now.";
+            }
         }
 
         private WorkerColumn workerSortColumn = WorkerColumn.Wage;
@@ -1274,14 +1352,14 @@ namespace Intercolony
         /// made it look like a problem with one specific button rather than with the layout.
         ///
         /// Deriving all of it from one place keeps the expansion target clear of every control. The
-        /// expanded table and the three action slots are measured and reserved together, so a long
-        /// value cannot paint over the employee below and an unavailable action cannot move the
-        /// actions that follow it.
+        /// expanded table and action slots are measured and reserved together, so a long value
+        /// cannot paint over the employee below and an unavailable action cannot move the actions
+        /// that follow it.
         /// </summary>
         private struct EmployeeRowLayout
         {
             public const float ActionWidth = 110f;
-            public const float MenuWidth = 28f;
+            public const float LifecycleButtonWidth = 92f;
 
             /// <summary>Width available for identity labels, the table, and expansion region.</summary>
             public float textWidth;
@@ -1297,8 +1375,8 @@ namespace Intercolony
             public Rect expandText;
             public Rect expandType;
 
-            /// <summary>Where the contract-actions menu button goes.</summary>
-            public Rect contractActions;
+            /// <summary>Where the contextual lifecycle button goes.</summary>
+            public Rect lifecycleAction;
 
             public Rect[] contractLabels;
             public Rect[] contractValues;
@@ -1311,20 +1389,20 @@ namespace Intercolony
                 float typeColumnWidth = Mathf.Min(
                     EmployeeTypeColumnWidth, Mathf.Max(1f, rect.width * 0.32f));
                 float typeX = rect.xMax - typeColumnWidth;
-                float contractActionsX = typeX - MenuWidth - EmployeeColumnGap;
+                float lifecycleActionX = typeX - LifecycleButtonWidth - EmployeeColumnGap;
 
-                // Always reserve the menu and the expanded action column, even when the collapsed
-                // row does not draw the stack. The text and expansion regions therefore remain
-                // clear of every control in every state.
-                float textRight = Mathf.Min(contractActionsX, actionX) - EmployeeColumnGap;
+                // Always reserve the lifecycle button and the expanded action column, even when
+                // the collapsed row does not draw the stack. The text and expansion regions
+                // therefore remain clear of every control in every state.
+                float textRight = Mathf.Min(lifecycleActionX, actionX) - EmployeeColumnGap;
                 float textX = rect.x + EmployeeRowHorizontalPadding +
                               (hasPortrait ? EmployeePortraitSize + EmployeeColumnGap : 0f);
 
                 EmployeeRowLayout layout = new EmployeeRowLayout
                 {
                     textWidth = Mathf.Max(1f, textRight - textX),
-                    contractActions = new Rect(
-                        contractActionsX, rect.y, MenuWidth, EmployeeActionHeight)
+                    lifecycleAction = new Rect(
+                        lifecycleActionX, rect.y, LifecycleButtonWidth, EmployeeActionHeight)
                 };
 
                 float nameHeight = EmployeeLabelHeight(contract.workerName, layout.textWidth);
@@ -1360,10 +1438,10 @@ namespace Intercolony
                 layout.autoRenew = new Rect(
                     typeX, layout.type.yMax + EmployeeHeaderLineGap,
                     typeColumnWidth, autoHeight);
-                layout.contractActions = new Rect(
-                    contractActionsX,
+                layout.lifecycleAction = new Rect(
+                    lifecycleActionX,
                     rect.y + (headerHeight - EmployeeActionHeight) / 2f,
-                    MenuWidth,
+                    LifecycleButtonWidth,
                     EmployeeActionHeight);
 
                 if (hasPortrait)
@@ -1415,7 +1493,8 @@ namespace Intercolony
                 }
 
                 float stackY = detailY + EmployeeExpandedTopPadding;
-                layout.actionStack = new Rect[EmployeeActionCount];
+                int actionCount = EmployeeActionCountFor(contract);
+                layout.actionStack = new Rect[actionCount];
                 for (int i = 0; i < layout.actionStack.Length; i++)
                 {
                     layout.actionStack[i] = new Rect(
@@ -1425,8 +1504,8 @@ namespace Intercolony
                         EmployeeActionHeight);
                 }
 
-                float stackBottom = stackY + EmployeeActionCount * EmployeeActionHeight +
-                                    (EmployeeActionCount - 1) * EmployeeActionGap;
+                float stackBottom = stackY + actionCount * EmployeeActionHeight +
+                                    (actionCount - 1) * EmployeeActionGap;
                 float detailContentBottom = Mathf.Max(tableY, stackBottom);
                 float detailBodyHeight = detailContentBottom - detailY +
                                          EmployeeExpandedBottomPadding;
@@ -1489,6 +1568,22 @@ namespace Intercolony
             DrawEmployeeActionButton(
                 layout.actionStack[2], "Negotiate", false,
                 "Negotiation is not available yet.", null);
+
+            int actionCount = EmployeeActionCountFor(contract);
+            if (actionCount > 3)
+            {
+                DrawEmployeeActionButton(
+                    layout.actionStack[3], $"Pay arrears ({contract.arrearsSilver})", true,
+                    "Pay the wages already owed to this worker.",
+                    () =>
+                    {
+                        if (!PayrollService.TryPayArrears(
+                                contract, Find.CurrentMap, out string failReason))
+                        {
+                            Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
+                        }
+                    });
+            }
         }
 
         private static void DrawEmployeeActionButton(
@@ -1564,57 +1659,33 @@ namespace Intercolony
 
             bool hasLiveRenewalOffer = RenewalService.HasLiveOffer(contract);
             bool hasLiveTransitionOffer = TransitionService.HasLiveOffer(contract);
-            List<FloatMenuOption> options = new List<FloatMenuOption>();
+            EmployeeLifecycleActionKind lifecycleActionKind = ResolveLifecycleAction(
+                contract, hasLiveTransitionOffer, hasLiveRenewalOffer);
+            string lifecycleActionLabel = LifecycleActionLabel(lifecycleActionKind);
+            System.Action lifecycleAction = null;
 
-            // The stack owns the two affirmative offer actions. The menu keeps only their existing
-            // decline paths, so dismiss and the other occasional actions remain secondary.
-            if (hasLiveTransitionOffer)
+            switch (lifecycleActionKind)
             {
-                options.Add(new FloatMenuOption(
-                    "Not now", () => TransitionService.Decline(contract)));
+                case EmployeeLifecycleActionKind.DeclineTransition:
+                    lifecycleAction = () => TransitionService.Decline(contract);
+                    break;
+                case EmployeeLifecycleActionKind.DeclineRenewal:
+                    lifecycleAction = () => RenewalService.Decline(contract);
+                    break;
+                case EmployeeLifecycleActionKind.Cancel:
+                case EmployeeLifecycleActionKind.Dismiss:
+                    lifecycleAction = () => ConfirmDismiss(contract);
+                    break;
             }
 
-            if (hasLiveRenewalOffer)
-            {
-                options.Add(new FloatMenuOption(
-                    "Let them go at the end of the term",
-                    () => RenewalService.Decline(contract)));
-            }
-
-            if (!hasLiveTransitionOffer && !hasLiveRenewalOffer &&
-                contract.status != EmploymentStatus.Severed)
-            {
-                options.Add(new FloatMenuOption(
-                    contract.status == EmploymentStatus.Travelling ? "Cancel" : "Dismiss",
-                    () => ConfirmDismiss(contract)));
-            }
-
-            if (contract.arrearsSilver > 0)
-            {
-                options.Add(new FloatMenuOption(
-                    $"Pay {contract.arrearsSilver}",
-                    () =>
-                    {
-                        if (!PayrollService.TryPayArrears(
-                                contract, Find.CurrentMap, out string failReason))
-                        {
-                            Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
-                        }
-                    }));
-            }
-
-            if (options.Count == 0 && ShouldBuildTooltip(layout.contractActions))
-            {
-                TooltipHandler.TipRegion(
-                    layout.contractActions,
-                    "No additional contract actions are available.");
-            }
-
-            if (Widgets.ButtonText(layout.contractActions, "...",
-                    active: options.Count > 0))
-            {
-                Find.WindowStack.Add(new FloatMenu(options));
-            }
+            // Keep the reserved space stable when no lifecycle decision applies, so the text and
+            // expansion targets do not shift as offers appear or expire.
+            DrawEmployeeActionButton(
+                layout.lifecycleAction,
+                lifecycleActionLabel ?? string.Empty,
+                lifecycleActionKind != EmployeeLifecycleActionKind.None,
+                LifecycleActionTooltip(lifecycleActionKind),
+                lifecycleAction);
 
             if (expanded)
             {
@@ -1623,7 +1694,8 @@ namespace Intercolony
             }
 
             // The portrait is jump/select only. These two non-overlapping regions toggle expansion;
-            // both stop before the menu, checkbox, and expanded action columns can receive input.
+            // both stop before the lifecycle button, checkbox, and expanded action columns can
+            // receive input.
             bool toggleExpansion = false;
             if (Widgets.ButtonInvisible(layout.expandText))
             {
