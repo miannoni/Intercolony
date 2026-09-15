@@ -3,11 +3,18 @@ using Verse;
 
 namespace Intercolony
 {
+    /// <summary>
+    /// A preset is the reusable half of a Produce program. It deliberately stores no cell,
+    /// rotation, product ThingDef, style, paused flag, or waitingForResume latch because those
+    /// are facts about one concrete object rather than a template; applying a preset leaves the
+    /// target's own product and placement alone.
+    /// </summary>
     public class ProduceControlPreset : IExposable
     {
         public int id;
         public string name;
         public int targetCount;
+        // -1 is a sentinel meaning "never set", not a quantity; never format it for display.
         public int resumeBelow = -1;
         public bool restrictToSelectedWorkers;
         public List<Pawn> allowedWorkers = new List<Pawn>();

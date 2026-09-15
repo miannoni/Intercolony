@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using RimWorld;
 using Verse;
 
@@ -441,11 +442,176 @@ namespace Intercolony
 
             if (duplicate == preset)
             {
+                if (!string.Equals(preset.name, trimmedName, System.StringComparison.Ordinal))
+                {
+                    preset.name = trimmedName;
+                    presetsRevision++;
+                }
+
                 return true;
             }
 
-            preset.name = trimmedName;
-            presetsRevision++;
+            if (!string.Equals(preset.name, trimmedName, System.StringComparison.Ordinal))
+            {
+                preset.name = trimmedName;
+                presetsRevision++;
+            }
+
+            return true;
+        }
+
+        public bool TryResolveProduceTargetCell(IntVec3 cell, out IntVec3 targetCell)
+        {
+            Rot4 rotation;
+            ThingDef thingDef;
+            ThingDef stuffDef;
+            ThingStyleDef styleDef;
+            return TryResolveProduceTargetCell(
+                cell,
+                out targetCell,
+                out rotation,
+                out thingDef,
+                out stuffDef,
+                out styleDef);
+        }
+
+        private bool TryResolveProduceTargetCell(
+            IntVec3 cell,
+            out IntVec3 targetCell,
+            out Rot4 rotation,
+            out ThingDef thingDef,
+            out ThingDef stuffDef,
+            out ThingStyleDef styleDef)
+        {
+            targetCell = IntVec3.Invalid;
+            rotation = default(Rot4);
+            thingDef = null;
+            stuffDef = null;
+            styleDef = null;
+
+            if (!cell.InBounds(map))
+            {
+                return false;
+            }
+
+            foreach (Thing thing in map.thingGrid.ThingsAt(cell).OrderByDescending(t => t.def.altitudeLayer))
+            {
+                if (!ProduceSubjectUtility.TryGetProduceSubject(
+                        thing,
+                        out rotation,
+                        out thingDef,
+                        out stuffDef,
+                        out styleDef))
+                {
+                    continue;
+                }
+
+                // The gizmo uses thing.Position as this object's loop key (ProduceGizmoPatch.cs:66), not the dragged cell.
+                targetCell = thing.Position;
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool TryApplyPreset(IntVec3 cell, ProduceControlPreset preset, out string reason)
+        {
+            return TryApplyPreset(cell, preset, out _, out reason);
+        }
+
+        public bool TryApplyPreset(
+            IntVec3 cell,
+            ProduceControlPreset preset,
+            out IntVec3 targetCell,
+            out string reason)
+        {
+            targetCell = IntVec3.Invalid;
+            reason = null;
+            if (!cell.InBounds(map))
+            {
+                reason = "cell is outside the map";
+                return false;
+            }
+
+            if (preset == null)
+            {
+                reason = "preset is required";
+                return false;
+            }
+
+            Rot4 rotation;
+            ThingDef thingDef;
+            ThingDef stuffDef;
+            ThingStyleDef styleDef;
+            if (!TryResolveProduceTargetCell(
+                    cell,
+                    out targetCell,
+                    out rotation,
+                    out thingDef,
+                    out stuffDef,
+                    out styleDef))
+            {
+                reason = "no production object here";
+                return false;
+            }
+
+            List<ThingDef> compatibleStuff = new List<ThingDef>();
+            bool applyAllowedStuff = false;
+            if (!thingDef.MadeFromStuff)
+            {
+                // Non-stuffable products have no material constraint to carry into the program.
+                applyAllowedStuff = true;
+            }
+            else if (preset.allowedStuff != null && preset.allowedStuff.Count > 0)
+            {
+                for (int i = 0; i < preset.allowedStuff.Count; i++)
+                {
+                    ThingDef stuff = preset.allowedStuff[i];
+                    if (stuff != null &&
+                        stuff.stuffProps != null &&
+                        stuff.stuffProps.CanMake(thingDef) &&
+                        !compatibleStuff.Contains(stuff))
+                    {
+                        compatibleStuff.Add(stuff);
+                    }
+                }
+
+                if (compatibleStuff.Count == 0)
+                {
+                    reason = "no compatible allowed material";
+                    return false;
+                }
+
+                applyAllowedStuff = true;
+            }
+
+            ProduceLoopRecord loop = Find(targetCell);
+            if (loop == null)
+            {
+                Enable(targetCell, rotation, thingDef, stuffDef, styleDef);
+                loop = Find(targetCell);
+            }
+
+            SetTargetCount(targetCell, preset.targetCount);
+            SetResumeBelow(targetCell, preset.resumeBelow);
+            SetWorkerRestriction(targetCell, preset.restrictToSelectedWorkers);
+            SetAllowedWorkers(targetCell, preset.allowedWorkers);
+            SetMinConstructionSkill(targetCell, preset.minConstructionSkill);
+            if (applyAllowedStuff)
+            {
+                SetAllowedStuff(targetCell, compatibleStuff);
+            }
+
+            // SetTargetCount and SetResumeBelow intentionally clear this latch; recompute it from this target's stock after all settings are applied.
+            if (loop.targetCount <= 0)
+            {
+                loop.waitingForResume = false;
+            }
+            else
+            {
+                loop.waitingForResume = CountStoredThings(loop) >= loop.targetCount;
+            }
+
             return true;
         }
 
