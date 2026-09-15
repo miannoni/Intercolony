@@ -37,9 +37,10 @@ namespace Intercolony
         // Separates applicant-queue shuffles from the labor-census random stream.
         private const int ApplicantShuffleSalt = 0x4C41_5445;
 
-        // Full pawn generation is expensive by this codebase's own account, so an equipment
-        // request gets only a small number of naturally generated loadout attempts.
-        private const int MaxEquipmentMaterialisationAttempts = 3;
+        // A posting may encounter several prospects, but a fulfilment defect should be visible
+        // once per posting rather than once for every prospect that exposes the same defect.
+        private static readonly HashSet<int> EquipmentFulfilmentWarnings =
+            new HashSet<int>();
 
         // --- Creating ----------------------------------------------------------------------
 
@@ -288,8 +289,8 @@ namespace Intercolony
         ///
         /// This is what makes a deep market affordable. The census can be hundreds of workers
         /// because none of them exist until one of them applies for something; generating a pawn is
-        /// the expensive call, and it happens once for a legacy applicant or at most the small
-        /// equipment-attempt cap for a demanding posting rather than once per worker considered.
+        /// the expensive call, and it happens once for a legacy applicant or demanding posting
+        /// rather than once per worker considered.
         /// </summary>
         private static bool Apply(
             IntercolonyWorldComponent state, JobPosting posting, LaborProspect worker, int ask)
@@ -309,8 +310,9 @@ namespace Intercolony
                 return true;
             }
 
+            SettlementEconomicProfile profile = ProfileFor(state, worker.settlementId);
             if (!LaborEquipmentTierService.CanSupply(
-                    ProfileFor(state, worker.settlementId),
+                    profile,
                     posting.requestedEquipmentLevel,
                     posting.combatClause))
             {
@@ -319,35 +321,68 @@ namespace Intercolony
                 return false;
             }
 
-            for (int attempt = 0; attempt < MaxEquipmentMaterialisationAttempts; attempt++)
+            Pawn applicantPawn = worker.Materialise();
+            if (applicantPawn == null)
             {
-                Pawn pawn = worker.Materialise();
-                if (pawn == null)
-                {
-                    continue;
-                }
-
-                if (posting.requestedEquipmentLevel == LaborEquipmentLevel.None)
-                {
-                    StripBondableEquipment(pawn);
-                }
-
-                LaborEquipmentLevel actual = LaborEquipmentTierService.Classify(
-                    pawn, posting.combatClause);
-                if (!LaborEquipmentTierService.MeetsOrExceeds(
-                        actual, posting.requestedEquipmentLevel))
-                {
-                    DiscardRejectedPawn(pawn);
-                    continue;
-                }
-
-                AddApplicant(posting, worker, pawn, ask);
-                return true;
+                return false;
             }
 
-            // Failure to sample a qualifying naturally generated loadout is scarcity, not an
-            // error. Leave the worker unapplied and let a later market refresh try again.
-            return false;
+            if (posting.requestedEquipmentLevel == LaborEquipmentLevel.None)
+            {
+                StripBondableEquipment(applicantPawn);
+            }
+            else
+            {
+                LaborEquipmentLevel natural = LaborEquipmentTierService.Classify(
+                    applicantPawn, posting.combatClause);
+                if (!LaborEquipmentTierService.MeetsOrExceeds(
+                        natural, posting.requestedEquipmentLevel))
+                {
+                    string fulfilmentFailure;
+                    if (!LaborEquipmentAllocator.TryFulfil(
+                            applicantPawn, worker.equipmentTier, posting.combatClause, profile,
+                            out fulfilmentFailure))
+                    {
+                        WarnEquipmentFulfilmentFailure(
+                            posting, worker, fulfilmentFailure ?? "unknown allocator failure");
+                        DiscardRejectedPawn(applicantPawn);
+                        return false;
+                    }
+                }
+            }
+
+            // The allocator is deliberately not an acceptance shortcut. The actual pawn's final
+            // loadout is classified once here, after every mutation, and this invariant decides
+            // whether the applicant is allowed into the waiting list.
+            LaborEquipmentLevel actual = LaborEquipmentTierService.Classify(
+                applicantPawn, posting.combatClause);
+            if (!LaborEquipmentTierService.MeetsOrExceeds(
+                    actual, posting.requestedEquipmentLevel))
+            {
+                WarnEquipmentFulfilmentFailure(
+                    posting, worker,
+                    $"actual loadout classified as {actual} after fulfilment.");
+                DiscardRejectedPawn(applicantPawn);
+                return false;
+            }
+
+            AddApplicant(posting, worker, applicantPawn, ask);
+            return true;
+        }
+
+        private static void WarnEquipmentFulfilmentFailure(
+            JobPosting posting, LaborProspect worker, string reason)
+        {
+            if (posting != null && !EquipmentFulfilmentWarnings.Add(posting.id))
+            {
+                return;
+            }
+
+            IntercolonyLog.Warning(
+                $"Equipment fulfilment failed for posting {posting?.id.ToString() ?? "unknown"}: " +
+                $"requested {posting?.requestedEquipmentLevel.ToString() ?? "unknown"}, " +
+                $"promised {worker?.equipmentTier.ToString() ?? "unknown"}, " +
+                $"clause {posting?.combatClause.ToString() ?? "unknown"}; {reason}");
         }
 
         private static void StripBondableEquipment(Pawn pawn)
