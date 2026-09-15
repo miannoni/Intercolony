@@ -106,6 +106,22 @@ namespace Intercolony
             {
                 Skip("contract self-test prerequisites",
                     "no accessible settlement or tradable defs");
+                Skip("generic stuffable agreement stays valid",
+                    "no accessible settlement or tradable defs");
+                Skip("named material reaches the contract",
+                    "no accessible settlement or tradable defs");
+                Skip("different material changes contract price",
+                    "no accessible settlement or tradable defs");
+                Skip("material previews follow contract prices",
+                    "no accessible settlement or tradable defs");
+                Skip("impossible material pair is refused without writing",
+                    "no accessible settlement or tradable defs");
+                Skip("impossible material pair is not previewable",
+                    "no accessible settlement or tradable defs");
+                Skip("non-stuffable agreement ignores material",
+                    "no accessible settlement or tradable defs");
+                Skip("cycle order carries optional material constraint",
+                    "no accessible settlement or tradable defs");
                 return Summarize();
             }
 
@@ -584,7 +600,8 @@ namespace Intercolony
                                 ProcurementContractService.MinimumCadenceDays,
                                 ProcurementContractService.MinimumTotalCycles,
                                 agreedUnitPrice: null,
-                                fulfillment: FulfillmentMode.SellerDelivery);
+                                fulfillment: FulfillmentMode.SellerDelivery,
+                                stuffDef: null);
                         // This fails if either removed contract-only gate still rejects a
                         // stackLimit-1 ThingDef or a ThingCategory.Building, or if the agreement
                         // grows an unrequested quality/material specification.
@@ -598,7 +615,482 @@ namespace Intercolony
                             $"reason={furnitureProposal.Reason ?? "none"}; " +
                             $"item={furnitureProposal.Contract?.thingDef?.defName ?? "<none>"}");
 
-                        state.Contracts.Clear();
+                        RecurringContract genericContract = furnitureProposal?.Contract;
+                        bool stuffableFurnitureFixture = minifiableFurniture != null &&
+                            minifiableFurniture.MadeFromStuff;
+                        if (!stuffableFurnitureFixture)
+                        {
+                            const string reason =
+                                "the selected furniture fixture is not stuffable";
+                            Skip("generic stuffable agreement stays valid", reason);
+                            Skip("named material reaches the contract", reason);
+                            Skip("different material changes contract price", reason);
+                            Skip("material previews follow contract prices", reason);
+                            Skip("impossible material pair is refused without writing", reason);
+                            Skip("impossible material pair is not previewable", reason);
+                            Skip("cycle order carries optional material constraint", reason);
+                            if (genericContract != null)
+                            {
+                                state.Contracts.Remove(genericContract);
+                            }
+                        }
+                        else
+                        {
+                            bool genericProposalSuccess = furnitureProposal != null &&
+                                furnitureProposal.Success;
+                            bool genericContractCreated = genericContract != null &&
+                                state.Contracts.Contains(genericContract);
+                            Check("generic stuffable agreement stays valid",
+                                genericProposalSuccess && genericContractCreated &&
+                                genericContract.thingDef == minifiableFurniture &&
+                                genericContract.stuffDef == null,
+                                $"OBSERVED success={genericProposalSuccess}; " +
+                                $"created={genericContractCreated}; " +
+                                $"stuff={genericContract?.stuffDef?.defName ?? "null"}; " +
+                                "EXPECTED success=True; created=True; stuff=null");
+
+                            if (genericContract != null)
+                            {
+                                state.Contracts.Remove(genericContract);
+                            }
+
+                            ThingDef cheapestStuff = null;
+                            ThingDef mostExpensiveStuff = null;
+                            float cheapestStuffMarketValue = 0f;
+                            float mostExpensiveStuffMarketValue = 0f;
+                            if (StatDefOf.MarketValue != null)
+                            {
+                                foreach (ThingDef candidate in
+                                         DefDatabase<ThingDef>.AllDefsListForReading)
+                                {
+                                    if (candidate == null || !candidate.IsStuff ||
+                                        candidate.stuffProps == null ||
+                                        !candidate.stuffProps.CanMake(minifiableFurniture))
+                                    {
+                                        continue;
+                                    }
+
+                                    float candidateMarketValue =
+                                        candidate.GetStatValueAbstract(StatDefOf.MarketValue);
+                                    if (candidateMarketValue <= 0f ||
+                                        float.IsNaN(candidateMarketValue) ||
+                                        float.IsInfinity(candidateMarketValue))
+                                    {
+                                        continue;
+                                    }
+
+                                    if (cheapestStuff == null ||
+                                        candidateMarketValue < cheapestStuffMarketValue)
+                                    {
+                                        cheapestStuff = candidate;
+                                        cheapestStuffMarketValue = candidateMarketValue;
+                                    }
+
+                                    if (mostExpensiveStuff == null ||
+                                        candidateMarketValue > mostExpensiveStuffMarketValue)
+                                    {
+                                        mostExpensiveStuff = candidate;
+                                        mostExpensiveStuffMarketValue = candidateMarketValue;
+                                    }
+                                }
+                            }
+
+                            ThingDef impossibleStuff = null;
+                            foreach (ThingDef candidate in
+                                     DefDatabase<ThingDef>.AllDefsListForReading)
+                            {
+                                if (candidate == null || candidate == cheapestStuff ||
+                                    candidate == mostExpensiveStuff || candidate.stuffProps == null)
+                                {
+                                    continue;
+                                }
+
+                                if (!candidate.stuffProps.CanMake(minifiableFurniture))
+                                {
+                                    impossibleStuff = candidate;
+                                    break;
+                                }
+                            }
+
+                            if (impossibleStuff == null && ThingDefOf.Silver != null &&
+                                ThingDefOf.Silver != cheapestStuff &&
+                                ThingDefOf.Silver != mostExpensiveStuff &&
+                                (ThingDefOf.Silver.stuffProps == null ||
+                                 !ThingDefOf.Silver.stuffProps.CanMake(minifiableFurniture)))
+                            {
+                                impossibleStuff = ThingDefOf.Silver;
+                            }
+
+                            if (impossibleStuff == null)
+                            {
+                                foreach (ThingDef candidate in
+                                         DefDatabase<ThingDef>.AllDefsListForReading)
+                                {
+                                    if (candidate != null && candidate != cheapestStuff &&
+                                        candidate != mostExpensiveStuff &&
+                                        (candidate.stuffProps == null ||
+                                         !candidate.stuffProps.CanMake(minifiableFurniture)))
+                                    {
+                                        impossibleStuff = candidate;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (cheapestStuff != null && mostExpensiveStuff != null)
+                            {
+                                sb.AppendLine(
+                                    $"  material fixture: cheapest={cheapestStuff.defName} " +
+                                    $"MarketValue={cheapestStuffMarketValue:R}; " +
+                                    $"most expensive={mostExpensiveStuff.defName} " +
+                                    $"MarketValue={mostExpensiveStuffMarketValue:R}");
+                            }
+
+                            bool hasTwoDistinctMaterialValues =
+                                cheapestStuff != null && mostExpensiveStuff != null &&
+                                cheapestStuff != mostExpensiveStuff &&
+                                !Mathf.Approximately(
+                                    cheapestStuffMarketValue, mostExpensiveStuffMarketValue);
+                            string materialDifferenceSkipReason = null;
+                            if (cheapestStuff == null || mostExpensiveStuff == null)
+                            {
+                                materialDifferenceSkipReason =
+                                    "fewer than two valid stuffs can make the selected product";
+                            }
+                            else if (cheapestStuff == mostExpensiveStuff)
+                            {
+                                materialDifferenceSkipReason =
+                                    "fewer than two distinct valid stuffs can make the selected product";
+                            }
+                            else if (!hasTwoDistinctMaterialValues)
+                            {
+                                materialDifferenceSkipReason =
+                                    "cheapest and most expensive stuffs are within a rounding step of each other";
+                            }
+
+                            ContractTerms cheapestPreview = null;
+                            ContractTerms mostExpensivePreview = null;
+                            if (hasTwoDistinctMaterialValues)
+                            {
+                                cheapestPreview = ContractService.PreviewContractTerms(
+                                    state,
+                                    subject,
+                                    minifiableFurniture,
+                                    ContractService.MinimumQuantityPerCycle,
+                                    ProcurementContractService.MinimumCadenceDays,
+                                    ProcurementContractService.MinimumTotalCycles,
+                                    agreedUnitPrice: null,
+                                    fulfillment: FulfillmentMode.SellerDelivery,
+                                    stuffDef: cheapestStuff);
+                                mostExpensivePreview = ContractService.PreviewContractTerms(
+                                    state,
+                                    subject,
+                                    minifiableFurniture,
+                                    ContractService.MinimumQuantityPerCycle,
+                                    ProcurementContractService.MinimumCadenceDays,
+                                    ProcurementContractService.MinimumTotalCycles,
+                                    agreedUnitPrice: null,
+                                    fulfillment: FulfillmentMode.SellerDelivery,
+                                    stuffDef: mostExpensiveStuff);
+                            }
+
+                            RecurringContract cheapestContract = null;
+                            if (cheapestStuff == null)
+                            {
+                                Skip("named material reaches the contract",
+                                    "no valid stuff can make the selected product");
+                            }
+                            else
+                            {
+                                ContractProposalResult cheapestProposal =
+                                    ContractService.ProposeContract(
+                                        state,
+                                        subject,
+                                        minifiableFurniture,
+                                        ContractService.MinimumQuantityPerCycle,
+                                        ProcurementContractService.MinimumCadenceDays,
+                                        ProcurementContractService.MinimumTotalCycles,
+                                        agreedUnitPrice: null,
+                                        fulfillment: FulfillmentMode.SellerDelivery,
+                                        stuffDef: cheapestStuff);
+                                cheapestContract = cheapestProposal?.Contract;
+                                bool cheapestProposalSuccess = cheapestProposal != null &&
+                                    cheapestProposal.Success;
+                                bool cheapestContractCreated = cheapestContract != null &&
+                                    state.Contracts.Contains(cheapestContract);
+                                Check("named material reaches the contract",
+                                    cheapestProposalSuccess && cheapestContractCreated &&
+                                    cheapestContract.thingDef == minifiableFurniture &&
+                                    cheapestContract.stuffDef == cheapestStuff,
+                                    $"OBSERVED success={cheapestProposalSuccess}; " +
+                                    $"created={cheapestContractCreated}; " +
+                                    $"stuff={cheapestContract?.stuffDef?.defName ?? "null"}; " +
+                                    $"EXPECTED success=True; created=True; " +
+                                    $"stuff={cheapestStuff.defName}");
+
+                                if (cheapestContract != null)
+                                {
+                                    state.Contracts.Remove(cheapestContract);
+                                }
+                            }
+
+                            if (!hasTwoDistinctMaterialValues)
+                            {
+                                Skip("different material changes contract price",
+                                    materialDifferenceSkipReason);
+                                Skip("material previews follow contract prices",
+                                    materialDifferenceSkipReason);
+                            }
+                            else
+                            {
+                                ContractProposalResult mostExpensiveProposal =
+                                    ContractService.ProposeContract(
+                                        state,
+                                        subject,
+                                        minifiableFurniture,
+                                        ContractService.MinimumQuantityPerCycle,
+                                        ProcurementContractService.MinimumCadenceDays,
+                                        ProcurementContractService.MinimumTotalCycles,
+                                        agreedUnitPrice: null,
+                                        fulfillment: FulfillmentMode.SellerDelivery,
+                                        stuffDef: mostExpensiveStuff);
+                                RecurringContract mostExpensiveContract =
+                                    mostExpensiveProposal?.Contract;
+                                bool mostExpensiveProposalSuccess =
+                                    mostExpensiveProposal != null &&
+                                    mostExpensiveProposal.Success;
+                                bool mostExpensiveContractCreated =
+                                    mostExpensiveContract != null &&
+                                    state.Contracts.Contains(mostExpensiveContract);
+                                float cheapestContractUnitPrice = cheapestContract == null
+                                    ? -1f
+                                    : cheapestContract.unitPrice;
+                                float mostExpensiveContractUnitPrice =
+                                    mostExpensiveContract == null
+                                        ? -1f
+                                        : mostExpensiveContract.unitPrice;
+                                bool contractPricesDiffer =
+                                    cheapestContract != null && mostExpensiveContract != null &&
+                                    !Mathf.Approximately(
+                                        cheapestContractUnitPrice, mostExpensiveContractUnitPrice);
+                                Check("different material changes contract price",
+                                        cheapestContract != null &&
+                                        cheapestContract.stuffDef == cheapestStuff &&
+                                        mostExpensiveProposalSuccess &&
+                                        mostExpensiveContractCreated &&
+                                        mostExpensiveContract.thingDef == minifiableFurniture &&
+                                        mostExpensiveContract.stuffDef == mostExpensiveStuff &&
+                                        contractPricesDiffer,
+                                    $"OBSERVED {cheapestStuff.defName} unitPrice={cheapestContractUnitPrice:R}; " +
+                                    $"{mostExpensiveStuff.defName} unitPrice={mostExpensiveContractUnitPrice:R}; " +
+                                    $"MarketValue={cheapestStuffMarketValue:R}/" +
+                                    $"{mostExpensiveStuffMarketValue:R}; " +
+                                    $"success={mostExpensiveProposalSuccess}; " +
+                                    $"created={mostExpensiveContractCreated}; " +
+                                    "EXPECTED both contracts created with their named stuffs and " +
+                                    "different unitPrice values");
+
+                                float cheapestPreviewReferencePrice = cheapestPreview == null
+                                    ? -1f
+                                    : cheapestPreview.referenceUnitPrice;
+                                float mostExpensivePreviewReferencePrice =
+                                    mostExpensivePreview == null
+                                        ? -1f
+                                        : mostExpensivePreview.referenceUnitPrice;
+                                bool previewPricesFollowContracts =
+                                    cheapestPreview != null && mostExpensivePreview != null &&
+                                    cheapestContract != null && mostExpensiveContract != null &&
+                                    !Mathf.Approximately(
+                                        cheapestPreviewReferencePrice,
+                                        mostExpensivePreviewReferencePrice) &&
+                                    Mathf.Approximately(
+                                        cheapestPreviewReferencePrice,
+                                        cheapestContractUnitPrice) &&
+                                    Mathf.Approximately(
+                                        mostExpensivePreviewReferencePrice,
+                                        mostExpensiveContractUnitPrice) &&
+                                    (cheapestPreviewReferencePrice <
+                                        mostExpensivePreviewReferencePrice) ==
+                                    (cheapestContractUnitPrice < mostExpensiveContractUnitPrice);
+                                Check("material previews follow contract prices",
+                                    previewPricesFollowContracts,
+                                    $"OBSERVED preview referenceUnitPrice={cheapestPreviewReferencePrice:R}/" +
+                                    $"{mostExpensivePreviewReferencePrice:R}; contract unitPrice={cheapestContractUnitPrice:R}/" +
+                                    $"{mostExpensiveContractUnitPrice:R}; " +
+                                    "EXPECTED preview references differ, match their contracts, " +
+                                    "and preserve the contract price direction");
+
+                                if (mostExpensiveContract != null)
+                                {
+                                    state.Contracts.Remove(mostExpensiveContract);
+                                }
+                            }
+
+                            if (impossibleStuff == null)
+                            {
+                                const string reason =
+                                    "no incompatible material definition is loaded";
+                                Skip("impossible material pair is refused without writing", reason);
+                                Skip("impossible material pair is not previewable", reason);
+                            }
+                            else
+                            {
+                                int contractCountBeforeImpossible = state.Contracts.Count;
+                                ContractProposalResult impossibleProposal =
+                                    ContractService.ProposeContract(
+                                        state,
+                                        subject,
+                                        minifiableFurniture,
+                                        ContractService.MinimumQuantityPerCycle,
+                                        ProcurementContractService.MinimumCadenceDays,
+                                        ProcurementContractService.MinimumTotalCycles,
+                                        agreedUnitPrice: null,
+                                        fulfillment: FulfillmentMode.SellerDelivery,
+                                        stuffDef: impossibleStuff);
+                                int contractCountAfterImpossible = state.Contracts.Count;
+                                bool impossibleProposalSuccess = impossibleProposal != null &&
+                                    impossibleProposal.Success;
+                                string impossibleProposalFailure = impossibleProposal == null
+                                    ? "null"
+                                    : impossibleProposal.Failure.ToString();
+                                Check("impossible material pair is refused without writing",
+                                    !impossibleProposalSuccess &&
+                                    impossibleProposal != null &&
+                                    impossibleProposal.Failure == ContractProposalFailure.InvalidItem &&
+                                    contractCountAfterImpossible == contractCountBeforeImpossible,
+                                    $"OBSERVED success={impossibleProposalSuccess}; " +
+                                    $"failure={impossibleProposalFailure}; " +
+                                    $"contracts={contractCountBeforeImpossible}->" +
+                                    $"{contractCountAfterImpossible}; " +
+                                    $"EXPECTED success=False; failure={ContractProposalFailure.InvalidItem}; " +
+                                    $"contracts={contractCountBeforeImpossible}->" +
+                                    $"{contractCountBeforeImpossible}");
+
+                                if (impossibleProposal?.Contract != null)
+                                {
+                                    state.Contracts.Remove(impossibleProposal.Contract);
+                                }
+
+                                ContractTerms impossiblePreviewTerms =
+                                    ContractService.PreviewContractTerms(
+                                        state,
+                                        subject,
+                                        minifiableFurniture,
+                                        ContractService.MinimumQuantityPerCycle,
+                                        ProcurementContractService.MinimumCadenceDays,
+                                        ProcurementContractService.MinimumTotalCycles,
+                                        agreedUnitPrice: null,
+                                        fulfillment: FulfillmentMode.SellerDelivery,
+                                        stuffDef: impossibleStuff);
+                                IntercolonyNegotiationAcceptancePreview impossibleAcceptance =
+                                    ContractService.PreviewAcceptance(
+                                        state,
+                                        subject,
+                                        minifiableFurniture,
+                                        ContractService.MinimumQuantityPerCycle,
+                                        ProcurementContractService.MinimumCadenceDays,
+                                        ProcurementContractService.MinimumTotalCycles,
+                                        agreedUnitPrice: null,
+                                        fulfillment: FulfillmentMode.SellerDelivery,
+                                        stuffDef: impossibleStuff);
+                                string impossiblePreviewResult = impossiblePreviewTerms == null
+                                    ? "null"
+                                    : "terms";
+                                string impossibleAcceptanceResult = impossibleAcceptance == null
+                                    ? "null"
+                                    : impossibleAcceptance.Band.ToString();
+                                Check("impossible material pair is not previewable",
+                                    impossiblePreviewTerms == null && impossibleAcceptance == null,
+                                    $"OBSERVED terms={impossiblePreviewResult}; " +
+                                    $"acceptance={impossibleAcceptanceResult}; " +
+                                    "EXPECTED terms=null; acceptance=null");
+                            }
+
+                            if (cheapestStuff == null)
+                            {
+                                Skip("cycle order carries optional material constraint",
+                                    "no valid stuff can make the selected product");
+                            }
+                            else
+                            {
+                                SalesOrder concreteCycleOrder = null;
+                                SalesOrder genericCycleOrder = null;
+                                try
+                                {
+                                    if (cheapestContract != null)
+                                    {
+                                        state.AddContract(cheapestContract);
+                                        ContractService.RaiseCycleOrder(state, cheapestContract);
+                                        concreteCycleOrder = state.FindOrder(
+                                            cheapestContract.activeOrderId);
+                                    }
+
+                                    if (genericContract != null)
+                                    {
+                                        state.AddContract(genericContract);
+                                        ContractService.RaiseCycleOrder(state, genericContract);
+                                        genericCycleOrder = state.FindOrder(
+                                            genericContract.activeOrderId);
+                                    }
+
+                                    bool concreteConstraintArmed = concreteCycleOrder != null &&
+                                        concreteCycleOrder.line != null &&
+                                        concreteCycleOrder.line.allowedStuff == cheapestStuff &&
+                                        concreteCycleOrder.line.HasStuffConstraint;
+                                    bool genericConstraintUnarmed = genericCycleOrder != null &&
+                                        genericCycleOrder.line != null &&
+                                        genericCycleOrder.line.allowedStuff == null &&
+                                        !genericCycleOrder.line.HasStuffConstraint;
+                                    bool concreteConstraintReported = concreteCycleOrder != null &&
+                                        concreteCycleOrder.line != null &&
+                                        concreteCycleOrder.line.HasStuffConstraint;
+                                    bool genericConstraintReported = genericCycleOrder != null &&
+                                        genericCycleOrder.line != null &&
+                                        genericCycleOrder.line.HasStuffConstraint;
+                                    string concreteAllowedStuff = concreteCycleOrder == null ||
+                                        concreteCycleOrder.line == null ||
+                                        concreteCycleOrder.line.allowedStuff == null
+                                        ? "null"
+                                        : concreteCycleOrder.line.allowedStuff.defName;
+                                    string genericAllowedStuff = genericCycleOrder == null ||
+                                        genericCycleOrder.line == null ||
+                                        genericCycleOrder.line.allowedStuff == null
+                                        ? "null"
+                                        : genericCycleOrder.line.allowedStuff.defName;
+                                    Check("cycle order carries optional material constraint",
+                                        concreteConstraintArmed && genericConstraintUnarmed,
+                                        $"OBSERVED concrete allowedStuff={concreteAllowedStuff}; " +
+                                        $"armed={concreteConstraintReported}; " +
+                                        $"generic allowedStuff={genericAllowedStuff}; " +
+                                        $"armed={genericConstraintReported}; " +
+                                        $"EXPECTED concrete allowedStuff={cheapestStuff.defName}; " +
+                                        "armed=True; generic allowedStuff=null; armed=False");
+                                }
+                                finally
+                                {
+                                    if (concreteCycleOrder != null)
+                                    {
+                                        state.Orders.Remove(concreteCycleOrder);
+                                    }
+
+                                    if (genericCycleOrder != null)
+                                    {
+                                        state.Orders.Remove(genericCycleOrder);
+                                    }
+
+                                    if (cheapestContract != null)
+                                    {
+                                        state.Contracts.Remove(cheapestContract);
+                                    }
+
+                                    if (genericContract != null)
+                                    {
+                                        state.Contracts.Remove(genericContract);
+                                    }
+                                }
+                            }
+                        }
+                    state.Contracts.Clear();
                         temporarilyBlacklistedDef = minifiableFurniture;
                         IntercolonyTradeBlacklist.AddRuntimeExclusion(
                             minifiableFurniture, "contract eligibility self-test");
@@ -623,6 +1115,88 @@ namespace Intercolony
                             $"reason={blacklistedFurnitureProposal.Reason ?? "none"}");
                         IntercolonyTradeBlacklist.RemoveRuntimeExclusion(minifiableFurniture);
                         temporarilyBlacklistedDef = null;
+                    }
+                    else
+                    {
+                        const string reason =
+                            "the DiningChair furniture fixture is unavailable";
+                        Skip("generic stuffable agreement stays valid", reason);
+                        Skip("named material reaches the contract", reason);
+                        Skip("different material changes contract price", reason);
+                        Skip("material previews follow contract prices", reason);
+                        Skip("impossible material pair is refused without writing", reason);
+                        Skip("impossible material pair is not previewable", reason);
+                        Skip("cycle order carries optional material constraint", reason);
+                    }
+
+                    ThingDef nonStuffableConcreteStuff = null;
+                    foreach (ThingDef candidate in
+                             DefDatabase<ThingDef>.AllDefsListForReading)
+                    {
+                        if (candidate != null && candidate.IsStuff)
+                        {
+                            nonStuffableConcreteStuff = candidate;
+                            break;
+                        }
+                    }
+
+                    if (meat == null || meat.MadeFromStuff ||
+                        nonStuffableConcreteStuff == null)
+                    {
+                        Skip("non-stuffable agreement ignores material",
+                            "no non-stuffable product and concrete stuff fixture is available");
+                    }
+                    else
+                    {
+                        ClearHistory();
+                        ContractProposalResult nonStuffableProposal = null;
+                        try
+                        {
+                            for (int i = 0;
+                                 i < ContractService.MinimumCompletedOrdersForAgreement;
+                                 i++)
+                            {
+                                PlantHistoryOrder(subject.ID, meat, SalesOrderStatus.Completed);
+                            }
+
+                            nonStuffableProposal = ContractService.ProposeContract(
+                                state,
+                                subject,
+                                meat,
+                                ContractService.MinimumQuantityPerCycle,
+                                ProcurementContractService.MinimumCadenceDays,
+                                ProcurementContractService.MinimumTotalCycles,
+                                agreedUnitPrice: null,
+                                fulfillment: FulfillmentMode.SellerDelivery,
+                                stuffDef: nonStuffableConcreteStuff);
+                            RecurringContract nonStuffableContract =
+                                nonStuffableProposal?.Contract;
+                            bool nonStuffableProposalSuccess =
+                                nonStuffableProposal != null && nonStuffableProposal.Success;
+                            bool nonStuffableContractCreated =
+                                nonStuffableContract != null &&
+                                state.Contracts.Contains(nonStuffableContract);
+                            Check("non-stuffable agreement ignores material",
+                                nonStuffableProposalSuccess && nonStuffableContractCreated &&
+                                nonStuffableContract.thingDef == meat &&
+                                nonStuffableContract.stuffDef == null,
+                                $"OBSERVED success={nonStuffableProposalSuccess}; " +
+                                $"created={nonStuffableContractCreated}; " +
+                                $"product={nonStuffableContract?.thingDef?.defName ?? "null"}; " +
+                                $"stuff={nonStuffableContract?.stuffDef?.defName ?? "null"}; " +
+                                $"input stuff={nonStuffableConcreteStuff.defName}; " +
+                                "EXPECTED success=True; created=True; product is unchanged; " +
+                                "stuff=null");
+                        }
+                        finally
+                        {
+                            if (nonStuffableProposal?.Contract != null)
+                            {
+                                state.Contracts.Remove(nonStuffableProposal.Contract);
+                            }
+
+                            ClearHistory();
+                        }
                     }
 
                     state.Contracts.Clear();
@@ -977,6 +1551,19 @@ namespace Intercolony
                         $"cycles={legacyProposal.Contract?.totalCycles}; " +
                         $"cadence={legacyProposal.Contract?.CadenceDays:F0}; " +
                         $"reason={legacyProposal.Reason ?? "none"}");
+                }
+                else
+                {
+                    const string reason =
+                        "the recurring-goods fixture or settlement profile is unavailable";
+                    Skip("generic stuffable agreement stays valid", reason);
+                    Skip("named material reaches the contract", reason);
+                    Skip("different material changes contract price", reason);
+                    Skip("material previews follow contract prices", reason);
+                    Skip("impossible material pair is refused without writing", reason);
+                    Skip("impossible material pair is not previewable", reason);
+                    Skip("non-stuffable agreement ignores material", reason);
+                    Skip("cycle order carries optional material constraint", reason);
                 }
             }
             finally
