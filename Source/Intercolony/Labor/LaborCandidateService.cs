@@ -356,8 +356,13 @@ namespace Intercolony
 
                     for (int i = 0; i < perSettlement && census.Count < MaxCensus; i++)
                     {
-                        census.Add(GenerateProspectBiased(
-                            settlement, profile, distance, travel, skills, skillCount, qualityBias));
+                        LaborProspect prospect = GenerateProspectBiased(
+                            settlement, profile, distance, travel, skills, skillCount, qualityBias);
+                        // A census exists before a posting has a clause, so use Civilian as the
+                        // baseline promise. It is the most restrictive CanSupply clause.
+                        prospect.equipmentTier = LaborEquipmentTierService.RollPromisedTier(
+                            profile, CombatClause.Civilian);
+                        census.Add(prospect);
                     }
                 }
             }

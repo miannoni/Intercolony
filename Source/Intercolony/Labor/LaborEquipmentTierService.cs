@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -24,6 +25,10 @@ namespace Intercolony
         private const float StandardCapabilityFloor = -0.30f;
         private const float ProfessionalCapabilityFloor = 0.60f;
         private const float EliteCapabilityFloor = 1.05f;
+
+        private const float StandardPromiseWeight = 1.00f;
+        private const float ProfessionalPromiseWeight = 0.30f;
+        private const float ElitePromiseWeight = 0.05f;
 
         /// <summary>
         /// Classifies the pawn's actual loadout under one combat clause.
@@ -97,6 +102,100 @@ namespace Intercolony
                 default:
                     return false;
             }
+        }
+
+        /// <summary>
+        /// Rolls the equipment tier a settlement promises for a census prospect under the
+        /// supplied combat clause.
+        ///
+        /// Capability is an upper bound: abundance changes the relative chance of each exact
+        /// tier, but never adds a tier that <see cref="CanSupply"/> rejects. The caller owns the
+        /// seeded <see cref="Rand"/> state; this method consumes one random value only when a
+        /// positive weighted outcome exists.
+        /// </summary>
+        public static LaborEquipmentLevel RollPromisedTier(
+            SettlementEconomicProfile profile, CombatClause clause)
+        {
+            LaborEquipmentLevel[] possibleTiers =
+            {
+                LaborEquipmentLevel.Standard,
+                LaborEquipmentLevel.Professional,
+                LaborEquipmentLevel.Elite
+            };
+            List<LaborEquipmentLevel> candidates = new List<LaborEquipmentLevel>();
+            List<float> weights = new List<float>();
+            IntercolonySettings settings = IntercolonyMod.Settings;
+
+            for (int i = 0; i < possibleTiers.Length; i++)
+            {
+                LaborEquipmentLevel tier = possibleTiers[i];
+                if (!CanSupply(profile, tier, clause))
+                {
+                    continue;
+                }
+
+                float baselineWeight;
+                float abundanceMultiplier;
+                switch (tier)
+                {
+                    case LaborEquipmentLevel.Standard:
+                        baselineWeight = StandardPromiseWeight;
+                        abundanceMultiplier = settings.standardEquipmentAbundance;
+                        break;
+                    case LaborEquipmentLevel.Professional:
+                        baselineWeight = ProfessionalPromiseWeight;
+                        abundanceMultiplier = settings.professionalEquipmentAbundance;
+                        break;
+                    case LaborEquipmentLevel.Elite:
+                        baselineWeight = ElitePromiseWeight;
+                        abundanceMultiplier = settings.eliteEquipmentAbundance;
+                        break;
+                    default:
+                        continue;
+                }
+
+                candidates.Add(tier);
+                weights.Add(Mathf.Max(0f, baselineWeight * abundanceMultiplier));
+            }
+
+            float totalWeight = 0f;
+            for (int i = 0; i < weights.Count; i++)
+            {
+                totalWeight += weights[i];
+            }
+
+            if (totalWeight <= 0f)
+            {
+                return LaborEquipmentLevel.None;
+            }
+
+            float roll = Rand.Value * totalWeight;
+            float cumulativeWeight = 0f;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (weights[i] <= 0f)
+                {
+                    continue;
+                }
+
+                cumulativeWeight += weights[i];
+                if (roll < cumulativeWeight)
+                {
+                    return candidates[i];
+                }
+            }
+
+            // A value at the upper floating-point boundary can sit just beyond the last bucket.
+            // Returning the last positive bucket keeps the normalized choice total and safe.
+            for (int i = candidates.Count - 1; i >= 0; i--)
+            {
+                if (weights[i] > 0f)
+                {
+                    return candidates[i];
+                }
+            }
+
+            return LaborEquipmentLevel.None;
         }
 
         /// <summary>Whether an actual tier satisfies a requested tier.</summary>

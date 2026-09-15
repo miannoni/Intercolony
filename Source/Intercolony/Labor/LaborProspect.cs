@@ -50,6 +50,13 @@ namespace Intercolony
         /// </summary>
         public float pricedSkillValue;
 
+        /// <summary>
+        /// The equipment tier this source settlement promises to send with the worker if hired.
+        /// This remains a lightweight market promise; actual gear is materialised later, when an
+        /// applicant becomes a pawn.
+        /// </summary>
+        public LaborEquipmentLevel equipmentTier = LaborEquipmentLevel.None;
+
         public int LevelOf(SkillDef skill)
         {
             if (skill == null || skillLevels == null || skill.index >= skillLevels.Length)
