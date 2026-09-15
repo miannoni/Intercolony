@@ -23,6 +23,7 @@ namespace Intercolony
         private const float RowHorizontalPadding = 4f;
         private const float RowVerticalPadding = 2f;
         private const float ControlRowHeight = 28f;
+        private const float MaterialButtonWidth = 136f;
         private const float MaterialRowHeight = ControlRowHeight + 4f;
         private const float SliderHeight = 20f;
         private const float TermsTopOffset = 316f;
@@ -73,7 +74,7 @@ namespace Intercolony
             this.state = state;
             qualifyingItemsBySettlement = new Dictionary<int, List<ThingDef>>();
             qualifyingSettlements = FindQualifyingSettlements(
-                state, qualifyingItemsBySettlement, selectedStuff);
+                state, qualifyingItemsBySettlement);
             qualifyingSettlementsByItem = InvertQualifyingItemsBySettlement(
                 qualifyingSettlements, qualifyingItemsBySettlement);
             qualifyingItems = FindQualifyingItems(qualifyingSettlementsByItem);
@@ -248,13 +249,16 @@ namespace Intercolony
             float y = rect.y;
             if (ShouldShowMaterialSelector)
             {
-                Widgets.Label(new Rect(rect.x, y, rect.width - 78f, ControlRowHeight),
+                Widgets.Label(new Rect(
+                    rect.x, y, rect.width - (MaterialButtonWidth + 6f), ControlRowHeight),
                     MaterialLabel);
                 string materialValueLabel = selectedStuff == null
                     ? AnyMaterialLabel
                     : selectedStuff.LabelCap.ToString();
                 if (Widgets.ButtonText(
-                        new Rect(rect.xMax - 72f, y, 72f, ControlRowHeight),
+                        new Rect(
+                            rect.xMax - MaterialButtonWidth, y,
+                            MaterialButtonWidth, ControlRowHeight),
                         materialValueLabel))
                 {
                     OpenMaterialMenu();
@@ -956,8 +960,7 @@ namespace Intercolony
 
         private static List<Settlement> FindQualifyingSettlements(
             IntercolonyWorldComponent state,
-            Dictionary<int, List<ThingDef>> qualifyingItemsBySettlement,
-            ThingDef selectedStuff)
+            Dictionary<int, List<ThingDef>> qualifyingItemsBySettlement)
         {
             List<Settlement> result = new List<Settlement>();
             List<Settlement> settlements = Find.WorldObjects?.Settlements;
@@ -979,13 +982,14 @@ namespace Intercolony
                         continue;
                     }
 
+                    // Eligibility is a per-product question; narrowing by the current material
+                    // would hide products the player could still propose after changing material.
                     if (ContractService.PreviewContractTerms(
                             state, settlement, thingDef,
                             ContractService.MinimumQuantityPerCycle,
                             DefaultCadenceDays, DefaultTotalDeliveries,
                             agreedUnitPrice: null,
-                            fulfillment: DefaultFulfillment,
-                            stuffDef: selectedStuff) != null)
+                            fulfillment: DefaultFulfillment) != null)
                     {
                         qualifyingItems.Add(thingDef);
                     }
