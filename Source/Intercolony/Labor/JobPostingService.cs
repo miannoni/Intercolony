@@ -37,6 +37,16 @@ namespace Intercolony
         // Separates applicant-queue shuffles from the labor-census random stream.
         private const int ApplicantShuffleSalt = 0x4C41_5445;
 
+        private const string NoApplicantsLetterTitle = "No applicants";
+        private const string NoApplicantsLetterIntro =
+            "Your posting — {0} — drew no replies.\n\n";
+        private const string NoSkillQualifiedExplanation =
+            "Nobody reachable met the {0} skill requirement.";
+        private const string NoEquipmentTierExplanation =
+            "Nobody with {0} answered.";
+        private const string EquipmentFulfilmentFailureExplanation =
+            "Unexpectedly, capable workers could not be equipped to the requested tier.";
+
         // A posting may encounter several prospects, but a fulfilment defect should be visible
         // once per posting rather than once for every prospect that exposes the same defect.
         private static readonly HashSet<int> EquipmentFulfilmentWarnings =
@@ -144,6 +154,12 @@ namespace Intercolony
             float standing = EmployerReputationService.ScoreFor(state);
             List<LaborProspect> world = LaborCandidateService.Census(state);
             Dictionary<int, int> gained = new Dictionary<int, int>();
+            Dictionary<int, MatchAttempt> attempts = new Dictionary<int, MatchAttempt>();
+
+            foreach (JobPosting posting in open)
+            {
+                attempts[posting.id] = new MatchAttempt();
+            }
 
             // Phase one: every worker picks the one posting that suits them best, without regard
             // to whether it already has a queue.
@@ -163,12 +179,26 @@ namespace Intercolony
 
                 JobPosting best = null;
                 int bestAsk = 0;
+                JobPosting bestSkillMatch = null;
+                int bestSkillAsk = 0;
 
                 foreach (JobPosting posting in open)
                 {
                     if (!posting.MeetsRequirement(worker))
                     {
                         continue;
+                    }
+
+                    int ask = Ask(state, worker, posting, standing);
+
+                    // Keep one diagnostic owner for each prospect, just as matching keeps one
+                    // queue owner. If every skill-qualified choice misses its tier, the best
+                    // skill-only choice still identifies the gate that stopped the prospect.
+                    if (bestSkillMatch == null || ask > bestSkillAsk ||
+                        (ask == bestSkillAsk && posting.id < bestSkillMatch.id))
+                    {
+                        bestSkillMatch = posting;
+                        bestSkillAsk = ask;
                     }
 
                     // Reject a prospect whose census promise is below the request before the
@@ -182,8 +212,6 @@ namespace Intercolony
                         continue;
                     }
 
-                    int ask = Ask(state, worker, posting, standing);
-
                     // A prospect chooses the posting that pays them the most. Ask includes the
                     // posting's term and combat clause, so this is a real choice: the same prospect
                     // can ask more for Armed or Security work than for Civilian work. Break equal
@@ -195,6 +223,20 @@ namespace Intercolony
                         best = posting;
                         bestAsk = ask;
                     }
+                }
+
+                if (best != null)
+                {
+                    MatchAttempt attempt = attempts[best.id];
+                    attempt.skillQualified++;
+                    attempts[best.id] = attempt;
+                }
+                else if (bestSkillMatch != null)
+                {
+                    MatchAttempt attempt = attempts[bestSkillMatch.id];
+                    attempt.skillQualified++;
+                    attempt.tierRejected++;
+                    attempts[bestSkillMatch.id] = attempt;
                 }
 
                 if (best == null)
@@ -247,10 +289,25 @@ namespace Intercolony
                     int taken = 0;
                     for (int i = 0; i < queue.Count && taken < room; i++)
                     {
-                        if (Apply(state, posting, queue[i].worker, queue[i].ask))
+                        ApplyResult result = Apply(state, posting, queue[i].worker, queue[i].ask);
+                        MatchAttempt attempt = attempts[posting.id];
+                        switch (result)
                         {
-                            taken++;
+                            case ApplyResult.Accepted:
+                                attempt.accepted++;
+                                taken++;
+                                break;
+                            case ApplyResult.SourceRejected:
+                                attempt.sourceRejected++;
+                                break;
+                            case ApplyResult.FulfilmentRejected:
+                                attempt.fulfilmentRejected++;
+                                break;
+                            default:
+                                break;
                         }
+
+                        attempts[posting.id] = attempt;
                     }
 
                     if (taken > 0)
@@ -267,7 +324,8 @@ namespace Intercolony
             foreach (JobPosting posting in open)
             {
                 gained.TryGetValue(posting.id, out int arrived);
-                Report(state, posting, arrived, standing);
+                MatchAttempt attempt = attempts[posting.id];
+                Report(state, posting, arrived, standing, attempt);
             }
         }
 
@@ -276,6 +334,23 @@ namespace Intercolony
         {
             public LaborProspect worker;
             public int ask;
+        }
+
+        private struct MatchAttempt
+        {
+            public int skillQualified;
+            public int tierRejected;
+            public int sourceRejected;
+            public int fulfilmentRejected;
+            public int accepted;
+        }
+
+        private enum ApplyResult
+        {
+            Rejected,
+            SourceRejected,
+            FulfilmentRejected,
+            Accepted
         }
 
         /// <summary>How many more applicants this posting will hold.</summary>
@@ -292,7 +367,7 @@ namespace Intercolony
         /// the expensive call, and it happens once for a legacy applicant or demanding posting
         /// rather than once per worker considered.
         /// </summary>
-        private static bool Apply(
+        private static ApplyResult Apply(
             IntercolonyWorldComponent state, JobPosting posting, LaborProspect worker, int ask)
         {
             // Any is the legacy path: one generation, no capability gate, no classification and
@@ -303,11 +378,11 @@ namespace Intercolony
                 Pawn pawn = worker.Materialise();
                 if (pawn == null)
                 {
-                    return false;
+                    return ApplyResult.Rejected;
                 }
 
                 AddApplicant(posting, worker, pawn, ask);
-                return true;
+                return ApplyResult.Accepted;
             }
 
             SettlementEconomicProfile profile = ProfileFor(state, worker.settlementId);
@@ -318,13 +393,13 @@ namespace Intercolony
             {
                 // This is the cheap source-settlement filter. Do it before Materialise: full pawn
                 // generation is expensive, and an incapable source must not spend it.
-                return false;
+                return ApplyResult.SourceRejected;
             }
 
             Pawn applicantPawn = worker.Materialise();
             if (applicantPawn == null)
             {
-                return false;
+                return ApplyResult.Rejected;
             }
 
             if (posting.requestedEquipmentLevel == LaborEquipmentLevel.None)
@@ -346,7 +421,7 @@ namespace Intercolony
                         WarnEquipmentFulfilmentFailure(
                             posting, worker, fulfilmentFailure ?? "unknown allocator failure");
                         DiscardRejectedPawn(applicantPawn);
-                        return false;
+                        return ApplyResult.FulfilmentRejected;
                     }
                 }
             }
@@ -363,11 +438,11 @@ namespace Intercolony
                     posting, worker,
                     $"actual loadout classified as {actual} after fulfilment.");
                 DiscardRejectedPawn(applicantPawn);
-                return false;
+                return ApplyResult.FulfilmentRejected;
             }
 
             AddApplicant(posting, worker, applicantPawn, ask);
-            return true;
+            return ApplyResult.Accepted;
         }
 
         private static void WarnEquipmentFulfilmentFailure(
@@ -475,11 +550,11 @@ namespace Intercolony
         /// Tells the player what their advertisement did, and — when it did nothing — why.
         ///
         /// The "why" is the point. A posting that draws nobody is indistinguishable from a broken
-        /// feature unless the game says whether nobody qualified or whether the qualified pool did
-        /// not answer this refresh. The posted wage is intentionally not one of those reasons.
+        /// feature unless the game says whether skill, equipment, or fulfilment stopped the reply.
+        /// The posted wage is intentionally not one of those reasons.
         /// </summary>
         private static void Report(IntercolonyWorldComponent state, JobPosting posting, int arrived,
-            float standing)
+            float standing, MatchAttempt attempt)
         {
             if (arrived > 0)
             {
@@ -509,11 +584,36 @@ namespace Intercolony
 
             posting.noAnswerNotified = true;
 
+            string explanation;
+            if (posting.requestedEquipmentLevel == LaborEquipmentLevel.Any)
+            {
+                // Any has no equipment gate; preserve its legacy explanation byte for byte.
+                explanation = ExplainSilence(state, posting, standing);
+            }
+            else if (attempt.fulfilmentRejected > 0)
+            {
+                explanation = EquipmentFulfilmentFailureExplanation;
+            }
+            else if (attempt.tierRejected > 0 || attempt.sourceRejected > 0)
+            {
+                explanation = string.Format(
+                    NoEquipmentTierExplanation,
+                    LaborEquipmentTierService.Label(posting.requestedEquipmentLevel));
+            }
+            else if (posting.skill != null && attempt.skillQualified == 0)
+            {
+                explanation = string.Format(
+                    NoSkillQualifiedExplanation, posting.SkillLabel);
+            }
+            else
+            {
+                explanation = ExplainSilence(state, posting, standing);
+            }
+
             IntercolonyLetters.Send(
                 IntercolonyLetterImportance.Chatty,
-                "No applicants",
-                $"Your posting — {posting.Headline()} — drew no replies.\n\n" +
-                ExplainSilence(state, posting, standing),
+                NoApplicantsLetterTitle,
+                string.Format(NoApplicantsLetterIntro, posting.Headline()) + explanation,
                 LetterDefOf.NeutralEvent);
         }
 
