@@ -1,196 +1,153 @@
 # Foreman state — Intercolony
 
-Stage: **C0 closed. C1 in progress** — F04 named Produce presets + Architect bulk application.
-Unit: C1.1 — `ProduceControlPreset` record + map-component ownership.
-Worker: luna running · out `C:\Users\matte\.claude\jobs\439462af\tmp\C1.1-out.txt`
-Last done: C1.0 recon closed without a Sol dispatch — both §5.6 and §9.6 answered from the 1.6 references. See C1-D1..D5 and C5-D1..D4.
-Updated: 2026-09-15 00:12
-Foreman load: 2026-09-14 23:45
-Foreman: e46c835 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
-Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` and follow it, then re-run its section 0.
+Stage: **C1** — F04 named Produce presets + Architect bulk application.
+Unit: C1.4 — Architect `Production` category; verified, being accepted on this wake.
+Worker: idle/none
+Loop: PROCESSING_RESULT
+Last done: C1.4 verified — build 0/0, produce 71/0/1, exit 0, log CLEAN, no def-load errors. C1.3 accepted at `4bf2746`.
+Updated: 2026-09-15 01:34
+Foreman load: 2026-09-15 01:34
+Plan: C:\dev\INTERCOLONY_PLAYTEST_POLISH_CORRECTION_PLAN.md · worker copy `docs/PLAYTEST_POLISH_PLAN.md`
+Mode: autonomous run-to-halt
+Foreman: 89fdf02 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
+Fallback: if `Skill(foreman)` is unknown, read `C:\dev\agent-foreman\skill\SKILL.md` then `RUN_CONTRACT.md`.
 
 <!-- Everything above this line is the header. A fresh session reads only the header. -->
 
-## THE RUN — read this before dispatching anything
+## The run
 
-**`C:\dev\INTERCOLONY_PLAYTEST_POLISH_CORRECTION_PLAN.md` is the authority.** A copy for workers,
-which have no chat history, lives at `docs/PLAYTEST_POLISH_PLAN.md`. It beats
-`docs/PLAYTEST_FINALIZATION_PLAN.md`, every older plan, every old RECON file and every historical
-progress record **for the five findings it covers**.
+**Authority:** `C:\dev\INTERCOLONY_PLAYTEST_POLISH_CORRECTION_PLAN.md`, copied for workers to
+`docs/PLAYTEST_POLISH_PLAN.md`. It beats every older plan, RECON file and progress record for its five
+findings. Branch `foreman/playtest-polish-2026-09-14`, cut from
+`foreman/playtest-finalization-2026-09-13` at `04bd776` (schema 59, suite 1674/0/19). That
+finalization work is complete and must not be reset or recreated.
 
-This is a **human-playtest polish pass** over the finalization run, not a correction of a wrong
-implementation. Branch `foreman/playtest-polish-2026-09-14`, cut from
-`foreman/playtest-finalization-2026-09-13` at `04bd776` (schema 59, whole suite 1674/0/19). That
-finalization work is **complete and must not be reset, discarded or recreated**.
+**Autonomy.** The operator authorised this run start to finish without stopping between stages. Halt
+only for a genuine Human Blocker: an unresolved player-facing product decision, an irreversible or
+external action, a save/data-loss risk with no safe route, or two plan requirements that cannot both
+hold. A hard implementation, a failing test and an unfamiliar vanilla API are not blockers. If one
+chain blocks, quarantine it and keep executing the others.
 
-**The operator authorised this run to proceed autonomously, start to finish, without stopping between
-stages to ask permission.** Continue whenever another executable unit exists. Stop only for a genuine
-Human Blocker: a player-facing product decision the plan does not already make, an irreversible or
-external action, a save-compatibility/data-loss risk with no safe conservative route, or two explicit
-plan requirements that cannot both hold. A hard implementation, a failing test and an unfamiliar
-vanilla API are **not** Human Blockers. If one chain blocks, quarantine it and keep executing the
-others.
+- **In scope:** F04 presets/bulk apply · F16 contextual lifecycle button · F19 optional contract
+  material · F23 equipment-tier market abundance + 3 Mod Settings · F24 route-specific emergency
+  hiring, visible pod, arrival letter, Emergency Job Postings.
+- **Regression-only:** F06, F20, F21, existing Produce Pause/Resume/Stop, employment lifecycle, schema-59
+  save compatibility. Do not improve them opportunistically.
+- **Frozen:** F12, F22. F21/F24 transport must not become a back door into F12; F23 covers hiring
+  *from* the market only. The final diff gets searched for both.
+- **Out of scope:** Administration, Commercial redesign, the `PurchaseOrderService.DeliverToColony`
+  partial-delivery defect, the inaccessible recurring-contract destination defect. A new unrelated
+  issue gets documented; the run continues.
+- **Never:** merge to `main`, tag, GitHub release, Workshop publish. Push regularly. Schema stays 59
+  unless the plan names a bump (§9.9 only).
 
-### IN SCOPE — only these five findings
+## Foreman method — refreshed to `89fdf02` on operator request, 2026-09-15 01:34
 
-**F04** reusable Produce presets + Architect bulk application · **F16** contextual employee lifecycle
-button replacing `...` · **F19** optional material specificity on stuffable selling agreements ·
-**F23** equipment-tier abundance in the underlying labor market + three Mod Settings controls ·
-**F24** genuinely rapid route-specific emergency hiring, visible drop-pod arrival, arrival letter,
-Emergency Job Postings.
+The canonical clone was fast-forwarded `e46c835` → `89fdf02` (clean, not ahead, 8 behind) and
+`SKILL.md` / `RUN_CONTRACT.md` / `WORKER.md` reloaded. The 15-minute heartbeat was re-armed with the
+new state-machine prompt. This run continues under the new method from its existing durable state; no
+accepted work was undone or redone.
 
-### REGRESSION-ONLY — accepted as good, touch only if this run breaks them
+**The loop is the method.** WAKE → read state → check the ONE worker once → verify/disposition if
+finished → choose ONE bounded unit → dispatch ONE Sol recon or Luna worker → persist → **END THE
+TURN**. Four durable loop states: `READY_TO_DISPATCH`, `WAITING_ON_WORKER`, `PROCESSING_RESULT`,
+`CLEAN_HALT`.
 
-**F06** apparel policies / bond consent · **F20** direct labor economics · **F21** settlement
-rapid-logistics capability. Also: existing Produce Pause/Resume/Stop, the employment contract
-lifecycle, and save compatibility from schema 59. Do not "improve" them opportunistically.
+**Dispatch is a hard turn barrier.** After a launch the Supervisor does no further project work in
+that turn: no polling/sleep/watchers, no inspecting future stages, no pre-reconning, no pre-authoring
+the next prompt, no unrelated tests, no second worker. Idle Supervisor time is correct; worker time
+should dominate. Autonomous run-to-halt describes the multi-turn run, not one long turn.
 
-### FROZEN — documented, never advanced
+**Recon roles are literal.** Where the plan marks FOCUSED RECON REQUIRED, that unit belongs to **Sol
+high read-only** — always, even when Foreman believes it could answer from `reference/decompiled/`.
+Foreman frames the question and later spot-checks the answer; it does not perform the recon.
+Everywhere else, do not recon: inspect the files the plan names and implement. The plan marks three;
+**§8.7 (C4) and §9.6 (C5) are owed to Sol.**
 
-**F12** recurring/preprogrammed player caravans and **F22** player-supplied labor. F21/F24 rapid
-transport must not become a back door into F12. F23 applies only to hiring workers **from** the
-market. The final diff gets searched for both.
+**Serialise:** never two workers on `MainTabWindow_Intercolony_Labor.cs`, `ProduceLoopMapComponent.cs`,
+`JobPostingService.cs`/`LaborCandidateService.cs`, or world schema/migration code.
 
-### Out of scope even though known
-
-Administration, unrelated Commercial redesign, the `PurchaseOrderService.DeliverToColony`
-partial-delivery defect, and the inaccessible recurring-contract destination defect — unless one
-directly blocks this plan. A new unrelated issue gets documented and the run continues.
-
-### Standing constraints
-
-Stay on `foreman/playtest-polish-2026-09-14`. **Never merge to `main`, never tag, never create a
-GitHub release, never publish or update the Workshop.** Push regularly. Schema is 59; a world-schema
-bump is authorised only where the plan names one (§9.9 emergency posting flag, if the persistence
-policy requires it).
-
-### Recon policy — this plan is deliberately on-rails
-
-**Do not open a stage with a repo-wide recon.** Inspect the production files the plan names, verify
-the audited seam still exists, and implement directly when it does. Dispatch Sol read-only **only**
-for a question the plan marks FOCUSED RECON REQUIRED, or where concrete code evidence proves the
-named seam is no longer valid — and only that question. No whole-repo sweeps, no re-reading
-`DESIGN.md` / the old source plan / old RECON files / all of `PROGRESS.md`, no long standalone recon
-essay. Return from recon to implementation immediately. Optimise for implementation tokens, not
-rediscovery tokens.
-
-The plan marks exactly three: §5.6 dynamic Architect category, §8.7 pawn gear regeneration, §9.6
-visible drop-pod descent + letter look target.
-
-### Serialisation the plan requires
-
-Never two workers on `MainTabWindow_Intercolony_Labor.cs`, on `ProduceLoopMapComponent.cs`, on
-`JobPostingService.cs`/`LaborCandidateService.cs`, or on world schema/migration code.
-
-### Evidence policy — suite green is not evidence
-
-Per stage: targeted behavioural assertion; negative control / mutation where the governing seam could
-otherwise be fake; targeted suite; save/load proof for new persisted state; and visual behaviour
-recorded honestly as **human evidence owed**, never claimed. Specifically, F24 must not claim human
-visual acceptance because `DropPodUtility` was called, a skyfaller class exists, or the pawn
-eventually spawned.
+**Evidence.** Per stage: targeted behavioural assertion; mutation/negative control where the governing
+seam could be fake; the relevant subsystem suite before accepting a slice where feasible; save/load
+proof for new persisted state; visual behaviour recorded as **human evidence owed**, never claimed.
+F24 must not claim visual acceptance because `DropPodUtility` was called, a skyfaller class exists, or
+the pawn eventually spawned.
 
 ## Stages
 
 | | Stage | Scope | Status |
 |---|---|---|---|
-| ✅ | C0 — baseline and scope lock | — | closed. Branch cut at `04bd776`, build clean, schema 59 |
-| ⏳ | C1 — F04 Produce presets / Architect production controls | F04 | in progress |
-| ⬜ | C2 — F16 contextual employee lifecycle button | F16 | not started |
-| ⬜ | C3 — F19 optional material specificity for selling agreements | F19 | not started |
-| ⬜ | C4 — F23 equipment-tier market abundance + settings | F23 | not started |
-| ⬜ | C5 — F24 emergency hiring polish | F24 | not started |
+| ✅ | C0 — baseline and scope lock | — | closed, `6e1b408`. Base `04bd776`, build 0/0, schema 59 |
+| ⏳ | C1 — Produce presets / Architect production controls | F04 | in progress |
+| ⬜ | C2 — contextual employee lifecycle button | F16 | not started |
+| ⬜ | C3 — optional material specificity for selling agreements | F19 | not started |
+| ⬜ | C4 — equipment-tier market abundance + settings | F23 | not started; §8.7 recon owed to Sol |
+| ⬜ | C5 — emergency hiring polish | F24 | not started; §9.6 recon owed to Sol |
 | ⬜ | C6 — integration and regression | — | not started |
-
-## Units — stage C0
-
-| | Unit | Status |
-|---|---|---|
-| ✅ | C0.1 — branch `foreman/playtest-polish-2026-09-14` cut from the finalization branch | done, base `04bd776` |
-| ✅ | C0.2 — baseline `dotnet build` | done, 0 warnings 0 errors |
-| ✅ | C0.3 — schema confirmed 59 | `IntercolonyWorldComponent.cs:31` |
-| ✅ | C0.4 — plan copied to `docs/PLAYTEST_POLISH_PLAN.md`, scope matrix recorded above | done |
 
 ## Units — stage C1
 
 | | Unit | Status |
 |---|---|---|
-| ✅ | C1.0 — recon: runtime Architect designators from a saved list; right-click float menu on an Architect entry | closed by Foreman, no Sol needed; C1-D1..D5 |
-| ⏳ | C1.1 — `ProduceControlPreset` record + map-component ownership, old-save safe | luna running |
-| ⬜ | C1.2 — `TryApplyPreset` as the single authoritative application path | not started |
-| ⬜ | C1.3 — `Dialog_ProduceControls` gains name + `Save as preset` | not started |
-| ⬜ | C1.4 — Architect `Production` category with one runtime designator per preset, drag + right-click | not started |
-| ⬜ | C1.5 — Architect > Orders generic `Produce controls` preset manager | not started |
-| ⬜ | C1.6 — assertions + mutation for preset copy, independence, material intersection | not started |
+| ✅ | C1.0 — recon: runtime Architect designators; right-click on an Architect entry | closed; C1-D1..D5 |
+| ✅ | C1.1 — `ProduceControlPreset` + map-component ownership, old-save safe | accepted, `117f66f` |
+| ✅ | C1.2 — `TryApplyPreset`, the single authoritative application path | accepted, `1475025` |
+| ✅ | C1.2b — key application on `Thing.Position` so one object gets one loop | accepted, `1475025`. **produce 71/0/1, exit 0, CLEAN** |
+| ✅ | C1.3 — `Dialog_ProduceControls` gains name + `Save as preset` | accepted, `4bf2746`. **produce 71/0/1, exit 0, CLEAN** |
+| ⏳ | C1.4 — Architect `Production` category: XML def, runtime registry, drag-apply + one summary | luna running |
+| ⬜ | C1.5 — `Dialog_EditProducePreset` + rename prompt | not started |
+| ⬜ | C1.6 — right-click float menu on the preset entry: Edit / Rename / Remove | not started |
+| ⬜ | C1.7 — Architect > Orders generic `Produce controls` preset manager/picker | not started |
+| ⬜ | C1.8 — assertions + mutation: preset copy, independence, material intersection, dedupe | not started |
 
-## Decisions
+## Decisions — this run
 
-Recorded as the run makes them. Numbered per stage.
-
-- **C0-D1.** Base is exactly `04bd776`; local and `origin` agreed, so there were no operator
-  continuation commits to preserve.
-- **C0-D2.** Two pre-existing untracked operator files — `Playtesting annotations.docx` and
-  `tools/Compress-Images.ps1` — are left strictly alone: never deleted, moved, modified or committed.
+- **C0-D1.** Base is exactly `04bd776`; local and `origin` agreed, so no operator continuation commits
+  existed to preserve.
+- **C0-D2.** `Playtesting annotations.docx` and `tools/Compress-Images.ps1` are pre-existing untracked
+  operator files: never deleted, moved, modified or committed.
 - **C0-D3.** Worker prompts and outputs live in `C:\Users\matte\.claude\jobs\439462af\tmp\`, outside
-  the repository, so nothing scratch can reach a commit.
+  the repo, so nothing scratch can reach a commit.
 
-### C1 — §5.6 recon, answered by Foreman from the 1.6 references (no Sol dispatch needed)
+### C1 — §5.6, from the 1.6 references
 
-- **C1-D1.** Architect entries come from `DesignationCategoryDef.AllResolvedDesignators`, which
-  returns the **live** backing `resolvedDesignators` list
-  (`reference/decompiled/Verse/DesignationCategoryDef.cs:77`, field at `:40`). `ResolveDesignators()`
-  (`:274`) `Clear()`s and rebuilds it, and is called exactly once per game launch from
-  `ResolveReferences()` via `LongEventHandler.ExecuteWhenFinished` (`:264-272`). `resolvedDesignators`
-  is `[Unsaved(false)]`. Therefore **mutating `AllResolvedDesignators` at runtime is the supported
-  route**, and `specialDesignatorClasses` — a `List<Type>` instantiated exactly once at `:277-293` —
-  **cannot** carry a runtime-variable count.
-- **C1-D2.** Right-click on an Architect entry: `ArchitectCategoryTab.cs:49` draws the panel with
-  `GizmoGridDrawer.DrawGizmoGrid(def.ResolvedAllowedDesignators, ...)`, and `GizmoGridDrawer` consults
-  `Gizmo.RightClickFloatMenuOptions` at `:354`, `:366` and `:431`. That member is declared
-  `virtual` on `Verse/Gizmo.cs:33` and already overridden on `Verse/Designator.cs:100`. So Edit /
-  Rename / Remove come from **overriding `RightClickFloatMenuOptions`** on the preset designator. **No
-  Harmony patch is required.**
-- **C1-D3.** `resolvedDesignators` is per-Def and therefore global, while presets are per-map. The
-  registry must re-sync against `Find.CurrentMap`'s preset list. Sync on a cheap guard — current map
-  reference plus `ProduceLoopMapComponent.PresetsRevision` — from `MapComponentUpdate()`
-  (`reference/decompiled/Verse/MapComponent.cs:12`) gated on `map == Find.CurrentMap`, plus on
-  `FinalizeInit()` (`:32`) and on every preset mutation.
-- **C1-D4.** UX reference confirmed against `Blueprints Forked - 1.6` source at
-  `C:\Program Files (x86)\Steam\steamapps\workshop\content\294100\3525001145\Source\Blueprints\`
-  (path contains spaces). `BlueprintController.Initialize()` takes
-  `named.AllResolvedDesignators`, `Clear()`s it, re-adds its own designators, and `Add`/`Remove`
-  mutate that same list live; `Designator_Blueprint.RightClickFloatMenuOptions` supplies
-  Edit/Rename/Remove. **Pattern confirmed, no dependency added, none of its architecture copied.**
-  Intercolony must NOT `Clear()` the whole list the way Blueprints does — see C1-D5.
-- **C1-D5.** Intercolony's `Production` category is authored once in XML with
-  `Designator_Cancel` plus the generic preset manager in `specialDesignatorClasses`. The runtime sync
-  must remove and re-add **only its own preset designators**, never `Clear()` the list, so a
-  third-party mod that also injected into this category is not wiped.
+*Process note: Foreman did this recon itself, which the operator has since ruled a role violation.
+Every claim was verified at a cited file:line and the units built on it are accepted, so it stands
+rather than being re-derived. Sol owns §8.7 and §9.6.*
 
-### C5 — §9.6 recon, answered by Foreman from the 1.6 references (no Sol dispatch needed)
+- **C1-D1.** `DesignationCategoryDef.AllResolvedDesignators` (`Verse/DesignationCategoryDef.cs:77`)
+  returns the **live** `resolvedDesignators` list (field `:40`, `[Unsaved(false)]`).
+  `ResolveDesignators()` (`:274`) clears and rebuilds it, once per launch, from `ResolveReferences()`
+  (`:264`). So runtime mutation of that list is the supported route, and `specialDesignatorClasses` —
+  a `List<Type>` instantiated once at `:277-293` — cannot carry a runtime-variable count.
+- **C1-D2.** Right-click on an Architect entry: `ArchitectCategoryTab.cs:49` draws via
+  `GizmoGridDrawer.DrawGizmoGrid(def.ResolvedAllowedDesignators, ...)`, which consults
+  `Gizmo.RightClickFloatMenuOptions` at `:354/:366/:431`. That member is `virtual` on
+  `Verse/Gizmo.cs:33`. Edit/Rename/Remove come from overriding it. **No Harmony patch.**
+- **C1-D3.** `resolvedDesignators` is per-Def and therefore global, while presets are per-map. Sync
+  against `Find.CurrentMap` on a two-comparison guard (cached map + `PresetsRevision`) from
+  `MapComponentUpdate()`, plus `FinalizeInit()` and `MapRemoved()`.
+- **C1-D4.** UX pattern confirmed against `Blueprints Forked - 1.6` source under
+  `C:\Program Files (x86)\Steam\steamapps\workshop\content\294100\3525001145\` (path has spaces): it
+  mutates `AllResolvedDesignators` live and supplies Edit/Rename/Remove via
+  `RightClickFloatMenuOptions`. No dependency added, no architecture copied.
+- **C1-D5.** Intercolony must **not** `Clear()` the whole category list the way Blueprints does. The
+  sync removes only elements that `is Designator_ProducePreset` — by type test, not by a remembered
+  list, because static state outlives a game here (the `LaborCandidateService` leak in CLAUDE.md), and
+  so a third-party injection into the same category survives.
+- **C1-D6.** A Produce loop is keyed on the object's own `Thing.Position` — that is what the gizmo
+  uses (`ProduceGizmoPatch.cs:66`). Preset application must canonicalise to it, or a drag across a
+  2x2 object's four cells creates four loops, none of them the one its gizmo shows. C1.2b.
 
-- **C5-D1.** `DropPodUtility.MakeDropPodAt` (`reference/decompiled/RimWorld/DropPodUtility.cs:12-25`)
-  **already produces the identical visible descent vanilla raids use**: it spawns a real
-  `ThingDefOf.DropPodIncoming` skyfaller through `SkyfallerMaker.SpawnSkyfaller`
-  (`reference/decompiled/RimWorld/SkyfallerMaker.cs:40-58`) → `GenSpawn.Spawn`. So the missing piece
-  is **not** the skyfaller. The current code at `EmploymentService.cs:1134` never tells the player to
-  look: no letter, no look target, and a pod descent lasts seconds. That is why the playtest saw
-  nothing.
-- **C5-D2.** `MakeDropPodAt` returns `void`, so the letter's look target is obtained by reading the
-  spawned `Skyfaller` back off the landing cell immediately after the call, rather than by
-  duplicating vanilla's four-line body. `LookTargets` has a `Thing` ctor
-  (`reference/decompiled/Verse/LookTargets.cs:46`) and an `IntVec3 + Map` ctor (`:58`) as the
-  fallback if the skyfaller cannot be resolved.
-- **C5-D3.** The letter goes through `IntercolonyLetters.Send(importance, label, text, def,
-  lookTargets)` (`Source/Intercolony/Core/IntercolonyLetters.cs:29`) at
-  `IntercolonyLetterImportance.Always` — §9.7 requires a reliably visible importance, and `Always`
-  is the only level the player's letter-volume setting cannot suppress.
-- **C5-D4.** The audited emergency-ETA defect is confirmed exactly as the plan describes:
-  `LaborCandidateService.ArrivalTicksFor` (`:820-833`) returns one hardcoded
-  `EmergencyPodArrivalHours` for every pod route, and falls through to
-  `candidate.travelDays * GenDate.TicksPerDay` — i.e. **ordinary multi-day timing** — for a
-  conventional emergency. `EmergencyConventionalMaxDays = 2` at `:32` is the `<= 2 days` rule the plan
-  orders deleted.
+- **C1-D7.** The `produce` suite baseline on this branch is **71/0/1**, and the single skip is
+  pre-existing and documented: `allowedWorkers` is a `LookMode.Reference` list, and the suite's
+  detached `ProduceLoopMapComponent` probe has no registered pawn objects for Scribe's cross-reference
+  pass, so the references come back null and PostLoadInit strips them. It skips rather than comparing
+  an empty list to an empty list (`9ce7518`, `8ad2e16`). **Consequence for C1.8:** the plan's §5.8
+  acceptance 3, "preset round-trips save/load including selected workers", cannot be machine-proven by
+  that probe either. Assert the non-reference preset fields across a save and record the
+  selected-worker round-trip as human evidence owed — do not skip silently, and do not assert
+  empty-equals-empty.
 
 ## Open for the operator
 

@@ -20,6 +20,28 @@ namespace Intercolony
         {
         }
 
+        public override void MapComponentUpdate()
+        {
+            base.MapComponentUpdate();
+            ProducePresetDesignators.SyncFor(map);
+        }
+
+        public override void FinalizeInit()
+        {
+            base.FinalizeInit();
+            ProducePresetDesignators.SyncFor(map);
+        }
+
+        public override void MapRemoved()
+        {
+            base.MapRemoved();
+            // The registry may already belong to another current map, so clear only this component's cached map.
+            if (ProducePresetDesignators.IsCachedFor(map))
+            {
+                ProducePresetDesignators.Clear();
+            }
+        }
+
         public override void MapComponentTick()
         {
             base.MapComponentTick();

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Defs>
+
+  <!-- Provides one stable Architect category for the runtime designators made from saved presets. -->
+  <DesignationCategoryDef>
+    <defName>IntercolonyProduction</defName>
+    <label>production</label>
+    <description>Saved Produce presets are applied by dragging over eligible objects.</description>
+    <order>850</order>
+    <specialDesignatorClasses>
+      <li>Designator_Cancel</li>
+    </specialDesignatorClasses>
+  </DesignationCategoryDef>
+
+</Defs>
