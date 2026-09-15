@@ -135,6 +135,9 @@ namespace Intercolony
         private sealed class PreparedContractProposal
         {
             public ContractTerms terms;
+            // Keep the normalized material beside the terms so preview and send cannot disagree
+            // about whether the proposal is generic or names a concrete material.
+            public ThingDef stuffDef;
             public IntercolonyNegotiationProposal negotiationProposal;
         }
 
@@ -391,7 +394,7 @@ namespace Intercolony
             float appeal = DelayAppeal(evaluation);
             RecurringContract contract = BuildExplicitContract(
                 state, settlement, thingDef, quantityPerCycle, prepared.terms,
-                FulfillmentMode.SellerDelivery);
+                FulfillmentMode.SellerDelivery, null);
             contract.proposalAppeal = appeal;
             contract.decisionDueTick =
                 GenTicks.TicksGame + ProposalDecisionDelayTicks(appeal);
@@ -408,6 +411,9 @@ namespace Intercolony
         /// Sends player-chosen standing-agreement terms to a settlement. The settlement's answer
         /// remains pending after every commercial gate and term bound has been satisfied.
         /// </summary>
+        /// <param name="stuffDef">
+        /// Optional material for a stuffable product; null means any material.
+        /// </param>
         public static ContractProposalResult ProposeContract(
             IntercolonyWorldComponent state,
             Settlement settlement,
@@ -416,11 +422,12 @@ namespace Intercolony
             int cadenceDays,
             int totalCycles,
             float? agreedUnitPrice = null,
-            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery,
+            ThingDef stuffDef = null)
         {
             if (!TryPrepareExplicitProposal(
                     state, settlement, thingDef, quantityPerCycle, cadenceDays, totalCycles,
-                    agreedUnitPrice, fulfillment,
+                    agreedUnitPrice, fulfillment, stuffDef,
                     out PreparedContractProposal prepared,
                     out ContractProposalFailure failure,
                     out string reason,
@@ -434,7 +441,8 @@ namespace Intercolony
             float appeal = DelayAppeal(evaluation);
 
             RecurringContract contract = BuildExplicitContract(
-                state, settlement, thingDef, quantityPerCycle, prepared.terms, fulfillment);
+                state, settlement, thingDef, quantityPerCycle, prepared.terms, fulfillment,
+                prepared.stuffDef);
             contract.proposalAppeal = appeal;
             contract.decisionDueTick = GenTicks.TicksGame + ProposalDecisionDelayTicks(appeal);
 
@@ -536,6 +544,9 @@ namespace Intercolony
         /// Computes the fixed player-chosen terms an eligible proposal would carry without
         /// constructing or recording a contract. Returns null when it could not be sent.
         /// </summary>
+        /// <param name="stuffDef">
+        /// Optional material for a stuffable product; null means any material.
+        /// </param>
         public static ContractTerms PreviewContractTerms(
             IntercolonyWorldComponent state,
             Settlement settlement,
@@ -544,11 +555,12 @@ namespace Intercolony
             int cadenceDays,
             int totalCycles,
             float? agreedUnitPrice = null,
-            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery,
+            ThingDef stuffDef = null)
         {
             return TryPrepareExplicitProposal(
                     state, settlement, thingDef, quantityPerCycle, cadenceDays, totalCycles,
-                    agreedUnitPrice, fulfillment,
+                    agreedUnitPrice, fulfillment, stuffDef,
                     out PreparedContractProposal prepared,
                     out _, out _,
                     cacheProfile: false)
@@ -561,6 +573,9 @@ namespace Intercolony
         /// recording a contract. The negotiation proposal is built by the same pure preparation
         /// path used immediately before the real proposal is evaluated.
         /// </summary>
+        /// <param name="stuffDef">
+        /// Optional material for a stuffable product; null means any material.
+        /// </param>
         public static IntercolonyNegotiationAcceptancePreview PreviewAcceptance(
             IntercolonyWorldComponent state,
             Settlement settlement,
@@ -569,11 +584,12 @@ namespace Intercolony
             int cadenceDays,
             int totalCycles,
             float? agreedUnitPrice = null,
-            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery)
+            FulfillmentMode fulfillment = FulfillmentMode.SellerDelivery,
+            ThingDef stuffDef = null)
         {
             if (!TryPrepareExplicitProposal(
                     state, settlement, thingDef, quantityPerCycle, cadenceDays, totalCycles,
-                    agreedUnitPrice, fulfillment,
+                    agreedUnitPrice, fulfillment, stuffDef,
                     out PreparedContractProposal prepared,
                     out _, out _,
                     cacheProfile: false))
@@ -640,6 +656,7 @@ namespace Intercolony
                     legacyBuildTerms.deliveryCount,
                     chosenUnitPrice,
                     FulfillmentMode.SellerDelivery,
+                    null,
                     out prepared,
                     out failure,
                     out reason,
@@ -743,6 +760,7 @@ namespace Intercolony
             int totalCycles,
             float? agreedUnitPrice,
             FulfillmentMode fulfillment,
+            ThingDef stuffDef,
             out PreparedContractProposal prepared,
             out ContractProposalFailure failure,
             out string reason,
@@ -754,6 +772,23 @@ namespace Intercolony
                 failure = ContractProposalFailure.InvalidState;
                 reason = "No Intercolony world state is available.";
                 return false;
+            }
+
+            ThingDef normalizedStuffDef = null;
+            if (thingDef != null && thingDef.MadeFromStuff && stuffDef != null)
+            {
+                // Refuse an impossible named pair before profile caching or contract creation;
+                // a stuffless agreement remains valid and a non-stuffable product ignores stuff.
+                if (stuffDef.stuffProps == null || !stuffDef.stuffProps.CanMake(thingDef))
+                {
+                    failure = ContractProposalFailure.InvalidItem;
+                    string stuffLabel = stuffDef.label ?? stuffDef.defName ?? "The selected material";
+                    string thingLabel = thingDef.label ?? thingDef.defName ?? "the selected product";
+                    reason = $"{stuffLabel} cannot be used to make {thingLabel}.";
+                    return false;
+                }
+
+                normalizedStuffDef = stuffDef;
             }
 
             if (!TryGetEligibleCounterparty(
@@ -803,7 +838,7 @@ namespace Intercolony
             }
 
             ContractTerms terms = CalculateExplicitContractTerms(
-                state, settlement, profile, thingDef, category, quantityPerCycle,
+                state, settlement, profile, thingDef, normalizedStuffDef, category, quantityPerCycle,
                 cadenceDays, totalCycles, agreedUnitPrice);
             float chosenUnitPrice = agreedUnitPrice ?? terms.referenceUnitPrice;
             if (!terms.IsUnitPriceInRange(chosenUnitPrice))
@@ -819,6 +854,7 @@ namespace Intercolony
             prepared = new PreparedContractProposal
             {
                 terms = terms,
+                stuffDef = normalizedStuffDef,
                 negotiationProposal = new IntercolonyNegotiationProposal
                 {
                     state = state,
@@ -1004,7 +1040,8 @@ namespace Intercolony
             ThingDef thingDef,
             int quantityPerCycle,
             ContractTerms terms,
-            FulfillmentMode fulfillment)
+            FulfillmentMode fulfillment,
+            ThingDef stuffDef)
         {
             return new RecurringContract
             {
@@ -1013,6 +1050,7 @@ namespace Intercolony
                 settlementName = settlement.Label ?? "unnamed",
                 factionName = settlement.Faction?.Name ?? "",
                 thingDef = thingDef,
+                stuffDef = stuffDef,
                 quantityPerCycle = quantityPerCycle,
                 cadenceTicks = terms.cadenceTicks,
                 totalCycles = terms.deliveryCount,
@@ -1114,6 +1152,7 @@ namespace Intercolony
             Settlement settlement,
             SettlementEconomicProfile profile,
             ThingDef thingDef,
+            ThingDef stuffDef,
             IntercolonyProductCategory category,
             int quantityPerCycle,
             int cadenceDays,
@@ -1121,8 +1160,10 @@ namespace Intercolony
             float? agreedUnitPrice)
         {
             float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+            // Use the same material-aware spot value for preview, range validation, and the
+            // stored contract terms; null deliberately follows the existing generic path.
             float spot = IntercolonyPricing.UnitPrice(
-                state, thingDef, null, quantityPerCycle, profile, category, distance, null, out _);
+                state, thingDef, stuffDef, quantityPerCycle, profile, category, distance, null, out _);
             // A player proposal with no explicit rate keeps the existing sell-side default:
             // the current spot price. The settlement-generated path above remains on its
             // premium calculation and is deliberately not routed through this helper.
