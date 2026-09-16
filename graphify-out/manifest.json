@@ -252,15 +252,15 @@
     "semantic_hash": ""
   },
   "Source/Intercolony/Debug/IntercolonyJobPostingSelfTest.cs": {
-    "mtime": 1789528504.7623346,
-    "seen": 1789529124.3905783,
-    "ast_hash": "4338350177c724b1dbd214595f128bc5",
+    "mtime": 1789530233.2522912,
+    "seen": 1789531823.328728,
+    "ast_hash": "afc53c2c258463f1854063f585fdf5fa",
     "semantic_hash": ""
   },
   "Source/Intercolony/Debug/IntercolonyLaborSelfTest.cs": {
-    "mtime": 1789528232.476261,
-    "seen": 1789529124.390582,
-    "ast_hash": "5e6f588833222bfd1a2cb8c9bc8a2452",
+    "mtime": 1789531444.456032,
+    "seen": 1789531823.328732,
+    "ast_hash": "191572a74ad2df4a5d0e986afb4899aa",
     "semantic_hash": ""
   },
   "Source/Intercolony/Debug/IntercolonyLaborSelfTestSupport.cs": {
@@ -528,9 +528,9 @@
     "semantic_hash": ""
   },
   "Source/Intercolony/Labor/LaborCandidateService.cs": {
-    "mtime": 1789520018.3967059,
-    "seen": 1789520295.7758672,
-    "ast_hash": "64d10060e21d3ccca356847c0c2ab257",
+    "mtime": 1789531503.473085,
+    "seen": 1789531823.328848,
+    "ast_hash": "1ffd488e569d28326d47437d3b547c0b",
     "semantic_hash": ""
   },
   "Source/Intercolony/Labor/LaborDebt.cs": {
@@ -1158,9 +1158,9 @@
     "semantic_hash": ""
   },
   "FOREMAN.md": {
-    "mtime": 1789527876.353224,
-    "seen": 1789529124.3909302,
-    "ast_hash": "45400c1ab57753d4c26a3bdf3a2f93df",
+    "mtime": 1789531474.6875904,
+    "seen": 1789531823.3290968,
+    "ast_hash": "428242aa785dc51ab008ce891bc5be2e",
     "semantic_hash": ""
   },
   "PROGRESS.md": {

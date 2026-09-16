@@ -185,6 +185,7 @@ namespace Intercolony
                 CheckEmergencyPostingFlag(r, state);
                 CheckEmergencyPostingPersistence(r);
                 CheckEmergencyPostingImmediateMatch(r, state);
+                CheckEmergencyEquipmentIntegration(r, state);
                 CheckEmergencyReachFilter(r, state);
                 CheckRequirementsDriveApplicants(r, state);
                 CheckWaitingListIsSpread(r, state);
@@ -1655,6 +1656,407 @@ namespace Intercolony
                 censusRefreshField.SetValue(null, savedCensusRefreshCount);
                 LaborCandidateService.InvalidateCensus();
             }
+        }
+
+        private static void CheckEmergencyEquipmentIntegration(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string label =
+                "an emergency Security Professional posting matches reachable applicants with real gear";
+            const int shootingMinimum = 1;
+            const int termDays = 20;
+
+            List<LaborProspect> census = LaborCandidateService.Census(state);
+            int censusTotal = census?.Count ?? 0;
+            int professionalCapableCount = 0;
+            int emergencyRoutedCount = 0;
+            int bothCount = 0;
+            int shootingQualifiedCount = 0;
+            int professionalPromiseCount = 0;
+            int combinedEligibleCount = 0;
+            LaborProspect sourceFixture = null;
+
+            if (census != null)
+            {
+                foreach (LaborProspect prospect in census)
+                {
+                    if (prospect == null)
+                    {
+                        continue;
+                    }
+
+                    Settlement source = IntercolonyMarketAccess.FindSettlement(
+                        prospect.settlementId);
+                    SettlementEconomicProfile profile = source == null
+                        ? null
+                        : state.GetProfile(source);
+                    bool professionalCapable = profile != null &&
+                        LaborEquipmentTierService.CanSupply(
+                            profile, LaborEquipmentLevel.Professional, CombatClause.Security);
+                    bool emergencyRouted = LaborCandidateService.CanReachEmergency(
+                        state, prospect);
+                    bool shootingQualified = SkillDefOf.Shooting != null &&
+                        prospect.CanDo(SkillDefOf.Shooting) &&
+                        prospect.LevelOf(SkillDefOf.Shooting) >= shootingMinimum;
+                    bool professionalPromise = LaborEquipmentTierService.MeetsOrExceeds(
+                        prospect.equipmentTier, LaborEquipmentLevel.Professional);
+
+                    if (professionalCapable)
+                    {
+                        professionalCapableCount++;
+                    }
+
+                    if (emergencyRouted)
+                    {
+                        emergencyRoutedCount++;
+                    }
+
+                    if (professionalCapable && emergencyRouted)
+                    {
+                        bothCount++;
+                    }
+
+                    if (shootingQualified)
+                    {
+                        shootingQualifiedCount++;
+                    }
+
+                    if (professionalPromise)
+                    {
+                        professionalPromiseCount++;
+                    }
+
+                    if (prospect.faction != null && professionalCapable &&
+                        emergencyRouted && shootingQualified && professionalPromise)
+                    {
+                        combinedEligibleCount++;
+                        if (sourceFixture == null)
+                        {
+                            sourceFixture = prospect;
+                        }
+                    }
+                }
+            }
+
+            string censusCounts =
+                $"total={censusTotal}; professional-capable={professionalCapableCount}; " +
+                $"emergency-routed={emergencyRoutedCount}; both={bothCount}; " +
+                $"Shooting 1+={shootingQualifiedCount}; " +
+                $"Professional promise={professionalPromiseCount}; " +
+                $"combined eligible={combinedEligibleCount}";
+
+            if (bothCount == 0)
+            {
+                r.Skip(label,
+                    "the current world cannot supply a source that is both " +
+                    $"Professional-capable and emergency-routed; {censusCounts}");
+                return;
+            }
+
+            if (sourceFixture == null)
+            {
+                r.Skip(label,
+                    "the current world has a Professional-capable and emergency-routed source, " +
+                    $"but none also has a materialisable Shooting 1+ Professional promise; " +
+                    censusCounts);
+                return;
+            }
+
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(label,
+                    "Find.WorldPawns was null, so the real applicant pawn could not be cleaned up; " +
+                    censusCounts);
+                return;
+            }
+
+            FieldInfo censusField = typeof(LaborCandidateService).GetField(
+                "census", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo censusRefreshField = typeof(LaborCandidateService).GetField(
+                "censusRefreshCount", BindingFlags.Static | BindingFlags.NonPublic);
+            if (censusField == null || censusRefreshField == null)
+            {
+                r.Skip(label,
+                    "LaborCandidateService controlled census fields were not found; " +
+                    censusCounts);
+                return;
+            }
+
+            List<LaborProspect> savedCensus =
+                censusField.GetValue(null) as List<LaborProspect>;
+            int savedCensusRefreshCount = (int)censusRefreshField.GetValue(null);
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            JobPosting ordinaryPosting = null;
+            JobPosting emergencyPosting = null;
+            int ordinaryAsk = -1;
+            StringBuilder emergencyAsks = new StringBuilder();
+            string ordinaryFailure = null;
+            string emergencyFailure = null;
+            int immediateApplicantCount = 0;
+            int routeViolations = 0;
+            int unknownSources = 0;
+            int skillViolations = 0;
+            int actualGearViolations = 0;
+            int premiumViolations = 0;
+            string gearFailure = null;
+
+            try
+            {
+                state.Postings.Clear();
+                censusField.SetValue(
+                    null, new List<LaborProspect> { sourceFixture });
+                censusRefreshField.SetValue(null, state.RefreshCount);
+                ordinaryPosting = JobPostingService.TryPost(
+                    state,
+                    SkillDefOf.Shooting,
+                    shootingMinimum,
+                    termDays,
+                    WageStructure.Daily,
+                    CombatClause.Security,
+                    out ordinaryFailure,
+                    LaborEquipmentLevel.Any,
+                    emergencyDispatch: false);
+                if (ordinaryPosting == null)
+                {
+                    r.Check(
+                        false,
+                        label,
+                        $"the ordinary ask control could not be posted: " +
+                        $"{ordinaryFailure ?? "no failure reason"}; {censusCounts}");
+                    return;
+                }
+
+                JobPostingService.MatchAll(state);
+                if (ordinaryPosting.Applicants.Count == 0)
+                {
+                    r.Skip(label,
+                        $"the ordinary ask control produced no applicant from the selected real " +
+                        $"source; {censusCounts}; ordinary failure={ordinaryFailure ?? "none"}");
+                    return;
+                }
+
+                ordinaryAsk = ordinaryPosting.Applicants[0]?.openMarketAsk ?? -1;
+                if (ordinaryAsk <= 0)
+                {
+                    r.Skip(label,
+                        $"the selected real source produced no positive ordinary ask for the " +
+                        $"premium control; ordinary ask={ordinaryAsk}; {censusCounts}");
+                    return;
+                }
+
+                JobPostingService.Close(
+                    ordinaryPosting,
+                    JobPostingStatus.Withdrawn,
+                    "self-test emergency equipment ordinary control cleanup");
+                state.Postings.Remove(ordinaryPosting);
+                ordinaryPosting = null;
+
+                List<LaborProspect> controlledFixture =
+                    new List<LaborProspect> { sourceFixture };
+                LaborProspect routeBlockedFixture = null;
+                if (census != null)
+                {
+                    foreach (LaborProspect prospect in census)
+                    {
+                        if (prospect == null || prospect == sourceFixture ||
+                            prospect.settlementId == sourceFixture.settlementId)
+                        {
+                            continue;
+                        }
+
+                        Settlement source = IntercolonyMarketAccess.FindSettlement(
+                            prospect.settlementId);
+                        SettlementEconomicProfile profile = source == null
+                            ? null
+                            : state.GetProfile(source);
+                        bool professionalCapable = profile != null &&
+                            LaborEquipmentTierService.CanSupply(
+                                profile,
+                                LaborEquipmentLevel.Professional,
+                                CombatClause.Security);
+                        bool shootingQualified = SkillDefOf.Shooting != null &&
+                            prospect.CanDo(SkillDefOf.Shooting) &&
+                            prospect.LevelOf(SkillDefOf.Shooting) >= shootingMinimum;
+                        bool professionalPromise = LaborEquipmentTierService.MeetsOrExceeds(
+                            prospect.equipmentTier, LaborEquipmentLevel.Professional);
+                        if (prospect.faction != null && professionalCapable &&
+                            !LaborCandidateService.CanReachEmergency(state, prospect) &&
+                            shootingQualified && professionalPromise)
+                        {
+                            routeBlockedFixture = prospect;
+                            controlledFixture.Add(prospect);
+                            break;
+                        }
+                    }
+                }
+
+                state.Postings.Clear();
+                censusField.SetValue(null, controlledFixture);
+                censusRefreshField.SetValue(null, state.RefreshCount);
+                emergencyPosting = JobPostingService.TryPost(
+                    state,
+                    SkillDefOf.Shooting,
+                    shootingMinimum,
+                    termDays,
+                    WageStructure.Daily,
+                    CombatClause.Security,
+                    out emergencyFailure,
+                    LaborEquipmentLevel.Professional,
+                    emergencyDispatch: true);
+                if (emergencyPosting == null)
+                {
+                    r.Check(
+                        false,
+                        label,
+                        $"TryPost refused the real Professional/emergency fixture: " +
+                        $"{emergencyFailure ?? "no failure reason"}; {censusCounts}");
+                    return;
+                }
+
+                // TryPost's emergency path is the event under test: do not call MatchAll here.
+                immediateApplicantCount = emergencyPosting.Applicants.Count;
+                if (immediateApplicantCount == 0)
+                {
+                    r.Skip(
+                        label,
+                        $"the real Professional/emergency fixture produced no applicant to " +
+                        $"measure; {censusCounts}; controlled fixture={controlledFixture.Count}");
+                    return;
+                }
+
+                foreach (JobApplicant applicant in emergencyPosting.Applicants)
+                {
+                    LaborProspect applicantSource = FindApplicantProspect(
+                        controlledFixture, applicant);
+                    if (applicantSource == null)
+                    {
+                        unknownSources++;
+                    }
+                    else if (!LaborCandidateService.CanReachEmergency(
+                                 state, applicantSource))
+                    {
+                        routeViolations++;
+                    }
+
+                    if (applicant == null || applicant.pawn == null ||
+                        !emergencyPosting.MeetsRequirement(applicant.pawn))
+                    {
+                        skillViolations++;
+                    }
+
+                    LaborEquipmentLevel actual = LaborEquipmentLevel.None;
+                    bool gearWasClassified = false;
+                    try
+                    {
+                        actual = LaborEquipmentTierService.Classify(
+                            applicant?.pawn, emergencyPosting.combatClause);
+                        gearWasClassified = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        gearFailure = $"{ex.GetType().Name}: {ex.Message}";
+                    }
+
+                    if (!gearWasClassified || applicant == null || applicant.pawn == null ||
+                        !LaborEquipmentTierService.MeetsOrExceeds(
+                            actual, LaborEquipmentLevel.Professional))
+                    {
+                        actualGearViolations++;
+                    }
+
+                    if (emergencyAsks.Length > 0)
+                    {
+                        emergencyAsks.Append(",");
+                    }
+
+                    int applicantAsk = applicant?.openMarketAsk ?? -1;
+                    emergencyAsks.Append(applicantAsk);
+                    if (applicantAsk <= ordinaryAsk)
+                    {
+                        premiumViolations++;
+                    }
+                }
+
+                bool postingTermsMatch = emergencyPosting.skill == SkillDefOf.Shooting &&
+                    emergencyPosting.minSkillLevel == shootingMinimum &&
+                    emergencyPosting.combatClause == CombatClause.Security &&
+                    emergencyPosting.requestedEquipmentLevel ==
+                        LaborEquipmentLevel.Professional &&
+                    emergencyPosting.emergencyDispatch;
+                bool immediateAndCapped = immediateApplicantCount > 0 &&
+                    immediateApplicantCount <= 6;
+                bool onlyReachableSourcesAnswered = routeViolations == 0 &&
+                    unknownSources == 0;
+                bool allActualGearMeetsRequest = actualGearViolations == 0;
+                bool premiumVisible = immediateApplicantCount > 0 &&
+                    premiumViolations == 0;
+                r.Check(
+                    postingTermsMatch && immediateAndCapped &&
+                    onlyReachableSourcesAnswered && skillViolations == 0 &&
+                    allActualGearMeetsRequest && premiumVisible,
+                    label,
+                    $"OBSERVED terms skill={emergencyPosting.skill?.defName ?? "null"}, " +
+                    $"min={emergencyPosting.minSkillLevel}, clause={emergencyPosting.combatClause}, " +
+                    $"equipment={emergencyPosting.requestedEquipmentLevel}, " +
+                    $"emergency={emergencyPosting.emergencyDispatch}; " +
+                    $"immediate applicants={immediateApplicantCount}; " +
+                    $"reachable-source violations={routeViolations}, unknown sources={unknownSources}; " +
+                    $"Shooting violations={skillViolations}; actual gear violations=" +
+                    $"{actualGearViolations}; ordinary ask={ordinaryAsk}; emergency asks=" +
+                    $"[{emergencyAsks}]; premium violations={premiumViolations}; " +
+                    $"controlled fixture={controlledFixture.Count}, route-blocked fixture=" +
+                    $"{(routeBlockedFixture == null ? "none" : routeBlockedFixture.settlementName)}; " +
+                    "EXPECTED skill=Shooting, min=1, clause=Security, equipment=Professional, " +
+                    "emergency=True; immediate applicants=1-6; all sources reachable; " +
+                    "Shooting violations=0; actual gear >= Professional; every emergency ask " +
+                    "greater than the ordinary ask");
+            }
+            catch (Exception ex)
+            {
+                r.Check(
+                    false,
+                    label,
+                    $"the real emergency/equipment fixture threw {ex.GetType().Name}: " +
+                    $"{ex.Message}; {censusCounts}; immediate applicants=" +
+                    $"{immediateApplicantCount}; actual gear violations={actualGearViolations}; " +
+                    $"gear failure={gearFailure ?? "none"}");
+            }
+            finally
+            {
+                JobPostingService.Close(
+                    emergencyPosting,
+                    JobPostingStatus.Withdrawn,
+                    "self-test emergency equipment cleanup");
+                JobPostingService.Close(
+                    ordinaryPosting,
+                    JobPostingStatus.Withdrawn,
+                    "self-test emergency equipment ordinary cleanup");
+                RestorePostingList(
+                    state,
+                    savedPostings,
+                    "self-test emergency equipment cleanup");
+                censusField.SetValue(null, savedCensus);
+                censusRefreshField.SetValue(null, savedCensusRefreshCount);
+            }
+        }
+
+        private static LaborProspect FindApplicantProspect(
+            List<LaborProspect> prospects, JobApplicant applicant)
+        {
+            if (prospects == null || applicant == null)
+            {
+                return null;
+            }
+
+            foreach (LaborProspect prospect in prospects)
+            {
+                if (prospect != null && prospect.settlementId == applicant.settlementId)
+                {
+                    return prospect;
+                }
+            }
+
+            return null;
         }
 
         private static List<LaborProspect> FindMaterialisableEmergencyProspects(

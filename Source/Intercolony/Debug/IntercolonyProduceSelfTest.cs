@@ -7230,23 +7230,38 @@ namespace Intercolony
             const string renameAssertion = "renaming preserves a preset id";
             const string removeAssertion = "removing a preset leaves existing loops";
             const string lifecycleAssertion = "a preset-applied loop pauses, resumes and stops";
+            const string integrationAssertion =
+                "a Produce preset round trip keeps loops at 20 until deliberate reapplication";
             const int oldTargetCount = 20;
             const int oldResumeBelow = 10;
             const int oldMinConstructionSkill = 7;
-            const int editedTargetCount = 31;
+            const int editedTargetCount = 40;
             const int editedResumeBelow = 14;
             const int editedMinConstructionSkill = 9;
             const int targetCountToApply = 3;
             IntVec3 sourceCell = IntVec3.Invalid;
             List<IntVec3> targetCells = new List<IntVec3>();
             List<ThingDef> expectedAllowedStuff = BuildExpectedAllowedStuff(subject);
+            Pawn fixtureWorker = FindExistingPawn(map);
+            int spawnedPawnCount = map?.mapPawns?.AllPawnsSpawned?.Count ?? 0;
+            string workerUnavailableReason =
+                $"no existing spawned pawn was available for the preset worker setting; " +
+                $"spawned pawns={spawnedPawnCount}";
             ProduceControlPreset preset = null;
             int presetId = -1;
+            int presetTargetBeforeEdit = -1;
             bool editReported = false;
             bool reapplyReported = false;
             bool renameReported = false;
             bool removeReported = false;
             bool lifecycleReported = false;
+            bool integrationReported = false;
+            List<int> targetCountsAfterInitialApply = new List<int>();
+            List<int> targetCountsAfterEdit = new List<int>();
+            List<int> targetCountsAfterReapply = new List<int>();
+            bool observedPaused = false;
+            bool observedResumed = false;
+            bool observedStopped = false;
 
             try
             {
@@ -7261,6 +7276,10 @@ namespace Intercolony
                     SkipPresetFollowupAssertions(
                         r,
                         "no empty valid cell for the registered preset source loop fixture");
+                    r.Skip(
+                        integrationAssertion,
+                        "no empty valid cell for the registered preset source loop fixture; " +
+                        "valid source cells=0");
                     return;
                 }
 
@@ -7274,6 +7293,12 @@ namespace Intercolony
                 loops.SetTargetCount(sourceCell, oldTargetCount);
                 loops.SetResumeBelow(sourceCell, oldResumeBelow);
                 loops.SetWorkerRestriction(sourceCell, true);
+                if (fixtureWorker != null)
+                {
+                    loops.SetAllowedWorkers(
+                        sourceCell,
+                        new List<Pawn> { fixtureWorker });
+                }
                 loops.SetMinConstructionSkill(sourceCell, oldMinConstructionSkill);
                 loops.SetAllowedStuff(sourceCell, expectedAllowedStuff);
                 ProduceLoopRecord sourceRecord = loops.Find(sourceCell);
@@ -7290,6 +7315,20 @@ namespace Intercolony
                         r,
                         $"the registered preset fixture was not created; reason " +
                         $"{createReason ?? "<none>"}");
+                    if (fixtureWorker == null)
+                    {
+                        r.Skip(
+                            integrationAssertion,
+                            workerUnavailableReason);
+                    }
+                    else
+                    {
+                        r.Check(
+                            false,
+                            integrationAssertion,
+                            $"the registered preset fixture was not created; reason " +
+                            $"{createReason ?? "<none>"}");
+                    }
                     return;
                 }
 
@@ -7309,6 +7348,10 @@ namespace Intercolony
                             r,
                             $"needed {targetCountToApply} empty valid subject cells; found " +
                             $"{targetCells.Count}");
+                        r.Skip(
+                            integrationAssertion,
+                            $"needed {targetCountToApply} empty valid subject cells; found " +
+                            $"{targetCells.Count}");
                         return;
                     }
 
@@ -7324,6 +7367,11 @@ namespace Intercolony
                             r,
                             $"could not spawn compatible subject {i + 1} of " +
                             $"{targetCountToApply}");
+                        r.Skip(
+                            integrationAssertion,
+                            $"could not spawn compatible subject {i + 1} of " +
+                            $"{targetCountToApply}; spawned compatible subjects=" +
+                            $"{targetCells.Count}; expected={targetCountToApply}");
                         return;
                     }
 
@@ -7352,9 +7400,41 @@ namespace Intercolony
                         r,
                         $"the registered preset could not configure all three target loops; " +
                         $"{initialApplyFailure ?? "no failure detail"}");
+                    if (fixtureWorker == null)
+                    {
+                        r.Skip(
+                            integrationAssertion,
+                            workerUnavailableReason);
+                    }
+                    else
+                    {
+                        r.Check(
+                            false,
+                            integrationAssertion,
+                            $"the registered preset could not configure all three target loops; " +
+                            $"{initialApplyFailure ?? "no failure detail"}");
+                    }
                     return;
                 }
 
+                targetCountsAfterInitialApply = CaptureTargetCounts(loops, targetCells);
+                presetTargetBeforeEdit = preset.targetCount;
+                bool allConfigured = true;
+                for (int i = 0; i < targetCells.Count; i++)
+                {
+                    if (!LoopMatchesPreset(loops.Find(targetCells[i]), preset))
+                    {
+                        allConfigured = false;
+                        break;
+                    }
+                }
+                bool initialPresetControlsMatch = presetTargetBeforeEdit == oldTargetCount &&
+                    preset.resumeBelow == oldResumeBelow &&
+                    preset.restrictToSelectedWorkers &&
+                    preset.allowedWorkers != null &&
+                    preset.allowedWorkers.Count == 1 &&
+                    preset.allowedWorkers[0] == fixtureWorker &&
+                    preset.minConstructionSkill == oldMinConstructionSkill;
                 List<ProduceLoopSnapshot> beforeEdit = new List<ProduceLoopSnapshot>();
                 for (int i = 0; i < targetCells.Count; i++)
                 {
@@ -7381,6 +7461,7 @@ namespace Intercolony
                         break;
                     }
                 }
+                targetCountsAfterEdit = CaptureTargetCounts(loops, targetCells);
 
                 bool presetEdited = preset.targetCount == editedTargetCount &&
                     preset.resumeBelow == editedResumeBelow &&
@@ -7415,6 +7496,7 @@ namespace Intercolony
                         break;
                     }
                 }
+                targetCountsAfterReapply = CaptureTargetCounts(loops, targetCells);
 
                 reapplyReported = true;
                 r.Check(
@@ -7453,12 +7535,12 @@ namespace Intercolony
                 IntVec3 lifecycleCell = targetCells[0];
                 loops.Pause(lifecycleCell);
                 ProduceLoopRecord pausedRecord = loops.Find(lifecycleCell);
-                bool observedPaused = pausedRecord != null && pausedRecord.paused;
+                observedPaused = pausedRecord != null && pausedRecord.paused;
                 loops.Resume(lifecycleCell);
                 ProduceLoopRecord resumedRecord = loops.Find(lifecycleCell);
-                bool observedResumed = resumedRecord != null && !resumedRecord.paused;
+                observedResumed = resumedRecord != null && !resumedRecord.paused;
                 loops.Disable(lifecycleCell);
-                bool observedStopped = loops.Find(lifecycleCell) == null;
+                observedStopped = loops.Find(lifecycleCell) == null;
                 lifecycleReported = true;
                 r.Check(
                     observedPaused && observedResumed && observedStopped,
@@ -7466,6 +7548,83 @@ namespace Intercolony
                     $"observed paused {(observedPaused ? "true" : "false")}; expected true; " +
                     $"observed resumed {(observedResumed ? "true" : "false")}; expected true; " +
                     $"observed stopped {(observedStopped ? "true" : "false")}; expected true");
+
+                if (fixtureWorker == null)
+                {
+                    integrationReported = true;
+                    r.Skip(
+                        integrationAssertion,
+                        workerUnavailableReason);
+                }
+                else
+                {
+                    bool initialTargetsAtTwenty =
+                        targetCountsAfterInitialApply.Count == 3;
+                    for (int i = 0; i < targetCountsAfterInitialApply.Count; i++)
+                    {
+                        if (targetCountsAfterInitialApply[i] != 20)
+                        {
+                            initialTargetsAtTwenty = false;
+                            break;
+                        }
+                    }
+
+                    bool existingTargetsStayedAtTwenty =
+                        targetCountsAfterEdit.Count == 3;
+                    for (int i = 0; i < targetCountsAfterEdit.Count; i++)
+                    {
+                        if (targetCountsAfterEdit[i] != 20)
+                        {
+                            existingTargetsStayedAtTwenty = false;
+                            break;
+                        }
+                    }
+
+                    bool reappliedTargetsAtForty =
+                        targetCountsAfterReapply.Count == 3;
+                    for (int i = 0; i < targetCountsAfterReapply.Count; i++)
+                    {
+                        if (targetCountsAfterReapply[i] != 40)
+                        {
+                            reappliedTargetsAtForty = false;
+                            break;
+                        }
+                    }
+
+                    integrationReported = true;
+                    r.Check(
+                        presetTargetBeforeEdit == 20 &&
+                        initialPresetControlsMatch &&
+                        allConfigured &&
+                        initialTargetsAtTwenty &&
+                        presetEdited &&
+                        existingLoopsUnchanged &&
+                        existingTargetsStayedAtTwenty &&
+                        allReapplied &&
+                        reappliedTargetsAtForty &&
+                        observedPaused && observedResumed && observedStopped,
+                        integrationAssertion,
+                        $"observed preset target before edit {presetTargetBeforeEdit}; expected 20; " +
+                        $"observed targets after first apply " +
+                        $"{DescribeTargetCounts(targetCountsAfterInitialApply)}; expected [20,20,20]; " +
+                        $"observed preset target after edit {preset?.targetCount ?? -1}; expected 40; " +
+                        $"observed targets after edit " +
+                        $"{DescribeTargetCounts(targetCountsAfterEdit)}; expected [20,20,20]; " +
+                        $"observed targets after reapply " +
+                        $"{DescribeTargetCounts(targetCountsAfterReapply)}; expected [40,40,40]; " +
+                        $"observed controls identical after first apply " +
+                        $"{(allConfigured ? "true" : "false")}; expected true; " +
+                        $"observed initial preset controls {DescribePresetSettings(preset)}; " +
+                        "expected targetCount=20, resumeBelow=10, " +
+                        "restrictToSelectedWorkers=true, allowedWorkers=1, " +
+                        "minConstructionSkill=7; " +
+                        $"observed initial controls match expected " +
+                        $"{(initialPresetControlsMatch ? "true" : "false")}; expected true; " +
+                        $"observed existing loops unchanged " +
+                        $"{(existingLoopsUnchanged ? "true" : "false")}; expected true; " +
+                        $"observed lifecycle paused/resumed/stopped " +
+                        $"{observedPaused}/{observedResumed}/{observedStopped}; expected true/true/true");
+                }
 
                 int beforeRemoveLoopCount = loops.Loops.Count;
                 List<IntVec3> loopCellsBeforeRemove = new List<IntVec3>();
@@ -7536,6 +7695,21 @@ namespace Intercolony
                 {
                     lifecycleReported = true;
                     r.Check(false, lifecycleAssertion, detail);
+                }
+
+                if (!integrationReported)
+                {
+                    integrationReported = true;
+                    if (fixtureWorker == null)
+                    {
+                        r.Skip(
+                            integrationAssertion,
+                            workerUnavailableReason);
+                    }
+                    else
+                    {
+                        r.Check(false, integrationAssertion, detail);
+                    }
                 }
 
                 if (!removeReported)
@@ -8102,6 +8276,9 @@ namespace Intercolony
             r.Skip("a preset configures independent loops", reason);
             r.Skip("editing a preset leaves existing loops unchanged", reason);
             r.Skip("reapplying an edited preset updates existing loops", reason);
+            r.Skip(
+                "a Produce preset round trip keeps loops at 20 until deliberate reapplication",
+                reason);
             r.Skip("a preset does not copy the waiting latch", reason);
             r.Skip("a preset keeps only compatible materials", reason);
             r.Skip(
@@ -8331,6 +8508,47 @@ namespace Intercolony
                    $"allowedWorkers {DescribePawns(preset.allowedWorkers)}, " +
                    $"minConstructionSkill {preset.minConstructionSkill}, " +
                    $"allowedStuff {DescribeThingDefs(preset.allowedStuff)}";
+        }
+
+        private static List<int> CaptureTargetCounts(
+            ProduceLoopMapComponent loops,
+            List<IntVec3> targetCells)
+        {
+            List<int> result = new List<int>();
+            if (targetCells == null)
+            {
+                return result;
+            }
+
+            for (int i = 0; i < targetCells.Count; i++)
+            {
+                ProduceLoopRecord record = loops?.Find(targetCells[i]);
+                result.Add(record == null ? -1 : record.targetCount);
+            }
+
+            return result;
+        }
+
+        private static string DescribeTargetCounts(List<int> targetCounts)
+        {
+            if (targetCounts == null || targetCounts.Count == 0)
+            {
+                return "<none>";
+            }
+
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < targetCounts.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(",");
+                }
+
+                sb.Append(targetCounts[i]);
+            }
+
+            sb.Append("]");
+            return sb.ToString();
         }
 
         private static string DescribeTargetLoops(

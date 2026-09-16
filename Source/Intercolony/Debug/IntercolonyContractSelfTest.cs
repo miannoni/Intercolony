@@ -22,6 +22,10 @@ namespace Intercolony
     public static class IntercolonyContractSelfTest
     {
         private const string ProbeTag = "ContractProbe";
+        private const string GenericBusinessMaterialAssertion =
+            "Business does not invent a direct material cost for a generic stuffable contract";
+        private const string ConcreteBusinessMaterialAssertion =
+            "Business resolves different direct material replacement costs for concrete contracts";
 
         public static string Run(IntercolonyWorldComponent state)
         {
@@ -108,6 +112,14 @@ namespace Intercolony
                     "no accessible settlement or tradable defs");
                 Skip("generic stuffable agreement stays valid",
                     "no accessible settlement or tradable defs");
+                Skip(GenericBusinessMaterialAssertion,
+                    $"no accessible settlement or tradable defs; accessible settlements=" +
+                    $"{(subject == null ? 0 : 1)}; tradable defs=" +
+                    $"{IntercolonyProductClassifier.TradableDefs.Count}");
+                Skip(ConcreteBusinessMaterialAssertion,
+                    $"no accessible settlement or tradable defs; accessible settlements=" +
+                    $"{(subject == null ? 0 : 1)}; tradable defs=" +
+                    $"{IntercolonyProductClassifier.TradableDefs.Count}");
                 Skip("named material reaches the contract",
                     "no accessible settlement or tradable defs");
                 Skip("different material changes contract price",
@@ -621,7 +633,10 @@ namespace Intercolony
                         if (!stuffableFurnitureFixture)
                         {
                             const string reason =
-                                "the selected furniture fixture is not stuffable";
+                                "the selected furniture fixture is not stuffable; " +
+                                "stuffable fixtures=0 of 1";
+                            Skip(GenericBusinessMaterialAssertion, reason);
+                            Skip(ConcreteBusinessMaterialAssertion, reason);
                             Skip("generic stuffable agreement stays valid", reason);
                             Skip("named material reaches the contract", reason);
                             Skip("different material changes contract price", reason);
@@ -649,6 +664,44 @@ namespace Intercolony
                                 $"stuff={genericContract?.stuffDef?.defName ?? "null"}; " +
                                 "EXPECTED success=True; created=True; stuff=null");
 
+                            if (genericContract == null)
+                            {
+                                Check(
+                                    GenericBusinessMaterialAssertion,
+                                    false,
+                                    $"OBSERVED generic contract=null; EXPECTED a created generic " +
+                                    $"stuffable contract before Business estimation");
+                            }
+                            else
+                            {
+                                BusinessReportService.ContractEstimate genericBusinessEstimate =
+                                    BusinessReportService.Estimate(state, genericContract);
+                                BusinessReportService.DirectInputEstimate genericDirectInputs =
+                                    genericBusinessEstimate.directInputs;
+                                const string expectedGenericReason =
+                                    "The construction route cannot be priced because the contract " +
+                                    "has no stuffDef for this stuffable product.";
+                                bool genericHasNoInventedCost =
+                                    genericDirectInputs != null &&
+                                    genericDirectInputs.status ==
+                                        BusinessReportService.DirectInputCostStatus.CannotBePriced &&
+                                    !genericDirectInputs.hasDirectInputs &&
+                                    genericDirectInputs.costPerUnit == 0f &&
+                                    genericBusinessEstimate.directInputsIfBought == 0 &&
+                                    genericDirectInputs.reason == expectedGenericReason;
+                                Check(
+                                    GenericBusinessMaterialAssertion,
+                                    genericHasNoInventedCost,
+                                    $"OBSERVED status={genericDirectInputs?.status.ToString() ?? "null"}; " +
+                                    $"hasDirectInputs={genericDirectInputs?.hasDirectInputs.ToString() ?? "null"}; " +
+                                    $"costPerUnit={genericDirectInputs?.costPerUnit.ToString("R") ?? "null"}; " +
+                                    $"directInputsIfBought={genericBusinessEstimate.directInputsIfBought}; " +
+                                    $"reason={genericDirectInputs?.reason ?? "null"}; " +
+                                    "EXPECTED status=CannotBePriced; hasDirectInputs=False; " +
+                                    $"costPerUnit=0; directInputsIfBought=0; " +
+                                    $"reason={expectedGenericReason}");
+                            }
+
                             if (genericContract != null)
                             {
                                 state.Contracts.Remove(genericContract);
@@ -658,6 +711,7 @@ namespace Intercolony
                             ThingDef mostExpensiveStuff = null;
                             float cheapestStuffMarketValue = 0f;
                             float mostExpensiveStuffMarketValue = 0f;
+                            int validStuffCount = 0;
                             if (StatDefOf.MarketValue != null)
                             {
                                 foreach (ThingDef candidate in
@@ -679,6 +733,7 @@ namespace Intercolony
                                         continue;
                                     }
 
+                                    validStuffCount++;
                                     if (cheapestStuff == null ||
                                         candidateMarketValue < cheapestStuffMarketValue)
                                     {
@@ -840,6 +895,13 @@ namespace Intercolony
                                     materialDifferenceSkipReason);
                                 Skip("material previews follow contract prices",
                                     materialDifferenceSkipReason);
+                                Skip(
+                                    ConcreteBusinessMaterialAssertion,
+                                    $"{materialDifferenceSkipReason}; valid stuffs={validStuffCount}; " +
+                                    $"cheapest={cheapestStuff?.defName ?? "null"} " +
+                                    $"MarketValue={cheapestStuffMarketValue:R}; " +
+                                    $"most expensive={mostExpensiveStuff?.defName ?? "null"} " +
+                                    $"MarketValue={mostExpensiveStuffMarketValue:R}");
                             }
                             else
                             {
@@ -919,6 +981,66 @@ namespace Intercolony
                                     $"{mostExpensiveContractUnitPrice:R}; " +
                                     "EXPECTED preview references differ, match their contracts, " +
                                     "and preserve the contract price direction");
+
+                                BusinessReportService.ContractEstimate cheapestBusinessEstimate =
+                                    cheapestContract == null
+                                        ? null
+                                        : BusinessReportService.Estimate(state, cheapestContract);
+                                BusinessReportService.ContractEstimate mostExpensiveBusinessEstimate =
+                                    mostExpensiveContract == null
+                                        ? null
+                                        : BusinessReportService.Estimate(state, mostExpensiveContract);
+                                BusinessReportService.DirectInputEstimate cheapestDirectInputs =
+                                    cheapestBusinessEstimate?.directInputs;
+                                BusinessReportService.DirectInputEstimate mostExpensiveDirectInputs =
+                                    mostExpensiveBusinessEstimate?.directInputs;
+                                bool directCostsResolved =
+                                    cheapestDirectInputs != null &&
+                                    mostExpensiveDirectInputs != null &&
+                                    cheapestDirectInputs.status ==
+                                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                                    mostExpensiveDirectInputs.status ==
+                                        BusinessReportService.DirectInputCostStatus.Resolved &&
+                                    cheapestDirectInputs.hasDirectInputs &&
+                                    mostExpensiveDirectInputs.hasDirectInputs &&
+                                    cheapestDirectInputs.costPerUnit > 0f &&
+                                    mostExpensiveDirectInputs.costPerUnit > 0f;
+                                bool directCostsDiffer = directCostsResolved &&
+                                    !Mathf.Approximately(
+                                        cheapestDirectInputs.costPerUnit,
+                                        mostExpensiveDirectInputs.costPerUnit);
+                                string concreteBusinessDetail =
+                                    $"OBSERVED {cheapestStuff.defName} contract=" +
+                                    $"{(cheapestContract == null ? "missing" : "present")}; " +
+                                    $"status={cheapestDirectInputs?.status.ToString() ?? "null"}, " +
+                                    $"costPerUnit={cheapestDirectInputs?.costPerUnit.ToString("R") ?? "null"}; " +
+                                    $"{mostExpensiveStuff.defName} contract=" +
+                                    $"{(mostExpensiveContract == null ? "missing" : "present")}; " +
+                                    $"status={mostExpensiveDirectInputs?.status.ToString() ?? "null"}, " +
+                                    $"costPerUnit={mostExpensiveDirectInputs?.costPerUnit.ToString("R") ?? "null"}; " +
+                                    $"MarketValue={cheapestStuffMarketValue:R}/" +
+                                    $"{mostExpensiveStuffMarketValue:R}; " +
+                                    "EXPECTED both concrete contracts present with status=Resolved, " +
+                                    "positive direct-input costs, and different costPerUnit values";
+                                if (directCostsResolved && !directCostsDiffer)
+                                {
+                                    Skip(
+                                        ConcreteBusinessMaterialAssertion,
+                                        "the selected materials resolved to the same Business direct " +
+                                        $"cost; valid stuffs={validStuffCount}; " +
+                                        $"{cheapestStuff.defName} MarketValue={cheapestStuffMarketValue:R}, " +
+                                        $"costPerUnit={cheapestDirectInputs.costPerUnit:R}; " +
+                                        $"{mostExpensiveStuff.defName} " +
+                                        $"MarketValue={mostExpensiveStuffMarketValue:R}, " +
+                                        $"costPerUnit={mostExpensiveDirectInputs.costPerUnit:R}");
+                                }
+                                else
+                                {
+                                    Check(
+                                        ConcreteBusinessMaterialAssertion,
+                                        directCostsDiffer,
+                                        concreteBusinessDetail);
+                                }
 
                                 if (mostExpensiveContract != null)
                                 {
@@ -1118,9 +1240,12 @@ namespace Intercolony
                     }
                     else
                     {
-                        const string reason =
-                            "the DiningChair furniture fixture is unavailable";
+                        string reason =
+                            "the DiningChair furniture fixture is unavailable; " +
+                            "DiningChair fixtures=0 of 1";
                         Skip("generic stuffable agreement stays valid", reason);
+                        Skip(GenericBusinessMaterialAssertion, reason);
+                        Skip(ConcreteBusinessMaterialAssertion, reason);
                         Skip("named material reaches the contract", reason);
                         Skip("different material changes contract price", reason);
                         Skip("material previews follow contract prices", reason);
@@ -1554,9 +1679,13 @@ namespace Intercolony
                 }
                 else
                 {
-                    const string reason =
-                        "the recurring-goods fixture or settlement profile is unavailable";
+                    string reason =
+                        "the recurring-goods fixture or settlement profile is unavailable; " +
+                        $"meat={(meat == null ? 0 : 1)}; rice={(rice == null ? 0 : 1)}; " +
+                        $"cloth={(cloth == null ? 0 : 1)}; profile={(profile == null ? 0 : 1)}";
                     Skip("generic stuffable agreement stays valid", reason);
+                    Skip(GenericBusinessMaterialAssertion, reason);
+                    Skip(ConcreteBusinessMaterialAssertion, reason);
                     Skip("named material reaches the contract", reason);
                     Skip("different material changes contract price", reason);
                     Skip("material previews follow contract prices", reason);
