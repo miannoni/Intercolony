@@ -1849,7 +1849,8 @@ namespace Intercolony
             string name = candidate == null ? "null" : candidate.Name;
             return $"{name}={candidate?.travelDays ?? -1}d, quote available " +
                 $"{quote.available}, route {quote.transport}, method {quote.methodLabel}, " +
-                $"ETA {LaborCandidateService.ArrivalDurationLabel(quote.arrivalTicks)}, actual " +
+                $"ETA ticks {quote.arrivalTicks} " +
+                $"({quote.arrivalTicks / (float)GenDate.TicksPerHour:0.##}h), actual " +
                 $"{actual}";
         }
 
@@ -1929,10 +1930,12 @@ namespace Intercolony
                 actualConventionalArrivalTicks <= 9 * GenDate.TicksPerHour;
             r.Check(conventionalArrivalMatches,
                 "U3 conventional emergency quotes 5-9 hours",
-                $"{conventionalCandidate?.Name ?? "missing"}: quote available " +
-                $"{conventionalQuote.available}, route {conventionalQuote.transport}, " +
-                $"method {conventionalQuote.methodLabel}, expected " +
-                $"{conventionalQuote.arrivalTicks} ticks, actual {actualConventionalArrivalTicks}");
+                $"OBSERVED {conventionalCandidate?.Name ?? "missing"} " +
+                $"arrivalTicks={actualConventionalArrivalTicks} " +
+                $"({actualConventionalArrivalTicks / (float)GenDate.TicksPerHour:0.##}h), " +
+                $"transport={conventionalQuote.transport}; EXPECTED between " +
+                $"{5 * GenDate.TicksPerHour} and {9 * GenDate.TicksPerHour} ticks " +
+                "(5h-9h), transport=Conventional");
 
             EmergencyArrivalQuote distantQuote = distantConventionalCandidate == null
                 ? new EmergencyArrivalQuote()
@@ -1948,7 +1951,8 @@ namespace Intercolony
             r.Check(distantConventionalUnavailable,
                 "U3 distant conventional emergency is unavailable",
                 $"{distantConventionalCandidate?.Name ?? "missing"}: quote available " +
-                $"{distantQuote.available}, ETA ticks {distantArrivalTicks}");
+                $"{distantQuote.available}, ETA ticks {distantArrivalTicks} " +
+                $"({distantArrivalTicks / (float)GenDate.TicksPerHour:0.##}h)");
 
             if (podCapableCandidates == 0)
             {
@@ -1971,9 +1975,12 @@ namespace Intercolony
                 actualPodArrivalTicks <= 4 * GenDate.TicksPerHour;
             r.Check(podArrivalInHours,
                 "U3 emergency pod quotes 1-4 hours",
-                $"{podCandidate?.Name ?? "missing"}: expected {podQuote.arrivalTicks} ticks " +
-                $"from {podQuote.methodLabel}, actual {actualPodArrivalTicks}; " +
-                $"{podCapableCandidates} pod-capable");
+                $"OBSERVED {podCandidate?.Name ?? "missing"} " +
+                $"arrivalTicks={actualPodArrivalTicks} " +
+                $"({actualPodArrivalTicks / (float)GenDate.TicksPerHour:0.##}h), " +
+                $"transport={podQuote.transport}; EXPECTED between " +
+                $"{GenDate.TicksPerHour} and {4 * GenDate.TicksPerHour} ticks " +
+                "(1h-4h), transport=DropPod");
         }
 
         private static string CandidateTravelDaysDetail(List<LaborCandidate> candidates)
