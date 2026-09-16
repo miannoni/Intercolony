@@ -456,6 +456,10 @@ About/PublishedFileId.txt
 # kept locally rather than in history, where 25 MB of PNGs would be permanent.
 Screenshots/
 
-# graphify build cache and dated backups churn on every rebuild; the graph itself is tracked.
-graphify-out/cache/
-graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+# graphify output is a derived artifact, regenerated in ~26s by `graphify update .` and
+# rebuilt automatically by the post-commit hook. Tracking it is unworkable: the hook
+# rewrites these files AFTER every commit, so the tree can never be clean, and graph.json
+# re-serialises with different node ordering each run - 41,551 diff lines for no content
+# change, which would poison every future `git diff` review. .gitattributes keeps its
+# merge driver registered harmlessly in case a future setup does track it.
+graphify-out/
