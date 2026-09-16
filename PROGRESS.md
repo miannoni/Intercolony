@@ -2990,3 +2990,70 @@ Known limitations:
 Manual test:
 - Seven entries were added to `docs/PENDING_PLAYTESTS.md`, covering all six findings plus the three cross-system sittings of plan section 14. Nothing in this run was played by a person. Machine evidence cannot settle whether the tiers feel different, whether a pod landing looks right, whether the card reads well, or whether the Produce controls are usable.
 
+## Playtest polish — F04/F16/F19/F23/F24  (2026-09-16)
+
+Implemented:
+- This polish pass ran on branch `foreman/playtest-polish-2026-09-14`, cut from
+  `foreman/playtest-finalization-2026-09-13` at `04bd776`. Save schema stayed unchanged at **59**
+  throughout. It corrects the first human-playtest findings from the finalization run; it is not a
+  claim that the earlier work was wrong.
+- **F04** — Reusable named Produce presets are saved per map in `ProduceLoopMapComponent`; one
+  authoritative `TryApplyPreset` is keyed on the object's own `Thing.Position` (the gizmo's loop key,
+  so one object gets one loop); `Save as preset` is in the object popup with an overwrite prompt; a
+  new Architect `Production` category builds its entries at runtime from the saved list, with
+  drag-apply and one concise summary message per drag; right-click provides Edit / Rename / Remove; a
+  preset editor and a rename prompt are present; and a generic `Produce controls` entry under
+  Architect > Orders manages presets without selecting an object first. No Export, by design.
+- **F16** — The employee card's `...` overflow is gone, replaced by one contextual lifecycle button
+  (`Not now` / `Let them go` / `Cancel` / `Dismiss`) driven by a pure resolver; arrears moved to the
+  expanded card as `Pay arrears (N)`.
+- **F19** — Optional material on stuffable selling agreements is threaded through the proposal and
+  both preview paths into the contract; `Any material` stays the default and stays valid; an
+  impossible product+material pair is refused before any state is written; Business resolves a
+  concrete material's replacement cost and deliberately does NOT invent one for a generic contract.
+- **F23** — The labor market now knows a worker's equipment tier before a posting asks. Prospects
+  carry a promised tier assigned during census generation under the settlement capability ceiling;
+  three Mod Settings (Standard / Professional / Elite abundance, 0-300%, default 100%) tune it;
+  matching filters on the promise before any pawn is generated; a deterministic allocator fulfils
+  the promise with real items and `Classify` is the final gate; and an empty posting now says whether
+  skill, equipment or fulfilment was the blocker.
+- **F24** — Emergency hiring is route-specific and visible: one authoritative
+  `EmergencyArrivalQuote` gives 1-4h by drop pod and 5-9h by rushed ground arrival, at tick resolution;
+  the `<= 2 days` rule is deleted; an inbound letter is sent at launch at an importance the default
+  settings cannot suppress, with a jump target on the actual pod; the hire UI quotes hours and route
+  instead of travel days; and job postings can request an emergency hire, matching the existing
+  census immediately.
+
+Not implemented:
+- F12 recurring player caravans and F22 player-supplied labor remain frozen and untouched.
+- The `PurchaseOrderService.DeliverToColony` partial-delivery defect and the inaccessible
+  recurring-contract destination defect were left alone.
+- No Produce preset export/import.
+
+Known limitations:
+- **Elite no longer requires a Spacer source.** Base-game worlds have no eligible Spacer settlement —
+  Pirates are `permanentEnemy`, Ancients are hidden, the Empire is Royalty-only — so the old
+  `techTier >= Spacer` gate made Elite structurally impossible and it measured **0 of 616 prospects**.
+  Elite now needs Industrial tech, Comfortable-or-better wealth and a higher capability score, which
+  still excludes every tribal and medieval source. Measured after the change: **616 prospects, 568
+  Standard, 41 Professional, 7 Elite**.
+- **Conventional emergency routes measured zero on a real world** (**0 of 748**): every
+  emergency-capable source was pod-capable and none fell inside the 12-tile ground threshold. Plan
+  §9.3 permits this, so the threshold was not retuned — but the 5-9h band has only ever run against
+  constructed fixtures.
+- The emergency-reach filter removes **79.4%** of the census (**154 of 748** have any route, all
+  DropPod).
+- A preset's selected WORKERS cannot be machine-proven across a save: `allowedWorkers` is a
+  `LookMode.Reference` list and the suite's detached component has no registered pawn objects for
+  Scribe's cross-reference pass. Every other preset field is proven across a save.
+
+Manual test:
+- Suite evidence: `produce 85/0/2` · `contract 84/0/0` · `job-posting 51/0/0` · `labor 111/0/0` ·
+  `combat-clause 43/0/0` · `employer-reputation 34/0/0` — every run exit 0, log CLEAN, world-pawn
+  and postings deltas 0.
+- Mutation evidence: **5/5 GOOD** on F04, **4/4** on F16, **4/4** on F19, **3/3** on F23 after
+  closing a hole the mutation itself exposed, **2/2** on F24 timing plus **2 more** on posting
+  matching.
+- No human playtest was performed in this run; the owed observations are listed in
+  `docs/PENDING_PLAYTESTS.md`.
+

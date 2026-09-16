@@ -46,6 +46,46 @@ They no longer need individual entries here, because every pass reports its own 
 What remains deliberately asks a human to watch two colonies, mod interactions, behaviour over seasons, or whether a screen reads well.
 A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it does not close those items.
 
+### Playtest polish — F04/F16/F19/F23/F24 needs a human pass
+
+Added 2026-09-16 on branch `foreman/playtest-polish-2026-09-14`, cut from
+`foreman/playtest-finalization-2026-09-13` at `04bd776`. This group records the first human-playtest
+findings from the finalization run being corrected; it is not a claim that the earlier work was wrong.
+No item below has been played in this run.
+
+**Steps.**
+
+1. **F24 pod descent (mandatory).** Hire one direct emergency worker from a drop-pod-capable
+   settlement. See a quoted ETA of **1–4h**. Receive the inbound letter, see that it names the source,
+   click **Jump to location**, and watch a vanilla-style pod descend at the announced site. See the
+   worker activate from that pod, not walk in or appear beside it. The letter is the fix: before this
+   run there was no letter at launch, and the post-arrival one was suppressed at the default letter
+   volume, which is why the first playtest saw nothing.
+2. **F24 conventional route.** Find or engineer a source within the **12-tile** ground threshold.
+   Hire through that route and watch a visibly different **5–9h `Emergency caravan`** arrival. This
+   band has never run in a live world.
+3. **F24 emergency job posting.** Repeat the pod path through an **Emergency Job Posting** applicant.
+   Read the premium shown when posting and compare it with the premium actually charged; they must be
+   the same.
+4. **F04 Architect flow.** Create a preset from a chair's popup, find it under **Architect >
+   Production**, and drag it over a room of chairs and tables. Watch all eligible objects become
+   configured and the one concise summary message name any skipped incompatible ones. Right-click the
+   preset and use **Edit**, **Rename** and **Remove**. Then repeat the flow from **Architect > Orders >
+   Produce controls** without selecting an object first.
+5. **F04 preset workers across a save.** Configure a preset with specific selected workers, save,
+   reload, and reopen it. See the selections survive. Then repeat with a selected worker who died or
+   left between save and load; see that worker dropped while the remaining selections stay.
+6. **F16 employee card.** Screenshot the collapsed card for an ordinary active employee and see
+   **Dismiss**, for a travelling employee and see **Cancel**, for a live stay offer and see **Not now**,
+   and for a live renewal offer and see **Let them go**. See no `...`, no overlap, and **Pay arrears
+   (N)** in the expanded card.
+7. **F19 material selector.** Propose a chair agreement first at **Any material**, then at **Steel**,
+   then at **Wood**. See the reference price change with the material. In Business, see a concrete
+   replacement cost for Steel and Wood and an honest unresolved state for the generic contract.
+8. **F23 equipment postings.** Post **Shooting 1+** at **Standard**, then **Professional**, then
+   **Elite** in an ordinary world. See somebody answer at each tier, and inspect what each applicant
+   actually carries to confirm that the gear matches the claimed tier.
+
 ### F04: the Produce Controls popup has never been seen by a person
 
 Added 2026-09-14 on branch `foreman/playtest-finalization-2026-09-13`. The **Set target** slider is
