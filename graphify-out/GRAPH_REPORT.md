@@ -6,12 +6,12 @@
 - Unclassified: 23 file(s) not represented in the graph (top: .xml 10, .bbcode 7, (none) 5)
 
 ## Summary
-- 6927 nodes · 18457 edges · 371 communities (350 shown, 21 thin omitted)
+- 6964 nodes · 18460 edges · 388 communities (360 shown, 28 thin omitted)
 - Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 1003 edges (avg confidence: 0.81)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `1805ec71`
+- Built from commit: `82f417ac`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -19,7 +19,7 @@
 - CLAUDE.md
 - IntercolonyRfqSelfTest
 - What You Must Do When Invoked
-- .AllowedMaterialsDetail
+- List
 - graphify reference: extra exports and benchmark
 - graphify reference: query, path, explain
 - graphify reference: add a URL and watch a folder
@@ -39,28 +39,27 @@
 - EmploymentContract
 - PurchaseRequest
 - SalesOrderService
-- MainTabWindow_Intercolony
-- .CountColonySilver
+- LaborDebt
 - Map
 - EmployerReputationService
 - ProduceLoopMapComponent
 - Intercolony
 - IntercolonyEconomySelfTest
 - IntercolonyCashFlowSelfTest
-- LaborCandidate
+- LaborCandidateService
 - EmployeeApparelPatch
 - SettlementProfileGenerator
-- .Close
-- FindBuyerService
+- IntercolonyJobPostingSelfTest
+- FulfillmentMode
 - IntercolonyMod
 - Dialog_CreateRequest
-- JobApplicant
+- JobPosting
 - Intercolony progress log
 - Settlement
 - IntercolonyNegotiationSelfTest
-- ProduceLoopRecord
+- .Close
 - LaborEquipmentAllocator
-- IntercolonySettings
+- IntercolonyLaborSelfTest
 - Backlog
 - IntercolonyAnimalSelfTest
 - .CheckF11DeterministicResponseTiming
@@ -68,7 +67,7 @@
 - DebugAction
 - IntercolonyNegotiationTerms
 - Dialog_ProposeAgreement
-- IntercolonyLaborSelfTest
+- .Run
 - CommercialReputation
 - PurchaseOrdersColumn
 - dev.ps1
@@ -85,13 +84,13 @@
 - .Run
 - Slice log
 - ReceivingLocationMapComponent
-- .DrawContractEstimate
+- MainTabWindow_Intercolony
 - Results
 - IntercolonyLedgerSelfTest
 - .Run
 - Dialog_CreateJobPosting
 - 2. The eleven answers
-- FulfillmentMode
+- .Run
 - bridge-client.ts
 - .EvaluateStatus
 - .Run
@@ -106,30 +105,30 @@
 - IntercolonyAllSelfTests
 - Stage 6 Recon Seam Map: F07, F19, F20
 - Stage 7 seam map — F25, F23, F24 and F22
-- .UnitPrice
-- .End
+- ThingDef
+- HarmonyPatches.cs
 - .CheckProduceDesignators
 - Stage 2 seam map — F03 and F04
-- SettlementEconomicProfile
+- .CheckProduceFurnitureRate
 - .BuildComparisonRows
 - mcp.ts
 - Technical note — employee pawn control
 - CommercialHistoryUiService
 - LedgerKind
 - IntercolonyBrandSelfTest
-- JobPosting
+- JobPostingService
 - ProductBrandUiService
-- PurchaseOrder
+- PurchaseOrderService
 - .TryGenerateAnimal
 - Stage 5 seam map: F21 market geography and F11 progressive RFQ responses
 - OrderHistoryService
-- WageStructure
+- .TryHire
 - EmploymentStatus
 - Dialog_ApparelBondConsent
 - TermRow
 - EconomicEventType
 - IntercolonyLaborSpike
-- .RefreshMarketStateIndex
+- IntercolonyEventSelfTest
 - AnimalSpec
 - INTERCOLONY_1_0_IMPLEMENTATION_PLAN.md
 - Intercolony_Claude_Execution_and_Decision_Guide.md
@@ -137,12 +136,12 @@
 - .SelectTab
 - package.json
 - EmployerReputation
-- ThingDef
+- IntercolonyTradeBlacklist
 - 8.3 Implementation steps
 - 9. Feature 7 — Supply contracts should come from supply history
 - 9. Stage C5 — F24: emergency hiring should feel like premium rapid reinforcement
 - MarketPressureService
-- IntercolonyMarketBaseline
+- .CountColonySilver
 - IntercolonyDevBridgeHost
 - .RunDeliveredQualityChecks
 - Candidate questions, grouped by what they learn
@@ -152,14 +151,14 @@
 - IntercolonyDevBridgeProtocol
 - Stage 4 seam map — F05 receiving locations and F12 programmed caravans
 - CombatClause
-- ProcurementCounterConfirmationDialog
+- List
 - cli.ts
 - IntercolonyProfileSelfTest
-- BusinessReportService
+- .EstimateDirectInputs
 - A. Production control and automation
 - IntercolonyLongTermSelfTest
 - IntercolonyNegotiationAcceptancePreview
-- .RunPostAcceptanceRenegotiationAssertions
+- ProduceControlPreset
 - .DumpEconomicEvents
 - compilerOptions
 - CaravanArrivalAction_DeliverOrder
@@ -168,7 +167,7 @@
 - 10. Stage 3 — Circumstance-driven economic events
 - 11. Stage 4 — Brand strength & colony specialization
 - 9. Stage 2 — Market fundamentals overhaul
-- .ProposeContract
+- ProcurementContractProposalFailure
 - .Warning
 - .DrawBusiness
 - .Run
@@ -181,8 +180,8 @@
 - Foreman state — Intercolony
 - ExpectedLogHandler
 - Stage 3 Reconnaissance Seam Map
-- .CanProduceGood
-- .BuildRow
+- BusinessReportService
+- .BuildSummary
 - Dialog_ForcedApparelReleaseConsent
 - Intercolony 1.0 Implementation Status
 - F24 — Emergency / urgent hiring
@@ -190,7 +189,7 @@
 - C. Employees and employment UX
 - 4. Feature 1 — Unified inventory reservation / committed quantities
 - Intercolony Stage 1 seam map
-- .DrawApplicantRow
+- MainTabWindow_Intercolony
 - EmploymentEquipmentService
 - 7. Stable domain terminology
 - PLAYTEST_BATCH_SOURCE_PLAN.md
@@ -198,15 +197,15 @@
 - 10. Stage P5 — F19 + F20: replace the Business contract economics block
 - 11. Stage P6 — F21 + F24: rapid-logistics capability and real emergency hiring
 - 5. Stage C1 — F04: named Produce presets and bulk application
-- ProductSimilarityEvidence
+- .CheckEmergencyDispatch
 - IntercolonyDevBridgePump
 - Compatibility
 - The dev test bridge
 - 7B. F17 — secondary employee actions must leave the primary card
 - Intercolony 0.9.1 Release Prep
 - Intercolony 1.1.0 — production, agreements, and a fuller labor market
-- .ExplainDemand
-- .CreateOne
+- IntercolonyProductCategory
+- EmergencyArrivalQuote
 - .ExposeData
 - CommercialHistoryRelationRow
 - Tab
@@ -219,7 +218,7 @@
 - 6. Stage P1 — F04: Produce Controls
 - package.ps1
 - ContractStatus
-- SupplierMarketColumn
+- DebugSourceSummary
 - 70. Suggested domain service boundaries
 - 15. Stage 8 — 1.0 integration, balance and release gate
 - 5. Locked design principles for the whole 1.0 program
@@ -230,7 +229,7 @@
 - Intercolony 0.9.0 — first public beta
 - Technical note — unique goods and capital equipment
 - .HandleConnection
-- .MigrateIfNeeded
+- .CheckStage8BMigrationMatrix
 - Column
 - .BuildCommand
 - 120. Phase 27 — Finished product / 1.0 objective
@@ -258,7 +257,7 @@
 - Intercolony 0.9.1 — agreements, prices and corrections
 - TemporarySilverGift
 - Intercolony
-- PurchaseOrderStatus
+- PurchaseOrder
 - SettlementMarketState
 - LaborEquipmentLevel
 - QuoteColumn
@@ -328,6 +327,7 @@
 - OrderLine
 - Results
 - IntercolonyNegotiationAcceptanceBand
+- .Run
 - Results
 - fake-bridge.mjs
 - 101. Phase 8 — Finished goods market
@@ -373,46 +373,63 @@
 - 12. Save/load heuristic
 - intercolony-rimworld
 - ~~Procurement delivery and refund use the paying colony~~ -- CLOSED 2026-08-21
-- IntercolonyDebugWindow
-- EmploymentArrivalTransport
+- .For
+- List
 - SettlementRapidLogisticsCapability
-- CommercialGoodwillPressureStatus
+- .Complete
 - Results
-- .CheckDemandConditionLotQuantities
-- Results
+- LaborProspect
+- Dialog_RenameProducePreset
 - .RestoreHistorySilver
 - ProspectRejection
 - CarriedEquipmentLocation
-- .CallsMethod
+- .WorldComponentTick
+- ProductBrandRecord
+- .RunGoodwillPressureAssertions
+- .TryCounter
+- MarketOpportunityState
+- ProducePresetDesignators
+- .BuildChoices
+- ProcurementContractStatus
+- .FindCraftedSubject
+- IntercolonyNegotiationDecision
+- ProductBrandService
+- .Prefix
+- Results
+- .Prefix
+- Map
+- IReadOnlyList
+- Passion
+- Dictionary
 
 ## God Nodes (most connected - your core abstractions)
-1. `IntercolonyWorldComponent` - 803 edges
+1. `IntercolonyWorldComponent` - 766 edges
 2. `ThingDef` - 321 edges
-3. `MainTabWindow_Intercolony` - 310 edges
-4. `EmploymentContract` - 192 edges
-5. `IntercolonyRfqSelfTest` - 174 edges
-6. `Intercolony` - 166 edges
-7. `Settlement` - 143 edges
-8. `IntercolonyProduceSelfTest` - 140 edges
-9. `SettlementEconomicProfile` - 134 edges
+3. `MainTabWindow_Intercolony` - 230 edges
+4. `IntercolonyRfqSelfTest` - 174 edges
+5. `Intercolony` - 166 edges
+6. `EmploymentContract` - 166 edges
+7. `IntercolonyProduceSelfTest` - 140 edges
+8. `Settlement` - 138 edges
+9. `SettlementEconomicProfile` - 124 edges
 10. `SalesOrder` - 123 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `EconomicChainLink` --references--> `IntercolonyProductCategory`  [EXTRACTED]
-  Source/Intercolony/Economy/MarketPressureService.cs → Source/Intercolony/Core/IntercolonyProductCategory.cs
-- `ConstructionObservation` --references--> `Faction`  [EXTRACTED]
-  Source/Intercolony/Compatibility/HarmonyPatches.cs → Source/Intercolony/Economy/EconomicEventDefinitions.cs
-- `ConstructionObservation` --references--> `ThingDef`  [EXTRACTED]
-  Source/Intercolony/Compatibility/HarmonyPatches.cs → Source/Intercolony/Orders/SalesOrder.cs
-- `ContractProposalResult` --references--> `IntercolonyNegotiationResult`  [EXTRACTED]
-  Source/Intercolony/Contracts/ContractService.cs → Source/Intercolony/Contracts/IntercolonyNegotiationEvaluator.cs
-- `Dialog_ProposeAgreement` --references--> `ContractTerms`  [EXTRACTED]
-  Source/Intercolony/UI/Dialog_ProposeAgreement.cs → Source/Intercolony/Contracts/ContractService.cs
+- `IntercolonyWorldComponent` --references--> `JobPosting`  [EXTRACTED]
+  Source/Intercolony/Core/IntercolonyWorldComponent.cs → Source/Intercolony/Labor/JobPosting.cs
+- `CommercialHistoryEntry` --references--> `ThingDef`  [EXTRACTED]
+  Source/Intercolony/Core/CommercialHistoryEntry.cs → Source/Intercolony/Orders/SalesOrder.cs
+- `IntercolonyWorldComponent` --references--> `CommercialHistoryEntry`  [EXTRACTED]
+  Source/Intercolony/Core/IntercolonyWorldComponent.cs → Source/Intercolony/Core/CommercialHistoryEntry.cs
+- `F11CohortFixture` --references--> `PendingRfqResponse`  [EXTRACTED]
+  Source/Intercolony/Debug/IntercolonyRfqSelfTest.cs → Source/Intercolony/Procurement/PendingRfqResponse.cs
+- `F11CohortFixture` --references--> `PurchaseRequest`  [EXTRACTED]
+  Source/Intercolony/Debug/IntercolonyRfqSelfTest.cs → Source/Intercolony/Procurement/PurchaseRequest.cs
 
 ## Import Cycles
 - None detected.
 
-## Communities (371 total, 21 thin omitted)
+## Communities (388 total, 28 thin omitted)
 
 ### Community 0 - "CLAUDE.md"
 Cohesion: 0.08
@@ -425,6 +442,10 @@ Nodes (20): FieldInfo, CommercialHistoryEntry, Dictionary, List, Map, Thing, Zon
 ### Community 2 - "What You Must Do When Invoked"
 Cohesion: 0.08
 Nodes (24): For /graphify add and --watch, For /graphify query, For the commit hook and native CLAUDE.md integration, For --update and --cluster-only, /graphify, Honesty Rules, Interpreter guard for subcommands, Part A - Structural extraction for code files (+16 more)
+
+### Community 3 - "List"
+Cohesion: 0.22
+Nodes (4): Blueprint, DesignationDef, List, Thing
 
 ### Community 4 - "graphify reference: extra exports and benchmark"
 Cohesion: 0.22
@@ -455,84 +476,80 @@ Cohesion: 0.06
 Nodes (26): QualityCategory, ProcurementContract, CanAcceptFinalCounter, CanDeclineFinalCounter, HasPendingCounterpartyCounter, IsPendingProposal, IsValidAfterLoad, paymentPerCycle (+18 more)
 
 ### Community 15 - "IntercolonyWorldComponent"
-Cohesion: 0.03
-Nodes (57): F11RoundTripResult, RefreshPerformanceSample, CommercialTimelineService, Dictionary, HashSet, List, IntercolonyWorldComponent, ActiveContractCount (+49 more)
+Cohesion: 0.02
+Nodes (62): EditWindow, F11RoundTripResult, RefreshPerformanceSample, Dictionary, HashSet, List, IntercolonyWorldComponent, ActiveContractCount (+54 more)
 
 ### Community 17 - "DESIGN.md"
 Cohesion: 0.02
 Nodes (84): 0. Instructions to the coding agent, 117. Phase 24 — Economic integration and dashboard, 11. Demand generation, 121. "Finished" does not mean frozen, 122. Recommended implementation order for Claude Code, 123. Definition of a good coding task, 124. Documentation that should evolve with the code, 127. The core vision in one scenario (+76 more)
 
 ### Community 18 - "Dialog_EditProducePreset"
-Cohesion: 0.05
-Nodes (26): Map, List, Pawn, ProduceControlPreset, EffectiveResumeBelow, Map, Pawn, Thing (+18 more)
+Cohesion: 0.13
+Nodes (7): List, Map, Pawn, Rect, Vector2, Dialog_EditProducePreset, InitialSize
 
 ### Community 19 - "Outstanding"
 Cohesion: 0.03
 Nodes (75): §115's first acceptance criterion — long-run stability, 1.0 program — Stage 2, the 2K play gate, 1.0 program — Stage 3, the two event criteria (added 2026-08-22), A partial quote acceptance leaves the request open, ~~A proposal's answer does not change on reload~~, ~~A proposed agreement is answered after a wait~~, Agreement terms layout needs a two-dialog scroll check, Architect Orders needs a presence check before area play (+67 more)
 
 ### Community 20 - "EmploymentContract"
-Cohesion: 0.05
-Nodes (36): EmployeeLifecycleActionKind, EmployeeRowLayout, List, Pawn, CombatUseMonitor, Dictionary, List, Map (+28 more)
+Cohesion: 0.06
+Nodes (35): ActiveTransporterInfo, DropPodIncoming, Pawn, Pawn, CompensationService, Dictionary, List, Map (+27 more)
 
 ### Community 21 - "PurchaseRequest"
-Cohesion: 0.06
-Nodes (25): List, QualityCategory, ProcurementFulfillmentPreference, Either, PlayerPickup, SupplierDelivers, PurchaseRequest, AnyQuotes (+17 more)
+Cohesion: 0.07
+Nodes (19): List, ProcurementFulfillmentPreference, Either, PlayerPickup, SupplierDelivers, PurchaseRequest, AnyQuotes, BestCompleteQuote (+11 more)
 
 ### Community 22 - "SalesOrderService"
-Cohesion: 0.13
+Cohesion: 0.15
 Nodes (7): OrderAvailability, CanBeFullySatisfied, NotApplicable, Caravan, Map, Pawn, SalesOrderService
 
-### Community 23 - "MainTabWindow_Intercolony"
-Cohesion: 0.05
-Nodes (20): BuyerColumn, Column, EmployeeContractRow, MainTabWindow, OrderColumn, QuoteColumn, Vector2, Color (+12 more)
-
-### Community 24 - ".CountColonySilver"
-Cohesion: 0.07
-Nodes (20): IntVec3, List, Map, Zone_Stockpile, IntercolonyLaborSelfTestSupport, NetTaken, Map, StringBuilder (+12 more)
+### Community 24 - "LaborDebt"
+Cohesion: 0.10
+Nodes (14): WorkRefusalReason, CombatMisuse, None, UnpaidWages, LaborDebt, DaysOutstanding, IsSettled, IsValidAfterLoad (+6 more)
 
 ### Community 25 - "Map"
-Cohesion: 0.19
-Nodes (12): CellRect, Designation, Func, HashSet, IntVec3, List, Map, Rot4 (+4 more)
+Cohesion: 0.27
+Nodes (9): CellRect, Designation, Func, HashSet, IntVec3, Map, Rot4, Zone_Stockpile (+1 more)
 
 ### Community 26 - "EmployerReputationService"
 Cohesion: 0.14
-Nodes (6): List, Map, StringBuilder, IntercolonyEmployerReputationSelfTest, Results, EmployerReputationService
+Nodes (5): Map, StringBuilder, IntercolonyTransitionSelfTest, Results, EmployerReputationService
 
 ### Community 27 - "ProduceLoopMapComponent"
-Cohesion: 0.10
-Nodes (10): ProduceLoopSnapshot, Building, IntVec3, IReadOnlyList, List, Pawn, ProduceLoopMapComponent, Loops (+2 more)
+Cohesion: 0.11
+Nodes (12): ProduceLoopSnapshot, Building, IntVec3, IReadOnlyList, List, Pawn, Rot4, ThingStyleDef (+4 more)
 
 ### Community 28 - "Intercolony"
 Cohesion: 0.05
-Nodes (5): Intercolony, QuestScriptDef, IntercolonyQuestDefOf, ProduceWorkerGatePatch, MarketTableSortUtility
+Nodes (7): Intercolony, QuestScriptDef, IntercolonyQuestDefOf, EmploymentArrivalTransport, Conventional, DropPod, MarketTableSortUtility
 
 ### Community 29 - "IntercolonyEconomySelfTest"
-Cohesion: 0.16
+Cohesion: 0.13
 Nodes (4): List, StringBuilder, IntercolonyEconomySelfTest, Results
 
 ### Community 30 - "IntercolonyCashFlowSelfTest"
 Cohesion: 0.12
 Nodes (11): List, CashFlowDay, Net, CashFlowForecast, CashFlowReport, TotalExpenses, TotalNet, TotalRevenue (+3 more)
 
-### Community 31 - "LaborCandidate"
-Cohesion: 0.08
-Nodes (16): Pawn, LaborCandidate, Name, IReadOnlyList, List, Passion, Pawn, SkillDef (+8 more)
+### Community 31 - "LaborCandidateService"
+Cohesion: 0.11
+Nodes (15): IReadOnlyList, Passion, Settlement, CombatClause, IntercolonyWorldComponent, LaborCandidate, LaborProspect, List (+7 more)
 
 ### Community 32 - "EmployeeApparelPatch"
 Cohesion: 0.09
-Nodes (27): CodeInstruction, Designator_Strip, ForcedReleaseItem, HarmonyPatch, HarmonyPostfix, HarmonyPrefix, HarmonyTranspiler, Job (+19 more)
+Nodes (26): CodeInstruction, Designator_Strip, ForcedReleaseItem, HarmonyPatch, HarmonyPostfix, HarmonyPrefix, HarmonyTranspiler, Job (+18 more)
 
 ### Community 33 - "SettlementProfileGenerator"
 Cohesion: 0.11
 Nodes (16): IntercolonyArchetype, Affluent, Agricultural, Frontier, Industrial, Military, Mixed, TradeHub (+8 more)
 
-### Community 34 - ".Close"
+### Community 34 - "IntercolonyJobPostingSelfTest"
 Cohesion: 0.08
 Nodes (19): ApplicantDraw, ApplicantValues, Draw, EquipmentCensusCounts, EquipmentMatchObservation, List, Map, Pawn (+11 more)
 
-### Community 35 - "FindBuyerService"
-Cohesion: 0.14
-Nodes (8): Gender, KeyValuePair, LifeStageDef, List, Map, Pawn, AnimalStockGroup, FindBuyerService
+### Community 35 - "FulfillmentMode"
+Cohesion: 0.11
+Nodes (15): Gender, LifeStageDef, List, Map, Pawn, Thing, AnimalStockGroup, BuyerOffer (+7 more)
 
 ### Community 36 - "IntercolonyMod"
 Cohesion: 0.06
@@ -542,101 +559,97 @@ Nodes (18): ISet, Mod, Func, Rect, Vector2, IntercolonyMod, Settings, Dictionary
 Cohesion: 0.11
 Nodes (11): Def, Dictionary, Gender, LifeStageDef, List, PawnKindDef, QualityCategory, Rect (+3 more)
 
-### Community 38 - "JobApplicant"
-Cohesion: 0.11
-Nodes (12): Map, Pawn, JobApplicant, DaysWaiting, IsValidAfterLoad, Name, JobPostingStatus, Expired (+4 more)
+### Community 38 - "JobPosting"
+Cohesion: 0.06
+Nodes (27): Faction, Map, CombatClause, LaborEquipmentLevel, List, Pawn, SkillDef, WageStructure (+19 more)
 
 ### Community 39 - "Intercolony progress log"
 Cohesion: 0.04
 Nodes (53): 0.9.1 — agreements, prices and corrections  (2026-08-15), 0.9.1 release preparation — focused self-tests  (2026-08-13), 0.9.2 — animal sales and procurement fixes  (2026-08-17), 0.9.3 — the Tier 2 UI pass  (2026-08-18), 1.0.2 batch — reputation quality, cash flow, and the world-pawn investigation  (2026-08-29), 1.0 program — stages 0 through 8  (2026-08-23), 1.0 release  (2026-08-24), 1.1.0 release — merged, tagged, released and published  (2026-09-13) (+45 more)
 
 ### Community 40 - "Settlement"
-Cohesion: 0.08
-Nodes (7): MarketSample, PreparedProcurementProposal, Action, StringBuilder, Settlement, IntercolonyMarketAccess, List
+Cohesion: 0.06
+Nodes (17): PreparedProcurementProposal, TechLevel, SettlementEconomicProfile, StrongestSupply, List, StringBuilder, IntercolonyMarketSelfTest, Settlement (+9 more)
 
-### Community 41 - "IntercolonyNegotiationSelfTest"
-Cohesion: 0.13
-Nodes (4): List, StringBuilder, IntercolonyNegotiationSelfTest, Results
-
-### Community 42 - "ProduceLoopRecord"
+### Community 42 - ".Close"
 Cohesion: 0.10
 Nodes (15): IntVec3, List, Pawn, Rot4, ThingStyleDef, ProduceLoopRecord, EffectiveResumeBelow, IntVec3 (+7 more)
 
 ### Community 43 - "LaborEquipmentAllocator"
-Cohesion: 0.13
-Nodes (11): ItemChoice, CompQuality, HashSet, List, Pawn, QualityCategory, StatDef, TechLevel (+3 more)
+Cohesion: 0.22
+Nodes (4): ItemChoice, HashSet, StatDef, LaborEquipmentAllocator
 
-### Community 44 - "IntercolonySettings"
+### Community 44 - "IntercolonyLaborSelfTest"
 Cohesion: 0.11
-Nodes (11): ModSettings, SettingsRoundTrip, HashSet, SettingsRoundTrip, HashSet, IntercolonyLetterVolume, Everything, ImportantOnly (+3 more)
+Nodes (14): ModSettings, SettingsRoundTrip, HashSet, MethodInfo, Type, IntercolonyLaborSelfTest, SettingsRoundTrip, HashSet (+6 more)
 
 ### Community 45 - "Backlog"
 Cohesion: 0.04
 Nodes (44): 0.9.1 play-test findings — 2026-08-15/16, 10. Quality and material do not affect the price when selling — only when buying, 1. "Sell to this buyer?" dialog is visually broken and over-verbose, ~~2. The employee signing fee is never disclosed before hiring~~, 3. ~~Buyer travel-time promise is not persisted~~; its presentation is confusing, ~~4. Animal sales are dead — Mark Ready is a silent no-op~~, 5. Add a "mark this order ready" toggle to the "Sell to this buyer?" popup, 6. Ready sales orders should be sortable and better laid out (+36 more)
 
 ### Community 46 - "IntercolonyAnimalSelfTest"
-Cohesion: 0.13
+Cohesion: 0.12
 Nodes (10): LifeStageAge, MemoryThoughtHandler, CompEggLayer, Dictionary, List, Map, Pawn, IntercolonyAnimalSelfTest (+2 more)
 
 ### Community 47 - ".CheckF11DeterministicResponseTiming"
-Cohesion: 0.11
-Nodes (10): F11CohortFixture, F11QuoteFixture, F11QuoteTerms, MethodInfo, QualityCategory, F11QuoteFixture, F11QuoteTerms, TotalPrice (+2 more)
+Cohesion: 0.08
+Nodes (15): F11CohortFixture, F11QuoteFixture, F11QuoteTerms, MethodInfo, QualityCategory, F11QuoteFixture, F11QuoteTerms, TotalPrice (+7 more)
 
 ### Community 48 - "MarketOpportunity"
-Cohesion: 0.06
-Nodes (23): QualityCategory, MarketOpportunity, CanAcceptOriginalTerms, CanSubmitCounter, DaysRemaining, HasConditionConstraint, HasPendingCounterpartyCounter, IsAvailable (+15 more)
+Cohesion: 0.09
+Nodes (19): SettlementSample, List, StringBuilder, IntercolonyMarketBaseline, SettlementSample, QualityCategory, MarketOpportunity, CanAcceptOriginalTerms (+11 more)
+
+### Community 49 - "DebugAction"
+Cohesion: 0.09
+Nodes (3): DebugAction, CompQuality, Map
 
 ### Community 50 - "IntercolonyNegotiationTerms"
-Cohesion: 0.11
-Nodes (15): List, IntercolonyNegotiationDecision, Accepted, Countered, Refused, IntercolonyNegotiationDirection, Purchase, Sale (+7 more)
+Cohesion: 0.16
+Nodes (10): List, IntercolonyNegotiationDirection, Purchase, Sale, IntercolonyNegotiationEvaluator, IntercolonyNegotiationFactor, IntercolonyNegotiationProposal, IntercolonyNegotiationResult (+2 more)
 
 ### Community 51 - "Dialog_ProposeAgreement"
-Cohesion: 0.12
-Nodes (8): Dictionary, List, Rect, Vector2, Dialog_ProposeAgreement, InitialSize, MaterialSelectorHeight, ShouldShowMaterialSelector
+Cohesion: 0.11
+Nodes (9): Dictionary, EffectiveBrandDetails, List, Rect, Vector2, Dialog_ProposeAgreement, InitialSize, MaterialSelectorHeight (+1 more)
 
-### Community 52 - "IntercolonyLaborSelfTest"
-Cohesion: 0.12
-Nodes (12): Building_Grave, DeadEmployeeCorpseRoundTripProbe, CompQuality, Corpse, Dictionary, List, Map, Pawn (+4 more)
+### Community 52 - ".Run"
+Cohesion: 0.14
+Nodes (9): Building_Grave, DeadEmployeeCorpseRoundTripProbe, CompQuality, Corpse, List, Map, Pawn, Thing (+1 more)
 
 ### Community 53 - "CommercialReputation"
-Cohesion: 0.06
-Nodes (27): GoodwillPressureResults, RelationshipResults, FactionRelation, FactionRelationKind, List, StringBuilder, GoodwillPressureResults, Output (+19 more)
+Cohesion: 0.07
+Nodes (22): MarketSample, RelationshipResults, List, IntercolonyReputationSelfTest, MarketSample, AverageDeadline, AverageQuantity, RelationshipResults (+14 more)
 
 ### Community 54 - "PurchaseOrdersColumn"
-Cohesion: 0.10
-Nodes (14): Comparison, List, IEnumerable, List, PurchaseOrdersColumn, Fulfillment, Item, OrderId (+6 more)
+Cohesion: 0.12
+Nodes (12): Comparison, List, List, PurchaseOrdersColumn, Fulfillment, Item, OrderId, Quantity (+4 more)
 
 ### Community 55 - "dev.ps1"
 Cohesion: 0.13
 Nodes (39): Add-Mark(), Format-WorldPawnIdentityLine(), Get-AllLines(), Get-BinaryFingerprint(), Get-BridgeField(), Get-CompiledSources(), Get-IntercolonySaveSchema(), Get-InterestingLines() (+31 more)
 
 ### Community 56 - "OrderValidationResult"
-Cohesion: 0.13
+Cohesion: 0.12
 Nodes (17): Pawn, AnimalTradeUtility, Caravan, Dictionary, IEnumerable, List, Map, Pawn (+9 more)
 
 ### Community 57 - "ProductSimilarityService"
-Cohesion: 0.17
-Nodes (10): ProductProfile, ProductSimilarityEvidence, SimilarityResult, Dictionary, List, ThingCategoryDef, ProductProfile, ProductSimilarityService (+2 more)
+Cohesion: 0.12
+Nodes (19): ProductProfile, ProductSimilarityEvidence, SimilarityResult, Dictionary, List, ThingCategoryDef, ProductProfile, ProductSimilarityEvidence (+11 more)
 
 ### Community 58 - "Dialog_ProposeProcurementAgreement"
-Cohesion: 0.13
-Nodes (7): Dictionary, HashSet, List, Rect, Vector2, Dialog_ProposeProcurementAgreement, InitialSize
+Cohesion: 0.15
+Nodes (6): Dictionary, List, Rect, Vector2, Dialog_ProposeProcurementAgreement, InitialSize
 
 ### Community 59 - "CommercialEventType"
-Cohesion: 0.09
+Cohesion: 0.10
 Nodes (18): CommercialEventType, BrandMilestone, ContractCancelled, ContractCompleted, ContractFailed, ContractStarted, CounterofferAccepted, DeadlineExtended (+10 more)
 
 ### Community 60 - "EconomicEvent"
-Cohesion: 0.16
+Cohesion: 0.15
 Nodes (7): GenerationDecision, List, EconomicEvent, List, EconomicEventService, GenerationDecision, Starts
 
 ### Community 61 - ".Send"
-Cohesion: 0.12
-Nodes (9): LetterDef, LookTargets, Pawn, HostilityPolicy, IntercolonyLetterImportance, Always, Chatty, Important (+1 more)
-
-### Community 62 - "IntercolonyTimelineSelfTest"
-Cohesion: 0.22
-Nodes (3): List, IntercolonyTimelineSelfTest, CommercialHistoryTimelineRow
+Cohesion: 0.14
+Nodes (8): LetterDef, LookTargets, HostilityPolicy, IntercolonyLetterImportance, Always, Chatty, Important, IntercolonyLetters
 
 ### Community 63 - "protocol.ts"
 Cohesion: 0.10
@@ -648,7 +661,7 @@ Nodes (10): Command_Toggle, Action, Building_Storage, Func, Gizmo, IEnumerable, 
 
 ### Community 65 - "LaborEquipmentTierService"
 Cohesion: 0.15
-Nodes (8): LoadoutSummary, Pawn, StatDef, TechLevel, Thing, ThingWithComps, LaborEquipmentTierService, LoadoutSummary
+Nodes (8): LoadoutSummary, Apparel, StatDef, TechLevel, Thing, ThingWithComps, LaborEquipmentTierService, LoadoutSummary
 
 ### Community 66 - ".Run"
 Cohesion: 0.13
@@ -662,61 +675,61 @@ Nodes (35): 0.1 — status ledger (2026-08-19), 0.2 — market baseline (2026-08
 Cohesion: 0.19
 Nodes (10): ISlotGroupParent, MapComponent, Building_Storage, IEnumerable, List, Map, Zone_Stockpile, ReceivingLocationMapComponent (+2 more)
 
-### Community 69 - ".DrawContractEstimate"
-Cohesion: 0.11
-Nodes (4): ContractEstimate, DirectInputEstimate, DirectLaborEstimate, TextAnchor
+### Community 69 - "MainTabWindow_Intercolony"
+Cohesion: 0.09
+Nodes (15): BuyerColumn, Column, MainTabWindow, OrderColumn, QuoteColumn, Vector2, Color, ContractEstimate (+7 more)
 
 ### Community 71 - "IntercolonyLedgerSelfTest"
-Cohesion: 0.14
-Nodes (8): ProductionCommitment, ContractEstimate, IngredientCount, List, Map, RecipeDef, ThingDefCountClass, IntercolonyLedgerSelfTest
+Cohesion: 0.13
+Nodes (9): ProductionCommitment, Report, ContractEstimate, IngredientCount, List, Map, RecipeDef, ThingDefCountClass (+1 more)
 
 ### Community 72 - ".Run"
-Cohesion: 0.11
-Nodes (6): Map, StringBuilder, IntercolonyCombatClauseSelfTest, Results, Pawn, CompensationService
+Cohesion: 0.20
+Nodes (4): Map, StringBuilder, IntercolonyCombatClauseSelfTest, Results
 
 ### Community 73 - "Dialog_CreateJobPosting"
-Cohesion: 0.12
-Nodes (8): Color, Rect, SkillDef, Vector2, Dialog_CreateJobPosting, InitialSize, SliderRowHeight, LaborOptionRows
+Cohesion: 0.10
+Nodes (13): Action, Color, CombatClause, IntercolonyWorldComponent, LaborEquipmentLevel, Rect, SkillDef, Vector2 (+5 more)
 
 ### Community 74 - "2. The eleven answers"
 Cohesion: 0.06
 Nodes (31): 10. Bonds and relations on voluntary sale, 11. Multiple `PawnKindDef`s per species, 1. How vanilla identifies an ordinary trade animal, 1. Purpose, 2. Stable persisted species identity, 2. The eleven answers, 3. Live-animal market value, 3. Representation comparison (+23 more)
 
-### Community 75 - "FulfillmentMode"
-Cohesion: 0.25
-Nodes (8): Thing, BuyerOffer, Interested, IsAnimalOffer, TotalPrice, FulfillmentMode, BuyerPickup, SellerDelivery
+### Community 75 - ".Run"
+Cohesion: 0.12
+Nodes (4): StringBuilder, Results, Map, RenewalService
 
 ### Community 76 - "bridge-client.ts"
 Cohesion: 0.12
 Nodes (19): BridgeClient, BridgeClientOptions, BridgeInfrastructureError, BridgeServerCommandError, connectionError(), errorMessage(), exchangeOneLine(), parseEnvironmentPort() (+11 more)
 
 ### Community 77 - ".EvaluateStatus"
-Cohesion: 0.24
-Nodes (6): List, CommercialGoodwillPressure, CommercialGoodwillPressureService, GoodwillBaseCeiling, GoodwillPressureDelta, GoodwillPressureIntervalDays
+Cohesion: 0.12
+Nodes (16): List, CommercialGoodwillPressure, CommercialGoodwillPressureEvaluation, IsEarning, IsPositivePressureDisabled, CommercialGoodwillPressureService, GoodwillBaseCeiling, GoodwillPressureDelta (+8 more)
 
 ### Community 78 - ".Run"
 Cohesion: 0.11
 Nodes (11): MarketFixture, Dictionary, List, Map, StringBuilder, IntercolonyPerformanceProfile, MarketFixture, RecordCount (+3 more)
 
 ### Community 79 - "SalesOrder"
-Cohesion: 0.06
-Nodes (27): List, List, Map, Pawn, SalesOrder, ActualDeliveredQuality, BuyerEnRoute, CanMarkReady (+19 more)
+Cohesion: 0.05
+Nodes (33): List, PostAcceptanceRenegotiationService, RenegotiationRequest, RenegotiationRequestKind, DeadlineExtension, MutualCancellation, QuantityReduction, List (+25 more)
 
 ### Community 80 - "SupplierMarketRow"
 Cohesion: 0.28
 Nodes (3): List, SupplierMarketRow, SupplierMarketUiService
 
 ### Community 81 - "TransitionService"
-Cohesion: 0.14
-Nodes (7): Map, StringBuilder, IntercolonyTransitionSelfTest, Results, Map, Pawn, TransitionService
+Cohesion: 0.22
+Nodes (3): Map, Pawn, TransitionService
 
 ### Community 82 - "Designator_ProducePreset"
-Cohesion: 0.10
-Nodes (15): Designator_Cells, AcceptanceReport, DrawStyleCategoryDef, FloatMenuOption, IEnumerable, IntVec3, Designator_ProducePreset, DrawStyleCategory (+7 more)
+Cohesion: 0.18
+Nodes (11): Designator_Cells, AcceptanceReport, DrawStyleCategoryDef, FloatMenuOption, IEnumerable, IntVec3, Designator_ProducePreset, DrawStyleCategory (+3 more)
 
 ### Community 83 - "Rect"
-Cohesion: 0.09
-Nodes (5): LaborPage, Rect, Color, Rect, EmployeeRowLayout
+Cohesion: 0.06
+Nodes (14): Exception, KeyValuePair, Map, Rect, Vector2, SupplierMarketColumn, Fulfillment, Item (+6 more)
 
 ### Community 84 - "orchestrator.ts"
 Cohesion: 0.14
@@ -727,7 +740,7 @@ Cohesion: 0.07
 Nodes (27): Code work, Commerce, Commerce, Compatibility, Compatibility, Documentation and code drift found during the audit, Expanded 1.0 target, Labor (+19 more)
 
 ### Community 86 - "Dialog_Counteroffer"
-Cohesion: 0.18
+Cohesion: 0.17
 Nodes (5): List, Rect, Vector2, Dialog_Counteroffer, InitialSize
 
 ### Community 87 - "IntercolonyAllSelfTests"
@@ -742,25 +755,25 @@ Nodes (26): A. The Business view today, B. F07's two numbers, C. What vanilla of
 Cohesion: 0.07
 Nodes (26): B. The labour market today, C. What already varies with what, CONCLUDE, CONCLUDE — derived answer by finding, CONCLUDE — no new Harmony patch, but different blockers, CONCLUDE — not yet reciprocal, CONCLUDE — the important asymmetry, CONCLUDE — what the suites cannot assert (+18 more)
 
-### Community 90 - ".UnitPrice"
-Cohesion: 0.10
-Nodes (13): List, QualityCategory, Thing, IntercolonyPricing, EffectiveEconomyDifficulty, PriceFactor, LogisticsQuote, DistancePriceMultiplier (+5 more)
+### Community 90 - "ThingDef"
+Cohesion: 0.05
+Nodes (20): Action, StringBuilder, List, QualityCategory, Thing, IntercolonyPricing, EffectiveEconomyDifficulty, PriceFactor (+12 more)
 
-### Community 91 - ".End"
-Cohesion: 0.07
-Nodes (25): ActiveTransporterInfo, ConstructionObservation, DropPodIncoming, Caravan, FloatMenuOption, Frame, Gizmo, IEnumerable (+17 more)
+### Community 91 - "HarmonyPatches.cs"
+Cohesion: 0.11
+Nodes (16): ConstructionObservation, Caravan, FloatMenuOption, Frame, Gizmo, IEnumerable, List, Map (+8 more)
 
 ### Community 92 - ".CheckProduceDesignators"
-Cohesion: 0.17
-Nodes (13): Designator, Event, AcceptanceReport, DrawStyleCategoryDef, IntVec3, Rot4, ThingStyleDef, Designator_ProduceBase (+5 more)
+Cohesion: 0.20
+Nodes (12): Designator, AcceptanceReport, DrawStyleCategoryDef, IntVec3, Rot4, ThingStyleDef, Designator_ProduceBase, DrawStyleCategory (+4 more)
 
 ### Community 93 - "Stage 2 seam map — F03 and F04"
 Cohesion: 0.08
 Nodes (25): A. Read — the current Produce loop, end to end, B. Read — current player start/stop UI, Base class and method relationship, C. Read — record state required by F03, Conclusions — design opinions and proposed Stage 2 unit boundaries, D. Read — vanilla area-designator precedent, Designator: only a narrow Cancel side effect, E. Read — F04 per-object configuration UI seam (+17 more)
 
-### Community 94 - "SettlementEconomicProfile"
-Cohesion: 0.11
-Nodes (15): IntercolonyProductCategory, ArtAndUnique, CapitalEquipment, Commodities, Furniture, IntermediateGoods, ManufacturedGoods, IntercolonyProductCategoryUtility (+7 more)
+### Community 94 - ".CheckProduceFurnitureRate"
+Cohesion: 0.18
+Nodes (5): Blueprint_Build, Building, Frame, ProductionBucket, ProductionLedgerService
 
 ### Community 95 - ".BuildComparisonRows"
 Cohesion: 0.15
@@ -775,28 +788,28 @@ Cohesion: 0.08
 Nodes (24): A third owner of unspawned pawns — added Phase 21 (§35.2, §114), Answer to §108's acceptance question, Building the quest — three things that are not optional, Chosen strategy: A — temporary transfer into the player faction, Combat-use tracking without a patch — added Phase 20 (§42, §113), Known incompatibilities and side effects, Mod compatibility (§33 q18) — untested, Never hand-roll pawn disposal — CORRECTED 2026-07-29 (+16 more)
 
 ### Community 98 - "CommercialHistoryUiService"
-Cohesion: 0.23
-Nodes (4): CommercialGoodwillPressureEvaluation, IsEarning, IsPositivePressureDisabled, CommercialHistoryUiService
+Cohesion: 0.21
+Nodes (3): CommercialHistorySummary, List, CommercialHistoryUiService
 
 ### Community 99 - "LedgerKind"
-Cohesion: 0.09
-Nodes (19): Report, LedgerEntry, DaysAgo, IsIncome, LedgerKind, Compensation, DebtSettlement, PurchasePayment (+11 more)
+Cohesion: 0.10
+Nodes (18): LedgerEntry, DaysAgo, IsIncome, LedgerKind, Compensation, DebtSettlement, PurchasePayment, Refund (+10 more)
 
 ### Community 100 - "IntercolonyBrandSelfTest"
-Cohesion: 0.08
-Nodes (12): BrandSummaryRow, Dictionary, List, StringBuilder, IntercolonyBrandSelfTest, Results, DeliveredQualityResult, HasQualityEvidence (+4 more)
+Cohesion: 0.14
+Nodes (6): BrandSummaryRow, Dictionary, List, StringBuilder, IntercolonyBrandSelfTest, Results
 
-### Community 101 - "JobPosting"
-Cohesion: 0.06
-Nodes (27): ApplyResult, Interest, MatchAttempt, ProspectDecision, ProspectRejection, List, SkillDef, JobPosting (+19 more)
+### Community 101 - "JobPostingService"
+Cohesion: 0.10
+Nodes (21): ApplyResult, Interest, MatchAttempt, ProspectDecision, ProspectRejection, CombatClause, HashSet, IntercolonyWorldComponent (+13 more)
 
 ### Community 102 - "ProductBrandUiService"
-Cohesion: 0.11
-Nodes (14): BrandSummary, List, EffectiveBrandDetails, EffectiveBrandService, BrandSummaryRow, EffectiveBrandDetails, List, StringBuilder (+6 more)
+Cohesion: 0.14
+Nodes (11): BrandSummary, BrandSummaryRow, EffectiveBrandDetails, List, StringBuilder, BrandSummary, IsEmpty, BrandSummaryRow (+3 more)
 
-### Community 103 - "PurchaseOrder"
-Cohesion: 0.11
-Nodes (18): Map, QualityCategory, PurchaseOrder, AwaitingCollection, DaysUntilPickupExpires, DaysUntilReady, IsAnimalOrder, IsOpen (+10 more)
+### Community 103 - "PurchaseOrderService"
+Cohesion: 0.21
+Nodes (7): Caravan, CompQuality, IntVec3, List, Map, Thing, PurchaseOrderService
 
 ### Community 104 - ".TryGenerateAnimal"
 Cohesion: 0.18
@@ -807,16 +820,16 @@ Cohesion: 0.09
 Nodes (22): A. F21: what the finding actually asks for, Already exists that serves F21, B. Request Goods / RFQ path end to end, C. Timing: all at once or over time?, CONCLUDE: attachment map and stage-5 cut, D. Existing ways for something to happen later, Does not exist yet, E. Distance and geography already in the mod (+14 more)
 
 ### Community 106 - "OrderHistoryService"
-Cohesion: 0.17
+Cohesion: 0.18
 Nodes (3): HashSet, List, OrderHistoryService
 
-### Community 107 - "WageStructure"
-Cohesion: 0.11
-Nodes (13): WageStructure, Daily, Prepaid, Quadrum, WageStructureUtility, List, Map, Rect (+5 more)
+### Community 107 - ".TryHire"
+Cohesion: 0.10
+Nodes (15): EmploymentHireCostQuote, Map, WageStructure, Daily, Prepaid, Quadrum, WageStructureUtility, List (+7 more)
 
 ### Community 108 - "EmploymentStatus"
-Cohesion: 0.11
-Nodes (17): EmploymentStatus, Active, Captured, Completed, Converted, Dismissed, Failed, Quit (+9 more)
+Cohesion: 0.13
+Nodes (16): EmploymentStatus, Active, Captured, Completed, Converted, Dismissed, Failed, Quit (+8 more)
 
 ### Community 109 - "Dialog_ApparelBondConsent"
 Cohesion: 0.15
@@ -834,8 +847,8 @@ Nodes (15): Definition, Scope, EconomicEventType, AnimalDisease, ConstructionBoo
 Cohesion: 0.20
 Nodes (11): GuestStatus, Ideo, PawnSnapshot, Map, Pawn, PawnKindDef, Quest, StringBuilder (+3 more)
 
-### Community 113 - ".RefreshMarketStateIndex"
-Cohesion: 0.18
+### Community 113 - "IntercolonyEventSelfTest"
+Cohesion: 0.21
 Nodes (4): List, StringBuilder, IntercolonyEventSelfTest, Results
 
 ### Community 114 - "AnimalSpec"
@@ -854,21 +867,17 @@ Nodes (19): 11. Tests: choose the right evidence, 13. Performance heuristic, 14.
 Cohesion: 0.10
 Nodes (19): 0. Authority and intended use, 13. Explicit freezes — F12 and F22, 15. Recommended execution order and dispatch shape, 16. Testing and mutation policy, 18. Documentation closeout, 19. Clean-halt report, 20. Definition of success, 2. Git, branch and release discipline (+11 more)
 
-### Community 118 - ".SelectTab"
-Cohesion: 0.14
-Nodes (3): Exception, Tab, TabGroup
-
 ### Community 119 - "package.json"
 Cohesion: 0.10
 Nodes (19): @modelcontextprotocol/sdk, @types/node, typescript, dependencies, @modelcontextprotocol/sdk, devDependencies, @types/node, typescript (+11 more)
 
 ### Community 120 - "EmployerReputation"
-Cohesion: 0.14
-Nodes (11): EmployerReputation, Score, ScoreDisplay, Tier, TotalEmployments, EmployerTier, Decent, Exploitative (+3 more)
+Cohesion: 0.11
+Nodes (13): EmployerTier, EmployerReputation, Score, ScoreDisplay, Tier, TotalEmployments, EmployerTier, Decent (+5 more)
 
-### Community 121 - "ThingDef"
-Cohesion: 0.07
-Nodes (24): DebugSourceSummary, Def, ModContentPack, Dictionary, List, ThingCategoryDef, DebugSourceSummary, Examples (+16 more)
+### Community 121 - "IntercolonyTradeBlacklist"
+Cohesion: 0.13
+Nodes (8): Def, Dictionary, List, IntercolonyTradeBlacklist, List, ThingCategoryDef, Type, IntercolonyTradeBlacklistDef
 
 ### Community 122 - "8.3 Implementation steps"
 Cohesion: 0.11
@@ -883,12 +892,12 @@ Cohesion: 0.11
 Nodes (19): 9.10 Atomic posting creation API, 9.11 Emergency posting market behavior, 9.12 Emergency applicant data, 9.13 Pricing, 9.14 Save/load, 9.15 Acceptance tests, 9.1 Product goal, 9.2 Remove the two-day emergency rule (+11 more)
 
 ### Community 125 - "MarketPressureService"
-Cohesion: 0.17
-Nodes (8): EconomicChainLink, IList, Dictionary, DiffusionCandidate, DiffusionEdge, EconomicChainLink, MarketPressureService, PressureSnapshot
+Cohesion: 0.19
+Nodes (7): EconomicChainLink, IList, Dictionary, DiffusionCandidate, DiffusionEdge, MarketPressureService, PressureSnapshot
 
-### Community 126 - "IntercolonyMarketBaseline"
-Cohesion: 0.32
-Nodes (5): SettlementSample, List, StringBuilder, IntercolonyMarketBaseline, SettlementSample
+### Community 126 - ".CountColonySilver"
+Cohesion: 0.15
+Nodes (10): IntVec3, List, Map, Zone_Stockpile, IntercolonyLaborSelfTestSupport, NetTaken, Map, StringBuilder (+2 more)
 
 ### Community 127 - "IntercolonyDevBridgeHost"
 Cohesion: 0.18
@@ -926,9 +935,9 @@ Nodes (17): A. Where goods arrive today — READ, B. Vanilla acceptance, room, a
 Cohesion: 0.20
 Nodes (6): Pawn, CombatClause, Armed, Civilian, Security, CombatClauseUtility
 
-### Community 136 - "ProcurementCounterConfirmationDialog"
-Cohesion: 0.46
-Nodes (3): Vector2, ProcurementCounterConfirmationDialog, InitialSize
+### Community 136 - "List"
+Cohesion: 0.29
+Nodes (3): List, ProcurementCounterConfirmationDialog, InitialSize
 
 ### Community 137 - "cli.ts"
 Cohesion: 0.21
@@ -938,25 +947,25 @@ Nodes (15): BridgeTestFailureError, errorMessage(), formatAllTests(), formatEnvi
 Cohesion: 0.24
 Nodes (5): List, MethodInfo, StringBuilder, TechLevel, IntercolonyProfileSelfTest
 
-### Community 139 - "BusinessReportService"
-Cohesion: 0.16
-Nodes (9): DirectInputCostStatus, DirectInputPriceTier, DirectInputEstimate, IngredientCount, QualityCategory, ThingDefCountClass, BusinessReportService, DirectInputEstimate (+1 more)
+### Community 139 - ".EstimateDirectInputs"
+Cohesion: 0.24
+Nodes (4): DirectInputPriceTier, DirectInputEstimate, IngredientCount, QualityCategory
 
 ### Community 140 - "A. Production control and automation"
 Cohesion: 0.12
 Nodes (17): A. Production control and automation, Acceptance intent, Acceptance intent, Desired behavior, Desired behavior, Desired capabilities, F01 — Successful ready-order fulfillment should be silent, F02 — Cancel on a Produce blueprint must actually stop the Produce loop (+9 more)
 
 ### Community 141 - "IntercolonyLongTermSelfTest"
-Cohesion: 0.07
-Nodes (19): FactionGoodwillSnapshot, IArchivable, Letter, ProcurementContractDiagnosticSnapshot, ProcurementDiagnosticSnapshot, FactionRelation, FactionRelationKind, IntVec3 (+11 more)
+Cohesion: 0.11
+Nodes (17): FactionGoodwillSnapshot, IArchivable, Letter, ProcurementContractDiagnosticSnapshot, ProcurementDiagnosticSnapshot, FactionRelation, FactionRelationKind, IntVec3 (+9 more)
 
 ### Community 142 - "IntercolonyNegotiationAcceptancePreview"
-Cohesion: 0.14
-Nodes (9): IReadOnlyList, IntercolonyNegotiationAcceptancePreview, AcceptanceChance, Band, BandLabel, Factors, ProposalAppeal, Score (+1 more)
+Cohesion: 0.18
+Nodes (8): IReadOnlyList, IntercolonyNegotiationAcceptancePreview, AcceptanceChance, Band, BandLabel, Factors, ProposalAppeal, Score
 
-### Community 143 - ".RunPostAcceptanceRenegotiationAssertions"
-Cohesion: 0.21
-Nodes (6): PostAcceptanceRenegotiationService, RenegotiationRequest, RenegotiationRequestKind, DeadlineExtension, MutualCancellation, QuantityReduction
+### Community 143 - "ProduceControlPreset"
+Cohesion: 0.14
+Nodes (11): Event, List, Pawn, ProduceControlPreset, EffectiveResumeBelow, IReadOnlyList, Map, Rect (+3 more)
 
 ### Community 144 - ".DumpEconomicEvents"
 Cohesion: 0.19
@@ -990,13 +999,13 @@ Nodes (16): 11. Stage 4 — Brand strength & colony specialization, 4.1 Brand is
 Cohesion: 0.12
 Nodes (16): 2.10 Pricing integration, 2.11 Explainability, 2.12 Market diagnostics, 2.1 Add persisted current market state, 2.2 Create one authoritative effective-economy API, 2.3 Remove cycle-to-cycle demand noise as the main driver, 2.4 Pressure lifecycle: mean reversion, 2.5 Player transactions nudge, not dominate, local pressure (+8 more)
 
-### Community 152 - ".ProposeContract"
-Cohesion: 0.07
-Nodes (25): QualityCategory, PreparedProcurementProposal, ProcurementContractProposalFailure, CadenceOutOfRange, ExistingContract, InaccessibleSettlement, InsufficientTradeHistory, InvalidFulfillment (+17 more)
+### Community 152 - "ProcurementContractProposalFailure"
+Cohesion: 0.12
+Nodes (16): ProcurementContractProposalFailure, CadenceOutOfRange, ExistingContract, InaccessibleSettlement, InsufficientTradeHistory, InvalidFulfillment, InvalidItem, InvalidState (+8 more)
 
 ### Community 153 - ".Warning"
-Cohesion: 0.16
-Nodes (5): IDisposable, IntercolonyLog, VerboseEnabled, VerboseSuppression, CompQuality
+Cohesion: 0.17
+Nodes (4): IDisposable, IntercolonyLog, VerboseEnabled, VerboseSuppression
 
 ### Community 154 - ".DrawBusiness"
 Cohesion: 0.28
@@ -1027,8 +1036,8 @@ Cohesion: 0.13
 Nodes (14): 1. Replace the junction with the clean copy, 2. Upload, 3. Set visibility, then fill the page, 4. Save the PublishedFileId, 5. Smoke-test what Steam serves, 6. Restore the junction, Before you start, First upload (+6 more)
 
 ### Community 161 - "CommercialEventRecord"
-Cohesion: 0.20
-Nodes (3): CommercialEventRecord, DaysAgo, List
+Cohesion: 0.17
+Nodes (4): CommercialEventRecord, DaysAgo, List, CommercialTimelineService
 
 ### Community 162 - "Foreman state — Intercolony"
 Cohesion: 0.13
@@ -1042,13 +1051,13 @@ Nodes (11): ILogHandler, LogType, Object, Exception, HashSet, List, ExpectedLogH
 Cohesion: 0.13
 Nodes (14): A. Procurement agreements, A. Selling agreements, B. UI-only expansion state and lifecycle, C. Code-testable exceptional selling states, CONCLUDE — design opinions for cutting stage 3, D. Current `DrawEmployeeRow` contents and controls, E. Known detail-line overflow, NOT FOUND ledger (+6 more)
 
-### Community 165 - ".CanProduceGood"
-Cohesion: 0.27
-Nodes (7): DirectLaborCostStatus, Dictionary, List, Pawn, RecipeDef, WorkTypeDef, DirectLaborEstimate
+### Community 165 - "BusinessReportService"
+Cohesion: 0.17
+Nodes (12): DirectInputCostStatus, DirectLaborCostStatus, Dictionary, List, Pawn, RecipeDef, ThingDefCountClass, WorkTypeDef (+4 more)
 
-### Community 166 - ".BuildRow"
-Cohesion: 0.15
-Nodes (8): List, CommercialHistoryCoverage, AggregateOnly, None, Timeline, CommercialHistoryService, CommercialHistorySummary, List
+### Community 166 - ".BuildSummary"
+Cohesion: 0.20
+Nodes (6): List, CommercialHistoryCoverage, AggregateOnly, None, Timeline, CommercialHistoryService
 
 ### Community 167 - "Dialog_ForcedApparelReleaseConsent"
 Cohesion: 0.22
@@ -1078,13 +1087,13 @@ Nodes (14): 4.1 Player problem, 4.2 Design decision: logical commitment, not phy
 Cohesion: 0.14
 Nodes (13): Build and self-test report, Commercial-history success seams, Executive findings, F01 - silent routine auto-ready success, loud failure, F02 - Produce loop and vanilla Cancel, F13 - auto-renew visible on the employee card, F15 - default auto-ready ON for new agreements, Fields and Scribe behavior (+5 more)
 
-### Community 174 - ".DrawApplicantRow"
-Cohesion: 0.11
-Nodes (6): ApplicantHirePreview, RenderTexture, Action, Dictionary, List, ApplicantHirePreview
+### Community 174 - "MainTabWindow_Intercolony"
+Cohesion: 0.08
+Nodes (17): ApplicantHirePreview, EmployeeContractRow, EmployeeLifecycleActionKind, EmployeeRowLayout, EmploymentEquipmentQuote, LaborPage, RenderTexture, Action (+9 more)
 
 ### Community 175 - "EmploymentEquipmentService"
-Cohesion: 0.13
-Nodes (15): CarriedEquipmentLocation, CarriedEquipmentStack, IntVec3, List, Map, Pawn, QualityCategory, Thing (+7 more)
+Cohesion: 0.14
+Nodes (14): CarriedEquipmentLocation, CarriedEquipmentStack, IntVec3, List, Map, Pawn, QualityCategory, Thing (+6 more)
 
 ### Community 176 - "7. Stable domain terminology"
 Cohesion: 0.15
@@ -1110,9 +1119,9 @@ Nodes (13): 11.1 Settlement capability, 11.2 Emergency eligibility replaces near
 Cohesion: 0.15
 Nodes (13): 5.1 Problem, 5.2 Required player experience, 5.3 Preset model, 5.4 Applying a preset, 5.5 Drag behavior, 5.6 Dynamic Architect category, 5.7 Known files, 5.8 Acceptance tests (+5 more)
 
-### Community 182 - "ProductSimilarityEvidence"
-Cohesion: 0.22
-Nodes (9): ProductSimilarityEvidence, ExactThingDef, NullDefinitionFloor, SameIndustryMetadata, SameIntercolonyCategory, SharedBroadThingCategory, SharedNarrowThingCategory, SharedProductMetadata (+1 more)
+### Community 182 - ".CheckEmergencyDispatch"
+Cohesion: 0.15
+Nodes (5): Dictionary, PlanetTile, Pawn, LaborCandidate, Name
 
 ### Community 183 - "IntercolonyDevBridgePump"
 Cohesion: 0.21
@@ -1138,9 +1147,17 @@ Nodes (11): Baseline, Blockers, Checklist, Decisions made during release prep, I
 Cohesion: 0.17
 Nodes (11): Agreements that look after themselves, Deliveries and the Business tab, Fixes worth calling out, Hiring, Intercolony 1.1.0 — production, agreements, and a fuller labor market, Known limitations and playtest status, New defaults, Procurement is a real system now (+3 more)
 
-### Community 190 - ".CreateOne"
-Cohesion: 0.29
-Nodes (3): Func, QualityCategory, MarketOpportunityGenerator
+### Community 189 - "IntercolonyProductCategory"
+Cohesion: 0.17
+Nodes (11): IntercolonyProductCategory, ArtAndUnique, CapitalEquipment, Commodities, Furniture, IntermediateGoods, ManufacturedGoods, IntercolonyProductCategoryUtility (+3 more)
+
+### Community 190 - "EmergencyArrivalQuote"
+Cohesion: 0.21
+Nodes (8): Dictionary, EmploymentArrivalTransport, EmergencyArrivalQuote, EmploymentHireCostQuote, LaborCandidate, LaborEquipmentLevel, List, ApplicantHirePreview
+
+### Community 192 - "CommercialHistoryRelationRow"
+Cohesion: 0.28
+Nodes (3): CommercialHistoryRelationRow, CommercialHistorySummaryRow, CommercialHistoryTimelineRow
 
 ### Community 193 - "Tab"
 Cohesion: 0.17
@@ -1182,9 +1199,9 @@ Nodes (8): Assert-AssemblyCurrent(), Assert-OrdinaryItem(), Copy-ReleaseDirector
 Cohesion: 0.22
 Nodes (8): ContractStatus, Active, Breached, Cancelled, Completed, Declined, Offered, Suspended
 
-### Community 203 - "SupplierMarketColumn"
-Cohesion: 0.17
-Nodes (9): SupplierMarketColumn, Fulfillment, Item, LeadTime, Quantity, Reason, Supplier, TotalPayment (+1 more)
+### Community 203 - "DebugSourceSummary"
+Cohesion: 0.15
+Nodes (12): DebugSourceSummary, ModContentPack, Dictionary, List, DebugSourceSummary, Examples, Kind, Name (+4 more)
 
 ### Community 204 - "70. Suggested domain service boundaries"
 Cohesion: 0.20
@@ -1226,8 +1243,8 @@ Nodes (9): Chosen representation, Compatibility risks, Recommendation for Phase 
 Cohesion: 0.27
 Nodes (3): NetworkStream, Dictionary, TcpClient
 
-### Community 214 - ".MigrateIfNeeded"
-Cohesion: 0.32
+### Community 214 - ".CheckStage8BMigrationMatrix"
+Cohesion: 0.35
 Nodes (4): Stage8BMigrationRun, Stage8BSnapshot, Stage8BMigrationRun, Stage8BSnapshot
 
 ### Community 215 - "Column"
@@ -1331,24 +1348,24 @@ Cohesion: 0.25
 Nodes (7): Changes, Fixes, Intercolony 0.9.1 — agreements, prices and corrections, Known limits and not yet verified, New, Requirements, Saves
 
 ### Community 240 - "TemporarySilverGift"
-Cohesion: 0.32
-Nodes (5): IThingHolder, Thing, TemporarySilverGift, ParentHolder, ThingOwner
+Cohesion: 0.24
+Nodes (7): IDisposable, IThingHolder, List, Thing, TemporarySilverGift, ParentHolder, ThingOwner
 
 ### Community 241 - "Intercolony"
 Cohesion: 0.25
 Nodes (7): Compatibility and known limits, Development, Intercolony, Project status, Reporting problems, Requirements, What is in the mod
 
-### Community 242 - "PurchaseOrderStatus"
-Cohesion: 0.22
-Nodes (7): PurchaseOrderStatus, Cancelled, Completed, Confirmed, LostToWar, ReadyForPickup, SupplierDefault
+### Community 242 - "PurchaseOrder"
+Cohesion: 0.08
+Nodes (20): Map, QualityCategory, PurchaseOrder, AwaitingCollection, DaysUntilPickupExpires, DaysUntilReady, IsAnimalOrder, IsOpen (+12 more)
 
 ### Community 243 - "SettlementMarketState"
-Cohesion: 0.16
-Nodes (6): IDisposable, List, IntercolonyDiagnosticGuard, List, SettlementMarketState, IsNeutral
+Cohesion: 0.21
+Nodes (5): List, IntercolonyDiagnosticGuard, List, SettlementMarketState, IsNeutral
 
 ### Community 244 - "LaborEquipmentLevel"
-Cohesion: 0.25
-Nodes (6): LaborEquipmentLevel, Any, Elite, None, Professional, Standard
+Cohesion: 0.22
+Nodes (7): LaborEquipmentLevel, Any, Elite, None, Professional, Standard, Pawn
 
 ### Community 245 - "QuoteColumn"
 Cohesion: 0.25
@@ -1614,6 +1631,10 @@ Nodes (7): QualityCategory, OrderLine, HasAnyConstraint, HasConditionConstraint,
 Cohesion: 0.25
 Nodes (8): IntercolonyNegotiationAcceptanceBand, EvenOdds, Hopeless, Likely, NearCertain, Unlikely, VeryLikely, VeryUnlikely
 
+### Community 312 - ".Run"
+Cohesion: 0.20
+Nodes (5): List, Map, StringBuilder, IntercolonyEmployerReputationSelfTest, Results
+
 ### Community 315 - "fake-bridge.mjs"
 Cohesion: 0.60
 Nodes (4): port, resultFor(), server, testResult()
@@ -1735,8 +1756,8 @@ Cohesion: 0.50
 Nodes (4): LaborPage, Employees, Hire, Posts
 
 ### Community 345 - "Results"
-Cohesion: 0.07
-Nodes (15): Blueprint_Build, CraftedSubject, DesignationDef, Results, Building, CompQuality, Frame, Pawn (+7 more)
+Cohesion: 0.09
+Nodes (8): Results, Pawn, StringBuilder, ThingStyleDef, IntercolonyProduceSelfTest, ProduceLoopSnapshot, Results, Subject
 
 ### Community 346 - "118. Phase 25 — Polish and compatibility"
 Cohesion: 0.67
@@ -1782,25 +1803,25 @@ Nodes (3): ~~Animal specification, matcher and eligibility — `Run animal spec 
 Cohesion: 0.67
 Nodes (3): 12. Save/load heuristic, If no, If yes
 
-### Community 359 - "IntercolonyDebugWindow"
+### Community 360 - "List"
 Cohesion: 0.33
-Nodes (4): EditWindow, Vector2, IntercolonyDebugWindow, InitialSize
-
-### Community 360 - "EmploymentArrivalTransport"
-Cohesion: 0.50
-Nodes (3): EmploymentArrivalTransport, Conventional, DropPod
+Nodes (4): CompQuality, List, Pawn, Thing
 
 ### Community 361 - "SettlementRapidLogisticsCapability"
 Cohesion: 0.40
 Nodes (4): SettlementRapidLogisticsCapability, ConventionalTransportOnly, DropPodsAvailable, SettlementRapidLogisticsCapabilityUtility
 
-### Community 362 - "CommercialGoodwillPressureStatus"
-Cohesion: 0.29
-Nodes (7): CommercialGoodwillPressureStatus, AtCeiling, BelowThreshold, Earning, GoodwillRestricted, Hostile, Unavailable
+### Community 362 - ".Complete"
+Cohesion: 0.30
+Nodes (3): DeliveredQualityResult, HasQualityEvidence, NoEvidence
 
-### Community 365 - ".CheckDemandConditionLotQuantities"
-Cohesion: 0.50
-Nodes (3): List, StringBuilder, IntercolonyMarketSelfTest
+### Community 365 - "LaborProspect"
+Cohesion: 0.20
+Nodes (6): LaborProspect, Passion, Pawn, SkillDef, LaborProspect, BestSkillLevel
+
+### Community 366 - "Dialog_RenameProducePreset"
+Cohesion: 0.22
+Nodes (5): Map, Rect, Vector2, Dialog_RenameProducePreset, InitialSize
 
 ### Community 367 - ".RestoreHistorySilver"
 Cohesion: 0.60
@@ -1814,25 +1835,61 @@ Nodes (5): ProspectRejection, EmergencyReach, None, Skill, Tier
 Cohesion: 0.50
 Nodes (4): CarriedEquipmentLocation, CarryTracker, Equipment, Inventory
 
+### Community 370 - ".WorldComponentTick"
+Cohesion: 0.21
+Nodes (4): List, Pawn, CombatUseMonitor, List
+
+### Community 371 - "ProductBrandRecord"
+Cohesion: 0.21
+Nodes (5): List, EffectiveBrandDetails, EffectiveBrandService, ProductBrandRecord, directScore
+
+### Community 372 - ".RunGoodwillPressureAssertions"
+Cohesion: 0.25
+Nodes (6): GoodwillPressureResults, FactionRelation, FactionRelationKind, StringBuilder, GoodwillPressureResults, Output
+
+### Community 374 - "MarketOpportunityState"
+Cohesion: 0.20
+Nodes (9): MarketOpportunityNegotiationState, CounterpartyCountered, CounterpartyRefused, None, MarketOpportunityState, Accepted, Available, Declined (+1 more)
+
+### Community 376 - ".BuildChoices"
+Cohesion: 0.36
+Nodes (3): QualityCategory, TechLevel, ItemChoice
+
+### Community 377 - "ProcurementContractStatus"
+Cohesion: 0.22
+Nodes (9): ProcurementContractStatus, Active, Cancelled, Completed, CounterpartyCountered, CounterpartyRefused, Offered, SupplierDefault (+1 more)
+
+### Community 378 - ".FindCraftedSubject"
+Cohesion: 0.43
+Nodes (4): CraftedSubject, CompQuality, RecipeDef, CraftedSubject
+
+### Community 379 - "IntercolonyNegotiationDecision"
+Cohesion: 0.40
+Nodes (4): IntercolonyNegotiationDecision, Accepted, Countered, Refused
+
+### Community 381 - ".Prefix"
+Cohesion: 0.40
+Nodes (3): Pawn, Thing, ProduceWorkerGatePatch
+
 ## Knowledge Gaps
-- **2259 isolated node(s):** `node`, `HarmonyPatches`, `None`, `InvalidState`, `InaccessibleSettlement` (+2254 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2723 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **21 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **2259 isolated node(s):** `Open`, `Filled`, `Expired`, `Withdrawn`, `Name` (+2254 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2744 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **28 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `IntercolonyWorldComponent` connect `IntercolonyWorldComponent` to `IntercolonyRfqSelfTest`, `RecurringContract`, `ProcurementContract`, `.Message`, `EmploymentContract`, `PurchaseRequest`, `SalesOrderService`, `MainTabWindow_Intercolony`, `.CountColonySilver`, `EmployerReputationService`, `IntercolonyEconomySelfTest`, `IntercolonyCashFlowSelfTest`, `LaborCandidate`, `EmployeeApparelPatch`, `.Close`, `FindBuyerService`, `Dialog_CreateRequest`, `JobApplicant`, `Settlement`, `IntercolonyNegotiationSelfTest`, `IntercolonyAnimalSelfTest`, `.CheckF11DeterministicResponseTiming`, `MarketOpportunity`, `DebugAction`, `IntercolonyNegotiationTerms`, `Dialog_ProposeAgreement`, `IntercolonyLaborSelfTest`, `CommercialReputation`, `PurchaseOrdersColumn`, `Dialog_ProposeProcurementAgreement`, `CommercialEventType`, `EconomicEvent`, `.Send`, `IntercolonyTimelineSelfTest`, `.Run`, `.DrawContractEstimate`, `IntercolonyLedgerSelfTest`, `.Run`, `Dialog_CreateJobPosting`, `FulfillmentMode`, `.EvaluateStatus`, `.Run`, `SalesOrder`, `SupplierMarketRow`, `TransitionService`, `Rect`, `Dialog_Counteroffer`, `IntercolonyAllSelfTests`, `.UnitPrice`, `.End`, `SettlementEconomicProfile`, `CommercialHistoryUiService`, `LedgerKind`, `IntercolonyBrandSelfTest`, `JobPosting`, `ProductBrandUiService`, `PurchaseOrder`, `OrderHistoryService`, `.RefreshMarketStateIndex`, `.SelectTab`, `EmployerReputation`, `MarketPressureService`, `IntercolonyMarketBaseline`, `BusinessReportService`, `IntercolonyLongTermSelfTest`, `.RunPostAcceptanceRenegotiationAssertions`, `.DumpEconomicEvents`, `.BuildRows`, `.ProposeContract`, `.Warning`, `.DrawBusiness`, `CommercialEventRecord`, `.CanProduceGood`, `.BuildRow`, `.DrawApplicantRow`, `.ExplainDemand`, `.CreateOne`, `.ExposeData`, `.MigrateIfNeeded`, `.BuildCommand`, `SettlementMarketState`, `.EnsureCensus`, `Results`, `.DrawCashPosition`, `.CheckDemandConditionLotQuantities`?**
-  _High betweenness centrality (0.205) - this node is a cross-community bridge._
-- **Why does `ThingDef` connect `ThingDef` to `IntercolonyRfqSelfTest`, `.AllowedMaterialsDetail`, `RecurringContract`, `BusinessReportService`, `IntercolonyLongTermSelfTest`, `ProcurementContract`, `IntercolonyWorldComponent`, `.RunPostAcceptanceRenegotiationAssertions`, `IntercolonyNegotiationAcceptancePreview`, `Dialog_EditProducePreset`, `PurchaseRequest`, `MainTabWindow_Intercolony`, `.ProposeContract`, `Map`, `.CreateProduceGizmos`, `ProduceLoopMapComponent`, `.Run`, `IntercolonyEconomySelfTest`, `CommercialEventRecord`, `FindBuyerService`, `IntercolonyMod`, `.CanProduceGood`, `Dialog_CreateRequest`, `Settlement`, `IntercolonyNegotiationSelfTest`, `ProduceLoopRecord`, `LaborEquipmentAllocator`, `IntercolonyAnimalSelfTest`, `EmploymentEquipmentService`, `.CheckF11DeterministicResponseTiming`, `MarketOpportunity`, `IntercolonyNegotiationTerms`, `Dialog_ProposeAgreement`, `CommercialReputation`, `OrderLine`, `OrderValidationResult`, `ProductSimilarityService`, `Dialog_ProposeProcurementAgreement`, `CommercialEventType`, `.ExplainDemand`, `.CreateOne`, `.ExposeData`, `.Run`, `IntercolonyLedgerSelfTest`, `FulfillmentMode`, `.Run`, `SalesOrder`, `Designator_ProducePreset`, `Rect`, `Results`, `.UnitPrice`, `.End`, `.CheckProduceDesignators`, `SettlementEconomicProfile`, `IntercolonyBrandSelfTest`, `ProductBrandUiService`, `PurchaseOrder`, `.TryGenerateAnimal`, `PurchaseOrderStatus`, `AnimalSpec`, `IntercolonyMarketBaseline`?**
-  _High betweenness centrality (0.077) - this node is a cross-community bridge._
-- **Why does `MainTabWindow_Intercolony` connect `MainTabWindow_Intercolony` to `IntercolonyRfqSelfTest`, `OrderColumn`, `WorkerColumn`, `ProcurementCounterConfirmationDialog`, `RecurringContract`, `ProcurementContract`, `IntercolonyWorldComponent`, `EmploymentContract`, `SalesOrderService`, `BuyerColumn`, `.DrawBusiness`, `TabGroup`, `Intercolony`, `EmployeeLifecycleActionKind`, `IntercolonyCashFlowSelfTest`, `LaborCandidate`, `FindBuyerService`, `JobApplicant`, `Settlement`, `.DrawApplicantRow`, `MarketOpportunity`, `DebugAction`, `Dialog_ProposeAgreement`, `PurchaseOrdersColumn`, `CommercialHistoryRelationRow`, `Tab`, `.Run`, `.DrawContractEstimate`, `FulfillmentMode`, `SupplierMarketColumn`, `SalesOrder`, `SupplierMarketRow`, `TransitionService`, `Rect`, `Dialog_Counteroffer`, `Column`, `LaborPage`, `.UnitPrice`, `SettlementEconomicProfile`, `JobPosting`, `.DrawCashPosition`, `.CallsMethod`, `QuoteColumn`, `.SelectTab`, `ThingDef`?**
-  _High betweenness centrality (0.050) - this node is a cross-community bridge._
+- **Why does `IntercolonyWorldComponent` connect `IntercolonyWorldComponent` to `IntercolonyRfqSelfTest`, `RecurringContract`, `ProcurementContract`, `.Message`, `EmploymentContract`, `PurchaseRequest`, `SalesOrderService`, `.DrawProcurementContractRow`, `LaborDebt`, `EmployerReputationService`, `IntercolonyEconomySelfTest`, `IntercolonyCashFlowSelfTest`, `LaborCandidateService`, `EmployeeApparelPatch`, `IntercolonyJobPostingSelfTest`, `FulfillmentMode`, `Dialog_CreateRequest`, `JobPosting`, `Settlement`, `IntercolonyNegotiationSelfTest`, `IntercolonyAnimalSelfTest`, `.CheckF11DeterministicResponseTiming`, `MarketOpportunity`, `DebugAction`, `IntercolonyNegotiationTerms`, `Dialog_ProposeAgreement`, `.Run`, `CommercialReputation`, `PurchaseOrdersColumn`, `Dialog_ProposeProcurementAgreement`, `CommercialEventType`, `EconomicEvent`, `.Send`, `IntercolonyTimelineSelfTest`, `.Run`, `MainTabWindow_Intercolony`, `IntercolonyLedgerSelfTest`, `.Run`, `.Run`, `.EvaluateStatus`, `.Run`, `SalesOrder`, `SupplierMarketRow`, `TransitionService`, `Rect`, `Dialog_Counteroffer`, `IntercolonyAllSelfTests`, `ThingDef`, `.CheckProduceFurnitureRate`, `CommercialHistoryUiService`, `LedgerKind`, `IntercolonyBrandSelfTest`, `JobPostingService`, `ProductBrandUiService`, `OrderHistoryService`, `.TryHire`, `IntercolonyEventSelfTest`, `.SelectTab`, `EmployerReputation`, `MarketPressureService`, `.CountColonySilver`, `List`, `.EstimateDirectInputs`, `IntercolonyLongTermSelfTest`, `.DumpEconomicEvents`, `.BuildRows`, `.Warning`, `.DrawBusiness`, `CommercialEventRecord`, `BusinessReportService`, `.BuildSummary`, `.CheckEmergencyDispatch`, `IntercolonyProductCategory`, `.ExposeData`, `CommercialHistoryRelationRow`, `.CheckStage8BMigrationMatrix`, `.BuildCommand`, `PurchaseOrder`, `SettlementMarketState`, `.Run`, `Results`, `.Complete`, `.DrawCashPosition`, `.WorldComponentTick`, `ProductBrandRecord`, `.RunGoodwillPressureAssertions`, `.TryCounter`?**
+  _High betweenness centrality (0.204) - this node is a cross-community bridge._
+- **Why does `ThingDef` connect `ThingDef` to `IntercolonyRfqSelfTest`, `List`, `List`, `RecurringContract`, `.EstimateDirectInputs`, `IntercolonyLongTermSelfTest`, `ProcurementContract`, `IntercolonyWorldComponent`, `ProduceControlPreset`, `Dialog_EditProducePreset`, `PurchaseRequest`, `SalesOrderService`, `.CreateProduceGizmos`, `Map`, `ProduceLoopMapComponent`, `.Run`, `IntercolonyEconomySelfTest`, `CommercialEventRecord`, `FulfillmentMode`, `IntercolonyMod`, `BusinessReportService`, `Dialog_CreateRequest`, `Settlement`, `IntercolonyNegotiationSelfTest`, `.Close`, `LaborEquipmentAllocator`, `IntercolonyAnimalSelfTest`, `EmploymentEquipmentService`, `MarketOpportunity`, `.CheckF11DeterministicResponseTiming`, `IntercolonyNegotiationTerms`, `Dialog_ProposeAgreement`, `OrderLine`, `OrderValidationResult`, `ProductSimilarityService`, `Dialog_ProposeProcurementAgreement`, `IntercolonyProductCategory`, `IntercolonyTimelineSelfTest`, `.ExposeData`, `.Run`, `MainTabWindow_Intercolony`, `IntercolonyLedgerSelfTest`, `DebugSourceSummary`, `.Run`, `SalesOrder`, `Rect`, `Results`, `HarmonyPatches.cs`, `.CheckProduceDesignators`, `.CheckProduceFurnitureRate`, `IntercolonyBrandSelfTest`, `ProductBrandUiService`, `.For`, `.TryGenerateAnimal`, `.Complete`, `AnimalSpec`, `ProductBrandRecord`, `PurchaseOrder`, `.BuildChoices`, `IntercolonyTradeBlacklist`, `.FindCraftedSubject`?**
+  _High betweenness centrality (0.072) - this node is a cross-community bridge._
+- **Why does `Intercolony` connect `Intercolony` to `RecurringContract`, `ProcurementContract`, `IntercolonyWorldComponent`, `Dialog_EditProducePreset`, `EmploymentContract`, `PurchaseRequest`, `SalesOrderService`, `LaborDebt`, `EmployerReputationService`, `IntercolonyCashFlowSelfTest`, `EmployeeApparelPatch`, `SettlementProfileGenerator`, `IntercolonyJobPostingSelfTest`, `FulfillmentMode`, `IntercolonyMod`, `Dialog_CreateRequest`, `JobPosting`, `Settlement`, `.Close`, `IntercolonyLaborSelfTest`, `IntercolonyAnimalSelfTest`, `.CheckF11DeterministicResponseTiming`, `MarketOpportunity`, `IntercolonyNegotiationTerms`, `Dialog_ProposeAgreement`, `CommercialReputation`, `PurchaseOrdersColumn`, `OrderValidationResult`, `ProductSimilarityService`, `Dialog_ProposeProcurementAgreement`, `.Send`, `.CreateReceivingGizmos`, `LaborEquipmentTierService`, `ReceivingLocationMapComponent`, `IntercolonyLedgerSelfTest`, `.Run`, `Dialog_CreateJobPosting`, `.Run`, `.EvaluateStatus`, `.Run`, `SalesOrder`, `SupplierMarketRow`, `TransitionService`, `Designator_ProducePreset`, `Dialog_Counteroffer`, `IntercolonyAllSelfTests`, `ThingDef`, `HarmonyPatches.cs`, `.CheckProduceDesignators`, `.CheckProduceFurnitureRate`, `.BuildComparisonRows`, `LedgerKind`, `JobPostingService`, `ProductBrandUiService`, `PurchaseOrderService`, `.TryGenerateAnimal`, `OrderHistoryService`, `.TryHire`, `EmploymentStatus`, `Dialog_ApparelBondConsent`, `TermRow`, `EconomicEventType`, `IntercolonyLaborSpike`, `IntercolonyEventSelfTest`, `AnimalSpec`, `EmployerReputation`, `IntercolonyTradeBlacklist`, `MarketPressureService`, `.CountColonySilver`, `IntercolonyDevBridgeHost`, `.RunDeliveredQualityChecks`, `IntercolonyDevBridgeProtocol`, `CombatClause`, `IntercolonyProfileSelfTest`, `ProduceControlPreset`, `CaravanArrivalAction_DeliverOrder`, `.BuildRows`, `.Run`, `CommercialEventRecord`, `ExpectedLogHandler`, `BusinessReportService`, `.BuildSummary`, `Dialog_ForcedApparelReleaseConsent`, `EmploymentEquipmentService`, `IntercolonyDevBridgePump`, `IntercolonyProductCategory`, `EmergencyArrivalQuote`, `CommercialHistoryRelationRow`, `ContractStatus`, `.BuildCommand`, `PurchaseOrder`, `SettlementMarketState`, `ThoughtWorker_UnpaidWages`, `.CreateProduceGizmos`, `OrderLine`, `.Run`, `SettlementRapidLogisticsCapability`, `LaborProspect`, `Dialog_RenameProducePreset`, `.WorldComponentTick`, `ProductBrandRecord`, `.TryCounter`, `MarketOpportunityState`, `ProducePresetDesignators`, `ProductBrandService`, `.Prefix`?**
+  _High betweenness centrality (0.039) - this node is a cross-community bridge._
 - **Are the 3 inferred relationships involving `ThingDef` (e.g. with `.CheckCompletedTradeNudges()` and `.CheckRefundableBondAgreesWithSettlement()`) actually correct?**
   _`ThingDef` has 3 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 2 inferred relationships involving `MainTabWindow_Intercolony` (e.g. with `.CheckEmployeeCardLayout()` and `.CheckPurchaseOrderAction()`) actually correct?**
   _`MainTabWindow_Intercolony` has 2 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 6 inferred relationships involving `EmploymentContract` (e.g. with `.CheckFixedTermPayroll()` and `.CheckOpenEndedPayroll()`) actually correct?**
-  _`EmploymentContract` has 6 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `node`, `HarmonyPatches`, `None` to the rest of the system?**
+- **What connects `Open`, `Filled`, `Expired` to the rest of the system?**
   _2259 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `CLAUDE.md` be split into smaller, more focused modules?**
+  _Cohesion score 0.08 - nodes in this community are weakly interconnected._

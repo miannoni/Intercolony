@@ -5,6 +5,9 @@ using RimWorld;
 using RimWorld.Planet;
 using UnityEngine;
 using Verse;
+using System;
+using System.IO;
+using System.Xml;
 
 namespace Intercolony
 {
@@ -105,6 +108,29 @@ namespace Intercolony
             public int StandardOrBetter => standard + professional + elite;
         }
 
+        private struct EmergencyReachCensusCounts
+        {
+            public int total;
+            public int available;
+            public int dropPod;
+            public int conventional;
+            public int none;
+        }
+
+        private struct ImmediateEmergencyObservation
+        {
+            public int eligibleProspects;
+            public int applicantsBeforeMatchAll;
+        }
+
+        private struct EmergencyFilterObservation
+        {
+            public bool fixtureBuilt;
+            public bool ordinaryQueued;
+            public bool emergencyQueued;
+            public string failure;
+        }
+
         private struct TierSample
         {
             public int none;
@@ -155,6 +181,11 @@ namespace Intercolony
             {
                 CheckEquipmentMarket(r, state);
                 CheckPoolSplit(r, state);
+                CheckEmergencyReachCensus(r, state);
+                CheckEmergencyPostingFlag(r, state);
+                CheckEmergencyPostingPersistence(r);
+                CheckEmergencyPostingImmediateMatch(r, state);
+                CheckEmergencyReachFilter(r, state);
                 CheckRequirementsDriveApplicants(r, state);
                 CheckWaitingListIsSpread(r, state);
                 CheckMarketReproduces(r, state);
@@ -906,8 +937,8 @@ namespace Intercolony
                     state.Postings.Remove(posting);
                 }
 
-                state.Postings.Clear();
-                state.Postings.AddRange(savedPostings);
+                RestorePostingList(
+                    state, savedPostings, "self-test immediate emergency cleanup");
                 censusField.SetValue(null, savedCensus);
                 censusRefreshField.SetValue(null, savedCensusRefreshCount);
                 LaborCandidateService.InvalidateCensus();
@@ -1199,6 +1230,667 @@ namespace Intercolony
             r.Check(world.Count == 0 || highest > lowest,
                 "the census contains a spread of ability, not one worker repeated",
                 $"skill value {lowest:0.0} to {highest:0.0}");
+        }
+
+        // --- F24 emergency postings --------------------------------------------------------
+
+        private static void CheckEmergencyReachCensus(
+            Results r, IntercolonyWorldComponent state)
+        {
+            List<LaborProspect> census = LaborCandidateService.Census(state);
+            EmergencyReachCensusCounts counts = CountEmergencyReachCensus(census, state);
+
+            r.Info($"emergency reach census total: {counts.total} prospects");
+            r.Info($"emergency route available: {counts.available}/{counts.total} " +
+                   $"({EquipmentPercentage(counts.available, counts.total):0.0}%)");
+            r.Info($"emergency route DropPod: {counts.dropPod}/{counts.total} " +
+                   $"({EquipmentPercentage(counts.dropPod, counts.total):0.0}%)");
+            r.Info($"emergency route Conventional: {counts.conventional}/{counts.total} " +
+                   $"({EquipmentPercentage(counts.conventional, counts.total):0.0}%)");
+            r.Info($"emergency route none: {counts.none}/{counts.total} " +
+                   $"({EquipmentPercentage(counts.none, counts.total):0.0}%)");
+            r.Info($"emergency reach filter: {counts.available}/{counts.total} remain; " +
+                   $"narrowed by {counts.none}/{counts.total} " +
+                   $"({EquipmentPercentage(counts.none, counts.total):0.0}%)");
+        }
+
+        private static EmergencyReachCensusCounts CountEmergencyReachCensus(
+            List<LaborProspect> census, IntercolonyWorldComponent state)
+        {
+            EmergencyReachCensusCounts counts = new EmergencyReachCensusCounts
+            {
+                total = census?.Count ?? 0
+            };
+
+            if (census == null)
+            {
+                return counts;
+            }
+
+            foreach (LaborProspect prospect in census)
+            {
+                EmergencyArrivalQuote quote = LaborCandidateService.QuoteEmergencyArrival(
+                    state, prospect);
+                if (!quote.available)
+                {
+                    counts.none++;
+                    continue;
+                }
+
+                counts.available++;
+                if (quote.transport == EmploymentArrivalTransport.DropPod)
+                {
+                    counts.dropPod++;
+                }
+                else
+                {
+                    counts.conventional++;
+                }
+            }
+
+            return counts;
+        }
+
+        private static void CheckEmergencyPostingFlag(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string label = "emergency posting stores its flag and headline";
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(label,
+                    "Find.WorldPawns was null, so TryPost's emergency match could not run safely");
+                return;
+            }
+
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            JobPosting emergencyPosting = null;
+            JobPosting ordinaryPosting = null;
+            string emergencyFailure = null;
+            string ordinaryFailure = null;
+
+            try
+            {
+                state.Postings.Clear();
+                ordinaryPosting = JobPostingService.TryPost(
+                    state, null, 0, 20, WageStructure.Daily, CombatClause.Civilian,
+                    out ordinaryFailure, emergencyDispatch: false);
+                emergencyPosting = JobPostingService.TryPost(
+                    state, null, 0, 20, WageStructure.Daily, CombatClause.Civilian,
+                    out emergencyFailure, emergencyDispatch: true);
+
+                string emergencyHeadline = emergencyPosting?.Headline() ?? "missing";
+                string ordinaryHeadline = ordinaryPosting?.Headline() ?? "missing";
+                bool emergencyHeadlineContainsFlag = emergencyHeadline.IndexOf(
+                    "Emergency", StringComparison.Ordinal) >= 0;
+                bool ordinaryHeadlineOmitsFlag = ordinaryHeadline.IndexOf(
+                    "Emergency", StringComparison.Ordinal) < 0;
+                bool passed = emergencyPosting != null &&
+                    emergencyPosting.emergencyDispatch &&
+                    emergencyHeadlineContainsFlag &&
+                    ordinaryPosting != null &&
+                    !ordinaryPosting.emergencyDispatch &&
+                    ordinaryHeadlineOmitsFlag;
+
+                r.Check(passed, label,
+                    $"OBSERVED emergency flag {emergencyPosting?.emergencyDispatch ?? false}, " +
+                    $"headline contains Emergency {emergencyHeadlineContainsFlag}; ordinary flag " +
+                    $"{ordinaryPosting?.emergencyDispatch ?? false}, headline contains Emergency " +
+                    $"{!ordinaryHeadlineOmitsFlag}; EXPECTED true/contains and " +
+                    $"false/omits; emergency failure {emergencyFailure ?? "none"}, " +
+                    $"ordinary failure {ordinaryFailure ?? "none"}");
+            }
+            finally
+            {
+                JobPostingService.Close(
+                    emergencyPosting, JobPostingStatus.Withdrawn,
+                    "self-test emergency flag cleanup");
+                JobPostingService.Close(
+                    ordinaryPosting, JobPostingStatus.Withdrawn,
+                    "self-test ordinary flag cleanup");
+                RestorePostingList(state, savedPostings, "self-test emergency flag cleanup");
+            }
+        }
+
+        private static void RestorePostingList(
+            IntercolonyWorldComponent state, List<JobPosting> savedPostings, string cleanupNote)
+        {
+            List<JobPosting> createdPostings = new List<JobPosting>();
+            foreach (JobPosting posting in state.Postings)
+            {
+                if (posting != null && (savedPostings == null || !savedPostings.Contains(posting)))
+                {
+                    createdPostings.Add(posting);
+                }
+            }
+
+            foreach (JobPosting posting in createdPostings)
+            {
+                JobPostingService.Close(
+                    posting, JobPostingStatus.Withdrawn, cleanupNote);
+                state.Postings.Remove(posting);
+            }
+
+            state.Postings.Clear();
+            if (savedPostings != null)
+            {
+                state.Postings.AddRange(savedPostings);
+            }
+        }
+
+        private static void CheckEmergencyPostingPersistence(Results r)
+        {
+            const string label = "emergency posting flag survives save/load and missing node defaults false";
+            if (Scribe.saver == null || Scribe.loader == null)
+            {
+                r.Skip(label,
+                    "RimWorld Scribe.saver or Scribe.loader was unavailable");
+                return;
+            }
+
+            JobPosting savedPosting = new JobPosting
+            {
+                id = 2401,
+                termDays = 20,
+                wageStructure = WageStructure.Daily,
+                combatClause = CombatClause.Civilian,
+                requestedEquipmentLevel = LaborEquipmentLevel.Any,
+                emergencyDispatch = true,
+                postedTick = 123,
+                expiryTick = -1,
+                status = JobPostingStatus.Open
+            };
+            JobPosting loadedPosting = null;
+            JobPosting loadedWithoutEmergencyNode = null;
+            bool xmlHasEmergencyNode = false;
+            bool emergencyNodeRemoved = false;
+            bool xmlLacksEmergencyNode = false;
+            string failure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-EmergencyPosting-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "intercolonyEmergencyPostingTest");
+                Scribe_Deep.Look(ref savedPosting, "posting");
+                Scribe.saver.FinalizeSaving();
+
+                string savedXml = File.ReadAllText(path);
+                xmlHasEmergencyNode = savedXml.IndexOf(
+                    "<emergencyDispatch", StringComparison.Ordinal) >= 0;
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Deep.Look(ref loadedPosting, "posting");
+                Scribe.loader.FinalizeLoading();
+
+                if (!RemoveXmlNodeFromFile(path, "emergencyDispatch", out emergencyNodeRemoved))
+                {
+                    failure = "the emergencyDispatch XML node could not be removed";
+                }
+                else
+                {
+                    string legacyXml = File.ReadAllText(path);
+                    xmlLacksEmergencyNode = legacyXml.IndexOf(
+                        "<emergencyDispatch", StringComparison.Ordinal) < 0;
+
+                    Scribe.loader.InitLoading(path);
+                    Scribe_Deep.Look(ref loadedWithoutEmergencyNode, "posting");
+                    Scribe.loader.FinalizeLoading();
+                }
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            bool passed = failure == null &&
+                xmlHasEmergencyNode &&
+                loadedPosting != null &&
+                loadedPosting.emergencyDispatch &&
+                emergencyNodeRemoved &&
+                xmlLacksEmergencyNode &&
+                loadedWithoutEmergencyNode != null &&
+                !loadedWithoutEmergencyNode.emergencyDispatch;
+            r.Check(passed, label,
+                $"OBSERVED XML node {(xmlHasEmergencyNode ? "present" : "absent")}, " +
+                $"saved load flag {loadedPosting?.emergencyDispatch ?? false}, " +
+                $"node removed {emergencyNodeRemoved}, stripped XML node " +
+                $"{(xmlLacksEmergencyNode ? "absent" : "present")}, missing-node load flag " +
+                $"{loadedWithoutEmergencyNode?.emergencyDispatch ?? false}; EXPECTED " +
+                "node present, true after round-trip, then absent and false after legacy load" +
+                $"; failure {failure ?? "none"}");
+        }
+
+        private static bool RemoveXmlNodeFromFile(
+            string path, string nodeName, out bool nodeFound)
+        {
+            nodeFound = false;
+            XmlDocument document = new XmlDocument();
+            document.Load(path);
+            XmlNode node = document.SelectSingleNode("//" + nodeName);
+            if (node == null)
+            {
+                return true;
+            }
+
+            XmlNode parent = node.ParentNode;
+            if (parent == null)
+            {
+                return false;
+            }
+
+            parent.RemoveChild(node);
+            document.Save(path);
+            nodeFound = true;
+            return true;
+        }
+
+        private static void CheckEmergencyPostingImmediateMatch(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string label = "emergency posting matches immediately and respects the applicant cap";
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(label,
+                    "Find.WorldPawns was null, so an immediate applicant could not be cleaned up");
+                return;
+            }
+
+            FieldInfo censusField = typeof(LaborCandidateService).GetField(
+                "census", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo censusRefreshField = typeof(LaborCandidateService).GetField(
+                "censusRefreshCount", BindingFlags.Static | BindingFlags.NonPublic);
+            if (censusField == null || censusRefreshField == null)
+            {
+                r.Skip(label,
+                    "LaborCandidateService controlled census fields were not found");
+                return;
+            }
+
+            List<LaborProspect> savedCensus =
+                censusField.GetValue(null) as List<LaborProspect>;
+            int savedCensusRefreshCount = (int)censusRefreshField.GetValue(null);
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            JobPosting posting = null;
+
+            try
+            {
+                List<LaborProspect> reachable = FindMaterialisableEmergencyProspects(
+                    LaborCandidateService.Census(state), state);
+                if (reachable.Count == 0)
+                {
+                    r.Skip(label,
+                        "the current census had no emergency-reachable prospect with a faction " +
+                        "to materialise");
+                    return;
+                }
+
+                int fixtureCount = Mathf.Min(
+                    reachable.Count, JobPostingService.MaxWaitingApplicants + 2);
+                List<LaborProspect> fixture = new List<LaborProspect>();
+                for (int i = 0; i < fixtureCount; i++)
+                {
+                    fixture.Add(reachable[i]);
+                }
+
+                state.Postings.Clear();
+                censusField.SetValue(null, fixture);
+                censusRefreshField.SetValue(null, state.RefreshCount);
+                posting = JobPostingService.TryPost(
+                    state, null, 0, 20, WageStructure.Daily, CombatClause.Civilian,
+                    out string failReason, emergencyDispatch: true);
+                if (posting == null)
+                {
+                    r.Skip(label,
+                        $"TryPost refused the controlled immediate fixture: " +
+                        $"{failReason ?? "no failure reason"}");
+                    return;
+                }
+
+                ImmediateEmergencyObservation observation = new ImmediateEmergencyObservation
+                {
+                    eligibleProspects = fixture.Count,
+                    applicantsBeforeMatchAll = posting.Applicants.Count
+                };
+                r.Check(
+                    observation.applicantsBeforeMatchAll > 0 &&
+                    observation.applicantsBeforeMatchAll <= JobPostingService.MaxWaitingApplicants,
+                    label,
+                    $"OBSERVED {observation.applicantsBeforeMatchAll} applicant(s) before any " +
+                    $"MatchAll call from {observation.eligibleProspects} controlled eligible " +
+                    $"prospect(s); EXPECTED 1-{JobPostingService.MaxWaitingApplicants} " +
+                    "applicant(s) immediately");
+            }
+            catch (Exception ex)
+            {
+                r.Skip(label,
+                    $"controlled immediate fixture threw {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                JobPostingService.Close(
+                    posting, JobPostingStatus.Withdrawn,
+                    "self-test immediate emergency cleanup");
+                if (posting != null)
+                {
+                    state.Postings.Remove(posting);
+                }
+
+                state.Postings.Clear();
+                state.Postings.AddRange(savedPostings);
+                censusField.SetValue(null, savedCensus);
+                censusRefreshField.SetValue(null, savedCensusRefreshCount);
+                LaborCandidateService.InvalidateCensus();
+            }
+        }
+
+        private static List<LaborProspect> FindMaterialisableEmergencyProspects(
+            List<LaborProspect> census, IntercolonyWorldComponent state)
+        {
+            List<LaborProspect> reachable = new List<LaborProspect>();
+            if (census == null)
+            {
+                return reachable;
+            }
+
+            foreach (LaborProspect prospect in census)
+            {
+                if (prospect != null && prospect.faction != null &&
+                    LaborCandidateService.CanReachEmergency(state, prospect))
+                {
+                    reachable.Add(prospect);
+                }
+            }
+
+            return reachable;
+        }
+
+        private static void CheckEmergencyReachFilter(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const string label =
+                "a routeless prospect is rejected by emergency but queued by ordinary posting";
+            if (Find.WorldPawns == null)
+            {
+                r.Skip(label,
+                    "Find.WorldPawns was null, so the controlled ordinary applicant could not be " +
+                    "cleaned up");
+                return;
+            }
+
+            FieldInfo censusField = typeof(LaborCandidateService).GetField(
+                "census", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo censusRefreshField = typeof(LaborCandidateService).GetField(
+                "censusRefreshCount", BindingFlags.Static | BindingFlags.NonPublic);
+            if (censusField == null || censusRefreshField == null)
+            {
+                r.Skip(label,
+                    "LaborCandidateService controlled census fields were not found");
+                return;
+            }
+
+            string fixtureDescription;
+            LaborProspect routeless = FindRoutelessProspect(
+                state, out fixtureDescription);
+            if (routeless == null)
+            {
+                r.Skip(label,
+                    "the current census could not supply or construct a routeless prospect " +
+                    "with a materialisable faction");
+                return;
+            }
+
+            if (!ProbeProspectMaterialisation(routeless, out string materialisationFailure))
+            {
+                r.Skip(label,
+                    materialisationFailure ??
+                    "the controlled routeless prospect could not materialise a pawn");
+                return;
+            }
+
+            EmergencyFilterObservation observation = ExerciseEmergencyReachFilter(
+                state, routeless, censusField, censusRefreshField);
+            if (!observation.fixtureBuilt)
+            {
+                r.Skip(label, observation.failure ??
+                    "the controlled routeless prospect fixture could not be built");
+                return;
+            }
+
+            bool routelessStillUnavailable =
+                !LaborCandidateService.CanReachEmergency(state, routeless);
+            r.Check(
+                routelessStillUnavailable &&
+                observation.ordinaryQueued &&
+                !observation.emergencyQueued,
+                label,
+                $"OBSERVED fixture {fixtureDescription}; emergency available " +
+                $"{!routelessStillUnavailable}, ordinary queued {observation.ordinaryQueued}, " +
+                $"emergency queued {observation.emergencyQueued}; EXPECTED available False, " +
+                "ordinary queued True, emergency queued False; production gate is " +
+                "EvaluatePosting emergencyDispatch && !CanReachEmergency");
+        }
+
+        private static bool ProbeProspectMaterialisation(
+            LaborProspect prospect, out string failure)
+        {
+            failure = null;
+            Pawn pawn = null;
+            Rand.PushState(0xF24_1);
+            try
+            {
+                pawn = prospect?.Materialise();
+                if (pawn == null)
+                {
+                    failure = "the controlled routeless prospect could not materialise a pawn";
+                }
+            }
+            catch (Exception ex)
+            {
+                failure =
+                    $"materialising the controlled routeless prospect threw " +
+                    $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                DiscardEquipmentFixturePawn(pawn);
+                Rand.PopState();
+            }
+
+            return failure == null;
+        }
+
+        private static EmergencyFilterObservation ExerciseEmergencyReachFilter(
+            IntercolonyWorldComponent state, LaborProspect routeless,
+            FieldInfo censusField, FieldInfo censusRefreshField)
+        {
+            EmergencyFilterObservation observation = new EmergencyFilterObservation();
+            List<LaborProspect> savedCensus =
+                censusField.GetValue(null) as List<LaborProspect>;
+            int savedCensusRefreshCount = (int)censusRefreshField.GetValue(null);
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            JobPosting ordinaryPosting = null;
+            JobPosting emergencyPosting = null;
+
+            try
+            {
+                List<LaborProspect> fixture = new List<LaborProspect> { routeless };
+                state.Postings.Clear();
+                censusField.SetValue(null, fixture);
+                censusRefreshField.SetValue(null, state.RefreshCount);
+                ordinaryPosting = JobPostingService.TryPost(
+                    state, null, 0, 20, WageStructure.Daily, CombatClause.Civilian,
+                    out string ordinaryFailure, emergencyDispatch: false);
+                if (ordinaryPosting == null)
+                {
+                    observation.failure =
+                        $"TryPost refused the controlled ordinary fixture: " +
+                        $"{ordinaryFailure ?? "no failure reason"}";
+                    return observation;
+                }
+
+                JobPostingService.MatchAll(state);
+                observation.ordinaryQueued = ordinaryPosting.Applicants.Count > 0;
+                // Do not turn an empty ordinary control into a Skip: ME1 applies the emergency
+                // gate to ordinary postings too, and this must reach the assertion as
+                // ordinaryQueued=False so that mutation reddens it.
+
+                JobPostingService.Close(
+                    ordinaryPosting, JobPostingStatus.Withdrawn,
+                    "self-test emergency reach ordinary control cleanup");
+                state.Postings.Remove(ordinaryPosting);
+
+                emergencyPosting = JobPostingService.TryPost(
+                    state, null, 0, 20, WageStructure.Daily, CombatClause.Civilian,
+                    out string emergencyFailure, emergencyDispatch: true);
+                if (emergencyPosting == null)
+                {
+                    observation.failure =
+                        $"TryPost refused the controlled emergency fixture: " +
+                        $"{emergencyFailure ?? "no failure reason"}";
+                    return observation;
+                }
+
+                // TryPost's emergency path calls MatchImmediately, which reaches EvaluatePosting
+                // without a MatchAll call. Deleting the production
+                // posting.emergencyDispatch && !CanReachEmergency(...) gate would queue this
+                // same routeless prospect and redden the assertion above.
+                observation.emergencyQueued = emergencyPosting.Applicants.Count > 0;
+                observation.fixtureBuilt = true;
+            }
+            catch (Exception ex)
+            {
+                observation.failure =
+                    $"controlled emergency reach fixture threw {ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                JobPostingService.Close(
+                    ordinaryPosting, JobPostingStatus.Withdrawn,
+                    "self-test emergency reach ordinary cleanup");
+                JobPostingService.Close(
+                    emergencyPosting, JobPostingStatus.Withdrawn,
+                    "self-test emergency reach cleanup");
+                if (ordinaryPosting != null)
+                {
+                    state.Postings.Remove(ordinaryPosting);
+                }
+
+                if (emergencyPosting != null)
+                {
+                    state.Postings.Remove(emergencyPosting);
+                }
+
+                RestorePostingList(
+                    state, savedPostings, "self-test emergency reach cleanup");
+                censusField.SetValue(null, savedCensus);
+                censusRefreshField.SetValue(null, savedCensusRefreshCount);
+                LaborCandidateService.InvalidateCensus();
+            }
+
+            return observation;
+        }
+
+        private static LaborProspect FindRoutelessProspect(
+            IntercolonyWorldComponent state, out string fixtureDescription)
+        {
+            fixtureDescription = null;
+            List<LaborProspect> census = LaborCandidateService.Census(state);
+            if (census == null)
+            {
+                return null;
+            }
+
+            foreach (LaborProspect prospect in census)
+            {
+                if (prospect != null && prospect.faction != null &&
+                    !LaborCandidateService.CanReachEmergency(state, prospect))
+                {
+                    fixtureDescription =
+                        $"live census prospect {prospect.settlementName}/{prospect.settlementId} " +
+                        $"at {prospect.distanceTiles:0.##} tiles";
+                    return prospect;
+                }
+            }
+
+            foreach (LaborProspect prospect in census)
+            {
+                if (prospect == null || prospect.faction == null)
+                {
+                    continue;
+                }
+
+                Settlement source = IntercolonyMarketAccess.FindSettlement(
+                    prospect.settlementId);
+                SettlementEconomicProfile profile = source == null
+                    ? null
+                    : state.GetProfile(source);
+                if (profile == null ||
+                    profile.rapidLogisticsCapability ==
+                    SettlementRapidLogisticsCapability.DropPodsAvailable)
+                {
+                    continue;
+                }
+
+                LaborProspect controlled = CopyProspectForEmergencyFixture(
+                    prospect, prospect.settlementId, 24f, prospect.settlementName);
+                if (!LaborCandidateService.CanReachEmergency(state, controlled))
+                {
+                    fixtureDescription =
+                        $"controlled clone of {prospect.settlementName}/{prospect.settlementId} " +
+                        "at 24 tiles (conventional source beyond the emergency cutoff)";
+                    return controlled;
+                }
+            }
+
+            foreach (LaborProspect prospect in census)
+            {
+                if (prospect == null || prospect.faction == null)
+                {
+                    continue;
+                }
+
+                LaborProspect controlled = CopyProspectForEmergencyFixture(
+                    prospect, -1, 24f, "controlled routeless source");
+                if (!LaborCandidateService.CanReachEmergency(state, controlled))
+                {
+                    fixtureDescription =
+                        $"direct F23-style clone of {prospect.settlementName}/" +
+                        $"{prospect.settlementId} with missing source id and 24-tile distance";
+                    return controlled;
+                }
+            }
+
+            return null;
+        }
+
+        private static LaborProspect CopyProspectForEmergencyFixture(
+            LaborProspect source, int settlementId, float distanceTiles, string settlementName)
+        {
+            return new LaborProspect
+            {
+                settlementId = settlementId,
+                settlementName = settlementName ?? source.settlementName,
+                factionName = source.factionName,
+                faction = source.faction,
+                distanceTiles = distanceTiles,
+                travelDays = source.travelDays < 0 ? 1 : source.travelDays,
+                skillLevels = source.skillLevels == null
+                    ? null
+                    : (int[])source.skillLevels.Clone(),
+                passions = source.passions == null
+                    ? null
+                    : (Passion[])source.passions.Clone(),
+                pricedSkillValue = source.pricedSkillValue,
+                equipmentTier = LaborEquipmentLevel.Any
+            };
         }
 
         // --- §114's acceptance criterion ---------------------------------------------------

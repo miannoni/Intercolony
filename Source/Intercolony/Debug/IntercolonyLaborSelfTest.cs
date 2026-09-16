@@ -1954,6 +1954,10 @@ namespace Intercolony
                 $"{distantQuote.available}, ETA ticks {distantArrivalTicks} " +
                 $"({distantArrivalTicks / (float)GenDate.TicksPerHour:0.##}h)");
 
+            CheckEmergencyQuoteDeterminism(r, candidatePool);
+            CheckEmergencyQuoteVariation(r, candidatePool);
+            CheckEmergencyQuoteUpperBound(r, candidatePool);
+
             if (podCapableCandidates == 0)
             {
                 r.Skip("U3 emergency pod quotes 1-4 hours",
@@ -1981,6 +1985,177 @@ namespace Intercolony
                 $"transport={podQuote.transport}; EXPECTED between " +
                 $"{GenDate.TicksPerHour} and {4 * GenDate.TicksPerHour} ticks " +
                 "(1h-4h), transport=DropPod");
+        }
+
+        private static void CheckEmergencyQuoteDeterminism(
+            Results r, List<LaborCandidate> candidatePool)
+        {
+            const string label = "the same emergency candidate gets the same arrival ticks twice";
+            LaborCandidate candidate = null;
+            if (candidatePool != null)
+            {
+                foreach (LaborCandidate possible in candidatePool)
+                {
+                    EmergencyArrivalQuote possibleQuote =
+                        LaborCandidateService.QuoteEmergencyArrival(possible);
+                    if (possible?.pawn != null && possibleQuote.available)
+                    {
+                        candidate = possible;
+                        break;
+                    }
+                }
+            }
+
+            if (candidate == null)
+            {
+                r.Skip(label,
+                    "the current candidate pool had no candidate with an available emergency route");
+                return;
+            }
+
+            EmergencyArrivalQuote firstQuote =
+                LaborCandidateService.QuoteEmergencyArrival(candidate);
+            EmergencyArrivalQuote secondQuote =
+                LaborCandidateService.QuoteEmergencyArrival(candidate);
+            r.Check(firstQuote.arrivalTicks == secondQuote.arrivalTicks,
+                label,
+                $"OBSERVED {candidate.Name}: first arrivalTicks={firstQuote.arrivalTicks} " +
+                $"({firstQuote.arrivalTicks / (float)GenDate.TicksPerHour:0.##}h), " +
+                $"second arrivalTicks={secondQuote.arrivalTicks} " +
+                $"({secondQuote.arrivalTicks / (float)GenDate.TicksPerHour:0.##}h); " +
+                "EXPECTED identical arrivalTicks");
+        }
+
+        private static void CheckEmergencyQuoteVariation(
+            Results r, List<LaborCandidate> candidatePool)
+        {
+            const string label = "two pod candidates receive different stable emergency arrival ticks";
+            List<LaborCandidate> podCandidates = new List<LaborCandidate>();
+            if (candidatePool != null)
+            {
+                foreach (LaborCandidate candidate in candidatePool)
+                {
+                    EmergencyArrivalQuote quote =
+                        LaborCandidateService.QuoteEmergencyArrival(candidate);
+                    if (candidate?.pawn != null && quote.available &&
+                        quote.transport == EmploymentArrivalTransport.DropPod)
+                    {
+                        podCandidates.Add(candidate);
+                    }
+                }
+            }
+
+            if (podCandidates.Count < 2)
+            {
+                r.Skip(label,
+                    $"the current world supplied {podCandidates.Count} pod-capable candidate(s); " +
+                    "two are required for variation");
+                return;
+            }
+
+            LaborCandidate firstCandidate = podCandidates[0];
+            LaborCandidate secondCandidate = podCandidates[1];
+            EmergencyArrivalQuote firstQuote =
+                LaborCandidateService.QuoteEmergencyArrival(firstCandidate);
+            EmergencyArrivalQuote secondQuote =
+                LaborCandidateService.QuoteEmergencyArrival(secondCandidate);
+            bool differentPawnPair = false;
+
+            for (int i = 0; i < podCandidates.Count; i++)
+            {
+                for (int j = i + 1; j < podCandidates.Count; j++)
+                {
+                    if (ReferenceEquals(podCandidates[i].pawn, podCandidates[j].pawn))
+                    {
+                        continue;
+                    }
+
+                    differentPawnPair = true;
+                    EmergencyArrivalQuote possibleFirstQuote =
+                        LaborCandidateService.QuoteEmergencyArrival(podCandidates[i]);
+                    EmergencyArrivalQuote possibleSecondQuote =
+                        LaborCandidateService.QuoteEmergencyArrival(podCandidates[j]);
+                    firstCandidate = podCandidates[i];
+                    secondCandidate = podCandidates[j];
+                    firstQuote = possibleFirstQuote;
+                    secondQuote = possibleSecondQuote;
+                    if (possibleFirstQuote.arrivalTicks != possibleSecondQuote.arrivalTicks)
+                    {
+                        i = podCandidates.Count;
+                        break;
+                    }
+                }
+            }
+
+            bool firstInBand = firstQuote.arrivalTicks >= GenDate.TicksPerHour &&
+                firstQuote.arrivalTicks <= 4 * GenDate.TicksPerHour;
+            bool secondInBand = secondQuote.arrivalTicks >= GenDate.TicksPerHour &&
+                secondQuote.arrivalTicks <= 4 * GenDate.TicksPerHour;
+            bool variation = differentPawnPair &&
+                firstQuote.available &&
+                secondQuote.available &&
+                firstQuote.transport == EmploymentArrivalTransport.DropPod &&
+                secondQuote.transport == EmploymentArrivalTransport.DropPod &&
+                firstInBand &&
+                secondInBand &&
+                firstQuote.arrivalTicks != secondQuote.arrivalTicks;
+            r.Check(variation, label,
+                $"OBSERVED {firstCandidate.Name}/pawn " +
+                $"{firstCandidate.pawn?.thingIDNumber ?? -1} arrivalTicks=" +
+                $"{firstQuote.arrivalTicks} " +
+                $"({firstQuote.arrivalTicks / (float)GenDate.TicksPerHour:0.##}h) and " +
+                $"{secondCandidate.Name}/pawn {secondCandidate.pawn?.thingIDNumber ?? -1} " +
+                $"arrivalTicks={secondQuote.arrivalTicks} " +
+                $"({secondQuote.arrivalTicks / (float)GenDate.TicksPerHour:0.##}h); " +
+                $"different pawns {differentPawnPair}; EXPECTED different pawns, different " +
+                $"arrivalTicks, both between {GenDate.TicksPerHour} and " +
+                $"{4 * GenDate.TicksPerHour} ticks (1h-4h)");
+        }
+
+        private static void CheckEmergencyQuoteUpperBound(
+            Results r, List<LaborCandidate> candidatePool)
+        {
+            const string label = "no emergency quote uses ordinary multi-day timing";
+            int availableCount = 0;
+            StringBuilder violations = new StringBuilder();
+            if (candidatePool != null)
+            {
+                foreach (LaborCandidate candidate in candidatePool)
+                {
+                    EmergencyArrivalQuote quote =
+                        LaborCandidateService.QuoteEmergencyArrival(candidate);
+                    if (!quote.available)
+                    {
+                        continue;
+                    }
+
+                    availableCount++;
+                    if (quote.arrivalTicks > 9 * GenDate.TicksPerHour)
+                    {
+                        if (violations.Length > 0)
+                        {
+                            violations.Append("; ");
+                        }
+
+                        violations.Append(candidate?.Name ?? "missing")
+                            .Append('=')
+                            .Append(quote.arrivalTicks)
+                            .Append(" ticks");
+                    }
+                }
+            }
+
+            if (availableCount == 0)
+            {
+                r.Skip(label,
+                    "the current candidate pool had no available emergency quote to sweep");
+                return;
+            }
+
+            r.Check(violations.Length == 0, label,
+                $"OBSERVED {availableCount} available quote(s), violations " +
+                $"[{(violations.Length == 0 ? "none" : violations.ToString())}]; EXPECTED every " +
+                $"available arrivalTicks <= {9 * GenDate.TicksPerHour} ticks (9h)");
         }
 
         private static string CandidateTravelDaysDetail(List<LaborCandidate> candidates)
