@@ -9,9 +9,9 @@ namespace Intercolony
     /// <summary>
     /// Posting jobs and collecting applicants (DESIGN.md §35.2, §114).
     ///
-    /// F25 makes the posting an RFQ: a worker applies when they meet the requirement, and the
-    /// application carries the worker's own asking wage. Reputation still controls the census's
-    /// availability and quality, while the requirement controls who can answer — see <see
+    /// F25 makes the posting an RFQ: a worker applies when they meet the requirement (and, for an
+    /// emergency posting, have a valid emergency route), and the application carries the worker's
+    /// own asking wage. Reputation still controls the census's availability and quality, while the requirement controls who can answer — see <see
     /// cref="MatchAll"/>.
     ///
     /// The market limits itself. Every open posting is matched against **one** world labor pool per
@@ -44,6 +44,8 @@ namespace Intercolony
             "Nobody reachable met the {0} skill requirement.";
         private const string NoEquipmentTierExplanation =
             "Nobody with {0} answered.";
+        private const string NoEmergencyReachExplanation =
+            "Nobody who met the skill and equipment requirements can reach the colony by emergency dispatch.";
         private const string EquipmentFulfilmentFailureExplanation =
             "Unexpectedly, capable workers could not be equipped to the requested tier.";
 
@@ -65,11 +67,15 @@ namespace Intercolony
         /// <param name="requestedEquipmentLevel">
         /// The equipment tier the posting requests. Any is the legacy default for existing callers.
         /// </param>
+        /// <param name="emergencyDispatch">
+        /// Whether to match the posting immediately against prospects with an emergency route.
+        /// </param>
         public static JobPosting TryPost(
             IntercolonyWorldComponent state, SkillDef skill, int minSkillLevel,
             int termDays, WageStructure structure, CombatClause clause,
             out string failReason,
-            LaborEquipmentLevel requestedEquipmentLevel = LaborEquipmentLevel.Any)
+            LaborEquipmentLevel requestedEquipmentLevel = LaborEquipmentLevel.Any,
+            bool emergencyDispatch = false)
         {
             failReason = null;
 
@@ -94,12 +100,18 @@ namespace Intercolony
                 wageStructure = structure,
                 combatClause = clause,
                 requestedEquipmentLevel = requestedEquipmentLevel,
+                emergencyDispatch = emergencyDispatch,
                 postedTick = GenTicks.TicksGame,
                 expiryTick = -1,
                 status = JobPostingStatus.Open
             };
 
             state.AddPosting(posting);
+
+            if (emergencyDispatch)
+            {
+                MatchImmediately(state, posting);
+            }
 
             Messages.Message(
                 $"Posted: {posting.Headline()}.",
@@ -110,6 +122,64 @@ namespace Intercolony
         }
 
         // --- Matching ----------------------------------------------------------------------
+
+        /// <summary>
+        /// Gives a newly-created emergency posting the current market's first look immediately.
+        ///
+        /// The census is deliberately reused rather than rebuilt: posting an emergency job must
+        /// not manufacture a second population just because it was created between refreshes.
+        /// With one posting there is no cross-posting choice to resolve, but the same prospect
+        /// predicate, queue room, shuffle and Apply path are still used.
+        /// </summary>
+        internal static void MatchImmediately(
+            IntercolonyWorldComponent state, JobPosting posting)
+        {
+            if (state == null || posting == null || !posting.IsOpen)
+            {
+                return;
+            }
+
+            float standing = EmployerReputationService.ScoreFor(state);
+            List<LaborProspect> world = LaborCandidateService.Census(state);
+            List<Interest> interested = new List<Interest>();
+            MatchAttempt attempt = new MatchAttempt();
+
+            foreach (LaborProspect worker in world)
+            {
+                if (worker == null)
+                {
+                    continue;
+                }
+
+                ProspectDecision decision = EvaluatePosting(state, posting, worker, standing);
+                if (!decision.SkillQualified)
+                {
+                    continue;
+                }
+
+                attempt.skillQualified++;
+                if (!decision.Eligible)
+                {
+                    RecordRejection(ref attempt, decision.rejection);
+                    continue;
+                }
+
+                interested.Add(new Interest { worker = worker, ask = decision.ask });
+            }
+
+            int arrived = 0;
+            Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ ApplicantShuffleSalt);
+            try
+            {
+                arrived = ApplyInterested(state, posting, interested, ref attempt);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+
+            Report(state, posting, arrived, standing, attempt);
+        }
 
         /// <summary>
         /// Exposes every open posting to this cycle's world labor pool.
@@ -181,33 +251,29 @@ namespace Intercolony
                 int bestAsk = 0;
                 JobPosting bestSkillMatch = null;
                 int bestSkillAsk = 0;
+                ProspectRejection bestSkillRejection = ProspectRejection.None;
 
                 foreach (JobPosting posting in open)
                 {
-                    if (!posting.MeetsRequirement(worker))
+                    ProspectDecision decision = EvaluatePosting(state, posting, worker, standing);
+                    if (!decision.SkillQualified)
                     {
                         continue;
                     }
 
-                    int ask = Ask(state, worker, posting, standing);
-
                     // Keep one diagnostic owner for each prospect, just as matching keeps one
-                    // queue owner. If every skill-qualified choice misses its tier, the best
-                    // skill-only choice still identifies the gate that stopped the prospect.
-                    if (bestSkillMatch == null || ask > bestSkillAsk ||
-                        (ask == bestSkillAsk && posting.id < bestSkillMatch.id))
+                    // queue owner. If every skill-qualified choice misses its equipment or
+                    // emergency gate, the best skill-only choice still identifies the gate that
+                    // stopped the prospect.
+                    if (bestSkillMatch == null || decision.ask > bestSkillAsk ||
+                        (decision.ask == bestSkillAsk && posting.id < bestSkillMatch.id))
                     {
                         bestSkillMatch = posting;
-                        bestSkillAsk = ask;
+                        bestSkillAsk = decision.ask;
+                        bestSkillRejection = decision.rejection;
                     }
 
-                    // Reject a prospect whose census promise is below the request before the
-                    // expensive Apply/Materialise path. None is intentionally a wildcard here:
-                    // Apply strips bondable equipment after the pawn is built.
-                    if (posting.requestedEquipmentLevel != LaborEquipmentLevel.Any &&
-                        posting.requestedEquipmentLevel != LaborEquipmentLevel.None &&
-                        !LaborEquipmentTierService.MeetsOrExceeds(
-                            worker.equipmentTier, posting.requestedEquipmentLevel))
+                    if (!decision.Eligible)
                     {
                         continue;
                     }
@@ -217,11 +283,11 @@ namespace Intercolony
                     // can ask more for Armed or Security work than for Civilian work. Break equal
                     // asks by lower posting id so a seeded census produces the same market after a
                     // save reload.
-                    if (best == null || ask > bestAsk ||
-                        (ask == bestAsk && posting.id < best.id))
+                    if (best == null || decision.ask > bestAsk ||
+                        (decision.ask == bestAsk && posting.id < best.id))
                     {
                         best = posting;
-                        bestAsk = ask;
+                        bestAsk = decision.ask;
                     }
                 }
 
@@ -235,7 +301,7 @@ namespace Intercolony
                 {
                     MatchAttempt attempt = attempts[bestSkillMatch.id];
                     attempt.skillQualified++;
-                    attempt.tierRejected++;
+                    RecordRejection(ref attempt, bestSkillRejection);
                     attempts[bestSkillMatch.id] = attempt;
                 }
 
@@ -272,43 +338,9 @@ namespace Intercolony
                         continue;
                     }
 
-                    int room = Room(posting);
-                    if (room <= 0)
-                    {
-                        continue;
-                    }
-
-                    for (int i = queue.Count - 1; i > 0; i--)
-                    {
-                        int j = Rand.RangeInclusive(0, i);
-                        Interest swap = queue[i];
-                        queue[i] = queue[j];
-                        queue[j] = swap;
-                    }
-
-                    int taken = 0;
-                    for (int i = 0; i < queue.Count && taken < room; i++)
-                    {
-                        ApplyResult result = Apply(state, posting, queue[i].worker, queue[i].ask);
-                        MatchAttempt attempt = attempts[posting.id];
-                        switch (result)
-                        {
-                            case ApplyResult.Accepted:
-                                attempt.accepted++;
-                                taken++;
-                                break;
-                            case ApplyResult.SourceRejected:
-                                attempt.sourceRejected++;
-                                break;
-                            case ApplyResult.FulfilmentRejected:
-                                attempt.fulfilmentRejected++;
-                                break;
-                            default:
-                                break;
-                        }
-
-                        attempts[posting.id] = attempt;
-                    }
+                    MatchAttempt attempt = attempts[posting.id];
+                    int taken = ApplyInterested(state, posting, queue, ref attempt);
+                    attempts[posting.id] = attempt;
 
                     if (taken > 0)
                     {
@@ -340,9 +372,28 @@ namespace Intercolony
         {
             public int skillQualified;
             public int tierRejected;
+            public int emergencyReachRejected;
             public int sourceRejected;
             public int fulfilmentRejected;
             public int accepted;
+        }
+
+        private struct ProspectDecision
+        {
+            public int ask;
+            public ProspectRejection rejection;
+
+            public bool SkillQualified => rejection != ProspectRejection.Skill;
+
+            public bool Eligible => rejection == ProspectRejection.None;
+        }
+
+        private enum ProspectRejection
+        {
+            None,
+            Skill,
+            Tier,
+            EmergencyReach
         }
 
         private enum ApplyResult
@@ -360,6 +411,120 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Applies the shared phase-one gates to one census record. Keeping the emergency route
+        /// after skill and promised equipment preserves the existing diagnostic priority and keeps
+        /// the legacy Any path out of the new route check.
+        /// </summary>
+        private static ProspectDecision EvaluatePosting(
+            IntercolonyWorldComponent state, JobPosting posting, LaborProspect worker,
+            float standing)
+        {
+            if (!posting.MeetsRequirement(worker))
+            {
+                return new ProspectDecision
+                {
+                    rejection = ProspectRejection.Skill
+                };
+            }
+
+            int ask = Ask(state, worker, posting, standing);
+
+            // Reject a prospect whose census promise is below the request before the expensive
+            // Apply/Materialise path. None is intentionally a wildcard here: Apply strips
+            // bondable equipment after the pawn is built.
+            if (posting.requestedEquipmentLevel != LaborEquipmentLevel.Any &&
+                posting.requestedEquipmentLevel != LaborEquipmentLevel.None &&
+                !LaborEquipmentTierService.MeetsOrExceeds(
+                    worker.equipmentTier, posting.requestedEquipmentLevel))
+            {
+                return new ProspectDecision
+                {
+                    ask = ask,
+                    rejection = ProspectRejection.Tier
+                };
+            }
+
+            if (posting.emergencyDispatch &&
+                !LaborCandidateService.CanReachEmergency(state, worker))
+            {
+                return new ProspectDecision
+                {
+                    ask = ask,
+                    rejection = ProspectRejection.EmergencyReach
+                };
+            }
+
+            return new ProspectDecision
+            {
+                ask = ask,
+                rejection = ProspectRejection.None
+            };
+        }
+
+        private static void RecordRejection(
+            ref MatchAttempt attempt, ProspectRejection rejection)
+        {
+            switch (rejection)
+            {
+                case ProspectRejection.Tier:
+                    attempt.tierRejected++;
+                    break;
+                case ProspectRejection.EmergencyReach:
+                    attempt.emergencyReachRejected++;
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Runs the existing capped shuffle/apply phase for one posting. The same helper serves
+        /// refresh matching and immediate emergency matching so the queue cap and materialisation
+        /// rules cannot drift between the two entry points.
+        /// </summary>
+        private static int ApplyInterested(
+            IntercolonyWorldComponent state, JobPosting posting, List<Interest> queue,
+            ref MatchAttempt attempt)
+        {
+            int room = Room(posting);
+            if (room <= 0)
+            {
+                return 0;
+            }
+
+            for (int i = queue.Count - 1; i > 0; i--)
+            {
+                int j = Rand.RangeInclusive(0, i);
+                Interest swap = queue[i];
+                queue[i] = queue[j];
+                queue[j] = swap;
+            }
+
+            int taken = 0;
+            for (int i = 0; i < queue.Count && taken < room; i++)
+            {
+                ApplyResult result = Apply(state, posting, queue[i].worker, queue[i].ask);
+                switch (result)
+                {
+                    case ApplyResult.Accepted:
+                        attempt.accepted++;
+                        taken++;
+                        break;
+                    case ApplyResult.SourceRejected:
+                        attempt.sourceRejected++;
+                        break;
+                    case ApplyResult.FulfilmentRejected:
+                        attempt.fulfilmentRejected++;
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            return taken;
+        }
+
+        /// <summary>
         /// Turns a census record into an actual applicant - the only point at which a pawn is built.
         ///
         /// This is what makes a deep market affordable. The census can be hundreds of workers
@@ -370,9 +535,9 @@ namespace Intercolony
         private static ApplyResult Apply(
             IntercolonyWorldComponent state, JobPosting posting, LaborProspect worker, int ask)
         {
-            // Any is the legacy path: one generation, no capability gate, no classification and
-            // no retry. Existing postings load as Any and must behave exactly as they did before
-            // equipment requests existed.
+            // Any is the legacy equipment path: one generation, no equipment capability gate, no
+            // classification and no retry. Existing non-emergency postings load as Any and must
+            // behave exactly as they did before equipment requests existed.
             if (posting.requestedEquipmentLevel == LaborEquipmentLevel.Any)
             {
                 Pawn pawn = worker.Materialise();
@@ -543,14 +708,16 @@ namespace Intercolony
         {
             return LaborCandidateService.DailyWageFor(
                 worker.pricedSkillValue, ProfileFor(state, worker.settlementId),
-                worker.distanceTiles, posting.termDays, standing, posting.combatClause);
+                worker.distanceTiles, posting.termDays, standing, posting.combatClause,
+                posting.emergencyDispatch);
         }
 
         /// <summary>
         /// Tells the player what their advertisement did, and — when it did nothing — why.
         ///
         /// The "why" is the point. A posting that draws nobody is indistinguishable from a broken
-        /// feature unless the game says whether skill, equipment, or fulfilment stopped the reply.
+        /// feature unless the game says whether skill, equipment, fulfilment, or emergency reach
+        /// stopped the reply.
         /// The posted wage is intentionally not one of those reasons.
         /// </summary>
         private static void Report(IntercolonyWorldComponent state, JobPosting posting, int arrived,
@@ -585,7 +752,8 @@ namespace Intercolony
             posting.noAnswerNotified = true;
 
             string explanation;
-            if (posting.requestedEquipmentLevel == LaborEquipmentLevel.Any)
+            if (posting.requestedEquipmentLevel == LaborEquipmentLevel.Any &&
+                !posting.emergencyDispatch)
             {
                 // Any has no equipment gate; preserve its legacy explanation byte for byte.
                 explanation = ExplainSilence(state, posting, standing);
@@ -604,6 +772,10 @@ namespace Intercolony
             {
                 explanation = string.Format(
                     NoSkillQualifiedExplanation, posting.SkillLabel);
+            }
+            else if (attempt.emergencyReachRejected > 0)
+            {
+                explanation = NoEmergencyReachExplanation;
             }
             else
             {
@@ -860,23 +1032,26 @@ namespace Intercolony
         /// </summary>
         public static bool GoingRate(
             IntercolonyWorldComponent state, SkillDef skill, int minLevel, int termDays,
-            CombatClause clause, out int low, out int high, out int qualified)
+            CombatClause clause, out int low, out int high, out int qualified,
+            bool emergencyDispatch = false)
         {
             return GoingRate(
                 state, skill, minLevel, termDays, clause, WageStructure.Quadrum,
-                out low, out high, out qualified);
+                out low, out high, out qualified, emergencyDispatch);
         }
 
         /// <summary>
         /// The same band for a specific wage structure. Paying by the day carries a premium, so
         /// a daily posting genuinely costs more than a per-quadrum one for the same worker. The
         /// band is market information for the player, not an application threshold: applicants
-        /// still arrive based on the requirement and quote their own effective rate.
+        /// still arrive based on the requirement and quote their own effective rate. Emergency
+        /// previews use the same urgency multiplier as the applicant ask.
         /// </summary>
         public static bool GoingRate(
             IntercolonyWorldComponent state, SkillDef skill, int minLevel, int termDays,
             CombatClause clause, WageStructure structure,
-            out int low, out int high, out int qualified)
+            out int low, out int high, out int qualified,
+            bool emergencyDispatch = false)
         {
             low = 0;
             high = 0;
@@ -911,7 +1086,7 @@ namespace Intercolony
                     structure,
                     LaborCandidateService.DailyWageFor(
                         worker.pricedSkillValue, ProfileFor(state, worker.settlementId),
-                        worker.distanceTiles, termDays, standing, clause));
+                        worker.distanceTiles, termDays, standing, clause, emergencyDispatch));
 
                 if (ask < min)
                 {

@@ -40,6 +40,8 @@ namespace Intercolony
         private const int EmergencyPodMaxArrivalHours = 4;
         private const int EmergencyConventionalMinArrivalHours = 5;
         private const int EmergencyConventionalMaxArrivalHours = 9;
+        private const string EmergencyDropPodMethodLabel = "Drop pod";
+        private const string EmergencyCaravanMethodLabel = "Emergency caravan";
 
         /// <summary>
         /// One ordinary caravan day's geography is the furthest a source can plausibly compress
@@ -779,6 +781,22 @@ namespace Intercolony
             return QuoteEmergencyArrival(candidate).available;
         }
 
+        /// <summary>
+        /// The census-record equivalent of <see cref="CanReachEmergency(LaborCandidate)"/>. A
+        /// prospect has no pawn identity yet, so this answers route availability from its source
+        /// settlement and distance without materialising anything.
+        /// </summary>
+        internal static bool CanReachEmergency(LaborProspect prospect)
+        {
+            return QuoteEmergencyArrival(prospect).available;
+        }
+
+        internal static bool CanReachEmergency(
+            IntercolonyWorldComponent state, LaborProspect prospect)
+        {
+            return QuoteEmergencyArrival(state, prospect).available;
+        }
+
         private static bool IsEmergencyCandidate(LaborCandidate candidate)
         {
             return candidate != null && candidate.pawn != null && candidate.travelDays >= 0;
@@ -805,8 +823,14 @@ namespace Intercolony
                 return null;
             }
 
-            IntercolonyWorldComponent state = IntercolonyWorldComponent.Current;
-            Settlement settlement = IntercolonyMarketAccess.FindSettlement(candidate.settlementId);
+            return SourceSettlementProfile(
+                IntercolonyWorldComponent.Current, candidate.settlementId);
+        }
+
+        private static SettlementEconomicProfile SourceSettlementProfile(
+            IntercolonyWorldComponent state, int settlementId)
+        {
+            Settlement settlement = IntercolonyMarketAccess.FindSettlement(settlementId);
             return state == null || settlement == null
                 ? null
                 : state.GetProfile(settlement);
@@ -825,25 +849,66 @@ namespace Intercolony
             }
 
             SettlementEconomicProfile profile = SourceSettlementProfile(candidate);
+            int identityHash = Gen.HashCombineInt(
+                candidate.settlementId, candidate.pawn.thingIDNumber);
+            return QuoteEmergencyArrival(profile, candidate.distanceTiles, identityHash);
+        }
+
+        /// <summary>
+        /// Produces an emergency quote for a census record without generating a pawn. The source
+        /// settlement supplies the rapid-logistics capability and the prospect supplies distance;
+        /// a source-based identity keeps the same deterministic ETA band stable until matching.
+        /// </summary>
+        public static EmergencyArrivalQuote QuoteEmergencyArrival(LaborProspect prospect)
+        {
+            return QuoteEmergencyArrival(IntercolonyWorldComponent.Current, prospect);
+        }
+
+        internal static EmergencyArrivalQuote QuoteEmergencyArrival(
+            IntercolonyWorldComponent state, LaborProspect prospect)
+        {
+            if (!IsEmergencyProspect(prospect))
+            {
+                return UnavailableEmergencyArrivalQuote();
+            }
+
+            SettlementEconomicProfile profile = SourceSettlementProfile(state, prospect.settlementId);
+            int identityHash = Gen.HashCombineInt(
+                prospect.settlementId, Mathf.RoundToInt(prospect.distanceTiles * 10f));
+            return QuoteEmergencyArrival(profile, prospect.distanceTiles, identityHash);
+        }
+
+        private static bool IsEmergencyProspect(LaborProspect prospect)
+        {
+            return prospect != null && prospect.travelDays >= 0;
+        }
+
+        /// <summary>
+        /// The shared route and banding logic for pawn-backed candidates and census prospects.
+        /// Keeping the thresholds here makes a prospect's eligibility mean the same thing as a
+        /// direct-hire candidate's eligibility.
+        /// </summary>
+        private static EmergencyArrivalQuote QuoteEmergencyArrival(
+            SettlementEconomicProfile profile, float distanceTiles, int identityHash)
+        {
             if (profile != null &&
                 profile.rapidLogisticsCapability == SettlementRapidLogisticsCapability.DropPodsAvailable)
             {
                 int arrivalHours = DeterministicEmergencyArrivalHours(
-                    candidate, EmergencyPodMinArrivalHours, EmergencyPodMaxArrivalHours);
+                    identityHash, EmergencyPodMinArrivalHours, EmergencyPodMaxArrivalHours);
                 return new EmergencyArrivalQuote
                 {
                     available = true,
                     transport = EmploymentArrivalTransport.DropPod,
                     arrivalTicks = arrivalHours * GenDate.TicksPerHour,
-                    methodLabel = "Drop pod"
+                    methodLabel = EmergencyDropPodMethodLabel
                 };
             }
 
-            if (candidate.distanceTiles >= 0f &&
-                candidate.distanceTiles <= EmergencyConventionalMaxDistanceTiles)
+            if (distanceTiles >= 0f && distanceTiles <= EmergencyConventionalMaxDistanceTiles)
             {
                 int arrivalHours = DeterministicEmergencyArrivalHours(
-                    candidate,
+                    identityHash,
                     EmergencyConventionalMinArrivalHours,
                     EmergencyConventionalMaxArrivalHours);
                 return new EmergencyArrivalQuote
@@ -851,7 +916,7 @@ namespace Intercolony
                     available = true,
                     transport = EmploymentArrivalTransport.Conventional,
                     arrivalTicks = arrivalHours * GenDate.TicksPerHour,
-                    methodLabel = "Emergency caravan"
+                    methodLabel = EmergencyCaravanMethodLabel
                 };
             }
 
@@ -875,11 +940,9 @@ namespace Intercolony
         /// RimWorld's global random stream or the moving game clock.
         /// </summary>
         private static int DeterministicEmergencyArrivalHours(
-            LaborCandidate candidate, int minHours, int maxHours)
+            int identityHash, int minHours, int maxHours)
         {
-            int candidateHash = Gen.HashCombineInt(
-                candidate.settlementId, candidate.pawn.thingIDNumber);
-            int nonNegativeHash = candidateHash & int.MaxValue;
+            int nonNegativeHash = identityHash & int.MaxValue;
             int bandWidth = maxHours - minHours + 1;
             return minHours + nonNegativeHash % bandWidth;
         }

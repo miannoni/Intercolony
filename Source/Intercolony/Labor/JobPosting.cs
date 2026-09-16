@@ -201,6 +201,8 @@ namespace Intercolony
 
         public LaborEquipmentLevel requestedEquipmentLevel = LaborEquipmentLevel.Any;
 
+        public bool emergencyDispatch;
+
         // --- Lifecycle ---------------------------------------------------------------------
 
         public int postedTick;
@@ -249,14 +251,17 @@ namespace Intercolony
         public string SkillLabel =>
             skill == null ? "any work" : $"{skill.skillLabel.CapitalizeFirst()} {minSkillLevel}+";
 
+        private const string EmergencyHeadlineSuffix = " — Emergency";
+
         /// <summary>§35.2's headline, one line.</summary>
         public string Headline()
         {
             string equipmentRequirement = requestedEquipmentLevel == LaborEquipmentLevel.Any
                 ? ""
                 : $" — Equipment: {LaborEquipmentTierService.ShortLabel(requestedEquipmentLevel)}";
+            string emergencyRequirement = emergencyDispatch ? EmergencyHeadlineSuffix : "";
             return $"{SkillLabel} — open, {termDays}d, {wageStructure.Label()}, " +
-                   $"{combatClause.Label()}{equipmentRequirement}";
+                   $"{combatClause.Label()}{equipmentRequirement}{emergencyRequirement}";
         }
 
         public string StatusLine()
@@ -351,6 +356,7 @@ namespace Intercolony
             Scribe_Values.Look(ref wageStructure, "wageStructure", WageStructure.Daily);
             Scribe_Values.Look(ref combatClause, "combatClause", CombatClause.Civilian);
             Scribe_Values.Look(ref requestedEquipmentLevel, "requestedEquipmentLevel", LaborEquipmentLevel.Any);
+            Scribe_Values.Look(ref emergencyDispatch, "emergencyDispatch", false);
 
             Scribe_Values.Look(ref postedTick, "postedTick", 0);
             Scribe_Values.Look(ref expiryTick, "expiryTick", 0);

@@ -10,8 +10,8 @@ namespace Intercolony
     /// Writing a job advertisement (DESIGN.md §35.2, §114).
     ///
     /// §35.2's example screen has three lines — requirement, duration and market information — and
-    /// this is those three plus the two terms every employment already carries (§37's wage
-    /// structure and §42's combat clause), because an applicant is accepting all of it at once.
+    /// this is those three plus the terms every employment already carries (§37's wage structure,
+    /// §42's combat clause and emergency dispatch), because an applicant is accepting all of it at once.
     /// The posting itself names no number of positions: it stays open and the player hires as many
     /// applicants as they like.
     ///
@@ -82,13 +82,21 @@ namespace Intercolony
         private const float SliderWidth = 460f;
 
         private const float SkillButtonWidth = 200f;
+        private const float CheckboxSize = 24f;
+        private const float CheckboxMinimumHeight = 24f;
 
         private const string IntroText =
             "You name the requirement. Workers who qualify apply, and each one quotes their own " +
             "price, which you see before accepting anyone.";
+        private const string EmergencyHireRowLabel = "Urgency";
+        private const string EmergencyHireLabel = "Emergency hire";
+        private const string EmergencyHireTooltip =
+            "Matches immediately against workers who can actually reach the colony fast, narrowing " +
+            "the pool to sources with an emergency route and adding the emergency wage premium.";
 
         private readonly IntercolonyWorldComponent state;
-        private readonly Action<SkillDef, int, int, WageStructure, CombatClause, LaborEquipmentLevel> onConfirm;
+        private readonly Action<SkillDef, int, int, WageStructure, CombatClause,
+            LaborEquipmentLevel, bool> onConfirm;
 
         private SkillDef skill;
         private int minLevel = 8;
@@ -96,6 +104,7 @@ namespace Intercolony
         private WageStructure structure = WageStructure.Daily;
         private CombatClause clause = CombatClause.Civilian;
         private LaborEquipmentLevel requestedEquipmentLevel = LaborEquipmentLevel.Any;
+        private bool emergencyDispatch;
 
         private Vector2 optionsScroll;
 
@@ -110,7 +119,7 @@ namespace Intercolony
 
         public Dialog_CreateJobPosting(
             IntercolonyWorldComponent state,
-            Action<SkillDef, int, int, WageStructure, CombatClause, LaborEquipmentLevel> onConfirm)
+            Action<SkillDef, int, int, WageStructure, CombatClause, LaborEquipmentLevel, bool> onConfirm)
         {
             this.state = state;
             this.onConfirm = onConfirm;
@@ -169,7 +178,8 @@ namespace Intercolony
             {
                 // The posting is created with every term already set, so state.AddPosting never
                 // sees a partially specified posting.
-                onConfirm?.Invoke(skill, minLevel, termDays, structure, clause, requestedEquipmentLevel);
+                onConfirm?.Invoke(skill, minLevel, termDays, structure, clause,
+                    requestedEquipmentLevel, emergencyDispatch);
                 Close();
             }
 
@@ -238,6 +248,16 @@ namespace Intercolony
                 OpenEquipmentMenu();
             }
             y += ControlRowHeight + RowGap;
+
+            // Emergency is a posting term, so keep it in the same atomic form rather than
+            // allowing the dialog to create an ordinary posting and patch it afterward.
+            float emergencyHireHeight = EmergencyHireHeight();
+            DrawRowLabel(EmergencyHireRowLabel, y, emergencyHireHeight);
+            Rect emergencyHireRect = new Rect(
+                controlsX, y, SkillButtonWidth, emergencyHireHeight);
+            Widgets.CheckboxLabeled(emergencyHireRect, EmergencyHireLabel, ref emergencyDispatch);
+            TooltipHandler.TipRegion(emergencyHireRect, EmergencyHireTooltip);
+            y += emergencyHireHeight + RowGap;
 
             y = DrawSectionDivider(width, y);
 
@@ -378,6 +398,7 @@ namespace Intercolony
             }
             height += SliderRowHeight + RowGap;
             height += ControlRowHeight + RowGap;
+            height += EmergencyHireHeight() + RowGap;
             height += SectionGap;
 
             height += RateAdviceHeight(width - controlsX);
@@ -387,6 +408,18 @@ namespace Intercolony
             height += Mathf.Max(ClauseColumnHeight(columnWidth),
                 StructureColumnHeight(columnWidth));
             return height;
+        }
+
+        /// <summary>
+        /// CheckboxLabeled reserves the checkbox square from the label width, so measure the same
+        /// usable width here that the renderer receives. This keeps the tooltip and label inside
+        /// the row when the dialog is localized or the window is narrow.
+        /// </summary>
+        private static float EmergencyHireHeight()
+        {
+            return Mathf.Max(
+                CheckboxMinimumHeight,
+                Text.CalcHeight(EmergencyHireLabel, SkillButtonWidth - CheckboxSize));
         }
 
         private float ClauseColumnHeight(float width)
@@ -505,7 +538,7 @@ namespace Intercolony
         {
             int key = Gen.HashCombineInt(
                 Gen.HashCombineInt(skill?.shortHash ?? 0, minLevel, termDays, (int)clause),
-                (int)structure);
+                Gen.HashCombineInt((int)structure, emergencyDispatch ? 1 : 0));
             if (key == rateKey)
             {
                 return;
@@ -514,10 +547,10 @@ namespace Intercolony
             rateKey = key;
             bool askValid = JobPostingService.GoingRate(
                 state, skill, minLevel, termDays, clause, WageStructure.Quadrum,
-                out askRateLow, out askRateHigh, out qualified);
+                out askRateLow, out askRateHigh, out qualified, emergencyDispatch);
             rateValid = JobPostingService.GoingRate(
                 state, skill, minLevel, termDays, clause, structure,
-                out rateLow, out rateHigh, out int chargedQualified);
+                out rateLow, out rateHigh, out int chargedQualified, emergencyDispatch);
             rateValid = rateValid && askValid && chargedQualified == qualified;
         }
 
