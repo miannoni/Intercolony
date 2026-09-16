@@ -258,9 +258,9 @@
     "semantic_hash": ""
   },
   "Source/Intercolony/Debug/IntercolonyLaborSelfTest.cs": {
-    "mtime": 1789515551.5781784,
-    "seen": 1789515888.9646301,
-    "ast_hash": "9684aee580e6976f486364186ea499d1",
+    "mtime": 1789516771.690271,
+    "seen": 1789517081.641493,
+    "ast_hash": "b5909a8b877be0b7f2894700f78fef6d",
     "semantic_hash": ""
   },
   "Source/Intercolony/Debug/IntercolonyLaborSelfTestSupport.cs": {
@@ -528,8 +528,8 @@
     "semantic_hash": ""
   },
   "Source/Intercolony/Labor/LaborCandidateService.cs": {
-    "mtime": 1789516189.7747228,
-    "seen": 1789516285.161946,
+    "mtime": 1789516987.223962,
+    "seen": 1789517081.641599,
     "ast_hash": "8862c8e588389a6f5298be6d15d5f741",
     "semantic_hash": ""
   },
@@ -1158,9 +1158,9 @@
     "semantic_hash": ""
   },
   "FOREMAN.md": {
-    "mtime": 1789514080.4877582,
-    "seen": 1789515888.964886,
-    "ast_hash": "2b80f772614374e64951a6ead94148db",
+    "mtime": 1789516337.7484727,
+    "seen": 1789517081.6418371,
+    "ast_hash": "6cd882456b5e70b847f3b7053b23d17e",
     "semantic_hash": ""
   },
   "PROGRESS.md": {
