@@ -1158,15 +1158,15 @@
     "semantic_hash": ""
   },
   "FOREMAN.md": {
-    "mtime": 1789531866.2796133,
-    "seen": 1789535996.7294881,
-    "ast_hash": "aaa1c74b6344f8552257d9667cbc56dc",
+    "mtime": 1789536661.7828126,
+    "seen": 1789536661.985735,
+    "ast_hash": "e00c4c1c482d7e993bb24717b1139c79",
     "semantic_hash": ""
   },
   "PROGRESS.md": {
-    "mtime": 1789416253.9778478,
-    "seen": 1789515888.9648876,
-    "ast_hash": "f531f1b763f71824e80dc9932432e95f",
+    "mtime": 1789536451.82947,
+    "seen": 1789536661.9857392,
+    "ast_hash": "98bc198be7efa10091b3e7574eeca530",
     "semantic_hash": ""
   },
   "README.md": {
@@ -1284,9 +1284,9 @@
     "semantic_hash": ""
   },
   "docs/PENDING_PLAYTESTS.md": {
-    "mtime": 1789419669.0936668,
-    "seen": 1789515888.9649198,
-    "ast_hash": "1169edac082ff259f413c2cf90851d85",
+    "mtime": 1789536450.217173,
+    "seen": 1789536661.9857967,
+    "ast_hash": "8adb7b6188e2a5265a1790d863742cee",
     "semantic_hash": ""
   },
   "docs/PLAYTEST_BATCH_SOURCE_PLAN.md": {
