@@ -44,6 +44,13 @@ namespace Intercolony
         private const float EmployeeActionHeight = 30f;
         private const float EmployeeCheckboxSize = 24f;
         private const float CandidateRowHeight = 32f;
+        private const float CandidateCellTextPadding = 14f;
+        private const string EmergencyArrivalTooltipPrefix = "Emergency arrival: ";
+        private const string EmergencyArrivalTooltipSuffix = ".";
+        private const string EmergencyNoWorkersMessage =
+            "No workers are currently on offer.\n\n" +
+            "There is no direct-hire market to dispatch right now. Check back then, or post a job and " +
+            "let people come to you.";
 
         private static int EmployeeActionCountFor(EmploymentContract contract)
         {
@@ -304,20 +311,20 @@ namespace Intercolony
 
             if (emergencyDispatch)
             {
-                pool.RemoveAll(candidate => !LaborCandidateService.CanReachEmergency(candidate));
+                // Emergency dispatch offers only candidates with a valid route; the quote map below
+                // can therefore describe every listed worker without an unavailable UI state.
+                pool.RemoveAll(candidate =>
+                    !LaborCandidateService.CanReachEmergency(candidate));
             }
+
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> emergencyArrivalQuotes =
+                emergencyDispatch ? BuildEmergencyArrivalQuotes(pool) : null;
 
             if (pool.Count == 0)
             {
                 GUI.color = Color.gray;
-                // Capability and travel filtering can leave the emergency list empty even when
-                // the ordinary listing contains workers.
                 string emptyMessage = emergencyDispatch
-                    ? "No workers are currently on offer.\n\n" +
-                      "Emergency dispatch filters the existing direct-hire market; it does not " +
-                      "create workers or queue an urgent request. There is therefore nothing to " +
-                      "dispatch until the market refreshes. Check back then, or post a job and " +
-                      "let people come to you."
+                    ? EmergencyNoWorkersMessage
                     : "No workers on offer.\n\n" +
                       "Settlements you can reach are not releasing labor at the moment. The listing " +
                       "changes with the market — check back after the next refresh, or post a job and " +
@@ -328,10 +335,12 @@ namespace Intercolony
                 return;
             }
 
-            SortCandidates(pool);
+            SortCandidates(pool, emergencyDispatch, emergencyArrivalQuotes);
 
             Rect headerRect = new Rect(0f, y, inRect.width - 16f, HeaderHeight);
-            SetCandidateColumnWidths(headerRect.width, candidateColumnWidths);
+            SetCandidateColumnWidths(
+                headerRect.width, candidateColumnWidths, emergencyDispatch, pool,
+                emergencyArrivalQuotes);
             DrawWorkerHeader(headerRect, candidateColumnWidths);
             y += HeaderHeight + 2f;
 
@@ -343,7 +352,7 @@ namespace Intercolony
             for (int i = 0; i < pool.Count; i++)
             {
                 DrawCandidateRow(new Rect(0f, candidateY, listView.width, CandidateRowHeight), pool[i], i,
-                    state, candidateColumnWidths);
+                    state, candidateColumnWidths, emergencyDispatch, emergencyArrivalQuotes);
                 candidateY += CandidateRowHeight;
             }
 
@@ -1919,8 +1928,28 @@ namespace Intercolony
             }
         }
 
-        /// <summary>Column widths, proportional so the table fits whatever the window is.</summary>
-        private static void SetCandidateColumnWidths(float total, float[] widths)
+        private static Dictionary<LaborCandidate, EmergencyArrivalQuote> BuildEmergencyArrivalQuotes(
+            List<LaborCandidate> candidates)
+        {
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> quotes =
+                new Dictionary<LaborCandidate, EmergencyArrivalQuote>();
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                LaborCandidate candidate = candidates[i];
+                quotes[candidate] = LaborCandidateService.QuoteEmergencyArrival(candidate);
+            }
+
+            return quotes;
+        }
+
+        /// <summary>
+        /// Column widths, proportional so the table fits whatever the window is. Emergency mode
+        /// widens only the travel column because its route label is longer than an ordinary day.
+        /// </summary>
+        private static void SetCandidateColumnWidths(
+            float total, float[] widths, bool emergencyDispatch,
+            List<LaborCandidate> candidates,
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> emergencyArrivalQuotes)
         {
             float action = 90f;
             float usable = total - action;
@@ -1930,9 +1959,48 @@ namespace Intercolony
             widths[(int)WorkerColumn.MinTerm] = usable * 0.11f;
             widths[(int)WorkerColumn.Travel] = usable * 0.11f;
             widths[(int)WorkerColumn.Source] = usable * 0.17f;
+
+            if (!emergencyDispatch)
+            {
+                return;
+            }
+
+            // Measure the exact runtime labels so the method name remains visible without
+            // changing ordinary hiring's established column proportions.
+            float minimumTravelWidth = EmergencyTravelColumnMinimumWidth(
+                candidates, emergencyArrivalQuotes);
+            float extraTravelWidth = Mathf.Max(
+                0f, minimumTravelWidth - widths[(int)WorkerColumn.Travel]);
+            float skillsReduction = Mathf.Min(
+                extraTravelWidth, Mathf.Max(0f, widths[(int)WorkerColumn.Skills] - 1f));
+            widths[(int)WorkerColumn.Skills] -= skillsReduction;
+            extraTravelWidth -= skillsReduction;
+
+            float sourceReduction = Mathf.Min(
+                extraTravelWidth, Mathf.Max(0f, widths[(int)WorkerColumn.Source] - 1f));
+            widths[(int)WorkerColumn.Source] -= sourceReduction;
+            widths[(int)WorkerColumn.Travel] +=
+                skillsReduction + sourceReduction;
         }
 
-        private void SortCandidates(List<LaborCandidate> pool)
+        private static float EmergencyTravelColumnMinimumWidth(
+            List<LaborCandidate> candidates,
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> emergencyArrivalQuotes)
+        {
+            float widestLabel = 0f;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                EmergencyArrivalQuote quote = emergencyArrivalQuotes[candidates[i]];
+                string arrivalLabel = Dialog_HireWorker.EmergencyArrivalDisplayLabel(quote);
+                widestLabel = Mathf.Max(widestLabel, Text.CalcSize(arrivalLabel).x);
+            }
+
+            return widestLabel + CandidateCellTextPadding;
+        }
+
+        private void SortCandidates(
+            List<LaborCandidate> pool, bool emergencyDispatch,
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> emergencyArrivalQuotes)
         {
             pool.Sort((a, b) =>
             {
@@ -1951,7 +2019,9 @@ namespace Intercolony
                         result = a.minTermDays.CompareTo(b.minTermDays);
                         break;
                     case WorkerColumn.Travel:
-                        result = a.travelDays.CompareTo(b.travelDays);
+                        result = emergencyDispatch
+                            ? CompareEmergencyArrival(a, b, emergencyArrivalQuotes)
+                            : a.travelDays.CompareTo(b.travelDays);
                         break;
                     case WorkerColumn.Source:
                         result = string.Compare(a.settlementName, b.settlementName,
@@ -1969,6 +2039,15 @@ namespace Intercolony
 
                 return workerSortDescending ? -result : result;
             });
+        }
+
+        private static int CompareEmergencyArrival(
+            LaborCandidate first, LaborCandidate second,
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> emergencyArrivalQuotes)
+        {
+            EmergencyArrivalQuote firstQuote = emergencyArrivalQuotes[first];
+            EmergencyArrivalQuote secondQuote = emergencyArrivalQuotes[second];
+            return firstQuote.arrivalTicks.CompareTo(secondQuote.arrivalTicks);
         }
 
         private static int TopSkillLevel(LaborCandidate candidate)
@@ -1991,7 +2070,9 @@ namespace Intercolony
         }
 
         private void DrawCandidateRow(
-            Rect rect, LaborCandidate candidate, int index, IntercolonyWorldComponent state, float[] widths)
+            Rect rect, LaborCandidate candidate, int index, IntercolonyWorldComponent state,
+            float[] widths, bool emergencyDispatch,
+            Dictionary<LaborCandidate, EmergencyArrivalQuote> emergencyArrivalQuotes)
         {
             if (index % 2 == 1)
             {
@@ -2001,6 +2082,11 @@ namespace Intercolony
             Widgets.DrawHighlightIfMouseover(rect);
 
             float x = rect.x;
+            EmergencyArrivalQuote emergencyArrivalQuote = default(EmergencyArrivalQuote);
+            if (emergencyDispatch)
+            {
+                emergencyArrivalQuote = emergencyArrivalQuotes[candidate];
+            }
 
             void Cell(int column, string text)
             {
@@ -2014,13 +2100,19 @@ namespace Intercolony
             // hiring dialog can only price it upwards. A bare number here would read as the price.
             Cell((int)WorkerColumn.Wage, $"ask {candidate.dailyWage:N0}");
             Cell((int)WorkerColumn.MinTerm, $"{candidate.minTermDays}d");
-            Cell((int)WorkerColumn.Travel, $"{candidate.travelDays}d");
+            string arrivalLabel = emergencyDispatch
+                ? Dialog_HireWorker.EmergencyArrivalDisplayLabel(emergencyArrivalQuote)
+                : $"{candidate.travelDays}d";
+            Cell((int)WorkerColumn.Travel, arrivalLabel);
             Cell((int)WorkerColumn.Source, candidate.settlementName);
 
             if (ShouldBuildTooltip(rect))
             {
                 TooltipHandler.TipRegion(
-                    rect, new TipSignal(CandidateTooltip(candidate), candidate.GetHashCode()));
+                    rect,
+                    new TipSignal(
+                        CandidateTooltip(candidate, emergencyDispatch, emergencyArrivalQuote),
+                        candidate.GetHashCode()));
             }
 
             Rect hireRect = new Rect(rect.xMax - 86f, rect.y + 2f, 80f, 28f);
@@ -2030,7 +2122,9 @@ namespace Intercolony
             }
         }
 
-        private static string CandidateTooltip(LaborCandidate candidate)
+        private static string CandidateTooltip(
+            LaborCandidate candidate, bool emergencyDispatch,
+            EmergencyArrivalQuote emergencyArrivalQuote)
         {
             string text =
                 $"{candidate.Name} — {candidate.factionName}\n" +
@@ -2057,8 +2151,18 @@ namespace Intercolony
                     "as a civilian.\n" +
                     "Longer terms cost less per day. Agreeing to fight costs more:\n" +
                     $"  armed employee asks {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Armed.WageFactor()):N0}/day, " +
-                    $"security contractor asks {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Security.WageFactor()):N0}/day.\n" +
-                    $"Takes {candidate.travelDays} days to reach the colony.";
+                    $"security contractor asks {Mathf.RoundToInt(candidate.dailyWage * CombatClause.Security.WageFactor()):N0}/day.\n";
+
+            if (emergencyDispatch)
+            {
+                text += EmergencyArrivalTooltipPrefix +
+                        Dialog_HireWorker.EmergencyArrivalDisplayLabel(emergencyArrivalQuote) +
+                        EmergencyArrivalTooltipSuffix;
+            }
+            else
+            {
+                text += $"Takes {candidate.travelDays} days to reach the colony.";
+            }
 
             return text;
         }

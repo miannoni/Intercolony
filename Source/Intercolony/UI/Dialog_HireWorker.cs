@@ -28,6 +28,11 @@ namespace Intercolony
         private const float CostColumnGap = 8f;
         private const float CostRowGap = 4f;
         private const float CostTooltipWidth = 18f;
+        private const string EmergencyArrivalSeparator = " — ";
+        private const string EmergencyPremiumRowLabel = "Emergency premium";
+        private const string ArrivalRowLabel = "Arrival";
+        private const string EmergencyArrivalTooltipText =
+            "The quoted emergency route and ETA are used by the hire contract.";
 
         private readonly LaborCandidate candidate;
         private readonly SettlementEconomicProfile profile;
@@ -103,6 +108,16 @@ namespace Intercolony
             return LaborCandidateService.DailyWage(
                 candidate.pawn, profile, candidate.distanceTiles,
                 openEnded ? maxTermDays : termDays, EmployerStanding, option, emergencyMode);
+        }
+
+        /// <summary>
+        /// The single UI composition point for an emergency route and ETA. Keeping it fed by the
+        /// complete quote prevents the row from drifting away from the contract's arrival choice.
+        /// </summary>
+        internal static string EmergencyArrivalDisplayLabel(EmergencyArrivalQuote quote)
+        {
+            return LaborCandidateService.ArrivalDurationLabel(quote.arrivalTicks) +
+                   EmergencyArrivalSeparator + quote.methodLabel;
         }
 
         public override void DoWindowContents(Rect inRect)
@@ -224,10 +239,13 @@ namespace Intercolony
             long totalDue = hireCostQuote.totalDue;
             int available = PurchaseOrderService.CountColonySilver(map);
             bool affordable = totalDue <= int.MaxValue && available >= totalDue;
+            EmergencyArrivalQuote emergencyArrivalQuote = emergencyDispatch
+                ? LaborCandidateService.QuoteEmergencyArrival(candidate)
+                : default(EmergencyArrivalQuote);
             int ordinaryWage = emergencyDispatch ? WageFor(clause, false) : wage;
             List<TermRow> costRows = BuildCostRows(
-                structure, hireCostQuote, available, candidate, emergencyDispatch,
-                ordinaryWage, wage);
+                structure, hireCostQuote, available, emergencyDispatch,
+                ordinaryWage, wage, emergencyArrivalQuote);
             float costHeight = CostRowsHeight(costRows, inRect.width);
 
             float bottom = inRect.height - 40f;
@@ -279,7 +297,8 @@ namespace Intercolony
 
         private static List<TermRow> BuildCostRows(
             WageStructure structure, EmploymentHireCostQuote hireCostQuote, int available,
-            LaborCandidate candidate, bool emergencyDispatch, int ordinaryWage, int wage)
+            bool emergencyDispatch, int ordinaryWage, int wage,
+            EmergencyArrivalQuote emergencyArrivalQuote)
         {
             List<TermRow> rows = new List<TermRow>
             {
@@ -295,17 +314,15 @@ namespace Intercolony
             if (emergencyDispatch)
             {
                 int premium = Mathf.Max(0, wage - ordinaryWage);
-                int arrivalTicks = LaborCandidateService.ArrivalTicksFor(candidate, true);
-                string arrivalMethod = LaborCandidateService.EmergencyArrivalMethodFor(candidate);
                 rows.Add(new TermRow(
-                    "Emergency premium",
+                    EmergencyPremiumRowLabel,
                     $"+{premium:N0} ask silver/day " +
                     $"({LaborCandidateService.EmergencyDispatchWageMultiplier:0.#}x wage)",
                     EmergencyPremiumTooltip(ordinaryWage, wage)));
                 rows.Add(new TermRow(
-                    "Arrival",
-                    $"{LaborCandidateService.ArrivalDurationLabel(arrivalTicks)} — {arrivalMethod}",
-                    EmergencyArrivalTooltip(candidate, arrivalTicks, arrivalMethod)));
+                    ArrivalRowLabel,
+                    EmergencyArrivalDisplayLabel(emergencyArrivalQuote),
+                    EmergencyArrivalTooltipText));
             }
 
             rows.Add(new TermRow("Due at hire", $"{hireCostQuote.totalDue:N0} silver"));
@@ -319,14 +336,6 @@ namespace Intercolony
                    $"urgency multiplier in the shared wage calculation ({ordinaryWage:N0} ordinary to " +
                    $"{emergencyWage:N0} ask silver/day). It pays for priority and mobilisation; it does " +
                    "not guarantee that a worker exists or can fulfil the request.";
-        }
-
-        private static string EmergencyArrivalTooltip(
-            LaborCandidate candidate, int arrivalTicks, string arrivalMethod)
-        {
-            return $"This worker's source settlement can send them by {arrivalMethod} in " +
-                   $"{LaborCandidateService.ArrivalDurationLabel(arrivalTicks)}. " +
-                   $"Their ordinary travel estimate is {candidate.travelDays} days.";
         }
 
         private static float CostRowsHeight(List<TermRow> rows, float width)
