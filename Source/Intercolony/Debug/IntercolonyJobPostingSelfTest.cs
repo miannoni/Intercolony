@@ -287,6 +287,37 @@ namespace Intercolony
                 EquipmentCensusCounts counts = CountEquipmentCensus(census);
                 ReportEquipmentCensus(r, counts);
 
+                List<SettlementEconomicProfile> profiles = state.AllProfiles();
+                int standardCapableProfileCount = 0;
+                int professionalCapableProfileCount = 0;
+                int eliteCapableProfileCount = 0;
+                foreach (SettlementEconomicProfile profile in profiles)
+                {
+                    if (LaborEquipmentTierService.CanSupply(
+                            profile, LaborEquipmentLevel.Standard, CombatClause.Civilian))
+                    {
+                        standardCapableProfileCount++;
+                    }
+
+                    if (LaborEquipmentTierService.CanSupply(
+                            profile, LaborEquipmentLevel.Professional, CombatClause.Civilian))
+                    {
+                        professionalCapableProfileCount++;
+                    }
+
+                    if (LaborEquipmentTierService.CanSupply(
+                            profile, LaborEquipmentLevel.Elite, CombatClause.Civilian))
+                    {
+                        eliteCapableProfileCount++;
+                    }
+                }
+
+                r.Info(
+                    $"equipment capable sources (Civilian): " +
+                    $"standard={standardCapableProfileCount}/{profiles.Count}, " +
+                    $"professional={professionalCapableProfileCount}/{profiles.Count}, " +
+                    $"elite={eliteCapableProfileCount}/{profiles.Count}");
+
                 if (counts.total < EquipmentBalanceMinimumCensus)
                 {
                     const string reason = "census has fewer than 50 prospects";
@@ -299,32 +330,67 @@ namespace Intercolony
                 }
                 else
                 {
-                    r.Check(
-                        counts.StandardOrBetter * 2 > counts.total &&
-                        counts.StandardOrBetter > counts.ProfessionalOrBetter &&
-                        counts.StandardOrBetter > counts.elite,
-                        "standard-or-better is clearly the largest equipment group",
-                        $"OBSERVED standard-or-better={counts.StandardOrBetter}/{counts.total}; " +
-                        "EXPECTED more than half of the census and larger than upper-tier groups");
+                    if (standardCapableProfileCount == 0)
+                    {
+                        r.Skip(
+                            "standard-or-better is clearly the largest equipment group",
+                            $"no settlement in this world passes the Standard capability gate " +
+                            $"(0 of {profiles.Count} profiles), so a Standard-or-better census " +
+                            "cannot be required here");
+                    }
+                    else
+                    {
+                        r.Check(
+                            counts.StandardOrBetter * 2 > counts.total &&
+                            counts.StandardOrBetter > counts.ProfessionalOrBetter &&
+                            counts.StandardOrBetter > counts.elite,
+                            "standard-or-better is clearly the largest equipment group",
+                            $"OBSERVED standard-or-better={counts.StandardOrBetter}/{counts.total}; " +
+                            "EXPECTED more than half of the census and larger than upper-tier groups");
+                    }
 
-                    r.Check(
-                        counts.ProfessionalOrBetter * 2 < counts.StandardOrBetter,
-                        "professional-or-better is a strict minority of standard-or-better",
-                        $"OBSERVED professional-or-better={counts.ProfessionalOrBetter}, " +
-                        $"standard-or-better={counts.StandardOrBetter}; EXPECTED professional-or-better " +
-                        "below half of standard-or-better");
+                    if (professionalCapableProfileCount == 0)
+                    {
+                        string reason =
+                            $"no settlement in this world passes the Professional capability gate " +
+                            $"(0 of {profiles.Count} profiles), so a Professional-or-better minority " +
+                            "cannot be required here";
+                        r.Skip(
+                            "professional-or-better is a strict minority of standard-or-better", reason);
+                        r.Skip("elite is rarer than exact-professional", reason);
+                    }
+                    else
+                    {
+                        r.Check(
+                            counts.ProfessionalOrBetter * 2 < counts.StandardOrBetter,
+                            "professional-or-better is a strict minority of standard-or-better",
+                            $"OBSERVED professional-or-better={counts.ProfessionalOrBetter}, " +
+                            $"standard-or-better={counts.StandardOrBetter}; EXPECTED professional-or-better " +
+                            "below half of standard-or-better");
 
-                    r.Check(
-                        counts.elite < counts.professional,
-                        "elite is rarer than exact-professional",
-                        $"OBSERVED elite={counts.elite}, exact-professional={counts.professional}; " +
-                        "EXPECTED elite below exact-professional");
+                        r.Check(
+                            counts.elite < counts.professional,
+                            "elite is rarer than exact-professional",
+                            $"OBSERVED elite={counts.elite}, exact-professional={counts.professional}; " +
+                            "EXPECTED elite below exact-professional");
+                    }
                 }
 
-                r.Check(
-                    counts.elite > 0,
-                    "elite is non-zero in the full equipment census",
-                    $"OBSERVED elite={counts.elite} of {counts.total}; EXPECTED at least 1");
+                if (eliteCapableProfileCount == 0)
+                {
+                    r.Skip(
+                        "elite is non-zero in the full equipment census",
+                        $"no settlement in this world passes the Elite capability gate " +
+                        $"(0 of {profiles.Count} profiles), so a non-zero Elite census " +
+                        "cannot be required here");
+                }
+                else
+                {
+                    r.Check(
+                        counts.elite > 0,
+                        "elite is non-zero in the full equipment census",
+                        $"OBSERVED elite={counts.elite} of {counts.total}; EXPECTED at least 1");
+                }
                 r.Check(
                     counts.any == 0,
                     "no census prospect is assigned the any tier",

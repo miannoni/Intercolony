@@ -894,20 +894,20 @@ namespace Intercolony
             if (profile != null &&
                 profile.rapidLogisticsCapability == SettlementRapidLogisticsCapability.DropPodsAvailable)
             {
-                int arrivalHours = DeterministicEmergencyArrivalHours(
+                int quotedArrivalTicks = DeterministicEmergencyArrivalTicks(
                     identityHash, EmergencyPodMinArrivalHours, EmergencyPodMaxArrivalHours);
                 return new EmergencyArrivalQuote
                 {
                     available = true,
                     transport = EmploymentArrivalTransport.DropPod,
-                    arrivalTicks = arrivalHours * GenDate.TicksPerHour,
+                    arrivalTicks = quotedArrivalTicks,
                     methodLabel = EmergencyDropPodMethodLabel
                 };
             }
 
             if (distanceTiles >= 0f && distanceTiles <= EmergencyConventionalMaxDistanceTiles)
             {
-                int arrivalHours = DeterministicEmergencyArrivalHours(
+                int quotedArrivalTicks = DeterministicEmergencyArrivalTicks(
                     identityHash,
                     EmergencyConventionalMinArrivalHours,
                     EmergencyConventionalMaxArrivalHours);
@@ -915,7 +915,7 @@ namespace Intercolony
                 {
                     available = true,
                     transport = EmploymentArrivalTransport.Conventional,
-                    arrivalTicks = arrivalHours * GenDate.TicksPerHour,
+                    arrivalTicks = quotedArrivalTicks,
                     methodLabel = EmergencyCaravanMethodLabel
                 };
             }
@@ -936,15 +936,18 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Maps a stable candidate identity into an inclusive integer-hour band without touching
+        /// Maps a stable candidate identity into an inclusive tick band without touching
         /// RimWorld's global random stream or the moving game clock.
         /// </summary>
-        private static int DeterministicEmergencyArrivalHours(
+        internal static int DeterministicEmergencyArrivalTicks(
             int identityHash, int minHours, int maxHours)
         {
             int nonNegativeHash = identityHash & int.MaxValue;
-            int bandWidth = maxHours - minHours + 1;
-            return minHours + nonNegativeHash % bandWidth;
+            int minTicks = minHours * GenDate.TicksPerHour;
+            int maxTicks = maxHours * GenDate.TicksPerHour;
+            // Tick resolution matters because whole-hour resolution offered only four possible
+            // pod ETAs and could not express the plan's 2.3h example.
+            return minTicks + nonNegativeHash % (maxTicks - minTicks + 1);
         }
 
         /// <summary>
