@@ -117,7 +117,30 @@ function Read-LockedFile($path) {
     # Get-Content fails on it; FileShare.ReadWrite does not. This is what
     # lets us read the log without closing the game.
     if (-not (Test-Path $path)) { return "" }
-    $fs = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+
+    $maxAttempts = 10
+    $retryDelayMs = 250
+    $fs = $null
+    $lastException = $null
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            $fs = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+            break
+        } catch [System.IO.IOException] {
+            if (($_.Exception.HResult -band 0xFFFF) -ne 32) { throw }
+            $lastException = $_.Exception
+        } catch [System.Management.Automation.MethodInvocationException] {
+            $innerException = $_.Exception.InnerException
+            if (($innerException -isnot [System.IO.IOException]) -or (($innerException.HResult -band 0xFFFF) -ne 32)) { throw }
+            $lastException = $innerException
+        }
+        if ($attempt -lt $maxAttempts) { Start-Sleep -Milliseconds $retryDelayMs }
+    }
+    if ($null -eq $fs) {
+        $retryWindowMs = ($maxAttempts - 1) * $retryDelayMs
+        throw "File '$path' stayed locked for the whole retry window ($maxAttempts attempts over about ${retryWindowMs}ms). Last error: $($lastException.Message)"
+    }
+
     try {
         $sr = New-Object System.IO.StreamReader($fs)
         try { return $sr.ReadToEnd() } finally { $sr.Dispose() }
