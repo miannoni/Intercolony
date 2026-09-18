@@ -103,16 +103,19 @@ namespace Intercolony
             public readonly string Id;
             public readonly string Label;
             public readonly bool RequiresMap;
+            public readonly bool IncludeInAll;
             internal readonly Func<IntercolonyWorldComponent, Map, string> Invoke;
 
             internal SelfTestDefinition(
                 string id, string label, bool requiresMap,
-                Func<IntercolonyWorldComponent, Map, string> invoke)
+                Func<IntercolonyWorldComponent, Map, string> invoke,
+                bool includeInAll = true)
             {
                 Id = id;
                 Label = label;
                 RequiresMap = requiresMap;
                 Invoke = invoke;
+                IncludeInAll = includeInAll;
             }
         }
 
@@ -138,7 +141,8 @@ namespace Intercolony
             new SelfTestDefinition("performance", "performance", false,
                 (s, m) => IntercolonyPerformanceProfile.Run(s, m)),
             new SelfTestDefinition("posting-timings", "posting timings", false,
-                (s, m) => IntercolonyPostingTimingsSelfTest.Run(s)),
+                (s, m) => IntercolonyPostingTimingsSelfTest.Run(s),
+                includeInAll: false),
             new SelfTestDefinition("profile", "profile", false,
                 (s, m) => IntercolonyProfileSelfTest.Run()),
             new SelfTestDefinition("market", "market", false,
@@ -280,6 +284,11 @@ namespace Intercolony
 
             foreach (SelfTestDefinition definition in Definitions)
             {
+                if (!definition.IncludeInAll)
+                {
+                    continue;
+                }
+
                 SuiteResult result = RunDefinition(state, definition, map);
                 suite.results.Add(result);
                 if (result.Ran)
