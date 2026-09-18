@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -5041,6 +5042,19 @@ namespace Intercolony
                     !unavailableWorker.Spawned)
                 {
                     unavailableWorker.Destroy(DestroyMode.Vanish);
+                }
+                if (unavailableWorker != null && Find.WorldPawns != null)
+                {
+                    if (Find.WorldPawns.Contains(unavailableWorker))
+                    {
+                        Find.WorldPawns.RemoveAndDiscardPawnViaGC(unavailableWorker);
+                    }
+                    else if (!unavailableWorker.Discarded)
+                    {
+                        Find.WorldPawns.PassToWorld(
+                            unavailableWorker,
+                            PawnDiscardDecideMode.Discard);
+                    }
                 }
             }
         }
