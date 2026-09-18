@@ -14,6 +14,7 @@ namespace Intercolony
     {
         private const int PhaseCount = 5;
         private static Session currentSession;
+        private static Action<string> timingSummarySink;
 
         /// <summary>Default-off switch for the temporary Emergency posting measurement.</summary>
         public static bool Enabled;
@@ -32,20 +33,52 @@ namespace Intercolony
             allowedGameStates = AllowedGameStates.Playing, displayPriority = 45)]
         private static void PostEmergencyEliteTimingFixture()
         {
+            RunEmergencyEliteTimingFixture(IntercolonyWorldComponent.Current);
+        }
+
+        internal sealed class TimingFixtureResult
+        {
+            internal readonly string ConfigurationLine;
+            internal readonly string TimingBlock;
+            internal readonly Exception PostingException;
+            internal readonly int ApplicantCount;
+
+            internal TimingFixtureResult(
+                string configurationLine, string timingBlock,
+                Exception postingException, int applicantCount)
+            {
+                ConfigurationLine = configurationLine;
+                TimingBlock = timingBlock;
+                PostingException = postingException;
+                ApplicantCount = applicantCount;
+            }
+        }
+
+        /// <summary>
+        /// Runs the committed P0.2 Emergency + Elite stress case. The debug action and the
+        /// bridge-runnable self-test deliberately share this method so the measured path cannot
+        /// drift between a human click and an automated run.
+        /// </summary>
+        internal static TimingFixtureResult RunEmergencyEliteTimingFixture(
+            IntercolonyWorldComponent state)
+        {
             const int minimumSkillLevel = 0;
             const int termDays = 20;
             bool previousEnabled = Enabled;
+            Action<string> previousTimingSummarySink = timingSummarySink;
             JobPosting posting = null;
             string failReason = null;
             Exception postingException = null;
+            string timingBlock = null;
 
             try
             {
                 Enabled = true;
+                timingSummarySink = summary => timingBlock = summary;
                 try
                 {
                     posting = JobPostingService.TryPost(
-                        IntercolonyWorldComponent.Current,
+                        state,
                         null,
                         minimumSkillLevel,
                         termDays,
@@ -64,16 +97,20 @@ namespace Intercolony
                 string exceptionDetail = postingException == null
                     ? "none"
                     : $"{postingException.GetType().Name}: {postingException.Message}";
-                IntercolonyLog.Message(
+                string configurationLine =
                     "P0 Emergency + Elite timing fixture: " +
                     $"tier={LaborEquipmentLevel.Elite}, skill requirement=any " +
                     $"(skill=null, min={minimumSkillLevel}), emergency=True, " +
                     $"applicants={applicantCount}/{JobPostingService.MaxWaitingApplicants}, " +
                     $"postingCreated={posting != null}, failReason={failReason ?? "none"}, " +
-                    $"exception={exceptionDetail}");
+                    $"exception={exceptionDetail}";
+                IntercolonyLog.Message(configurationLine);
+                return new TimingFixtureResult(
+                    configurationLine, timingBlock, postingException, applicantCount);
             }
             finally
             {
+                timingSummarySink = previousTimingSummarySink;
                 Enabled = previousEnabled;
             }
         }
@@ -228,7 +265,9 @@ namespace Intercolony
                 AppendPhase(summary, PostingTimingPhase.EquipmentFulfilment, includeCallStats: true);
                 AppendPhase(summary, PostingTimingPhase.FinalApplicantPublication);
 
-                IntercolonyLog.Message(summary.ToString());
+                string timingBlock = summary.ToString();
+                timingSummarySink?.Invoke(timingBlock);
+                IntercolonyLog.Message(timingBlock);
             }
 
             private void AppendPhase(

@@ -137,6 +137,8 @@ namespace Intercolony
                 (s, m) => IntercolonyTimelineSelfTest.Run(s)),
             new SelfTestDefinition("performance", "performance", false,
                 (s, m) => IntercolonyPerformanceProfile.Run(s, m)),
+            new SelfTestDefinition("posting-timings", "posting timings", false,
+                (s, m) => IntercolonyPostingTimingsSelfTest.Run(s)),
             new SelfTestDefinition("profile", "profile", false,
                 (s, m) => IntercolonyProfileSelfTest.Run()),
             new SelfTestDefinition("market", "market", false,
