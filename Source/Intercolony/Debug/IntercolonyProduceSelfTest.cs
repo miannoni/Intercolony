@@ -109,6 +109,7 @@ namespace Intercolony
                     r, state, map, loops, reservedCells, testRects, addedDesignations);
 
                 Subject subject = FindSubject();
+                CheckProduceEntrypointAssertions(r, map, subject);
                 if (subject == null)
                 {
                     r.Check(
@@ -3082,6 +3083,403 @@ namespace Intercolony
                         map,
                         GenAdj.OccupiedRect(installedCell, Rot4.North, subject.thingDef.Size));
                 }
+            }
+        }
+
+        private static void CheckProduceEntrypointAssertions(
+            Results r,
+            Map map,
+            Subject subject)
+        {
+            CheckObjectProduceControlsEntryPoint(r, map, subject);
+            CheckArchitectProduceControlsEntryPoint(r);
+            CheckNewProductionEntryPoint(r, map);
+            CheckProductionDesignatorRegistration(r);
+            CheckNoProduceDesignatorsInOrders(r);
+        }
+
+        private static void CheckObjectProduceControlsEntryPoint(
+            Results r,
+            Map map,
+            Subject subject)
+        {
+            const string assertion =
+                "object-side Produce controls opens Dialog_ProducePresetManager";
+            if (subject == null)
+            {
+                r.Skip(assertion, "no loaded minifiable stuff-built building");
+                return;
+            }
+
+            WindowStack windowStack = Find.WindowStack;
+            if (windowStack == null)
+            {
+                r.Skip(assertion, "the live WindowStack is unavailable");
+                return;
+            }
+
+            if (HasProduceWindow(windowStack))
+            {
+                r.Skip(
+                    assertion,
+                    "a Produce manager or editor window is already open, so the diagnostic " +
+                    "cannot observe a new window without replacing player UI state");
+                return;
+            }
+
+            ProduceLoopMapComponent liveLoops = ProduceLoopMapComponent.For(map);
+            if (liveLoops == null)
+            {
+                r.Skip(assertion, "the current map has no ProduceLoopMapComponent");
+                return;
+            }
+
+            HashSet<IntVec3> reservedCells = new HashSet<IntVec3>();
+            List<CellRect> testRects = new List<CellRect>();
+            IntVec3 cell;
+            if (!TryFindBuildCell(
+                    map,
+                    liveLoops,
+                    subject,
+                    Rot4.North,
+                    reservedCells,
+                    out cell))
+            {
+                r.Skip(assertion, "no empty valid cell for the live gizmo fixture");
+                return;
+            }
+
+            RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
+            Building building = null;
+            bool loopEnabled = false;
+            bool routedToManager = false;
+            string detail = null;
+            try
+            {
+                building = SpawnFinishedBuilding(map, subject, cell, Rot4.North);
+                if (building == null)
+                {
+                    r.Skip(assertion, "could not spawn the live gizmo fixture");
+                    return;
+                }
+
+                liveLoops.Enable(
+                    cell,
+                    Rot4.North,
+                    subject.thingDef,
+                    subject.stuffDef,
+                    null);
+                loopEnabled = true;
+
+                Command_Action controlsGizmo = null;
+                foreach (Gizmo gizmo in Thing_GetGizmos_ProduceLoop_Patch.Postfix(
+                    new List<Gizmo>(),
+                    building))
+                {
+                    Command_Action command = gizmo as Command_Action;
+                    if (command != null && command.defaultLabel == "Produce controls")
+                    {
+                        controlsGizmo = command;
+                        break;
+                    }
+                }
+
+                if (controlsGizmo == null || controlsGizmo.action == null)
+                {
+                    detail =
+                        "the actual Thing.GetGizmos postfix did not expose an executable " +
+                        "Produce controls Command_Action";
+                }
+                else
+                {
+                    // RED if ProduceGizmoPatch.cs changes this action back to
+                    // new Dialog_ProduceControls(map, cell).
+                    controlsGizmo.action();
+                    routedToManager =
+                        windowStack.WindowOfType<Dialog_ProducePresetManager>() != null &&
+                        windowStack.WindowOfType<Dialog_ProduceControls>() == null;
+                    detail =
+                        "actual gizmo action opened " +
+                        (windowStack.WindowOfType<Dialog_ProducePresetManager>()?.GetType().Name ??
+                            "no manager window");
+                }
+            }
+            catch (Exception ex)
+            {
+                detail =
+                    $"actual object gizmo route threw {ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                CloseProduceWindows(windowStack);
+                if (loopEnabled)
+                {
+                    liveLoops.Disable(cell);
+                }
+
+                if (building != null && !building.Destroyed)
+                {
+                    building.Destroy();
+                }
+            }
+
+            // RED if the object gizmo action is changed back to
+            // new Dialog_ProduceControls(map, cell).
+            r.Check(routedToManager, assertion, detail);
+        }
+
+        private static void CheckArchitectProduceControlsEntryPoint(Results r)
+        {
+            const string assertion =
+                "Architect Produce controls opens the same Dialog_ProducePresetManager";
+            WindowStack windowStack = Find.WindowStack;
+            if (windowStack == null)
+            {
+                r.Skip(assertion, "the live WindowStack is unavailable");
+                return;
+            }
+
+            if (Find.CurrentMap == null)
+            {
+                r.Skip(assertion, "there is no current map for the Architect action");
+                return;
+            }
+
+            if (HasProduceWindow(windowStack))
+            {
+                r.Skip(
+                    assertion,
+                    "a Produce manager or editor window is already open, so the diagnostic " +
+                    "cannot observe a new window without replacing player UI state");
+                return;
+            }
+
+            DesignationCategoryDef productionCategory =
+                DefDatabase<DesignationCategoryDef>.GetNamedSilentFail("IntercolonyProduction");
+            Designator_ProducePresetManager managerDesignator = null;
+            if (productionCategory != null && productionCategory.AllResolvedDesignators != null)
+            {
+                List<Designator> designators = productionCategory.AllResolvedDesignators;
+                for (int i = 0; i < designators.Count; i++)
+                {
+                    managerDesignator = designators[i] as Designator_ProducePresetManager;
+                    if (managerDesignator != null)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            bool routedToManager = false;
+            string detail;
+            if (productionCategory == null)
+            {
+                detail = "IntercolonyProduction DesignationCategoryDef is missing";
+            }
+            else if (managerDesignator == null)
+            {
+                detail =
+                    "the resolved IntercolonyProduction category has no " +
+                    "Designator_ProducePresetManager";
+            }
+            else
+            {
+                try
+                {
+                    // RED if Designator_ProducePresetManager.ProcessInput stops adding
+                    // Dialog_ProducePresetManager and targets another window instead.
+                    managerDesignator.ProcessInput(null);
+                    routedToManager =
+                        windowStack.WindowOfType<Dialog_ProducePresetManager>() != null &&
+                        windowStack.WindowOfType<Dialog_ProduceControls>() == null;
+                    detail =
+                        "registered Architect designator opened " +
+                        (windowStack.WindowOfType<Dialog_ProducePresetManager>()?.GetType().Name ??
+                            "no manager window");
+                }
+                catch (Exception ex)
+                {
+                    detail =
+                        $"registered Architect designator route threw {ex.GetType().Name}: " +
+                        ex.Message;
+                }
+            }
+
+            CloseProduceWindows(windowStack);
+            // RED if the registered Architect action routes to anything other than
+            // Dialog_ProducePresetManager.
+            r.Check(routedToManager, assertion, detail);
+        }
+
+        private static void CheckNewProductionEntryPoint(Results r, Map map)
+        {
+            const string assertion =
+                "New production opens the existing Dialog_ProduceControls editor";
+            WindowStack windowStack = Find.WindowStack;
+            if (windowStack == null)
+            {
+                r.Skip(assertion, "the live WindowStack is unavailable");
+                return;
+            }
+
+            if (HasProduceWindow(windowStack))
+            {
+                r.Skip(
+                    assertion,
+                    "a Produce manager or editor window is already open, so the diagnostic " +
+                    "cannot observe a new window without replacing player UI state");
+                return;
+            }
+
+            MethodInfo openNewProduction = typeof(Dialog_ProducePresetManager).GetMethod(
+                "OpenNewProduction",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            bool routedToEditor = false;
+            string detail;
+            if (openNewProduction == null)
+            {
+                detail =
+                    "Dialog_ProducePresetManager.OpenNewProduction could not be found";
+            }
+            else
+            {
+                try
+                {
+                    Dialog_ProducePresetManager manager =
+                        new Dialog_ProducePresetManager(map, map.Center);
+
+                    // RED if Dialog_ProducePresetManager.OpenNewProduction stops adding
+                    // Dialog_ProduceControls and targets the manager or another window instead.
+                    openNewProduction.Invoke(manager, null);
+                    routedToEditor =
+                        windowStack.WindowOfType<Dialog_ProduceControls>() != null &&
+                        windowStack.WindowOfType<Dialog_ProducePresetManager>() == null;
+                    detail =
+                        "actual manager route opened " +
+                        (windowStack.WindowOfType<Dialog_ProduceControls>()?.GetType().Name ??
+                            "no editor window");
+                }
+                catch (Exception ex)
+                {
+                    Exception routeException = ex.InnerException ?? ex;
+                    detail =
+                        $"actual New production route threw {routeException.GetType().Name}: " +
+                        routeException.Message;
+                }
+            }
+
+            CloseProduceWindows(windowStack);
+            // RED if OpenNewProduction routes to the manager or another window instead of
+            // Dialog_ProduceControls.
+            r.Check(routedToEditor, assertion, detail);
+        }
+
+        private static void CheckProductionDesignatorRegistration(Results r)
+        {
+            const string assertion =
+                "Produce/resume, pause, stop, and Produce controls are registered under Production";
+            DesignationCategoryDef productionCategory =
+                DefDatabase<DesignationCategoryDef>.GetNamedSilentFail("IntercolonyProduction");
+            List<Designator> designators =
+                productionCategory == null ? null : productionCategory.AllResolvedDesignators;
+            int resumeCount = CountDesignatorsOfType<Designator_ProduceResume>(designators);
+            int pauseCount = CountDesignatorsOfType<Designator_ProducePause>(designators);
+            int stopCount = CountDesignatorsOfType<Designator_ProduceStop>(designators);
+            int managerCount = CountDesignatorsOfType<Designator_ProducePresetManager>(designators);
+            bool registered =
+                productionCategory != null &&
+                designators != null &&
+                resumeCount == 1 &&
+                pauseCount == 1 &&
+                stopCount == 1 &&
+                managerCount == 1;
+
+            // RED if IntercolonyProduction is missing or any of its four required
+            // specialDesignatorClasses entries is removed.
+            r.Check(
+                registered,
+                assertion,
+                $"category {(productionCategory == null ? "missing" : "present")}; " +
+                $"resume={resumeCount}, pause={pauseCount}, stop={stopCount}, " +
+                $"manager={managerCount}");
+        }
+
+        private static void CheckNoProduceDesignatorsInOrders(Results r)
+        {
+            const string assertion =
+                "none of the four Produce designators are registered in vanilla Orders";
+            DesignationCategoryDef ordersCategory =
+                DefDatabase<DesignationCategoryDef>.GetNamedSilentFail("Orders");
+            if (ordersCategory == null)
+            {
+                r.Skip(assertion, "the vanilla Orders DesignationCategoryDef is unavailable");
+                return;
+            }
+
+            List<Designator> designators = ordersCategory.AllResolvedDesignators;
+            int resumeCount = CountDesignatorsOfType<Designator_ProduceResume>(designators);
+            int pauseCount = CountDesignatorsOfType<Designator_ProducePause>(designators);
+            int stopCount = CountDesignatorsOfType<Designator_ProduceStop>(designators);
+            int managerCount = CountDesignatorsOfType<Designator_ProducePresetManager>(designators);
+            bool absent =
+                designators != null &&
+                resumeCount == 0 &&
+                pauseCount == 0 &&
+                stopCount == 0 &&
+                managerCount == 0;
+
+            // RED if any of the four Produce designators is added to vanilla Orders.
+            r.Check(
+                absent,
+                assertion,
+                $"Orders counts: resume={resumeCount}, pause={pauseCount}, " +
+                $"stop={stopCount}, manager={managerCount}");
+        }
+
+        private static int CountDesignatorsOfType<T>(List<Designator> designators)
+            where T : Designator
+        {
+            if (designators == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            for (int i = 0; i < designators.Count; i++)
+            {
+                if (designators[i] is T)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static bool HasProduceWindow(WindowStack windowStack)
+        {
+            return windowStack.WindowOfType<Dialog_ProducePresetManager>() != null ||
+                windowStack.WindowOfType<Dialog_ProduceControls>() != null;
+        }
+
+        private static void CloseProduceWindows(WindowStack windowStack)
+        {
+            if (windowStack == null)
+            {
+                return;
+            }
+
+            Dialog_ProducePresetManager manager =
+                windowStack.WindowOfType<Dialog_ProducePresetManager>();
+            if (manager != null)
+            {
+                manager.Close(false);
+            }
+
+            Dialog_ProduceControls editor = windowStack.WindowOfType<Dialog_ProduceControls>();
+            if (editor != null)
+            {
+                editor.Close(false);
             }
         }
 
