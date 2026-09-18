@@ -28,6 +28,56 @@ namespace Intercolony
                 : "Emergency posting timings disabled.");
         }
 
+        [DebugAction("Intercolony", "Post Emergency + Elite timing fixture",
+            allowedGameStates = AllowedGameStates.Playing, displayPriority = 45)]
+        private static void PostEmergencyEliteTimingFixture()
+        {
+            const int minimumSkillLevel = 0;
+            const int termDays = 20;
+            bool previousEnabled = Enabled;
+            JobPosting posting = null;
+            string failReason = null;
+            Exception postingException = null;
+
+            try
+            {
+                Enabled = true;
+                try
+                {
+                    posting = JobPostingService.TryPost(
+                        IntercolonyWorldComponent.Current,
+                        null,
+                        minimumSkillLevel,
+                        termDays,
+                        WageStructure.Daily,
+                        CombatClause.Civilian,
+                        out failReason,
+                        LaborEquipmentLevel.Elite,
+                        emergencyDispatch: true);
+                }
+                catch (Exception ex)
+                {
+                    postingException = ex;
+                }
+
+                int applicantCount = posting?.Applicants?.Count ?? 0;
+                string exceptionDetail = postingException == null
+                    ? "none"
+                    : $"{postingException.GetType().Name}: {postingException.Message}";
+                IntercolonyLog.Message(
+                    "P0 Emergency + Elite timing fixture: " +
+                    $"tier={LaborEquipmentLevel.Elite}, skill requirement=any " +
+                    $"(skill=null, min={minimumSkillLevel}), emergency=True, " +
+                    $"applicants={applicantCount}/{JobPostingService.MaxWaitingApplicants}, " +
+                    $"postingCreated={posting != null}, failReason={failReason ?? "none"}, " +
+                    $"exception={exceptionDetail}");
+            }
+            finally
+            {
+                Enabled = previousEnabled;
+            }
+        }
+
         /// <summary>
         /// Starts one timing session only for an Emergency posting. Returning null is intentional:
         /// the disabled path creates neither a stopwatch nor any timing state.
