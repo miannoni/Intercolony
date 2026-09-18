@@ -135,7 +135,7 @@ namespace Intercolony
                             return;
                         }
 
-                        Find.WindowStack.Add(new Dialog_ProduceControls(map, cell));
+                        Find.WindowStack.Add(new Dialog_ProducePresetManager(map, cell));
                     }
                 });
             }

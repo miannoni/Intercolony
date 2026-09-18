@@ -23,11 +23,16 @@ namespace Intercolony
         private const float CloseButtonWidth = 120f;
 
         private const string Title = "Produce controls";
+        private const string NewProductionLabel = "New production";
         private const string ApplyLabel = "Apply";
         private const string EditLabel = "Edit";
         private const string RenameLabel = "Rename";
         private const string RemoveLabel = "Remove";
         private const string CloseLabel = "Close";
+        private const string NewProductionTooltip =
+            "Open the production editor for this object.";
+        private const string NewProductionUnavailableTooltip =
+            "A production is created on a specific object. Open Produce controls from the object you want to configure.";
         private const string EmptyPresetMessage =
             "Presets are created from an object's Produce Controls popup with Save as preset.";
         private const string UnnamedPresetLabel = "Unnamed preset";
@@ -43,11 +48,18 @@ namespace Intercolony
             "This preset is not available for painting right now.";
 
         private readonly Map map;
+        private readonly IntVec3? contextCell;
         private Vector2 presetsScroll;
 
         public Dialog_ProducePresetManager(Map map)
+            : this(map, null)
+        {
+        }
+
+        public Dialog_ProducePresetManager(Map map, IntVec3? contextCell)
         {
             this.map = map;
+            this.contextCell = contextCell;
             doCloseX = true;
             forcePause = true;
             absorbInputAroundWindow = true;
@@ -137,9 +149,26 @@ namespace Intercolony
             y += titleHeight + RowGap;
             Text.Font = GameFont.Small;
 
+            float newProductionHeight = NewProductionButtonHeight(width);
+            Rect newProductionRect = new Rect(0f, y, width, newProductionHeight);
+            bool hasContextCell = contextCell.HasValue;
+            TooltipHandler.TipRegion(
+                newProductionRect,
+                hasContextCell ? NewProductionTooltip : NewProductionUnavailableTooltip);
+            if (Widgets.ButtonText(
+                    newProductionRect,
+                    NewProductionLabel,
+                    active: hasContextCell))
+            {
+                OpenNewProduction();
+                return;
+            }
+
+            y += newProductionHeight + RowGap;
+
             if (presets == null || presets.Count == 0)
             {
-                // Presets are captured from an object's Produce Controls popup; a create button here would invent a second authoring path.
+                // Presets are still captured by the existing per-production editor.
                 float emptyHeight = Text.CalcHeight(EmptyPresetMessage, width);
                 Widgets.Label(new Rect(0f, y, width, emptyHeight), EmptyPresetMessage);
                 return;
@@ -156,6 +185,16 @@ namespace Intercolony
                     y += RowGap;
                 }
             }
+        }
+
+        private void OpenNewProduction()
+        {
+            if (!contextCell.HasValue || map == null || Find.WindowStack == null)
+            {
+                return;
+            }
+
+            Find.WindowStack.Add(new Dialog_ProduceControls(map, contextCell.Value));
         }
 
         private void DrawPresetRow(
@@ -348,6 +387,7 @@ namespace Intercolony
             Text.Font = GameFont.Medium;
             float height = Text.CalcHeight(Title, width) + RowGap;
             Text.Font = GameFont.Small;
+            height += NewProductionButtonHeight(width) + RowGap;
             if (presets == null || presets.Count == 0)
             {
                 return height + Text.CalcHeight(EmptyPresetMessage, width);
@@ -363,6 +403,13 @@ namespace Intercolony
             }
 
             return height;
+        }
+
+        private static float NewProductionButtonHeight(float width)
+        {
+            return Mathf.Max(
+                RowHeight,
+                Text.CalcHeight(NewProductionLabel, width) + ButtonVerticalPadding);
         }
 
         private static float PresetRowHeight(float width, ProduceControlPreset preset)
