@@ -94,8 +94,8 @@ namespace Intercolony
                 }
 
                 int applicantCount = posting?.Applicants?.Count ?? 0;
-                string exceptionDetail = postingException == null
-                    ? "none"
+                string throwDetail = postingException == null
+                    ? "no"
                     : $"{postingException.GetType().Name}: {postingException.Message}";
                 string configurationLine =
                     "P0 Emergency + Elite timing fixture: " +
@@ -103,7 +103,7 @@ namespace Intercolony
                     $"(skill=null, min={minimumSkillLevel}), emergency=True, " +
                     $"applicants={applicantCount}/{JobPostingService.MaxWaitingApplicants}, " +
                     $"postingCreated={posting != null}, failReason={failReason ?? "none"}, " +
-                    $"exception={exceptionDetail}";
+                    $"threw={throwDetail}";
                 IntercolonyLog.Message(configurationLine);
                 return new TimingFixtureResult(
                     configurationLine, timingBlock, postingException, applicantCount);

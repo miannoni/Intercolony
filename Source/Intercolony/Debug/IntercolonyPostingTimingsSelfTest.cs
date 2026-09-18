@@ -62,8 +62,8 @@ namespace Intercolony
                 fixture.PostingException == null,
                 "TryPost completed without throwing",
                 fixture.PostingException == null
-                    ? "none"
-                    : $"{fixture.PostingException.GetType().Name}: " +
+                    ? "threw=no"
+                    : $"threw={fixture.PostingException.GetType().Name}: " +
                       fixture.PostingException.Message);
             r.Check(
                 !string.IsNullOrEmpty(fixture.TimingBlock),
