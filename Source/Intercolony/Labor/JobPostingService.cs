@@ -77,48 +77,54 @@ namespace Intercolony
             LaborEquipmentLevel requestedEquipmentLevel = LaborEquipmentLevel.Any,
             bool emergencyDispatch = false)
         {
-            failReason = null;
-
-            if (state == null)
+            using (PostingTimings.BeginTryPost(emergencyDispatch))
             {
-                failReason = "No world state.";
-                return null;
+                failReason = null;
+
+                if (state == null)
+                {
+                    failReason = "No world state.";
+                    return null;
+                }
+
+                if (termDays < 1 || termDays > LaborCandidateService.MaxTermDays)
+                {
+                    failReason = $"Term must be between 1 and {LaborCandidateService.MaxTermDays} days.";
+                    return null;
+                }
+
+                JobPosting posting = new JobPosting
+                {
+                    id = state.NextId(),
+                    skill = skill,
+                    minSkillLevel = skill == null ? 0 : Mathf.Clamp(minSkillLevel, 0, 20),
+                    termDays = termDays,
+                    wageStructure = structure,
+                    combatClause = clause,
+                    requestedEquipmentLevel = requestedEquipmentLevel,
+                    emergencyDispatch = emergencyDispatch,
+                    postedTick = GenTicks.TicksGame,
+                    expiryTick = -1,
+                    status = JobPostingStatus.Open
+                };
+
+                state.AddPosting(posting);
+
+                if (emergencyDispatch)
+                {
+                    MatchImmediately(state, posting);
+                }
+
+                using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
+                {
+                    Messages.Message(
+                        $"Posted: {posting.Headline()}.",
+                        MessageTypeDefOf.PositiveEvent, historical: false);
+
+                    IntercolonyLog.Message($"Posted: {posting}");
+                    return posting;
+                }
             }
-
-            if (termDays < 1 || termDays > LaborCandidateService.MaxTermDays)
-            {
-                failReason = $"Term must be between 1 and {LaborCandidateService.MaxTermDays} days.";
-                return null;
-            }
-
-            JobPosting posting = new JobPosting
-            {
-                id = state.NextId(),
-                skill = skill,
-                minSkillLevel = skill == null ? 0 : Mathf.Clamp(minSkillLevel, 0, 20),
-                termDays = termDays,
-                wageStructure = structure,
-                combatClause = clause,
-                requestedEquipmentLevel = requestedEquipmentLevel,
-                emergencyDispatch = emergencyDispatch,
-                postedTick = GenTicks.TicksGame,
-                expiryTick = -1,
-                status = JobPostingStatus.Open
-            };
-
-            state.AddPosting(posting);
-
-            if (emergencyDispatch)
-            {
-                MatchImmediately(state, posting);
-            }
-
-            Messages.Message(
-                $"Posted: {posting.Headline()}.",
-                MessageTypeDefOf.PositiveEvent, historical: false);
-
-            IntercolonyLog.Message($"Posted: {posting}");
-            return posting;
         }
 
         // --- Matching ----------------------------------------------------------------------
@@ -139,46 +145,59 @@ namespace Intercolony
                 return;
             }
 
-            float standing = EmployerReputationService.ScoreFor(state);
-            List<LaborProspect> world = LaborCandidateService.Census(state);
-            List<Interest> interested = new List<Interest>();
+            float standing;
+            List<LaborProspect> world;
+            List<Interest> interested;
             MatchAttempt attempt = new MatchAttempt();
 
-            foreach (LaborProspect worker in world)
+            using (PostingTimings.Phase(PostingTimingPhase.LightweightCensusFiltering))
             {
-                if (worker == null)
-                {
-                    continue;
-                }
+                standing = EmployerReputationService.ScoreFor(state);
+                world = LaborCandidateService.Census(state);
+                interested = new List<Interest>();
 
-                ProspectDecision decision = EvaluatePosting(state, posting, worker, standing);
-                if (!decision.SkillQualified)
+                foreach (LaborProspect worker in world)
                 {
-                    continue;
-                }
+                    if (worker == null)
+                    {
+                        continue;
+                    }
 
-                attempt.skillQualified++;
-                if (!decision.Eligible)
-                {
-                    RecordRejection(ref attempt, decision.rejection);
-                    continue;
-                }
+                    ProspectDecision decision = EvaluatePosting(state, posting, worker, standing);
+                    if (!decision.SkillQualified)
+                    {
+                        continue;
+                    }
 
-                interested.Add(new Interest { worker = worker, ask = decision.ask });
+                    attempt.skillQualified++;
+                    if (!decision.Eligible)
+                    {
+                        RecordRejection(ref attempt, decision.rejection);
+                        continue;
+                    }
+
+                    interested.Add(new Interest { worker = worker, ask = decision.ask });
+                }
             }
 
             int arrived = 0;
             Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ ApplicantShuffleSalt);
             try
             {
-                arrived = ApplyInterested(state, posting, interested, ref attempt);
+                using (PostingTimings.Phase(PostingTimingPhase.CandidateApplicationSelection))
+                {
+                    arrived = ApplyInterested(state, posting, interested, ref attempt);
+                }
             }
             finally
             {
                 Rand.PopState();
             }
 
-            Report(state, posting, arrived, standing, attempt);
+            using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
+            {
+                Report(state, posting, arrived, standing, attempt);
+            }
         }
 
         /// <summary>
@@ -540,13 +559,20 @@ namespace Intercolony
             // behave exactly as they did before equipment requests existed.
             if (posting.requestedEquipmentLevel == LaborEquipmentLevel.Any)
             {
-                Pawn pawn = worker.Materialise();
+                Pawn pawn;
+                using (PostingTimings.Phase(PostingTimingPhase.PawnMaterialisation))
+                {
+                    pawn = worker.Materialise();
+                }
                 if (pawn == null)
                 {
                     return ApplyResult.Rejected;
                 }
 
-                AddApplicant(posting, worker, pawn, ask);
+                using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
+                {
+                    AddApplicant(posting, worker, pawn, ask);
+                }
                 return ApplyResult.Accepted;
             }
 
@@ -561,7 +587,11 @@ namespace Intercolony
                 return ApplyResult.SourceRejected;
             }
 
-            Pawn applicantPawn = worker.Materialise();
+            Pawn applicantPawn;
+            using (PostingTimings.Phase(PostingTimingPhase.PawnMaterialisation))
+            {
+                applicantPawn = worker.Materialise();
+            }
             if (applicantPawn == null)
             {
                 return ApplyResult.Rejected;
@@ -579,9 +609,15 @@ namespace Intercolony
                         natural, posting.requestedEquipmentLevel))
                 {
                     string fulfilmentFailure;
-                    if (!LaborEquipmentAllocator.TryFulfil(
+                    bool fulfilled;
+                    using (PostingTimings.Phase(PostingTimingPhase.EquipmentFulfilment))
+                    {
+                        fulfilled = LaborEquipmentAllocator.TryFulfil(
                             applicantPawn, worker.equipmentTier, posting.combatClause, profile,
-                            out fulfilmentFailure))
+                            out fulfilmentFailure);
+                    }
+
+                    if (!fulfilled)
                     {
                         WarnEquipmentFulfilmentFailure(
                             posting, worker, fulfilmentFailure ?? "unknown allocator failure");
@@ -606,7 +642,10 @@ namespace Intercolony
                 return ApplyResult.FulfilmentRejected;
             }
 
-            AddApplicant(posting, worker, applicantPawn, ask);
+            using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
+            {
+                AddApplicant(posting, worker, applicantPawn, ask);
+            }
             return ApplyResult.Accepted;
         }
 
