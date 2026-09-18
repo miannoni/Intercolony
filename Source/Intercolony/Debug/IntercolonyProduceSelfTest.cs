@@ -4548,6 +4548,8 @@ namespace Intercolony
                 "a selected worker may work a restricted Produce program";
             const string unselectedLabel =
                 "a pawn who is not selected may not work a restricted Produce program";
+            const string allUnavailableLabel =
+                "an all-unavailable selected-worker Produce program stays restricted";
             const string skillFloorLabel =
                 "the Construction floor rejects an under-skilled pawn";
             const string haulingLabel =
@@ -4657,6 +4659,7 @@ namespace Intercolony
             RememberCell(cell, subject.thingDef, Rot4.North, reservedCells, testRects);
             CellRect buildRect = GenAdj.OccupiedRect(
                 cell, Rot4.North, subject.thingDef.Size);
+            Pawn unavailableWorker = null;
 
             try
             {
@@ -4798,6 +4801,118 @@ namespace Intercolony
                             pawnB, pawnBLevel, 0, unselectedBaseline, unselectedGated));
                 }
 
+                bool allUnavailableBaseline;
+                bool allUnavailableGated = false;
+                record.restrictToSelectedWorkers = false;
+                record.allowedWorkers = new List<Pawn>();
+                record.minConstructionSkill = 0;
+                if (!TryBaseline(
+                        pawnB,
+                        true,
+                        out allUnavailableBaseline,
+                        out baselineFailure))
+                {
+                    r.Skip(
+                        allUnavailableLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} could not be " +
+                        $"measured: {baselineFailure.GetType().Name}: {baselineFailure.Message}; " +
+                        "the gate cannot be distinguished");
+                }
+                else if (!allUnavailableBaseline)
+                {
+                    r.Skip(
+                        allUnavailableLabel,
+                        $"the baseline CanConstruct for {pawnB.ToStringSafe()} was already false; " +
+                        "the gate cannot be distinguished");
+                }
+                else
+                {
+                    // AvailableWorkerCandidates includes free colonists only through
+                    // FreeColonistsSpawned and active employees only while Spawned on this map.
+                    // Keep a real non-null Pawn off-map to model the persisted reference after
+                    // an assigned worker leaves; null is not a valid unavailable-worker fixture
+                    // because SetAllowedWorkers and PostLoadInit remove null references.
+                    string unavailableWorkerFailure = null;
+                    try
+                    {
+                        if (PawnKindDefOf.Colonist == null)
+                        {
+                            unavailableWorkerFailure =
+                                "RimWorld PawnKindDefOf.Colonist was unavailable";
+                        }
+                        else if (Faction.OfPlayer == null)
+                        {
+                            unavailableWorkerFailure =
+                                "RimWorld Faction.OfPlayer was unavailable";
+                        }
+                        else
+                        {
+                            unavailableWorker = PawnGenerator.GeneratePawn(
+                                new PawnGenerationRequest(
+                                    PawnKindDefOf.Colonist,
+                                    Faction.OfPlayer,
+                                    PawnGenerationContext.NonPlayer,
+                                    forceGenerateNewPawn: true,
+                                    canGeneratePawnRelations: false));
+                            if (unavailableWorker == null)
+                            {
+                                unavailableWorkerFailure =
+                                    "PawnGenerator returned no unavailable-worker fixture";
+                            }
+                            else if (unavailableWorker.Spawned || unavailableWorker.Map != null)
+                            {
+                                unavailableWorkerFailure =
+                                    "the generated worker was unexpectedly spawned or on a map";
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        unavailableWorkerFailure =
+                            $"could not construct the unavailable-worker fixture: " +
+                            $"{ex.GetType().Name}: {ex.Message}";
+                    }
+
+                    if (unavailableWorkerFailure != null)
+                    {
+                        r.Skip(allUnavailableLabel, unavailableWorkerFailure);
+                    }
+                    else
+                    {
+                        // Configure the map-owned loop through the same setters used by the
+                        // production controls; the assertion below observes CanConstruct, not
+                        // the worker list that this fixture just populated.
+                        gateLoops.SetWorkerRestriction(cell, true);
+                        gateLoops.SetAllowedWorkers(
+                            cell,
+                            new List<Pawn> { unavailableWorker });
+
+                        // RED if ProduceWorkerGatePatch.cs adds an
+                        // allowedWorkers.Exists(worker => worker != null && worker.Spawned)
+                        // requirement before the selected-pawn membership check.
+                        CheckSafely(
+                            r,
+                            allUnavailableLabel,
+                            () =>
+                            {
+                                allUnavailableGated = GenConstruct.CanConstruct(
+                                    blueprint, pawnB, true, false, null);
+                                return !allUnavailableGated;
+                            },
+                            () =>
+                                gateDetail(
+                                    pawnB,
+                                    pawnBLevel,
+                                    0,
+                                    allUnavailableBaseline,
+                                    allUnavailableGated) +
+                                $"; selected unavailable worker " +
+                                $"{unavailableWorker.ToStringSafe()}; Spawned " +
+                                $"{unavailableWorker.Spawned}; Map " +
+                                $"{(unavailableWorker.Map == null ? "null" : "present")}");
+                    }
+                }
+
                 int configuredFloor = pawnBLevel + 1;
                 bool skillFloorBaseline;
                 bool skillFloorGated = false;
@@ -4921,6 +5036,12 @@ namespace Intercolony
                 DestroyThingsInRect(map, buildRect);
                 loops.Disable(cell);
                 gateLoops.Disable(cell);
+                if (unavailableWorker != null &&
+                    !unavailableWorker.Destroyed &&
+                    !unavailableWorker.Spawned)
+                {
+                    unavailableWorker.Destroy(DestroyMode.Vanish);
+                }
             }
         }
 
@@ -10753,6 +10874,9 @@ private static int CountStoredTargetStock(
                 reason);
             r.Skip(
                 "a pawn who is not selected may not work a restricted Produce program",
+                reason);
+            r.Skip(
+                "an all-unavailable selected-worker Produce program stays restricted",
                 reason);
             r.Skip(
                 "the Construction floor rejects an under-skilled pawn",
