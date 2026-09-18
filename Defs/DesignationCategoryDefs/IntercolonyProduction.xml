@@ -9,6 +9,10 @@
     <order>850</order>
     <specialDesignatorClasses>
       <li>Designator_Cancel</li>
+      <li>Intercolony.Designator_ProduceResume</li>
+      <li>Intercolony.Designator_ProducePause</li>
+      <li>Intercolony.Designator_ProduceStop</li>
+      <li>Intercolony.Designator_ProducePresetManager</li>
     </specialDesignatorClasses>
   </DesignationCategoryDef>
 
