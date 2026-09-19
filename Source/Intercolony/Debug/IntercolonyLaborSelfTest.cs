@@ -2355,6 +2355,49 @@ namespace Intercolony
             return null;
         }
 
+        private static LaborCandidate FindStableEmergencyControlCandidate(
+            List<LaborCandidate> candidates,
+            IntercolonyWorldComponent state,
+            out SettlementEconomicProfile sourceProfile)
+        {
+            sourceProfile = null;
+            LaborCandidate selected = null;
+            if (candidates == null || state == null)
+            {
+                return null;
+            }
+
+            foreach (LaborCandidate candidate in candidates)
+            {
+                if (candidate?.pawn == null || candidate.travelDays < 0)
+                {
+                    continue;
+                }
+
+                Settlement source = IntercolonyMarketAccess.FindSettlement(
+                    candidate.settlementId);
+                SettlementEconomicProfile profile = source == null
+                    ? null
+                    : state.GetProfile(source);
+                if (profile == null)
+                {
+                    continue;
+                }
+
+                bool isEarlierStableCandidate = selected == null ||
+                    candidate.settlementId < selected.settlementId ||
+                    (candidate.settlementId == selected.settlementId &&
+                        candidate.pawn.thingIDNumber < selected.pawn.thingIDNumber);
+                if (isEarlierStableCandidate)
+                {
+                    selected = candidate;
+                    sourceProfile = profile;
+                }
+            }
+
+            return selected;
+        }
+
         /// <summary>
         /// F24's emergency mode is deliberately a direct-hire slice: the ordinary listing is
         /// filtered, the same candidate is priced with an independent premium, and its arrival
@@ -2375,6 +2418,10 @@ namespace Intercolony
             int savedLedgerStartTick = state.LedgerStartTick;
             EmployerReputation savedStandingOwner = state.EmployerStanding;
             float savedStanding = savedStandingOwner?.Score ?? 0f;
+            SettlementEconomicProfile controlledSourceProfile = null;
+            SettlementRapidLogisticsCapability savedControlledCapability =
+                SettlementRapidLogisticsCapability.ConventionalTransportOnly;
+            bool controlledCapabilityChanged = false;
 
             try
             {
@@ -2401,6 +2448,17 @@ namespace Intercolony
 
                 List<LaborCandidate> ordinaryPool =
                     new List<LaborCandidate>(LaborCandidateService.Refresh(state));
+
+                LaborCandidate controlledCandidate = FindStableEmergencyControlCandidate(
+                    ordinaryPool, state, out controlledSourceProfile);
+                if (controlledCandidate != null && controlledSourceProfile != null)
+                {
+                    savedControlledCapability = controlledSourceProfile.rapidLogisticsCapability;
+                    controlledSourceProfile.rapidLogisticsCapability =
+                        SettlementRapidLogisticsCapability.DropPodsAvailable;
+                    controlledCapabilityChanged = true;
+                }
+
                 List<LaborCandidate> emergencyPool =
                     new List<LaborCandidate>(ordinaryPool);
                 emergencyPool.RemoveAll(candidate =>
@@ -2450,7 +2508,7 @@ namespace Intercolony
                 LaborCandidate distantConventionalArrivalCandidate =
                     FindDistantConventionalArrivalFixture(ordinaryPool, state);
                 CheckEmergencyArrivalTicks(
-                    r, ordinaryPoolForU1, podArrivalCandidate,
+                    r, emergencyPool, podArrivalCandidate,
                     conventionalArrivalCandidate, distantConventionalArrivalCandidate);
 
                 LaborCandidate emergencyCandidate = podArrivalCandidate ??
@@ -2528,6 +2586,11 @@ namespace Intercolony
             }
             finally
             {
+                if (controlledCapabilityChanged && controlledSourceProfile != null)
+                {
+                    controlledSourceProfile.rapidLogisticsCapability = savedControlledCapability;
+                }
+
                 CleanupAddedEmployments(r, state, savedEmployments);
                 savedStandingOwner?.Adjust(savedStanding - savedStandingOwner.Score);
                 while (state.Ledger.Count > savedLedger)
