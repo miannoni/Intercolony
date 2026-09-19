@@ -52,9 +52,68 @@ namespace Intercolony
             "There is no direct-hire market to dispatch right now. Check back then, or post a job and " +
             "let people come to you.";
 
+        private const float EmployeeActionGroupGap = 8f;
+
+        private enum EmployeeActionGroup
+        {
+            Renewal,
+            PermanentStay,
+            Payroll
+        }
+
+        private enum EmployeeActionKind
+        {
+            Renew,
+            LetThemGo,
+            KeepThem,
+            Negotiate,
+            NotNow,
+            PayArrears
+        }
+
+        private struct EmployeeActionDefinition
+        {
+            public EmployeeActionKind kind;
+            public EmployeeActionGroup group;
+
+            public EmployeeActionDefinition(EmployeeActionKind kind, EmployeeActionGroup group)
+            {
+                this.kind = kind;
+                this.group = group;
+            }
+        }
+
+        private static EmployeeActionDefinition[] EmployeeActionDefinitionsFor(
+            EmploymentContract contract)
+        {
+            bool hasArrears = contract != null && contract.arrearsSilver > 0;
+            EmployeeActionDefinition[] actions = new EmployeeActionDefinition[hasArrears ? 6 : 5];
+
+            // The order is the player-facing order. Group changes also create a measured visual
+            // gap in EmployeeRowLayout, so the two lifecycle decisions cannot read as one stack.
+            actions[0] = new EmployeeActionDefinition(
+                EmployeeActionKind.Renew, EmployeeActionGroup.Renewal);
+            actions[1] = new EmployeeActionDefinition(
+                EmployeeActionKind.LetThemGo, EmployeeActionGroup.Renewal);
+            actions[2] = new EmployeeActionDefinition(
+                EmployeeActionKind.KeepThem, EmployeeActionGroup.PermanentStay);
+            actions[3] = new EmployeeActionDefinition(
+                EmployeeActionKind.Negotiate, EmployeeActionGroup.PermanentStay);
+            actions[4] = new EmployeeActionDefinition(
+                EmployeeActionKind.NotNow, EmployeeActionGroup.PermanentStay);
+
+            if (hasArrears)
+            {
+                actions[5] = new EmployeeActionDefinition(
+                    EmployeeActionKind.PayArrears, EmployeeActionGroup.Payroll);
+            }
+
+            return actions;
+        }
+
         private static int EmployeeActionCountFor(EmploymentContract contract)
         {
-            return contract != null && contract.arrearsSilver > 0 ? 4 : 3;
+            return EmployeeActionDefinitionsFor(contract).Length;
         }
 
         public override void PreClose()
@@ -93,19 +152,16 @@ namespace Intercolony
         internal static EmployeeLifecycleActionKind ResolveLifecycleAction(
             EmploymentContract contract, bool hasLiveTransitionOffer, bool hasLiveRenewalOffer)
         {
+            // Kept as a compatibility overload for the existing self-test surface. Offer state
+            // belongs to the expanded action groups, never to the header slot.
+            return ResolveLifecycleAction(contract);
+        }
+
+        internal static EmployeeLifecycleActionKind ResolveLifecycleAction(EmploymentContract contract)
+        {
             if (contract == null)
             {
                 return EmployeeLifecycleActionKind.None;
-            }
-
-            if (hasLiveTransitionOffer)
-            {
-                return EmployeeLifecycleActionKind.DeclineTransition;
-            }
-
-            if (hasLiveRenewalOffer)
-            {
-                return EmployeeLifecycleActionKind.DeclineRenewal;
             }
 
             if (contract.status == EmploymentStatus.Travelling)
@@ -113,7 +169,7 @@ namespace Intercolony
                 return EmployeeLifecycleActionKind.Cancel;
             }
 
-            if (contract.status != EmploymentStatus.Severed)
+            if (contract.status == EmploymentStatus.Active)
             {
                 return EmployeeLifecycleActionKind.Dismiss;
             }
@@ -1387,11 +1443,12 @@ namespace Intercolony
             public Rect expandText;
             public Rect expandType;
 
-            /// <summary>Where the contextual lifecycle button goes.</summary>
+            /// <summary>Where the employment-ending button goes.</summary>
             public Rect lifecycleAction;
 
             public Rect[] contractLabels;
             public Rect[] contractValues;
+            public EmployeeActionDefinition[] actionDefinitions;
             public Rect[] actionStack;
 
             public static EmployeeRowLayout For(
@@ -1505,19 +1562,31 @@ namespace Intercolony
                 }
 
                 float stackY = detailY + EmployeeExpandedTopPadding;
-                int actionCount = EmployeeActionCountFor(contract);
-                layout.actionStack = new Rect[actionCount];
+                EmployeeActionDefinition[] actionDefinitions =
+                    EmployeeActionDefinitionsFor(contract);
+                layout.actionDefinitions = actionDefinitions;
+                layout.actionStack = new Rect[actionDefinitions.Length];
+                float actionY = stackY;
                 for (int i = 0; i < layout.actionStack.Length; i++)
                 {
+                    if (i > 0)
+                    {
+                        actionY += EmployeeActionGap;
+                        if (actionDefinitions[i].group != actionDefinitions[i - 1].group)
+                        {
+                            actionY += EmployeeActionGroupGap;
+                        }
+                    }
+
                     layout.actionStack[i] = new Rect(
                         actionX,
-                        stackY + i * (EmployeeActionHeight + EmployeeActionGap),
+                        actionY,
                         ActionWidth,
                         EmployeeActionHeight);
+                    actionY += EmployeeActionHeight;
                 }
 
-                float stackBottom = stackY + actionCount * EmployeeActionHeight +
-                                    (actionCount - 1) * EmployeeActionGap;
+                float stackBottom = actionY;
                 float detailContentBottom = Mathf.Max(tableY, stackBottom);
                 float detailBodyHeight = detailContentBottom - detailY +
                                          EmployeeExpandedBottomPadding;
@@ -1560,41 +1629,72 @@ namespace Intercolony
                     contract.wageStructure, renewalWage):N0} silver/day."
                 : "No renewal offer is available.";
 
-            DrawEmployeeActionButton(
-                layout.actionStack[0], "Renew", hasLiveRenewalOffer, renewalTooltip,
-                () =>
-                {
-                    if (!RenewalService.Accept(contract, out string failReason))
-                    {
-                        Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
-                    }
-                });
-
-            DrawEmployeeActionButton(
-                layout.actionStack[1], "Keep them", hasLiveTransitionOffer,
-                hasLiveTransitionOffer
-                    ? null
-                    : "No offer to stay permanently is available.",
-                () => OpenTransitionDialog(contract));
-
-            DrawEmployeeActionButton(
-                layout.actionStack[2], "Negotiate", false,
-                "Negotiation is not available yet.", null);
-
-            int actionCount = EmployeeActionCountFor(contract);
-            if (actionCount > 3)
+            for (int i = 0; i < layout.actionDefinitions.Length; i++)
             {
-                DrawEmployeeActionButton(
-                    layout.actionStack[3], $"Pay arrears ({contract.arrearsSilver})", true,
-                    "Pay the wages already owed to this worker.",
-                    () =>
-                    {
-                        if (!PayrollService.TryPayArrears(
-                                contract, Find.CurrentMap, out string failReason))
-                        {
-                            Messages.Message(failReason, MessageTypeDefOf.RejectInput, historical: false);
-                        }
-                    });
+                EmployeeActionKind actionKind = layout.actionDefinitions[i].kind;
+                switch (actionKind)
+                {
+                    case EmployeeActionKind.Renew:
+                        DrawEmployeeActionButton(
+                            layout.actionStack[i], "Renew", hasLiveRenewalOffer, renewalTooltip,
+                            () =>
+                            {
+                                if (!RenewalService.Accept(contract, out string failReason))
+                                {
+                                    Messages.Message(
+                                        failReason, MessageTypeDefOf.RejectInput, historical: false);
+                                }
+                            });
+                        break;
+
+                    case EmployeeActionKind.LetThemGo:
+                        DrawEmployeeActionButton(
+                            layout.actionStack[i], "Let them go", hasLiveRenewalOffer,
+                            hasLiveRenewalOffer
+                                ? "Let them go at the end of the term instead of renewing."
+                                : "No renewal offer is available.",
+                            () => RenewalService.Decline(contract));
+                        break;
+
+                    case EmployeeActionKind.KeepThem:
+                        DrawEmployeeActionButton(
+                            layout.actionStack[i], "Keep them", hasLiveTransitionOffer,
+                            hasLiveTransitionOffer
+                                ? null
+                                : "No offer to stay permanently is available.",
+                            () => OpenTransitionDialog(contract));
+                        break;
+
+                    case EmployeeActionKind.Negotiate:
+                        DrawEmployeeActionButton(
+                            layout.actionStack[i], "Negotiate", false,
+                            "Negotiation is not available yet.", null);
+                        break;
+
+                    case EmployeeActionKind.NotNow:
+                        DrawEmployeeActionButton(
+                            layout.actionStack[i], "Not now", hasLiveTransitionOffer,
+                            hasLiveTransitionOffer
+                                ? "Decline the offer to stay permanently. They finish their current term."
+                                : "No offer to stay permanently is available.",
+                            () => TransitionService.Decline(contract));
+                        break;
+
+                    case EmployeeActionKind.PayArrears:
+                        DrawEmployeeActionButton(
+                            layout.actionStack[i], $"Pay arrears ({contract.arrearsSilver})", true,
+                            "Pay the wages already owed to this worker.",
+                            () =>
+                            {
+                                if (!PayrollService.TryPayArrears(
+                                        contract, Find.CurrentMap, out string failReason))
+                                {
+                                    Messages.Message(
+                                        failReason, MessageTypeDefOf.RejectInput, historical: false);
+                                }
+                            });
+                        break;
+                }
             }
         }
 
@@ -1671,19 +1771,12 @@ namespace Intercolony
 
             bool hasLiveRenewalOffer = RenewalService.HasLiveOffer(contract);
             bool hasLiveTransitionOffer = TransitionService.HasLiveOffer(contract);
-            EmployeeLifecycleActionKind lifecycleActionKind = ResolveLifecycleAction(
-                contract, hasLiveTransitionOffer, hasLiveRenewalOffer);
+            EmployeeLifecycleActionKind lifecycleActionKind = ResolveLifecycleAction(contract);
             string lifecycleActionLabel = LifecycleActionLabel(lifecycleActionKind);
             System.Action lifecycleAction = null;
 
             switch (lifecycleActionKind)
             {
-                case EmployeeLifecycleActionKind.DeclineTransition:
-                    lifecycleAction = () => TransitionService.Decline(contract);
-                    break;
-                case EmployeeLifecycleActionKind.DeclineRenewal:
-                    lifecycleAction = () => RenewalService.Decline(contract);
-                    break;
                 case EmployeeLifecycleActionKind.Cancel:
                 case EmployeeLifecycleActionKind.Dismiss:
                     lifecycleAction = () => ConfirmDismiss(contract);
