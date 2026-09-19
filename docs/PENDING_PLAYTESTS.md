@@ -2473,6 +2473,47 @@ settled by a test.
 Also note: cancelling, withdrawing or filling a posting while it is still searching should leave nothing
 behind — no half-arrived applicant, no leftover pawn.
 
+### F24/P6: Emergency Job Posting arrival quotes need a human read
+
+Added 2026-09-20 on branch `foreman/playtest-corrections-2026-09-18`, as Stage P6 of the Playtest
+Correction Pass II run, shipped 2026-09-20. This fixes F24, which the operator saw in live play: an
+applicant who answered an **Emergency Job Posting** was shown a fast drop-pod arrival and then reverted
+to ordinary multi-day travel the moment **Take on** was clicked. The quote is now frozen onto the
+applicant when they apply, persisted across save and load with a **schema 59 → 60 migration**, and
+honoured at hire. `arrivalTransport` had in fact never been set at all on the applicant hire path, so
+every emergency hire silently took the conventional default alongside the wrong ETA.
+
+Automated evidence is complete — whole suite **1770 passed / 0 failed / 18 skipped**, exit **0**, log
+clean, world-pawn delta **0**. Nine assertions cover it — four on the hire itself, four on persistence
+and migration, and one that the applicant arrives exactly once via its emergency route — and every one
+was seen fail for its own reason before being accepted. What remains cannot be settled by a test.
+
+**Steps.**
+
+1. Post an **Emergency** job **WITH THE GAME RUNNING**, accept an applicant quoted a drop pod, and watch
+   the arrival. It should arrive within the quoted **1–4 in-game hours**, **BY DROP POD**, and not walk in
+   days later.
+2. Repeat the same check for a close conventional source quoted **5–9 hours**. It should arrive in that
+   window by the conventional emergency route.
+3. Confirm that the quote the player is **SHOWN** and the arrival they **GET** are the same, and that the
+   premium charged matches the one previewed.
+4. Confirm that an ordinary non-emergency posting still arrives on ordinary multi-day travel, exactly as
+   before.
+5. **SAVE** with an emergency applicant still waiting in the list, quit to the menu, reload, then click
+   **Take on**. The arrival must be the one that was quoted before the save.
+6. **SAVE** while an emergency employee is travelling, reload, and confirm they arrive once, by the right
+   route — not twice, and not never.
+7. **THE ONE THAT NEEDS AN OLD SAVE:** load a save made **BEFORE THIS CHANGE** that has an emergency
+   posting with applicants waiting. Confirm no such applicant can be hired into a multi-day ordinary
+   arrival under an **Emergency** label. Either they carry a proper emergency quote, or they are removed
+   from the posting with a reason in the log and the posting rematches. A silent reversion to ordinary
+   travel is the defect this stage exists to prevent.
+
+Also note: the **12-tile** conventional threshold was deliberately **NOT retuned** in this pass. A
+previous measurement found **0 qualifying conventional routes in 748 examined cases**, so emergency routes
+may be rare in normal play. This stage fixed quote correctness, not availability; whether availability
+needs balancing is a separate judgement for the operator.
+
 ---
 
 ## Proven in play

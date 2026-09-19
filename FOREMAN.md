@@ -1,12 +1,16 @@
 # Foreman state — Intercolony
 
 Stage: **P6 — F24: freeze and honor Emergency Job Posting arrival quotes**
-Unit: P6.1 — persist the frozen emergency quote on `JobApplicant`, schema 59 → 60
-Worker: luna running — P6.1 quote persistence · log `C:\Users\matte\.claude\jobs\439462af\tmp\p6-1-worker.log` · bg id `boudh50f1`
+Unit: P6.5 — P6 human-evidence entry in `docs/PENDING_PLAYTESTS.md`
+Worker: luna running — P6.5 pending-playtest entry · log `C:\Users\matte\.claude\jobs\439462af\tmp\p6-5-worker.log` · bg id `bp6lch2ja`
+**P6.3f CLOSED at `108fb6b` — diagnosis confirmed by measurement, not arithmetic.** S3's 300-tick loop budgeted the pod's *flight* and forgot that impact spawns the pod, not the pawn: the pod opens only after `openDelay = 110` further ticks, so the real budget is `ticksToImpact + 111` = 231–311. It now derives the deadline from the launched objects and hard-fails if no pod, or more than one, was launched. Negative control — cap it back at 300 across six fresh worlds — reproduced the flake in three: `194+110+1=305`, `190+110+1=301`, `194+110+1=305`, each driving only 300 ticks, against a predicted threshold of 190; the three shorter-flight runs stayed green. With the fix: four whole-suite runs 1769/0/19, 1770/0/18, 1769/0/19, 1770/0/18, all exit 0, zero S3 failures, pawn delta 0.
+**All nine P6 assertions are in, and every one has been seen red for its own reason.**
+**Non-blocking defect, owed after P6:** `an applicant whose actual gear misses the request is not queued` failed once at HEAD (`Accepted`/`queued=True`) having passed at `8f9b7cf`, `64b2c17`, `1bb8339` — **flaky**, likely world-dependent like the others.
+**Standing rule earned twice in this stage:** with `-Fresh`, two runs are never a controlled comparison — every run builds a new world.
 Loop: WAITING_ON_WORKER
-Last done: **P5 CLOSED.** Click 350–605 ms → **17–20 ms**; negative control 423 ms; gate 1757/0/20, pawn delta 0, log CLEAN; human evidence at `e24c220`.
-Updated: 2026-09-19 23:21 — worker checked once, still running (reading `JobPosting.cs`); no source edits yet.
-Foreman load: 2026-09-19 22:49
+Last done: **P6.3c–P6.3f all closed** at `1bb8339`, `a96c0da`, `a00b0f4`, `108fb6b`. Their evidence lives in those commit messages; the unit table below is the index.
+Updated: 2026-09-20 12:31
+Foreman load: 2026-09-20 02:57 — SKILL.md + RUN_CONTRACT.md held in session context since the 22:49 activation load; loop restated: wake → check one → verify → dispatch one → persist → end turn.
 Plan: C:\dev\INTERCOLONY_PLAYTEST_CORRECTION_PASS_II_PLAN.md · worker copy `docs/PLAYTEST_CORRECTION_PASS_II_PLAN.md`
 Mode: autonomous run-to-halt
 Foreman: 89fdf02 · source C:\dev\agent-foreman · https://github.com/Vector-Consulting-IA-Operacional/agent-foreman.git
@@ -41,10 +45,19 @@ Clean halt is a completed, tested, pushed development branch.
 
 | Unit | Scope | Status |
 |---|---|---|
-| P6.1 | persist the frozen quote on `JobApplicant`, schema 59 → 60 + migration | luna running |
-| P6.2 | `TryHireApplicant` honours the frozen quote instead of `travelDays` | not started |
-| P6.3 | assertions incl. the four save/load proofs | not started |
-| P6.4 | mutations + stage gate + pending-playtest entry | not started |
+| P6.1 | persist the frozen quote on `JobApplicant`, schema 59 → 60 + migration | done `b28a834` |
+| P6.1b | repair 3 self-test sites the schema bump broke (one had been skipping since P5) | done `b28a834` |
+| P6.2 | `TryHireApplicant` honours the frozen quote instead of `travelDays` | done `38821b6` |
+| P6.3a/a2 | in-memory hire assertions + direct-construction fixture | done `8f9b7cf` |
+| P6.4 | mutation sweep, all four seen red | done `8f9b7cf` |
+| P6.3b | save/load proofs S1 quote survives, S2 accept after reload | done `64b2c17` |
+| P6.3c | S3 travelling contract survives save/load and arrives exactly once | done `1bb8339` |
+| P6.3c4 | close the payroll fixture's pre-existing world-pawn leak it exposed | done `1bb8339` |
+| P6.3d | S4 old emergency applicants migrated or invalidated, never silently ordinary | done `a96c0da` |
+| P6.3e | five labor emergency assertions made deterministic, not world-dependent | done `a00b0f4` |
+| P6.3f | derive S3's tick budget; flake proven by negative control | done `108fb6b` |
+| P6.5 | P6 human-evidence entry in `docs/PENDING_PLAYTESTS.md` | luna running |
+| P6.6 | stage gate + close P6 | not started |
 
 ## P6 locked semantics
 
