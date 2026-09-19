@@ -627,8 +627,8 @@ namespace Intercolony
                     using (PostingTimings.Phase(PostingTimingPhase.EquipmentFulfilment))
                     {
                         fulfilled = LaborEquipmentAllocator.TryFulfil(
-                            applicantPawn, worker.equipmentTier, posting.combatClause, profile,
-                            out fulfilmentFailure);
+                            applicantPawn, worker, posting.id, worker.equipmentTier,
+                            posting.combatClause, profile, out fulfilmentFailure);
                     }
 
                     if (!fulfilled)
