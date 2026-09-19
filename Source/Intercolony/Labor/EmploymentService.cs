@@ -363,6 +363,12 @@ namespace Intercolony
             }
 
             string skills = applicant.SkillSummary();
+            int arrivalTicks = applicant.emergencyArrivalAvailable
+                ? applicant.emergencyArrivalTicks
+                : applicant.travelDays * GenDate.TicksPerDay;
+            EmploymentArrivalTransport contractArrivalTransport = applicant.emergencyArrivalAvailable
+                ? applicant.emergencyArrivalTransport
+                : EmploymentArrivalTransport.Conventional;
             Pawn worker = applicant.Release();
 
             EmploymentContract contract = new EmploymentContract
@@ -385,7 +391,8 @@ namespace Intercolony
                 equipmentBond = equipmentBond,
                 paidSilver = upFront,
                 hiredTick = GenTicks.TicksGame,
-                arrivalTick = GenTicks.TicksGame + applicant.travelDays * GenDate.TicksPerDay,
+                arrivalTick = GenTicks.TicksGame + arrivalTicks,
+                arrivalTransport = contractArrivalTransport,
                 status = EmploymentStatus.Travelling
             };
 
