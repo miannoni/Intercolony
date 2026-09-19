@@ -604,35 +604,18 @@ namespace Intercolony
                 economySeedOverride ?? state.EconomySeed,
                 settlement.ID, thingDef.shortHash, quantityPerCycle);
             seed = Gen.HashCombineInt(seed, cadenceDays, totalCycles, DecisionSeedSalt);
-            Rand.PushState(seed);
-            try
-            {
-                if (!RfqService.CanTechnicallySupply(thingDef, profile))
-                {
-                    return false;
-                }
-
-                float supply = EffectiveEconomyService.EffectiveSupply(
-                    state, profile, category);
-                float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
-                referenceUnitPrice = IntercolonyPricing.SupplierUnitPrice(
-                    state,
-                    thingDef,
-                    stuffDef,
-                    quality,
-                    profile,
-                    category,
-                    supply,
-                    distance,
-                    fulfillment == FulfillmentMode.SellerDelivery,
-                    quantityPerCycle,
-                    out _);
-                return true;
-            }
-            finally
-            {
-                Rand.PopState();
-            }
+            return RfqService.TryCalculateOneSupplierUnitPrice(
+                state,
+                settlement,
+                profile,
+                thingDef,
+                stuffDef,
+                quality,
+                category,
+                fulfillment,
+                availabilityThreshold: null,
+                deterministicSeed: seed,
+                out referenceUnitPrice);
         }
 
         /// <summary>

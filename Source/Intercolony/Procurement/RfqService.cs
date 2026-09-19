@@ -776,6 +776,63 @@ namespace Intercolony
                 quantity, out explanation);
         }
 
+        /// <summary>
+        /// Calculates one supplier's unit price without creating a request or mutating market
+        /// state. The caller supplies the already-resolved read-only profile, deterministic seed,
+        /// and optional availability threshold so this helper can serve different read paths.
+        /// </summary>
+        internal static bool TryCalculateOneSupplierUnitPrice(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            SettlementEconomicProfile readOnlyProfile,
+            ThingDef thingDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            IntercolonyProductCategory category,
+            FulfillmentMode fulfillment,
+            float? availabilityThreshold,
+            int deterministicSeed,
+            out float unitPrice)
+        {
+            unitPrice = 0f;
+            Rand.PushState(deterministicSeed);
+            try
+            {
+                if (!CanTechnicallySupply(thingDef, readOnlyProfile))
+                {
+                    return false;
+                }
+
+                float supply = EffectiveEconomyService.EffectiveSupply(
+                    state, readOnlyProfile, category);
+                if (availabilityThreshold.HasValue && supply < availabilityThreshold.Value)
+                {
+                    return false;
+                }
+
+                float distance = MarketOpportunityGenerator.DistanceToPlayer(settlement);
+                unitPrice = SupplierUnitPrice(
+                    state,
+                    thingDef,
+                    stuffDef,
+                    quality,
+                    readOnlyProfile,
+                    category,
+                    supply,
+                    distance,
+                    fulfillment == FulfillmentMode.SellerDelivery,
+                    // The numeric unit-price path is quantity-independent; this helper discards
+                    // the explanation, where the quantity is only displayed.
+                    1,
+                    out _);
+                return true;
+            }
+            finally
+            {
+                Rand.PopState();
+            }
+        }
+
         public static float SupplierUnitPrice(
             IntercolonyWorldComponent state,
             ThingDef def,
