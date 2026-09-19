@@ -569,6 +569,13 @@ namespace Intercolony
                     return ApplyResult.Rejected;
                 }
 
+                if (!posting.MeetsRequirement(pawn))
+                {
+                    WarnSkillRequirementFailure(posting, pawn);
+                    DiscardRejectedPawn(pawn);
+                    return ApplyResult.FulfilmentRejected;
+                }
+
                 using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
                 {
                     AddApplicant(posting, worker, pawn, ask);
@@ -595,6 +602,13 @@ namespace Intercolony
             if (applicantPawn == null)
             {
                 return ApplyResult.Rejected;
+            }
+
+            if (!posting.MeetsRequirement(applicantPawn))
+            {
+                WarnSkillRequirementFailure(posting, applicantPawn);
+                DiscardRejectedPawn(applicantPawn);
+                return ApplyResult.FulfilmentRejected;
             }
 
             if (posting.requestedEquipmentLevel == LaborEquipmentLevel.None)
@@ -647,6 +661,25 @@ namespace Intercolony
                 AddApplicant(posting, worker, applicantPawn, ask);
             }
             return ApplyResult.Accepted;
+        }
+
+        private static void WarnSkillRequirementFailure(JobPosting posting, Pawn pawn)
+        {
+            string skillName = posting?.skill?.skillLabel ?? posting?.skill?.defName ?? "unknown";
+            string reason = "materialised pawn has no skills";
+            if (posting?.skill != null && pawn?.skills != null)
+            {
+                SkillRecord record = pawn.skills.GetSkill(posting.skill);
+                reason = record == null
+                    ? "materialised pawn has no matching skill record"
+                    : record.TotallyDisabled
+                        ? "materialised pawn's skill is TotallyDisabled"
+                        : $"materialised pawn level {record.Level} is below {posting.minSkillLevel}";
+            }
+
+            IntercolonyLog.Warning(
+                $"Skill requirement failed for posting {posting?.id.ToString() ?? "unknown"}: " +
+                $"skill {skillName} >= {posting?.minSkillLevel.ToString() ?? "unknown"}; {reason}.");
         }
 
         private static void WarnEquipmentFulfilmentFailure(

@@ -105,8 +105,9 @@ namespace Intercolony
         /// whose skills were merely *near* the advertised ones would make the going-rate band a
         /// polite fiction.
         ///
-        /// Skills the backstory disabled are left alone — the census records those as -1 and never
-        /// prices them, so there is nothing to align.
+        /// A generated pawn may have a backstory that totally disables a skill even when the census
+        /// record has a usable level for it. AlignSkills leaves that disabled skill alone, so the
+        /// posting path rechecks the materialised pawn and rejects it when that skill is required.
         /// </summary>
         public Pawn Materialise()
         {
