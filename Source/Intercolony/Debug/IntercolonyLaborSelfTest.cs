@@ -44,6 +44,33 @@ namespace Intercolony
         private const float CloseConventionalFixtureDistanceTiles = 10f;
         private const float DistantConventionalFixtureDistanceTiles = 24f;
 
+        // F23 diversity evidence: 32 is large enough to expose a cloned package while keeping
+        // this debug suite well below the hundreds of pawn generations the census deliberately
+        // avoids. The civilian sample only checks the no-weapon invariant, so it is smaller.
+        private const int EquipmentDiversityApplicantsPerTier = 32;
+        private const int EquipmentDiversityCivilianApplicantsPerTier = 8;
+        // Four distinct exact signatures and a 75% largest-group ceiling are deliberately broad
+        // anti-cloning floors, not predictions of exact RNG aesthetics. D3 raises the structural
+        // floor to six across the combined 64 combat applicants and uses the same 75% ceiling.
+        private const int EquipmentDiversityMinimumDistinctSignatures = 4;
+        private const int EquipmentDiversityMinimumMixedPackages = 2;
+        private const int EquipmentDiversityMarketIdentityBase = 0x5F23_0000;
+
+        private const string EquipmentDiversityD1Label =
+            "D1 Professional applicants have diverse actual package signatures";
+        private const string EquipmentDiversityD2Label =
+            "D2 Elite applicants have diverse actual package signatures";
+        private const string EquipmentDiversityD3Label =
+            "D3 a rich Core-like pool does not clone weapon/apparel signatures";
+        private const string EquipmentDiversityD4Label =
+            "D4 every accepted diversity applicant meets its promised tier by Classify";
+        private const string EquipmentDiversityD5Label =
+            "D5 civilian high-tier packages contain no weapon";
+        private const string EquipmentDiversityD6Label =
+            "D6 valid high-tier packages include mixed item bands";
+        private const string EquipmentDiversityD7Label =
+            "D7 high-tier packages are not systematically fully best-in-slot";
+
         private sealed class EmployeeCardFixture
         {
             public readonly string label;
@@ -66,6 +93,39 @@ namespace Intercolony
         }
 
         private static List<EmployeeActionObservation> employeeActionObservations;
+
+        private sealed class EquipmentPackageObservation
+        {
+            public string packageSignature;
+            public string weaponApparelSignature;
+            public int itemCount;
+            public bool hasWeapon;
+            public bool hasBasicBand;
+            public bool hasProfessionalBand;
+            public bool hasEliteBand;
+            public bool fullyBestInSlot;
+            public LaborEquipmentLevel actualTier;
+            public bool tierValid;
+        }
+
+        private sealed class EquipmentPackageSample
+        {
+            public readonly int requested;
+            public readonly List<EquipmentPackageObservation> accepted =
+                new List<EquipmentPackageObservation>();
+            public readonly HashSet<int> prospectIdentities = new HashSet<int>();
+            public int prospectIdentityCollisions;
+            public int materialiseFailures;
+            public int fulfilmentFailures;
+            public int exceptionCount;
+            public int tierMismatchCount;
+            public string firstFailure;
+
+            public EquipmentPackageSample(int requested)
+            {
+                this.requested = requested;
+            }
+        }
 
         private class Results
         {
@@ -132,6 +192,8 @@ namespace Intercolony
                 CheckAutoRenewPersistence(r);
                 CheckLaborSpineRoundTrip(r);
                 CheckEquipmentTierRules(r, map);
+                CheckEquipmentPackageDiversity(
+                    r, state, fixturePawns, fixtureItems);
                 CheckEquipmentBondBuyout(r);
                 CheckRefundableBondAgreesWithSettlement(r);
                 CheckSettingsDefaultMigration(r);
@@ -1087,6 +1149,868 @@ namespace Intercolony
             r.Info(
                 "Any applicant materialisation and AddApplicant ownership were not exercised " +
                 "because that legacy path necessarily generates a pawn.");
+        }
+
+        private static void CheckEquipmentPackageDiversity(
+            Results r, IntercolonyWorldComponent state,
+            List<Pawn> fixturePawns, List<Thing> fixtureItems)
+        {
+            if (!TryFindEquipmentDiversitySource(
+                    state,
+                    out Settlement sourceSettlement,
+                    out SettlementEconomicProfile sourceProfile,
+                    out int skillCount,
+                    out string sourceFailure))
+            {
+                SkipEquipmentDiversityAssertions(r, sourceFailure);
+                return;
+            }
+
+            // The catalogue is only a readiness diagnostic. Every D1-D7 observation below is
+            // still taken from the instantiated pawn after the production allocator returns.
+            int professionalWeaponAlternatives = LaborEquipmentCatalogue.EntriesFor(
+                LaborEquipmentCatalogueRole.PrimaryWeapon, TechLevel.Industrial).Count;
+            int professionalApparelAlternatives = LaborEquipmentCatalogue.EntriesFor(
+                LaborEquipmentCatalogueRole.Apparel, TechLevel.Industrial).Count;
+            int eliteWeaponAlternatives = LaborEquipmentCatalogue.EntriesFor(
+                LaborEquipmentCatalogueRole.PrimaryWeapon, TechLevel.Spacer).Count;
+            int eliteApparelAlternatives = LaborEquipmentCatalogue.EntriesFor(
+                LaborEquipmentCatalogueRole.Apparel, TechLevel.Spacer).Count;
+            bool professionalAlternatives = professionalWeaponAlternatives >= 2 &&
+                professionalApparelAlternatives >= 2;
+            bool eliteAlternatives = eliteWeaponAlternatives >= 2 &&
+                eliteApparelAlternatives >= 2;
+
+            EquipmentPackageSample professional = new EquipmentPackageSample(
+                EquipmentDiversityApplicantsPerTier);
+            EquipmentPackageSample elite = new EquipmentPackageSample(
+                EquipmentDiversityApplicantsPerTier);
+            EquipmentPackageSample civilianProfessional = new EquipmentPackageSample(
+                EquipmentDiversityCivilianApplicantsPerTier);
+            EquipmentPackageSample civilianElite = new EquipmentPackageSample(
+                EquipmentDiversityCivilianApplicantsPerTier);
+
+            string generationFailure = null;
+            bool randomStatePushed = false;
+            try
+            {
+                // Pawn materialisation is the same real LaborProspect.Materialise path used by
+                // JobPostingService. The pushed state only makes this fixture reproducible; the
+                // allocator's own package seed remains the production seed.
+                Rand.PushState(Gen.HashCombineInt(
+                    sourceProfile.seed, EquipmentDiversityMarketIdentityBase));
+                randomStatePushed = true;
+
+                GenerateEquipmentApplicants(
+                    sourceSettlement,
+                    sourceProfile,
+                    LaborEquipmentLevel.Professional,
+                    CombatClause.Armed,
+                    EquipmentDiversityApplicantsPerTier,
+                    EquipmentDiversityMarketIdentityBase +
+                        (int)LaborEquipmentLevel.Professional * 10 +
+                        (int)CombatClause.Armed,
+                    skillCount,
+                    0,
+                    fixturePawns,
+                    fixtureItems,
+                    professional);
+                GenerateEquipmentApplicants(
+                    sourceSettlement,
+                    sourceProfile,
+                    LaborEquipmentLevel.Elite,
+                    CombatClause.Armed,
+                    EquipmentDiversityApplicantsPerTier,
+                    EquipmentDiversityMarketIdentityBase +
+                        (int)LaborEquipmentLevel.Elite * 10 +
+                        (int)CombatClause.Armed,
+                    skillCount,
+                    1000,
+                    fixturePawns,
+                    fixtureItems,
+                    elite);
+                GenerateEquipmentApplicants(
+                    sourceSettlement,
+                    sourceProfile,
+                    LaborEquipmentLevel.Professional,
+                    CombatClause.Civilian,
+                    EquipmentDiversityCivilianApplicantsPerTier,
+                    EquipmentDiversityMarketIdentityBase +
+                        (int)LaborEquipmentLevel.Professional * 10 +
+                        (int)CombatClause.Civilian,
+                    skillCount,
+                    2000,
+                    fixturePawns,
+                    fixtureItems,
+                    civilianProfessional);
+                GenerateEquipmentApplicants(
+                    sourceSettlement,
+                    sourceProfile,
+                    LaborEquipmentLevel.Elite,
+                    CombatClause.Civilian,
+                    EquipmentDiversityCivilianApplicantsPerTier,
+                    EquipmentDiversityMarketIdentityBase +
+                        (int)LaborEquipmentLevel.Elite * 10 +
+                        (int)CombatClause.Civilian,
+                    skillCount,
+                    3000,
+                    fixturePawns,
+                    fixtureItems,
+                    civilianElite);
+            }
+            catch (Exception ex)
+            {
+                generationFailure =
+                    $"equipment diversity fixture threw {ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                if (randomStatePushed)
+                {
+                    Rand.PopState();
+                }
+            }
+
+            r.Info(
+                $"equipment diversity source {sourceSettlement.Label ?? "unnamed"} " +
+                $"({sourceProfile.techTier}/{sourceProfile.wealthTier}/" +
+                $"{sourceProfile.archetype}); production samples Professional " +
+                $"{professional.accepted.Count}/{professional.requested}, Elite " +
+                $"{elite.accepted.Count}/{elite.requested}, civilian " +
+                $"{civilianProfessional.accepted.Count}/{civilianProfessional.requested}+" +
+                $"{civilianElite.accepted.Count}/{civilianElite.requested}; " +
+                $"loaded alternatives P weapon/apparel={professionalWeaponAlternatives}/" +
+                $"{professionalApparelAlternatives}, E weapon/apparel=" +
+                $"{eliteWeaponAlternatives}/{eliteApparelAlternatives}");
+
+            if (generationFailure != null)
+            {
+                r.Check(false, EquipmentDiversityD1Label, generationFailure);
+                r.Check(false, EquipmentDiversityD2Label, generationFailure);
+                r.Check(false, EquipmentDiversityD3Label, generationFailure);
+                r.Check(false, EquipmentDiversityD4Label, generationFailure);
+                r.Check(false, EquipmentDiversityD5Label, generationFailure);
+                r.Check(false, EquipmentDiversityD6Label, generationFailure);
+                r.Check(false, EquipmentDiversityD7Label, generationFailure);
+                return;
+            }
+
+            int professionalDistinct = DistinctEquipmentSignatures(
+                professional.accepted, structural: false);
+            int professionalLargestGroup = LargestEquipmentSignatureGroup(
+                professional.accepted, structural: false);
+            int eliteDistinct = DistinctEquipmentSignatures(
+                elite.accepted, structural: false);
+            int eliteLargestGroup = LargestEquipmentSignatureGroup(
+                elite.accepted, structural: false);
+
+            List<EquipmentPackageObservation> highTierObservations =
+                new List<EquipmentPackageObservation>();
+            highTierObservations.AddRange(professional.accepted);
+            highTierObservations.AddRange(elite.accepted);
+            int highTierDistinctStructural = DistinctEquipmentSignatures(
+                highTierObservations, structural: true);
+            int highTierLargestStructuralGroup = LargestEquipmentSignatureGroup(
+                highTierObservations, structural: true);
+            int highTierValidCount = CountValidEquipmentObservations(highTierObservations);
+            int highTierFullyBestInSlot = CountFullyBestInSlotPackages(
+                highTierObservations);
+            int professionalMixedBands = CountProfessionalMixedBandPackages(
+                professional.accepted);
+            int eliteProfessionalFiller = CountEliteProfessionalFillerPackages(
+                elite.accepted);
+            int civilianWeaponViolations = CountCivilianWeaponViolations(
+                civilianProfessional.accepted) +
+                CountCivilianWeaponViolations(civilianElite.accepted);
+            int acceptedCount = professional.accepted.Count + elite.accepted.Count +
+                civilianProfessional.accepted.Count + civilianElite.accepted.Count;
+            int tierMismatchCount = professional.tierMismatchCount +
+                elite.tierMismatchCount + civilianProfessional.tierMismatchCount +
+                civilianElite.tierMismatchCount;
+
+            if (!professionalAlternatives)
+            {
+                r.Skip(
+                    EquipmentDiversityD1Label,
+                    $"loaded Professional pool had only " +
+                    $"{professionalWeaponAlternatives} weapon and " +
+                    $"{professionalApparelAlternatives} apparel entries; " +
+                    "there were no two alternatives in both required roles");
+            }
+            else
+            {
+                // D1 turns red if the allocator is changed to take the deterministic first
+                // passing package: this exact-signature count/max-group pair becomes uniform.
+                r.Check(
+                    professional.accepted.Count >= professional.requested &&
+                    professional.prospectIdentityCollisions == 0 &&
+                    professionalDistinct >= EquipmentDiversityMinimumDistinctSignatures &&
+                    professionalLargestGroup * 4 <= professional.accepted.Count * 3,
+                    EquipmentDiversityD1Label,
+                    $"accepted={professional.accepted.Count}/{professional.requested}; " +
+                    $"distinct signatures={professionalDistinct} (>= " +
+                    $"{EquipmentDiversityMinimumDistinctSignatures}); largest exact group=" +
+                    $"{professionalLargestGroup}/{professional.accepted.Count} (<=75%); " +
+                    DescribeEquipmentSample(professional));
+            }
+
+            if (!eliteAlternatives)
+            {
+                r.Skip(
+                    EquipmentDiversityD2Label,
+                    $"loaded Elite pool had only {eliteWeaponAlternatives} weapon and " +
+                    $"{eliteApparelAlternatives} apparel entries; there were no two " +
+                    "alternatives in both required roles");
+            }
+            else
+            {
+                // D2 turns red under the same deterministic-first-passing mutation: all Elite
+                // applicants then observe the same instantiated package signature.
+                r.Check(
+                    elite.accepted.Count >= elite.requested &&
+                    elite.prospectIdentityCollisions == 0 &&
+                    eliteDistinct >= EquipmentDiversityMinimumDistinctSignatures &&
+                    eliteLargestGroup * 4 <= elite.accepted.Count * 3,
+                    EquipmentDiversityD2Label,
+                    $"accepted={elite.accepted.Count}/{elite.requested}; distinct signatures=" +
+                    $"{eliteDistinct} (>= {EquipmentDiversityMinimumDistinctSignatures}); " +
+                    $"largest exact group={eliteLargestGroup}/{elite.accepted.Count} (<=75%); " +
+                    DescribeEquipmentSample(elite));
+            }
+
+            if (!professionalAlternatives || !eliteAlternatives)
+            {
+                r.Skip(
+                    EquipmentDiversityD3Label,
+                    $"the rich-pool comparison needs both role pools to expose alternatives; " +
+                    $"Professional alternatives={professionalAlternatives}, Elite " +
+                    $"alternatives={eliteAlternatives}");
+            }
+            else
+            {
+                // D3 turns red if deterministic first-passing selection collapses the actual
+                // weapon/apparel shape, even if quality-only differences remain elsewhere.
+                r.Check(
+                    professional.accepted.Count >= professional.requested &&
+                    elite.accepted.Count >= elite.requested &&
+                    highTierDistinctStructural >=
+                        EquipmentDiversityMinimumDistinctSignatures + 2 &&
+                    highTierLargestStructuralGroup * 4 <= highTierObservations.Count * 3,
+                    EquipmentDiversityD3Label,
+                    $"actual high-tier applicants={highTierObservations.Count}; distinct " +
+                    $"weapon/apparel signatures={highTierDistinctStructural} (>=6); " +
+                    $"largest structural group={highTierLargestStructuralGroup}/" +
+                    $"{highTierObservations.Count} (<=75%); source pool is " +
+                    $"{sourceProfile.techTier}/{sourceProfile.wealthTier}/" +
+                    $"{sourceProfile.archetype}");
+            }
+
+            // D4 turns red when a production edit bypasses the final Classify/MeetsOrExceeds
+            // guard: the real generated pawn remains under-tier and this observed mismatch is
+            // non-zero. The test intentionally calls Classify on the returned pawn again.
+            r.Check(
+                acceptedCount > 0 && tierMismatchCount == 0,
+                EquipmentDiversityD4Label,
+                $"accepted={acceptedCount}; under-tier actual loadouts={tierMismatchCount}; " +
+                $"Professional [{DescribeEquipmentSample(professional)}]; Elite " +
+                $"[{DescribeEquipmentSample(elite)}]; civilian " +
+                $"[{DescribeEquipmentSample(civilianProfessional)} / " +
+                $"{DescribeEquipmentSample(civilianElite)}]");
+
+            // D5 turns red if the civilian branch starts admitting a generated weapon. This is
+            // counted from the pawn's actual equipment tracker, never from a planner's flag.
+            r.Check(
+                civilianProfessional.accepted.Count >=
+                    EquipmentDiversityCivilianApplicantsPerTier &&
+                civilianElite.accepted.Count >= EquipmentDiversityCivilianApplicantsPerTier &&
+                civilianWeaponViolations == 0,
+                EquipmentDiversityD5Label,
+                $"civilian accepted Professional={civilianProfessional.accepted.Count}/" +
+                $"{civilianProfessional.requested}, Elite={civilianElite.accepted.Count}/" +
+                $"{civilianElite.requested}; actual weapon-bearing civilians=" +
+                $"{civilianWeaponViolations}");
+
+            if (!professionalAlternatives || !eliteAlternatives)
+            {
+                r.Skip(
+                    EquipmentDiversityD6Label,
+                    "mixed-band evidence needs both Professional and Elite alternative pools");
+                r.Skip(
+                    EquipmentDiversityD7Label,
+                    "best-in-slot spread evidence needs both Professional and Elite alternative pools");
+            }
+            else
+            {
+                // D6 turns red if the item-band inputs become a rigid recipe (for example, a
+                // production edit that disallows Basic Professional filler or Professional Elite
+                // filler). Both counters use only valid, instantiated loadouts.
+                r.Check(
+                    professionalMixedBands >= EquipmentDiversityMinimumMixedPackages &&
+                    eliteProfessionalFiller >= EquipmentDiversityMinimumMixedPackages,
+                    EquipmentDiversityD6Label,
+                    $"valid mixed Professional packages={professionalMixedBands} (>= " +
+                    $"{EquipmentDiversityMinimumMixedPackages}); valid Elite packages with " +
+                    $"Professional-ish filler={eliteProfessionalFiller} (>= " +
+                    $"{EquipmentDiversityMinimumMixedPackages}); bands come from " +
+                    "LaborEquipmentItemScore on actual Things");
+
+                // D7 turns red if high-tier selection is made a fully-maximal recipe. The
+                // intentionally strong proxy is every actual item in the Elite item band and
+                // Excellent-or-better quality; a package promise must not require that.
+                r.Check(
+                    highTierValidCount >=
+                        EquipmentDiversityApplicantsPerTier * 2 &&
+                    highTierFullyBestInSlot * 4 <= highTierValidCount * 3,
+                    EquipmentDiversityD7Label,
+                    $"valid high-tier packages={highTierValidCount}; fully best-in-slot " +
+                    $"proxy={highTierFullyBestInSlot} (<=75%); proxy requires every actual " +
+                    "item to be Elite-band and Excellent-or-better");
+            }
+        }
+
+        private static void SkipEquipmentDiversityAssertions(Results r, string reason)
+        {
+            string detail = reason ?? "no suitable rich Core-like source was available";
+            r.Skip(EquipmentDiversityD1Label, detail);
+            r.Skip(EquipmentDiversityD2Label, detail);
+            r.Skip(EquipmentDiversityD3Label, detail);
+            r.Skip(EquipmentDiversityD4Label, detail);
+            r.Skip(EquipmentDiversityD5Label, detail);
+            r.Skip(EquipmentDiversityD6Label, detail);
+            r.Skip(EquipmentDiversityD7Label, detail);
+        }
+
+        private static bool TryFindEquipmentDiversitySource(
+            IntercolonyWorldComponent state,
+            out Settlement sourceSettlement,
+            out SettlementEconomicProfile sourceProfile,
+            out int skillCount,
+            out string failure)
+        {
+            sourceSettlement = null;
+            sourceProfile = null;
+            skillCount = 0;
+            failure = null;
+
+            if (state == null || Find.WorldPawns == null)
+            {
+                failure = "the world component or WorldPawns registry was unavailable";
+                return false;
+            }
+
+            List<SkillDef> skills = DefDatabase<SkillDef>.AllDefsListForReading;
+            if (skills != null)
+            {
+                foreach (SkillDef skill in skills)
+                {
+                    if (skill != null)
+                    {
+                        skillCount = Math.Max(skillCount, skill.index + 1);
+                    }
+                }
+            }
+
+            if (skillCount <= 0)
+            {
+                failure = "the loaded defs exposed no indexed skills for distinct prospects";
+                return false;
+            }
+
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements != null)
+            {
+                foreach (Settlement settlement in settlements)
+                {
+                    if (settlement?.Faction == null ||
+                        settlement.Faction == Faction.OfPlayer)
+                    {
+                        continue;
+                    }
+
+                    SettlementEconomicProfile profile = state.GetProfile(settlement);
+                    if (profile == null || profile.techTier != TechLevel.Industrial ||
+                        profile.wealthTier < IntercolonyWealthTier.Comfortable ||
+                        !LaborEquipmentTierService.CanSupply(
+                            profile, LaborEquipmentLevel.Professional, CombatClause.Armed) ||
+                        !LaborEquipmentTierService.CanSupply(
+                            profile, LaborEquipmentLevel.Elite, CombatClause.Armed) ||
+                        !LaborEquipmentTierService.CanSupply(
+                            profile, LaborEquipmentLevel.Professional, CombatClause.Civilian) ||
+                        !LaborEquipmentTierService.CanSupply(
+                            profile, LaborEquipmentLevel.Elite, CombatClause.Civilian))
+                    {
+                        continue;
+                    }
+
+                    PawnKindDef kind = settlement.Faction.RandomPawnKind();
+                    if (kind?.RaceProps == null || !kind.RaceProps.Humanlike)
+                    {
+                        continue;
+                    }
+
+                    sourceSettlement = settlement;
+                    sourceProfile = profile;
+                    return true;
+                }
+            }
+
+            failure =
+                "no non-player Industrial, Comfortable-or-better settlement with a " +
+                "humanlike pawn kind could supply both high tiers for Armed and Civilian";
+            return false;
+        }
+
+        private static void GenerateEquipmentApplicants(
+            Settlement sourceSettlement,
+            SettlementEconomicProfile sourceProfile,
+            LaborEquipmentLevel promisedTier,
+            CombatClause clause,
+            int applicantCount,
+            int marketIdentity,
+            int skillCount,
+            int ordinalOffset,
+            List<Pawn> fixturePawns,
+            List<Thing> fixtureItems,
+            EquipmentPackageSample sample)
+        {
+            for (int index = 0; index < applicantCount; index++)
+            {
+                int ordinal = ordinalOffset + index;
+                LaborProspect prospect = BuildEquipmentDiversityProspect(
+                    sourceSettlement, promisedTier, skillCount, ordinal);
+                int prospectIdentity = LaborEquipmentPackagePlanner.StableProspectIdentity(
+                    prospect);
+                if (!sample.prospectIdentities.Add(prospectIdentity))
+                {
+                    // N4: identity is deliberately varied by skills, passions and price; a
+                    // collision here means this fixture accidentally recreated the production
+                    // limitation it is meant to avoid.
+                    sample.prospectIdentityCollisions++;
+                }
+
+                Pawn pawn;
+                try
+                {
+                    pawn = prospect.Materialise();
+                }
+                catch (Exception ex)
+                {
+                    sample.exceptionCount++;
+                    if (sample.firstFailure == null)
+                    {
+                        sample.firstFailure =
+                            $"prospect materialisation threw {ex.GetType().Name}: {ex.Message}";
+                    }
+
+                    continue;
+                }
+
+                if (pawn == null)
+                {
+                    sample.materialiseFailures++;
+                    if (sample.firstFailure == null)
+                    {
+                        sample.firstFailure = "prospect.Materialise returned null";
+                    }
+
+                    continue;
+                }
+
+                TrackPawn(fixturePawns, pawn);
+                try
+                {
+                    string failReason;
+                    // This is the production overload. It receives the real census prospect and
+                    // one stable posting/market identity, exactly like JobPostingService.Apply.
+                    bool fulfilled = LaborEquipmentAllocator.TryFulfil(
+                        pawn,
+                        prospect,
+                        marketIdentity,
+                        promisedTier,
+                        clause,
+                        sourceProfile,
+                        out failReason);
+                    if (!fulfilled)
+                    {
+                        sample.fulfilmentFailures++;
+                        if (sample.firstFailure == null)
+                        {
+                            sample.firstFailure = failReason ?? "allocator returned false";
+                        }
+
+                        continue;
+                    }
+
+                    EquipmentPackageObservation observation = ObserveEquipmentPackage(pawn);
+                    observation.actualTier = LaborEquipmentTierService.Classify(
+                        pawn, clause);
+                    observation.tierValid = LaborEquipmentTierService.MeetsOrExceeds(
+                        observation.actualTier, promisedTier);
+                    if (!observation.tierValid)
+                    {
+                        sample.tierMismatchCount++;
+                    }
+
+                    sample.accepted.Add(observation);
+                }
+                catch (Exception ex)
+                {
+                    sample.exceptionCount++;
+                    if (sample.firstFailure == null)
+                    {
+                        sample.firstFailure =
+                            $"allocator observation threw {ex.GetType().Name}: {ex.Message}";
+                    }
+                }
+                finally
+                {
+                    // The outer Run finally owns this shared list. Capture even a failed
+                    // fulfilment's remaining loadout so an unexpected allocator failure cannot
+                    // turn into a fixture Thing leak.
+                    TrackGeneratedLoadout(fixtureItems, pawn);
+                }
+            }
+        }
+
+        private static LaborProspect BuildEquipmentDiversityProspect(
+            Settlement sourceSettlement,
+            LaborEquipmentLevel promisedTier,
+            int skillCount,
+            int ordinal)
+        {
+            int[] skillLevels = new int[skillCount];
+            Passion[] passions = new Passion[skillCount];
+            for (int index = 0; index < skillCount; index++)
+            {
+                skillLevels[index] = 3 + ((ordinal * 11 + index * 5) % 9);
+            }
+
+            int specialty = ordinal % skillCount;
+            int secondary = (ordinal * 5 + 3) % skillCount;
+            skillLevels[specialty] = 8 + (ordinal % 13);
+            passions[specialty] = ordinal % 3 == 0
+                ? Passion.Major
+                : ordinal % 3 == 1 ? Passion.Minor : Passion.None;
+            if (secondary != specialty)
+            {
+                skillLevels[secondary] = Math.Max(
+                    skillLevels[secondary], 7 + ((ordinal * 3) % 9));
+                passions[secondary] = ordinal % 4 == 0
+                    ? Passion.Minor
+                    : Passion.None;
+            }
+
+            LaborProspect prospect = new LaborProspect
+            {
+                settlementId = sourceSettlement.ID,
+                settlementName = sourceSettlement.Label ?? "unnamed",
+                factionName = sourceSettlement.Faction?.Name ?? "",
+                faction = sourceSettlement.Faction,
+                distanceTiles = 0f,
+                travelDays = 0,
+                skillLevels = skillLevels,
+                passions = passions,
+                equipmentTier = promisedTier
+            };
+            prospect.pricedSkillValue = EquipmentDiversityProspectPrice(
+                skillLevels, passions);
+            return prospect;
+        }
+
+        private static float EquipmentDiversityProspectPrice(
+            int[] skillLevels, Passion[] passions)
+        {
+            List<int> rankedLevels = new List<int>();
+            List<Passion> rankedPassions = new List<Passion>();
+            for (int index = 0; index < skillLevels.Length; index++)
+            {
+                if (skillLevels[index] >= 0)
+                {
+                    rankedLevels.Add(skillLevels[index]);
+                    rankedPassions.Add(
+                        passions != null && index < passions.Length
+                            ? passions[index]
+                            : Passion.None);
+                }
+            }
+
+            for (int left = 0; left < rankedLevels.Count; left++)
+            {
+                for (int right = left + 1; right < rankedLevels.Count; right++)
+                {
+                    if (rankedLevels[right] <= rankedLevels[left])
+                    {
+                        continue;
+                    }
+
+                    int level = rankedLevels[left];
+                    rankedLevels[left] = rankedLevels[right];
+                    rankedLevels[right] = level;
+                    Passion passion = rankedPassions[left];
+                    rankedPassions[left] = rankedPassions[right];
+                    rankedPassions[right] = passion;
+                }
+            }
+
+            float price = 0f;
+            for (int index = 0;
+                 index < LaborCandidateService.PricedSkillCount &&
+                 index < rankedLevels.Count;
+                 index++)
+            {
+                price += LaborCandidateService.WeightedLevel(
+                    rankedLevels[index], rankedPassions[index]);
+            }
+
+            return price;
+        }
+
+        private sealed class EquipmentItemObservation
+        {
+            public string packageKey;
+            public string structuralKey;
+            public LaborEquipmentItemBand band;
+            public bool hasQuality;
+            public QualityCategory quality;
+        }
+
+        private static EquipmentPackageObservation ObserveEquipmentPackage(Pawn pawn)
+        {
+            List<string> packageKeys = new List<string>();
+            List<string> weaponKeys = new List<string>();
+            List<string> apparelKeys = new List<string>();
+            bool hasWeapon = false;
+            bool hasBasicBand = false;
+            bool hasProfessionalBand = false;
+            bool hasEliteBand = false;
+            bool fullyBestInSlot = true;
+
+            if (pawn?.equipment?.AllEquipmentListForReading != null)
+            {
+                foreach (ThingWithComps item in pawn.equipment.AllEquipmentListForReading)
+                {
+                    EquipmentItemObservation observed = ObserveEquipmentItem(item);
+                    if (observed == null)
+                    {
+                        continue;
+                    }
+
+                    packageKeys.Add(observed.packageKey);
+                    weaponKeys.Add(observed.structuralKey);
+                    hasWeapon |= item.def != null && item.def.IsWeapon;
+                    hasBasicBand |= observed.band == LaborEquipmentItemBand.Basic;
+                    hasProfessionalBand |=
+                        observed.band == LaborEquipmentItemBand.Professional;
+                    hasEliteBand |= observed.band == LaborEquipmentItemBand.Elite;
+                    fullyBestInSlot &= observed.band == LaborEquipmentItemBand.Elite &&
+                        observed.hasQuality && observed.quality >= QualityCategory.Excellent;
+                }
+            }
+
+            if (pawn?.apparel?.WornApparel != null)
+            {
+                foreach (Apparel item in pawn.apparel.WornApparel)
+                {
+                    EquipmentItemObservation observed = ObserveEquipmentItem(item);
+                    if (observed == null)
+                    {
+                        continue;
+                    }
+
+                    packageKeys.Add(observed.packageKey);
+                    apparelKeys.Add(observed.structuralKey);
+                    hasBasicBand |= observed.band == LaborEquipmentItemBand.Basic;
+                    hasProfessionalBand |=
+                        observed.band == LaborEquipmentItemBand.Professional;
+                    hasEliteBand |= observed.band == LaborEquipmentItemBand.Elite;
+                    fullyBestInSlot &= observed.band == LaborEquipmentItemBand.Elite &&
+                        observed.hasQuality && observed.quality >= QualityCategory.Excellent;
+                }
+            }
+
+            packageKeys.Sort(StringComparer.Ordinal);
+            weaponKeys.Sort(StringComparer.Ordinal);
+            apparelKeys.Sort(StringComparer.Ordinal);
+            int itemCount = packageKeys.Count;
+            if (itemCount == 0)
+            {
+                fullyBestInSlot = false;
+            }
+
+            return new EquipmentPackageObservation
+            {
+                packageSignature = String.Join("|", packageKeys.ToArray()),
+                weaponApparelSignature =
+                    $"W[{String.Join("|", weaponKeys.ToArray())}]" +
+                    $"A[{String.Join("|", apparelKeys.ToArray())}]",
+                itemCount = itemCount,
+                hasWeapon = hasWeapon,
+                hasBasicBand = hasBasicBand,
+                hasProfessionalBand = hasProfessionalBand,
+                hasEliteBand = hasEliteBand,
+                fullyBestInSlot = fullyBestInSlot
+            };
+        }
+
+        private static EquipmentItemObservation ObserveEquipmentItem(Thing item)
+        {
+            if (item == null || item.Destroyed || item.def == null || item.stackCount <= 0)
+            {
+                return null;
+            }
+
+            QualityCategory quality = QualityCategory.Normal;
+            bool hasQuality = item.TryGetQuality(out quality);
+            LaborEquipmentItemScoreResult score = LaborEquipmentItemScore.Evaluate(
+                item.def, item.Stuff, quality);
+            return new EquipmentItemObservation
+            {
+                packageKey = EquipmentItemSignature(item, hasQuality, quality),
+                structuralKey = EquipmentItemSignature(item, false, quality),
+                band = score.Band,
+                hasQuality = hasQuality,
+                quality = quality
+            };
+        }
+
+        private static string EquipmentItemSignature(
+            Thing item, bool includeQuality, QualityCategory quality)
+        {
+            string qualityPart = includeQuality ? ((int)quality).ToString() : "*";
+            return (item?.def?.defName ?? "<null>") + ":" +
+                   (item?.Stuff?.defName ?? "<none>") + ":" + qualityPart;
+        }
+
+        private static int DistinctEquipmentSignatures(
+            List<EquipmentPackageObservation> observations, bool structural)
+        {
+            HashSet<string> signatures = new HashSet<string>(StringComparer.Ordinal);
+            foreach (EquipmentPackageObservation observation in observations)
+            {
+                if (observation != null)
+                {
+                    signatures.Add(structural
+                        ? observation.weaponApparelSignature
+                        : observation.packageSignature);
+                }
+            }
+
+            return signatures.Count;
+        }
+
+        private static int LargestEquipmentSignatureGroup(
+            List<EquipmentPackageObservation> observations, bool structural)
+        {
+            Dictionary<string, int> counts = new Dictionary<string, int>(
+                StringComparer.Ordinal);
+            int largest = 0;
+            foreach (EquipmentPackageObservation observation in observations)
+            {
+                if (observation == null)
+                {
+                    continue;
+                }
+
+                string signature = structural
+                    ? observation.weaponApparelSignature
+                    : observation.packageSignature;
+                counts.TryGetValue(signature, out int count);
+                count++;
+                counts[signature] = count;
+                largest = Math.Max(largest, count);
+            }
+
+            return largest;
+        }
+
+        private static int CountValidEquipmentObservations(
+            List<EquipmentPackageObservation> observations)
+        {
+            int count = 0;
+            foreach (EquipmentPackageObservation observation in observations)
+            {
+                if (observation != null && observation.tierValid)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static int CountFullyBestInSlotPackages(
+            List<EquipmentPackageObservation> observations)
+        {
+            int count = 0;
+            foreach (EquipmentPackageObservation observation in observations)
+            {
+                if (observation != null && observation.tierValid &&
+                    observation.fullyBestInSlot)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static int CountProfessionalMixedBandPackages(
+            List<EquipmentPackageObservation> observations)
+        {
+            int count = 0;
+            foreach (EquipmentPackageObservation observation in observations)
+            {
+                if (observation != null && observation.tierValid &&
+                    observation.hasBasicBand &&
+                    (observation.hasProfessionalBand || observation.hasEliteBand))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static int CountEliteProfessionalFillerPackages(
+            List<EquipmentPackageObservation> observations)
+        {
+            int count = 0;
+            foreach (EquipmentPackageObservation observation in observations)
+            {
+                if (observation != null && observation.tierValid &&
+                    observation.hasEliteBand && observation.hasProfessionalBand)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static int CountCivilianWeaponViolations(
+            List<EquipmentPackageObservation> observations)
+        {
+            int count = 0;
+            foreach (EquipmentPackageObservation observation in observations)
+            {
+                if (observation != null && observation.hasWeapon)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static string DescribeEquipmentSample(EquipmentPackageSample sample)
+        {
+            return $"accepted={sample.accepted.Count}/{sample.requested}, " +
+                   $"materialise failures={sample.materialiseFailures}, " +
+                   $"fulfilment failures={sample.fulfilmentFailures}, " +
+                   $"exceptions={sample.exceptionCount}, " +
+                   $"tier mismatches={sample.tierMismatchCount}, " +
+                   $"prospect identity collisions={sample.prospectIdentityCollisions}, " +
+                   $"first failure={sample.firstFailure ?? "none"}";
         }
 
         private static void SkipArrivalSafetyChecks(Results r, string reason)
@@ -6445,6 +7369,33 @@ namespace Intercolony
             if (pawn != null && !fixturePawns.Contains(pawn))
             {
                 fixturePawns.Add(pawn);
+            }
+        }
+
+        private static void TrackGeneratedLoadout(List<Thing> fixtureItems, Pawn pawn)
+        {
+            if (pawn?.equipment?.AllEquipmentListForReading != null)
+            {
+                foreach (ThingWithComps item in pawn.equipment.AllEquipmentListForReading)
+                {
+                    TrackThing(fixtureItems, item);
+                }
+            }
+
+            if (pawn?.apparel?.WornApparel != null)
+            {
+                foreach (Apparel item in pawn.apparel.WornApparel)
+                {
+                    TrackThing(fixtureItems, item);
+                }
+            }
+        }
+
+        private static void TrackThing(List<Thing> fixtureItems, Thing item)
+        {
+            if (item != null && !fixtureItems.Contains(item))
+            {
+                fixtureItems.Add(item);
             }
         }
 
