@@ -51,14 +51,16 @@ A shipped fix recorded in `PROGRESS.md` is still not a play observation, so it d
 Added 2026-09-16 on branch `foreman/playtest-polish-2026-09-14`, cut from
 `foreman/playtest-finalization-2026-09-13` at `04bd776`. This group records the first human-playtest
 findings from the finalization run being corrected; it is not a claim that the earlier work was wrong.
-No item below has been played in this run.
+Items below remain outstanding unless a sub-item is explicitly marked **PROVEN IN PLAY**; a marked
+sub-item records the operator's evidence without closing the surrounding checks.
 
 **Steps.**
 
 1. **F24 pod descent (mandatory).** Hire one direct emergency worker from a drop-pod-capable
    settlement. See a quoted ETA of **1–4h**. Receive the inbound letter, see that it names the source,
-   click **Jump to location**, and watch a vanilla-style pod descend at the announced site. See the
-   worker activate from that pod, not walk in or appear beside it. The letter is the fix: before this
+   click **Jump to location**, and ~~watch a vanilla-style pod descend at the announced site.~~
+   **[PROVEN IN PLAY — operator observed]** See the worker activate from that pod, not walk in or
+   appear beside it. The letter is the fix: before this
    run there was no letter at launch, and the post-arrival one was suppressed at the default letter
    volume, which is why the first playtest saw nothing.
 2. **F24 conventional route.** Find or engineer a source within the **12-tile** ground threshold.
@@ -68,20 +70,25 @@ No item below has been played in this run.
    Read the premium shown when posting and compare it with the premium actually charged; they must be
    the same.
 4. **F04 Architect flow.** Create a preset from a chair's popup, find it under **Architect >
-   Production**, and drag it over a room of chairs and tables. Watch all eligible objects become
-   configured and the one concise summary message name any skipped incompatible ones. Right-click the
-   preset and use **Edit**, **Rename** and **Remove**. Then repeat the flow from **Architect > Orders >
-   Produce controls** without selecting an object first.
-5. **F04 preset workers across a save.** Configure a preset with specific selected workers, save,
-   reload, and reopen it. See the selections survive. Then repeat with a selected worker who died or
-   left between save and load; see that worker dropped while the remaining selections stay.
+   Production**, and ~~drag it over a room of chairs and tables. Watch all eligible objects become
+   configured and the one concise summary message name any skipped incompatible ones.~~ **[PROVEN IN
+   PLAY — operator observed]** ~~Right-click the preset and use **Edit**, **Rename** and **Remove**.~~
+   **[PROVEN IN PLAY — operator observed]** Then
+   repeat the flow from **Architect > Orders > Produce controls** without selecting an object first.
+5. **F04 preset workers across a save.** ~~Configure a preset with specific selected workers, save,
+   reload, and reopen it. See the selections survive.~~ **[PROVEN IN PLAY — operator observed]** Then
+   ~~repeat with a selected worker who died or left between save and load; see that worker dropped while
+   the remaining selections stay.~~ **[PROVEN IN PLAY — operator observed]**
 6. **F16 employee card.** Screenshot the collapsed card for an ordinary active employee and see
-   **Dismiss**, for a travelling employee and see **Cancel**, for a live stay offer and see **Not now**,
+   ~~**Dismiss**~~ **[PROVEN IN PLAY — operator observed]**, for a travelling employee and ~~**Cancel**~~
+   **[PROVEN IN PLAY — operator observed]**, for a live stay offer and see ~~**Not now**~~ **[PROVEN IN
+   PLAY — operator observed]**,
    and for a live renewal offer and see **Let them go**. See no `...`, no overlap, and **Pay arrears
    (N)** in the expanded card.
-7. **F19 material selector.** Propose a chair agreement first at **Any material**, then at **Steel**,
+7. **F19 material selector.** ~~Propose a chair agreement first at **Any material**, then at **Steel**,
    then at **Wood**. See the reference price change with the material. In Business, see a concrete
-   replacement cost for Steel and Wood and an honest unresolved state for the generic contract.
+   replacement cost for Steel and Wood and an honest unresolved state for the generic contract.~~
+   **[PROVEN IN PLAY — operator observed]**
 8. **F23 equipment postings.** Post **Shooting 1+** at **Standard**, then **Professional**, then
    **Elite** in an ordinary world. See somebody answer at each tier, and inspect what each applicant
    actually carries to confirm that the gear matches the claimed tier.
@@ -2287,7 +2294,10 @@ Added 2026-09-14 on branch `foreman/playtest-finalization-2026-09-13`. The contr
 
 The routes, the price tiers, the median, the wage sharing and the margin's contents are asserted through the real production code and mutation-proven, and none of that says anything about whether the block reads well.
 
-### F21/F24: nobody has watched an emergency worker drop out of the sky
+### F21/F24: emergency worker drop-pod arrival — physical descent proven; remaining checks outstanding
+
+**Physical descent is proven in play.** The operator has seen the pod descend visibly; the remaining
+checks below concern landing feel, location, emergency availability, premium, and save/reload.
 
 Added 2026-09-15 on branch `foreman/playtest-finalization-2026-09-13`. Every settlement now has a stable **rapid-logistics capability** — **drop pods available** or **conventional transport only** — derived from tech, wealth and archetype, shown on its economic display, and **never available below Industrial**. **Emergency Dispatch no longer keeps "the nearest half"**. A worker qualifies if their ordinary travel is already **2 days or under**, or if their settlement **can send a pod**. Capability, not proximity.
 
@@ -2295,11 +2305,19 @@ Travel is no longer **divided by three**: a close settlement's own caravan is th
 
 A pod hire **really arrives by drop pod** — vanilla's pod, a safe colony landing cell, the pawn stepping out — and only then becomes an active employee, so **payroll does not start mid-air**. If the pod **cannot fly safely**, nothing is destroyed: the **contract stays travelling**, the **worker stays pinned**, and a technical failure is logged **once**.
 
-**Steps.** Ask a person to judge whether an emergency worker actually falls out of the sky and whether that reads as visibly different from an ordinary hire walking in, which is the entire point of the feature; whether the pod lands somewhere sensible rather than across the map or inside the killbox; whether roughly four hours FEELS like the cavalry arriving or like a teleport; whether the Emergency Dispatch list is usefully populated or usually empty in a real game — the suite measures about a third of settlements as pod-capable, and the 2-day conventional threshold is expected almost never to fire; whether the premium feels earned; and whether saving and reloading mid-descent still lands the same worker.
+**Steps.** ~~Ask a person to judge whether an emergency worker actually falls out of the sky~~ **[PROVEN IN
+PLAY — operator observed]** and whether that reads as visibly different from an ordinary hire walking in,
+which is the entire point of the feature; whether the pod lands somewhere sensible rather than across
+the map or inside the killbox; whether roughly four hours FEELS like the cavalry arriving or like a
+teleport; whether the Emergency Dispatch list is usefully populated or usually empty in a real game —
+the suite measures about a third of settlements as pod-capable, and the 2-day conventional threshold is
+expected almost never to fire; whether the premium feels earned; and whether saving and reloading
+mid-descent still lands the same worker.
 
 **The empty-list case is a real possible outcome by design** — emergency hiring buys priority, not a guarantee; a tester who sees nothing should report the world's settlement mix rather than assuming a bug.
 
-The capability model, the eligibility rule, the arrival timing and the failure path are asserted and mutation-proven, and none of that shows whether a pod landing looks or feels right.
+The capability model, the eligibility rule, the arrival timing and the failure path are asserted and
+mutation-proven, and none of that shows whether a pod landing feels right or lands sensibly.
 
 ### F23: requested equipment levels have never been posted by a person
 
@@ -2373,11 +2391,13 @@ test.
 **Steps.**
 
 1. Take one expanded-card screenshot and judge its readability. The card now shows three groups:
-   **Renew** / **Let them go**, then **Keep them** / **Negotiate** / **Not now**, then **Pay arrears**
+   **Renew** / **Let them go**, then **Keep them** / **Negotiate** / ~~**Not now**~~ **[PROVEN IN PLAY —
+   operator observed]**, then **Pay arrears**
    when it applies. Judge whether those read as three separate decisions rather than one list of six
    buttons.
-2. Judge whether the header slot reads correctly: **Dismiss** for an active worker, **Cancel** for a
-   travelling one, and a reserved empty slot otherwise. Previously this one slot also showed **Not now**
+2. Judge whether the header slot reads correctly: ~~**Dismiss**~~ **[PROVEN IN PLAY — operator observed]**
+   for an active worker, ~~**Cancel**~~ **[PROVEN IN PLAY — operator observed]** for a travelling one,
+   and a reserved empty slot otherwise. Previously this one slot also showed **Not now**
    and **Let them go**, so confirm nothing looks missing now that it does not.
 3. Judge whether **Negotiate**, permanently disabled with the tooltip **"Negotiation is not available
    yet."**, reads as deliberately unavailable rather than broken.
@@ -2411,8 +2431,9 @@ into the labour partition turned both material-invariance assertions red (**Gold
    the tooltip says so. This convention was chosen during the run because the plan did not decide it, and
    it changes the number the player reads. Judge whether delivered is the right basis to compare against,
    or whether a pickup price would be more useful.
-4. Confirm an agreement left at **Any material** still shows a dash with its tooltip reason, rather than
-   a blended number. That dash is deliberate: there is no honest single price across wood, gold and steel.
+4. ~~Confirm an agreement left at **Any material** still shows a dash with its tooltip reason, rather than
+   a blended number. That dash is deliberate: there is no honest single price across wood, gold and steel.~~
+   **[PROVEN IN PLAY — operator observed]**
 
 Also note: the benchmark prefers current listing and open-RFQ evidence, and only falls back to the
 indicative supplier quote when there is none. If a figure ever looks wrong, which tier produced it is the
@@ -2549,7 +2570,7 @@ the human checks below more than any other, and they are **required**, not nice-
 4. Confirm **Jump to location** is **ENABLED** on that letter.
 5. Click it and confirm the camera lands on the incoming pod or its landing site.
 6. Confirm the game **REMAINS paused** after the jump.
-7. Resume, and visibly watch the pod descend.
+7. ~~Resume, and visibly watch the pod descend.~~ **[PROVEN IN PLAY — operator observed]**
 8. Confirm the worker activates from that pod exactly once — not twice, and not never.
 
 Also check that an ordinary, non-emergency employee arrival is unchanged, and that no other Intercolony
