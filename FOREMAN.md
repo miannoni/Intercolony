@@ -1,15 +1,13 @@
 # Foreman state — Intercolony
 
-Stage: **P6 — F24: freeze and honor Emergency Job Posting arrival quotes**
-Unit: P6.5 — P6 human-evidence entry in `docs/PENDING_PLAYTESTS.md`
-Worker: luna running — P6.5 pending-playtest entry · log `C:\Users\matte\.claude\jobs\439462af\tmp\p6-5-worker.log` · bg id `bp6lch2ja`
-**P6.3f CLOSED at `108fb6b` — diagnosis confirmed by measurement, not arithmetic.** S3's 300-tick loop budgeted the pod's *flight* and forgot that impact spawns the pod, not the pawn: the pod opens only after `openDelay = 110` further ticks, so the real budget is `ticksToImpact + 111` = 231–311. It now derives the deadline from the launched objects and hard-fails if no pod, or more than one, was launched. Negative control — cap it back at 300 across six fresh worlds — reproduced the flake in three: `194+110+1=305`, `190+110+1=301`, `194+110+1=305`, each driving only 300 ticks, against a predicted threshold of 190; the three shorter-flight runs stayed green. With the fix: four whole-suite runs 1769/0/19, 1770/0/18, 1769/0/19, 1770/0/18, all exit 0, zero S3 failures, pawn delta 0.
-**All nine P6 assertions are in, and every one has been seen red for its own reason.**
-**Non-blocking defect, owed after P6:** `an applicant whose actual gear misses the request is not queued` failed once at HEAD (`Accepted`/`queued=True`) having passed at `8f9b7cf`, `64b2c17`, `1bb8339` — **flaky**, likely world-dependent like the others.
-**Standing rule earned twice in this stage:** with `-Fresh`, two runs are never a controlled comparison — every run builds a new world.
+Stage: **P7 — F24: raid-like attention for inbound emergency pods**
+Unit: P7.1 — FOCUSED RECON (required by the plan): how vanilla pauses, targets and times a pod-arrival letter
+Worker: **sol recon running** — P7.1 vanilla letter/attention pattern · log `C:\Users\matte\.claude\jobs\439462af\tmp\p7-1-recon.log` · bg id `b6y0y1i2m`
 Loop: WAITING_ON_WORKER
-Last done: **P6.3c–P6.3f all closed** at `1bb8339`, `a96c0da`, `a00b0f4`, `108fb6b`. Their evidence lives in those commit messages; the unit table below is the index.
-Updated: 2026-09-20 12:31
+Last done: **P6 CLOSED.** Nine assertions, every one seen red for its own reason; final gate **1770/0/18**, exit 0, log CLEAN, world pawns 15 → 15, kept-forever 12 → 12. Branch pushed at `040bd90`. Along the way P6 also fixed two pre-existing test defects it exposed: a payroll fixture that abandoned its hired pawn on the map, and an equipment assertion that had been silently skipping since P5.
+**Non-blocking defect, still owed:** `an applicant whose actual gear misses the request is not queued` failed once at HEAD (`Accepted`/`queued=True`) having passed at `8f9b7cf`, `64b2c17`, `1bb8339` — **flaky**, probably world-dependent like the others.
+**Standing rule earned twice in P6:** with `-Fresh`, two runs are never a controlled comparison — every run builds a new world. Compare only within a run, or across several.
+Updated: 2026-09-20 13:05
 Foreman load: 2026-09-20 02:57 — SKILL.md + RUN_CONTRACT.md held in session context since the 22:49 activation load; loop restated: wake → check one → verify → dispatch one → persist → end turn.
 Plan: C:\dev\INTERCOLONY_PLAYTEST_CORRECTION_PASS_II_PLAN.md · worker copy `docs/PLAYTEST_CORRECTION_PASS_II_PLAN.md`
 Mode: autonomous run-to-halt
@@ -37,11 +35,11 @@ Clean halt is a completed, tested, pushed development branch.
 | P3 | F19/F20 Business benchmark + labor consistency | closed — 1749/0/19 |
 | P4 | F23 diversified equipment packages | closed — 1756/0/19 |
 | P5 | F23/Emergency posting performance | closed — 1757/0/20 |
-| P6 | F24 emergency quote persistence + hiring | in progress |
-| P7 | F24 raid-like pod attention letter | not started |
+| P6 | F24 emergency quote persistence + hiring | closed — 1770/0/18 |
+| P7 | F24 raid-like pod attention letter | in progress |
 | P8 | integration, pending-playtest cleanup, whole-suite gate | not started |
 
-## Stage P6 units
+## Stage P6 units — closed, kept as the index to its evidence
 
 | Unit | Scope | Status |
 |---|---|---|
@@ -56,8 +54,8 @@ Clean halt is a completed, tested, pushed development branch.
 | P6.3d | S4 old emergency applicants migrated or invalidated, never silently ordinary | done `a96c0da` |
 | P6.3e | five labor emergency assertions made deterministic, not world-dependent | done `a00b0f4` |
 | P6.3f | derive S3's tick budget; flake proven by negative control | done `108fb6b` |
-| P6.5 | P6 human-evidence entry in `docs/PENDING_PLAYTESTS.md` | luna running |
-| P6.6 | stage gate + close P6 | not started |
+| P6.5 | P6 human-evidence entry in `docs/PENDING_PLAYTESTS.md` | done `040bd90` |
+| P6.6 | stage gate + close P6 | done — 1770/0/18, exit 0, CLEAN, pushed |
 
 ## P6 locked semantics
 
@@ -109,7 +107,8 @@ removed. The 59 → 60 migration must resolve that so the fencing does not outli
 ## Human evidence owed
 
 All recorded in `docs/PENDING_PLAYTESTS.md`: F04 (`4ec90b2`), F16 (`bf39b1d`), F19/F20 (`f49fbcd`),
-F23 (`809a5bd`), P5 click-feel including the paused-game case (`e24c220`).
+F23 (`809a5bd`), P5 click-feel including the paused-game case (`e24c220`), P6/F24 emergency
+arrival including the old-save migration case (`040bd90`).
 
 ## Operator items
 
