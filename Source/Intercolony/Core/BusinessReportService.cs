@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -32,6 +34,63 @@ namespace Intercolony
         /// with the market, and a purchase from three years ago is not evidence about today.
         /// </summary>
         private const int RecentPurchaseWindowTicks = YearDays * GenDate.TicksPerDay;
+
+        // These sentinels are outside the normal input domains: ThingDef.shortHash is a ushort,
+        // and a null quality has no QualityCategory value. Keeping them explicit makes the
+        // read-only quote seed stable for both exact and quality-less contracts.
+        private const int NoStuffSeedPart = -1;
+        private const int NoQualitySeedPart = -1;
+
+        // Business-only salt. It is deliberately separate from the procurement, listing, and
+        // contract salts so the report's indicative quote stream cannot line up with another
+        // seeded market decision.
+        private const int IndicativeMarketQuoteSeedSalt = 0x4252_4D32;
+
+        private static readonly ConditionalWeakTable<IntercolonyWorldComponent,
+            IndicativeMarketQuoteCache> IndicativeMarketQuoteCaches =
+            new ConditionalWeakTable<IntercolonyWorldComponent, IndicativeMarketQuoteCache>();
+
+        private sealed class IndicativeMarketQuoteCache
+        {
+            public int refreshCount = int.MinValue;
+            public readonly Dictionary<IndicativeMarketQuoteKey, float?> medians =
+                new Dictionary<IndicativeMarketQuoteKey, float?>();
+        }
+
+        private struct IndicativeMarketQuoteKey : IEquatable<IndicativeMarketQuoteKey>
+        {
+            private readonly ThingDef productDef;
+            private readonly ThingDef stuffDef;
+            private readonly int qualityPart;
+
+            public IndicativeMarketQuoteKey(
+                ThingDef productDef, ThingDef stuffDef, QualityCategory? quality)
+            {
+                this.productDef = productDef;
+                this.stuffDef = stuffDef;
+                qualityPart = quality.HasValue ? (int)quality.Value : NoQualitySeedPart;
+            }
+
+            public bool Equals(IndicativeMarketQuoteKey other)
+            {
+                return ReferenceEquals(productDef, other.productDef) &&
+                       ReferenceEquals(stuffDef, other.stuffDef) &&
+                       qualityPart == other.qualityPart;
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is IndicativeMarketQuoteKey &&
+                       Equals((IndicativeMarketQuoteKey)obj);
+            }
+
+            public override int GetHashCode()
+            {
+                int hash = productDef?.GetHashCode() ?? 0;
+                hash = Gen.HashCombineInt(hash, stuffDef?.GetHashCode() ?? 0);
+                return Gen.HashCombineInt(hash, qualityPart);
+            }
+        }
 
         // --- Forward-looking: is this contract worth it? (§45) -----------------------------
 
@@ -181,6 +240,17 @@ namespace Intercolony
         /// </summary>
         public static ContractEstimate Estimate(IntercolonyWorldComponent state, RecurringContract contract)
         {
+            IndicativeMarketQuoteCache marketQuoteCache = state == null
+                ? null
+                : GetIndicativeMarketQuoteCache(state);
+            return Estimate(state, contract, marketQuoteCache);
+        }
+
+        private static ContractEstimate Estimate(
+            IntercolonyWorldComponent state,
+            RecurringContract contract,
+            IndicativeMarketQuoteCache marketQuoteCache)
+        {
             ContractEstimate estimate = new ContractEstimate { contract = contract };
             if (contract == null)
             {
@@ -189,11 +259,12 @@ namespace Intercolony
 
             estimate.revenue = contract.DiscountedCyclePayment;
             estimate.hasMarketMedianUnitPrice =
-                TryGetCurrentProcurementMarketMedianUnitPrice(
+                TryGetProcurementMarketMedianUnitPrice(
                     state,
                     contract.thingDef,
                     contract.stuffDef,
                     contract.minQuality,
+                    marketQuoteCache,
                     out estimate.marketMedianUnitPrice);
 
             // Base value plus what a supplier marks up, using procurement's own constant so the
@@ -1195,6 +1266,149 @@ namespace Intercolony
             return IsUsablePositive(unitPrice);
         }
 
+        private static bool TryGetProcurementMarketMedianUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef productDef,
+            ThingDef stuffDef,
+            QualityCategory? minQuality,
+            IndicativeMarketQuoteCache marketQuoteCache,
+            out float unitPrice)
+        {
+            unitPrice = 0f;
+            if (productDef != null && productDef.MadeFromStuff && stuffDef == null)
+            {
+                // A generic stuffable agreement has no exact product to price. In particular,
+                // do not let a current stuffless record accidentally turn Any material into a
+                // generic market benchmark.
+                return false;
+            }
+
+            // Tier 1 is deliberately queried first and remains the only source whenever it has
+            // at least one usable current observation. The indicative tier is never blended in.
+            if (TryGetCurrentProcurementMarketMedianUnitPrice(
+                    state, productDef, stuffDef, minQuality, out unitPrice))
+            {
+                return true;
+            }
+
+            return TryGetIndicativeSupplierMarketMedianUnitPrice(
+                state, productDef, stuffDef, minQuality, marketQuoteCache, out unitPrice);
+        }
+
+        private static bool TryGetIndicativeSupplierMarketMedianUnitPrice(
+            IntercolonyWorldComponent state,
+            ThingDef productDef,
+            ThingDef stuffDef,
+            QualityCategory? quality,
+            IndicativeMarketQuoteCache marketQuoteCache,
+            out float unitPrice)
+        {
+            unitPrice = 0f;
+            if (state == null || productDef == null || marketQuoteCache == null ||
+                !IntercolonyProductClassifier.TryGetTradableCategory(
+                    productDef, out IntercolonyProductCategory category))
+            {
+                return false;
+            }
+
+            IndicativeMarketQuoteKey key = new IndicativeMarketQuoteKey(
+                productDef, stuffDef, quality);
+            if (marketQuoteCache.medians.TryGetValue(key, out float? cachedMedian))
+            {
+                if (cachedMedian.HasValue)
+                {
+                    unitPrice = cachedMedian.Value;
+                    return true;
+                }
+
+                return false;
+            }
+
+            List<float> prices = new List<float>();
+            List<Settlement> settlements = Find.WorldObjects?.Settlements;
+            if (settlements != null)
+            {
+                foreach (Settlement settlement in settlements)
+                {
+                    if (settlement == null || !IntercolonyMarketAccess.IsAccessible(settlement))
+                    {
+                        continue;
+                    }
+
+                    SettlementEconomicProfile profile = state.GetProfileForReadOnly(settlement);
+                    if (profile == null)
+                    {
+                        continue;
+                    }
+
+                    int deterministicSeed = IndicativeSupplierQuoteSeed(
+                        state, settlement, productDef, stuffDef, quality);
+                    if (RfqService.TryCalculateOneSupplierUnitPrice(
+                            state,
+                            settlement,
+                            profile,
+                            productDef,
+                            stuffDef,
+                            quality,
+                            category,
+                            FulfillmentMode.SellerDelivery,
+                            RfqService.MinimumEffectiveSupplyForSupplierQuote,
+                            deterministicSeed,
+                            out float supplierUnitPrice) &&
+                        IsUsablePositive(supplierUnitPrice))
+                    {
+                        prices.Add(supplierUnitPrice);
+                    }
+                }
+            }
+
+            if (prices.Count == 0)
+            {
+                // Cache the honest no-observation result for this world/refresh/key as well;
+                // otherwise a dash would still re-run every seeded supplier quote every frame.
+                marketQuoteCache.medians[key] = null;
+                return false;
+            }
+
+            prices.Sort();
+            unitPrice = prices[(prices.Count - 1) / 2];
+            marketQuoteCache.medians[key] = unitPrice;
+            return IsUsablePositive(unitPrice);
+        }
+
+        private static int IndicativeSupplierQuoteSeed(
+            IntercolonyWorldComponent state,
+            Settlement settlement,
+            ThingDef productDef,
+            ThingDef stuffDef,
+            QualityCategory? quality)
+        {
+            int seed = Gen.HashCombineInt(
+                state.EconomySeedForReadOnly,
+                state.RefreshCount,
+                settlement.ID,
+                productDef.shortHash);
+            return Gen.HashCombineInt(
+                seed,
+                stuffDef?.shortHash ?? NoStuffSeedPart,
+                quality.HasValue ? (int)quality.Value : NoQualitySeedPart,
+                IndicativeMarketQuoteSeedSalt);
+        }
+
+        private static IndicativeMarketQuoteCache GetIndicativeMarketQuoteCache(
+            IntercolonyWorldComponent state)
+        {
+            IndicativeMarketQuoteCache cache = IndicativeMarketQuoteCaches.GetValue(
+                state, _ => new IndicativeMarketQuoteCache());
+            if (cache.refreshCount != state.RefreshCount)
+            {
+                cache.refreshCount = state.RefreshCount;
+                cache.medians.Clear();
+            }
+
+            return cache;
+        }
+
         private static bool MatchesMarketQuality(
             QualityCategory? offeredQuality, QualityCategory? minQuality)
         {
@@ -1304,11 +1518,15 @@ namespace Intercolony
                 return estimates;
             }
 
+            // The Business page asks for this list during every render pass. Build one cache for
+            // the report and let each estimate reuse its product/quality median; the seeded
+            // supplier walk therefore happens at most once per key in the current world/refresh.
+            IndicativeMarketQuoteCache marketQuoteCache = GetIndicativeMarketQuoteCache(state);
             foreach (RecurringContract contract in state.Contracts)
             {
                 if (IsBusinessLive(contract))
                 {
-                    estimates.Add(Estimate(state, contract));
+                    estimates.Add(Estimate(state, contract, marketQuoteCache));
                 }
             }
 

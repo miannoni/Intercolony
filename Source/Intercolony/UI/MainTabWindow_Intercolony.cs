@@ -4154,7 +4154,11 @@ namespace Intercolony
         private const float ContractEstimateColumnGap = 8f;
         private const float ContractMarketBenchmarkRowGap = 2f;
         private const string ContractMarketBenchmarkTooltip =
-            "Median current procurement price for this product across available suppliers.";
+            "Median current procurement price for this product across available suppliers. " +
+            "The indicative fallback is a delivered price: it includes the supplier's delivery " +
+            "charge.";
+        private const string ContractAnyMaterialMarketBenchmarkTooltip =
+            "Agreement does not specify a material.";
         private const string ContractSellerDeliveryNote =
             "Seller delivery — caravan cost not included in production margin";
 
@@ -4349,6 +4353,19 @@ namespace Intercolony
             return estimate != null && estimate.hasMarketMedianUnitPrice
                 ? $"{estimate.marketMedianUnitPrice:F2} / unit"
                 : "—";
+        }
+
+        private static string ContractMarketBenchmarkTooltipFor(
+            BusinessReportService.ContractEstimate estimate)
+        {
+            RecurringContract contract = estimate?.contract;
+            if (contract?.thingDef != null && contract.thingDef.MadeFromStuff &&
+                contract.stuffDef == null)
+            {
+                return ContractAnyMaterialMarketBenchmarkTooltip;
+            }
+
+            return ContractMarketBenchmarkTooltip;
         }
 
         private static string DirectInputTooltip(
@@ -4694,7 +4711,8 @@ namespace Intercolony
                 rect, lineY, "Median market price:", "",
                 ContractMarketMedianPriceLabel(estimate),
                 labelWidth, numberWidth, cycleNumberX, unitNumberX,
-                new Color(0.85f, 0.85f, 0.85f), ContractMarketBenchmarkTooltip);
+                new Color(0.85f, 0.85f, 0.85f),
+                ContractMarketBenchmarkTooltipFor(estimate));
         }
 
         private void DrawContractRow(

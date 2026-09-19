@@ -26,6 +26,13 @@ namespace Intercolony
         /// </summary>
         public const int RequestLifespanDays = 6;
 
+        /// <summary>
+        /// Minimum effective supply for a supplier to be considered able to quote. This is the
+        /// deterministic availability gate; the separate response roll is willingness, not the
+        /// existence of a price.
+        /// </summary>
+        internal const float MinimumEffectiveSupplyForSupplierQuote = 0.35f;
+
         /// <summary>Hard maximum delay from request creation to a scheduled response.</summary>
         private const int MaxResponseDelayDays = 5;
 
@@ -492,7 +499,7 @@ namespace Intercolony
             }
 
             float supply = EffectiveEconomyService.EffectiveSupply(state, profile, category);
-            if (supply < 0.35f)
+            if (supply < MinimumEffectiveSupplyForSupplierQuote)
             {
                 return null;
             }
