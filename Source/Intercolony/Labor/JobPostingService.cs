@@ -853,6 +853,19 @@ namespace Intercolony
             IntercolonyWorldComponent state, JobPosting posting, LaborProspect worker, int ask,
             int censusRefreshCount, int censusIndex)
         {
+            EmergencyArrivalQuote emergencyArrivalQuote = default(EmergencyArrivalQuote);
+            if (posting.emergencyDispatch)
+            {
+                // Matching already applied the emergency gate, but the quote is frozen at the
+                // publication boundary as well. A route that disappeared between selection and
+                // materialisation must not become an emergency applicant with no emergency quote.
+                emergencyArrivalQuote = LaborCandidateService.QuoteEmergencyArrival(state, worker);
+                if (!emergencyArrivalQuote.available)
+                {
+                    return ApplyResult.SourceRejected;
+                }
+            }
+
             // Any is the legacy equipment path: one generation, no equipment capability gate, no
             // classification and no retry. Existing non-emergency postings load as Any and must
             // behave exactly as they did before equipment requests existed.
@@ -878,7 +891,8 @@ namespace Intercolony
                 using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
                 {
                     AddApplicant(
-                        posting, worker, pawn, ask, censusRefreshCount, censusIndex);
+                        posting, worker, pawn, ask, censusRefreshCount, censusIndex,
+                        emergencyArrivalQuote);
                 }
                 return ApplyResult.Accepted;
             }
@@ -959,7 +973,8 @@ namespace Intercolony
             using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
             {
                 AddApplicant(
-                    posting, worker, applicantPawn, ask, censusRefreshCount, censusIndex);
+                    posting, worker, applicantPawn, ask, censusRefreshCount, censusIndex,
+                    emergencyArrivalQuote);
             }
             return ApplyResult.Accepted;
         }
@@ -1029,7 +1044,7 @@ namespace Intercolony
 
         private static void AddApplicant(
             JobPosting posting, LaborProspect worker, Pawn pawn, int ask,
-            int censusRefreshCount, int censusIndex)
+            int censusRefreshCount, int censusIndex, EmergencyArrivalQuote emergencyArrivalQuote)
         {
             // Nothing else owns this pawn - it was built for this list. KeepForever rather than
             // Decide for the reason the notes give:
@@ -1040,7 +1055,7 @@ namespace Intercolony
                 Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.KeepForever);
             }
 
-            posting.Applicants.Add(new JobApplicant
+            JobApplicant applicant = new JobApplicant
             {
                 pawn = pawn,
                 settlementId = worker.settlementId,
@@ -1054,7 +1069,15 @@ namespace Intercolony
                 appliedTick = GenTicks.TicksGame,
                 sourceCensusRefreshCount = censusRefreshCount,
                 sourceCensusIndex = censusIndex
-            });
+            };
+
+            if (posting.emergencyDispatch)
+            {
+                LaborCandidateService.FreezeEmergencyArrivalQuote(
+                    applicant, emergencyArrivalQuote);
+            }
+
+            posting.Applicants.Add(applicant);
         }
 
         private static void DiscardRejectedPawn(Pawn pawn)

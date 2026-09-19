@@ -28,7 +28,13 @@ namespace Intercolony
         /// <see cref="MigrateIfNeeded"/>. Additive nodes with safe defaults may ride the current
         /// schema when the batch explicitly authorises them to do so.
         /// </summary>
-        public const int CurrentSaveVersion = 59;
+        public const int CurrentSaveVersion = 60;
+
+        // A legacy applicant whose exact census row cannot be recovered gets this out-of-range
+        // pair. It is only an identity marker: AlreadyApplied compares both fields exactly, and
+        // no live census row can have int.MaxValue as its index. It is never player-facing.
+        private const int LegacyApplicantCensusRefreshMarker = int.MaxValue;
+        private const int LegacyApplicantCensusIndexMarker = int.MaxValue;
 
         /// <summary>
         /// How often the scheduled refresh fires, in ticks. Read live so changing the mod setting
@@ -2817,7 +2823,227 @@ namespace Intercolony
                     "safe defaults.");
             }
 
+            if (saveVersion < 60)
+            {
+                MigrateEmergencyApplicantQuotes();
+            }
+
             saveVersion = CurrentSaveVersion;
+        }
+
+        /// <summary>
+        /// Repairs the two pieces of labor applicant state that schema 60 makes durable:
+        /// emergency arrival quotes and the P5 census provenance needed to resume matching after
+        /// a load. Ordinary applicants intentionally do not enter this path.
+        /// </summary>
+        private void MigrateEmergencyApplicantQuotes()
+        {
+            int frozenQuotes = 0;
+            int restoredCensusIdentities = 0;
+            int markedLegacyIdentities = 0;
+            int invalidatedApplicants = 0;
+
+            List<LaborProspect> census = null;
+            float standing = 0f;
+
+            foreach (JobPosting posting in postings)
+            {
+                if (posting == null || !posting.emergencyDispatch)
+                {
+                    continue;
+                }
+
+                HashSet<int> claimedCensusIndexes = new HashSet<int>();
+                foreach (JobApplicant existingApplicant in posting.Applicants)
+                {
+                    if (existingApplicant != null &&
+                        existingApplicant.HasSourceCensusIdentity &&
+                        existingApplicant.sourceCensusRefreshCount == refreshCount)
+                    {
+                        claimedCensusIndexes.Add(existingApplicant.sourceCensusIndex);
+                    }
+                }
+
+                for (int i = posting.Applicants.Count - 1; i >= 0; i--)
+                {
+                    JobApplicant applicant = posting.Applicants[i];
+                    if (applicant == null)
+                    {
+                        continue;
+                    }
+
+                    if (!applicant.emergencyArrivalAvailable)
+                    {
+                        Settlement sourceSettlement =
+                            IntercolonyMarketAccess.FindSettlement(applicant.settlementId);
+                        string invalidReason = null;
+                        if (sourceSettlement == null)
+                        {
+                            invalidReason = "the source settlement no longer exists";
+                        }
+                        else
+                        {
+                            string accessReason;
+                            if (!IntercolonyMarketAccess.IsAccessible(
+                                    sourceSettlement, out accessReason))
+                            {
+                                invalidReason =
+                                    "the source settlement is no longer accessible" +
+                                    (string.IsNullOrEmpty(accessReason)
+                                        ? ""
+                                        : $" ({accessReason})");
+                            }
+                            else
+                            {
+                                string laborReason;
+                                if (!EmployerReputationService.WillSupplyLabor(
+                                        this, sourceSettlement.ID, out laborReason))
+                                {
+                                    invalidReason =
+                                        "the source settlement will not supply labor" +
+                                        (string.IsNullOrEmpty(laborReason)
+                                            ? ""
+                                            : $" ({laborReason})");
+                                }
+                            }
+                        }
+
+                        EmergencyArrivalQuote quote = default(EmergencyArrivalQuote);
+                        if (invalidReason == null)
+                        {
+                            LaborProspect source = new LaborProspect
+                            {
+                                settlementId = applicant.settlementId,
+                                distanceTiles = applicant.distanceTiles,
+                                travelDays = applicant.travelDays
+                            };
+                            quote = LaborCandidateService.QuoteEmergencyArrival(this, source);
+                            if (!quote.available)
+                            {
+                                invalidReason =
+                                    "no safe emergency route remains for the saved source and distance";
+                            }
+                        }
+
+                        if (invalidReason != null)
+                        {
+                            string applicantName = applicant.Name;
+                            applicant.Discard();
+                            posting.Applicants.RemoveAt(i);
+                            invalidatedApplicants++;
+                            IntercolonyLog.Warning(
+                                $"Invalidated emergency applicant {applicantName} on posting " +
+                                $"#{posting.id} during schema 59 -> 60 migration: {invalidReason}. " +
+                                "The pinned pawn was discarded through JobApplicant.Discard(); " +
+                                "the posting will rematch normally.");
+                            continue;
+                        }
+
+                        LaborCandidateService.FreezeEmergencyArrivalQuote(applicant, quote);
+                        frozenQuotes++;
+                    }
+
+                    if (applicant.HasSourceCensusIdentity)
+                    {
+                        continue;
+                    }
+
+                    if (census == null)
+                    {
+                        census = LaborCandidateService.Census(this);
+                        standing = EmployerReputationService.ScoreFor(this);
+                    }
+
+                    int censusIndex = FindLegacyApplicantCensusIndex(
+                        posting, applicant, census, standing, claimedCensusIndexes);
+                    if (censusIndex >= 0)
+                    {
+                        applicant.sourceCensusRefreshCount = refreshCount;
+                        applicant.sourceCensusIndex = censusIndex;
+                        claimedCensusIndexes.Add(censusIndex);
+                        restoredCensusIdentities++;
+                    }
+                    else
+                    {
+                        // The old save did not retain enough provenance to identify the exact
+                        // census row. This pair records that the applicant was considered while
+                        // remaining outside every real row, so it no longer triggers the P5
+                        // untracked-applicant fence or suppresses a future live census row.
+                        applicant.sourceCensusRefreshCount = LegacyApplicantCensusRefreshMarker;
+                        applicant.sourceCensusIndex = LegacyApplicantCensusIndexMarker;
+                        markedLegacyIdentities++;
+                    }
+                }
+            }
+
+            IntercolonyLog.Message(
+                $"  schema 59 -> 60: froze {frozenQuotes} emergency applicant quote(s), " +
+                $"restored {restoredCensusIdentities} P5 census identit{(restoredCensusIdentities == 1 ? "y" : "ies")}, " +
+                $"marked {markedLegacyIdentities} unrecoverable legacy census identit{(markedLegacyIdentities == 1 ? "y" : "ies")}, " +
+                $"and invalidated {invalidatedApplicants} emergency applicant(s).");
+        }
+
+        private int FindLegacyApplicantCensusIndex(
+            JobPosting posting, JobApplicant applicant, List<LaborProspect> census,
+            float standing, HashSet<int> claimedCensusIndexes)
+        {
+            if (posting == null || applicant == null || census == null)
+            {
+                return -1;
+            }
+
+            int matchedCensusIndex = -1;
+            for (int i = 0; i < census.Count; i++)
+            {
+                LaborProspect prospect = census[i];
+                if (prospect == null || prospect.censusRefreshCount != refreshCount ||
+                    prospect.censusIndex < 0 || claimedCensusIndexes.Contains(prospect.censusIndex) ||
+                    prospect.settlementId != applicant.settlementId ||
+                    prospect.travelDays != applicant.travelDays ||
+                    Mathf.Abs(prospect.distanceTiles - applicant.distanceTiles) > 0.001f ||
+                    !posting.MeetsRequirement(prospect))
+                {
+                    continue;
+                }
+
+                Settlement sourceSettlement =
+                    IntercolonyMarketAccess.FindSettlement(prospect.settlementId);
+                SettlementEconomicProfile profile = sourceSettlement == null
+                    ? null
+                    : GetProfile(sourceSettlement);
+                int ask = LaborCandidateService.DailyWageFor(
+                    prospect.pricedSkillValue,
+                    profile,
+                    prospect.distanceTiles,
+                    posting.termDays,
+                    standing,
+                    posting.combatClause,
+                    posting.emergencyDispatch);
+                if (ask != applicant.openMarketAsk)
+                {
+                    continue;
+                }
+
+                if (applicant.pawn != null &&
+                    Mathf.Abs(
+                        LaborCandidateService.PricedSkillValue(applicant.pawn) -
+                        prospect.pricedSkillValue) > 0.001f)
+                {
+                    continue;
+                }
+
+                if (matchedCensusIndex >= 0)
+                {
+                    // The old applicant did not retain enough provenance to choose safely
+                    // between equivalent live census rows. Let the caller use the legacy marker
+                    // rather than suppressing one row and allowing another duplicate.
+                    return -1;
+                }
+
+                matchedCensusIndex = prospect.censusIndex;
+            }
+
+            return matchedCensusIndex;
         }
 
         /// <summary>

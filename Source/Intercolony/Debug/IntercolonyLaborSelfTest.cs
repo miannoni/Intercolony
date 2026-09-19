@@ -33,7 +33,7 @@ namespace Intercolony
         private const float ExpectedEmergencyWageMultiplier = 4f;
         // Keep this schema pin as a literal independent of CurrentSaveVersion: bumping the
         // production constant must fail here until the migration coverage is deliberately reviewed.
-        private const int ExpectedCurrentSaveVersion = 59;
+        private const int ExpectedCurrentSaveVersion = 60;
 
         // DailyWageFor rounds once after applying the urgency multiplier, while the ordinary
         // listing exposes its already-rounded daily wage. The independent integer oracle is
@@ -2379,8 +2379,8 @@ namespace Intercolony
             try
             {
                 r.Check(IntercolonyWorldComponent.CurrentSaveVersion == ExpectedCurrentSaveVersion,
-                    "U4 CurrentSaveVersion remains 59",
-                    $"expected 59, actual {IntercolonyWorldComponent.CurrentSaveVersion}");
+                    "U4 CurrentSaveVersion remains 60",
+                    $"expected 60, actual {IntercolonyWorldComponent.CurrentSaveVersion}");
 
                 // Capture U1 before the main F23 hire consumes one candidate; otherwise the
                 // eligibility comparison would be measuring a changed market. U2-U4 deliberately

@@ -91,6 +91,16 @@ namespace Intercolony
         public float distanceTiles;
         public int travelDays;
 
+        /// <summary>
+        /// The emergency arrival quote frozen when this applicant was created. Ordinary
+        /// applicants leave this unavailable and continue to use <see cref="travelDays"/>.
+        /// </summary>
+        public bool emergencyArrivalAvailable;
+        public EmploymentArrivalTransport emergencyArrivalTransport =
+            EmploymentArrivalTransport.Conventional;
+        public int emergencyArrivalTicks;
+        public string emergencyArrivalMethodLabel = "";
+
         /// <summary>Level in the skill the posting asked for, frozen so the list reads after the pawn is gone.</summary>
         public int requiredSkillLevel;
 
@@ -198,6 +208,15 @@ namespace Intercolony
             Scribe_Values.Look(ref factionName, "factionName", "");
             Scribe_Values.Look(ref distanceTiles, "distanceTiles", 0f);
             Scribe_Values.Look(ref travelDays, "travelDays", 0);
+            Scribe_Values.Look(
+                ref emergencyArrivalAvailable, "emergencyArrivalAvailable", false);
+            Scribe_Values.Look(
+                ref emergencyArrivalTransport,
+                "emergencyArrivalTransport",
+                EmploymentArrivalTransport.Conventional);
+            Scribe_Values.Look(ref emergencyArrivalTicks, "emergencyArrivalTicks", 0);
+            Scribe_Values.Look(
+                ref emergencyArrivalMethodLabel, "emergencyArrivalMethodLabel", "");
             Scribe_Values.Look(ref requiredSkillLevel, "requiredSkillLevel", 0);
             Scribe_Values.Look(ref openMarketAsk, "openMarketAsk", 0);
             Scribe_Values.Look(ref appliedTick, "appliedTick", 0);

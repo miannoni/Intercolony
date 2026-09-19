@@ -960,7 +960,7 @@ namespace Intercolony
                 JobPostingService.MatchAll(state);
 
                 object applyResult = applyMethod.Invoke(
-                    null, new object[] { state, posting, prospect, 1 });
+                    null, new object[] { state, posting, prospect, 1, state.RefreshCount, 0 });
                 observation.applyResult = applyResult?.ToString();
                 if (observation.applyResult == "Accepted")
                 {

@@ -880,6 +880,25 @@ namespace Intercolony
             return QuoteEmergencyArrival(profile, prospect.distanceTiles, identityHash);
         }
 
+        /// <summary>
+        /// Copies the shared emergency quote shape onto the persisted applicant record. Keeping
+        /// this conversion beside <see cref="EmergencyArrivalQuote"/> prevents job postings from
+        /// growing a second route model with its own transport or ETA rules.
+        /// </summary>
+        internal static void FreezeEmergencyArrivalQuote(
+            JobApplicant applicant, EmergencyArrivalQuote quote)
+        {
+            if (applicant == null)
+            {
+                return;
+            }
+
+            applicant.emergencyArrivalAvailable = quote.available;
+            applicant.emergencyArrivalTransport = quote.transport;
+            applicant.emergencyArrivalTicks = quote.arrivalTicks;
+            applicant.emergencyArrivalMethodLabel = quote.methodLabel ?? string.Empty;
+        }
+
         private static bool IsEmergencyProspect(LaborProspect prospect)
         {
             return prospect != null && prospect.travelDays >= 0;
