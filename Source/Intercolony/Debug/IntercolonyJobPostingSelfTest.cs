@@ -986,37 +986,65 @@ namespace Intercolony
                 // final gate that phase one cannot reach with a lower promise.
                 JobPostingService.MatchAll(state);
 
-                object applyResult = applyMethod.Invoke(
-                    null, new object[] { state, posting, prospect, 1, state.RefreshCount, 0 });
-                observation.applyResult = applyResult?.ToString();
-                if (observation.applyResult == "Accepted")
+                MethodInfo materialiseMethod = typeof(LaborProspect).GetMethod(
+                    nameof(LaborProspect.Materialise),
+                    BindingFlags.Instance | BindingFlags.Public);
+                MethodInfo clearMaterialisedLoadout = typeof(IntercolonyJobPostingSelfTest).GetMethod(
+                    nameof(ClearMaterialisedLoadout),
+                    BindingFlags.Static | BindingFlags.NonPublic);
+                if (materialiseMethod == null || clearMaterialisedLoadout == null)
                 {
-                    observation.applicantQueued = posting.Applicants.Count > 0;
-                    if (posting.Applicants.Count > 0)
+                    throw new InvalidOperationException(
+                        "the LaborProspect.Materialise loadout-control patch was unavailable");
+                }
+
+                HarmonyLib.Harmony harmony = new HarmonyLib.Harmony(
+                    "miannoni.intercolony.final-loadout.selftest");
+                try
+                {
+                    harmony.Patch(
+                        materialiseMethod,
+                        postfix: new HarmonyLib.HarmonyMethod(clearMaterialisedLoadout));
+
+                    object applyResult = applyMethod.Invoke(
+                        null, new object[] { state, posting, prospect, 1, state.RefreshCount, 0 });
+                    observation.applyResult = applyResult?.ToString();
+                    if (observation.applyResult == "Accepted")
                     {
-                        JobPostingService.Reject(
-                            posting, posting.Applicants[posting.Applicants.Count - 1]);
+                        observation.applicantQueued = posting.Applicants.Count > 0;
+                        if (posting.Applicants.Count > 0)
+                        {
+                            JobPostingService.Reject(
+                                posting, posting.Applicants[posting.Applicants.Count - 1]);
+                        }
+                    }
+                    else if (observation.applyResult == "FulfilmentRejected")
+                    {
+                        // With a materialised pawn and a None promise, TryFulfil cannot fail: it
+                        // strips the loadout and returns true. Therefore this result identifies the
+                        // final actual-loadout gate, rather than the earlier allocator failure path.
+                        observation.finalGateRejected = true;
+                    }
+                    else if (observation.applyResult == "Rejected")
+                    {
+                        observation.fixtureBuilt = false;
+                        observation.failure =
+                            "the controlled prospect could not materialise an applicant pawn";
+                    }
+                    else
+                    {
+                        observation.fixtureBuilt = false;
+                        observation.failure =
+                            $"Apply returned {observation.applyResult ?? "null"} instead of an " +
+                            "applicant or final-gate rejection";
                     }
                 }
-                else if (observation.applyResult == "FulfilmentRejected")
+                finally
                 {
-                    // With a materialised pawn and a None promise, TryFulfil cannot fail: it
-                    // strips the loadout and returns true. Therefore this result identifies the
-                    // final actual-loadout gate, rather than the earlier allocator failure path.
-                    observation.finalGateRejected = true;
-                }
-                else if (observation.applyResult == "Rejected")
-                {
-                    observation.fixtureBuilt = false;
-                    observation.failure =
-                        "the controlled prospect could not materialise an applicant pawn";
-                }
-                else
-                {
-                    observation.fixtureBuilt = false;
-                    observation.failure =
-                        $"Apply returned {observation.applyResult ?? "null"} instead of an " +
-                        "applicant or final-gate rejection";
+                    harmony.Unpatch(
+                        materialiseMethod,
+                        HarmonyLib.HarmonyPatchType.Postfix,
+                        harmony.Id);
                 }
             }
             catch (System.Exception ex)
@@ -1042,6 +1070,19 @@ namespace Intercolony
             }
 
             return observation;
+        }
+
+        private static void ClearMaterialisedLoadout(Pawn __result)
+        {
+            if (__result?.equipment != null)
+            {
+                __result.equipment.DestroyAllEquipment(DestroyMode.Vanish);
+            }
+
+            if (__result?.apparel != null)
+            {
+                __result.apparel.DestroyAll(DestroyMode.Vanish);
+            }
         }
 
         private static void CheckEquipmentFulfilment(

@@ -1161,11 +1161,10 @@ namespace Intercolony
             // keeps the launch announcement idempotent if the same contract is invoked again.
             if (dropPodArrivalLettersSent.Add(contract))
             {
-                // Resolve the skyfaller so Jump to location follows the actual incoming pod;
-                // the cell target is the exact fallback while the pod is not in the grid.
-                DropPodIncoming incomingPod = map.thingGrid.ThingAt<DropPodIncoming>(cell);
-                LookTargets lookTargets = incomingPod != null
-                    ? new LookTargets(incomingPod)
+                // Target the pawn so Jump to location follows the transport lifecycle from
+                // incoming skyfaller to landed pod to the pawn after the pod opens.
+                LookTargets lookTargets = worker != null
+                    ? new LookTargets(worker)
                     : new LookTargets(cell, map);
                 string landingSite = map.Parent == null
                     ? EmergencyArrivalLetterLandingSiteFallback
@@ -1181,7 +1180,7 @@ namespace Intercolony
                         contract.workerName,
                         contract.settlementName,
                         landingSite),
-                    LetterDefOf.PositiveEvent,
+                    IntercolonyLetterDefOf.Intercolony_EmergencyEmployeeArrival,
                     lookTargets);
             }
         }
